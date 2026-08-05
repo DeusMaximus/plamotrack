@@ -60,6 +60,12 @@ Template:
     Docker publishes on 0.0.0.0 when you omit the bind address, so the db was
     answering on the LAN — verified before and after. Override via
     `POSTGRES_BIND` if remote access is genuinely wanted.
+  - **`pool_pre_ping=True`** on the engine. Without it the first request after
+    any Postgres restart 500s on a severed pooled connection
+    (`asyncpg InterfaceError: connection is closed`) and only recovers on the
+    second — A/B verified by restarting the db container with and without it.
+    Matters more from M8, where api and db are separate containers that restart
+    independently. Harmless under the tests' NullPool.
 - **Security audit (clean):** only `.env.example` has *ever* been tracked, in
   any commit; no db/dump/key files; no hardcoded secrets. The only
   credential-shaped strings in tracked code are the localhost dev defaults in

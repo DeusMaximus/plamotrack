@@ -22,7 +22,16 @@ def get_engine() -> AsyncEngine:
     if _engine is None:
         settings = get_settings()
         kwargs = {"poolclass": NullPool} if settings.database_pool == "null" else {}
-        _engine = create_async_engine(settings.database_url, **kwargs)
+        _engine = create_async_engine(
+            settings.database_url,
+            # Checked-out connections are validated before use, so a Postgres
+            # restart costs a reconnect instead of a failed request. The API and
+            # db are separate containers from M8 and restart independently; a
+            # pooled connection severed by one of those restarts is otherwise
+            # handed to the next request, which 500s on a dead socket.
+            pool_pre_ping=True,
+            **kwargs,
+        )
     return _engine
 
 
