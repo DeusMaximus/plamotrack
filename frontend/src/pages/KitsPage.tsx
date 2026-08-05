@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { api, ApiError } from "../api/client";
 import type { Kit, KitCreate, KitStatus, KitUpdate } from "../api/types";
 import { KIT_STATUSES } from "../api/types";
+import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
@@ -184,7 +185,10 @@ export function KitsPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">Kits</h1>
-        <Button onClick={() => setModal({ mode: "add" })}>+ Add kit</Button>
+        <div className="flex gap-2">
+          <ExportCsvButton table="kits" />
+          <Button onClick={() => setModal({ mode: "add" })}>+ Add kit</Button>
+        </div>
       </div>
 
       <div className="flex gap-2">

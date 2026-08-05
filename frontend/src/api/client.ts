@@ -3,6 +3,9 @@ import type {
   Consumable,
   ConsumableCreate,
   ConsumableUpdate,
+  ImportMode,
+  ImportPlan,
+  ImportResult,
   Kit,
   KitCreate,
   KitStatus,
@@ -71,6 +74,41 @@ function patch(body: unknown): RequestInit {
   return { method: "PATCH", body: JSON.stringify(body) };
 }
 
+/** Multipart POST — the browser sets its own boundary, so no Content-Type here. */
+async function upload<T>(path: string, form: FormData): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, { method: "POST", body: form });
+  if (!res.ok) {
+    let detail = res.statusText;
+    try {
+      const body = (await res.json()) as { detail?: unknown };
+      if (typeof body.detail === "string") detail = body.detail;
+    } catch {
+      // non-JSON error body — keep statusText
+    }
+    throw new ApiError(res.status, detail);
+  }
+  return (await res.json()) as T;
+}
+
+/** Pull a file down through fetch so an API error renders as a message rather
+ *  than dumping a JSON error page into a download. */
+export async function downloadFile(path: string, fallbackName: string): Promise<void> {
+  const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) {
+    throw new ApiError(res.status, `Export failed (${res.status})`);
+  }
+  const disposition = res.headers.get("Content-Disposition") ?? "";
+  const name = /filename="?([^"]+)"?/.exec(disposition)?.[1] ?? fallbackName;
+  const blobUrl = URL.createObjectURL(await res.blob());
+  const link = document.createElement("a");
+  link.href = blobUrl;
+  link.download = name;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(blobUrl);
+}
+
 export const api = {
   listKits: (filters?: { status?: KitStatus | "" }) => {
     const params = new URLSearchParams();
@@ -114,4 +152,20 @@ export const api = {
   updateOrder: (id: string, data: OrderUpdate) => request<Order>(`/orders/${id}`, patch(data)),
   receiveOrder: (id: string) => request<Order>(`/orders/${id}/receive`, { method: "POST" }),
   deleteOrder: (id: string) => request<void>(`/orders/${id}`, { method: "DELETE" }),
+
+  previewImport: (file: File, mode: ImportMode) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("mode", mode);
+    return upload<ImportPlan>("/import/preview", form);
+  },
+  applyImport: (file: File, mode: ImportMode, planHash: string, confirm?: string) => {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("mode", mode);
+    // Re-checked server-side: a mismatch means the collection moved under the preview.
+    form.append("plan_hash", planHash);
+    if (confirm) form.append("confirm", confirm);
+    return upload<ImportResult>("/import/apply", form);
+  },
 };

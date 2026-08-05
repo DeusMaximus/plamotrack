@@ -16,6 +16,55 @@ Template:
 
 ---
 
+## 2026-08-06 — Claude Code — Milestone 4.5: CSV import/export
+
+- **Done:**
+  - **`services/portability/`** — `spec.py` declares every table's CSV shape once
+    (columns, parsers, roles, natural key, FK order); `exporting.py`,
+    `importing.py`, `starter_sheet.py` all read it, so export/import/templates
+    can't drift. A test asserts template headers == export headers.
+  - **Export:** `GET /export/archive` (zip of 9 CSVs + `manifest.json` carrying
+    export + schema versions, schema version = live Alembic revision + README),
+    `GET /export/{table}.csv`, `/export/templates` (blank pack + COLUMNS.txt),
+    `/export/starter-sheet.csv`. Every uuid FK gets a readable twin column
+    (`retailer_name`), every `*_minor` a major-unit twin (`unit_price`) — the
+    canonical column wins on import.
+  - **Import:** `POST /import/preview` → full `ImportPlan` (per-row action,
+    what it matched and how, field diffs, derived effects); `POST /import/apply`
+    re-plans and 409s if `plan_hash` moved. Stateless — nothing cached between
+    the two calls. Modes: merge / add_only / replace_all (typed `confirm=REPLACE`).
+    One transaction; any bad row imports nothing.
+  - **Starter sheet:** one denormalized row per kit → expands to
+    retailers + orders + order lines, then goes through the *same* planner.
+  - **Frontend:** `/data` page (export, templates, drag-drop import with mode
+    selector, preview accordions, REPLACE gate), `ExportCsvButton` on Kits /
+    Orders / Inventory / Retailers.
+  - `docs/import-export.md` (user-facing format + matching reference), README
+    section, AGENTS.md rules 9–10, design doc §12.
+- **Decisions (user-confirmed up front):** hybrid dispatch (kits restored when
+  the upload has them, spawned via the §3.9 fan-out when it doesn't);
+  three conflict modes; natural-key matching per table with **kits deliberately
+  excluded** (a kit row is one physical kit — name matching would merge real
+  purchases); both a template pack and a single starter sheet.
+- **Two invariants worth not breaking** (see AGENTS.md 9–10, §12.5):
+  stock is only ever read from the catalog CSVs — importing orders never adjusts
+  it, or re-import doubles it; and a blank cell in an *included* column means
+  null while an *omitted* column is left alone, which is why the starter sheet
+  emits only the columns it actually knows about (it was wiping retailer ratings
+  until that was fixed — regression test covers it).
+- **State:** 89 backend tests green (60 existing + 29 new), ruff clean,
+  `npm run build` + lint green. Browser-verified live: starter sheet →
+  6 created + 3 kits spawned; archive re-import → 0 new / 0 updated /
+  24 unchanged; replace_all wipe-and-restore → collection byte-identical
+  before/after. **No migration** — additive only. `python-multipart` added to
+  backend deps (FastAPI needs it for uploads).
+  Refactor: `orders._spawn_kits` → public `spawn_kits(...)` with keyword args so
+  the importer reuses the real fan-out; `_spawn_from_details` wraps it for the
+  REST payload shape.
+- **Next:** Milestone 5 (photos) — §9.2 storage decision first. `kit_photos` is
+  already registered in the portability spec and exports empty, so the archive
+  shape won't change when photos land.
+
 ## 2026-08-06 — Claude Code — Status merge (in_hand → backlog) + dual board views
 
 - **Done:**

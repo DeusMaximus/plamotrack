@@ -2,6 +2,7 @@ import { Navigate, Route, Routes } from "react-router-dom";
 
 import { Layout } from "./components/Layout";
 import { BoardPage } from "./pages/BoardPage";
+import { DataPage } from "./pages/DataPage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { KitsPage } from "./pages/KitsPage";
 import { OrdersPage } from "./pages/OrdersPage";
@@ -17,6 +18,7 @@ export default function App() {
         <Route path="/orders" element={<OrdersPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/retailers" element={<RetailersPage />} />
+        <Route path="/data" element={<DataPage />} />
       </Route>
     </Routes>
   );

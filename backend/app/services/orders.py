@@ -156,27 +156,59 @@ def _initial_kit_status(requested: KitStatus, received: bool) -> KitStatus:
     return requested
 
 
-async def _spawn_kits(
+async def spawn_kits(
+    session: AsyncSession,
+    item: OrderItem,
+    *,
+    name: str,
+    grade: str,
+    scale: str | None = None,
+    kit_number: str | None = None,
+    status: KitStatus | str | None = None,
+    count: int = 1,
+    received: bool = False,
+) -> None:
+    """The §3.9 fan-out: one physical `kits` row per unit on a kit-type order line.
+
+    Shared with the CSV importer, which needs the same fan-out for order lines that
+    arrive without their kits — hence the loose keyword signature rather than an
+    `OrderKitDetails`, which is a REST-payload shape the importer doesn't have.
+    """
+    requested = KitStatus(status) if status else KitStatus.ORDERED
+    final_status = _initial_kit_status(requested, received)
+    resolved_scale = scale if scale is not None else default_scale_for_grade(grade)
+    for _ in range(count):
+        session.add(
+            Kit(
+                name=name,
+                grade=grade,
+                scale=resolved_scale,
+                kit_number=kit_number,
+                status=final_status,
+                order_item_id=item.id,
+            )
+        )
+    await session.flush()
+
+
+async def _spawn_from_details(
     session: AsyncSession,
     item: OrderItem,
     details: OrderKitDetails,
     count: int,
     received: bool,
 ) -> None:
-    status = _initial_kit_status(details.status, received)
-    scale = details.scale if details.scale is not None else default_scale_for_grade(details.grade)
-    for _ in range(count):
-        session.add(
-            Kit(
-                name=details.name,
-                grade=details.grade,
-                scale=scale,
-                kit_number=details.kit_number,
-                status=status,
-                order_item_id=item.id,
-            )
-        )
-    await session.flush()
+    await spawn_kits(
+        session,
+        item,
+        name=details.name,
+        grade=details.grade,
+        scale=details.scale,
+        kit_number=details.kit_number,
+        status=details.status,
+        count=count,
+        received=received,
+    )
 
 
 async def _line_kits(session: AsyncSession, item_id: uuid.UUID) -> list[Kit]:
@@ -227,7 +259,7 @@ async def _add_line(
     await session.flush()
 
     if line.item_type is ItemType.KIT:
-        await _spawn_kits(session, item, line.kit, line.quantity, received)
+        await _spawn_from_details(session, item, line.kit, line.quantity, received)
     else:
         if line.new_item is not None:
             row = _build_catalog_row(line.item_type, line.new_item)
@@ -284,7 +316,7 @@ async def _update_line(
         # defense in depth should the two ever drift.
         delta = line.quantity - len(line_kits)
         if delta > 0:
-            await _spawn_kits(session, item, details, delta, received)
+            await _spawn_from_details(session, item, details, delta, received)
         elif delta < 0:
             await _delete_line_kits(session, item, count=-delta)
     else:

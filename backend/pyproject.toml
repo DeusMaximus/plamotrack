@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "fastmcp>=3.0",
+    "python-multipart>=0.0.9",  # FastAPI needs it for the import file upload
 ]
 
 [dependency-groups]

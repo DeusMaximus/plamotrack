@@ -19,6 +19,7 @@ import type {
 } from "../api/types";
 import type { CatalogSelection } from "../components/CatalogItemPicker";
 import { CatalogItemPicker } from "../components/CatalogItemPicker";
+import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
 import { formatDate, formatMoney, majorToMinor, minorToMajor, todayISO } from "../lib/format";
@@ -622,7 +623,10 @@ export function OrdersPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">Orders</h1>
-        <Button onClick={() => setModal({ mode: "add" })}>+ New order</Button>
+        <div className="flex gap-2">
+          <ExportCsvButton table="orders" />
+          <Button onClick={() => setModal({ mode: "add" })}>+ New order</Button>
+        </div>
       </div>
 
       <ErrorBanner message={actionError} />

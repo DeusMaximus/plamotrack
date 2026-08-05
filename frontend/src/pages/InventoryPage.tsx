@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 
 import { api, ApiError } from "../api/client";
 import type { Consumable, Tool, Upgrade } from "../api/types";
+import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
 
@@ -255,7 +256,10 @@ export function InventoryPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">Inventory</h1>
-        <Button onClick={() => setAddOpen(true)}>+ Add {tab.slice(0, -1)}</Button>
+        <div className="flex gap-2">
+          <ExportCsvButton table={tab} />
+          <Button onClick={() => setAddOpen(true)}>+ Add {tab.slice(0, -1)}</Button>
+        </div>
       </div>
 
       <div className="flex gap-1 border-b border-zinc-200">

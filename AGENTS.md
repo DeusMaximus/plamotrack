@@ -31,6 +31,7 @@ backend/
     models/             # SQLAlchemy 2.0 async models — 9 tables
     schemas/            # Pydantic v2 request/response models
     services/           # ALL business logic lives here (see rules below)
+      portability/      # CSV import/export — spec.py registry drives all of it
     routers/            # REST endpoints — thin, delegate to services
     mcp.py              # MCP tools — thin, delegate to the same services
     main.py             # app factory; MCP mounted at /mcp on the REST port
@@ -40,8 +41,10 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
   src/
     api/                # hand-typed API client + types mirroring backend schemas
     components/         # Layout, Modal, ui primitives, CatalogItemPicker (§3.9 select-or-create)
-    pages/              # BoardPage (Kanban), KitsPage, OrdersPage, InventoryPage, RetailersPage
+    pages/              # BoardPage (Kanban), KitsPage, OrdersPage, InventoryPage,
+                        #   RetailersPage, DataPage (import/export)
   e2e/                  # Playwright happy-path (runs against the dev stack, self-cleaning)
+docs/import-export.md   # user-facing CSV format + matching reference
 ```
 
 ## Dev environment & commands
@@ -115,6 +118,16 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    types exist by design (UI, REST, MCP agents).
 8. **Public read paths (Milestone 6)** must be genuinely separate route handlers
    under `/public/*` with no write capability reachable — not filtered views (§5).
+9. **CSV shape is declared once**, in `services/portability/spec.py`. Export,
+   import, and the blank templates all read that registry — never hand-write a
+   header or a parser anywhere else, or the three drift and a template starts
+   describing columns the importer won't accept (there's a test guarding this).
+   Adding a model column = adding one `col(...)` line.
+10. **Import never invents stock.** `quantity_on_hand` comes only from the
+    catalog CSVs; importing orders never adjusts it. Re-importing an archive
+    must be a no-op, and deriving stock from received orders would double it.
+    Kits are the mirror image: they're spawned from an order line *only* when
+    nothing else in the upload supplies them (§3.9 hybrid dispatch).
 
 ## Roadmap (design doc §11)
 
@@ -122,6 +135,7 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
 2. ~~MCP tools on the shared service layer~~ ✅
 3. ~~Frontend: table views + basic forms~~ ✅
 4. ~~Kanban board (drag-and-drop, dnd-kit)~~ ✅
+4.5. ~~Import/export: CSV archive + manifest, preview, templates~~ ✅ (§12)
 5. Photo upload + gallery ← decide storage backend default first (§9.2)
 6. Public read-only routes + showcase page
 7. Auth on the write path (single-user)

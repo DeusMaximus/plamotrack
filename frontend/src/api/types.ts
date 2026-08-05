@@ -252,3 +252,70 @@ export interface RetailerUpdate {
   would_order_again?: WouldOrderAgain | null;
   notes?: string | null;
 }
+
+// --- import / export -----------------------------------------------------------
+// Mirrors app/schemas/portability.py.
+
+export type ImportMode = "merge" | "add_only" | "replace_all";
+
+export type RowAction = "create" | "update" | "unchanged" | "skip" | "error";
+
+export interface FieldChange {
+  field: string;
+  before: string;
+  after: string;
+}
+
+export interface PlannedRow {
+  row_number: number;
+  action: RowAction;
+  label: string;
+  matched_id: string | null;
+  matched_by: string | null;
+  changes: FieldChange[];
+  messages: string[];
+  error: string | null;
+}
+
+export interface TablePlan {
+  table: string;
+  counts: Record<RowAction, number>;
+  rows: PlannedRow[];
+}
+
+export interface DerivedEffects {
+  kits_spawned: number;
+  stock_changes: number;
+  stock_note: string;
+  rows_deleted: Record<string, number>;
+}
+
+export interface ManifestInfo {
+  format: string | null;
+  export_version: number | null;
+  schema_version: string | null;
+  app_version: string | null;
+  exported_at: string | null;
+}
+
+export interface ImportPlan {
+  plan_hash: string;
+  mode: ImportMode;
+  source: string;
+  manifest: ManifestInfo | null;
+  tables: TablePlan[];
+  derived: DerivedEffects;
+  warnings: string[];
+  blocking_errors: string[];
+}
+
+export interface ImportResult {
+  mode: ImportMode;
+  source: string;
+  created: number;
+  updated: number;
+  skipped: number;
+  kits_spawned: number;
+  rows_deleted: Record<string, number>;
+  warnings: string[];
+}

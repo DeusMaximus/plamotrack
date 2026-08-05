@@ -5,6 +5,7 @@ import { useForm } from "react-hook-form";
 import { api, ApiError } from "../api/client";
 import type { PackingQuality, Retailer, ShippingSpeed, WouldOrderAgain } from "../api/types";
 import { PACKING_QUALITIES, SHIPPING_SPEEDS, WOULD_ORDER_AGAIN } from "../api/types";
+import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
 
@@ -192,7 +193,10 @@ export function RetailersPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">Retailers</h1>
-        <Button onClick={() => setModal({})}>+ Add retailer</Button>
+        <div className="flex gap-2">
+          <ExportCsvButton table="retailers" />
+          <Button onClick={() => setModal({})}>+ Add retailer</Button>
+        </div>
       </div>
 
       <ErrorBanner message={actionError} />

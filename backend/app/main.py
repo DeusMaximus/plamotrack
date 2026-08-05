@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 
 from app.exceptions import ConflictError, DomainError, InvalidInputError, NotFoundError
 from app.mcp import mcp
-from app.routers import catalog, inventory, kits, orders, retailers
+from app.routers import catalog, inventory, kits, orders, portability, retailers
 
 # REST and MCP share one process and one service layer (§2). The MCP endpoint is
 # mounted at /mcp on the same port — a deliberate simplification of §8's
@@ -17,7 +17,14 @@ app = FastAPI(
     lifespan=mcp_app.lifespan,  # required for the MCP session manager
 )
 
-for router in (kits.router, inventory.router, catalog.router, retailers.router, orders.router):
+for router in (
+    kits.router,
+    inventory.router,
+    catalog.router,
+    retailers.router,
+    orders.router,
+    portability.router,
+):
     app.include_router(router)
 
 app.mount("/mcp", mcp_app)
