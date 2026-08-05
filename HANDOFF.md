@@ -16,6 +16,58 @@ Template:
 
 ---
 
+## 2026-08-06 — Claude Code — Public alpha prep: design doc published, README
+
+- **Done:**
+  - **Design doc is now tracked at `docs/design.md`** (was the untracked
+    `plamotrack-design-doc.md`; its `.git/info/exclude` line is removed).
+    Sanitised for a public audience: internal-project references replaced with
+    the underlying rationale, second-person/personal phrasing removed, the
+    two-port MCP sketch corrected to the mounted `/mcp` route.
+    **Reframed from spec to decision record** — it now says outright that it
+    isn't a contract and that the code wins where they disagree. Every section
+    carries a ✅ Built / 🔨 Planned (Mn) / 💭 Open marker; §4 splits into built
+    vs planned endpoints, and §5 (auth + `/public/*`) is labelled as entirely
+    unimplemented. §9.1–§9.4 are now explicitly numbered so code comments
+    referencing them resolve.
+  - **§10 rewritten for the public alpha**: repo goes public at 4.5 instead of
+    waiting for M1–6, with the four disclosures (no auth, no bundled
+    containers, no photos/showcase, schema still moving). §12.6 realigned —
+    code going public ≠ an instance going on the internet; M7 still gates that.
+  - **README** fleshed out from the stub: alpha warning up top, feature
+    sections with six screenshots, install steps, MCP wiring for Claude
+    Desktop (connector UI + `mcp-remote` fallback) and Claude Code, tool table,
+    what-isn't-built table. Tone is deliberately light per design notes §10.1.
+  - **`docs/screenshots/`** — six 2× retina PNGs (~1.5 MB total) captured via
+    Playwright against the dev stack. Script is throwaway; re-shoot by driving
+    chromium from `frontend/` so `@playwright/test` resolves.
+  - AGENTS.md: design-doc bullet rewritten (tracked, not a spec, not binding —
+    the architecture rules are), `docs/design.md` added to Layout, roadmap notes
+    the alpha ships at 4.5 and that the audience is now strangers.
+  - **Config consolidated to one `.env`** (was root `.env` for compose +
+    `backend/.env` for the API, with the password written twice and required to
+    match). `app/config.py` now declares `POSTGRES_USER/PASSWORD/DB/HOST/PORT`
+    and **assembles** the DSN from them, URL-quoting the credentials so a
+    password containing `@` or `/` can't produce a DSN that parses to the wrong
+    host. `DATABASE_URL` still overrides wholesale — `tests/conftest.py` and the
+    M8 container both depend on that. `env_file` is now an absolute pair
+    (`<root>/.env`, `<backend>/.env`, later wins) anchored on `__file__` rather
+    than the cwd-relative `".env"`, so launching from the repo root and from
+    `backend/` resolve identically; they previously didn't. Compose publishes
+    `${POSTGRES_PORT:-5432}`, so moving the port is one edit. `backend/.env` is
+    now redundant — deleted locally, still honoured if present.
+- **Security audit (clean):** only `.env.example` has *ever* been tracked, in
+  any commit; no db/dump/key files; no hardcoded secrets. The only
+  credential-shaped strings in tracked code are the localhost dev defaults in
+  `app/config.py` and `tests/conftest.py` (`plamotrack`/`plamotrack`) —
+  throwaway, fine to publish, worth a glance if that ever stops being true.
+- **State:** 89 backend tests green. **Nothing committed** — the user is
+  reviewing the README first. **The dev DB now holds seeded demo data** (~21
+  kits, 12 orders, 4 retailers) created for the screenshots via the REST API;
+  a pre-seed archive export was taken if it needs reverting.
+- **Next:** commit after review, then Milestone 5 (photos) — §9.2 storage
+  decision still first.
+
 ## 2026-08-06 — Claude Code — Milestone 4.5: CSV import/export
 
 - **Done:**

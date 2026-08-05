@@ -16,16 +16,20 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
   in-flight work, and known breakage.
 - **Session end:** append an entry to `HANDOFF.md` using its template. Keep it short
   and factual — the next agent may be a different model with zero shared context.
-- **Design doc:** the authoritative spec lives locally at `plamotrack-design-doc.md`,
-  deliberately untracked via `.git/info/exclude` — **never commit it**. `§n`
-  references in code comments and docs point at its sections. If the file is absent
-  in your checkout, this file plus `HANDOFF.md` are your context.
+- **Design notes:** `docs/design.md` — tracked, public, and **not** a spec. It records
+  product intent and the reasoning behind architectural decisions; `§n` references in
+  code comments and docs point at its sections. Where it and the code disagree, the
+  code is right and the doc is behind — update the doc in the same commit rather than
+  bending the code to match it. The binding rules for agents are the architecture
+  rules below, not the design notes.
 
 ## Layout
 
 ```
 docker-compose.yml      # dev: db only; api/frontend services land at Milestone 8
-.env / backend/.env     # local values (gitignored); .env.example is the template
+.env                    # the only config file (gitignored); .env.example is the template
+                        #   compose + API both read it; app/config.py assembles the DSN
+                        #   from POSTGRES_* unless DATABASE_URL is set explicitly
 backend/
   app/
     models/             # SQLAlchemy 2.0 async models — 9 tables
@@ -44,6 +48,7 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
     pages/              # BoardPage (Kanban), KitsPage, OrdersPage, InventoryPage,
                         #   RetailersPage, DataPage (import/export)
   e2e/                  # Playwright happy-path (runs against the dev stack, self-cleaning)
+docs/design.md          # product intent + architectural decision record (§n targets)
 docs/import-export.md   # user-facing CSV format + matching reference
 ```
 
@@ -129,17 +134,22 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     Kits are the mirror image: they're spawned from an order line *only* when
     nothing else in the upload supplies them (§3.9 hybrid dispatch).
 
-## Roadmap (design doc §11)
+## Roadmap (design notes §11)
 
 1. ~~Schema + migrations + REST CRUD~~ ✅
 2. ~~MCP tools on the shared service layer~~ ✅
 3. ~~Frontend: table views + basic forms~~ ✅
 4. ~~Kanban board (drag-and-drop, dnd-kit)~~ ✅
 4.5. ~~Import/export: CSV archive + manifest, preview, templates~~ ✅ (§12)
+→ **Public alpha ships here.** Everything below is built in the open.
 5. Photo upload + gallery ← decide storage backend default first (§9.2)
 6. Public read-only routes + showcase page
 7. Auth on the write path (single-user)
 8. Docker Compose packaging + setup docs
 9. Open-source polish: README, screenshots, contribution guide
 
-Repo stays private until milestones 1–6 are done (§10).
+The repo goes public at 4.5 as an alpha (§10, revised) rather than waiting for
+milestones 1–6. Consequence for anything written from here on: **the audience is
+strangers.** No internal references, no assumed context, and disclose what isn't
+built rather than describing planned endpoints as if they exist. Nothing is
+authenticated yet (M7) — an alpha instance belongs on a trusted network.

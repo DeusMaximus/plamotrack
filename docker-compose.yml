@@ -9,7 +9,9 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-plamotrack}
     ports:
-      - "5432:5432"
+      # Host-side port only — the API finds it via POSTGRES_PORT, so changing
+      # this one value moves both sides together.
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
