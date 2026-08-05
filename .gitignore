@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Env / secrets
+.env
+
+# Local dev state (local Postgres data dir, logs)
+.dev/
+
+# Photo storage (local volume default)
+data/
+
+# Node (frontend, added at Milestone 3)
+node_modules/
+dist/
+
+# OS
+.DS_Store
