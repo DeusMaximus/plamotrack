@@ -16,6 +16,28 @@ Template:
 
 ---
 
+## 2026-08-06 — Claude Code — Integrity fixes from external review (GPT 5.6)
+
+- **Done:** three backend integrity fixes, all with regression tests
+  (`tests/test_integrity.py`, suite now 60):
+  1. `_get_order_for_write` now locks the order row (`FOR UPDATE`) — concurrent
+     `receive_order` calls serialize; the loser 409s instead of applying stock
+     twice. Test drives two simultaneous receives via asyncio.gather and
+     asserts exactly one success + single stock application.
+  2. `get_or_create_retailer` no longer commits — it joins the caller's
+     transaction, so a failed MCP order rolls back its implicitly-created
+     retailer. Happy path (case-insensitive reuse) re-tested.
+  3. Order-spawned kits are blocked from direct deletion (409 pointing at
+     order editing) so line quantity and surviving kits can't drift; the edit
+     diff also now computes against actual kit counts as defense in depth.
+     Standalone kits still delete normally.
+- **Not done (deferred, from the same review):** surface frontend query
+  failures as errors (not empty states); confirmation dialog on Receive;
+  Playwright happy-path test. Queue these with or before Milestone 4 frontend
+  work. A proper "disposed/sold" kit state is the long-term answer for removing
+  an order-spawned kit from the collection without touching purchase history.
+- **State:** 60 backend tests green; committed + pushed.
+
 ## 2026-08-06 — Claude Code — Order lifecycle (pending→received) + full CRUD
 
 - **Done:**

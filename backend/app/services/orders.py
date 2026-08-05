@@ -52,7 +52,10 @@ async def list_retailers(session: AsyncSession) -> list[Retailer]:
 
 async def get_or_create_retailer(session: AsyncSession, name: str) -> Retailer:
     """Case-insensitive match by name; used by the MCP create_order tool so agents
-    don't fragment the retailer list."""
+    don't fragment the retailer list.
+
+    Deliberately does NOT commit: it participates in the caller's transaction so
+    a failed order creation rolls the new retailer back too — no partial data."""
     retailer = await session.scalar(
         select(Retailer).where(Retailer.name.ilike(name.strip())).limit(1)
     )
@@ -60,7 +63,6 @@ async def get_or_create_retailer(session: AsyncSession, name: str) -> Retailer:
         retailer = Retailer(name=name.strip())
         session.add(retailer)
         await session.flush()
-        await session.commit()
     return retailer
 
 
@@ -272,12 +274,15 @@ async def _update_line(
         )
         # Kit details propagate to every kit this line spawned (single source of
         # truth for "I misspelled the name at order entry").
-        for kit in await _line_kits(session, item.id):
+        line_kits = await _line_kits(session, item.id)
+        for kit in line_kits:
             kit.name = details.name
             kit.grade = details.grade
             kit.scale = scale
             kit.kit_number = details.kit_number
-        delta = line.quantity - item.quantity
+        # Diff against the actual surviving kit count, not item.quantity —
+        # defense in depth should the two ever drift.
+        delta = line.quantity - len(line_kits)
         if delta > 0:
             await _spawn_kits(session, item, details, delta, received)
         elif delta < 0:
@@ -336,8 +341,14 @@ async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
 
 
 async def _get_order_for_write(session: AsyncSession, order_id: uuid.UUID) -> Order:
+    """Load an order with its lines, row-locked. The lock serializes all order
+    mutations (receive/edit/delete): a concurrent receive waits here, then sees
+    received_at already set and 409s instead of applying stock a second time."""
     order = await session.scalar(
-        select(Order).where(Order.id == order_id).options(selectinload(Order.items))
+        select(Order)
+        .where(Order.id == order_id)
+        .options(selectinload(Order.items))
+        .with_for_update()
     )
     if order is None:
         raise NotFoundError(f"order {order_id} not found")

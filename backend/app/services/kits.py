@@ -4,7 +4,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.exceptions import InvalidInputError, NotFoundError
+from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import Kit, KitStatus
 from app.schemas.kits import KitCreate, KitUpdate
 
@@ -77,6 +77,14 @@ async def update_kit(session: AsyncSession, kit_id: uuid.UUID, data: KitUpdate) 
 
 async def delete_kit(session: AsyncSession, kit_id: uuid.UUID) -> None:
     kit = await get_kit(session, kit_id)
+    if kit.order_item_id is not None:
+        # Deleting a spawned kit directly would leave its order line claiming a
+        # quantity the collection no longer backs. Undo happens at the order.
+        raise ConflictError(
+            f"'{kit.name}' was spawned by an order line — edit that order "
+            "(reduce the line quantity or remove the line) instead, so the "
+            "purchase record and the collection stay consistent"
+        )
     await session.delete(kit)
     await session.flush()
     await session.commit()

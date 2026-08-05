@@ -91,6 +91,10 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    - Order **delete = undo the entry**: kits removed, applied stock reversed.
    - Guards everywhere: progressed kits (building/complete, rated, or with
      photos) and already-consumed stock block destructive edits with a 409.
+   - Order-spawned kits cannot be deleted directly (409) — undo happens at the
+     order line, so purchase records and the collection never drift.
+   - All order mutations load the order row `FOR UPDATE` — concurrent
+     receive/edit/delete serialize instead of double-applying stock.
 3. **Catalog de-dup (§3.9):** catalog items are select-or-create — order lines take
    `catalog_ref_id` (from `/catalog/search` / `search_catalog`) or `new_item`, never
    free-text names. Don't add code paths that bypass this.
