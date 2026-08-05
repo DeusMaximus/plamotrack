@@ -16,67 +16,92 @@ Template:
 
 ---
 
-## 2026-08-06 — Claude Code — Public alpha prep: design doc published, README
+## 2026-08-06 — Claude Code — Public alpha prep: docs, README, config hardening
 
-- **Done:**
-  - **Design doc is now tracked at `docs/design.md`** (was the untracked
-    `plamotrack-design-doc.md`; its `.git/info/exclude` line is removed).
-    Sanitised for a public audience: internal-project references replaced with
-    the underlying rationale, second-person/personal phrasing removed, the
-    two-port MCP sketch corrected to the mounted `/mcp` route.
-    **Reframed from spec to decision record** — it now says outright that it
-    isn't a contract and that the code wins where they disagree. Every section
-    carries a ✅ Built / 🔨 Planned (Mn) / 💭 Open marker; §4 splits into built
-    vs planned endpoints, and §5 (auth + `/public/*`) is labelled as entirely
-    unimplemented. §9.1–§9.4 are now explicitly numbered so code comments
+Everything below is committed and pushed to `main` in three commits:
+`058bca4` (docs + README + screenshots), `a88f796` (loopback binding),
+`5f790e7` (pool_pre_ping). **The repo itself has not been flipped to public
+yet** — that's the next action, see below.
+
+- **Done — publishing the design doc:**
+  - **Now tracked at `docs/design.md`** (was the untracked
+    `plamotrack-design-doc.md`; its `.git/info/exclude` line is removed, so
+    that old filename is no longer ignored anywhere).
+  - Sanitised for an audience of strangers: internal-project references
+    replaced with the underlying rationale, personal phrasing removed, and the
+    two-port MCP sketch corrected to the `/mcp` route that was actually built.
+  - **Reframed from spec to decision record.** It now states outright that it
+    isn't a contract and that the code wins where they disagree — development
+    had already improved on it in several places. Every section carries a
+    ✅ Built / 🔨 Planned (Mn) / 💭 Open marker; §4 separates built endpoints
+    from planned ones, §5 (auth + `/public/*`) is labelled entirely
+    unimplemented, and §9.1–§9.4 are explicitly numbered so the code comments
     referencing them resolve.
-  - **§10 rewritten for the public alpha**: repo goes public at 4.5 instead of
-    waiting for M1–6, with the four disclosures (no auth, no bundled
-    containers, no photos/showcase, schema still moving). §12.6 realigned —
-    code going public ≠ an instance going on the internet; M7 still gates that.
-  - **README** fleshed out from the stub: alpha warning up top, feature
-    sections with six screenshots, install steps, MCP wiring for Claude
-    Desktop (connector UI + `mcp-remote` fallback) and Claude Code, tool table,
-    what-isn't-built table. Tone is deliberately light per design notes §10.1.
-  - **`docs/screenshots/`** — six 2× retina PNGs (~1.5 MB total) captured via
-    Playwright against the dev stack. Script is throwaway; re-shoot by driving
-    chromium from `frontend/` so `@playwright/test` resolves.
+  - **§10 rewritten for the alpha**: public at 4.5 rather than after M1–6, with
+    four disclosures (no auth, no bundled containers, no photos/showcase,
+    schema still moving). §12.6 realigned — code going public ≠ an instance
+    going on the internet, and M7 still gates the latter.
   - AGENTS.md: design-doc bullet rewritten (tracked, not a spec, not binding —
     the architecture rules are), `docs/design.md` added to Layout, roadmap notes
     the alpha ships at 4.5 and that the audience is now strangers.
-  - **Config consolidated to one `.env`** (was root `.env` for compose +
-    `backend/.env` for the API, with the password written twice and required to
-    match). `app/config.py` now declares `POSTGRES_USER/PASSWORD/DB/HOST/PORT`
-    and **assembles** the DSN from them, URL-quoting the credentials so a
-    password containing `@` or `/` can't produce a DSN that parses to the wrong
-    host. `DATABASE_URL` still overrides wholesale — `tests/conftest.py` and the
-    M8 container both depend on that. `env_file` is now an absolute pair
-    (`<root>/.env`, `<backend>/.env`, later wins) anchored on `__file__` rather
-    than the cwd-relative `".env"`, so launching from the repo root and from
-    `backend/` resolve identically; they previously didn't. Compose publishes
-    `${POSTGRES_PORT:-5432}`, so moving the port is one edit. `backend/.env` is
-    now redundant — deleted locally, still honoured if present.
-  - **Postgres is published on loopback only** (`${POSTGRES_BIND:-127.0.0.1}`).
-    Docker publishes on 0.0.0.0 when you omit the bind address, so the db was
-    answering on the LAN — verified before and after. Override via
-    `POSTGRES_BIND` if remote access is genuinely wanted.
+- **Done — README** (stub → full front page): alpha warning up top, feature
+  sections, install steps, MCP wiring, tool table, what-isn't-built table. Tone
+  deliberately light per design notes §10.1.
+  - **Claude Desktop is documented as config-file-only** (`mcp-remote` bridge in
+    `claude_desktop_config.json`). Its *Add custom connector* dialog only
+    accepts publicly reachable URLs, so it cannot reach a self-hosted instance —
+    user-verified, after a first draft claimed otherwise. Claude Code takes the
+    HTTP URL directly. Endpoint is `http://localhost:8000/mcp/`; **the trailing
+    slash matters**, without it you get a 307 and not every client re-POSTs.
+  - **`docs/screenshots/`** — six 2× retina PNGs (~1.5 MB) captured with
+    Playwright against the dev stack. The capture script was throwaway; to
+    re-shoot, drive chromium from inside `frontend/` so `@playwright/test`
+    resolves.
+- **Done — config and exposure hardening** (all three found while writing the
+  install docs; none were asked for up front):
+  - **One `.env`**, at the repo root. Previously root `.env` for compose plus
+    `backend/.env` for the API, with the password written twice and nothing
+    enforcing a match. `app/config.py` now declares
+    `POSTGRES_USER/PASSWORD/DB/HOST/PORT` and **assembles** the DSN, URL-quoting
+    the credentials so a password containing `@` or `/` can't produce a DSN that
+    parses to the wrong host. `DATABASE_URL` still overrides wholesale —
+    `tests/conftest.py` and the M8 container both depend on that. `env_file` is
+    an absolute pair (`<root>/.env`, `<backend>/.env`, later wins) anchored on
+    `__file__` instead of the cwd-relative `".env"`, so the repo root and
+    `backend/` now resolve identically; they previously didn't. `backend/.env`
+    is redundant and deleted locally, still honoured if present.
+  - **Postgres publishes on loopback only** (`${POSTGRES_BIND:-127.0.0.1}`).
+    Docker publishes on 0.0.0.0 when the bind address is omitted, so the dev db
+    was answering on the LAN — confirmed by connecting to it on the host's
+    network address, and refused after the change.
   - **`pool_pre_ping=True`** on the engine. Without it the first request after
     any Postgres restart 500s on a severed pooled connection
     (`asyncpg InterfaceError: connection is closed`) and only recovers on the
-    second — A/B verified by restarting the db container with and without it.
-    Matters more from M8, where api and db are separate containers that restart
-    independently. Harmless under the tests' NullPool.
+    second — A/B verified by restarting the db container both ways. Matters more
+    from M8, where api and db restart independently. No-op under the tests'
+    NullPool.
 - **Security audit (clean):** only `.env.example` has *ever* been tracked, in
-  any commit; no db/dump/key files; no hardcoded secrets. The only
-  credential-shaped strings in tracked code are the localhost dev defaults in
-  `app/config.py` and `tests/conftest.py` (`plamotrack`/`plamotrack`) —
+  any commit, not just at HEAD; no db/dump/key files; no hardcoded secrets. The
+  only credential-shaped strings in tracked code are the localhost dev defaults
+  in `app/config.py` and `tests/conftest.py` (`plamotrack`/`plamotrack`) —
   throwaway, fine to publish, worth a glance if that ever stops being true.
-- **State:** 89 backend tests green. **Nothing committed** — the user is
-  reviewing the README first. **The dev DB now holds seeded demo data** (~21
-  kits, 12 orders, 4 retailers) created for the screenshots via the REST API;
-  a pre-seed archive export was taken if it needs reverting.
-- **Next:** commit after review, then Milestone 5 (photos) — §9.2 storage
-  decision still first.
+- **State:** 89 backend tests green, ruff clean, `npm run build` green. Working
+  tree clean, `main` pushed. **The dev DB holds seeded demo data** (~21 kits,
+  12 orders, 4 retailers) created via the REST API for the screenshots — a
+  pre-seed archive export was taken before seeding if it ever needs reverting.
+- **Next — flipping the repo public.** Nothing in the code blocks it; these are
+  the GitHub-side steps and they haven't been done:
+  1. Set the repo visibility to public.
+  2. Set the About description from design notes §10.1 (the functional one that
+     carries search weight — not the README tagline).
+  3. Tag the alpha (`v0.1.0-alpha`) so people have something to pin to, given
+     §10 warns the schema will still move.
+  4. Re-read the README's alpha warning once it's public — it is the only thing
+     standing between a stranger and an unauthenticated write API.
+- **Then:** Milestone 5 (photos) — §9.2 storage decision still first.
+- **Worth revisiting now the audience changes:** committing straight to `main`
+  was fine while this was private and solo; with outside PRs possible, a
+  branch-and-PR flow may suit better.
 
 ## 2026-08-06 — Claude Code — Milestone 4.5: CSV import/export
 
