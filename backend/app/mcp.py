@@ -24,8 +24,9 @@ from app.services import upgrades as upgrades_service
 mcp = FastMCP(
     "plamotrack",
     instructions=(
-        "Track a Gunpla/plamo collection: kits move through a build pipeline "
-        "(backlog → pre_ordered → ordered → in_transit → in_hand → building → complete); "
+        "Track a Gunpla/plamo collection: kits move through a pipeline "
+        "(pre_ordered → ordered → in_transit → backlog → building → complete; "
+        "backlog = physically in hand but not started); "
         "tools, consumables, and upgrades are quantity-tracked stock. "
         "Before adding catalog items to an order, ALWAYS search_catalog first and reuse "
         "an existing item's id — free-text duplicates fragment the catalog."
@@ -43,8 +44,14 @@ async def _tool_session() -> AsyncIterator[AsyncSession]:
         raise ToolError(str(exc)) from exc
 
 
+# Friendly aliases for vocabulary agents may carry over from emails or the old
+# status model ("your order has arrived", the retired in_hand status).
+_STATUS_ALIASES = {"in_hand": "backlog", "arrived": "backlog", "received": "backlog"}
+
+
 def _parse_status(value: str) -> KitStatus:
     normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = _STATUS_ALIASES.get(normalized, normalized)
     try:
         return KitStatus(normalized)
     except ValueError:
@@ -61,9 +68,9 @@ def _parse_uuid(value: str, what: str) -> uuid.UUID:
 
 @mcp.tool
 async def list_kits(status: str | None = None, grade: str | None = None) -> list[dict]:
-    """List kits in the collection, optionally filtered by build-pipeline status
-    (backlog, pre_ordered, ordered, in_transit, in_hand, building, complete)
-    and/or grade (HG, RG, MG, PG, SD, ...)."""
+    """List kits in the collection, optionally filtered by pipeline status
+    (pre_ordered, ordered, in_transit, backlog, building, complete — backlog
+    means in hand but not started) and/or grade (HG, RG, MG, PG, SD, ...)."""
     parsed_status = _parse_status(status) if status else None
     async with _tool_session() as session:
         kits = await kits_service.list_kits(session, status=parsed_status, grade=grade)
@@ -81,9 +88,9 @@ async def get_kit(kit_id: str) -> dict:
 
 @mcp.tool
 async def update_kit_status(kit_id: str, status: str) -> dict:
-    """Move a kit to a new build-pipeline status (equivalent to dragging its
-    Kanban card). Valid statuses: backlog, pre_ordered, ordered, in_transit,
-    in_hand, building, complete."""
+    """Move a kit to a new pipeline status (equivalent to dragging its Kanban
+    card). Valid statuses: pre_ordered, ordered, in_transit, backlog (= in
+    hand, not started), building, complete."""
     parsed_id = _parse_uuid(kit_id, "kit_id")
     parsed_status = _parse_status(status)
     async with _tool_session() as session:
@@ -164,7 +171,7 @@ async def list_orders(pending_only: bool = False) -> list[dict]:
 async def mark_order_received(order_id: str) -> dict:
     """Mark an order as arrived/delivered: catalog stock increments are applied
     and kits still in the ordering pipeline (pre_ordered/ordered/in_transit)
-    move to in_hand. Find the order with list_orders(pending_only=true)."""
+    move to backlog. Find the order with list_orders(pending_only=true)."""
     parsed = _parse_uuid(order_id, "order_id")
     async with _tool_session() as session:
         order = await orders_service.receive_order(session, parsed)

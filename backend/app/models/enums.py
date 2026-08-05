@@ -4,11 +4,14 @@ from sqlalchemy import Enum as SAEnum
 
 
 class KitStatus(enum.StrEnum):
-    BACKLOG = "backlog"
+    """Pipeline order. `backlog` = physically in hand, not started — the former
+    separate in_hand status was merged into it (they were functionally the same
+    pile); kits not yet arrived live in the ordering states before it."""
+
     PRE_ORDERED = "pre_ordered"
     ORDERED = "ordered"
     IN_TRANSIT = "in_transit"
-    IN_HAND = "in_hand"
+    BACKLOG = "backlog"
     BUILDING = "building"
     COMPLETE = "complete"
 

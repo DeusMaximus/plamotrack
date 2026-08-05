@@ -63,11 +63,11 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   await page.getByRole("button", { name: "Consumables" }).click();
   await expect(markerRow.getByRole("cell").nth(2)).toHaveText("3");
 
-  // …and the kit advanced to In Hand
+  // …and the kit advanced to Backlog (in hand, unbuilt)
   await page.goto("/kits");
   const kitRow = page.getByRole("row").filter({ hasText: KIT });
   await expect(kitRow).toBeVisible();
-  await expect(kitRow.getByText("In Hand").first()).toBeVisible();
+  await expect(kitRow.getByText("Backlog").first()).toBeVisible();
 });
 
 test("kanban drag moves the kit to Building", async ({ page }) => {
@@ -103,7 +103,7 @@ test.afterAll("clean up everything this run created", async () => {
   const kits = (await (await api.get("/kits")).json()) as { id: string; name: string }[];
   const kit = kits.find((k) => k.name === KIT);
   // Un-progress the kit so the order's undo-delete guard allows removal.
-  if (kit) await api.patch(`/kits/${kit.id}`, { data: { status: "in_hand" } });
+  if (kit) await api.patch(`/kits/${kit.id}`, { data: { status: "backlog" } });
 
   const retailers = (await (await api.get("/retailers")).json()) as {
     id: string;

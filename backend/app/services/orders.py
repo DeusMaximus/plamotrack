@@ -31,7 +31,7 @@ from app.services.kits import default_scale_for_grade
 
 # A kit that has visibly progressed is never silently deleted by order edits.
 PROGRESSED_STATUSES = {KitStatus.BUILDING, KitStatus.COMPLETE}
-# Statuses that a delivery arrival naturally advances to in_hand.
+# Statuses that a delivery arrival naturally advances to backlog (in hand, unbuilt).
 ARRIVAL_ELIGIBLE = {KitStatus.PRE_ORDERED, KitStatus.ORDERED, KitStatus.IN_TRANSIT}
 
 
@@ -152,7 +152,7 @@ async def _adjust_ref(
 
 def _initial_kit_status(requested: KitStatus, received: bool) -> KitStatus:
     if received and requested in ARRIVAL_ELIGIBLE:
-        return KitStatus.IN_HAND
+        return KitStatus.BACKLOG
     return requested
 
 
@@ -396,7 +396,7 @@ async def update_order(session: AsyncSession, order_id: uuid.UUID, data: OrderUp
 
 async def receive_order(session: AsyncSession, order_id: uuid.UUID) -> Order:
     """Mark an order arrived: apply catalog stock increments and advance kits
-    still in the ordering pipeline to in_hand."""
+    still in the ordering pipeline to backlog (in hand, unbuilt)."""
     order = await _get_order_for_write(session, order_id)
     if order.received_at is not None:
         raise ConflictError("order is already marked received")
@@ -407,7 +407,7 @@ async def receive_order(session: AsyncSession, order_id: uuid.UUID) -> Order:
         if item.item_type is ItemType.KIT:
             for kit in await _line_kits(session, item.id):
                 if kit.status in ARRIVAL_ELIGIBLE:
-                    kit.status = KitStatus.IN_HAND
+                    kit.status = KitStatus.BACKLOG
                     kit.status_updated_at = now
         elif item.catalog_ref_id is not None:
             await _adjust_ref(session, item.item_type, item.catalog_ref_id, item.quantity)

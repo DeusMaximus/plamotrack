@@ -23,7 +23,7 @@ import { useMemo, useState } from "react";
 
 import { api, ApiError } from "../api/client";
 import type { Kit, KitStatus } from "../api/types";
-import { KIT_STATUSES } from "../api/types";
+import { StatusBadge } from "../components/StatusBadge";
 import { EmptyState, ErrorBanner } from "../components/ui";
 import { STATUS_LABELS } from "../lib/format";
 
@@ -65,17 +65,41 @@ const columnKeyboardCoordinates: KeyboardCoordinateGetter = (event, { context })
   return target ? { x: target.left + 16, y: target.top + 16 } : undefined;
 };
 
-const COLUMN_ACCENTS: Record<KitStatus, string> = {
-  backlog: "border-t-zinc-400",
+type BoardView = "build" | "orders";
+
+// Build view: what's on the bench. Orders view: what's in the mail, with
+// everything already here rolled up into one "Received" column.
+const BUILD_COLUMNS: readonly KitStatus[] = ["backlog", "building", "complete"];
+const ORDER_COLUMNS: readonly KitStatus[] = ["pre_ordered", "ordered", "in_transit"];
+const RECEIVED_ID = "received";
+const RECEIVED_GROUP: ReadonlySet<KitStatus> = new Set(BUILD_COLUMNS);
+
+const COLUMN_ACCENTS: Record<string, string> = {
   pre_ordered: "border-t-purple-400",
   ordered: "border-t-blue-400",
   in_transit: "border-t-amber-400",
-  in_hand: "border-t-teal-400",
+  backlog: "border-t-teal-400", // inherited in_hand's teal in the merge
   building: "border-t-orange-400",
   complete: "border-t-green-500",
+  [RECEIVED_ID]: "border-t-teal-400",
 };
 
-function KitCard({ kit, isOverlay = false }: { kit: Kit; isOverlay?: boolean }) {
+const VIEW_STORAGE_KEY = "plamotrack.boardView";
+
+function initialView(): BoardView {
+  const stored = localStorage.getItem(VIEW_STORAGE_KEY);
+  return stored === "orders" ? "orders" : "build";
+}
+
+function KitCard({
+  kit,
+  isOverlay = false,
+  showStatus = false,
+}: {
+  kit: Kit;
+  isOverlay?: boolean;
+  showStatus?: boolean;
+}) {
   return (
     <div
       className={`rounded-lg border border-zinc-200 bg-white p-3 text-sm ${
@@ -89,6 +113,7 @@ function KitCard({ kit, isOverlay = false }: { kit: Kit; isOverlay?: boolean }) 
         </span>
         {kit.scale && <span>{kit.scale}</span>}
         {kit.kit_number && <span className="text-zinc-400">{kit.kit_number}</span>}
+        {showStatus && <StatusBadge status={kit.status} />}
       </div>
       {kit.rating != null && (
         <div className="mt-1 text-xs text-amber-500" title={`${kit.rating}/5`}>
@@ -100,7 +125,7 @@ function KitCard({ kit, isOverlay = false }: { kit: Kit; isOverlay?: boolean }) 
   );
 }
 
-function DraggableCard({ kit }: { kit: Kit }) {
+function DraggableCard({ kit, showStatus = false }: { kit: Kit; showStatus?: boolean }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: kit.id });
   return (
     <div
@@ -109,19 +134,29 @@ function DraggableCard({ kit }: { kit: Kit }) {
       {...listeners}
       className={`cursor-grab touch-none active:cursor-grabbing ${isDragging ? "opacity-30" : ""}`}
     >
-      <KitCard kit={kit} />
+      <KitCard kit={kit} showStatus={showStatus} />
     </div>
   );
 }
 
-function Column({ status, kits }: { status: KitStatus; kits: Kit[] }) {
-  const { setNodeRef, isOver } = useDroppable({ id: status });
+function Column({
+  id,
+  title,
+  kits,
+  showStatus = false,
+}: {
+  id: string;
+  title: string;
+  kits: Kit[];
+  showStatus?: boolean;
+}) {
+  const { setNodeRef, isOver } = useDroppable({ id });
   return (
-    <div className="flex w-60 shrink-0 flex-col">
+    <div className="flex w-full min-w-56 max-w-80 shrink-0 flex-col">
       <div
-        className={`rounded-t-lg border-t-4 bg-white px-3 py-2 ${COLUMN_ACCENTS[status]} border-x border-zinc-200`}
+        className={`rounded-t-lg border-t-4 bg-white px-3 py-2 ${COLUMN_ACCENTS[id]} border-x border-zinc-200`}
       >
-        <span className="text-sm font-semibold">{STATUS_LABELS[status]}</span>
+        <span className="text-sm font-semibold">{title}</span>
         <span className="ml-2 rounded-full bg-zinc-100 px-1.5 text-xs text-zinc-500">
           {kits.length}
         </span>
@@ -134,7 +169,7 @@ function Column({ status, kits }: { status: KitStatus; kits: Kit[] }) {
         style={{ minHeight: "8rem" }}
       >
         {kits.map((kit) => (
-          <DraggableCard key={kit.id} kit={kit} />
+          <DraggableCard key={kit.id} kit={kit} showStatus={showStatus} />
         ))}
         {kits.length === 0 && (
           <div className="px-2 py-6 text-center text-xs text-zinc-400">
@@ -148,6 +183,7 @@ function Column({ status, kits }: { status: KitStatus; kits: Kit[] }) {
 
 export function BoardPage() {
   const queryClient = useQueryClient();
+  const [view, setView] = useState<BoardView>(initialView);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
@@ -157,6 +193,11 @@ export function BoardPage() {
     isError,
     error,
   } = useQuery({ queryKey: ["kits"], queryFn: () => api.listKits() });
+
+  const selectView = (next: BoardView) => {
+    setView(next);
+    localStorage.setItem(VIEW_STORAGE_KEY, next);
+  };
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -172,9 +213,7 @@ export function BoardPage() {
       const previous = queryClient.getQueryData<Kit[]>(["kits"]);
       queryClient.setQueryData<Kit[]>(["kits"], (current) =>
         (current ?? []).map((kit) =>
-          kit.id === id
-            ? { ...kit, status, status_updated_at: new Date().toISOString() }
-            : kit,
+          kit.id === id ? { ...kit, status, status_updated_at: new Date().toISOString() } : kit,
         ),
       );
       return { previous };
@@ -187,7 +226,11 @@ export function BoardPage() {
   });
 
   const byStatus = useMemo(() => {
-    const groups = new Map<KitStatus, Kit[]>(KIT_STATUSES.map((status) => [status, []]));
+    const groups = new Map<KitStatus, Kit[]>(
+      (["pre_ordered", "ordered", "in_transit", "backlog", "building", "complete"] as const).map(
+        (status) => [status, []],
+      ),
+    );
     for (const kit of kits ?? []) {
       groups.get(kit.status)?.push(kit);
     }
@@ -197,6 +240,14 @@ export function BoardPage() {
     }
     return groups;
   }, [kits]);
+
+  const receivedKits = useMemo(
+    () =>
+      [...RECEIVED_GROUP]
+        .flatMap((status) => byStatus.get(status) ?? [])
+        .sort((a, b) => b.status_updated_at.localeCompare(a.status_updated_at)),
+    [byStatus],
+  );
 
   const activeKit = activeId ? (kits ?? []).find((kit) => kit.id === activeId) : null;
 
@@ -210,8 +261,17 @@ export function BoardPage() {
     const { active, over } = event;
     if (!over) return;
     const kit = (kits ?? []).find((k) => k.id === active.id);
-    const target = over.id as KitStatus;
-    if (kit && kit.status !== target) {
+    if (!kit) return;
+
+    // Dropping on the aggregate "Received" column means "it's here" — which is
+    // backlog unless the kit is already past that point.
+    const target: KitStatus | null =
+      over.id === RECEIVED_ID
+        ? RECEIVED_GROUP.has(kit.status)
+          ? null
+          : "backlog"
+        : (over.id as KitStatus);
+    if (target && kit.status !== target) {
       statusMutation.mutate({ id: kit.id, status: target });
     }
   };
@@ -219,11 +279,29 @@ export function BoardPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">Build Pipeline</h1>
-        <span className="text-sm text-zinc-500">
-          {kits?.length ?? 0} kit{(kits?.length ?? 0) === 1 ? "" : "s"} — drag cards to update
-          status
-        </span>
+        <h1 className="text-2xl font-bold">
+          {view === "build" ? "Build Pipeline" : "Orders Pipeline"}
+        </h1>
+        <div className="flex items-center gap-3">
+          <span className="hidden text-sm text-zinc-500 sm:inline">
+            drag cards to update status
+          </span>
+          <div className="flex rounded-lg border border-zinc-300 bg-white p-0.5">
+            {(["build", "orders"] as const).map((option) => (
+              <button
+                key={option}
+                onClick={() => selectView(option)}
+                className={`rounded-md px-3 py-1 text-sm font-medium ${
+                  view === option
+                    ? "bg-indigo-600 text-white"
+                    : "text-zinc-600 hover:text-zinc-900"
+                }`}
+              >
+                {option === "build" ? "Build" : "Orders"}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       <ErrorBanner message={actionError} />
@@ -241,11 +319,32 @@ export function BoardPage() {
           onDragCancel={() => setActiveId(null)}
         >
           <div className="flex gap-3 overflow-x-auto pb-4">
-            {KIT_STATUSES.map((status) => (
-              <Column key={status} status={status} kits={byStatus.get(status) ?? []} />
-            ))}
+            {view === "build" ? (
+              BUILD_COLUMNS.map((status) => (
+                <Column
+                  key={status}
+                  id={status}
+                  title={STATUS_LABELS[status]}
+                  kits={byStatus.get(status) ?? []}
+                />
+              ))
+            ) : (
+              <>
+                {ORDER_COLUMNS.map((status) => (
+                  <Column
+                    key={status}
+                    id={status}
+                    title={STATUS_LABELS[status]}
+                    kits={byStatus.get(status) ?? []}
+                  />
+                ))}
+                <Column id={RECEIVED_ID} title="Received" kits={receivedKits} showStatus />
+              </>
+            )}
           </div>
-          <DragOverlay>{activeKit ? <KitCard kit={activeKit} isOverlay /> : null}</DragOverlay>
+          <DragOverlay>
+            {activeKit ? <KitCard kit={activeKit} isOverlay showStatus={view === "orders"} /> : null}
+          </DragOverlay>
         </DndContext>
       )}
     </div>

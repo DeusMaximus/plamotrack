@@ -1,9 +1,10 @@
+/** Pipeline order. `backlog` = physically in hand, not started (the former
+ * in_hand status was merged into it). */
 export const KIT_STATUSES = [
-  "backlog",
   "pre_ordered",
   "ordered",
   "in_transit",
-  "in_hand",
+  "backlog",
   "building",
   "complete",
 ] as const;

@@ -47,14 +47,14 @@ async def make_order(client, retailer, items: list[dict], **extra) -> dict:
 # --- receive -------------------------------------------------------------------
 
 
-async def test_receive_moves_pipeline_kits_to_in_hand(client, retailer):
+async def test_receive_moves_pipeline_kits_to_backlog(client, retailer):
     order = await make_order(client, retailer, [kit_line()])
     kits = (await client.get("/kits")).json()
     assert all(k["status"] == "ordered" for k in kits)
 
     await client.post(f"/orders/{order['id']}/receive")
     kits = (await client.get("/kits")).json()
-    assert all(k["status"] == "in_hand" for k in kits)
+    assert all(k["status"] == "backlog" for k in kits)
 
 
 async def test_receive_leaves_progressed_kits_alone(client, retailer):
@@ -65,7 +65,7 @@ async def test_receive_leaves_progressed_kits_alone(client, retailer):
     await client.post(f"/orders/{order['id']}/receive")
     kits = {k["id"]: k["status"] for k in (await client.get("/kits")).json()}
     assert kits[kit_id] == "building"  # untouched
-    assert sorted(kits.values()) == ["building", "in_hand"]
+    assert sorted(kits.values()) == ["backlog", "building"]
 
 
 async def test_double_receive_conflicts(client, retailer):
@@ -75,10 +75,10 @@ async def test_double_receive_conflicts(client, retailer):
     assert resp.status_code == 409
 
 
-async def test_received_order_spawns_kits_in_hand(client, retailer):
+async def test_received_order_spawns_kits_in_backlog(client, retailer):
     await make_order(client, retailer, [kit_line()], received=True)
     kits = (await client.get("/kits")).json()
-    assert all(k["status"] == "in_hand" for k in kits)
+    assert all(k["status"] == "backlog" for k in kits)
 
 
 # --- delete (undo) -------------------------------------------------------------
@@ -384,7 +384,7 @@ async def test_line_omission_removes_and_reverses(client, retailer):
     assert (await client.get("/consumables")).json()[0]["quantity_on_hand"] == 0
 
 
-async def test_line_added_to_received_order_spawns_in_hand(client, retailer):
+async def test_line_added_to_received_order_spawns_in_backlog(client, retailer):
     order = await make_order(client, retailer, [kit_line(quantity=1)], received=True)
     existing_line = order["items"][0]
 
@@ -407,7 +407,7 @@ async def test_line_added_to_received_order_spawns_in_hand(client, retailer):
     assert resp.status_code == 200
     kits = (await client.get("/kits")).json()
     assert len(kits) == 2
-    assert all(k["status"] == "in_hand" for k in kits)
+    assert all(k["status"] == "backlog" for k in kits)
 
 
 async def test_item_type_change_rejected(client, retailer):

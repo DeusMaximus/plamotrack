@@ -110,7 +110,7 @@ class OrderCreate(BaseModel):
     shipping_cost_minor: int | None = Field(default=None, ge=0)
     currency_code: str = Field(pattern=_CURRENCY_PATTERN)
     # True = already in hand (store purchase / arrived before entry): stock is
-    # applied and spawned kits start at in_hand instead of ordered.
+    # applied and spawned kits start at backlog instead of ordered.
     received: bool = False
     items: list[OrderItemCreate] = Field(min_length=1)
 

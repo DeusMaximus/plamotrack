@@ -36,7 +36,7 @@ async def update_order(order_id: uuid.UUID, data: OrderUpdate, session: SessionD
 @router.post("/{order_id}/receive", response_model=OrderRead)
 async def receive_order(order_id: uuid.UUID, session: SessionDep):
     """Mark the order arrived: applies catalog stock increments and moves kits
-    still in the ordering pipeline to in_hand."""
+    still in the ordering pipeline to backlog (in hand, unbuilt)."""
     return await orders_service.receive_order(session, order_id)
 
 

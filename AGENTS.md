@@ -3,8 +3,9 @@
 Guidance for AI coding agents (Claude Code, Codex, …) and humans working in this repo.
 
 **plamotrack** is a self-hosted, open-source Gunpla/plamo collection & build tracker:
-kits move through a build pipeline (backlog → pre_ordered → ordered → in_transit →
-in_hand → building → complete) on a drag-and-drop Kanban board, alongside
+kits move through a pipeline (pre_ordered → ordered → in_transit → backlog →
+building → complete; backlog = in hand, not started) on a drag-and-drop Kanban
+board with Build and Orders views, alongside
 quantity-tracked tools, consumables, and third-party upgrades. Ships as a Docker
 Compose stack: FastAPI REST API + embedded MCP server (same process, shared service
 layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
@@ -87,7 +88,7 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    `kits` rows (with `order_item_id` provenance) at entry. Catalog lines increment
    `quantity_on_hand` **only when the order is received** (`received_at`) —
    quantity means *physically on hand*, not on order. Receiving also advances
-   pipeline kits (pre_ordered/ordered/in_transit → in_hand). One transaction per
+   pipeline kits (pre_ordered/ordered/in_transit → backlog). One transaction per
    order — any bad line rolls back all of it.
    - Order **edit** re-runs the dispatch diff (kit details propagate to spawned
      kits; quantity/target changes spawn/remove kits and adjust applied stock).

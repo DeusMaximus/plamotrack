@@ -1,11 +1,10 @@
 import type { KitStatus } from "../api/types";
 
 export const STATUS_LABELS: Record<KitStatus, string> = {
-  backlog: "Backlog",
   pre_ordered: "Pre-ordered",
   ordered: "Ordered",
   in_transit: "In Transit",
-  in_hand: "In Hand",
+  backlog: "Backlog",
   building: "Building",
   complete: "Complete",
 };

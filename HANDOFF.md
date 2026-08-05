@@ -16,6 +16,26 @@ Template:
 
 ---
 
+## 2026-08-06 — Claude Code — Status merge (in_hand → backlog) + dual board views
+
+- **Done:**
+  - **Merged in_hand into backlog** (migration `9d78b6148c30`, hand-written —
+    enum value changes are invisible to autogenerate): they were functionally
+    the same pile. Final pipeline: pre_ordered → ordered → in_transit →
+    **backlog** (= in hand, not started; keeps in_hand's old position and teal)
+    → building → complete. in_hand kits data-migrated; CHECK constraint
+    rebuilt; receive/spawn flows now advance to backlog. MCP `_parse_status`
+    gained aliases (in_hand/arrived/received → backlog) for agents with stale
+    vocabulary.
+  - **Board views**: Build (default — Backlog/Building/Complete) and Orders
+    (Pre-ordered/Ordered/In Transit + one aggregate **Received** column
+    grouping the three build states, cards showing their status badge).
+    Dropping on Received = backlog unless the kit is already past it. Toggle
+    persists in localStorage (`plamotrack.boardView`).
+- **State:** 60 backend tests + 2 E2E green (drag test now runs in the default
+  Build view); design doc §1.1/§3.1 amended. Committed + pushed.
+- **Next:** Milestone 5 (photos) — §9.2 storage decision first.
+
 ## 2026-08-06 — Claude Code — Milestone 4: Kanban board + deferred review items
 
 - **Done:**

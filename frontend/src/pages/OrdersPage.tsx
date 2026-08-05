@@ -573,7 +573,7 @@ export function OrdersPage() {
       !window.confirm(
         `Mark the ${formatDate(order.order_date)} order from ${label} as received?\n\n` +
           "Catalog stock will be applied and kits still in the ordering pipeline " +
-          "move to In Hand.",
+          "move to Backlog.",
       )
     ) {
       return;
