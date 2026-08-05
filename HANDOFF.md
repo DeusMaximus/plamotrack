@@ -16,12 +16,21 @@ Template:
 
 ---
 
-## 2026-08-06 — Claude Code — Public alpha prep: docs, README, config hardening
+## 2026-08-06 — Claude Code — Public alpha SHIPPED: repo public, v0.1.0-alpha
 
-Everything below is committed and pushed to `main` in three commits:
-`058bca4` (docs + README + screenshots), `a88f796` (loopback binding),
-`5f790e7` (pool_pre_ping). **The repo itself has not been flipped to public
-yet** — that's the next action, see below.
+**The repo is public and v0.1.0-alpha is released.** Everything below is on
+`main`: `058bca4` (docs + README + screenshots), `a88f796` (loopback binding),
+`5f790e7` (pool_pre_ping), `12a6ac0` (screenshot disclaimer). Release tagged at
+`12a6ac0`, marked **prerelease** so GitHub doesn't badge it "Latest" and the
+alpha framing survives outside the notes body.
+
+Repo settings now: visibility public; About description was already the §10.1
+functional text; topics added (gunpla, plamo, model-kits, self-hosted, fastapi,
+react, mcp, mcp-server, postgres, docker). Verified anonymously after the flip —
+README, screenshots and design notes serve 200, `.env` serves 404.
+
+**Branching changed with it:** feature work goes on a branch + PR now, direct-
+to-main is retired. See the Git conventions section in AGENTS.md.
 
 - **Done — publishing the design doc:**
   - **Now tracked at `docs/design.md`** (was the untracked
@@ -86,22 +95,20 @@ yet** — that's the next action, see below.
   in `app/config.py` and `tests/conftest.py` (`plamotrack`/`plamotrack`) —
   throwaway, fine to publish, worth a glance if that ever stops being true.
 - **State:** 89 backend tests green, ruff clean, `npm run build` green. Working
-  tree clean, `main` pushed. **The dev DB holds seeded demo data** (~21 kits,
-  12 orders, 4 retailers) created via the REST API for the screenshots — a
-  pre-seed archive export was taken before seeding if it ever needs reverting.
-- **Next — flipping the repo public.** Nothing in the code blocks it; these are
-  the GitHub-side steps and they haven't been done:
-  1. Set the repo visibility to public.
-  2. Set the About description from design notes §10.1 (the functional one that
-     carries search weight — not the README tagline).
-  3. Tag the alpha (`v0.1.0-alpha`) so people have something to pin to, given
-     §10 warns the schema will still move.
-  4. Re-read the README's alpha warning once it's public — it is the only thing
-     standing between a stranger and an unauthenticated write API.
-- **Then:** Milestone 5 (photos) — §9.2 storage decision still first.
-- **Worth revisiting now the audience changes:** committing straight to `main`
-  was fine while this was private and solo; with outside PRs possible, a
-  branch-and-PR flow may suit better.
+  tree clean, `main` pushed, repo public, release out. The dev DB holds seeded
+  demo data (~21 kits, 12 orders, 4 retailers) created via the REST API for the
+  screenshots — the user has confirmed it's all throwaway test data, so there's
+  nothing here worth preserving on the dev Mac.
+- **Next:** Milestone 5 (photos) — the §9.2 storage decision comes first, and it
+  now has a second input: the user's own instance will run in a dedicated LXC on
+  Proxmox, so "local volume" means a bind mount inside one container rather than
+  anything exotic. That also shapes M8 packaging — single-host compose, not
+  orchestration.
+- **Now that it's public, for whoever picks this up:** the README's alpha warning
+  is the only thing between a stranger and an unauthenticated write API. Don't
+  weaken it, and don't describe planned endpoints as though they exist —
+  `docs/design.md` marks every section ✅/🔨/💭 for exactly that reason. M7 (auth)
+  is the gate on anyone sensibly exposing an instance.
 
 ## 2026-08-06 — Claude Code — Milestone 4.5: CSV import/export
 

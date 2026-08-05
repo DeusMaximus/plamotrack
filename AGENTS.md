@@ -23,6 +23,21 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
   bending the code to match it. The binding rules for agents are the architecture
   rules below, not the design notes.
 
+## Git conventions
+
+- **Feature work goes on a branch**, then a PR — not straight to `main`. The repo
+  went public at Milestone 4.5 (2026-08-06); `main` is now what strangers clone,
+  and outside contributors can open PRs against it. Direct-to-main was a
+  private-and-solo convenience and is retired.
+- Exception: session bookkeeping and process docs that exist to be read *between*
+  sessions — `HANDOFF.md` entries, `AGENTS.md` notes — commit on `main`. Branching
+  a hand-off entry just delays the next agent from seeing it.
+- **Commit or push only when the user asks.** Don't take a green test run as
+  permission.
+- Anything outward-facing — pushing a tag, cutting a release, changing repo
+  settings or visibility — needs explicit confirmation each time. Approval for one
+  doesn't carry to the next.
+
 ## Layout
 
 ```
