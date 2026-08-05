@@ -35,10 +35,21 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
 
 @asynccontextmanager
 async def session_scope() -> AsyncIterator[AsyncSession]:
-    """One transaction per unit of work: commits on success, rolls back on any error."""
+    """One transaction per unit of work: commits on success, rolls back on any error.
+
+    NOTE: mutating service functions also commit explicitly before returning.
+    FastAPI runs yield-dependency teardown after the response is sent, so a
+    commit that only happens here loses read-after-write consistency — the UI's
+    invalidate-and-refetch (and any agent doing write-then-read) can race it.
+    The commit below is a safety net for read paths and is a no-op after an
+    explicit service commit."""
     async with get_sessionmaker()() as session:
-        async with session.begin():
+        try:
             yield session
+            await session.commit()
+        except BaseException:
+            await session.rollback()
+            raise
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:

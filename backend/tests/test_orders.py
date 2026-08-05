@@ -52,7 +52,8 @@ async def test_kit_line_preorder_status(client, retailer):
     assert kits[0]["status"] == "pre_ordered"
 
 
-async def test_catalog_line_increments_existing(client, retailer):
+async def test_pending_catalog_line_defers_increment(client, retailer):
+    """Stock means 'physically on hand' — a pending order must not inflate it."""
     consumable = (
         await client.post(
             "/consumables",
@@ -78,13 +79,75 @@ async def test_catalog_line_increments_existing(client, retailer):
         },
     )
     assert resp.status_code == 201
-    assert resp.json()["items"][0]["catalog_ref_id"] == consumable["id"]
+    order = resp.json()
+    assert order["received_at"] is None
+    assert (await client.get("/consumables")).json()[0]["quantity_on_hand"] == 2  # unchanged
 
-    refreshed = (await client.get("/consumables")).json()[0]
-    assert refreshed["quantity_on_hand"] == 7  # 2 + 5
+    received = (await client.post(f"/orders/{order['id']}/receive")).json()
+    assert received["received_at"] is not None
+    assert (await client.get("/consumables")).json()[0]["quantity_on_hand"] == 7  # 2 + 5
+
+
+async def test_received_catalog_line_increments_immediately(client, retailer):
+    consumable = (
+        await client.post(
+            "/consumables",
+            json={"name": "Gundam Marker GM02", "category": "paint", "quantity_on_hand": 2},
+        )
+    ).json()
+
+    resp = await client.post(
+        "/orders",
+        json={
+            "retailer_id": retailer["id"],
+            "order_date": "2026-08-01",
+            "currency_code": "AUD",
+            "received": True,
+            "items": [
+                {
+                    "item_type": "consumable",
+                    "quantity": 5,
+                    "unit_price_minor": 650,
+                    "currency_code": "AUD",
+                    "catalog_ref_id": consumable["id"],
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 201
+    assert resp.json()["received_at"] is not None
+    assert (await client.get("/consumables")).json()[0]["quantity_on_hand"] == 7
 
 
 async def test_catalog_line_new_item_creates_then_increments(client, retailer):
+    resp = await client.post(
+        "/orders",
+        json={
+            "retailer_id": retailer["id"],
+            "order_date": "2026-08-01",
+            "currency_code": "AUD",
+            "received": True,
+            "items": [
+                {
+                    "item_type": "upgrade",
+                    "quantity": 4,
+                    "unit_price_minor": 1200,
+                    "currency_code": "AUD",
+                    "new_item": {"name": "G-Rework Decal Sheet #4", "manufacturer": "G-Rework"},
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 201
+
+    upgrades = (await client.get("/upgrades")).json()
+    assert len(upgrades) == 1
+    assert upgrades[0]["quantity_on_hand"] == 4
+    assert resp.json()["items"][0]["catalog_ref_id"] == upgrades[0]["id"]
+
+
+async def test_pending_new_item_created_at_zero_stock(client, retailer):
+    """Select-or-create still registers the catalog item, but stock waits for arrival."""
     resp = await client.post(
         "/orders",
         json={
@@ -103,11 +166,7 @@ async def test_catalog_line_new_item_creates_then_increments(client, retailer):
         },
     )
     assert resp.status_code == 201
-
-    upgrades = (await client.get("/upgrades")).json()
-    assert len(upgrades) == 1
-    assert upgrades[0]["quantity_on_hand"] == 4
-    assert resp.json()["items"][0]["catalog_ref_id"] == upgrades[0]["id"]
+    assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 0
 
 
 async def test_order_failure_rolls_back_everything(client, retailer):

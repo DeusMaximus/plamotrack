@@ -34,4 +34,5 @@ async def apply_upgrade(
     application = UpgradeApplication(upgrade_id=upgrade.id, kit_id=kit.id, quantity_used=quantity)
     session.add(application)
     await session.flush()
+    await session.commit()
     return application

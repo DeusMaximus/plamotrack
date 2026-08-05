@@ -1,17 +1,20 @@
 import logging
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.exceptions import ConflictError, NotFoundError
-from app.models import Consumable, ItemType, Tool, Upgrade
+from app.exceptions import ConflictError, InvalidInputError, NotFoundError
+from app.models import Consumable, ItemType, OrderItem, Tool, Upgrade, UpgradeApplication
 from app.schemas.catalog import (
     CatalogSearchResult,
     ConsumableCreate,
+    ConsumableUpdate,
     StockAdjustmentResult,
     ToolCreate,
+    ToolUpdate,
     UpgradeCreate,
+    UpgradeUpdate,
 )
 
 logger = logging.getLogger(__name__)
@@ -57,6 +60,7 @@ async def create_tool(session: AsyncSession, data: ToolCreate) -> Tool:
     tool = Tool(**data.model_dump())
     session.add(tool)
     await session.flush()
+    await session.commit()
     return tool
 
 
@@ -64,6 +68,7 @@ async def create_consumable(session: AsyncSession, data: ConsumableCreate) -> Co
     consumable = Consumable(**data.model_dump())
     session.add(consumable)
     await session.flush()
+    await session.commit()
     return consumable
 
 
@@ -71,6 +76,7 @@ async def create_upgrade(session: AsyncSession, data: UpgradeCreate) -> Upgrade:
     upgrade = Upgrade(**data.model_dump())
     session.add(upgrade)
     await session.flush()
+    await session.commit()
     return upgrade
 
 
@@ -78,6 +84,64 @@ async def list_catalog(
     session: AsyncSession, model: type[Tool | Consumable | Upgrade]
 ) -> list[Tool | Consumable | Upgrade]:
     return list((await session.scalars(select(model).order_by(model.name))).all())
+
+
+# Fields that exist as NOT NULL columns — an explicit null in a PATCH is rejected.
+_NON_NULLABLE = {"name", "category", "manufacturer", "quantity_on_hand"}
+
+
+async def update_catalog_item(
+    session: AsyncSession,
+    item_type: ItemType,
+    item_id: uuid.UUID,
+    data: ToolUpdate | ConsumableUpdate | UpgradeUpdate,
+) -> Tool | Consumable | Upgrade:
+    model = CATALOG_MODELS[item_type]
+    row = await session.get(model, item_id)
+    if row is None:
+        raise NotFoundError(f"{item_type} {item_id} not found")
+    fields = data.model_dump(exclude_unset=True)
+    for key, value in fields.items():
+        if value is None and key in _NON_NULLABLE:
+            raise InvalidInputError(f"{key} cannot be null")
+        setattr(row, key, value)
+    await session.flush()
+    await session.commit()
+    return row
+
+
+async def delete_catalog_item(
+    session: AsyncSession, item_type: ItemType, item_id: uuid.UUID
+) -> None:
+    """History-preserving delete: items referenced by order lines (or, for
+    upgrades, recorded applications) cannot be removed — edit them instead."""
+    model = CATALOG_MODELS[item_type]
+    row = await session.get(model, item_id)
+    if row is None:
+        raise NotFoundError(f"{item_type} {item_id} not found")
+
+    order_refs = await session.scalar(
+        select(func.count()).select_from(OrderItem).where(OrderItem.catalog_ref_id == item_id)
+    )
+    if order_refs:
+        raise ConflictError(
+            f"'{row.name}' appears on {order_refs} order line(s) — "
+            "order history is kept, so it cannot be deleted"
+        )
+    if item_type is ItemType.UPGRADE:
+        applications = await session.scalar(
+            select(func.count())
+            .select_from(UpgradeApplication)
+            .where(UpgradeApplication.upgrade_id == item_id)
+        )
+        if applications:
+            raise ConflictError(
+                f"'{row.name}' has been applied to {applications} kit(s) — "
+                "build history is kept, so it cannot be deleted"
+            )
+    await session.delete(row)
+    await session.flush()
+    await session.commit()
 
 
 async def adjust_stock(
@@ -96,6 +160,7 @@ async def adjust_stock(
             )
         row.quantity_on_hand = new_quantity
         await session.flush()
+        await session.commit()
         # No audit table in v1 — the reason is logged and echoed, not persisted.
         logger.info(
             "stock adjusted: %s '%s' %+d -> %d (reason: %s)",

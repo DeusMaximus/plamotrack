@@ -10,6 +10,8 @@ EXPECTED_TOOLS = {
     "update_kit_status",
     "search_catalog",
     "create_order",
+    "list_orders",
+    "mark_order_received",
     "adjust_stock",
     "apply_upgrade",
 }
@@ -127,6 +129,52 @@ async def test_search_and_adjust_stock(client):
             await mcp_client.call_tool(
                 "adjust_stock", {"catalog_id": consumable["id"], "delta": -5}
             )
+
+
+async def test_receive_flow_via_mcp(client):
+    consumable = (
+        await client.post(
+            "/consumables",
+            json={"name": "Top Coat", "category": "paint", "quantity_on_hand": 1},
+        )
+    ).json()
+
+    async with Client(mcp) as mcp_client:
+        order = (
+            await mcp_client.call_tool(
+                "create_order",
+                {
+                    "retailer": "HLJ",
+                    "order_date": "2026-08-02",
+                    "items": [
+                        {
+                            "item_type": "consumable",
+                            "quantity": 3,
+                            "unit_price_minor": 550,
+                            "currency_code": "JPY",
+                            "catalog_ref_id": consumable["id"],
+                        }
+                    ],
+                },
+            )
+        ).data
+        assert order["received_at"] is None
+        # stock untouched while in transit
+        assert (await client.get("/consumables")).json()[0]["quantity_on_hand"] == 1
+
+        pending = (await mcp_client.call_tool("list_orders", {"pending_only": True})).data
+        assert [o["id"] for o in pending] == [order["id"]]
+
+        received = (
+            await mcp_client.call_tool("mark_order_received", {"order_id": order["id"]})
+        ).data
+        assert received["received_at"] is not None
+        assert (await client.get("/consumables")).json()[0]["quantity_on_hand"] == 4
+
+        assert (await mcp_client.call_tool("list_orders", {"pending_only": True})).data == []
+
+        with pytest.raises(ToolError, match="already"):
+            await mcp_client.call_tool("mark_order_received", {"order_id": order["id"]})
 
 
 async def test_apply_upgrade_stock_guard(client):

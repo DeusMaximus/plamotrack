@@ -1,10 +1,16 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.models.enums import ItemType, KitStatus
+from app.models.enums import (
+    ItemType,
+    KitStatus,
+    PackingQuality,
+    ShippingSpeed,
+    WouldOrderAgain,
+)
 
 _CURRENCY_PATTERN = r"^[A-Z]{3}$"
 
@@ -12,6 +18,22 @@ _CURRENCY_PATTERN = r"^[A-Z]{3}$"
 class RetailerCreate(BaseModel):
     name: str = Field(min_length=1)
     url: str | None = None
+    rating: int | None = Field(default=None, ge=1, le=5)
+    packing_quality: PackingQuality | None = None
+    shipping_speed: ShippingSpeed | None = None
+    would_order_again: WouldOrderAgain | None = None
+    notes: str | None = None
+
+
+class RetailerUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1)
+    url: str | None = None
+    rating: int | None = Field(default=None, ge=1, le=5)
+    packing_quality: PackingQuality | None = None
+    shipping_speed: ShippingSpeed | None = None
+    would_order_again: WouldOrderAgain | None = None
     notes: str | None = None
 
 
@@ -21,6 +43,10 @@ class RetailerRead(BaseModel):
     id: uuid.UUID
     name: str
     url: str | None
+    rating: int | None
+    packing_quality: PackingQuality | None
+    shipping_speed: ShippingSpeed | None
+    would_order_again: WouldOrderAgain | None
     notes: str | None
 
 
@@ -77,12 +103,38 @@ class OrderItemCreate(BaseModel):
 class OrderCreate(BaseModel):
     retailer_id: uuid.UUID
     order_date: date
+    order_number: str | None = None  # retailer's reference — informational only
     delivery_service: str | None = None  # null = local pickup/purchase
     tracking_number: str | None = None
     tracking_url: str | None = None
     shipping_cost_minor: int | None = Field(default=None, ge=0)
     currency_code: str = Field(pattern=_CURRENCY_PATTERN)
+    # True = already in hand (store purchase / arrived before entry): stock is
+    # applied and spawned kits start at in_hand instead of ordered.
+    received: bool = False
     items: list[OrderItemCreate] = Field(min_length=1)
+
+
+class OrderItemUpsert(OrderItemCreate):
+    """A line in an order edit: with id = update that line, without = new line.
+    Existing lines omitted from the edit payload are removed (dispatch undone)."""
+
+    id: uuid.UUID | None = None
+
+
+class OrderUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    retailer_id: uuid.UUID | None = None
+    order_date: date | None = None
+    order_number: str | None = None
+    delivery_service: str | None = None
+    tracking_number: str | None = None
+    tracking_url: str | None = None
+    shipping_cost_minor: int | None = Field(default=None, ge=0)
+    currency_code: str | None = Field(default=None, pattern=_CURRENCY_PATTERN)
+    # None = leave line items untouched; a list is the full replacement set.
+    items: list[OrderItemUpsert] | None = Field(default=None, min_length=1)
 
 
 class OrderItemRead(BaseModel):
@@ -104,9 +156,11 @@ class OrderRead(BaseModel):
     id: uuid.UUID
     retailer_id: uuid.UUID
     order_date: date
+    order_number: str | None
     delivery_service: str | None
     tracking_number: str | None
     tracking_url: str | None
     shipping_cost_minor: int | None
     currency_code: str
+    received_at: datetime | None
     items: list[OrderItemRead]

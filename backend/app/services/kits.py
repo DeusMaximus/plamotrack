@@ -33,6 +33,7 @@ async def create_kit(session: AsyncSession, data: KitCreate) -> Kit:
         kit.scale = default_scale_for_grade(kit.grade)
     session.add(kit)
     await session.flush()
+    await session.commit()  # durable before the response goes out — see db.session_scope
     return kit
 
 
@@ -70,6 +71,7 @@ async def update_kit(session: AsyncSession, kit_id: uuid.UUID, data: KitUpdate) 
     # updated_at is generated server-side on UPDATE; refresh so serialization
     # after commit doesn't trigger a lazy load outside the async context.
     await session.refresh(kit)
+    await session.commit()
     return kit
 
 
@@ -77,3 +79,4 @@ async def delete_kit(session: AsyncSession, kit_id: uuid.UUID) -> None:
     kit = await get_kit(session, kit_id)
     await session.delete(kit)
     await session.flush()
+    await session.commit()

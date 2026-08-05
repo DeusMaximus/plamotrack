@@ -1,11 +1,17 @@
 import uuid
-from datetime import date
+from datetime import date, datetime
 
-from sqlalchemy import CheckConstraint, ForeignKey, String
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, UUIDPrimaryKeyMixin
-from app.models.enums import ItemType, text_enum
+from app.models.enums import (
+    ItemType,
+    PackingQuality,
+    ShippingSpeed,
+    WouldOrderAgain,
+    text_enum,
+)
 
 
 class Retailer(UUIDPrimaryKeyMixin, Base):
@@ -13,7 +19,20 @@ class Retailer(UUIDPrimaryKeyMixin, Base):
 
     name: Mapped[str] = mapped_column(index=True)
     url: Mapped[str | None]
+    # Experience report card (all optional — filled in after you've dealt with them)
+    rating: Mapped[int | None]  # overall, 1–5
+    packing_quality: Mapped[PackingQuality | None] = mapped_column(
+        text_enum(PackingQuality, "packing_quality")
+    )
+    shipping_speed: Mapped[ShippingSpeed | None] = mapped_column(
+        text_enum(ShippingSpeed, "shipping_speed")
+    )
+    would_order_again: Mapped[WouldOrderAgain | None] = mapped_column(
+        text_enum(WouldOrderAgain, "would_order_again")
+    )
     notes: Mapped[str | None]
+
+    __table_args__ = (CheckConstraint("rating BETWEEN 1 AND 5", name="rating_range"),)
 
 
 class Order(UUIDPrimaryKeyMixin, Base):
@@ -21,11 +40,19 @@ class Order(UUIDPrimaryKeyMixin, Base):
 
     retailer_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("retailers.id"))
     order_date: Mapped[date]
+    # The retailer's own reference number, for support contact ("order lost",
+    # "item missing"). Informational only — deliberately NOT unique: it's only
+    # unique per retailer, never rely on it as an identifier internally.
+    order_number: Mapped[str | None]
     delivery_service: Mapped[str | None]  # null = local pickup/purchase (§3.8)
     tracking_number: Mapped[str | None]
     tracking_url: Mapped[str | None]
     shipping_cost_minor: Mapped[int | None]
     currency_code: Mapped[str] = mapped_column(String(3))
+    # Null = pending (not yet arrived). Catalog stock increments are applied when
+    # the order is received, not at entry — quantity_on_hand means "physically
+    # on hand", not "on hand + on order".
+    received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"

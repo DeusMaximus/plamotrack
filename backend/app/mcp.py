@@ -107,10 +107,12 @@ async def create_order(
     order_date: str,
     items: list[OrderItemCreate],
     currency_code: str = "AUD",
+    order_number: str | None = None,
     shipping_cost_minor: int | None = None,
     delivery_service: str | None = None,
     tracking_number: str | None = None,
     tracking_url: str | None = None,
+    received: bool = False,
 ) -> dict:
     """Record a purchase. The retailer is matched by name case-insensitively and
     created if new; order_date is ISO format (YYYY-MM-DD). Item lines follow the
@@ -118,8 +120,12 @@ async def create_order(
     optional kit_number; status defaults to `ordered`, use `pre_ordered` for
     pre-orders) and spawns one collection row per quantity. A tool/consumable/
     upgrade line needs either `catalog_ref_id` (an id from search_catalog — always
-    search first) or `new_item` details, and increments that item's stock.
-    Prices are integer minor units (cents/yen) with an ISO 4217 currency_code."""
+    search first) or `new_item` details. Catalog stock does NOT increase until the
+    order is received: pass received=true for store purchases already in hand, or
+    call mark_order_received when a shipment arrives. Include the retailer's
+    order_number from the confirmation email when available (support reference —
+    only unique per retailer, never treat it as an identifier). Prices are integer
+    minor units (cents/yen) with an ISO 4217 currency_code."""
     try:
         parsed_date = date.fromisoformat(order_date)
     except ValueError:
@@ -129,14 +135,39 @@ async def create_order(
         data = OrderCreate(
             retailer_id=retailer_row.id,
             order_date=parsed_date,
+            order_number=order_number,
             delivery_service=delivery_service,
             tracking_number=tracking_number,
             tracking_url=tracking_url,
             shipping_cost_minor=shipping_cost_minor,
             currency_code=currency_code,
+            received=received,
             items=items,
         )
         order = await orders_service.create_order(session, data)
+        return OrderRead.model_validate(order).model_dump(mode="json")
+
+
+@mcp.tool
+async def list_orders(pending_only: bool = False) -> list[dict]:
+    """List orders (newest first), including received state and line items.
+    Use pending_only=true to see orders still awaiting delivery — e.g. to find
+    which order a shipping-notification email belongs to."""
+    async with _tool_session() as session:
+        orders = await orders_service.list_orders(session)
+        if pending_only:
+            orders = [order for order in orders if order.received_at is None]
+        return [OrderRead.model_validate(order).model_dump(mode="json") for order in orders]
+
+
+@mcp.tool
+async def mark_order_received(order_id: str) -> dict:
+    """Mark an order as arrived/delivered: catalog stock increments are applied
+    and kits still in the ordering pipeline (pre_ordered/ordered/in_transit)
+    move to in_hand. Find the order with list_orders(pending_only=true)."""
+    parsed = _parse_uuid(order_id, "order_id")
+    async with _tool_session() as session:
+        order = await orders_service.receive_order(session, parsed)
         return OrderRead.model_validate(order).model_dump(mode="json")
 
 

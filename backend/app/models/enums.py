@@ -20,6 +20,28 @@ class ItemType(enum.StrEnum):
     UPGRADE = "upgrade"
 
 
+class PackingQuality(enum.StrEnum):
+    EXCELLENT = "excellent"
+    GOOD = "good"
+    AVERAGE = "average"
+    BELOW_AVERAGE = "below_average"
+    POOR = "poor"
+
+
+class ShippingSpeed(enum.StrEnum):
+    VERY_FAST = "very_fast"
+    FAST = "fast"
+    AVERAGE = "average"
+    SLOW = "slow"
+    VERY_SLOW = "very_slow"
+
+
+class WouldOrderAgain(enum.StrEnum):
+    YES = "yes"
+    MAYBE = "maybe"
+    NO = "no"
+
+
 def text_enum(enum_cls: type[enum.StrEnum], name: str) -> SAEnum:
     """Text column + CHECK constraint instead of a native Postgres enum, so future
     taxonomy changes are a data migration rather than an ALTER TYPE dance (§9.1)."""

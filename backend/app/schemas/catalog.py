@@ -15,6 +15,16 @@ class ToolCreate(BaseModel):
     condition_notes: str | None = None
 
 
+class ToolUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1)
+    category: str | None = Field(default=None, min_length=1)
+    quantity_on_hand: int | None = Field(default=None, ge=0)
+    unit_cost_reference: Decimal | None = None
+    condition_notes: str | None = None
+
+
 class ToolRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -33,6 +43,15 @@ class ConsumableCreate(BaseModel):
     low_stock_threshold: int | None = Field(default=None, ge=0)
 
 
+class ConsumableUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1)
+    category: str | None = Field(default=None, min_length=1)
+    quantity_on_hand: int | None = Field(default=None, ge=0)
+    low_stock_threshold: int | None = Field(default=None, ge=0)
+
+
 class ConsumableRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -47,6 +66,14 @@ class UpgradeCreate(BaseModel):
     name: str = Field(min_length=1)
     manufacturer: str = Field(min_length=1)
     quantity_on_hand: int = Field(default=0, ge=0)
+
+
+class UpgradeUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1)
+    manufacturer: str | None = Field(default=None, min_length=1)
+    quantity_on_hand: int | None = Field(default=None, ge=0)
 
 
 class UpgradeRead(BaseModel):
