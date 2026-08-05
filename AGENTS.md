@@ -35,6 +35,11 @@ backend/
     main.py             # app factory; MCP mounted at /mcp on the REST port
   alembic/              # async migrations; text enums + CHECK constraints
   tests/                # pytest against real Postgres, in-memory MCP client tests
+frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-hook-form
+  src/
+    api/                # hand-typed API client + types mirroring backend schemas
+    components/         # Layout, Modal, ui primitives, CatalogItemPicker (§3.9 select-or-create)
+    pages/              # KitsPage, OrdersPage, InventoryPage, RetailersPage
 ```
 
 ## Dev environment & commands
@@ -56,6 +61,16 @@ uv run alembic upgrade head  # apply migrations to the dev DB
 uv run uvicorn app.main:app  # REST on :8000, MCP endpoint at /mcp/
 ```
 
+Frontend is npm-managed — run from `frontend/` (needs the backend on :8000; the
+dev server proxies `/api/*` there, stripping the prefix):
+
+```bash
+npm install
+npm run dev                  # Vite on :5173
+npm run build                # tsc type-check + production build — run before committing
+npm run lint                 # oxlint
+```
+
 Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."` →
 **hand-check the generated migration** (constraint names, ondelete, enum CHECKs) →
 `upgrade head` → make sure tests still pass both migration directions.
@@ -65,12 +80,22 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
 1. **Business logic lives in `app/services/` only.** Routers and MCP tools are thin
    wrappers over the same service functions — REST and MCP must never diverge. If
    you add an endpoint or tool, its logic goes in a service both can call.
-2. **Order line dispatch (§3.9):** `item_type=kit` lines fan out into N `kits` rows
-   (with `order_item_id` provenance); tool/consumable/upgrade lines increment
-   `quantity_on_hand`. One transaction per order — any bad line rolls back all of it.
+2. **Order line dispatch (§3.9, amended):** `item_type=kit` lines fan out into N
+   `kits` rows (with `order_item_id` provenance) at entry. Catalog lines increment
+   `quantity_on_hand` **only when the order is received** (`received_at`) —
+   quantity means *physically on hand*, not on order. Receiving also advances
+   pipeline kits (pre_ordered/ordered/in_transit → in_hand). One transaction per
+   order — any bad line rolls back all of it.
+   - Order **edit** re-runs the dispatch diff (kit details propagate to spawned
+     kits; quantity/target changes spawn/remove kits and adjust applied stock).
+   - Order **delete = undo the entry**: kits removed, applied stock reversed.
+   - Guards everywhere: progressed kits (building/complete, rated, or with
+     photos) and already-consumed stock block destructive edits with a 409.
 3. **Catalog de-dup (§3.9):** catalog items are select-or-create — order lines take
    `catalog_ref_id` (from `/catalog/search` / `search_catalog`) or `new_item`, never
    free-text names. Don't add code paths that bypass this.
+   Catalog items and retailers referenced by order history (or upgrade
+   applications) cannot be deleted — edit them instead; history is fact (§6 ethos).
 4. **Money:** integer minor units + ISO 4217 `currency_code`, never floats.
    `converted_price_aud_minor` is an entry-time snapshot — never recompute it (§6).
 5. **Enums are text + CHECK constraint,** not native Postgres enums — the
@@ -87,8 +112,8 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
 
 1. ~~Schema + migrations + REST CRUD~~ ✅
 2. ~~MCP tools on the shared service layer~~ ✅
-3. Frontend: table views + basic forms (React + Vite + dnd-kit, `frontend/`)
-4. Kanban board (drag-and-drop)
+3. ~~Frontend: table views + basic forms~~ ✅
+4. Kanban board (drag-and-drop, dnd-kit)
 5. Photo upload + gallery ← decide storage backend default first (§9.2)
 6. Public read-only routes + showcase page
 7. Auth on the write path (single-user)
