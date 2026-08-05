@@ -9,9 +9,13 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-plamotrack}
     ports:
-      # Host-side port only — the API finds it via POSTGRES_PORT, so changing
-      # this one value moves both sides together.
-      - "${POSTGRES_PORT:-5432}:5432"
+      # Loopback only by default: the database is published for tooling on this
+      # machine (the from-source API, psql, pytest), and nothing else needs to
+      # reach it. Docker publishes on 0.0.0.0 if you omit the bind address,
+      # which puts an unauthenticated-by-default service on your LAN.
+      # Override POSTGRES_BIND only if you genuinely need remote access, and
+      # set a real password first.
+      - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:

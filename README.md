@@ -153,6 +153,10 @@ nothing to keep in sync.
 docker compose up -d db --wait
 ```
 
+This publishes the database on `127.0.0.1` only, so nothing outside this machine can
+reach it. If you need remote access, set `POSTGRES_BIND` in `.env` — and set a real
+password before you do.
+
 ### 3. Start the API (and the MCP server — same process)
 
 ```bash

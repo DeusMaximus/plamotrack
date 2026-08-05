@@ -56,6 +56,10 @@ Template:
     `backend/` resolve identically; they previously didn't. Compose publishes
     `${POSTGRES_PORT:-5432}`, so moving the port is one edit. `backend/.env` is
     now redundant — deleted locally, still honoured if present.
+  - **Postgres is published on loopback only** (`${POSTGRES_BIND:-127.0.0.1}`).
+    Docker publishes on 0.0.0.0 when you omit the bind address, so the db was
+    answering on the LAN — verified before and after. Override via
+    `POSTGRES_BIND` if remote access is genuinely wanted.
 - **Security audit (clean):** only `.env.example` has *ever* been tracked, in
   any commit; no db/dump/key files; no hardcoded secrets. The only
   credential-shaped strings in tracked code are the localhost dev defaults in
