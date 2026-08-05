@@ -167,7 +167,12 @@ export function RetailersPage() {
   const queryClient = useQueryClient();
   const [modal, setModal] = useState<{ retailer?: Retailer } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const { data: retailers, isLoading } = useQuery({
+  const {
+    data: retailers,
+    isLoading,
+    isError,
+    error,
+  } = useQuery({
     queryKey: ["retailers"],
     queryFn: api.listRetailers,
   });
@@ -192,7 +197,9 @@ export function RetailersPage() {
 
       <ErrorBanner message={actionError} />
 
-      {retailers?.length ? (
+      {isError ? (
+        <ErrorBanner message={`Failed to load retailers: ${(error as Error).message}`} />
+      ) : retailers?.length ? (
         <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
           <table className="w-full text-sm">
             <thead>

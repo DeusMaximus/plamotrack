@@ -16,6 +16,38 @@ Template:
 
 ---
 
+## 2026-08-06 — Claude Code — Milestone 4: Kanban board + deferred review items
+
+- **Done:**
+  - **Board page** (`/board`, now the index route) with @dnd-kit/core: seven
+    color-accented status columns, draggable kit cards (grade/scale/kit# chips,
+    rating stars), DragOverlay ghost, per-column counts. Drops call the same
+    `PATCH /kits/{id}` as the table's dropdown, with an **optimistic cache
+    update** (rollback on error, invalidate on settle) so cards land instantly.
+  - dnd-kit subtleties handled: `pointerWithin` collision with a
+    `rectIntersection` fallback (pointerWithin alone breaks keyboard drags),
+    and a **custom keyboard coordinate getter** that jumps one whole column per
+    arrow press (the default 25px nudges get cancelled by board auto-scroll).
+    Keyboard: focus card → Enter → arrows → Enter.
+  - Deferred review items: list-query failures now render error banners instead
+    of fake empty states (all pages); Receive has a confirm dialog; **Playwright
+    happy-path E2E** (`frontend/e2e/`, `npm run test:e2e`): order with new
+    retailer + typeahead-created consumable → pending (stock 0) → receive
+    (stock 3, kit In Hand) → real stepped mouse drag to Building. Runs against
+    the dev stack, uniquely-named data, cleans up after itself via the API
+    (including un-progressing the kit so undo-delete passes). Chromium via
+    `npx playwright install chromium`.
+- **Notes:** in-pane synthetic single-step drags don't satisfy the
+  PointerSensor activation constraint — that's an automation artifact; human
+  mouse drag (user-verified) and Playwright stepped drags both work. No
+  intra-column manual ordering (nothing in the schema backs it) — columns sort
+  by status_updated_at desc.
+- **State:** frontend build + lint green, 2/2 E2E green, 60 backend tests
+  untouched. Committed + pushed.
+- **Next:** Milestone 5 — photo upload + gallery. **Decision gate first:
+  §9.2 photo storage backend** (local volume default vs S3/MinIO opt-in)
+  before writing the upload handler.
+
 ## 2026-08-06 — Claude Code — Integrity fixes from external review (GPT 5.6)
 
 - **Done:** three backend integrity fixes, all with regression tests

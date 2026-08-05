@@ -532,7 +532,12 @@ export function OrdersPage() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const { data: orders, isLoading } = useQuery({ queryKey: ["orders"], queryFn: api.listOrders });
+  const {
+    data: orders,
+    isLoading,
+    isError,
+    error,
+  } = useQuery({ queryKey: ["orders"], queryFn: api.listOrders });
   const { data: retailers } = useQuery({ queryKey: ["retailers"], queryFn: api.listRetailers });
   const { data: kits } = useQuery({ queryKey: ["kits"], queryFn: () => api.listKits() });
   const { data: tools } = useQuery({ queryKey: ["tools"], queryFn: api.listTools });
@@ -563,6 +568,16 @@ export function OrdersPage() {
     );
 
   const receive = async (order: Order) => {
+    const label = retailerName.get(order.retailer_id) ?? "this retailer";
+    if (
+      !window.confirm(
+        `Mark the ${formatDate(order.order_date)} order from ${label} as received?\n\n` +
+          "Catalog stock will be applied and kits still in the ordering pipeline " +
+          "move to In Hand.",
+      )
+    ) {
+      return;
+    }
     setActionError(null);
     try {
       await api.receiveOrder(order.id);
@@ -612,7 +627,9 @@ export function OrdersPage() {
 
       <ErrorBanner message={actionError} />
 
-      {orders?.length ? (
+      {isError ? (
+        <ErrorBanner message={`Failed to load orders: ${(error as Error).message}`} />
+      ) : orders?.length ? (
         <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
           <table className="w-full text-sm">
             <thead>

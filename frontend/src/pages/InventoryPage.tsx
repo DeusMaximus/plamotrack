@@ -277,7 +277,9 @@ export function InventoryPage() {
       <ErrorBanner message={actionError} />
 
       {tab === "tools" &&
-        (tools.data?.length ? (
+        (tools.isError ? (
+          <ErrorBanner message={`Failed to load tools: ${(tools.error as Error).message}`} />
+        ) : tools.data?.length ? (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>
@@ -318,7 +320,11 @@ export function InventoryPage() {
         ))}
 
       {tab === "consumables" &&
-        (consumables.data?.length ? (
+        (consumables.isError ? (
+          <ErrorBanner
+            message={`Failed to load consumables: ${(consumables.error as Error).message}`}
+          />
+        ) : consumables.data?.length ? (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>
@@ -371,7 +377,9 @@ export function InventoryPage() {
         ))}
 
       {tab === "upgrades" &&
-        (upgrades.data?.length ? (
+        (upgrades.isError ? (
+          <ErrorBanner message={`Failed to load upgrades: ${(upgrades.error as Error).message}`} />
+        ) : upgrades.data?.length ? (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>

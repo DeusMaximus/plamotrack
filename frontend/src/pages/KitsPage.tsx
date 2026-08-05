@@ -147,7 +147,12 @@ export function KitsPage() {
   const [modal, setModal] = useState<{ mode: "add" } | { mode: "edit"; kit: Kit } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const { data: kits, isLoading } = useQuery({ queryKey: ["kits"], queryFn: () => api.listKits() });
+  const {
+    data: kits,
+    isLoading,
+    isError,
+    error,
+  } = useQuery({ queryKey: ["kits"], queryFn: () => api.listKits() });
 
   const statusMutation = useMutation({
     mutationFn: ({ id, status }: { id: string; status: KitStatus }) =>
@@ -205,7 +210,9 @@ export function KitsPage() {
 
       <ErrorBanner message={actionError} />
 
-      {isLoading ? (
+      {isError ? (
+        <ErrorBanner message={`Failed to load kits: ${(error as Error).message}`} />
+      ) : isLoading ? (
         <EmptyState>Loading…</EmptyState>
       ) : visible.length === 0 ? (
         <EmptyState>

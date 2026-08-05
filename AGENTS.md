@@ -39,7 +39,8 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
   src/
     api/                # hand-typed API client + types mirroring backend schemas
     components/         # Layout, Modal, ui primitives, CatalogItemPicker (§3.9 select-or-create)
-    pages/              # KitsPage, OrdersPage, InventoryPage, RetailersPage
+    pages/              # BoardPage (Kanban), KitsPage, OrdersPage, InventoryPage, RetailersPage
+  e2e/                  # Playwright happy-path (runs against the dev stack, self-cleaning)
 ```
 
 ## Dev environment & commands
@@ -69,6 +70,8 @@ npm install
 npm run dev                  # Vite on :5173
 npm run build                # tsc type-check + production build — run before committing
 npm run lint                 # oxlint
+npm run test:e2e             # Playwright happy-path (needs chromium: npx playwright install chromium);
+                             # reuses running dev servers, creates + cleans its own data
 ```
 
 Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."` →
@@ -117,7 +120,7 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
 1. ~~Schema + migrations + REST CRUD~~ ✅
 2. ~~MCP tools on the shared service layer~~ ✅
 3. ~~Frontend: table views + basic forms~~ ✅
-4. Kanban board (drag-and-drop, dnd-kit)
+4. ~~Kanban board (drag-and-drop, dnd-kit)~~ ✅
 5. Photo upload + gallery ← decide storage backend default first (§9.2)
 6. Public read-only routes + showcase page
 7. Auth on the write path (single-user)

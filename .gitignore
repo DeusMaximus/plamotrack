@@ -18,6 +18,8 @@ data/
 # Node (frontend, added at Milestone 3)
 node_modules/
 dist/
+test-results/
+playwright-report/
 
 # OS
 .DS_Store
