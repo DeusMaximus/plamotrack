@@ -76,6 +76,10 @@ loose in a bag.
 
 ![Retailers, rated](docs/screenshots/retailers.png)
 
+*Everything in these screenshots is invented demo data, ratings included. Mecha Supply
+Co isn't a real shop, and the ones that are haven't been graded by anyone — go form your
+own opinions, that's what the field is for.*
+
 ### Your data, genuinely yours
 
 Export the entire collection as a zip of plain CSVs with a manifest, or pull any single
