@@ -16,7 +16,7 @@ Backing up, restoring, and upgrading the bundled Docker Compose stack.
 | `web` | nginx: the UI, plus `/api` and `/mcp` proxied to the API | **yes** — `127.0.0.1:8080` |
 | `api` | FastAPI + the MCP server, one process | no |
 | `migrate` | runs `alembic upgrade head`, then exits | no |
-| `db` | Postgres 16 | loopback only, for local tooling |
+| `db` | Postgres 16 | no — Compose network only |
 
 Only `web` is reachable, so an instance has one door. `migrate` showing as
 `Exited (0)` is what success looks like — it's a startup step, not a service.
@@ -33,7 +33,9 @@ Two kinds, and they answer different questions.
 timestamps. This is your disaster-recovery copy.
 
 ```bash
-docker compose exec -T db pg_dump -U plamotrack -Fc plamotrack > plamotrack-$(date +%F).dump
+docker compose exec -T db sh -c \
+  'exec pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' \
+  > plamotrack-$(date +%F).dump
 ```
 
 **The CSV archive — portable copy.** Readable, diffable, and importable into a
@@ -56,13 +58,19 @@ one:
 ```bash
 docker compose down -v          # destroys the current database. See the warning below.
 docker compose up -d db --wait
-docker compose exec -T db pg_restore -U plamotrack -d plamotrack --clean --if-exists < plamotrack-2026-08-10.dump
+docker compose exec -T db sh -c \
+  'exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
+  < plamotrack-2026-08-10.dump
 docker compose up -d --wait
 ```
 
 > `docker compose down -v` deletes the `db-data` volume, which **is** your
 > collection. Without `-v` the volume survives and `down` is safe. Take a backup
 > first regardless.
+
+The quoted variables are expanded inside the database container, so these commands
+follow the active `POSTGRES_USER` and `POSTGRES_DB` values from `.env` rather than
+assuming the defaults.
 
 ## Upgrading
 

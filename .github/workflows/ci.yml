@@ -133,10 +133,43 @@ jobs:
       # example's disposable password is appropriate here and, importantly,
       # reaches both Postgres and the API through the normal config path.
       - name: Prepare CI configuration
-        run: cp .env.example .env
+        run: |
+          cp .env.example .env
+          sed -i 's/^POSTGRES_USER=.*/POSTGRES_USER=plamotrack_ci/' .env
+          sed -i 's/^POSTGRES_DB=.*/POSTGRES_DB=plamotrack_ci/' .env
+          sed -i 's/^POSTGRES_PORT=.*/POSTGRES_PORT=55432/' .env
+
+      - name: Validate packaged and development Compose configurations
+        run: |
+          python - <<'PY'
+          import json
+          import subprocess
+
+
+          def compose_config(*files: str) -> dict:
+              command = ["docker", "compose"]
+              for file in files:
+                  command.extend(("-f", file))
+              command.extend(("config", "--format", "json"))
+              return json.loads(subprocess.check_output(command, text=True))
+
+
+          base = compose_config("docker-compose.yml")
+          development = compose_config("docker-compose.yml", "docker-compose.dev.yml")
+
+          assert not base["services"]["db"].get("ports"), base["services"]["db"]
+          assert base["services"]["api"]["environment"]["POSTGRES_HOST"] == "db"
+          assert base["services"]["api"]["environment"]["POSTGRES_PORT"] == "5432"
+          assert base["services"]["migrate"]["environment"]["POSTGRES_PORT"] == "5432"
+
+          [port] = development["services"]["db"]["ports"]
+          assert port["host_ip"] == "127.0.0.1", port
+          assert port["published"] == "55432", port
+          assert port["target"] == 5432, port
+          PY
 
       - name: Start Postgres
-        run: docker compose up -d db --wait
+        run: docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db --wait
 
       - name: Apply migrations
         working-directory: backend
@@ -146,11 +179,50 @@ jobs:
         working-directory: frontend
         run: npm run test:e2e
 
+      - name: Exercise documented backup and restore commands
+        run: |
+          docker compose exec -T db sh -c 'exec pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > /tmp/plamotrack-ci.dump
+          docker compose exec -T db sh -c 'exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < /tmp/plamotrack-ci.dump
+
       - name: Build and start the packaged stack
         run: docker compose up -d --build --wait
 
       - name: Smoke-test the ingress
         run: |
+          python - <<'PY'
+          import json
+          import subprocess
+
+
+          output = subprocess.check_output(
+              ["docker", "compose", "ps", "--format", "json"], text=True
+          )
+          try:
+              parsed = json.loads(output)
+              rows = parsed if isinstance(parsed, list) else [parsed]
+          except json.JSONDecodeError:
+              rows = [json.loads(line) for line in output.splitlines() if line.strip()]
+          services = {
+              row["Service"]: row for row in rows
+          }
+          assert not any(
+              publisher["PublishedPort"]
+              for publisher in services["db"].get("Publishers") or []
+          ), services["db"].get("Publishers")
+          published_web = [
+              publisher
+              for publisher in services["web"].get("Publishers") or []
+              if publisher["PublishedPort"]
+          ]
+          assert published_web == [
+              {
+                  "URL": "127.0.0.1",
+                  "TargetPort": 80,
+                  "PublishedPort": 8080,
+                  "Protocol": "tcp",
+              }
+          ], published_web
+          PY
           curl --fail --silent --show-error http://127.0.0.1:8080/ > /dev/null
           curl --fail --silent --show-error http://127.0.0.1:8080/api/readyz > /dev/null
           curl --fail --silent --show-error http://127.0.0.1:8080/openapi.json > /dev/null

@@ -273,7 +273,8 @@ run the database in Docker and the app from source.
 Node 20.19+ (or 22+).
 
 ```bash
-docker compose up -d db --wait                       # just Postgres, on 127.0.0.1:5432
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db --wait
+# just Postgres, on fixed loopback and POSTGRES_PORT (5432 by default)
 
 cd backend && uv sync && uv run alembic upgrade head
 uv run uvicorn app.main:app                          # REST on :8000, MCP at :8000/mcp/
@@ -285,14 +286,20 @@ Open **http://localhost:5173**. The API serves at the root here rather than unde
 `/api` — the Vite dev proxy strips the prefix exactly as nginx does in the container,
 so the app's own fetch paths are identical either way.
 
-`docker compose up -d db` and the full stack are the same Compose project, so they
-share one database container — starting one doesn't clash with the other. What you
-get if both are running is two APIs against one database: the container's on
-`:8080`, yours from source on `:8000`. Harmless, but confusing when a change doesn't
-show up where you expected. `docker compose stop web api` leaves just the database.
+The development overlay and full stack are the same Compose project, so they share
+one database container. Starting the full stack without the overlay recreates the
+database container without its host port; the named volume and its data survive.
+What you get if both APIs are running is the container's on `:8080` and yours from
+source on `:8000`. Harmless, but confusing when a change doesn't show up where you
+expected. `docker compose stop web api` leaves just the database.
 
-Already have a Postgres on 5432? Set `POSTGRES_PORT` in `.env` — Compose publishes
-on it and the API connects to it.
+Already have a Postgres on 5432? Set `POSTGRES_PORT` in `.env` — the development
+overlay publishes on it and the source-run API connects to it. The bind stays fixed
+to `127.0.0.1`; deliberately remote database access requires your own override.
+
+Tests follow the same configured connection by default, but use a sibling
+`<database>_test` database that they create if needed and destructively reset. Set
+`TEST_DATABASE_URL` in the test process only when tests need a different connection.
 
 ```bash
 cd backend
