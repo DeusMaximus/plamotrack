@@ -28,13 +28,14 @@ Template:
 - **Decisions:** Removed `POSTGRES_BIND` from `.env.example`; remote database access
   requires an operator-supplied override. Kept #7 with #8 because both alter the
   recovery/development Compose documentation.
-- **State:** Changes are uncommitted. 104 backend tests pass; Ruff check/format,
-  workflow YAML parsing, Compose config, and `git diff --check` pass. Isolated
-  runtime tests verified `127.0.0.1:55432`, custom-name dump/restore, dev-to-base
-  recreation without data loss, packaged REST/OpenAPI/MCP, and no published db
-  port. Disposable projects/volumes were removed; the original stack was untouched.
-- **Next:** Review, then commit/push/open a PR when the user asks; GitHub CI has not
-  run on this branch yet. Issues #7 and #8 remain open until merge.
+- **State:** Implementation committed as `5855865` and pushed. 104 backend tests
+  pass; Ruff check/format, workflow YAML parsing, Compose config, and
+  `git diff --check` pass. Isolated runtime tests verified `127.0.0.1:55432`,
+  custom-name dump/restore, dev-to-base recreation without data loss, packaged
+  REST/OpenAPI/MCP, and no published db port. Disposable projects/volumes were
+  removed; the original stack was untouched.
+- **Next:** Open/review a PR when the user asks; GitHub CI has not run on this branch
+  yet. Issues #7 and #8 remain open until merge.
 
 ## 2026-08-10 — Codex — Add GitHub Actions CI
 
