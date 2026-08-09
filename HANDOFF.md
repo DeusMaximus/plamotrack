@@ -74,10 +74,10 @@ so nothing is hidden from the next session in the meantime.
   verified too — a migration that can't connect leaves `api` and `web` in `Created` and
   compose exits **1**. The documented `pg_dump`/`pg_restore` procedure was run
   end-to-end and the conversion snapshot survived it.
-- **Known gap, not addressed:** `docs/screenshots/` were shot against the dev server
-  and show `:5173`, while the README now tells people `:8080`. Re-shoot before the next
-  release tag. To do it, drive chromium from inside `frontend/` so `@playwright/test`
-  resolves; the original capture script was throwaway.
+- **Screenshots need no action.** They were shot with Playwright, which captures the
+  page viewport only — no browser chrome, so no `:5173` address bar to go stale against
+  the README's new `:8080`. Checked all six. The UI in them is also unchanged by this
+  work (none show the order form modal, the only screen that moved).
 - **Next:** M5.1 proper is now just the three i18n workstreams — frontend string
   catalogue (~200–260 keys, `react-i18next` recommended, OrdersPage is the big one),
   locale-aware formatting (small; only 19 directional Tailwind utilities to swap), and
