@@ -79,8 +79,25 @@ class OrderItemCreate(BaseModel):
     currency_code: str = Field(pattern=_CURRENCY_PATTERN)
     # Entry-time conversion snapshot (§6). Omit the code and the instance's
     # reference currency is stamped in; it is never re-read afterwards.
-    converted_price_minor: int | None = Field(default=None, ge=0)
-    converted_currency_code: str | None = Field(default=None, pattern=_CURRENCY_PATTERN)
+    converted_price_minor: int | None = Field(
+        default=None,
+        ge=0,
+        description=(
+            "Entry-time conversion snapshot: what this line cost in the currency "
+            "below, recorded once and never recomputed. On an update, omitting this "
+            "field keeps the stored snapshot — clearing it takes an explicit null."
+        ),
+    )
+    converted_currency_code: str | None = Field(
+        default=None,
+        pattern=_CURRENCY_PATTERN,
+        description=(
+            "The currency the snapshot above was taken in. Omit it and the "
+            "instance's reference currency is stamped in at write time, so moving "
+            "that setting later never restates what past purchases cost. Sent "
+            "without an amount it is an error; it follows the amount on an update."
+        ),
+    )
     kit: OrderKitDetails | None = None
     catalog_ref_id: uuid.UUID | None = None
     new_item: NewCatalogItem | None = None
@@ -90,7 +107,8 @@ class OrderItemCreate(BaseModel):
         if self.converted_currency_code is not None and self.converted_price_minor is None:
             raise ValueError(
                 "converted_currency_code without converted_price_minor: a currency "
-                "with no amount doesn't record anything"
+                "with no amount doesn't record anything — send the amount too, which "
+                "is also how an update changes an existing snapshot's currency"
             )
         return self
 
@@ -129,7 +147,13 @@ class OrderCreate(BaseModel):
 
 class OrderItemUpsert(OrderItemCreate):
     """A line in an order edit: with id = update that line, without = new line.
-    Existing lines omitted from the edit payload are removed (dispatch undone)."""
+    Existing lines omitted from the edit payload are removed (dispatch undone).
+
+    A supplied line replaces the stored one field for field, with one deliberate
+    exception: the `converted_*` snapshot pair. Omit those and the stored snapshot
+    survives the edit; send an explicit null to clear it (issue #3). They are a
+    recorded fact rather than a restatable value — an editor that never had the
+    entry-time rate shouldn't destroy one by changing a quantity."""
 
     id: uuid.UUID | None = None
 
