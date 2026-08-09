@@ -41,11 +41,13 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
 ## Layout
 
 ```
-docker-compose.yml      # dev: db only; api/frontend services land at Milestone 5
+docker-compose.yml      # the full stack: web (nginx) + api + migrate + db.
+                        #   `up -d --wait` installs; `up -d db --wait` is the dev flow
 .env                    # the only config file (gitignored); .env.example is the template
                         #   compose + API both read it; app/config.py assembles the DSN
                         #   from POSTGRES_* unless DATABASE_URL is set explicitly
 backend/
+  Dockerfile            # multi-stage uv build; also the migrate service's image
   app/
     models/             # SQLAlchemy 2.0 async models — 9 tables
     schemas/            # Pydantic v2 request/response models
@@ -57,6 +59,9 @@ backend/
   alembic/              # async migrations; text enums + CHECK constraints
   tests/                # pytest against real Postgres, in-memory MCP client tests
 frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-hook-form
+  Dockerfile            # node build -> nginx:alpine
+  nginx.conf            # THE ingress. Read the comments before touching the /mcp or
+                        #   resolver lines — both encode bugs found by testing (§8)
   src/
     api/                # hand-typed API client + types mirroring backend schemas
     components/         # Layout, Modal, ui primitives, CatalogItemPicker (§3.9 select-or-create)
@@ -65,14 +70,26 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
   e2e/                  # Playwright happy-path (runs against the dev stack, self-cleaning)
 docs/design.md          # product intent + architectural decision record (§n targets)
 docs/import-export.md   # user-facing CSV format + matching reference
+docs/operations.md      # backup / restore / upgrade for the container stack
 ```
 
 ## Dev environment & commands
 
-Postgres comes from Docker (OrbStack on the primary dev Mac, auto-starts):
+Postgres comes from Docker (OrbStack on the primary dev Mac, auto-starts). For
+development, run **only** the db service and the app from source — the container
+stack has no hot reload, and both want port 5432:
 
 ```bash
 docker compose up -d db --wait
+```
+
+To exercise the packaged stack instead (before touching Dockerfiles, `nginx.conf`,
+or anything about startup ordering):
+
+```bash
+docker compose up -d --wait   # http://127.0.0.1:8080 — builds on first run
+docker compose logs migrate   # migrations; Exited (0) is success
+docker compose down           # add -v ONLY to destroy the database
 ```
 
 Backend is uv-managed — run everything from `backend/`:
@@ -128,7 +145,12 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    Catalog items and retailers referenced by order history (or upgrade
    applications) cannot be deleted — edit them instead; history is fact (§6 ethos).
 4. **Money:** integer minor units + ISO 4217 `currency_code`, never floats.
-   `converted_price_aud_minor` is an entry-time snapshot — never recompute it (§6).
+   `converted_price_minor` + `converted_currency_code` are an entry-time snapshot —
+   never recompute them, and never render the amount using the *current*
+   `REFERENCE_CURRENCY` instead of the code stored on the row (§6). The pair is
+   null-or-present together, enforced by a CHECK constraint. The instance default
+   lives in `settings.reference_currency` and is stamped in by the service layer at
+   write time; `converted_price_aud_minor` survives only as a CSV import alias.
 5. **Enums are text + CHECK constraint,** not native Postgres enums — the
    generic-vs-Gunpla taxonomy question (§9.1) is still open, keep it a data migration.
 6. **Errors:** services raise `app.exceptions` domain errors (`NotFoundError`,
@@ -159,10 +181,11 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
 4. ~~Kanban board (drag-and-drop, dnd-kit)~~ ✅
 4.5. ~~Import/export: CSV archive + manifest, preview, templates~~ ✅ (§12)
 → **Public alpha ships here.** Everything below is built in the open.
-5. Installability: full local Docker Compose stack, safe loopback defaults,
-   migrations, health checks, backup/upgrade docs
+5. ~~Installability: full local Docker Compose stack, safe loopback defaults,
+   migrations, health checks, backup/upgrade docs~~ ✅ (§8, `docs/operations.md`)
+   — also shipped the configurable reference currency, pulled forward from 5.1
 5.1. Internationalisation foundation: English catalogue, locale-aware formatting,
-     structured errors, configurable reference currency; no translations yet
+     structured errors; no translations yet
 6. Secure remote access: single-owner browser auth, scoped REST/MCP tokens,
    OAuth-compatible MCP, tested TLS/VPS deployment path
 6.1. MCP modernisation: dual-era current + `2026-07-28` compatibility with

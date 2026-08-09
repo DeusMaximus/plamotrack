@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import get_settings
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import (
     Consumable,
@@ -28,6 +29,22 @@ from app.schemas.orders import (
 )
 from app.services.catalog import CATALOG_MODELS
 from app.services.kits import default_scale_for_grade
+
+
+def _converted_snapshot(line: OrderItemCreate) -> tuple[int | None, str | None]:
+    """The §6 conversion snapshot: an amount and the currency it was captured in.
+
+    A caller that supplies an amount but no currency means "the instance's
+    reference currency" — resolved once, here, at write time. Reading the setting
+    on the way out instead would make every historical amount change meaning the
+    day the operator edits an env var.
+    """
+    if line.converted_price_minor is None:
+        return None, None
+    return line.converted_price_minor, (
+        line.converted_currency_code or get_settings().reference_currency
+    )
+
 
 # A kit that has visibly progressed is never silently deleted by order edits.
 PROGRESSED_STATUSES = {KitStatus.BUILDING, KitStatus.COMPLETE}
@@ -247,13 +264,15 @@ async def _add_line(
 ) -> OrderItem:
     """The §3.9 dispatch: kit lines FAN OUT into kits rows immediately; catalog
     lines INCREMENT stock — but only once the order is received."""
+    converted_minor, converted_code = _converted_snapshot(line)
     item = OrderItem(
         order_id=order.id,
         item_type=line.item_type,
         quantity=line.quantity,
         unit_price_minor=line.unit_price_minor,
         currency_code=line.currency_code,
-        converted_price_aud_minor=line.converted_price_aud_minor,
+        converted_price_minor=converted_minor,
+        converted_currency_code=converted_code,
     )
     session.add(item)
     await session.flush()
@@ -346,7 +365,7 @@ async def _update_line(
     item.quantity = line.quantity
     item.unit_price_minor = line.unit_price_minor
     item.currency_code = line.currency_code
-    item.converted_price_aud_minor = line.converted_price_aud_minor
+    item.converted_price_minor, item.converted_currency_code = _converted_snapshot(line)
     await session.flush()
 
 

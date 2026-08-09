@@ -150,6 +150,18 @@ creates them from.
 Dates are `YYYY-MM-DD` (though `14/03/2026` and `03/14/2026` are accepted).
 Leave `id` blank on rows you add by hand.
 
+### Older exports still import
+
+Column names occasionally change. When one does, the old name keeps working as an
+alias — an archive you exported months ago imports as cleanly as one you exported
+today, and re-importing it is still a no-op. Exports always write the current name.
+
+So far there is one:
+
+| Old column | Current columns | Notes |
+| --- | --- | --- |
+| `converted_price_aud_minor` | `converted_price_minor` + `converted_currency_code` | Rows under the old name are read as **AUD**, since that's what the name meant — even if your instance uses a different reference currency. |
+
 ---
 
 ## Limits and safety

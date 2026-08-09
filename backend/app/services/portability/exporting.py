@@ -253,5 +253,5 @@ def template_pack() -> bytes:
 
 
 def starter_sheet_csv(*, with_examples: bool = True) -> str:
-    rows = starter_sheet.STARTER_SHEET_EXAMPLES if with_examples else []
+    rows = starter_sheet.starter_sheet_examples() if with_examples else []
     return _write_csv(starter_sheet.STARTER_SHEET_HEADER, rows)

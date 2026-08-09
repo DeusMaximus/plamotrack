@@ -115,7 +115,10 @@ def _detect_table(filename: str, header: list[str]) -> str | None:
     names = {name.strip().lower() for name in header}
     best, best_score = None, 0
     for spec in TABLE_SPECS:
+        # Aliases count towards the signature — a renamed older export should
+        # still be recognised as the table it is.
         expected = {column.name for column in spec.columns}
+        expected |= {alias for column in spec.columns for alias in column.aliases}
         score = len(names & expected)
         if score > best_score and score >= max(2, len(expected) // 2):
             best, best_score = spec.key, score
@@ -304,6 +307,9 @@ class _Planner:
     # -- parsing ---------------------------------------------------------------
 
     def _parse_row(self, spec: TableSpec, raw: dict[str, str]) -> _Row:
+        # Retired header names become current ones before anything looks at the
+        # row, so the rest of this method only ever sees the spec's own vocabulary.
+        raw = spec.canonicalise(raw)
         row_number = int(raw.get(_ROW_MARKER, 0) or 0)
         values: dict[str, Any] = {}
         present: set[str] = set()
@@ -974,7 +980,13 @@ _COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
     "consumables": {"quantity_on_hand": 0},
     "upgrades": {"quantity_on_hand": 0},
     "kits": {"status": "backlog", "status_updated_at": lambda: datetime.now(UTC)},
-    "order_items": {"unit_price_minor": 0, "converted_price_aud_minor": None},
+    "order_items": {
+        "unit_price_minor": 0,
+        # Both halves of the snapshot stay absent together — the paired CHECK
+        # constraint rejects an amount with no currency, and vice versa.
+        "converted_price_minor": None,
+        "converted_currency_code": None,
+    },
     "upgrade_applications": {"applied_at": lambda: datetime.now(UTC)},
     "kit_photos": {"created_at": lambda: datetime.now(UTC)},
 }

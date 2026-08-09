@@ -1,0 +1,18 @@
+# Secrets: a stray .env baked into an image would silently outrank the real
+# environment for anyone who later ran it outside compose.
+.env
+.env.*
+
+# Built on the host — never copy a host venv into the image.
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+.pytest_cache/
+.ruff_cache/
+tests/
+
+.DS_Store
+Dockerfile
+.dockerignore

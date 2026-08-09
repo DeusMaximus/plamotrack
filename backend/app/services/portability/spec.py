@@ -255,6 +255,14 @@ class ColumnSpec:
     #: Exists in the CSV but not on the model — order_items' kit_* columns mirror
     #: the kits a line spawned, which are rows of their own.
     virtual: bool = False
+    #: Header names this column used to ship under. Accepted on import and mapped
+    #: to `name`; never exported, so an archive only ever names the current column.
+    #: This is what keeps re-importing an older export a no-op (§12.5).
+    aliases: tuple[str, ...] = ()
+    #: Sibling cells to fill when a row arrived under an alias and left them blank.
+    #: A retired name can carry meaning the current one spreads across columns —
+    #: converted_price_aud_minor stated its currency, converted_price_minor doesn't.
+    alias_fills: tuple[tuple[str, str], ...] = ()
     help: str = ""
 
     @property
@@ -277,6 +285,8 @@ def col(
     ref_table: str | None = None,
     mirrors: str | None = None,
     virtual: bool = False,
+    aliases: tuple[str, ...] = (),
+    alias_fills: tuple[tuple[str, str], ...] = (),
     help: str = "",
 ) -> ColumnSpec:
     return ColumnSpec(
@@ -288,6 +298,8 @@ def col(
         ref_table=ref_table,
         mirrors=mirrors,
         virtual=virtual,
+        aliases=aliases,
+        alias_fills=alias_fills,
         help=help,
     )
 
@@ -318,6 +330,11 @@ class TableSpec:
 
     def __post_init__(self) -> None:
         self._by_name.update({column.name: column for column in self.columns})
+        # Retired header names resolve to their current column, so an archive
+        # exported by an older version is understood rather than warned about.
+        for column in self.columns:
+            for alias in column.aliases:
+                self._by_name.setdefault(alias, column)
 
     @property
     def filename(self) -> str:
@@ -328,7 +345,35 @@ class TableSpec:
         return [column.name for column in self.columns]
 
     def column(self, name: str) -> ColumnSpec | None:
+        """Resolves current names and retired aliases alike."""
         return self._by_name.get(name)
+
+    def canonicalise(self, raw: dict[str, str]) -> dict[str, str]:
+        """Rewrite retired header names to their current ones, plus whatever the
+        retired name implied (`alias_fills`).
+
+        A file carrying both names is not a conflict worth erroring over — the
+        current column wins and the alias is dropped, which is the same rule the
+        ALT_* columns already follow.
+        """
+        matched = [
+            (key, column)
+            for key in raw
+            if (column := self._by_name.get(key)) is not None and column.name != key
+        ]
+        if not matched:
+            return raw
+
+        superseded = {key for key, column in matched if column.name in raw}
+        renamed = {key: column.name for key, column in matched if key not in superseded}
+        out = {renamed.get(key, key): value for key, value in raw.items() if key not in superseded}
+        for key, column in matched:
+            if key in superseded:
+                continue
+            for sibling, value in column.alias_fills:
+                if not out.get(sibling, "").strip():
+                    out[sibling] = value
+        return out
 
     def to_row(self, instance: Any) -> dict[str, str]:
         """Model instance -> csv cells. ALT columns are filled by the exporter."""
@@ -520,7 +565,22 @@ ORDER_ITEMS = TableSpec(
             help="Major units, e.g. 49.99.",
         ),
         col("currency_code", parse_currency, required=True),
-        col("converted_price_aud_minor", parse_int, help="Entry-time snapshot — never recomputed."),
+        col(
+            "converted_price_minor",
+            parse_int,
+            # Pre-0.2 exports named this converted_price_aud_minor and had no
+            # companion currency column. The retired name asserted AUD, so rows
+            # arriving under it are stamped AUD rather than silently reinterpreted
+            # as whatever this instance happens to use as its reference currency.
+            aliases=("converted_price_aud_minor",),
+            alias_fills=(("converted_currency_code", "AUD"),),
+            help="Entry-time snapshot in the reference currency — never recomputed.",
+        ),
+        col(
+            "converted_currency_code",
+            parse_currency,
+            help="Currency the snapshot was taken in. Blank = the instance default.",
+        ),
         # Kit details live on the spawned kits, not the line. Exported from them for
         # legibility; on import they only matter when nothing else supplies the kits.
         col("kit_name", parse_text, get=lambda i: None, virtual=True),

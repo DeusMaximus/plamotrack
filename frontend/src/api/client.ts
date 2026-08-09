@@ -10,6 +10,7 @@ import type {
   KitCreate,
   KitStatus,
   KitUpdate,
+  Meta,
   Order,
   OrderCreate,
   OrderUpdate,
@@ -146,6 +147,8 @@ export const api = {
   updateRetailer: (id: string, data: RetailerUpdate) =>
     request<Retailer>(`/retailers/${id}`, patch(data)),
   deleteRetailer: (id: string) => request<void>(`/retailers/${id}`, { method: "DELETE" }),
+
+  getMeta: () => request<Meta>("/meta"),
 
   listOrders: () => request<Order[]>("/orders"),
   createOrder: (data: OrderCreate) => request<Order>("/orders", post(data)),
