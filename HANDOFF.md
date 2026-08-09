@@ -18,8 +18,14 @@ Template:
 
 ## 2026-08-10 — Claude Code — M5 installability + neutral reference currency
 
-Branch **`feat/m5-install-and-reference-currency`**, not yet committed or pushed —
-the user hasn't asked for either. Working tree holds everything below.
+Branch **`feat/m5-install-and-reference-currency`**, pushed, PR open against `main`.
+Two commits: `588a12f` (the work below) and `f6a69c4` (exposure docs). Working tree
+clean.
+
+This hand-off entry lives on the branch rather than on `main`, against the usual
+convention — the branch already contained a `HANDOFF.md` edit, so committing another
+to `main` would have guaranteed a conflict at merge. The PR was opened immediately,
+so nothing is hidden from the next session in the meantime.
 
 - **Done — reference currency (pulled forward from M5.1):**
   - `converted_price_aud_minor` → `converted_price_minor` + `converted_currency_code`.
@@ -53,17 +59,31 @@ the user hasn't asked for either. Working tree holds everything below.
   - Also: `/mcp` without the trailing slash is now *served*, not redirected.
     `serverInfo.version` was reporting FastMCP's `3.4.5` under plamotrack's name; now
     `app.__version__`.
+- **Done — exposure docs (`f6a69c4`):** `WEB_BIND` works exactly like `POSTGRES_BIND`
+  (it's the host-IP field of the same publish syntax), but the *risk* isn't symmetric:
+  Postgres on `0.0.0.0` still has a password, the web ingress has nothing. New
+  "Reaching it from another machine" section in `docs/operations.md` gives three
+  options best-first — SSH tunnel, private/VPN address, then LAN — plus the Docker
+  iptables surprise (published ports are forwarded, not delivered to the host, so
+  `ufw deny` does **not** block them; the bind address is the real control).
+  Deliberately ships **no** reverse-proxy config: a TLS/auth reference belongs with M6
+  where it can be tested against the MCP streaming path.
 - **State:** 102 backend tests pass, ruff clean, `npm run build` + oxlint clean,
   Playwright e2e passes. Verified on a clean volume: `up -d --build --wait` exits 0,
   all six migrations run, UI/API/MCP/openapi all 200 on an empty instance. Failure path
   verified too — a migration that can't connect leaves `api` and `web` in `Created` and
   compose exits **1**. The documented `pg_dump`/`pg_restore` procedure was run
   end-to-end and the conversion snapshot survived it.
+- **Known gap, not addressed:** `docs/screenshots/` were shot against the dev server
+  and show `:5173`, while the README now tells people `:8080`. Re-shoot before the next
+  release tag. To do it, drive chromium from inside `frontend/` so `@playwright/test`
+  resolves; the original capture script was throwaway.
 - **Next:** M5.1 proper is now just the three i18n workstreams — frontend string
   catalogue (~200–260 keys, `react-i18next` recommended, OrdersPage is the big one),
   locale-aware formatting (small; only 19 directional Tailwind utilities to swap), and
   structured error codes (48 raise sites; the codes become permanent API surface, so
-  pin them with tests). Estimated 4–5 sessions.
+  pin them with tests). Estimated 4–5 sessions. The reference-currency piece that used
+  to sit in M5.1 is done — don't re-plan it.
 
 ## 2026-08-09 — Codex — Public roadmap reprioritisation (merged)
 
