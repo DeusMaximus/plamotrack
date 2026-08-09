@@ -1,9 +1,12 @@
+import re
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_CURRENCY_RE = re.compile(r"[A-Z]{3}")
 
 # Anchored on this file, not the working directory: `uv run uvicorn` from
 # backend/ and `pytest` from the repo root must resolve the same config.
@@ -38,6 +41,20 @@ class Settings(BaseSettings):
     # "null" disables connection pooling; used by the test suite where each test
     # runs in its own event loop and pooled connections would cross loops.
     database_pool: str = "default"
+
+    # The currency this instance converts foreign purchases into for comparison
+    # (§6). It supplies the *default* for new entries only — every converted
+    # amount stores the code it was captured under, so changing this later never
+    # reinterprets a snapshot that was already taken.
+    reference_currency: str = "AUD"
+
+    @field_validator("reference_currency")
+    @classmethod
+    def _validate_reference_currency(cls, value: str) -> str:
+        code = value.strip().upper()
+        if not _CURRENCY_RE.fullmatch(code):
+            raise ValueError(f"REFERENCE_CURRENCY must be a 3-letter ISO 4217 code (got {value!r})")
+        return code
 
     @model_validator(mode="after")
     def _assemble_database_url(self) -> "Settings":

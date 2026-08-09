@@ -147,7 +147,9 @@ export interface OrderItem {
   quantity: number;
   unit_price_minor: number;
   currency_code: string;
-  converted_price_aud_minor: number | null;
+  /** Entry-time conversion snapshot, in `converted_currency_code`. Never recomputed. */
+  converted_price_minor: number | null;
+  converted_currency_code: string | null;
   spawned_kit_ids: string[];
 }
 
@@ -186,7 +188,9 @@ export interface OrderItemCreate {
   quantity: number;
   unit_price_minor: number;
   currency_code: string;
-  converted_price_aud_minor?: number | null;
+  /** Omit the code and the instance's reference currency is stamped in server-side. */
+  converted_price_minor?: number | null;
+  converted_currency_code?: string | null;
   kit?: OrderKitDetails | null;
   catalog_ref_id?: string | null;
   new_item?: NewCatalogItem | null;
@@ -318,4 +322,11 @@ export interface ImportResult {
   kits_spawned: number;
   rows_deleted: Record<string, number>;
   warnings: string[];
+}
+
+/** Instance-level settings the UI needs before it can render a form. */
+export interface Meta {
+  version: string;
+  /** Default currency for new entries; each snapshot stores its own code. */
+  reference_currency: string;
 }

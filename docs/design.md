@@ -377,18 +377,31 @@ logs; "a login page exists" is not the completion criterion.
 - `unit_price_minor` — integer, minor units (cents), never float. Avoids the classic
   floating-point money bug
 - `currency_code` — ISO 4217 (AUD, USD, JPY, …), stored per order item
-- ✅ `converted_price_aud_minor` — the current alpha implementation, captured **at entry
-  time** and never recalculated on view.
+- ✅ `converted_price_minor` + `converted_currency_code` — the conversion snapshot,
+  captured **at entry time** and never recalculated on view.
   What a kit cost is a historical fact; re-deriving it from a live FX API on every page
   load would make spend history drift underneath the person reading it. If a live-rate
   lookup at entry time is wanted (a nice-to-have, not built), it's a one-shot call at
   creation, result stored, done
+- ✅ `REFERENCE_CURRENCY` — the instance's own currency (default `AUD`). Order forms,
+  starter-sheet templates, and the MCP `create_order` default all read it. A CHECK
+  constraint keeps the amount and its code null-or-present together
 
-🔨 **M5.1 removes the AUD assumption without changing the snapshot rule.** The field
-becomes a neutral reference-currency amount with the currency recorded alongside it.
-Existing values migrate as AUD. The instance has a configurable default reference
-currency, and order forms, starter sheets, and MCP defaults all read it rather than
-hard-coding AUD. Changing the instance default later does not reinterpret old snapshots.
+✅ **The AUD assumption is gone** (shipped ahead of M5.1, alongside M5). The amount
+column was `converted_price_aud_minor` — a name that asserted a currency the schema
+never stored. It is now a neutral amount with its code beside it, and the code is
+written **at entry time**, not read from config on the way out: an amount whose meaning
+can be changed by editing an env var is not a snapshot. Moving `REFERENCE_CURRENCY`
+later therefore changes what *new* entries default to and nothing else.
+
+Two compatibility notes for anyone who used the 0.1.0 alpha:
+
+- the migration renames the column rather than replacing it, and backfills `AUD` for
+  every existing snapshot — which is what those rows always meant
+- CSVs exported by 0.1.0 still import. `converted_price_aud_minor` is a registered
+  alias of the current column and carries `AUD` in with it, so an old archive is read
+  as the AUD it was even on an instance whose reference currency is something else.
+  Exports only ever emit the current name
 
 The same instinct — recorded facts stay recorded — runs through the order guards in
 §3.9 and the delete blocks in §4.
@@ -412,6 +425,11 @@ The first localisation milestone is infrastructure, not a partially translated U
 
 Shipping the English catalogue before adding photos, authentication screens, or the
 showcase prevents each of those features from creating another pile of embedded copy.
+
+The configurable reference currency listed above was split out and shipped early, with
+M5 — it is a schema migration and a CSV rename, unrelated to translation, and it got
+cheaper the sooner it happened: every archive exported under the old column name is one
+more file the compatibility alias has to keep understanding.
 
 ---
 
@@ -459,25 +477,52 @@ transactional tools do not need them.
 
 ---
 
-## 8. Docker Compose Layout 🔨 **Planned (M5) — partially built**
-
-Today `docker-compose.yml` starts the database only; the API and frontend run from
-source in development. The full local stack lands with M5:
+## 8. Docker Compose Layout ✅ (Milestone 5, 10/08/2026)
 
 ```yaml
 services:
-  api:        # FastAPI + FastMCP, one process, one port (REST at /, MCP at /mcp)
-  frontend:   # single ingress: static Vite build, /api + /mcp proxy to the api service
-  db:         # postgres:16   ✅ this one exists today
+  web:      # nginx: static Vite build; /api and /mcp proxied to api
+  api:      # FastAPI + FastMCP, one process, one port (REST at /, MCP at /mcp)
+  migrate:  # alembic upgrade head, then exits — a gate, not a service
+  db:       # postgres:16
   # photo storage: local named volume by default;
   # optional S3-compatible (MinIO or external) via env var, not required for v1
 ```
 
-Only the frontend ingress is published to the host; the API and database remain on the
-Compose network. The host bind defaults to `127.0.0.1`, so a convenient install is not
-accidentally an internet deployment. Database migrations run as a controlled startup
-step before the API becomes healthy, and `docker compose up -d --wait` is the supported
-empty-instance path.
+Only `web` is published; the API and database stay on the Compose network, so an
+instance has one door and it binds to `127.0.0.1` — a convenient install is not
+accidentally an internet deployment. `docker compose up -d --wait` is the supported
+empty-instance path, and it exits non-zero if anything fails to come up.
+
+Images build from source in-repo. Publishing to a registry belongs with the rest of
+release automation in M9; until then an install needs no registry, no tags, and no
+multi-architecture story — the machine doing the installing builds for itself.
+
+**Migrations are their own container**, gating the API through
+`service_completed_successfully`. Running them from the API's entrypoint would turn a
+failed migration into a crash-looping API; this way it's a stopped deploy with the
+error in `docker compose logs migrate`, and the API never starts against a database it
+doesn't match.
+
+**The API's healthcheck is `/readyz`, which touches the database.** `/healthz` stays a
+pure liveness check. If the healthcheck didn't hit Postgres, Compose would report a
+healthy stack that cannot serve a single request.
+
+Two nginx details are load-bearing rather than incidental, both found by testing
+rather than reasoning:
+
+- **`proxy_buffering off` on the MCP routes.** MCP is streamable HTTP; with buffering
+  on, nginx holds the response and the client waits for bytes the proxy already has.
+  It presents as a hang, not an error, which makes it expensive to diagnose later.
+- **The upstream is resolved through a variable, with `resolver 127.0.0.11`.** A
+  literal hostname in `proxy_pass` is resolved once at startup and cached for the life
+  of the process, so recreating the api container onto a new address — exactly what
+  upgrading does — 502s every request until `web` is restarted too. Verified by
+  forcing the api container onto a different address with `web` left running: 502
+  before, 200 after.
+
+`/mcp` without the trailing slash is served rather than redirected. A 307 in answer to
+a POST is a real hazard, not a cosmetic one, because not every client re-sends the body.
 
 M5 does **not** make the stack internet-safe. M6 supplies a tested VPS deployment path
 with authentication and a reference TLS/reverse-proxy configuration (for example Caddy),
@@ -568,12 +613,15 @@ Unchanged from the original plan:
 5. ✅ **4.5** Import/export — CSV archive + manifest, preview, templates (§12), inserted
    ahead of the rest to make a public alpha honest (§10)
 6. → **Public alpha here.** Everything below happens in the open.
-7. 🔨 **M5 — Installability:** full local Docker Compose stack, controlled migrations,
-   safe loopback defaults, health checks, and backup/upgrade documentation. This improves
-   adoption without claiming the unauthenticated stack is internet-safe
+7. ✅ **M5 — Installability:** full local Docker Compose stack, controlled migrations,
+   safe loopback defaults, health checks, and backup/upgrade documentation (§8,
+   `docs/operations.md`). This improves adoption without claiming the unauthenticated
+   stack is internet-safe. The configurable reference currency was pulled forward from
+   M5.1 and shipped here — it is a schema migration, not translation work, and its
+   compatibility cost grows with every archive exported under the old column name
 8. 🔨 **M5.1 — Internationalisation foundation:** English source catalogue,
-   locale-aware formatting, structured API errors, and a configurable historical
-   reference currency. No translations in this milestone
+   locale-aware formatting, and structured API errors. No translations in this
+   milestone
 9. 🔨 **M6 — Secure remote access:** single-owner browser authentication, scoped
    REST/MCP bearer tokens, OAuth-compatible MCP access, and a tested TLS/VPS deployment
    path. This is the gate for deliberately exposing an instance

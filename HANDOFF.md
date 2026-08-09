@@ -16,6 +16,75 @@ Template:
 
 ---
 
+## 2026-08-10 — Claude Code — M5 installability + neutral reference currency
+
+Branch **`feat/m5-install-and-reference-currency`**, pushed, PR open against `main`.
+Two commits: `588a12f` (the work below) and `f6a69c4` (exposure docs). Working tree
+clean.
+
+This hand-off entry lives on the branch rather than on `main`, against the usual
+convention — the branch already contained a `HANDOFF.md` edit, so committing another
+to `main` would have guaranteed a conflict at merge. The PR was opened immediately,
+so nothing is hidden from the next session in the meantime.
+
+- **Done — reference currency (pulled forward from M5.1):**
+  - `converted_price_aud_minor` → `converted_price_minor` + `converted_currency_code`.
+    Migration `2b293c6fd496` **renames** (doesn't replace) and backfills `'AUD'`;
+    downgrade is deliberately lossy for non-AUD rows and says so. Round trip verified.
+  - New `REFERENCE_CURRENCY` setting (default AUD, validated as ISO 4217). The code is
+    stamped **at write time** by `_converted_snapshot()` in `services/orders.py` —
+    never read from config on the way out, or every historical amount would change
+    meaning when the operator edits an env var. Paired CHECK constraint.
+  - New `GET /meta` (version + reference_currency). The order form reads it; it gates
+    its render on the query because react-hook-form snapshots defaults at mount and
+    would otherwise stick a new order on the fallback currency.
+  - **CSV alias mechanism** on `ColumnSpec`: `aliases` + `alias_fills`. The retired
+    header still imports and carries `AUD` in with it, because the old *name* asserted
+    the currency — an instance on JPY must not reinterpret those rows. Exports only
+    emit current names. 13 new tests in `tests/test_reference_currency.py`.
+- **Done — M5 packaging:** `web` (nginx) + `api` + one-shot `migrate` + `db`. Only
+  `web` published, loopback, `${WEB_PORT:-8080}`. Images build from source in-repo —
+  registry publishing stays in M9. `/readyz` (real `SELECT 1`) is the healthcheck;
+  `/healthz` stays liveness-only.
+- **Three things found by testing, not by reasoning — don't "simplify" them away:**
+  1. **nginx `resolver 127.0.0.11` + variable upstream.** A literal hostname in
+     `proxy_pass` resolves once at startup and caches forever, so recreating `api` on a
+     new address — *what upgrading does* — 502s everything until `web` restarts too.
+     Reproduced by squatting api's address: 502 before, 200 after.
+  2. **`proxy_buffering off` on `/mcp`.** Verified a full MCP session (initialize →
+     tools/list → tools/call) through the proxy, chunked SSE intact.
+  3. **`location = /openapi.json`.** `/api/docs` rendered fine but its schema fetch hit
+     the SPA fallback and got `index.html` with a 200. Swagger would show "failed to
+     load API definition".
+  - Also: `/mcp` without the trailing slash is now *served*, not redirected.
+    `serverInfo.version` was reporting FastMCP's `3.4.5` under plamotrack's name; now
+    `app.__version__`.
+- **Done — exposure docs (`f6a69c4`):** `WEB_BIND` works exactly like `POSTGRES_BIND`
+  (it's the host-IP field of the same publish syntax), but the *risk* isn't symmetric:
+  Postgres on `0.0.0.0` still has a password, the web ingress has nothing. New
+  "Reaching it from another machine" section in `docs/operations.md` gives three
+  options best-first — SSH tunnel, private/VPN address, then LAN — plus the Docker
+  iptables surprise (published ports are forwarded, not delivered to the host, so
+  `ufw deny` does **not** block them; the bind address is the real control).
+  Deliberately ships **no** reverse-proxy config: a TLS/auth reference belongs with M6
+  where it can be tested against the MCP streaming path.
+- **State:** 102 backend tests pass, ruff clean, `npm run build` + oxlint clean,
+  Playwright e2e passes. Verified on a clean volume: `up -d --build --wait` exits 0,
+  all six migrations run, UI/API/MCP/openapi all 200 on an empty instance. Failure path
+  verified too — a migration that can't connect leaves `api` and `web` in `Created` and
+  compose exits **1**. The documented `pg_dump`/`pg_restore` procedure was run
+  end-to-end and the conversion snapshot survived it.
+- **Screenshots need no action.** They were shot with Playwright, which captures the
+  page viewport only — no browser chrome, so no `:5173` address bar to go stale against
+  the README's new `:8080`. Checked all six. The UI in them is also unchanged by this
+  work (none show the order form modal, the only screen that moved).
+- **Next:** M5.1 proper is now just the three i18n workstreams — frontend string
+  catalogue (~200–260 keys, `react-i18next` recommended, OrdersPage is the big one),
+  locale-aware formatting (small; only 19 directional Tailwind utilities to swap), and
+  structured error codes (48 raise sites; the codes become permanent API surface, so
+  pin them with tests). Estimated 4–5 sessions. The reference-currency piece that used
+  to sit in M5.1 is done — don't re-plan it.
+
 ## 2026-08-09 — Codex — Public roadmap reprioritisation (merged)
 
 - **Done:** Reworked the public roadmap across `docs/design.md`, `README.md`,

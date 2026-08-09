@@ -124,8 +124,8 @@ Being honest up front beats you finding out at 11pm:
 | Kits, orders, inventory, retailers, Kanban board | ✅ Built |
 | CSV import / export | ✅ Built |
 | MCP server | ✅ Built |
-| **Bundled `docker compose up` for the whole local stack** | 🔨 Milestone 5 — today compose only starts Postgres |
-| **Internationalisation foundations** | 🔨 Milestone 5.1 — English catalogue and locale-aware formatting first; translations later |
+| Bundled `docker compose up` for the whole local stack | ✅ Built |
+| **Internationalisation foundations** | 🔨 Milestone 5.1 — English catalogue and locale-aware formatting; the configurable reference currency already shipped |
 | **Authentication + OAuth-compatible remote MCP** | 🔨 Milestone 6 — yes, really, see the warning above |
 | **MCP `2026-07-28` compatibility** | 🔨 Milestone 6.1 — dual-era, without dropping current clients |
 | **Photo gallery per kit** | 🔨 Milestone 7 |
@@ -135,70 +135,58 @@ Being honest up front beats you finding out at 11pm:
 
 ## Installing it
 
-Right now the database runs in Docker and the app runs from source. One-command
-local packaging is Milestone 5. It will bind to loopback by default; authenticated VPS
-deployment follows in Milestone 6.
-
-**You'll need:** [Docker](https://docs.docker.com/get-started/get-docker/) ·
-[uv](https://docs.astral.sh/uv/getting-started/installation/) ·
-Node 20.19+ (or 22+) · about five minutes.
-
-### 1. Clone and set a password
+**You'll need:** [Docker](https://docs.docker.com/get-started/get-docker/) and about
+three minutes. Nothing else — the images build from this repo.
 
 ```bash
 git clone https://github.com/DeusMaximus/plamotrack.git && cd plamotrack
 cp .env.example .env
+# open .env, replace change-me with a real password
+docker compose up -d --wait
 ```
 
-Open `.env` and replace `change-me`. That one file is the whole configuration — Docker
-Compose reads it to start the database, and the API reads it to connect, so there's
-nothing to keep in sync.
-
-### 2. Start Postgres
-
-```bash
-docker compose up -d db --wait
-```
-
-This publishes the database on `127.0.0.1` only, so nothing outside this machine can
-reach it. If you need remote access, set `POSTGRES_BIND` in `.env` — and set a real
-password before you do.
-
-### 3. Start the API (and the MCP server — same process)
-
-```bash
-cd backend && uv sync && uv run alembic upgrade head && uv run uvicorn app.main:app
-```
-
-That gives you the REST API on `http://localhost:8000`, interactive API docs at
-`http://localhost:8000/docs`, and the MCP endpoint at `http://localhost:8000/mcp/`.
-
-### 4. Start the frontend
-
-In a second terminal:
-
-```bash
-cd frontend && npm install && npm run dev
-```
-
-Open **http://localhost:5173** and you're looking at an empty collection. Head to
+Open **http://localhost:8080**. That's an empty collection — head to
 **Data → Starter sheet** to pour an existing spreadsheet in, or just add an order.
+
+The first run builds two images and takes a couple of minutes; after that it's
+seconds. `.env` is the whole configuration: Compose reads it to start the database
+and the API reads it to connect, so there's nothing to keep in sync.
+
+### What you just started
+
+Four containers, but only one open port:
+
+| | |
+|---|---|
+| **http://localhost:8080** | the app |
+| `http://localhost:8080/api/…` | REST API — e.g. `/api/kits`, or `/api/docs` for the interactive docs |
+| `http://localhost:8080/mcp/` | MCP endpoint |
+
+The API and database aren't published — they talk over Compose's internal network,
+so an instance has exactly one door, and it's bound to `127.0.0.1`. A `migrate`
+container runs the database migrations and exits before the API starts; seeing it
+as `Exited (0)` is success, not a failure.
+
+Running it on a server and want to reach it from your laptop? That door stays on
+loopback by default for a reason — there's no login yet — so see
+[Reaching it from another machine](docs/operations.md#reaching-it-from-another-machine)
+rather than just widening the bind.
+
+Backups, restores, upgrading, and the full configuration reference live in
+**[docs/operations.md](docs/operations.md)**.
 
 ### Something went wrong
 
-- **`connection refused` from the API** — Postgres isn't up yet. `docker compose ps`
-  should show the `db` container healthy.
 - **`POSTGRES_PASSWORD` error from compose** — you skipped `cp .env.example .env`.
+- **Port 8080 already in use** — set `WEB_PORT` in `.env` to something free.
+- **`up --wait` failed** — `docker compose ps` shows which service is unhealthy.
+  If it's `migrate`, `docker compose logs migrate` has the reason, and the API
+  deliberately won't have started.
 - **Password authentication failed** — you changed `POSTGRES_PASSWORD` after the
   database volume was already created. Postgres only reads it when initialising an empty
   data directory. Either set it back, or `docker compose down -v` to start clean, which
-  deletes the database.
-- **Port 5432 already in use** — you have another Postgres. Set `POSTGRES_PORT` in
-  `.env` to something free; compose publishes on it and the API connects to it.
-- **Frontend loads but every list is empty with an error banner** — the API isn't
-  running on port 8000. The Vite dev server proxies `/api` there.
-- **Pointing at a Postgres you already run** — uncomment `DATABASE_URL` in `.env` and
-  skip step 2 entirely.
+  **deletes the database**.
+- **Pointing at a Postgres you already run** — uncomment `DATABASE_URL` in `.env`.
 
 ---
 
@@ -207,11 +195,12 @@ Open **http://localhost:5173** and you're looking at an empty collection. Head t
 plamotrack speaks MCP over streamable HTTP at:
 
 ```
-http://localhost:8000/mcp/
+http://localhost:8080/mcp/
 ```
 
-**Keep the trailing slash.** Without it you get a 307 redirect, and not every client
-follows redirects on POST.
+**Keep the trailing slash** as a habit. The bundled stack serves both spellings, but
+running the API straight from source (see *Developing on it*) redirects without it —
+and a 307 in response to a POST loses the body on clients that don't re-send it.
 
 ### Claude Desktop
 
@@ -230,7 +219,7 @@ So bridge the HTTP endpoint into a stdio server with
   "mcpServers": {
     "plamotrack": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "http://localhost:8000/mcp/"]
+      "args": ["-y", "mcp-remote", "http://localhost:8080/mcp/"]
     }
   }
 }
@@ -242,13 +231,13 @@ Restart Claude Desktop. If it complains about the URL not being HTTPS, add
 ### Claude Code
 
 ```bash
-claude mcp add --transport http plamotrack http://localhost:8000/mcp/
+claude mcp add --transport http plamotrack http://localhost:8080/mcp/
 ```
 
 ### Anything else
 
 It's a standard streamable-HTTP MCP server, so any client that can point at a local URL
-will work — give it `http://localhost:8000/mcp/`. Clients that only speak stdio, or
+will work — give it `http://localhost:8080/mcp/`. Clients that only speak stdio, or
 that (like Claude Desktop) only accept publicly reachable URLs, can use the `mcp-remote`
 bridge shown above. Instructions for other specific clients are welcome as PRs; open an
 issue if yours needs something unusual.
@@ -276,6 +265,34 @@ your entire collection is not a feature.
 ---
 
 ## Developing on it
+
+Running the containers is the install path; for development you want hot reload, so
+run the database in Docker and the app from source.
+
+**You'll need:** Docker · [uv](https://docs.astral.sh/uv/getting-started/installation/) ·
+Node 20.19+ (or 22+).
+
+```bash
+docker compose up -d db --wait                       # just Postgres, on 127.0.0.1:5432
+
+cd backend && uv sync && uv run alembic upgrade head
+uv run uvicorn app.main:app                          # REST on :8000, MCP at :8000/mcp/
+
+cd ../frontend && npm install && npm run dev         # Vite on :5173, proxies /api to :8000
+```
+
+Open **http://localhost:5173**. The API serves at the root here rather than under
+`/api` — the Vite dev proxy strips the prefix exactly as nginx does in the container,
+so the app's own fetch paths are identical either way.
+
+`docker compose up -d db` and the full stack are the same Compose project, so they
+share one database container — starting one doesn't clash with the other. What you
+get if both are running is two APIs against one database: the container's on
+`:8080`, yours from source on `:8000`. Harmless, but confusing when a change doesn't
+show up where you expected. `docker compose stop web api` leaves just the database.
+
+Already have a Postgres on 5432? Set `POSTGRES_PORT` in `.env` — Compose publishes
+on it and the API connects to it.
 
 ```bash
 cd backend

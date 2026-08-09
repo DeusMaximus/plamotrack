@@ -79,7 +79,12 @@ class OrderItem(UUIDPrimaryKeyMixin, Base):
     quantity: Mapped[int]
     unit_price_minor: Mapped[int]
     currency_code: Mapped[str] = mapped_column(String(3))
-    converted_price_aud_minor: Mapped[int | None]  # snapshot at entry time (§6)
+    # What this line cost in the instance's reference currency, captured at entry
+    # time and never recomputed (§6). The code is stored per row rather than read
+    # from config on the way out: an amount whose currency can be changed from an
+    # env var isn't a snapshot, it's a number that quietly means something else.
+    converted_price_minor: Mapped[int | None]
+    converted_currency_code: Mapped[str | None] = mapped_column(String(3))
 
     order: Mapped[Order] = relationship(back_populates="items")
     # Kits spawned by this line (kit-type lines only); read-only convenience.
@@ -93,6 +98,12 @@ class OrderItem(UUIDPrimaryKeyMixin, Base):
     __table_args__ = (
         CheckConstraint("quantity > 0", name="quantity_positive"),
         CheckConstraint("unit_price_minor >= 0", name="unit_price_non_negative"),
+        CheckConstraint("converted_price_minor >= 0", name="converted_price_non_negative"),
+        # A converted amount with no currency is the bug this pair replaced.
+        CheckConstraint(
+            "(converted_price_minor IS NULL) = (converted_currency_code IS NULL)",
+            name="converted_price_currency_paired",
+        ),
     )
 
 

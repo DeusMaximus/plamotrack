@@ -34,6 +34,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import get_settings
 from app.exceptions import ConflictError, InvalidInputError
 from app.models import ItemType, Kit, Order, OrderItem
 from app.schemas.portability import (
@@ -115,7 +116,10 @@ def _detect_table(filename: str, header: list[str]) -> str | None:
     names = {name.strip().lower() for name in header}
     best, best_score = None, 0
     for spec in TABLE_SPECS:
+        # Aliases count towards the signature — a renamed older export should
+        # still be recognised as the table it is.
         expected = {column.name for column in spec.columns}
+        expected |= {alias for column in spec.columns for alias in column.aliases}
         score = len(names & expected)
         if score > best_score and score >= max(2, len(expected) // 2):
             best, best_score = spec.key, score
@@ -304,6 +308,9 @@ class _Planner:
     # -- parsing ---------------------------------------------------------------
 
     def _parse_row(self, spec: TableSpec, raw: dict[str, str]) -> _Row:
+        # Retired header names become current ones before anything looks at the
+        # row, so the rest of this method only ever sees the spec's own vocabulary.
+        raw = spec.canonicalise(raw)
         row_number = int(raw.get(_ROW_MARKER, 0) or 0)
         values: dict[str, Any] = {}
         present: set[str] = set()
@@ -331,6 +338,8 @@ class _Planner:
         for column in spec.columns:
             if column.required and column.name in present and values.get(column.name) is None:
                 errors.append(f"{column.name} is required")
+
+        _pair_converted_snapshot(spec, values, present)
 
         row = _Row(
             table=spec.key,
@@ -948,6 +957,27 @@ async def apply_import(
     )
 
 
+def _pair_converted_snapshot(spec: TableSpec, values: dict[str, Any], present: set[str]) -> None:
+    """Keep the §6 snapshot's two halves consistent, mirroring `_converted_snapshot`
+    in services/orders.py — the REST and MCP paths get this from the service layer,
+    but the importer writes model rows directly and would otherwise bypass it.
+
+    An amount with a blank currency cell is what the column help promises means
+    "the instance default"; without this it reached Postgres as NULL and tripped
+    the paired CHECK constraint as an unhandled 500. Resolved here rather than at
+    write time so the preview shows the value that will actually land.
+    """
+    if spec.key != "order_items" or "converted_price_minor" not in present:
+        return
+    if values.get("converted_price_minor") is None:
+        # No amount means no snapshot: a currency on its own records nothing.
+        values["converted_currency_code"] = None
+        present.add("converted_currency_code")
+    elif values.get("converted_currency_code") is None:
+        values["converted_currency_code"] = get_settings().reference_currency
+        present.add("converted_currency_code")
+
+
 def _build_instance(spec: TableSpec, row: _Row) -> Any:
     fields: dict[str, Any] = {"id": row.new_id}
     for column in spec.columns:
@@ -974,7 +1004,13 @@ _COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
     "consumables": {"quantity_on_hand": 0},
     "upgrades": {"quantity_on_hand": 0},
     "kits": {"status": "backlog", "status_updated_at": lambda: datetime.now(UTC)},
-    "order_items": {"unit_price_minor": 0, "converted_price_aud_minor": None},
+    "order_items": {
+        "unit_price_minor": 0,
+        # Both halves of the snapshot stay absent together — the paired CHECK
+        # constraint rejects an amount with no currency, and vice versa.
+        "converted_price_minor": None,
+        "converted_currency_code": None,
+    },
     "upgrade_applications": {"applied_at": lambda: datetime.now(UTC)},
     "kit_photos": {"created_at": lambda: datetime.now(UTC)},
 }

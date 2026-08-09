@@ -11,6 +11,8 @@ from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import __version__
+from app.config import get_settings
 from app.db import session_scope
 from app.exceptions import DomainError
 from app.models.enums import KitStatus
@@ -23,6 +25,9 @@ from app.services import upgrades as upgrades_service
 
 mcp = FastMCP(
     "plamotrack",
+    # Left unset this reports FastMCP's own version, so a client would show
+    # "plamotrack 3.4.5" — the framework's number wearing the app's name.
+    version=__version__,
     instructions=(
         "Track a Gunpla/plamo collection: kits move through a pipeline "
         "(pre_ordered → ordered → in_transit → backlog → building → complete; "
@@ -113,7 +118,7 @@ async def create_order(
     retailer: str,
     order_date: str,
     items: list[OrderItemCreate],
-    currency_code: str = "AUD",
+    currency_code: str | None = None,
     order_number: str | None = None,
     shipping_cost_minor: int | None = None,
     delivery_service: str | None = None,
@@ -132,7 +137,8 @@ async def create_order(
     call mark_order_received when a shipment arrives. Include the retailer's
     order_number from the confirmation email when available (support reference —
     only unique per retailer, never treat it as an identifier). Prices are integer
-    minor units (cents/yen) with an ISO 4217 currency_code."""
+    minor units (cents/yen) with an ISO 4217 currency_code; omit currency_code to
+    use the instance's own reference currency (see the `meta` resource)."""
     try:
         parsed_date = date.fromisoformat(order_date)
     except ValueError:
@@ -147,7 +153,7 @@ async def create_order(
             tracking_number=tracking_number,
             tracking_url=tracking_url,
             shipping_cost_minor=shipping_cost_minor,
-            currency_code=currency_code,
+            currency_code=currency_code or get_settings().reference_currency,
             received=received,
             items=items,
         )

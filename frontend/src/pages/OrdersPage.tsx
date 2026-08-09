@@ -26,6 +26,19 @@ import { formatDate, formatMoney, majorToMinor, minorToMajor, todayISO } from ".
 
 const COMMON_CURRENCIES = ["AUD", "USD", "JPY", "EUR", "GBP", "SGD", "HKD", "CNY", "KRW"];
 
+/** Suggestions, with this instance's own currency first — it's the likely pick. */
+function currencyOptions(reference: string): string[] {
+  return [reference, ...COMMON_CURRENCIES.filter((code) => code !== reference)];
+}
+
+/** Instance config: static for the life of the process, so fetch it once.
+ * Shared key, so the page warms the cache before the form modal needs it. */
+const metaQuery = {
+  queryKey: ["meta"],
+  queryFn: api.getMeta,
+  staleTime: Infinity,
+} as const;
+
 interface LineValues {
   id?: string;
   item_type: ItemType;
@@ -105,14 +118,23 @@ function orderToFormValues(
   };
 }
 
-function toOrderItem(line: LineValues, currency: string): OrderItemUpsert {
+function toOrderItem(
+  line: LineValues,
+  currency: string,
+  referenceCurrency: string,
+): OrderItemUpsert {
   const unitPriceMinor = majorToMinor(line.unit_price, currency);
+  // Only a same-currency purchase converts to itself. Anything else needs a rate
+  // we don't have, so the snapshot stays empty rather than guessing (§6) — the
+  // server stamps the currency code in when an amount is present.
+  const converted = currency === referenceCurrency ? unitPriceMinor : null;
   const base = {
     id: line.id,
     quantity: Number(line.quantity),
     unit_price_minor: unitPriceMinor,
     currency_code: currency,
-    converted_price_aud_minor: currency === "AUD" ? unitPriceMinor : null,
+    converted_price_minor: converted,
+    converted_currency_code: converted === null ? null : referenceCurrency,
   };
   if (line.item_type === "kit") {
     return {
@@ -272,7 +294,42 @@ function LineEditor({
   );
 }
 
+/** Gate, so the form below is only ever *mounted* with a real reference currency.
+ *
+ * It has to be a separate component rather than an early return inside the form:
+ * hooks run before any return, so `useForm` would already have captured a
+ * defaultValues with an empty currency, and react-hook-form does not revisit
+ * defaults when the query later resolves. Not rendering isn't the same as not
+ * mounting. In practice OrdersPage warms this query, so the loading state is
+ * rarely seen — "rarely" being exactly why the bug would have survived. */
 function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void }) {
+  const { data: meta } = useQuery(metaQuery);
+
+  if (!meta) {
+    return (
+      <Modal title={order ? "Edit order" : "New order"} onClose={onClose} wide>
+        <EmptyState>Loading…</EmptyState>
+      </Modal>
+    );
+  }
+  return (
+    <OrderForm
+      order={order}
+      onClose={onClose}
+      referenceCurrency={meta.reference_currency}
+    />
+  );
+}
+
+function OrderForm({
+  order,
+  onClose,
+  referenceCurrency,
+}: {
+  order?: Order;
+  onClose: () => void;
+  referenceCurrency: string;
+}) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [newRetailerName, setNewRetailerName] = useState<string | null>(null);
@@ -291,7 +348,7 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
         retailer_id: "",
         order_date: todayISO(),
         order_number: "",
-        currency_code: "AUD",
+        currency_code: referenceCurrency,
         shipping_cost: "",
         delivery_service: "",
         tracking_number: "",
@@ -346,7 +403,9 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
       delivery_service: values.delivery_service || null,
       tracking_number: values.tracking_number || null,
       tracking_url: values.tracking_url || null,
-      items: values.items.map((line) => toOrderItem(line, values.currency_code)),
+      items: values.items.map((line) =>
+        toOrderItem(line, values.currency_code, referenceCurrency),
+      ),
     };
     try {
       if (order) {
@@ -426,7 +485,7 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
               })}
             />
             <datalist id="currencies">
-              {COMMON_CURRENCIES.map((code) => (
+              {currencyOptions(referenceCurrency).map((code) => (
                 <option key={code} value={code} />
               ))}
             </datalist>
@@ -547,6 +606,8 @@ export function OrdersPage() {
     queryFn: api.listConsumables,
   });
   const { data: upgrades } = useQuery({ queryKey: ["upgrades"], queryFn: api.listUpgrades });
+  // Warms the shared cache so the form modal has it the moment it opens.
+  useQuery(metaQuery);
 
   const retailerName = useMemo(
     () => new Map((retailers ?? []).map((retailer) => [retailer.id, retailer.name])),

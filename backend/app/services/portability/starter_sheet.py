@@ -14,6 +14,7 @@ lines, so a five-kit haul is five rows here and one order in the app.
 import uuid
 from collections import OrderedDict
 
+from app.config import get_settings
 from app.models.enums import KitStatus
 from app.services.portability.spec import (
     ColumnSpec,
@@ -56,13 +57,21 @@ STARTER_SHEET_COLUMNS: tuple[ColumnSpec, ...] = (
     col("order_date", parse_date, help="YYYY-MM-DD. Required if a retailer is named."),
     col("order_number", parse_text, help="The shop's reference, if you have it."),
     col("unit_price", parse_decimal, help="Major units per kit, e.g. 49.99."),
-    col("currency", parse_text, help="3-letter code, e.g. AUD. Blank = AUD."),
+    col(
+        "currency",
+        parse_text,
+        help="3-letter ISO code, e.g. JPY. Blank = this instance's reference currency.",
+    ),
     col("received", parse_text, help="yes/no — has it arrived? Blank = yes."),
 )
 
 STARTER_SHEET_HEADER: list[str] = [column.name for column in STARTER_SHEET_COLUMNS]
 
-STARTER_SHEET_EXAMPLES: list[dict[str, str]] = [
+#: Placeholder resolved by `starter_sheet_examples()`. A downloaded template full
+#: of somebody else's currency is exactly the AUD assumption this stopped baking in.
+_INSTANCE_CURRENCY = "\0currency\0"
+
+_STARTER_SHEET_EXAMPLES: list[dict[str, str]] = [
     {
         "kit_name": "RX-79(G) Ground Type",
         "grade": "HG",
@@ -76,7 +85,7 @@ STARTER_SHEET_EXAMPLES: list[dict[str, str]] = [
         "order_date": "2026-03-14",
         "order_number": "HLJ-88213",
         "unit_price": "24.50",
-        "currency": "AUD",
+        "currency": _INSTANCE_CURRENCY,
         "received": "yes",
     },
     {
@@ -92,7 +101,7 @@ STARTER_SHEET_EXAMPLES: list[dict[str, str]] = [
         "order_date": "2026-03-14",
         "order_number": "HLJ-88213",
         "unit_price": "112.00",
-        "currency": "AUD",
+        "currency": _INSTANCE_CURRENCY,
         "received": "yes",
     },
     {
@@ -112,6 +121,15 @@ STARTER_SHEET_EXAMPLES: list[dict[str, str]] = [
         "received": "",
     },
 ]
+
+
+def starter_sheet_examples() -> list[dict[str, str]]:
+    """Sample rows for the downloadable template, in this instance's currency."""
+    currency = get_settings().reference_currency
+    return [
+        {name: (currency if value == _INSTANCE_CURRENCY else value) for name, value in row.items()}
+        for row in _STARTER_SHEET_EXAMPLES
+    ]
 
 
 def is_starter_sheet(header: list[str]) -> bool:
@@ -155,7 +173,9 @@ def expand(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
     for row in rows:
         source_row = row.get(_ROW_MARKER, "")
         retailer_name = (row.get("retailer") or "").strip()
-        currency = (row.get("currency") or "").strip().upper() or "AUD"
+        currency = (row.get("currency") or "").strip().upper() or (
+            get_settings().reference_currency
+        )
         quantity = (row.get("quantity") or "").strip() or "1"
         status = (row.get("status") or "").strip()
 

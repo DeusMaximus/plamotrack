@@ -77,10 +77,22 @@ class OrderItemCreate(BaseModel):
     quantity: int = Field(gt=0)
     unit_price_minor: int = Field(ge=0)
     currency_code: str = Field(pattern=_CURRENCY_PATTERN)
-    converted_price_aud_minor: int | None = Field(default=None, ge=0)
+    # Entry-time conversion snapshot (§6). Omit the code and the instance's
+    # reference currency is stamped in; it is never re-read afterwards.
+    converted_price_minor: int | None = Field(default=None, ge=0)
+    converted_currency_code: str | None = Field(default=None, pattern=_CURRENCY_PATTERN)
     kit: OrderKitDetails | None = None
     catalog_ref_id: uuid.UUID | None = None
     new_item: NewCatalogItem | None = None
+
+    @model_validator(mode="after")
+    def _validate_converted_snapshot(self) -> "OrderItemCreate":
+        if self.converted_currency_code is not None and self.converted_price_minor is None:
+            raise ValueError(
+                "converted_currency_code without converted_price_minor: a currency "
+                "with no amount doesn't record anything"
+            )
+        return self
 
     @model_validator(mode="after")
     def _validate_dispatch_payload(self) -> "OrderItemCreate":
@@ -146,7 +158,8 @@ class OrderItemRead(BaseModel):
     quantity: int
     unit_price_minor: int
     currency_code: str
-    converted_price_aud_minor: int | None
+    converted_price_minor: int | None
+    converted_currency_code: str | None
     spawned_kit_ids: list[uuid.UUID] = []
 
 

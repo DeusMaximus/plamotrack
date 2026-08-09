@@ -1,5 +1,13 @@
-# Dev stack — currently just the database.
-# The api and frontend services land with Milestone 5 (local installability).
+# The full local stack (design notes §8). `docker compose up -d --wait` builds
+# it, migrates the database, and leaves an instance on http://127.0.0.1:8080.
+#
+# Only `web` is published. The API and the database stay on the compose network,
+# so an instance has exactly one door, bound to loopback by default. That makes
+# this a convenient local install and NOT an internet deployment — nothing here
+# is authenticated yet (Milestone 6).
+#
+# Developing on it instead? `docker compose up -d db --wait` still starts just
+# the database, and the API and frontend run from source as before.
 services:
   db:
     image: postgres:16
@@ -11,10 +19,10 @@ services:
     ports:
       # Loopback only by default: the database is published for tooling on this
       # machine (the from-source API, psql, pytest), and nothing else needs to
-      # reach it. Docker publishes on 0.0.0.0 if you omit the bind address,
-      # which puts an unauthenticated-by-default service on your LAN.
-      # Override POSTGRES_BIND only if you genuinely need remote access, and
-      # set a real password first.
+      # reach it — the api container talks to it over the compose network.
+      # Docker publishes on 0.0.0.0 if you omit the bind address, which puts an
+      # unauthenticated-by-default service on your LAN. Override POSTGRES_BIND
+      # only if you genuinely need remote access, and set a real password first.
       - "${POSTGRES_BIND:-127.0.0.1}:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
@@ -23,6 +31,64 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # Migrations run as their own step, to completion, before the API starts.
+  # Doing it in the API's entrypoint instead would turn a failed migration into
+  # a crash-looping API rather than a stopped deploy with a readable error.
+  migrate:
+    build: ./backend
+    image: plamotrack-api:local
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    env_file: .env
+    environment:
+      # Beats the value in .env, which points the from-source API at the
+      # published host port. In here, the database is a service name.
+      POSTGRES_HOST: db
+    depends_on:
+      db:
+        condition: service_healthy
+
+  api:
+    build: ./backend
+    image: plamotrack-api:local
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      POSTGRES_HOST: db
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # /readyz, not /healthz: this has to fail while Postgres is unreachable,
+      # or compose reports a stack healthy that can't serve a single request.
+      # Written in python because the slim image has no curl and doesn't need one.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz').read()",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
+
+  web:
+    build: ./frontend
+    image: plamotrack-web:local
+    restart: unless-stopped
+    ports:
+      # The one published port. WEB_BIND is the whole access-control story until
+      # M6 — nothing here authenticates, so whoever can reach this can write to
+      # it. Loopback by default; see "Reaching it from another machine" in
+      # docs/operations.md before widening it, especially on Linux, where a
+      # published port is not covered by the host firewall.
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
   db-data:
