@@ -19,8 +19,8 @@ Template:
 ## 2026-08-10 — Claude Code — Issue #3: order edits stop erasing the §6 snapshot
 
 **Merged to `main` in PR #11 (`6d6b12e`), closing #3.** Verified green on `main` after
-the merge: 109 backend tests, ruff, `npm run build`, oxlint. The remote branch
-`fix/order-snapshot-preservation` still exists — delete when convenient.
+the merge: 109 backend tests, ruff, `npm run build`, oxlint. Branch deleted, local and
+remote; local `main` matches `origin/main`.
 
 - **Done:** Two commits, `6ba87ac` + `be80b31`.
   Reproduced #3 first against the live dev API — a `PATCH` carrying only a quantity
