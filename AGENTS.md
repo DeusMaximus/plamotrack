@@ -42,7 +42,8 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
 
 ```
 docker-compose.yml      # the full stack: web (nginx) + api + migrate + db.
-                        #   `up -d --wait` installs; `up -d db --wait` is the dev flow
+                        #   `up -d --wait` installs without publishing Postgres
+docker-compose.dev.yml  # explicit dev overlay: publishes Postgres on loopback only
 .env                    # the only config file (gitignored); .env.example is the template
                         #   compose + API both read it; app/config.py assembles the DSN
                         #   from POSTGRES_* unless DATABASE_URL is set explicitly
@@ -80,7 +81,7 @@ development, run **only** the db service and the app from source — the contain
 stack has no hot reload, and both want port 5432:
 
 ```bash
-docker compose up -d db --wait
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db --wait
 ```
 
 To exercise the packaged stack instead (before touching Dockerfiles, `nginx.conf`,

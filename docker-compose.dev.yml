@@ -1,0 +1,6 @@
+# Development-only Compose overlay. The packaged stack deliberately leaves
+# Postgres internal; source-run API/tests/tooling need this explicit loopback port.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"

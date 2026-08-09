@@ -16,6 +16,26 @@ Template:
 
 ---
 
+## 2026-08-10 — Codex — Internal packaged Postgres + config-aware recovery
+
+- **Done:** Implemented issues #8 and #7 on `codex/internal-postgres-dev-compose`.
+  The base stack no longer publishes Postgres; `docker-compose.dev.yml` explicitly
+  publishes it on fixed loopback for source development. Packaged `api`/`migrate`
+  are pinned to `db:5432`, while `POSTGRES_PORT` remains the configurable dev host
+  port. Backup/restore commands now read `POSTGRES_USER` and `POSTGRES_DB` inside
+  the database container. CI validates both configs, uses non-default names/port,
+  exercises dump/restore, and checks the packaged runtime publishers.
+- **Decisions:** Removed `POSTGRES_BIND` from `.env.example`; remote database access
+  requires an operator-supplied override. Kept #7 with #8 because both alter the
+  recovery/development Compose documentation.
+- **State:** Changes are uncommitted. 104 backend tests pass; Ruff check/format,
+  workflow YAML parsing, Compose config, and `git diff --check` pass. Isolated
+  runtime tests verified `127.0.0.1:55432`, custom-name dump/restore, dev-to-base
+  recreation without data loss, packaged REST/OpenAPI/MCP, and no published db
+  port. Disposable projects/volumes were removed; the original stack was untouched.
+- **Next:** Review, then commit/push/open a PR when the user asks; GitHub CI has not
+  run on this branch yet. Issues #7 and #8 remain open until merge.
+
 ## 2026-08-10 — Codex — Add GitHub Actions CI
 
 - **Done:** Added `.github/workflows/ci.yml` on `codex/add-github-ci`: read-only,

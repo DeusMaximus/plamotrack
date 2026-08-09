@@ -31,8 +31,8 @@ _TABLES = (
 
 
 async def _ensure_test_database() -> None:
-    """Create the test database if missing, so `docker compose up -d db` +
-    `pytest` works on a fresh checkout with no manual setup."""
+    """Create the test database if missing, so the dev Compose db + pytest works
+    on a fresh checkout with no manual setup."""
     url = make_url(os.environ["DATABASE_URL"])
     admin = create_async_engine(
         url.set(database="postgres"), isolation_level="AUTOCOMMIT", poolclass=NullPool
