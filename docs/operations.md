@@ -98,6 +98,81 @@ the API. `.env.example` documents every key. The ones worth knowing:
 
 Changes to `.env` need `docker compose up -d` to take effect.
 
+## Reaching it from another machine
+
+Running it on a NAS, a home server, or a VM and wanting to use it from your laptop
+is the normal case. The default `WEB_BIND=127.0.0.1` means only the machine
+*running* it can connect, so this needs a decision from you rather than a flag.
+
+Start from what's actually true: **nothing in plamotrack is authenticated yet.**
+There is no login, and `/api` and `/mcp` accept writes and deletes from anyone who
+can reach the port. So the question isn't "how do I open the port", it's "who
+should be able to reach this, and what's doing the deciding". Three answers, best
+first.
+
+### 1. Don't open it — tunnel to it
+
+Nothing to configure, nothing exposed, and it works from anywhere you can SSH:
+
+```bash
+ssh -N -L 8080:127.0.0.1:8080 you@your-server
+```
+
+`http://localhost:8080` on your laptop is now the instance. `WEB_BIND` stays on
+loopback. SSH is doing the authentication, which is the part plamotrack can't do
+yet. Best option for occasional use from one or two machines.
+
+### 2. Put it on a private network
+
+A WireGuard-based mesh (Tailscale, Netbird, headscale, plain WireGuard) gives the
+server an address only your own devices can route to. Bind to *that* interface
+rather than to everything:
+
+```bash
+WEB_BIND=100.x.y.z    # the server's address on the private network, not 0.0.0.0
+```
+
+Now the app is reachable from your phone and laptop, and from nothing else, with
+the VPN deciding who's in. This is the best fit if you want it always-available on
+your own devices. It's also the shape M6's authentication will slot into rather
+than replace.
+
+### 3. Bind to the LAN
+
+```bash
+WEB_BIND=0.0.0.0
+```
+
+Every device on the network can now reach it, and there is nothing to stop any of
+them writing to it — a guest phone, a smart TV, anything that joins your Wi-Fi.
+Reasonable on a network where you trust every device and every person; a bad idea
+on a shared, office, or student-house network. **Never route this in from the
+internet or put it on a public-facing interface.** Use option 1 or 2 instead until
+M6 lands.
+
+> ### ⚠️ On Linux, a published port ignores your firewall
+>
+> Docker inserts its own iptables rules to forward published ports into
+> containers. That traffic is *forwarded*, not delivered to the host, so it never
+> passes the `INPUT` rules `ufw` and `firewalld` mostly work with — `ufw deny 8080`
+> typically will **not** block a published container port. Plenty of self-hosted
+> services have ended up on the open internet exactly this way.
+>
+> The reliable control is the bind address, not the firewall: keep `WEB_BIND` on
+> `127.0.0.1` or a private-network address, and let it decide who can connect.
+> If you do need host-firewall rules to apply to Docker traffic, they belong in
+> the `DOCKER-USER` chain.
+
+### What about HTTPS and a login?
+
+That's Milestone 6: single-owner browser authentication, scoped API/MCP tokens,
+and a *tested* TLS reverse-proxy configuration. Putting a proxy in front of this
+today can give you HTTPS and a password prompt, and some people will want that —
+but a config here that hasn't been tested against the MCP streaming path would be
+a liability rather than a help, so this document won't pretend to supply one yet.
+If you do build your own, `frontend/nginx.conf` documents the two settings a proxy
+in front of MCP has to get right.
+
 ## When something's wrong
 
 **`up --wait` hangs or fails.** Find the unhealthy service:

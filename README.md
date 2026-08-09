@@ -167,6 +167,11 @@ so an instance has exactly one door, and it's bound to `127.0.0.1`. A `migrate`
 container runs the database migrations and exits before the API starts; seeing it
 as `Exited (0)` is success, not a failure.
 
+Running it on a server and want to reach it from your laptop? That door stays on
+loopback by default for a reason — there's no login yet — so see
+[Reaching it from another machine](docs/operations.md#reaching-it-from-another-machine)
+rather than just widening the bind.
+
 Backups, restores, upgrading, and the full configuration reference live in
 **[docs/operations.md](docs/operations.md)**.
 
