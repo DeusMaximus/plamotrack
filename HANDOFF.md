@@ -18,8 +18,11 @@ Template:
 
 ## 2026-08-10 — Claude Code — Issue #3: order edits stop erasing the §6 snapshot
 
-- **Done:** PR #11 (`6ba87ac` + `be80b31`) from `fix/order-snapshot-preservation`, open,
-  not merged, all checks green on both commits.
+**Merged to `main` in PR #11 (`6d6b12e`), closing #3.** Verified green on `main` after
+the merge: 109 backend tests, ruff, `npm run build`, oxlint. The remote branch
+`fix/order-snapshot-preservation` still exists — delete when convenient.
+
+- **Done:** Two commits, `6ba87ac` + `be80b31`.
   Reproduced #3 first against the live dev API — a `PATCH` carrying only a quantity
   turned `7350 AUD` into `None None` — then fixed both halves:
   - `_apply_converted_snapshot()` in `services/orders.py` reads `model_fields_set`, so
@@ -54,8 +57,14 @@ Template:
   hand in the browser with `REFERENCE_CURRENCY` moved to `JPY` — a JPY order's AUD
   snapshot survived a quantity edit. `.env` was restored byte-for-byte afterwards and
   all test data was deleted from the dev database.
-- **Next:** Re-review/merge PR #11; #3 closes with it. Two bugs found while checking
-  this work were written up rather than fixed in it, both deliberately:
+- **Review:** Copilot's first pass found the `be80b31` bug above; its re-review of the
+  fix generated no new comments. Four suppressed nits are left undone and are all
+  cosmetic: three grammar tweaks (`OrdersPage.tsx:157`, `api/types.ts:191`,
+  `design.md:411`) and the non-null assertion in `findOrder()` in
+  `e2e/order-snapshot.spec.ts:51`, which would make a missing order fail as a cryptic
+  `TypeError` rather than a readable assertion. Worth a sweep if someone's passing.
+- **Next:** Two bugs found while checking this work were written up rather than fixed
+  in it, both deliberately:
   - **#12 (new)** — the CSV importer relabels a stored snapshot's currency exactly as
     `be80b31` stopped the service doing: a merge import carrying `converted_price_minor`
     with no currency column turned `4200 GBP` into `4400 AUD`. Reproduced. Not a copy of
