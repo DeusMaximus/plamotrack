@@ -94,8 +94,10 @@ class OrderItemCreate(BaseModel):
         description=(
             "The currency the snapshot above was taken in. Omit it and the "
             "instance's reference currency is stamped in at write time, so moving "
-            "that setting later never restates what past purchases cost. Sent "
-            "without an amount it is an error; it follows the amount on an update."
+            "that setting later never restates what past purchases cost. On an "
+            "update it falls back to the code already recorded on the line before "
+            "the instance default, so correcting only the amount cannot relabel "
+            "the currency. Sent without an amount it is an error."
         ),
     )
     kit: OrderKitDetails | None = None

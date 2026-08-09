@@ -410,6 +410,9 @@ The same instinct — recorded facts stay recorded — runs through the order gu
 ✅ **An edit only touches the snapshot when it says so.** A line in `PATCH /orders/{id}`
 otherwise replaces the stored one field for field; the `converted_*` pair is the single
 exception. Omit it and the stored snapshot survives; clearing takes an explicit `null`.
+Restating the amount alone doesn't relabel the currency either — on an update the code
+falls back to the one already recorded before it falls back to the instance default, or
+a typo fix on a GBP amount would quietly reissue it as AUD.
 The reason it can't follow the rule its neighbours follow: no client holds the
 entry-time rate, so nobody editing a quantity is in a position to restate the
 conversion — and treating "absent" as "clear" meant a foreign-currency snapshot,

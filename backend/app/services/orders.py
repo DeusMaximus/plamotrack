@@ -57,10 +57,25 @@ def _apply_converted_snapshot(item: OrderItem, line: OrderItemCreate) -> None:
     Reads `model_fields_set`, so a Python caller that constructs the model with
     converted_price_minor=None *is* asking to clear it; only an absent key means
     "leave this alone".
+
+    The currency falls back to the one already recorded before it falls back to
+    the instance default: correcting a typo'd amount on a GBP snapshot must not
+    relabel it AUD, which is the same "config never overwrites a record" rule the
+    rest of this function exists to enforce. A brand-new snapshot has nothing to
+    inherit, so it still takes the reference currency.
     """
     if "converted_price_minor" not in line.model_fields_set:
         return
-    item.converted_price_minor, item.converted_currency_code = _converted_snapshot(line)
+    if line.converted_price_minor is None:
+        item.converted_price_minor = None
+        item.converted_currency_code = None
+        return
+    item.converted_price_minor = line.converted_price_minor
+    item.converted_currency_code = (
+        line.converted_currency_code
+        or item.converted_currency_code
+        or get_settings().reference_currency
+    )
 
 
 # A kit that has visibly progressed is never silently deleted by order edits.
