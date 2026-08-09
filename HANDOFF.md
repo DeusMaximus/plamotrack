@@ -16,6 +16,45 @@ Template:
 
 ---
 
+## 2026-08-10 — Claude Code — Issue #3: order edits stop erasing the §6 snapshot
+
+- **Done:** PR #11 (`6ba87ac`) from `fix/order-snapshot-preservation`, open, not merged.
+  Reproduced #3 first against the live dev API — a `PATCH` carrying only a quantity
+  turned `7350 AUD` into `None None` — then fixed both halves:
+  - `_apply_converted_snapshot()` in `services/orders.py` reads `model_fields_set`, so
+    an **omitted** `converted_price_minor` leaves the stored pair alone; an explicit
+    `null` clears it. `_add_line`'s create path is untouched.
+  - `OrdersPage.tsx` no longer recomputes the snapshot. `snapshotIsDerivable()` allows
+    derivation **only for a line being created** in the instance's own currency;
+    anything already stored round-trips in the currency it was recorded in, through a
+    new optional `≈ [amount] CODE` input (blank = none, and blanking a populated one
+    clears it). The field is the only way the browser can change a snapshot now.
+  - Schema descriptions on both `converted_*` fields (so the rule is in the generated
+    OpenAPI, not just comments), `OrderItemUpsert`'s docstring, and design notes §6.
+- **Decisions:** Issue options **1 + 2**, not the 409 guard (option 3). The rejected
+  shortcut is worth knowing about: "purchase currency == `REFERENCE_CURRENCY` → just
+  recompute" silently restamps a JPY purchase's AUD snapshot as JPY once the operator
+  moves the setting, and "amount != unit price → recompute" discards an imported
+  AUD 95 against an AUD 100 line. Both are recorded facts; neither is derivable. The
+  cost is that single-currency instances now see an `≈` row on existing lines that
+  mostly restates the price — deliberate, and cheap to hide later if it grates.
+- **State:** 108 backend tests pass (104 + 4 new in `test_reference_currency.py`),
+  ruff check/format clean, `npm run build` + oxlint clean, 4 Playwright tests pass
+  (new `e2e/order-snapshot.spec.ts` + the happy path). Negative controls run: the new
+  backend test fails without the service fix, and the new e2e `L == R` case fails
+  against the old frontend rule (GBP 4200 overwritten by AUD 10000). Also checked by
+  hand in the browser with `REFERENCE_CURRENCY` moved to `JPY` — a JPY order's AUD
+  snapshot survived a quantity edit. `.env` was restored byte-for-byte afterwards and
+  all test data was deleted from the dev database.
+- **Next:** Review/merge PR #11; #3 closes with it. Separately, #6 now has a comment
+  recording the **frontend** half of the minor-units bug, found while checking this
+  work: the money inputs hardcode `step="0.01"`, so a 3-decimal currency (KWD, BHD,
+  CLF…) can't be typed — and an existing 3-decimal order can't be re-saved from the UI
+  at all, since the form loads a value its own input calls invalid. Deliberately left
+  unfixed here: the real fix is `step` derived from `minorFractionDigits()` across all
+  three money inputs plus a decision on unknown codes, which is #6's job, not this
+  PR's. Issue #9 untouched.
+
 ## 2026-08-10 — Codex — PR #10 Postgres review follow-up
 
 - **Done:** Opened PR #10 for issues #7 and #8, reviewed all three Copilot threads,
