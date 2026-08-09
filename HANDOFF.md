@@ -16,6 +16,25 @@ Template:
 
 ---
 
+## 2026-08-10 — Codex — Add GitHub Actions CI
+
+- **Done:** Added `.github/workflows/ci.yml` on `codex/add-github-ci`: read-only,
+  SHA-pinned Backend, Frontend, and Integration jobs for PRs and pushes to `main`.
+  Backend runs Ruff check/format plus 104 Postgres-backed tests; Frontend runs
+  oxlint plus the production build; Integration runs Playwright, builds the full
+  Compose stack, probes UI/API/OpenAPI, and performs an MCP `tools/list` through nginx.
+- **Decisions:** Python 3.12, Node 22, Postgres 16; no version matrix, coverage gate,
+  release automation, or required-check repository setting yet. Concurrent stale
+  runs cancel. Public-fork code receives no secrets and only `contents: read`.
+- **State:** Workflow committed as `840c764` and pushed to
+  `origin/codex/add-github-ci`. `actionlint` clean; 104 pytest tests, Ruff
+  check/format, frontend lint/build, 2 Playwright tests, ingress probes, and live MCP
+  handshake all pass locally. Existing Compose stack was inspected but not recreated
+  or stopped, preserving the development database.
+- **Next:** Open a PR to trigger the workflow. After several stable runs, consider
+  making Backend and Frontend required; promote Integration only once its runner
+  behaviour is proven non-flaky.
+
 ## 2026-08-10 — Claude Code — M5 installability + neutral reference currency
 
 **Merged to `main` in PR #2 (`c9988c8`), released as `v0.2.0-alpha`.** Branch deleted.
