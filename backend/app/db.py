@@ -26,7 +26,7 @@ def get_engine() -> AsyncEngine:
             settings.database_url,
             # Checked-out connections are validated before use, so a Postgres
             # restart costs a reconnect instead of a failed request. The API and
-            # db are separate containers from M8 and restart independently; a
+            # db are separate containers from M5 and restart independently; a
             # pooled connection severed by one of those restarts is otherwise
             # handed to the next request, which 500s on a dead socket.
             pool_pre_ping=True,

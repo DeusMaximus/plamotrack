@@ -16,6 +16,20 @@ Template:
 
 ---
 
+## 2026-08-09 — Codex — Public roadmap reprioritisation
+
+- **Done:** Reworked the public roadmap across `docs/design.md`, `README.md`,
+  `AGENTS.md`, and milestone-bearing code/config comments.
+- **Decisions:** M5 = full local Compose install; M5.1 = internationalisation
+  foundation and neutral reference currency; M6 = single-owner auth, OAuth MCP,
+  and tested VPS deployment; M6.1 = dual-era MCP `2026-07-28`; M7 = photos;
+  M8 = public showcase after protected admin/MCP ingress; M9 = open-source ops.
+- **State:** Documentation/comment-only changes on
+  `codex/refresh-public-roadmap`; uncommitted. `git diff --check` is clean; no
+  runtime tests were needed.
+- **Next:** Implement M5 packaging with one loopback-bound ingress, internal API/db,
+  controlled migrations, health checks, and upgrade/backup docs.
+
 ## 2026-08-06 — Claude Code — Public alpha SHIPPED: repo public, v0.1.0-alpha
 
 **The repo is public and v0.1.0-alpha is released.** Everything below is on

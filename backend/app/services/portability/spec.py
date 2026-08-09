@@ -613,7 +613,7 @@ UPGRADE_APPLICATIONS = TableSpec(
 KIT_PHOTOS = TableSpec(
     key="kit_photos",
     model=KitPhoto,
-    description="Gallery entries (§3.2). Empty until photo upload lands (Milestone 5).",
+    description="Gallery entries (§3.2). Empty until photo upload lands (Milestone 7).",
     depends_on=("kits",),
     columns=(
         id_col(),
