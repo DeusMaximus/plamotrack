@@ -28,9 +28,8 @@ Template:
 - **State:** 104 backend tests passed against an isolated Postgres using custom
   credentials, database name, and port 55433 without `TEST_DATABASE_URL`; Ruff
   check/format and `git diff --check` pass. The disposable database was removed.
-  PR #10 Backend and Frontend checks pass; Integration was still running at handoff.
-- **Next:** Confirm Integration passes, then review/merge PR #10. Issues #7 and #8
-  remain open until merge.
+  PR #10 Backend, Frontend, and Integration checks all pass.
+- **Next:** Review/merge PR #10. Issues #7 and #8 remain open until merge.
 
 ## 2026-08-10 — Codex — Add GitHub Actions CI
 
