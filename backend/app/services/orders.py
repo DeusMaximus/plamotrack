@@ -46,6 +46,38 @@ def _converted_snapshot(line: OrderItemCreate) -> tuple[int | None, str | None]:
     )
 
 
+def _apply_converted_snapshot(item: OrderItem, line: OrderItemCreate) -> None:
+    """An edit that never mentions the snapshot leaves it alone (issue #3).
+
+    Everything else on a line is replaced wholesale by an edit; this pair is the
+    exception, because it is a recorded fact the caller usually cannot restate —
+    no client has the entry-time FX rate, so "quantity: 2" would otherwise erase
+    what the purchase converted to. Clearing takes an explicit null.
+
+    Reads `model_fields_set`, so a Python caller that constructs the model with
+    converted_price_minor=None *is* asking to clear it; only an absent key means
+    "leave this alone".
+
+    The currency falls back to the one already recorded before it falls back to
+    the instance default: correcting a typo'd amount on a GBP snapshot must not
+    relabel it AUD, which is the same "config never overwrites a record" rule the
+    rest of this function exists to enforce. A brand-new snapshot has nothing to
+    inherit, so it still takes the reference currency.
+    """
+    if "converted_price_minor" not in line.model_fields_set:
+        return
+    if line.converted_price_minor is None:
+        item.converted_price_minor = None
+        item.converted_currency_code = None
+        return
+    item.converted_price_minor = line.converted_price_minor
+    item.converted_currency_code = (
+        line.converted_currency_code
+        or item.converted_currency_code
+        or get_settings().reference_currency
+    )
+
+
 # A kit that has visibly progressed is never silently deleted by order edits.
 PROGRESSED_STATUSES = {KitStatus.BUILDING, KitStatus.COMPLETE}
 # Statuses that a delivery arrival naturally advances to backlog (in hand, unbuilt).
@@ -365,7 +397,7 @@ async def _update_line(
     item.quantity = line.quantity
     item.unit_price_minor = line.unit_price_minor
     item.currency_code = line.currency_code
-    item.converted_price_minor, item.converted_currency_code = _converted_snapshot(line)
+    _apply_converted_snapshot(item, line)
     await session.flush()
 
 

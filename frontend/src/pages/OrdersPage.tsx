@@ -44,6 +44,11 @@ interface LineValues {
   item_type: ItemType;
   quantity: number;
   unit_price: string;
+  /** The §6 snapshot, in major units of `converted_currency_code`. "" = none. */
+  converted_price: string;
+  /** The currency the stored snapshot was taken in — which may not be today's
+   *  reference currency, and that difference is the whole point of §6. */
+  converted_currency_code: string | null;
   kit_name: string;
   kit_grade: string;
   kit_number: string;
@@ -69,6 +74,8 @@ function emptyLine(): LineValues {
     item_type: "kit",
     quantity: 1,
     unit_price: "",
+    converted_price: "",
+    converted_currency_code: null,
     kit_name: "",
     kit_grade: "",
     kit_number: "",
@@ -101,6 +108,13 @@ function orderToFormValues(
         item_type: item.item_type,
         quantity: item.quantity,
         unit_price: minorToMajor(item.unit_price_minor, item.currency_code),
+        // In the snapshot's own currency, not the line's — a JPY purchase with an
+        // AUD snapshot would otherwise be read with yen's zero decimal places.
+        converted_price:
+          item.converted_price_minor === null || item.converted_currency_code === null
+            ? ""
+            : minorToMajor(item.converted_price_minor, item.converted_currency_code),
+        converted_currency_code: item.converted_currency_code,
         kit_name: firstKit?.name ?? "",
         kit_grade: firstKit?.grade ?? "",
         kit_number: firstKit?.kit_number ?? "",
@@ -118,23 +132,48 @@ function orderToFormValues(
   };
 }
 
+/** Whether the browser may compute this line's §6 snapshot instead of carrying one.
+ *
+ * Only a line being *created* in the instance's own currency qualifies: at entry,
+ * in that currency, the converted amount is the price, and no rate is involved.
+ * Anything already stored is left to the field below — the reference currency, the
+ * purchase currency and the unit price are all things a recorded snapshot is
+ * allowed to disagree with (issue #3), so none of them may overrule one. */
+function snapshotIsDerivable(
+  lineId: string | undefined,
+  lineCurrency: string,
+  referenceCurrency: string,
+): boolean {
+  return lineId === undefined && lineCurrency === referenceCurrency;
+}
+
 function toOrderItem(
   line: LineValues,
   currency: string,
   referenceCurrency: string,
 ): OrderItemUpsert {
   const unitPriceMinor = majorToMinor(line.unit_price, currency);
-  // Only a same-currency purchase converts to itself. Anything else needs a rate
-  // we don't have, so the snapshot stays empty rather than guessing (§6) — the
-  // server stamps the currency code in when an amount is present.
-  const converted = currency === referenceCurrency ? unitPriceMinor : null;
+  // A snapshot already taken keeps its own currency; a newly typed one is in the
+  // instance's. Either way the amount below is read with that code's decimals.
+  const snapshotCode = line.converted_currency_code ?? referenceCurrency;
+  let converted: number | null;
+  if (snapshotIsDerivable(line.id, currency, referenceCurrency)) {
+    converted = unitPriceMinor;
+  } else if (line.converted_price.trim() === "") {
+    // Explicit null, not omission: on an edit the server reads that as "clear it",
+    // which is what an emptied field means. A blank field on a line that never had
+    // a snapshot lands on the same null and invents nothing.
+    converted = null;
+  } else {
+    converted = majorToMinor(line.converted_price, snapshotCode);
+  }
   const base = {
     id: line.id,
     quantity: Number(line.quantity),
     unit_price_minor: unitPriceMinor,
     currency_code: currency,
     converted_price_minor: converted,
-    converted_currency_code: converted === null ? null : referenceCurrency,
+    converted_currency_code: converted === null ? null : snapshotCode,
   };
   if (line.item_type === "kit") {
     return {
@@ -174,6 +213,7 @@ function LineEditor({
   errors,
   onRemove,
   canRemove,
+  referenceCurrency,
 }: {
   index: number;
   control: Control<OrderFormValues>;
@@ -183,9 +223,18 @@ function LineEditor({
   errors: FieldErrors<OrderFormValues>;
   onRemove: () => void;
   canRemove: boolean;
+  referenceCurrency: string;
 }) {
   const itemType = watch(`items.${index}.item_type`);
   const lineErrors = errors.items?.[index];
+  // Shown exactly when the browser can't derive the snapshot itself — so what the
+  // form displays and what toOrderItem submits are decided by the same rule.
+  const snapshotCode = watch(`items.${index}.converted_currency_code`) ?? referenceCurrency;
+  const showSnapshot = !snapshotIsDerivable(
+    watch(`items.${index}.id`),
+    watch("currency_code"),
+    referenceCurrency,
+  );
 
   return (
     <div className="space-y-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
@@ -289,6 +338,25 @@ function LineEditor({
             </div>
           )}
         />
+      )}
+
+      {showSnapshot && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm text-zinc-500">≈</span>
+          <Input
+            type="number"
+            step="0.01"
+            min={0}
+            aria-label="Converted price"
+            placeholder="Converted price"
+            className="!w-28"
+            {...register(`items.${index}.converted_price`)}
+          />
+          <span className="text-sm text-zinc-600">{snapshotCode}</span>
+          <span className="text-xs text-zinc-500">
+            what this cost at entry — recorded once, never recalculated. Blank for none.
+          </span>
+        </div>
       )}
     </div>
   );
@@ -548,6 +616,7 @@ function OrderForm({
               errors={errors}
               onRemove={() => remove(index)}
               canRemove={fields.length > 1}
+              referenceCurrency={referenceCurrency}
             />
           ))}
         </div>

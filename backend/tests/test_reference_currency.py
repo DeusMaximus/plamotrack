@@ -138,6 +138,110 @@ async def test_editing_a_line_restamps_the_snapshot(client, retailer, reference_
     assert line["converted_currency_code"] == "AUD"
 
 
+async def test_editing_a_line_preserves_an_omitted_snapshot(client, retailer, reference_currency):
+    """Issue #3: an edit about the quantity is not permission to erase the snapshot.
+
+    No client can restate a foreign-currency conversion — it has no entry-time
+    rate — so an absent field has to mean "leave it", not "clear it"."""
+    reference_currency("AUD")
+    created = await make_order(
+        client, retailer, [kit_line(unit_price_minor=3800, converted_price_minor=7350)]
+    )
+    order = created.json()
+    line_id = order["items"][0]["id"]
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={"items": [kit_line(id=line_id, quantity=2, unit_price_minor=3800)]},
+    )
+    assert resp.status_code == 200, resp.text
+    line = resp.json()["items"][0]
+    assert line["quantity"] == 2
+    assert line["converted_price_minor"] == 7350
+    assert line["converted_currency_code"] == "AUD"
+
+
+async def test_correcting_only_the_amount_keeps_the_recorded_currency(
+    client, retailer, reference_currency
+):
+    """A typo fix on the amount is not permission to relabel the currency.
+
+    The stored code outranks the instance default here: stamping AUD onto a GBP
+    snapshot because the payload didn't restate the code would turn £42.00 into
+    A$43.00 — the same config-overwrites-a-record failure as the omitted case."""
+    reference_currency("AUD")
+    created = await make_order(
+        client,
+        retailer,
+        [kit_line(converted_price_minor=4200, converted_currency_code="GBP")],
+    )
+    order = created.json()
+    line_id = order["items"][0]["id"]
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={"items": [kit_line(id=line_id, converted_price_minor=4300)]},
+    )
+    assert resp.status_code == 200, resp.text
+    line = resp.json()["items"][0]
+    assert line["converted_price_minor"] == 4300
+    assert line["converted_currency_code"] == "GBP"  # not restamped to the instance default
+
+
+async def test_an_explicit_null_clears_the_snapshot(client, retailer, reference_currency):
+    """The other half of the rule: clearing is possible, it just has to be meant."""
+    reference_currency("AUD")
+    created = await make_order(client, retailer, [kit_line(converted_price_minor=7350)])
+    order = created.json()
+    line_id = order["items"][0]["id"]
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={"items": [kit_line(id=line_id, converted_price_minor=None)]},
+    )
+    assert resp.status_code == 200, resp.text
+    line = resp.json()["items"][0]
+    assert line["converted_price_minor"] is None
+    assert line["converted_currency_code"] is None
+
+
+async def test_a_new_line_in_an_edit_invents_no_snapshot(client, retailer, reference_currency):
+    """Preserving what exists must not turn into inventing what doesn't."""
+    reference_currency("AUD")
+    created = await make_order(client, retailer, [kit_line(converted_price_minor=7350)])
+    order = created.json()
+    line_id = order["items"][0]["id"]
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={
+            "items": [
+                kit_line(id=line_id, converted_price_minor=7350, converted_currency_code="AUD"),
+                kit_line(kit={"name": "Zaku II", "grade": "HG"}),
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    added = next(item for item in resp.json()["items"] if item["id"] != line_id)
+    assert added["converted_price_minor"] is None
+    assert added["converted_currency_code"] is None
+
+
+async def test_changing_only_the_snapshot_currency_is_refused(client, retailer):
+    """Restating the amount is how an edit changes the code — a lone code still 422s,
+    and must not read as "keep the amount, relabel it"."""
+    created = await make_order(client, retailer, [kit_line(converted_price_minor=7350)])
+    order = created.json()
+    line_id = order["items"][0]["id"]
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={"items": [kit_line(id=line_id, converted_currency_code="GBP")]},
+    )
+    assert resp.status_code == 422
+    assert "converted_price_minor" in resp.text
+
+
 # --- the retired CSV column -----------------------------------------------------
 
 

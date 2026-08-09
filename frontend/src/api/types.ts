@@ -188,7 +188,9 @@ export interface OrderItemCreate {
   quantity: number;
   unit_price_minor: number;
   currency_code: string;
-  /** Omit the code and the instance's reference currency is stamped in server-side. */
+  /** Omit the code and the instance's reference currency is stamped in server-side.
+   *  On an update, omitting the amount keeps the stored snapshot; an explicit null
+   *  clears it. */
   converted_price_minor?: number | null;
   converted_currency_code?: string | null;
   kit?: OrderKitDetails | null;

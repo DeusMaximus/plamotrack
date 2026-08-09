@@ -318,7 +318,8 @@ Standard CRUD plus a few purpose-built endpoints.
 - `GET/POST /orders`, `GET /orders/{id}` — POST body includes nested order items; the
   server handles fan-out/increment dispatch per §3.9
 - `PATCH /orders/{id}` — header fields and/or full line-set replacement (dispatch diff
-  per §3.9)
+  per §3.9; the `converted_*` snapshot is the one field pair an omission preserves
+  rather than clears — see §6)
 - `POST /orders/{id}/receive`, `DELETE /orders/{id}` — receive/undo per §3.9
 - `GET /catalog/search?q=` — powers the typeahead, searches across
   tools/consumables/upgrades
@@ -405,6 +406,28 @@ Two compatibility notes for anyone who used the 0.1.0 alpha:
 
 The same instinct — recorded facts stay recorded — runs through the order guards in
 §3.9 and the delete blocks in §4.
+
+✅ **An edit only touches the snapshot when it says so.** A line in `PATCH /orders/{id}`
+otherwise replaces the stored one field for field; the `converted_*` pair is the single
+exception. Omit it and the stored snapshot survives; clearing takes an explicit `null`.
+Restating the amount alone doesn't relabel the currency either — on an update the code
+falls back to the one already recorded before it falls back to the instance default, or
+a typo fix on a GBP amount would quietly reissue it as AUD.
+The reason it can't follow the rule its neighbours follow: no client holds the
+entry-time rate, so nobody editing a quantity is in a position to restate the
+conversion — and treating "absent" as "clear" meant a foreign-currency snapshot,
+imported from a spreadsheet or written by an agent, died on the first unrelated edit.
+
+The browser follows from the same premise. It derives a snapshot only for a line it is
+*creating* in the instance's own currency, where the converted amount is the price and
+no rate is involved. For a line that already exists it shows what was recorded — in the
+currency it was recorded in — and sends that back untouched. Notably, "the purchase
+currency equals `REFERENCE_CURRENCY`" is **not** grounds to recompute: a yen purchase
+carrying an AUD snapshot on an instance that later moved to `JPY` would be silently
+restamped as yen, which is precisely the drift this section exists to prevent. Nor is
+"the amount differs from the unit price" — an imported AUD 95 against an AUD 100 line
+is a record, not a rounding error. Correcting or removing a snapshot is a thing the
+operator does on purpose, in a field put there for it.
 
 ### 6.1 Internationalisation 🔨 **Planned (M5.1) — no translations yet**
 
