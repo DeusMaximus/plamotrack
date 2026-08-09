@@ -16,6 +16,22 @@ Template:
 
 ---
 
+## 2026-08-10 — Codex — PR #10 Postgres review follow-up
+
+- **Done:** Opened PR #10 for issues #7 and #8, reviewed all three Copilot threads,
+  and pushed follow-up `3d74317`. The README now labels 5432 as the default dev
+  host port, tests derive their default connection from the same `.env`/`POSTGRES_*`
+  settings, and the feature branch no longer carries session bookkeeping.
+- **Decisions:** Tests keep a separate sibling `<database>_test` database and retain
+  `TEST_DATABASE_URL` as the explicit full-connection override. `HANDOFF.md` remains
+  a direct-to-`main` exception rather than part of feature PRs.
+- **State:** 104 backend tests passed against an isolated Postgres using custom
+  credentials, database name, and port 55433 without `TEST_DATABASE_URL`; Ruff
+  check/format and `git diff --check` pass. The disposable database was removed.
+  PR #10 Backend and Frontend checks pass; Integration was still running at handoff.
+- **Next:** Confirm Integration passes, then review/merge PR #10. Issues #7 and #8
+  remain open until merge.
+
 ## 2026-08-10 — Codex — Add GitHub Actions CI
 
 - **Done:** Added `.github/workflows/ci.yml` on `codex/add-github-ci`: read-only,
