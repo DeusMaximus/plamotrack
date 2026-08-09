@@ -34,6 +34,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.config import get_settings
 from app.exceptions import ConflictError, InvalidInputError
 from app.models import ItemType, Kit, Order, OrderItem
 from app.schemas.portability import (
@@ -337,6 +338,8 @@ class _Planner:
         for column in spec.columns:
             if column.required and column.name in present and values.get(column.name) is None:
                 errors.append(f"{column.name} is required")
+
+        _pair_converted_snapshot(spec, values, present)
 
         row = _Row(
             table=spec.key,
@@ -952,6 +955,27 @@ async def apply_import(
         rows_deleted=plan.derived.rows_deleted,
         warnings=plan.warnings,
     )
+
+
+def _pair_converted_snapshot(spec: TableSpec, values: dict[str, Any], present: set[str]) -> None:
+    """Keep the §6 snapshot's two halves consistent, mirroring `_converted_snapshot`
+    in services/orders.py — the REST and MCP paths get this from the service layer,
+    but the importer writes model rows directly and would otherwise bypass it.
+
+    An amount with a blank currency cell is what the column help promises means
+    "the instance default"; without this it reached Postgres as NULL and tripped
+    the paired CHECK constraint as an unhandled 500. Resolved here rather than at
+    write time so the preview shows the value that will actually land.
+    """
+    if spec.key != "order_items" or "converted_price_minor" not in present:
+        return
+    if values.get("converted_price_minor") is None:
+        # No amount means no snapshot: a currency on its own records nothing.
+        values["converted_currency_code"] = None
+        present.add("converted_currency_code")
+    elif values.get("converted_currency_code") is None:
+        values["converted_currency_code"] = get_settings().reference_currency
+        present.add("converted_currency_code")
 
 
 def _build_instance(spec: TableSpec, row: _Row) -> Any:

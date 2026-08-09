@@ -294,7 +294,42 @@ function LineEditor({
   );
 }
 
+/** Gate, so the form below is only ever *mounted* with a real reference currency.
+ *
+ * It has to be a separate component rather than an early return inside the form:
+ * hooks run before any return, so `useForm` would already have captured a
+ * defaultValues with an empty currency, and react-hook-form does not revisit
+ * defaults when the query later resolves. Not rendering isn't the same as not
+ * mounting. In practice OrdersPage warms this query, so the loading state is
+ * rarely seen — "rarely" being exactly why the bug would have survived. */
 function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void }) {
+  const { data: meta } = useQuery(metaQuery);
+
+  if (!meta) {
+    return (
+      <Modal title={order ? "Edit order" : "New order"} onClose={onClose} wide>
+        <EmptyState>Loading…</EmptyState>
+      </Modal>
+    );
+  }
+  return (
+    <OrderForm
+      order={order}
+      onClose={onClose}
+      referenceCurrency={meta.reference_currency}
+    />
+  );
+}
+
+function OrderForm({
+  order,
+  onClose,
+  referenceCurrency,
+}: {
+  order?: Order;
+  onClose: () => void;
+  referenceCurrency: string;
+}) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [newRetailerName, setNewRetailerName] = useState<string | null>(null);
@@ -306,8 +341,6 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
     queryFn: api.listConsumables,
   });
   const { data: upgrades } = useQuery({ queryKey: ["upgrades"], queryFn: api.listUpgrades });
-  const { data: meta } = useQuery(metaQuery);
-  const referenceCurrency = meta?.reference_currency ?? "";
 
   const defaults = useMemo((): OrderFormValues => {
     if (!order) {
@@ -401,16 +434,6 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
       setError(err instanceof ApiError ? err.message : "Request failed");
     }
   });
-
-  // react-hook-form captures defaultValues at mount, so rendering the form
-  // before /meta lands would stick a new order on the wrong default currency.
-  if (!meta) {
-    return (
-      <Modal title={order ? "Edit order" : "New order"} onClose={onClose} wide>
-        <EmptyState>Loading…</EmptyState>
-      </Modal>
-    );
-  }
 
   return (
     <Modal title={order ? "Edit order" : "New order"} onClose={onClose} wide>

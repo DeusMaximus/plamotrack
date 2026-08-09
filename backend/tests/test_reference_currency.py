@@ -261,6 +261,86 @@ async def test_current_column_wins_when_both_are_present(client, retailer):
     assert updated["converted_currency_code"] == "GBP"
 
 
+async def test_import_stamps_the_instance_currency_on_a_blank_code(
+    client, retailer, reference_currency
+):
+    """A hand-written sheet fills in an amount and leaves the code blank — which the
+    column help says means the instance default. Reaching Postgres as NULL would trip
+    the paired CHECK constraint as an unhandled 500."""
+    reference_currency("EUR")
+    order = await seeded_order(client, retailer)
+    content = order_items_csv(
+        [
+            "id",
+            "order_id",
+            "item_type",
+            "quantity",
+            "currency_code",
+            "converted_price_minor",
+            "converted_currency_code",
+        ],
+        [
+            {
+                "id": order["items"][0]["id"],
+                "order_id": order["id"],
+                "item_type": "kit",
+                "quantity": "1",
+                "currency_code": "JPY",
+                "converted_price_minor": "3200",
+                "converted_currency_code": "",
+            }
+        ],
+    )
+    resp = await client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert updated["converted_price_minor"] == 3200
+    assert updated["converted_currency_code"] == "EUR"
+
+
+async def test_import_drops_a_currency_that_has_no_amount(client, retailer):
+    """The mirror case: a code with no amount records nothing, so it isn't kept.
+    Same rule the service layer applies to REST and MCP writes."""
+    order = await seeded_order(client, retailer)
+    content = order_items_csv(
+        [
+            "id",
+            "order_id",
+            "item_type",
+            "quantity",
+            "currency_code",
+            "converted_price_minor",
+            "converted_currency_code",
+        ],
+        [
+            {
+                "id": order["items"][0]["id"],
+                "order_id": order["id"],
+                "item_type": "kit",
+                "quantity": "1",
+                "currency_code": "JPY",
+                "converted_price_minor": "",
+                "converted_currency_code": "GBP",
+            }
+        ],
+    )
+    resp = await client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert updated["converted_price_minor"] is None
+    assert updated["converted_currency_code"] is None
+
+
 async def test_exports_only_ever_name_the_current_column(client, retailer):
     await seeded_order(client, retailer)
     resp = await client.get("/export/order_items.csv")

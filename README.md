@@ -159,7 +159,7 @@ Four containers, but only one open port:
 | | |
 |---|---|
 | **http://localhost:8080** | the app |
-| `http://localhost:8080/api` | REST API (`/api/docs` for the interactive docs) |
+| `http://localhost:8080/api/…` | REST API — e.g. `/api/kits`, or `/api/docs` for the interactive docs |
 | `http://localhost:8080/mcp/` | MCP endpoint |
 
 The API and database aren't published — they talk over Compose's internal network,
@@ -285,8 +285,14 @@ Open **http://localhost:5173**. The API serves at the root here rather than unde
 `/api` — the Vite dev proxy strips the prefix exactly as nginx does in the container,
 so the app's own fetch paths are identical either way.
 
-If the container stack is also running, stop it first or change `WEB_PORT` — both
-want to publish the database on 5432.
+`docker compose up -d db` and the full stack are the same Compose project, so they
+share one database container — starting one doesn't clash with the other. What you
+get if both are running is two APIs against one database: the container's on
+`:8080`, yours from source on `:8000`. Harmless, but confusing when a change doesn't
+show up where you expected. `docker compose stop web api` leaves just the database.
+
+Already have a Postgres on 5432? Set `POSTGRES_PORT` in `.env` — Compose publishes
+on it and the API connects to it.
 
 ```bash
 cd backend
