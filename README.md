@@ -274,7 +274,7 @@ Node 20.19+ (or 22+).
 
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db --wait
-# just Postgres, on 127.0.0.1:5432
+# just Postgres, on fixed loopback and POSTGRES_PORT (5432 by default)
 
 cd backend && uv sync && uv run alembic upgrade head
 uv run uvicorn app.main:app                          # REST on :8000, MCP at :8000/mcp/
@@ -296,6 +296,10 @@ expected. `docker compose stop web api` leaves just the database.
 Already have a Postgres on 5432? Set `POSTGRES_PORT` in `.env` — the development
 overlay publishes on it and the source-run API connects to it. The bind stays fixed
 to `127.0.0.1`; deliberately remote database access requires your own override.
+
+Tests follow the same configured connection by default, but use a sibling
+`<database>_test` database that they create if needed and destructively reset. Set
+`TEST_DATABASE_URL` in the test process only when tests need a different connection.
 
 ```bash
 cd backend
