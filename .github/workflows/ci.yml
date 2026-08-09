@@ -96,8 +96,6 @@ jobs:
     name: Integration
     runs-on: ubuntu-latest
     timeout-minutes: 25
-    env:
-      POSTGRES_PASSWORD: plamotrack-ci
 
     steps:
       - name: Check out the repository
@@ -129,6 +127,13 @@ jobs:
       - name: Install Chromium
         working-directory: frontend
         run: npx playwright install --with-deps chromium
+
+      # The packaged stack deliberately requires the same .env file a real
+      # installation does. The runner is ephemeral and loopback-bound, so the
+      # example's disposable password is appropriate here and, importantly,
+      # reaches both Postgres and the API through the normal config path.
+      - name: Prepare CI configuration
+        run: cp .env.example .env
 
       - name: Start Postgres
         run: docker compose up -d db --wait
