@@ -18,9 +18,23 @@ Template:
 
 ## 2026-08-10 — Claude Code — Issue #3: order edits stop erasing the §6 snapshot
 
-**Merged to `main` in PR #11 (`6d6b12e`), closing #3.** Verified green on `main` after
-the merge: 109 backend tests, ruff, `npm run build`, oxlint. Branch deleted, local and
-remote; local `main` matches `origin/main`.
+**Merged to `main` in PR #11 (`6d6b12e`), closing #3, and shipped as `v0.2.1-alpha`
+(PR #13 → `3e19d4f`).** Verified green on `main` after the merge: 109 backend tests,
+ruff, `npm run build`, oxlint. Both branches deleted, local and remote; local `main`
+matches `origin/main`.
+
+**Release note for whoever cuts the next one:** the version lives in three places that
+must move together — `backend/app/__init__.py`, `backend/pyproject.toml`, and the
+`plamotrack-backend` entry in `backend/uv.lock` (regenerate with `uv lock`, don't hand-
+edit). `__init__.py` is what `GET /meta` and the MCP `serverInfo.version` report, so it
+has to be on `main` before the tag. No test pins the string. Published with
+`gh release create --prerelease --verify-tag` so it attaches to a tag already pushed
+rather than creating one of its own.
+
+**The `M5 hardening — v0.2.1-alpha` milestone still has #9 and #12 open**, so its name
+now outruns what shipped. Either rename it or move those two to a v0.2.2 milestone —
+both are in the release notes as known issues, so nothing is hidden from users either
+way.
 
 - **Done:** Two commits, `6ba87ac` + `be80b31`.
   Reproduced #3 first against the live dev API — a `PATCH` carrying only a quantity
