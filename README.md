@@ -14,7 +14,7 @@ want it to.
 >
 > **There is no authentication yet.** Anyone who can reach the API can write to it, and
 > that includes deleting things. Run it on a network you trust — your LAN, a VPN, or
-> plain old localhost — and please don't put it on the internet until Milestone 7 lands.
+> plain old localhost — and please don't put it on the internet until Milestone 6 lands.
 >
 > The database schema is also still moving. Migrations are provided and tested in both
 > directions, but export an archive before you upgrade. It takes one click, and that's
@@ -124,17 +124,20 @@ Being honest up front beats you finding out at 11pm:
 | Kits, orders, inventory, retailers, Kanban board | ✅ Built |
 | CSV import / export | ✅ Built |
 | MCP server | ✅ Built |
-| **Photo gallery per kit** | 🔨 Milestone 5 |
-| **Public read-only showcase page** | 🔨 Milestone 6 |
-| **Authentication** | 🔨 Milestone 7 — yes, really, see the warning above |
-| **Bundled `docker compose up` for the whole stack** | 🔨 Milestone 8 — today compose only starts Postgres |
+| **Bundled `docker compose up` for the whole local stack** | 🔨 Milestone 5 — today compose only starts Postgres |
+| **Internationalisation foundations** | 🔨 Milestone 5.1 — English catalogue and locale-aware formatting first; translations later |
+| **Authentication + OAuth-compatible remote MCP** | 🔨 Milestone 6 — yes, really, see the warning above |
+| **MCP `2026-07-28` compatibility** | 🔨 Milestone 6.1 — dual-era, without dropping current clients |
+| **Photo gallery per kit** | 🔨 Milestone 7 |
+| **Public read-only showcase page** | 🔨 Milestone 8 — after the admin and MCP paths are protected |
 
 ---
 
 ## Installing it
 
 Right now the database runs in Docker and the app runs from source. One-command
-packaging is Milestone 8.
+local packaging is Milestone 5. It will bind to loopback by default; authenticated VPS
+deployment follows in Milestone 6.
 
 **You'll need:** [Docker](https://docs.docker.com/get-started/get-docker/) ·
 [uv](https://docs.astral.sh/uv/getting-started/installation/) ·

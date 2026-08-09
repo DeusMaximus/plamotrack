@@ -105,7 +105,7 @@ async def _load_all(session: AsyncSession) -> dict[str, list[Any]]:
                 )
             ).all()
         ),
-        # Schema-only until Milestone 5; exported empty so the archive shape is
+        # Schema-only until Milestone 7; exported empty so the archive shape is
         # already correct when photos land.
         "kit_photos": [],
     }

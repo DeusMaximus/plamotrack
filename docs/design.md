@@ -1,6 +1,6 @@
 # plamotrack — Design Notes
 
-**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 06/08/2026
+**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 09/08/2026
 
 ---
 
@@ -38,9 +38,9 @@ the session-by-session build log.
 
 A self-hosted, open-source web application for tracking a Gunpla (or general model-kit)
 collection end to end: pre-order → order → arrival → build pipeline → completion,
-alongside the tools, consumables, and third-party upgrades used along the way. It ships
-as a Docker Compose stack with a web UI, a REST API, and an embedded MCP server so
-Claude and other agents can query and update the data directly.
+alongside the tools, consumables, and third-party upgrades used along the way. It is
+being packaged as a Docker Compose stack with a web UI, a REST API, and an embedded MCP
+server so Claude and other agents can query and update the data directly.
 
 It exists because the obvious alternatives don't fit. Spreadsheets can't model the
 one-order-becomes-several-kits relationship without either duplicating everything or
@@ -62,9 +62,17 @@ else's UI. This is the same app, owned outright.
 - ✅ MCP-native: agents can add orders, update build status, and adjust stock without a
   human touching the UI
 - ✅ Data that can leave: CSV export and import, so the collection is never trapped (§12)
-- 🔨 **Planned (M5)** Photo gallery per kit
-- 🔨 **Planned (M6)** A public-facing, read-only showcase page suitable for linking
-- 🔨 **Planned (M8)** `docker compose up` → ready-to-use instance, no manual schema setup
+- 🔨 **Planned (M5)** `docker compose up` → ready-to-use local instance, no manual
+  runtime or schema setup
+- 🔨 **Planned (M5.1)** Internationalisation foundations: English strings behind a
+  translation layer, locale-aware formatting, structured errors, and a configurable
+  reference currency — no translations yet
+- 🔨 **Planned (M6)** Authenticated remote access for the web UI, REST API, and MCP,
+  including OAuth-compatible MCP clients and a tested VPS deployment path
+- 🔨 **Planned (M6.1)** Dual-era MCP compatibility, adding `2026-07-28` without
+  dropping clients on the current protocol generation
+- 🔨 **Planned (M7)** Photo gallery per kit
+- 🔨 **Planned (M8)** A public-facing, read-only showcase page suitable for linking
 - Genuinely reusable by someone who isn't the author — this is a public repo, not a
   personal script
 
@@ -91,7 +99,7 @@ else's UI. This is the same app, owned outright.
 │ (Claude, …)  │               └──────────────┬──────────────┘
 └──────────────┘                              │
                                      ┌────────┴─────────┐
-                                     │  Photo storage   │ 🔨 M5
+                                     │  Photo storage   │ 🔨 M7
                                      │  (volume or S3)  │
                                      └──────────────────┘
 ```
@@ -108,7 +116,7 @@ else's UI. This is the same app, owned outright.
   writer types by design (web UI, REST clients, MCP agents), so Postgres is the boring
   correct answer. It costs one more container in the compose file; worth it.
 - ✅ **Frontend: React + Vite**, to be served as a static build behind a lightweight
-  nginx container (M8). Kanban via `dnd-kit` — maintained, accessible, no jQuery-era
+  nginx container (M5). Kanban via `dnd-kit` — maintained, accessible, no jQuery-era
   baggage.
 
 ---
@@ -142,7 +150,7 @@ rows.
 ### 3.2 `kit_photos`
 
 One-to-many gallery per kit. ✅ The table exists and is registered for export; 🔨 the
-upload endpoints and UI land in M5.
+upload endpoints and UI land in M7.
 
 | Field | Type | Notes |
 |---|---|---|
@@ -320,10 +328,10 @@ Standard CRUD plus a few purpose-built endpoints.
 
 **Planned 🔨**
 
-- `GET /kits/{id}/photos`, `POST /kits/{id}/photos` (multipart upload) — **M5**, blocked
+- `GET /kits/{id}/photos`, `POST /kits/{id}/photos` (multipart upload) — **M7**, blocked
   on the §9.2 storage decision. Not implemented; the `kit_photos` table exists but
   nothing writes to it
-- `GET /public/kits`, `GET /public/kits/{id}` — **M6**, read-only, no auth, powers the
+- `GET /public/kits`, `GET /public/kits/{id}` — **M8**, read-only, no auth, powers the
   showcase page (§5). Not implemented; there is currently no `/public/*` namespace at all
 
 ### 4.6 Photo model note
@@ -334,26 +342,33 @@ timeline is planned, only that the columns are cheap now and expensive to retrof
 
 ---
 
-## 5. Auth & Public Mode 🔨 **Planned (M6 + M7) — none of this exists yet**
+## 5. Auth, Remote Access & Public Mode 🔨 **Planned (M6 + M8) — none of this exists yet**
 
 Nothing in this section is implemented. Today every endpoint is unauthenticated and
 every endpoint can write. See §10 for what that means for running an alpha instance.
 
-The intended shape is two genuinely separate paths, not a UI toggle over one path:
+The intended shape has three genuinely separate access surfaces, not a UI toggle over
+one path:
 
-- **Admin/write path** — authenticated (single-user login to start; the schema doesn't
-  preclude multi-user later, but v1 assumes one owner). All `/kits`, `/orders`, `/tools`
-  and similar write endpoints sit behind this. **M7.**
+- **Browser admin path** — an authenticated, single-owner web session. The schema does
+  not preclude multi-user later, but v1 has exactly one owner. **M6.**
+- **REST and MCP path** — bearer-token authentication with separate read and write
+  scopes. Remote MCP clients authenticate via the MCP OAuth contract; browser sessions
+  do not double as MCP credentials. **M6.**
 - **Public/read path** — `/public/*` routes, no auth, and no write capability reachable
   from them at all. Genuinely separate route handlers, not client-side filtering over
-  the same ones. **M6.**
+  the same ones. **M8.**
 
-That separation is the standard shape for anything fronted by a tunnel or reverse proxy:
-a showcase link should be safe to hand out without someone finding the write API behind
-it. Filtered views fail this the first time a query parameter is guessed.
+That separation must be enforced at both the application and ingress layers. Separate
+`/public/*` handlers are necessary, but they do not make a showcase safe if the same
+public reverse proxy also exposes unauthenticated `/kits`, `/orders`, or `/mcp`. M6
+protects the admin surfaces before M8 makes the instance deliberately public.
 
 MCP tools always operate through the authenticated path — no public or anonymous MCP
-access.
+access. The implementation should use a maintained OAuth/OIDC provider or proxy rather
+than inventing an authorization server inside plamotrack. A remote deployment also needs
+token expiry and revocation, host/origin validation, rate limiting, and useful audit
+logs; "a login page exists" is not the completion criterion.
 
 ---
 
@@ -362,14 +377,41 @@ access.
 - `unit_price_minor` — integer, minor units (cents), never float. Avoids the classic
   floating-point money bug
 - `currency_code` — ISO 4217 (AUD, USD, JPY, …), stored per order item
-- `converted_price_aud_minor` — captured **at entry time**, never recalculated on view.
+- ✅ `converted_price_aud_minor` — the current alpha implementation, captured **at entry
+  time** and never recalculated on view.
   What a kit cost is a historical fact; re-deriving it from a live FX API on every page
   load would make spend history drift underneath the person reading it. If a live-rate
   lookup at entry time is wanted (a nice-to-have, not built), it's a one-shot call at
   creation, result stored, done
 
+🔨 **M5.1 removes the AUD assumption without changing the snapshot rule.** The field
+becomes a neutral reference-currency amount with the currency recorded alongside it.
+Existing values migrate as AUD. The instance has a configurable default reference
+currency, and order forms, starter sheets, and MCP defaults all read it rather than
+hard-coding AUD. Changing the instance default later does not reinterpret old snapshots.
+
 The same instinct — recorded facts stay recorded — runs through the order guards in
 §3.9 and the delete blocks in §4.
+
+### 6.1 Internationalisation 🔨 **Planned (M5.1) — no translations yet**
+
+The first localisation milestone is infrastructure, not a partially translated UI:
+
+- move every user-facing frontend string into an English source catalogue with semantic
+  keys, interpolation, and plural rules
+- route dates, times, numbers, and currency through locale-aware formatters; browser
+  locale is the initial default, with an explicit persisted override
+- set the document language and direction from the active locale, and prefer logical
+  layout properties where practical so a future right-to-left language is not a rewrite
+- return stable error codes and parameters from REST alongside the existing English
+  `detail`; the browser can translate known errors while API and MCP clients still get a
+  useful message
+- keep API enum values, MCP tool names, database values, and canonical CSV headers
+  stable and untranslated. Translation happens at the presentation boundary; user-entered
+  kit names, notes, retailers, and categories remain exactly what the owner wrote
+
+Shipping the English catalogue before adding photos, authentication screens, or the
+showcase prevents each of those features from creating another pile of embedded copy.
 
 ---
 
@@ -401,26 +443,46 @@ with this MCP server and a mail connector both active, reading one and writing t
 other. Building that as a feature would mean owning IMAP credentials, per-retailer
 parsers, and a support burden — for something the agent layer already does better.
 
+### 7.1 Protocol modernisation 🔨 **Planned (M6.1)**
+
+The current server uses the handshake/session-era MCP implementation. The `2026-07-28`
+revision changes the transport substantially: a stateless core, discovery in place of a
+required initialize handshake, standard routing headers, cache hints, and hardened OAuth
+behaviour. Plamotrack's tool handlers are already application-stateless — each call gets
+its durable state from Postgres — so the product architecture does not need to change.
+
+M6.1 adds the modern protocol only through an SDK/framework release that serves modern
+and legacy clients from the same endpoint. Completion means conformance coverage plus a
+small client matrix, not merely raising a dependency version. Tasks, multi-round-trip
+requests, subscriptions, and MCP Apps are not roadmap items: the current short,
+transactional tools do not need them.
+
 ---
 
-## 8. Docker Compose Layout 🔨 **Planned (M8) — partially built**
+## 8. Docker Compose Layout 🔨 **Planned (M5) — partially built**
 
 Today `docker-compose.yml` starts the database only; the API and frontend run from
-source in development. The full stack lands with M8:
+source in development. The full local stack lands with M5:
 
 ```yaml
 services:
   api:        # FastAPI + FastMCP, one process, one port (REST at /, MCP at /mcp)
-  frontend:   # nginx serving the Vite build, proxying /api to the api service
+  frontend:   # single ingress: static Vite build, /api + /mcp proxy to the api service
   db:         # postgres:16   ✅ this one exists today
   # photo storage: local named volume by default;
   # optional S3-compatible (MinIO or external) via env var, not required for v1
 ```
 
-Reverse proxy and TLS termination are left to the operator (Traefik labels, or a plain
-compose file with instructions for fronting it with nginx/Caddy/Cloudflare Tunnel). Not
-bundled — the stack should be honest about what it does and doesn't own, and bundling a
-proxy means owning everyone's certificate problems.
+Only the frontend ingress is published to the host; the API and database remain on the
+Compose network. The host bind defaults to `127.0.0.1`, so a convenient install is not
+accidentally an internet deployment. Database migrations run as a controlled startup
+step before the API becomes healthy, and `docker compose up -d --wait` is the supported
+empty-instance path.
+
+M5 does **not** make the stack internet-safe. M6 supplies a tested VPS deployment path
+with authentication and a reference TLS/reverse-proxy configuration (for example Caddy),
+while leaving operators free to use Traefik, nginx, or a tunnel. The base Compose file
+does not bundle a certificate authority or a heavyweight identity platform.
 
 ---
 
@@ -459,11 +521,14 @@ the remaining gaps become things to disclose rather than things to hide.
 
 **What "alpha" honestly means here — the things to disclose:**
 
-- **No auth on the write path** (M7). Anyone who can reach the API can write to it. Run
+- **No auth on the write path** (M6). Anyone who can reach the API can write to it. Run
   it on a network you trust — LAN, VPN, localhost. Do not put it on the public internet.
-- **No bundled application containers** (M8). Compose starts Postgres; the API and
-  frontend run from source. Packaging follows auth.
-- **No photos** (M5) and **no public showcase page** (M6).
+- **No bundled application containers yet** (M5). Compose starts Postgres; the API and
+  frontend run from source. The M5 stack will remain loopback-only by default and does
+  not imply that an unauthenticated instance is safe to expose.
+- **No localisation infrastructure yet** (M5.1). English is embedded in the UI and AUD
+  is still the reference-currency assumption.
+- **No photos** (M7) and **no public showcase page** (M8).
 - **The schema will still move.** Migrations are provided and tested in both directions,
   but breaking changes are possible while it's alpha. Export an archive before upgrading
   — that is exactly what §12 is for.
@@ -503,11 +568,23 @@ Unchanged from the original plan:
 5. ✅ **4.5** Import/export — CSV archive + manifest, preview, templates (§12), inserted
    ahead of the rest to make a public alpha honest (§10)
 6. → **Public alpha here.** Everything below happens in the open.
-7. 🔨 **M5** Photo upload + gallery *(§9.2 decision first)*
-8. 🔨 **M6** Public read-only routes + showcase page
-9. 🔨 **M7** Auth on the write path
-10. 🔨 **M8** Docker Compose packaging + setup docs
-11. 🔨 **M9** Open-source polish: README, screenshots, contribution guide
+7. 🔨 **M5 — Installability:** full local Docker Compose stack, controlled migrations,
+   safe loopback defaults, health checks, and backup/upgrade documentation. This improves
+   adoption without claiming the unauthenticated stack is internet-safe
+8. 🔨 **M5.1 — Internationalisation foundation:** English source catalogue,
+   locale-aware formatting, structured API errors, and a configurable historical
+   reference currency. No translations in this milestone
+9. 🔨 **M6 — Secure remote access:** single-owner browser authentication, scoped
+   REST/MCP bearer tokens, OAuth-compatible MCP access, and a tested TLS/VPS deployment
+   path. This is the gate for deliberately exposing an instance
+10. 🔨 **M6.1 — MCP modernisation:** dual-era compatibility for the existing protocol
+    generation and `2026-07-28`, with conformance and real-client coverage
+11. 🔨 **M7 — Photos:** local-volume upload + gallery, archive integration, and the
+    §9.2 storage decision closed before implementation
+12. 🔨 **M8 — Public showcase:** genuinely separate anonymous read routes and a
+    shareable frontend, built only after the admin and MCP surfaces are protected
+13. 🔨 **M9 — Open-source operations:** contribution guide, release automation,
+    compatibility/support matrix, and deployment documentation polish
 
 ---
 
@@ -599,8 +676,8 @@ before a regression test started guarding it.
 This is the milestone that makes a public alpha reasonable: the data can now leave.
 
 It does **not** make an exposed instance safe, and the two shouldn't be conflated. The
-code going public is not the same as an instance going on the internet. M7 (auth on the
-write path) is still the gate for the latter — see §10.
+code going public is not the same as an instance going on the internet. M6 (secure
+remote access and auth on the write path) is still the gate for the latter — see §10.
 
 ### 12.7 Deliberately not done
 

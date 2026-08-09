@@ -41,7 +41,7 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
 ## Layout
 
 ```
-docker-compose.yml      # dev: db only; api/frontend services land at Milestone 8
+docker-compose.yml      # dev: db only; api/frontend services land at Milestone 5
 .env                    # the only config file (gitignored); .env.example is the template
                         #   compose + API both read it; app/config.py assembles the DSN
                         #   from POSTGRES_* unless DATABASE_URL is set explicitly
@@ -136,8 +136,10 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    conversion are already wired — don't raise HTTP exceptions from services.
 7. **Stock mutations** use row locks (`with_for_update`) — three concurrent writer
    types exist by design (UI, REST, MCP agents).
-8. **Public read paths (Milestone 6)** must be genuinely separate route handlers
-   under `/public/*` with no write capability reachable — not filtered views (§5).
+8. **Public read paths (Milestone 8)** must be genuinely separate route handlers
+   under `/public/*` — not filtered views (§5). Public ingress must not expose an
+   unauthenticated admin or MCP route; route separation is enforced at both the app
+   and proxy layers.
 9. **CSV shape is declared once**, in `services/portability/spec.py`. Export,
    import, and the blank templates all read that registry — never hand-write a
    header or a parser anywhere else, or the three drift and a template starts
@@ -157,14 +159,21 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
 4. ~~Kanban board (drag-and-drop, dnd-kit)~~ ✅
 4.5. ~~Import/export: CSV archive + manifest, preview, templates~~ ✅ (§12)
 → **Public alpha ships here.** Everything below is built in the open.
-5. Photo upload + gallery ← decide storage backend default first (§9.2)
-6. Public read-only routes + showcase page
-7. Auth on the write path (single-user)
-8. Docker Compose packaging + setup docs
-9. Open-source polish: README, screenshots, contribution guide
+5. Installability: full local Docker Compose stack, safe loopback defaults,
+   migrations, health checks, backup/upgrade docs
+5.1. Internationalisation foundation: English catalogue, locale-aware formatting,
+     structured errors, configurable reference currency; no translations yet
+6. Secure remote access: single-owner browser auth, scoped REST/MCP tokens,
+   OAuth-compatible MCP, tested TLS/VPS deployment path
+6.1. MCP modernisation: dual-era current + `2026-07-28` compatibility with
+     conformance and client coverage
+7. Photo upload + gallery ← decide storage backend default first (§9.2)
+8. Public read-only routes + showcase page ← only after admin/MCP paths are protected
+9. Open-source operations: contribution guide, release automation, support matrix,
+   deployment-doc polish
 
 The repo goes public at 4.5 as an alpha (§10, revised) rather than waiting for
 milestones 1–6. Consequence for anything written from here on: **the audience is
 strangers.** No internal references, no assumed context, and disclose what isn't
 built rather than describing planned endpoints as if they exist. Nothing is
-authenticated yet (M7) — an alpha instance belongs on a trusted network.
+authenticated yet (M6) — an alpha instance belongs on a trusted network.

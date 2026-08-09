@@ -1,5 +1,5 @@
 # Dev stack — currently just the database.
-# The api and frontend services land with Milestone 8 (packaging).
+# The api and frontend services land with Milestone 5 (local installability).
 services:
   db:
     image: postgres:16
