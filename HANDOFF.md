@@ -26,15 +26,16 @@ Template:
 - **Decisions:** Python 3.12, Node 22, Postgres 16; no version matrix, coverage gate,
   release automation, or required-check repository setting yet. Concurrent stale
   runs cancel. Public-fork code receives no secrets and only `contents: read`.
-- **State:** Draft PR #4 is open at head `87be6ea`. Its first run caught that the
-  Integration job had no gitignored `.env`; `87be6ea` now copies `.env.example`,
-  exercising the documented fresh-install path without repository secrets. The rerun
-  is all green: Frontend 14s, Backend 47s, Integration 1m26s. Local validation remains
-  green too (`actionlint`, 104 pytest tests, Ruff check/format, frontend lint/build,
-  2 Playwright tests, ingress probes, and a live MCP handshake).
-- **Next:** Review and merge PR #4. After several stable runs, consider making Backend
-  and Frontend required; promote Integration only once its runner behaviour is proven
-  non-flaky.
+- **State:** CI is merged on `main` in PR #4 (`05ed745`). Its first run caught that
+  Integration had no gitignored `.env`; the fix copies `.env.example`, exercising the
+  documented fresh-install path without repository secrets. PR #5 (`78efd31`) fixed
+  both uv cache globs after the post-merge run showed they resolved to
+  `backend/backend/uv.lock`. PR checks and both push-to-`main` runs are green; the
+  latest runs Backend, Frontend, Playwright, the packaged Compose stack, ingress
+  probes, and a live MCP handshake. Both remote feature branches were deleted, their
+  local branches and stale refs are cleaned up, and local `main` matches `origin/main`.
+- **Next:** After several stable runs, consider making Backend and Frontend required;
+  promote Integration only once its runner behaviour is proven non-flaky.
 
 ## 2026-08-10 — Claude Code — M5 installability + neutral reference currency
 
