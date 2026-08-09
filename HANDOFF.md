@@ -18,14 +18,14 @@ Template:
 
 ## 2026-08-10 — Claude Code — M5 installability + neutral reference currency
 
-Branch **`feat/m5-install-and-reference-currency`**, pushed, PR open against `main`.
-Two commits: `588a12f` (the work below) and `f6a69c4` (exposure docs). Working tree
-clean.
+**Merged to `main` in PR #2 (`c9988c8`), released as `v0.2.0-alpha`.** Branch deleted.
+Verified green on `main` after the merge: 104 backend tests, ruff, `npm run build`,
+oxlint, and `docker compose up -d --build --wait` exiting 0.
 
-This hand-off entry lives on the branch rather than on `main`, against the usual
-convention — the branch already contained a `HANDOFF.md` edit, so committing another
-to `main` would have guaranteed a conflict at merge. The PR was opened immediately,
-so nothing is hidden from the next session in the meantime.
+**Open follow-up: issue #3** — editing an order line silently discards its conversion
+snapshot. Pre-existing (the old AUD column did the same), found during review of #2,
+reproduced and written up rather than fixed there. Worth settling before M7 adds more
+edit surfaces to order lines. Don't rediscover it from scratch.
 
 - **Done — reference currency (pulled forward from M5.1):**
   - `converted_price_aud_minor` → `converted_price_minor` + `converted_currency_code`.
