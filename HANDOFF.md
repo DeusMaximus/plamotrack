@@ -18,7 +18,8 @@ Template:
 
 ## 2026-08-10 — Claude Code — Issue #3: order edits stop erasing the §6 snapshot
 
-- **Done:** PR #11 (`6ba87ac`) from `fix/order-snapshot-preservation`, open, not merged.
+- **Done:** PR #11 (`6ba87ac` + `be80b31`) from `fix/order-snapshot-preservation`, open,
+  not merged, all checks green on both commits.
   Reproduced #3 first against the live dev API — a `PATCH` carrying only a quantity
   turned `7350 AUD` into `None None` — then fixed both halves:
   - `_apply_converted_snapshot()` in `services/orders.py` reads `model_fields_set`, so
@@ -31,6 +32,13 @@ Template:
     clears it). The field is the only way the browser can change a snapshot now.
   - Schema descriptions on both `converted_*` fields (so the rule is in the generated
     OpenAPI, not just comments), `OrderItemUpsert`'s docstring, and design notes §6.
+  - `be80b31` closes a hole Copilot's review found in the first commit and I'd missed:
+    resolving the code through `_converted_snapshot()` meant an amount-only `PATCH`
+    restamped a stored `GBP` snapshot as the instance default — £42.00 reissued as
+    A$43.00 from a request that never mentioned currency, which is the same
+    config-overwrites-a-record failure the commit was written to stop. The code now
+    falls back **explicit payload → already recorded on the line → instance default**.
+    Explicit code changes and the create path both behave exactly as before.
 - **Decisions:** Issue options **1 + 2**, not the 409 guard (option 3). The rejected
   shortcut is worth knowing about: "purchase currency == `REFERENCE_CURRENCY` → just
   recompute" silently restamps a JPY purchase's AUD snapshot as JPY once the operator
@@ -38,7 +46,7 @@ Template:
   AUD 95 against an AUD 100 line. Both are recorded facts; neither is derivable. The
   cost is that single-currency instances now see an `≈` row on existing lines that
   mostly restates the price — deliberate, and cheap to hide later if it grates.
-- **State:** 108 backend tests pass (104 + 4 new in `test_reference_currency.py`),
+- **State:** 109 backend tests pass (104 + 5 new in `test_reference_currency.py`),
   ruff check/format clean, `npm run build` + oxlint clean, 4 Playwright tests pass
   (new `e2e/order-snapshot.spec.ts` + the happy path). Negative controls run: the new
   backend test fails without the service fix, and the new e2e `L == R` case fails
@@ -46,14 +54,22 @@ Template:
   hand in the browser with `REFERENCE_CURRENCY` moved to `JPY` — a JPY order's AUD
   snapshot survived a quantity edit. `.env` was restored byte-for-byte afterwards and
   all test data was deleted from the dev database.
-- **Next:** Review/merge PR #11; #3 closes with it. Separately, #6 now has a comment
-  recording the **frontend** half of the minor-units bug, found while checking this
-  work: the money inputs hardcode `step="0.01"`, so a 3-decimal currency (KWD, BHD,
-  CLF…) can't be typed — and an existing 3-decimal order can't be re-saved from the UI
-  at all, since the form loads a value its own input calls invalid. Deliberately left
-  unfixed here: the real fix is `step` derived from `minorFractionDigits()` across all
-  three money inputs plus a decision on unknown codes, which is #6's job, not this
-  PR's. Issue #9 untouched.
+- **Next:** Re-review/merge PR #11; #3 closes with it. Two bugs found while checking
+  this work were written up rather than fixed in it, both deliberately:
+  - **#12 (new)** — the CSV importer relabels a stored snapshot's currency exactly as
+    `be80b31` stopped the service doing: a merge import carrying `converted_price_minor`
+    with no currency column turned `4200 GBP` into `4400 AUD`. Reproduced. Not a copy of
+    the service fix: `_pair_converted_snapshot()` runs at parse time, before a row knows
+    its update target, and the resolution has to land before the preview is computed or
+    `plan_hash` stops meaning anything.
+  - **#6 (commented)** — the **frontend** half of the minor-units bug: the money inputs
+    hardcode `step="0.01"`, so a 3-decimal currency (KWD, BHD, CLF…) can't be typed, and
+    an existing 3-decimal order can't be re-saved from the UI at all, since the form
+    loads a value its own input calls invalid. The fix is `step` derived from
+    `minorFractionDigits()` across all three inputs plus a decision on unknown codes —
+    #6's job, and it touches InventoryPage, which #11 otherwise doesn't.
+
+  Issue #9 untouched.
 
 ## 2026-08-10 — Codex — PR #10 Postgres review follow-up
 
