@@ -16,7 +16,7 @@ Template:
 
 ---
 
-## 2026-08-09 — Codex — Public roadmap reprioritisation
+## 2026-08-09 — Codex — Public roadmap reprioritisation (merged)
 
 - **Done:** Reworked the public roadmap across `docs/design.md`, `README.md`,
   `AGENTS.md`, and milestone-bearing code/config comments.
@@ -24,9 +24,9 @@ Template:
   foundation and neutral reference currency; M6 = single-owner auth, OAuth MCP,
   and tested VPS deployment; M6.1 = dual-era MCP `2026-07-28`; M7 = photos;
   M8 = public showcase after protected admin/MCP ingress; M9 = open-source ops.
-- **State:** Documentation/comment-only changes on
-  `codex/refresh-public-roadmap`; uncommitted. `git diff --check` is clean; no
-  runtime tests were needed.
+- **State:** Documentation/comment-only work committed as `8f87776`, pushed, and
+  merged to `main` in PR #1 (`ade9d2a`). Local `main` is fast-forwarded to that
+  merge. `git diff --check` was clean; no runtime tests were needed.
 - **Next:** Implement M5 packaging with one loopback-bound ingress, internal API/db,
   controlled migrations, health checks, and upgrade/backup docs.
 
