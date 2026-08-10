@@ -16,6 +16,59 @@ Template:
 
 ---
 
+## 2026-08-10 — Claude Code — Issue #6: ISO 4217 minor units, both halves
+
+**Committed on branch `fix/iso-4217-minor-units` (`5eec4a0`) — not pushed, no PR yet.**
+Green locally: 180 backend tests, ruff check + format, `npm run build`, oxlint, 4
+Playwright e2e.
+**#6 moved out of M5.1 into `M5 hardening — v0.2.2-alpha`** (agreed with the human) —
+M5.1 now has nothing open.
+
+- **Done:** new `backend/app/services/currency.py` holds the exponent table and the
+  three conversions, moved out of `portability/spec.py`; `frontend/src/lib/currency.ts`
+  mirrors it and supplies `stepFor()`; the three money inputs in `OrdersPage.tsx` derive
+  `step` from the relevant currency (unit price and shipping from the order's, converted
+  price from the *snapshot's* — §6 lets them differ).
+- **The finding that changed the fix.** The issue and the previous hand-off both had the
+  frontend down as the correct half, deriving the exponent from `Intl`. It isn't. `Intl`
+  reports CLDR *presentation* digits, which follow everyday practice and move between ICU
+  releases: Chromium 151 gives **IQD 0, HUF 0, COP 0, MGA 0** where ISO 4217 gives 3, 2,
+  2, 2. So the two layers already disagreed for HUF and COP — ordinary currencies, not
+  just the exotic ones the issue named — and worse, an exponent read from the runtime
+  means a *browser update* can change what a stored integer is worth. That's the §6
+  failure mode, so `Intl` no longer decides the exponent anywhere; it still picks symbol,
+  grouping and placement, with our digits passed in explicitly.
+- **Decisions** (the two the last session reserved, both put to the human):
+  - **ISO 4217 wins over CLDR** for the stored exponent. Consequence to know about:
+    HUF/COP/IQD/MGA amounts now display with ISO decimals, and any row already entered
+    in those four codes is reinterpreted. Those rows were already ambiguous — the two
+    layers disagreed about them — so there was no consistent prior meaning to keep.
+    Per-locale *display* digits stay open for M5.1 and are noted in §10.
+  - **Unknown codes: accept everywhere, warn on CSV import.** Rejecting would strand an
+    instance already holding an obscure code; silence is what #6 objected to. The warning
+    lands in the preview, where a typo'd `AUS` is still free to fix.
+- **Also fixed, same criterion:** `majorToMinor` scaled through a float, so `1.005` AUD
+  was 100 minor units in the browser and 101 in Python. It now shifts the decimal point
+  through the string and rounds half away from zero, like `Decimal` does.
+- **`InventoryPage.tsx:129` is not part of this** — the last hand-off called it the
+  fourth money input. `Tool.unit_cost_reference` is `Numeric(10, 2)` with **no currency
+  column** and plain `parse_decimal` in the spec, so it never touches the exponent at
+  all; `step="0.01"` matches the column's real scale. Money stored as a scaled decimal
+  with its currency unstated is a separate §6 inconsistency and wants its own issue.
+- **State:** `tests/test_currency.py` is new (65 cases): exponents, both conversions,
+  round-trip, unknown codes, and `test_frontend_mirrors_the_same_table`, which parses the
+  TS table and fails if the two copies drift — the frontend has no unit-test runner, so
+  that guard lives on the backend side. Three import/export tests added to
+  `test_portability.py`. Negative controls run: reverting the exponent table fails 12 of
+  them, removing the warning call fails the warning test, and the rest hold either way.
+  Verified live too — an order stored at `unit_price_minor: 1234` KWD opens with
+  `step="0.001"`, validates, and re-saves byte-identical (the thing the issue said was
+  impossible); switching that form to JPY flips `step` to `1` and correctly rejects
+  `1.234`. All probe data deleted from the dev database.
+- **Next:** commit, PR, then cut **v0.2.2-alpha** — it clears *both* known issues the
+  v0.2.1-alpha notes shipped with (#12 and #6). Version lives in three places that move
+  together; see the 2026-08-10 entry on #3 for the mechanics.
+
 ## 2026-08-10 — Claude Code — Issue #9 docs, and the #6 hand-off
 
 **Merged to `main` in PR #15 (`b1b5879`), closing #9.** Docs only. Branch deleted, local
