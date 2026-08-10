@@ -16,6 +16,40 @@ Template:
 
 ---
 
+## 2026-08-10 — Claude Code — Issue #12: CSV import stops relabelling a snapshot
+
+**Merged to `main` in PR #14 (`daaed3c`), closing #12.** Verified green on `main` after
+the merge: 113 backend tests, ruff, `npm run build`, oxlint. Branch deleted, local and
+remote. Not released — `v0.2.1-alpha` ships with this bug and names it as known, so this
+is the headline of the next one.
+
+- **Done:** `_pair_converted_snapshot()` stamped the instance reference currency onto
+  any `order_items` row carrying an amount and no currency, *including rows that already
+  had one* — a merge import correcting an amount turned a stored `4200 GBP` into
+  `4400 AUD`. Rows now record what the importer invented rather than read, in
+  `_Row.filled`, and `_defer_filled_snapshot_currency()` resolves an invented currency
+  against the row's target during classification.
+- **Decisions:**
+  - **Where it runs is the whole fix.** Classification is after matching (so
+    `row.target` exists) and before the diff (so the change list compares the value that
+    will really be written). The preview therefore stops reporting a currency change it
+    won't make — no new `plan_hash` contract, no `spec.py` change. **#12's own claim that
+    this had to happen at parse time was wrong**; reading the planner rather than
+    planning around the assumption is what caught it.
+  - Two behaviours deliberately unchanged, now pinned by tests so they don't get
+    "fixed": a blank **cell** in a column the sheet includes still means the instance
+    default (the column help promises it, and including a column is an instruction, not
+    silence), and a row with nothing recorded still gets the default filled in, which the
+    paired CHECK constraint requires.
+- **State:** 4 new tests in `test_reference_currency.py`. Negative control run: the two
+  aimed at the bug (apply *and* preview) fail without the fix; the two guarding
+  unchanged behaviour pass either way. Verified live through `/import/preview` and
+  `/import/apply` as well, and all probe data was deleted from the dev database.
+  Copilot's review generated no comments.
+- **Next:** #9 is the only thing left in `M5 hardening — v0.2.2-alpha` — a docs issue,
+  labelled good first issue. After that the milestone is releasable; #6 (minor units,
+  both halves) is the other known issue named in the v0.2.1-alpha notes and sits in M5.1.
+
 ## 2026-08-10 — Claude Code — Issue #3: order edits stop erasing the §6 snapshot
 
 **Merged to `main` in PR #11 (`6d6b12e`), closing #3, and shipped as `v0.2.1-alpha`
