@@ -31,10 +31,12 @@ has to be on `main` before the tag. No test pins the string. Published with
 `gh release create --prerelease --verify-tag` so it attaches to a tag already pushed
 rather than creating one of its own.
 
-**The `M5 hardening — v0.2.1-alpha` milestone still has #9 and #12 open**, so its name
-now outruns what shipped. Either rename it or move those two to a v0.2.2 milestone —
-both are in the release notes as known issues, so nothing is hidden from users either
-way.
+**Milestones:** `M5 hardening — v0.2.1-alpha` is closed, holding the three issues that
+shipped (#3, #7, #8). The two that didn't — #12 (CSV import relabels a snapshot's
+currency) and #9 (starter-sheet currency docs) — moved to a new
+`M5 hardening — v0.2.2-alpha`, and both went out documented as known issues in the
+release notes. #12 is the natural headline for that release: it's the same §6 invariant
+as #3, through the import path instead of the API.
 
 - **Done:** Two commits, `6ba87ac` + `be80b31`.
   Reproduced #3 first against the live dev API — a `PATCH` carrying only a quantity
