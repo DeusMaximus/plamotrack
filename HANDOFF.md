@@ -16,6 +16,57 @@ Template:
 
 ---
 
+## 2026-08-10 — Claude Code — Issue #9 docs, and the #6 hand-off
+
+**Merged to `main` in PR #15 (`b1b5879`), closing #9.** Docs only. Branch deleted, local
+and remote. `M5 hardening — v0.2.2-alpha` now has **nothing open** — #12 and #9 are both
+in, so the milestone is releasable whenever you want it.
+
+- **Done:** `docs/import-export.md` said a blank starter-sheet currency means AUD; it
+  means the instance's `REFERENCE_CURRENCY`, and the downloaded template's example rows
+  already arrive filled in with it. Checking nearby prose (the issue's third criterion)
+  turned up the design notes' known-limitations list still calling AUD "the
+  reference-currency assumption", two releases stale.
+- **Review:** Copilot caught that the replacement understated #6 — "can't be typed" is
+  true of the web form only. Corrected in `73a5045` and worth keeping straight, because
+  the two layers fail in opposite directions:
+  - **Web form:** `step="0.01"` on every money input, so `1.234` fails constraint
+    validation and the form (not `noValidate`) blocks submission. An order that already
+    holds a three-decimal amount can't be re-saved *unchanged* — the field is invalid on
+    arrival. Obstructive, visible, destroys nothing.
+  - **CSV layer:** `minor_fraction_digits()` in `portability/spec.py` returns 2 for
+    anything outside `ZERO_DECIMAL_CURRENCIES`, so KWD `1.234` is accepted and stored as
+    `123` minor units, then exported as `12.34`. Silent, and off by a factor of ten.
+
+### Next session: #6, then release v0.2.2-alpha
+
+**Recommendation: do #6 first, and don't wait for M5.1.** It's arguably misfiled there.
+A currency's minor-unit exponent is a property of the currency, not of the reader — KWD
+has 1000 fils whether the UI is English or Japanese — so M5.1's string catalogue and
+locale-aware *formatting* neither help it nor get duplicated by it. `formatMoney` on the
+frontend already derives the exponent from `Intl` and is already correct; M5.1 would not
+revisit either half of #6. And the CSV half isn't an i18n nicety at all: it's the third
+member of the #3 / #12 family, where the stored number means something other than what
+it says.
+
+Scope is small — the exponent table wants seven three-decimal codes (BHD, IQD, JOD, KWD,
+LYD, OMR, TND) and two four-decimal (CLF, UYW) beside the existing zero-decimal set, plus
+`step` derived from the same rule in the four money inputs (`OrdersPage.tsx` ×3 after the
+#3 field landed, `InventoryPage.tsx` ×1).
+
+**One decision is open and belongs to the human, not the next agent.** What should an
+*unrecognised* currency code do? Today both layers silently assume two decimals, which is
+how a typo'd code quietly becomes a wrong amount — and #6's own acceptance criteria
+object to exactly that silence. The options are keep silent-2, accept but warn on import,
+or reject outright. My recommendation was **warn on import, accept in the API**: rejecting
+breaks anyone already storing an obscure code, and silence is the thing being complained
+about. Not agreed yet — ask before implementing.
+
+Release after that: v0.2.2-alpha headlines #12 (the import relabelling fix), with #9 and
+#6 alongside. Doing #6 first is what lets its notes drop **both** known-issue bullets that
+v0.2.1-alpha shipped with, rather than repeating one. See the previous entry for the
+version-bump mechanics.
+
 ## 2026-08-10 — Claude Code — Issue #12: CSV import stops relabelling a snapshot
 
 **Merged to `main` in PR #14 (`daaed3c`), closing #12.** Verified green on `main` after
