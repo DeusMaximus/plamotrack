@@ -66,9 +66,28 @@ test("step is the currency's smallest unit", () => {
 });
 
 test("formatMoney shows the currency's own decimals, not the locale's", () => {
-  // Intl left alone renders 1234 IQD minor units as "IQD 1,234" — a thousand times
-  // the 1.234 dinar actually stored — because CLDR reports IQD as having none.
-  expect(formatMoney(1234, "IQD")).toContain("1.234");
-  expect(formatMoney(1234, "KWD")).toContain("1.234");
-  expect(formatMoney(1200, "JPY")).not.toContain(".");
+  // Compared against a formatter *told* the digit count, rather than against a
+  // literal: how many decimals appear is ours to get right, but the separators and
+  // the symbol's position belong to whatever locale the reader is in. Asserting on
+  // "1.234" would pass here and fail in de-DE, where the same amount is "1,234 IQD"
+  // and 1200 JPY is "1.200 ¥" — a full stop in a number with no decimals at all.
+  const withDigits = (major: number, currency: string, digits: number) =>
+    new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }).format(major);
+
+  expect(formatMoney(4999, "AUD")).toBe(withDigits(49.99, "AUD", 2));
+  expect(formatMoney(1200, "JPY")).toBe(withDigits(1200, "JPY", 0));
+  expect(formatMoney(1234, "KWD")).toBe(withDigits(1.234, "KWD", 3));
+  expect(formatMoney(1234, "IQD")).toBe(withDigits(1.234, "IQD", 3));
+
+  // And the check that stops the four above being vacuous: left to itself Intl
+  // renders that same IQD line as the locale's "1", because CLDR reports the dinar
+  // as having no minor unit. Going back to it has to fail a test.
+  expect(formatMoney(1234, "IQD")).not.toBe(
+    new Intl.NumberFormat(undefined, { style: "currency", currency: "IQD" }).format(1.234),
+  );
 });
