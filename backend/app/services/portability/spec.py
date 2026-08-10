@@ -51,51 +51,6 @@ from app.models.enums import (
     WouldOrderAgain,
 )
 
-# --- money ---------------------------------------------------------------------
-
-# ISO 4217 currencies with no minor unit. Everything else is assumed to have two,
-# which mirrors what the frontend derives from Intl (frontend/src/lib/format.ts).
-ZERO_DECIMAL_CURRENCIES = frozenset(
-    {
-        "BIF",
-        "CLP",
-        "DJF",
-        "GNF",
-        "ISK",
-        "JPY",
-        "KMF",
-        "KRW",
-        "PYG",
-        "RWF",
-        "UGX",
-        "UYI",
-        "VND",
-        "VUV",
-        "XAF",
-        "XOF",
-        "XPF",
-    }
-)
-
-
-def minor_fraction_digits(currency_code: str | None) -> int:
-    return 0 if (currency_code or "").strip().upper() in ZERO_DECIMAL_CURRENCIES else 2
-
-
-def major_to_minor(major: str | Decimal, currency_code: str | None) -> int:
-    """ "49.99" + AUD -> 4999. Rounds half-up, like the money it represents."""
-    value = major if isinstance(major, Decimal) else Decimal(str(major).strip().replace(",", ""))
-    scaled = value * (10 ** minor_fraction_digits(currency_code))
-    return int(scaled.quantize(Decimal(1), rounding="ROUND_HALF_UP"))
-
-
-def minor_to_major(minor: int, currency_code: str | None) -> str:
-    digits = minor_fraction_digits(currency_code)
-    if digits == 0:
-        return str(minor)
-    return f"{Decimal(minor) / (10**digits):.{digits}f}"
-
-
 # --- cell parsers --------------------------------------------------------------
 
 _TRUE = {"true", "t", "yes", "y", "1"}
@@ -405,7 +360,10 @@ def _photo_key(row: dict) -> tuple | None:
 
 # --- the registry --------------------------------------------------------------
 
-_MONEY_HELP = "Integer minor units (cents). Wins over the major-unit column when both are set."
+_MONEY_HELP = (
+    "Integer minor units — cents for AUD, whole yen for JPY, fils for KWD. "
+    "Wins over the major-unit column when both are set."
+)
 
 # The vocabulary agents and old exports still use for what is now `backlog` — the
 # same aliases app/mcp.py extends, so a status spelled "In Hand" imports cleanly.

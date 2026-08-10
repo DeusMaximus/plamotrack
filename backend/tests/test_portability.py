@@ -690,14 +690,96 @@ async def test_starter_sheet_template_is_importable_as_is(client):
     assert len((await client.get("/kits")).json()) == 3
 
 
+# --- minor units through the CSV layer (#6) -------------------------------------
+#
+# The conversions themselves are unit-tested in tests/test_currency.py. What these
+# cover is the layer above: that the major-unit column and the export read the
+# exponent off the row's *own* currency, so an archive comes back worth what it went
+# in worth.
+
+
+def _order_row(retailer: dict, code: str, **extra) -> dict:
+    return {
+        "id": "",
+        "retailer_id": retailer["id"],
+        "order_date": "2026-08-01",
+        "currency_code": code,
+        **extra,
+    }
+
+
 @pytest.mark.parametrize(
-    ("major", "currency", "expected"),
+    ("code", "major", "minor"),
     [
-        ("49.99", "AUD", 4999),
-        ("1200", "JPY", 1200),  # zero-decimal: yen are already minor units
-        ("0.5", "USD", 50),
-        ("1,299.50", "AUD", 129950),  # spreadsheets love a thousands separator
+        ("KWD", "1.234", 1234),  # 3 decimals — used to import as 123
+        ("CLF", "1.2345", 12345),  # 4 decimals — a factor of 100 out
+        ("JPY", "1200", 1200),
+        ("AUD", "49.99", 4999),
     ],
 )
-def test_major_to_minor_handles_zero_decimal_currencies(major, currency, expected):
-    assert spec.major_to_minor(major, currency) == expected
+async def test_order_line_money_round_trips_in_its_own_currency(
+    client, retailer, code, major, minor
+):
+    content = make_csv(
+        spec.ORDERS.header,
+        [_order_row(retailer, code)],
+    )
+    assert (await apply(client, content, filename="orders.csv")).status_code == 200
+    order_id = (await client.get("/orders")).json()[0]["id"]
+
+    # In through the major-unit column, which is the half a human types.
+    lines = make_csv(
+        spec.ORDER_ITEMS.header,
+        [
+            {
+                "id": "",
+                "order_id": order_id,
+                "item_type": "tool",
+                "catalog_name": "Godhand nippers",
+                "quantity": "1",
+                "unit_price": major,
+                "currency_code": code,
+            }
+        ],
+    )
+    applied = await apply(client, lines, filename="order_items.csv")
+    assert applied.status_code == 200, applied.text
+
+    stored = (await client.get(f"/orders/{order_id}")).json()["items"][0]
+    assert stored["unit_price_minor"] == minor
+    assert stored["currency_code"] == code
+
+    # ...and out again, unchanged.
+    exported = read_archive((await client.get("/export/archive")).content)
+    row = exported["order_items"][0]
+    assert row["unit_price_minor"] == str(minor)
+    assert row["unit_price"] == major
+
+
+async def test_unknown_currency_is_accepted_with_a_warning(client, retailer):
+    """Rejecting it would strand an instance already holding one; saying nothing is
+    how a typo'd code quietly becomes a wrong amount. So: accept, and say so."""
+    content = make_csv(
+        spec.ORDERS.header,
+        # "AUS" is one keystroke from AUD, and not a currency.
+        [_order_row(retailer, "AUS", shipping_cost="12.50")],
+    )
+
+    plan = await preview(client, content, filename="orders.csv")
+    row = plan["tables"][0]["rows"][0]
+    assert row["action"] == "create"
+    assert any("isn't a currency code we recognise" in message for message in row["messages"])
+
+    assert (await apply(client, content, filename="orders.csv")).status_code == 200
+    order = (await client.get("/orders")).json()[0]
+    assert order["currency_code"] == "AUS"
+    assert order["shipping_cost_minor"] == 1250  # the documented 2-decimal default
+
+
+async def test_known_currency_import_is_not_warned_about(client, retailer):
+    content = make_csv(
+        spec.ORDERS.header,
+        [_order_row(retailer, "KWD")],
+    )
+    plan = await preview(client, content, filename="orders.csv")
+    assert plan["tables"][0]["rows"][0]["messages"] == []
