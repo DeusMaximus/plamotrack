@@ -413,6 +413,14 @@ exception. Omit it and the stored snapshot survives; clearing takes an explicit 
 Restating the amount alone doesn't relabel the currency either — on an update the code
 falls back to the one already recorded before it falls back to the instance default, or
 a typo fix on a GBP amount would quietly reissue it as AUD.
+
+The CSV importer reaches the same conclusion from its own rule (§12): a column left out
+of a sheet is left alone. A sheet carrying an amount and no currency column had been
+stamping the instance default over whatever was recorded; it now defers to the stored
+code, and the preview shows the currency untouched because the deferral happens while
+the row is being diffed against its target rather than at write time. A blank *cell* in
+a column the sheet does include still means the instance default — that one is a
+documented instruction rather than silence.
 The reason it can't follow the rule its neighbours follow: no client holds the
 entry-time rate, so nobody editing a quantity is in a position to restate the
 conversion — and treating "absent" as "clear" meant a foreign-currency snapshot,

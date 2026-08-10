@@ -225,6 +225,10 @@ class _Row:
     action: RowAction
     values: dict[str, Any]
     present: set[str]
+    #: Columns this importer synthesised rather than read from the sheet. They are
+    #: in `present` because they will be written, but the sheet never said them —
+    #: which is the difference between a default and an instruction (#12).
+    filled: set[str] = field(default_factory=set)
     label: str = ""
     matched_id: uuid.UUID | None = None
     matched_by: str | None = None
@@ -339,7 +343,8 @@ class _Planner:
             if column.required and column.name in present and values.get(column.name) is None:
                 errors.append(f"{column.name} is required")
 
-        _pair_converted_snapshot(spec, values, present)
+        filled: set[str] = set()
+        _pair_converted_snapshot(spec, values, present, filled)
 
         row = _Row(
             table=spec.key,
@@ -347,6 +352,7 @@ class _Planner:
             action=RowAction.ERROR if errors else RowAction.CREATE,
             values=values,
             present=present,
+            filled=filled,
         )
         row.label = spec.label(values)
         if errors:
@@ -583,6 +589,8 @@ class _Planner:
         if self.mode is ImportMode.ADD_ONLY:
             row.action = RowAction.SKIP
             return
+
+        _defer_filled_snapshot_currency(spec, row)
 
         changes = []
         for column in spec.columns:
@@ -957,7 +965,9 @@ async def apply_import(
     )
 
 
-def _pair_converted_snapshot(spec: TableSpec, values: dict[str, Any], present: set[str]) -> None:
+def _pair_converted_snapshot(
+    spec: TableSpec, values: dict[str, Any], present: set[str], filled: set[str]
+) -> None:
     """Keep the §6 snapshot's two halves consistent, mirroring `_converted_snapshot`
     in services/orders.py — the REST and MCP paths get this from the service layer,
     but the importer writes model rows directly and would otherwise bypass it.
@@ -966,9 +976,14 @@ def _pair_converted_snapshot(spec: TableSpec, values: dict[str, Any], present: s
     "the instance default"; without this it reached Postgres as NULL and tripped
     the paired CHECK constraint as an unhandled 500. Resolved here rather than at
     write time so the preview shows the value that will actually land.
+
+    Anything this function invents is recorded in `filled`, because a currency the
+    sheet never mentioned must not overwrite one already recorded — see
+    `_defer_filled_snapshot_currency`.
     """
     if spec.key != "order_items" or "converted_price_minor" not in present:
         return
+    supplied = "converted_currency_code" in present
     if values.get("converted_price_minor") is None:
         # No amount means no snapshot: a currency on its own records nothing.
         values["converted_currency_code"] = None
@@ -976,6 +991,34 @@ def _pair_converted_snapshot(spec: TableSpec, values: dict[str, Any], present: s
     elif values.get("converted_currency_code") is None:
         values["converted_currency_code"] = get_settings().reference_currency
         present.add("converted_currency_code")
+        if not supplied:
+            filled.add("converted_currency_code")
+
+
+def _defer_filled_snapshot_currency(spec: TableSpec, row: _Row) -> None:
+    """A currency this importer invented never overwrites one already recorded (#12).
+
+    The same rule the API follows since #3: a sheet that carries an amount and no
+    currency *column at all* hasn't asked to relabel anything, so an existing row
+    keeps the code it recorded — otherwise correcting an amount would reissue a
+    GBP snapshot as whatever this instance happens to use, changing what the number
+    means by an exchange rate nobody supplied.
+
+    A blank *cell* in a column the sheet does carry is different, and stays as it
+    was: the column help promises blank means the instance default, and a sheet
+    that includes the column has said something. New rows are unaffected — they
+    have no recorded code to defer to.
+
+    Runs where the row knows its target, so the diff below compares against the
+    value that will really be written and the preview stays honest.
+    """
+    if spec.key != "order_items" or "converted_currency_code" not in row.filled:
+        return
+    if row.values.get("converted_price_minor") is None:
+        return
+    stored = getattr(row.target, "converted_currency_code", None)
+    if stored is not None:
+        row.values["converted_currency_code"] = stored
 
 
 def _build_instance(spec: TableSpec, row: _Row) -> Any:

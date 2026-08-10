@@ -407,6 +407,136 @@ async def test_import_stamps_the_instance_currency_on_a_blank_code(
     assert updated["converted_currency_code"] == "EUR"
 
 
+async def seeded_order_with_snapshot(client, retailer, minor: int, code: str) -> dict:
+    """A line whose §6 snapshot is already recorded — an import, an agent, or an
+    instance whose reference currency has since moved."""
+    resp = await make_order(
+        client,
+        retailer,
+        [kit_line(converted_price_minor=minor, converted_currency_code=code)],
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def amount_only_csv(order: dict, minor: str) -> bytes:
+    """A trimmed sheet: the amount column, and no currency column at all."""
+    return order_items_csv(
+        ["id", "order_id", "item_type", "quantity", "currency_code", "converted_price_minor"],
+        [
+            {
+                "id": order["items"][0]["id"],
+                "order_id": order["id"],
+                "item_type": "kit",
+                "quantity": "1",
+                "currency_code": "JPY",
+                "converted_price_minor": minor,
+            }
+        ],
+    )
+
+
+async def test_import_without_a_currency_column_keeps_the_recorded_code(
+    client, retailer, reference_currency
+):
+    """Issue #12: a sheet that never mentions currency hasn't asked to change it.
+
+    The import path of the same rule the API follows since #3 — otherwise correcting
+    an amount reissues a GBP snapshot as this instance's currency, changing what the
+    number means by a rate nobody supplied."""
+    reference_currency("AUD")
+    order = await seeded_order_with_snapshot(client, retailer, 4200, "GBP")
+
+    resp = await client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", amount_only_csv(order, "4400"), "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert updated["converted_price_minor"] == 4400
+    assert updated["converted_currency_code"] == "GBP"  # not restamped to AUD
+
+
+async def test_import_preview_does_not_claim_a_currency_change(
+    client, retailer, reference_currency
+):
+    """The preview has to show what apply will really write, or it isn't a preview."""
+    reference_currency("AUD")
+    order = await seeded_order_with_snapshot(client, retailer, 4200, "GBP")
+
+    resp = await client.post(
+        "/import/preview",
+        files={"file": ("order_items.csv", amount_only_csv(order, "4400"), "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+    table = next(t for t in resp.json()["tables"] if t["table"] == "order_items")
+    fields = {change["field"] for row in table["rows"] for change in row["changes"]}
+    assert "converted_price_minor" in fields
+    assert "converted_currency_code" not in fields
+
+
+async def test_import_without_a_currency_column_still_fills_a_missing_code(
+    client, retailer, reference_currency
+):
+    """Deferring to what's recorded must not stop the fill where nothing is recorded —
+    the paired CHECK constraint still needs both halves for a brand-new snapshot."""
+    reference_currency("EUR")
+    order = await seeded_order(client, retailer)  # no snapshot on the line
+
+    resp = await client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", amount_only_csv(order, "3200"), "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert updated["converted_price_minor"] == 3200
+    assert updated["converted_currency_code"] == "EUR"
+
+
+async def test_a_blank_cell_still_means_the_instance_default(client, retailer, reference_currency):
+    """The deliberate line between silence and an instruction: a sheet that carries the
+    column and leaves it blank *has* said something, and the column help promises blank
+    means the instance default. Only a missing column defers to what's recorded."""
+    reference_currency("EUR")
+    order = await seeded_order_with_snapshot(client, retailer, 4200, "GBP")
+    content = order_items_csv(
+        [
+            "id",
+            "order_id",
+            "item_type",
+            "quantity",
+            "currency_code",
+            "converted_price_minor",
+            "converted_currency_code",
+        ],
+        [
+            {
+                "id": order["items"][0]["id"],
+                "order_id": order["id"],
+                "item_type": "kit",
+                "quantity": "1",
+                "currency_code": "JPY",
+                "converted_price_minor": "4400",
+                "converted_currency_code": "",
+            }
+        ],
+    )
+    resp = await client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert updated["converted_currency_code"] == "EUR"
+
+
 async def test_import_drops_a_currency_that_has_no_amount(client, retailer):
     """The mirror case: a code with no amount records nothing, so it isn't kept.
     Same rule the service layer applies to REST and MCP writes."""
