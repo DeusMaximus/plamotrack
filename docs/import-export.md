@@ -130,6 +130,13 @@ quietly double your paint collection.
 restores nulls faithfully. (The starter sheet only ever emits columns it actually
 knows about, so importing a kit list won't wipe a retailer's rating.)
 
+The conversion pair on `order_items` bends the first half of that rule, because an
+amount with no currency isn't storable: leaving `converted_currency_code` blank in a
+column you *did* include means "the instance's reference currency", not "empty". The
+second half holds as written — leave the column out of the file and an amount you
+correct keeps the currency it was already recorded in, rather than being relabelled
+with yours.
+
 ---
 
 ## Editing the CSVs by hand
