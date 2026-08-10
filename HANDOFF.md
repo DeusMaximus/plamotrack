@@ -16,6 +16,40 @@ Template:
 
 ---
 
+## 2026-08-10 — Claude Code — Released v0.2.2-alpha
+
+**Shipped.** Tag `v0.2.2-alpha` on `b911dae`, published as a pre-release. Version bump
+went through PR #21 (`61a6d89`), green before merge. Milestone
+`M5 hardening — v0.2.2-alpha` closed holding the four issues that shipped: #12, #6, #9,
+#17. No branches outstanding.
+
+- **The first release in this run whose known-issues list carries nothing forward.**
+  v0.2.1-alpha named #12 and #6; both are fixed here. The only known issue now is #19,
+  which is new and disclosed as needing a schema migration.
+- **The release notes disclose a behaviour change**, and the next person answering a
+  question about it needs to know why: amounts recorded in **HUF, COP, IQD or MGA** may
+  now read smaller than they were entered. Those four are where the browser (following
+  CLDR, which gives them no decimals) and the CSV importer (assuming two) disagreed, so
+  what was stored depended on which path was used. There was no single correct prior
+  reading — that *was* the bug — so the notes say to check and re-enter rather than
+  offering a migration that would have to guess. Every other currency was consistent.
+- **Version bump mechanics, confirmed again this time:** `backend/app/__init__.py`,
+  `backend/pyproject.toml`, and the `plamotrack-backend` entry in `backend/uv.lock`
+  (`uv lock`, never hand-edited). Worth actually checking the two surfaces rather than
+  trusting the edit — `GET /meta` and the MCP handshake's `serverInfo` both reported
+  `0.2.2` before the tag was pushed. Published with
+  `gh release create --prerelease --verify-tag` so it attaches to an already-pushed tag
+  instead of creating one of its own. No test pins the version string.
+- **Why the release went out before #19:** raised as a question, decided deliberately.
+  Since everyone runs from `main`, a schema migration landing there is immediately
+  everyone's migration — so a tag *immediately before* one is what makes
+  `docs/operations.md`'s "export an archive before upgrading" actionable. The newest tag
+  had been v0.2.1-alpha, which still contained both bugs since fixed, so the only
+  rollback point on offer was a worse one.
+- **Next:** #19 is the only open issue and has no milestone. Estimated 1.5–2.5 hours;
+  see the notes on it below and in the issue. It wants a `M5 hardening — v0.2.3-alpha`
+  milestone if someone picks it up.
+
 ## 2026-08-10 — Claude Code — CI keeps its evidence; #19 filed
 
 **Merged to `main` in PR #20 (`7d7a36f`), closing #17.** Verified green on `main` after
