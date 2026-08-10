@@ -16,6 +16,48 @@ Template:
 
 ---
 
+## 2026-08-10 — Claude Code — format.ts gets tests, sharing its cases with Python
+
+**Merged to `main` in PR #18 (`e164f0d`).** Verified green on `main` after the merge:
+202 backend tests, ruff check + format, 80 frontend tests, oxlint, `npm run build`,
+4 Playwright e2e. Branch deleted, local and remote. No behaviour change — tests and
+tooling only. Follow-up to #6 in the same session; read that entry first.
+
+- **Why:** `frontend/src/lib/format.ts` had no tests at all, and both defects found in
+  it while fixing #6 were cases where the browser and Python disagreed about what an
+  amount was worth. One was caught by reading, the other by review. Nothing in the repo
+  would have caught a third.
+- **The shared fixture is the point.** `frontend/src/lib/__fixtures__/money-cases.json`
+  is read by **both** `format.test.ts` and `backend/tests/test_currency.py`. Two
+  hand-maintained lists drift, and a drifted pair shows up as a green test on each side
+  and a wrong number in the database. **Add a cross-layer case there, not to one suite.**
+  Confirmed with a negative control: editing one value fails both suites.
+  Suite-specific behaviour stays local — unparseable input and `stepFor` in the browser,
+  `Decimal` arguments and the unknown-code warning in Python.
+- **Two things that will bite anyone touching the frontend test setup:**
+  - vitest's default include glob matches `e2e/*.spec.ts`, which only Playwright can
+    run. `test.include` in `vite.config.ts` is narrowed to `src/**/*.test.ts` for that
+    reason — widening it breaks `npm test`.
+  - The fixture is **imported**, not read with `readFileSync`. Reading it would need
+    `"node"` in `tsconfig.app.json`'s `types`, which would hand application code Node's
+    globals; `resolveJsonModule` is the cheaper trade. Bundle size is unchanged.
+- **Review:** two comments, one of each kind, both answered on the PR.
+  - **Legitimate:** the `formatMoney` test asserted `toContain("1.234")` against
+    `Intl.NumberFormat(undefined, …)` output. In de-DE that string is `1,234 IQD`, and
+    the companion `not.toContain(".")` on 1200 JPY fails there too — German groups with
+    a full stop, so the test would have reported correct behaviour as a bug. Green on CI
+    only because the runner is en_US. Fixed in `4891f43`: expectations now compare
+    against a formatter handed the same digit count, which is locale-independent by
+    construction, plus one assertion that `formatMoney` does *not* match unaided `Intl`
+    (without it the rest would still pass if the exponent went back to CLDR). Verified
+    under en_AU, de_DE, fr_FR, ja_JP and C.
+  - **Wrong:** "vitest doesn't expose `test.for`". It has since 2.1 — it's in
+    `@vitest/runner`'s types, `typeof test.for === "function"`, `tsc -b` type-checks the
+    file, and all 80 cases run by name. Pushed back on the PR rather than changing code,
+    so it isn't left standing for the next reader.
+- **Next:** cut **v0.2.2-alpha** — see the entry below for what it clears and the
+  version-bump mechanics. `M5 hardening — v0.2.2-alpha` has nothing open.
+
 ## 2026-08-10 — Claude Code — Issue #6: ISO 4217 minor units, both halves
 
 **Merged to `main` in PR #16 (`cc8cc19`), closing #6.** Verified green on `main` after the
@@ -79,14 +121,7 @@ M5.1 now has nothing open, and that milestone is releasable.
   regression — were found by reading and by review, not by a test. The backend drift test
   pins the exponent *table* only, not the conversion logic.
 - **Next:** two things, in this order.
-  1. **Frontend test runner.** vitest 4.1.10 declares `vite: ^8.0.0` (installed: 8.2.0),
-     and these are pure functions, so no jsdom, no environment config, no separate config
-     file: one devDependency, a `"test": "vitest run"` script, one test file, one step in
-     the CI Frontend job. Worth doing as its own small PR rather than folded into a fix.
-     The design point that makes it worth more than "add some tests": put the parity cases
-     in a **shared JSON fixture** both suites read, so the two layers cannot silently
-     disagree — otherwise it is two hand-maintained lists that drift, the same failure the
-     exponent table already needed a guard for.
+  1. ~~**Frontend test runner.**~~ Done in PR #18 — see the entry above.
   2. **Cut v0.2.2-alpha.** It clears *both* known issues the v0.2.1-alpha notes shipped
      with (#12 and #6). Version lives in three places that move together; see the
      2026-08-10 entry on #3 for the mechanics. Release notes must mention that amounts
