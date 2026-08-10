@@ -22,7 +22,14 @@ import { CatalogItemPicker } from "../components/CatalogItemPicker";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
-import { formatDate, formatMoney, majorToMinor, minorToMajor, todayISO } from "../lib/format";
+import {
+  formatDate,
+  formatMoney,
+  majorToMinor,
+  minorToMajor,
+  stepFor,
+  todayISO,
+} from "../lib/format";
 
 const COMMON_CURRENCIES = ["AUD", "USD", "JPY", "EUR", "GBP", "SGD", "HKD", "CNY", "KRW"];
 
@@ -265,7 +272,7 @@ function LineEditor({
         </Field>
         <Input
           type="number"
-          step="0.01"
+          step={stepFor(watch("currency_code"))}
           min={0}
           aria-label="Unit price"
           placeholder="Unit price"
@@ -345,7 +352,8 @@ function LineEditor({
           <span className="text-sm text-zinc-500">≈</span>
           <Input
             type="number"
-            step="0.01"
+            // The snapshot's own currency, not the order's — §6 lets them differ.
+            step={stepFor(snapshotCode)}
             min={0}
             aria-label="Converted price"
             placeholder="Converted price"
@@ -568,7 +576,12 @@ function OrderForm({
             />
           </Field>
           <Field label="Shipping cost">
-            <Input type="number" step="0.01" min={0} {...register("shipping_cost")} />
+            <Input
+              type="number"
+              step={stepFor(watch("currency_code"))}
+              min={0}
+              {...register("shipping_cost")}
+            />
           </Field>
           <Field label="Delivery service">
             <Input {...register("delivery_service")} placeholder="blank = local pickup" />

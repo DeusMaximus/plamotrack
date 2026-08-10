@@ -150,6 +150,12 @@ canonical column wins when both are filled in**:
   beside `unit_price_minor` (`4999`). Money is stored as whole minor units so it
   can't drift through floating point; the major column is for typing.
 
+  How many minor units make one of the major follows the row's own currency, per
+  ISO 4217: `49.99` AUD is `4999` cents, `1200` JPY is `1200` yen, and `1.234` KWD
+  is `1234` fils. A code we don't recognise is imported as typed and read as having
+  two decimal places — the preview flags it, so a mistyped `AUS` is visible before
+  you apply it rather than after.
+
 On `order_items`, the `kit_*` columns mirror the kits a line bought. If you import
 an order line whose kits aren't in the file, those columns are what plamotrack
 creates them from.

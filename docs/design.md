@@ -599,16 +599,16 @@ the remaining gaps become things to disclose rather than things to hide.
 
 - **No auth on the write path** (M6). Anyone who can reach the API can write to it. Run
   it on a network you trust — LAN, VPN, localhost. Do not put it on the public internet.
-- **No bundled application containers yet** (M5). Compose starts Postgres; the API and
-  frontend run from source. The M5 stack will remain loopback-only by default and does
-  not imply that an unauthenticated instance is safe to expose.
-- **No localisation infrastructure yet** (M5.1). English is embedded in the UI. The
-  currency *assumption* is gone — `REFERENCE_CURRENCY` is configurable and defaults to
-  `AUD` — but money is still handled as though every currency had either none or two
-  decimal places (#6). For the three- and four-decimal ones (KWD, BHD, CLF, …) the CSV
-  layer accepts amounts and silently reads and writes them a factor of ten or a hundred
-  out, while the web form refuses them outright: it won't accept one typed, and it can't
-  re-save an order that already holds one.
+- **The packaged stack binds to loopback by default** (M5). `docker compose up -d`
+  brings up the whole thing, but that default is a convenience, not a security
+  boundary — moving the published port does not make an unauthenticated instance
+  safe to expose.
+- **No localisation infrastructure yet** (M5.1). English is embedded in the UI, and
+  amounts are shown with the number of decimals ISO 4217 gives the currency rather than
+  the number a particular locale conventionally displays — so a Hungarian reader gets
+  `HUF 1,200.00` where they would write `1 200 Ft`. What the stored numbers *mean* is
+  settled, though: minor units follow the ISO exponent throughout, in the database, the
+  CSV layer and the web form alike (#6), and `REFERENCE_CURRENCY` is configurable.
 - **No photos** (M7) and **no public showcase page** (M8).
 - **The schema will still move.** Migrations are provided and tested in both directions,
   but breaking changes are possible while it's alpha. Export an archive before upgrading

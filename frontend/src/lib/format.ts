@@ -1,4 +1,7 @@
 import type { KitStatus } from "../api/types";
+import { minorFractionDigits } from "./currency";
+
+export { minorFractionDigits, stepFor } from "./currency";
 
 export const STATUS_LABELS: Record<KitStatus, string> = {
   pre_ordered: "Pre-ordered",
@@ -9,24 +12,21 @@ export const STATUS_LABELS: Record<KitStatus, string> = {
   complete: "Complete",
 };
 
-/** Minor-unit digits for a currency (JPY → 0, AUD → 2), via Intl. */
-export function minorFractionDigits(currency: string): number {
-  try {
-    return (
-      new Intl.NumberFormat("en", { style: "currency", currency }).resolvedOptions()
-        .maximumFractionDigits ?? 2
-    );
-  } catch {
-    return 2;
-  }
-}
-
-/** "4999 AUD minor" → "$49.99" */
+/** "4999 AUD minor" → "$49.99"
+ *
+ * Intl still picks the symbol, grouping and placement, but the decimals are ours:
+ * left to itself it would render a 1234-minor IQD line as "IQD 1,234" rather than
+ * the 1.234 dinar it stands for. */
 export function formatMoney(minor: number, currency: string): string {
   const digits = minorFractionDigits(currency);
   const value = minor / 10 ** digits;
   try {
-    return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(value);
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency,
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }).format(value);
   } catch {
     return `${value.toFixed(digits)} ${currency}`;
   }
@@ -38,11 +38,30 @@ export function minorToMajor(minor: number, currency: string): string {
   return (minor / 10 ** digits).toFixed(digits);
 }
 
-/** Major-unit user input ("49.99") → integer minor units (4999). */
+/** Major-unit user input ("49.99") → integer minor units (4999).
+ *
+ * Scaled by moving the decimal point through the string rather than multiplying,
+ * because the float route disagrees with the backend at the halfway point: 1.005
+ * AUD is 100.49999999999999 cents to `Math.round` and 101 to Python's Decimal.
+ * The backend rounds half away from zero; so does this. */
 export function majorToMinor(major: string | number, currency: string): number {
-  const value = typeof major === "string" ? Number.parseFloat(major) : major;
-  if (Number.isNaN(value)) return 0;
-  return Math.round(value * 10 ** minorFractionDigits(currency));
+  const digits = minorFractionDigits(currency);
+  // toFixed rather than String() on the number path: it keeps 1e-7 out of the
+  // regex below, and one spare digit is enough to decide the rounding.
+  const text = (typeof major === "number" ? major.toFixed(digits + 1) : major)
+    .trim()
+    .replace(/[\s,]/g, "");
+  const parts = /^([+-]?)(\d*)(?:\.(\d*))?$/.exec(text);
+  if (!parts || (!parts[2] && !parts[3])) return 0;
+
+  const [, sign, whole = "", fraction = ""] = parts;
+  // One digit past the cut is all a half-up decision needs; the rest can't reach it.
+  const scaled = (fraction + "0".repeat(digits + 1)).slice(0, digits + 1);
+  const kept = Number(whole + scaled.slice(0, digits));
+  if (!Number.isFinite(kept)) return 0;
+
+  const magnitude = kept + (Number(scaled[digits]) >= 5 ? 1 : 0);
+  return sign === "-" ? -magnitude : magnitude;
 }
 
 export function formatDate(iso: string): string {

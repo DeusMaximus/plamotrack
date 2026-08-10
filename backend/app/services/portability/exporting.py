@@ -29,13 +29,13 @@ from app.models import (
     Upgrade,
     UpgradeApplication,
 )
+from app.services.currency import minor_to_major
 from app.services.portability import starter_sheet
 from app.services.portability.spec import (
     SPEC_BY_KEY,
     TABLE_SPECS,
     ColumnRole,
     TableSpec,
-    minor_to_major,
     render,
 )
 

@@ -48,6 +48,7 @@ from app.schemas.portability import (
     RowAction,
     TablePlan,
 )
+from app.services.currency import is_known_currency, major_to_minor
 from app.services.kits import default_scale_for_grade
 from app.services.orders import spawn_kits
 from app.services.portability import starter_sheet
@@ -63,7 +64,7 @@ from app.services.portability.spec import (
     TABLE_SPECS,
     ColumnRole,
     TableSpec,
-    major_to_minor,
+    parse_currency,
     render,
 )
 
@@ -685,8 +686,32 @@ class _Planner:
                 row.action = RowAction.ERROR
                 row.error = f"{column.name}: '{major}' is not a valid amount"
 
+    def _warn_unknown_currency(self, spec: TableSpec, row: _Row) -> None:
+        """A code outside ISO 4217 is stored as typed, with its decimals guessed.
+
+        Accepting it is deliberate: an instance already holding an obscure code
+        should not be locked out of its own archive. But two decimal places is then
+        an assumption rather than a fact, and a mistyped code is indistinguishable
+        from a real one — so the preview says so out loud, while the human looking
+        at it can still fix a typo for free.
+        """
+        for column in spec.columns:
+            if column.parse is not parse_currency:
+                continue
+            code = row.values.get(column.name)
+            if code and not is_known_currency(code):
+                row.messages.append(
+                    f"{column.name}: '{code}' isn't a currency code we recognise — it will be "
+                    "stored as typed, and its amounts read as having 2 decimal places"
+                )
+
     def _annotate(self, spec: TableSpec, row: _Row, replace_all: bool) -> None:
         """Warnings that need a human eye rather than blocking the import."""
+        if row.action is RowAction.ERROR:
+            return
+        # Not gated on `replace_all` below: a guessed exponent is worth saying
+        # whether the row is landing in an empty instance or an existing one.
+        self._warn_unknown_currency(spec, row)
         if replace_all:
             # Everything existing is deleted first, so "you already have one of
             # these" is not only useless here, it's actively misleading.
