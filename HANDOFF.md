@@ -18,11 +18,11 @@ Template:
 
 ## 2026-08-10 — Claude Code — Issue #6: ISO 4217 minor units, both halves
 
-**Committed on branch `fix/iso-4217-minor-units` (`5eec4a0`) — not pushed, no PR yet.**
-Green locally: 180 backend tests, ruff check + format, `npm run build`, oxlint, 4
-Playwright e2e.
+**Merged to `main` in PR #16 (`cc8cc19`), closing #6.** Verified green on `main` after the
+merge: 180 backend tests, ruff check + format, `npm run build`, oxlint, 4 Playwright e2e.
+Branch deleted, local and remote.
 **#6 moved out of M5.1 into `M5 hardening — v0.2.2-alpha`** (agreed with the human) —
-M5.1 now has nothing open.
+M5.1 now has nothing open, and that milestone is releasable.
 
 - **Done:** new `backend/app/services/currency.py` holds the exponent table and the
   three conversions, moved out of `portability/spec.py`; `frontend/src/lib/currency.ts`
@@ -65,9 +65,35 @@ M5.1 now has nothing open.
   `step="0.001"`, validates, and re-saves byte-identical (the thing the issue said was
   impossible); switching that form to JPY flips `step` to `1` and correctly rejects
   `1.234`. All probe data deleted from the dev database.
-- **Next:** commit, PR, then cut **v0.2.2-alpha** — it clears *both* known issues the
-  v0.2.1-alpha notes shipped with (#12 and #6). Version lives in three places that move
-  together; see the 2026-08-10 entry on #3 for the mechanics.
+- **Review caught a regression, fixed in `061bb4c`.** Scaling by moving the decimal point
+  fixed the rounding mismatch but the regex accepted only plain decimals, so `"1e2"` fell
+  through to the zero returned for unparseable input. Not hypothetical:
+  `<input type="number">` treats `1e2` as valid and passes it through verbatim, `Decimal`
+  reads it as 100, and the `parseFloat` being replaced did too — so the commit meant to
+  make the layers agree introduced a case where they didn't, and it failed **silently**
+  (non-empty field, `required` satisfied, unit price saved as 0). The exponent now folds
+  into the same decimal-point shift as the currency's digits. Checked against the backend
+  across 23 inputs with no disagreement.
+- **Known gap, deliberately not closed here:** `frontend/src/lib/format.ts` has **no
+  automated tests**. Both defects in it this session — the float rounding and the exponent
+  regression — were found by reading and by review, not by a test. The backend drift test
+  pins the exponent *table* only, not the conversion logic.
+- **Next:** two things, in this order.
+  1. **Frontend test runner.** vitest 4.1.10 declares `vite: ^8.0.0` (installed: 8.2.0),
+     and these are pure functions, so no jsdom, no environment config, no separate config
+     file: one devDependency, a `"test": "vitest run"` script, one test file, one step in
+     the CI Frontend job. Worth doing as its own small PR rather than folded into a fix.
+     The design point that makes it worth more than "add some tests": put the parity cases
+     in a **shared JSON fixture** both suites read, so the two layers cannot silently
+     disagree — otherwise it is two hand-maintained lists that drift, the same failure the
+     exponent table already needed a guard for.
+  2. **Cut v0.2.2-alpha.** It clears *both* known issues the v0.2.1-alpha notes shipped
+     with (#12 and #6). Version lives in three places that move together; see the
+     2026-08-10 entry on #3 for the mechanics. Release notes must mention that amounts
+     already recorded in HUF, COP, IQD or MGA are reinterpreted by the ISO exponent.
+- **Also opened:** #17 (CI keeps no Playwright artifacts and has no retries, so a flaky
+  e2e is indistinguishable from a regression — cost a re-run to establish during this PR;
+  filed under M9).
 
 ## 2026-08-10 — Claude Code — Issue #9 docs, and the #6 hand-off
 
