@@ -602,8 +602,13 @@ the remaining gaps become things to disclose rather than things to hide.
 - **No bundled application containers yet** (M5). Compose starts Postgres; the API and
   frontend run from source. The M5 stack will remain loopback-only by default and does
   not imply that an unauthenticated instance is safe to expose.
-- **No localisation infrastructure yet** (M5.1). English is embedded in the UI and AUD
-  is still the reference-currency assumption.
+- **No localisation infrastructure yet** (M5.1). English is embedded in the UI. The
+  currency *assumption* is gone — `REFERENCE_CURRENCY` is configurable and defaults to
+  `AUD` — but money is still handled as though every currency had either none or two
+  decimal places (#6). For the three- and four-decimal ones (KWD, BHD, CLF, …) the CSV
+  layer accepts amounts and silently reads and writes them a factor of ten or a hundred
+  out, while the web form refuses them outright: it won't accept one typed, and it can't
+  re-save an order that already holds one.
 - **No photos** (M7) and **no public showcase page** (M8).
 - **The schema will still move.** Migrations are provided and tested in both directions,
   but breaking changes are possible while it's alpha. Export an archive before upgrading
