@@ -16,6 +16,46 @@ Template:
 
 ---
 
+## 2026-08-10 — Claude Code — CI keeps its evidence; #19 filed
+
+**Merged to `main` in PR #20 (`7d7a36f`), closing #17.** Verified green on `main` after
+the merge: 202 backend tests, ruff check + format, 80 frontend tests, oxlint,
+`npm run build`, 4 Playwright e2e. Branch deleted, local and remote. Config only — no
+application code touched.
+
+- **Why it existed:** a red Integration job left a console excerpt and nothing else,
+  though Playwright had already written `test-results/…/error-context.md`. Telling a
+  flake from a regression on PR #16 meant re-running the job and hoping it disagreed
+  with itself. It did, but that isn't a method.
+- **What CI does now** (`frontend/playwright.config.ts` + the Integration job):
+  `retries: 1` on CI and 0 locally; `trace: "on-first-retry"`; the HTML reporter on CI;
+  an `if: failure()` upload of `playwright-report/` + `test-results/`, pinned by commit
+  SHA like every other action in the workflow. Plus `workers: 1` on CI — `fullyParallel:
+  false` only serialises *within* a file, so both specs had been running at once against
+  one database and one API process, which is the likeliest source of the original
+  contention.
+- **A flaky test no longer fails the build.** Passing on retry reports as `flaky` with
+  exit code 0. That is deliberate: it surfaces instability without blocking a PR, and
+  the trade is that a genuinely intermittent bug can sit inside a green build. If that
+  becomes a problem, the lever is the retry count, not the artifacts.
+- **How it was verified — worth copying.** The `if: failure()` path was exercised on
+  real CI, not just locally: one commit failed an e2e on purpose, the next removed it,
+  so the PR's own run history holds a red run and a green one. The red run attached a
+  712 KB artifact containing the browsable report, `error-context.md` from both attempts,
+  and a 42 KB `trace.zip` (verified to hold the network log and per-step screenshots,
+  not an empty shell). The green run produced **0 artifacts**, which is what proves the
+  gate works rather than uploading on every build. An artifact step nobody has watched
+  run is a guess.
+- **Also filed: #19** — `tools.unit_cost_reference` is `Numeric(10, 2)` with **no
+  currency column on the table at all**, confirmed against the live schema. Two §6
+  violations in one field: money as a scaled decimal, and an amount whose currency is
+  unrecorded. `scale 2` means a KWD tool cost cannot even be represented — Postgres
+  rounds `1.234` to `1.23` going in. Unmilestoned so it doesn't hold up v0.2.2-alpha.
+  The issue records that `InventoryPage.tsx:131`'s `step="0.01"` is **correct** and
+  should not be "fixed", and that the design question — per-row currency, or declare the
+  field to be in the instance's reference currency — wants deciding before any migration.
+- **Next:** cut **v0.2.2-alpha**. Nothing is open in its milestone.
+
 ## 2026-08-10 — Claude Code — format.ts gets tests, sharing its cases with Python
 
 **Merged to `main` in PR #18 (`e164f0d`).** Verified green on `main` after the merge:
