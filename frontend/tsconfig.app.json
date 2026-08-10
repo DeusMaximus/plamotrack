@@ -6,6 +6,10 @@
     "module": "esnext",
     "types": ["vite/client"],
     "allowArbitraryExtensions": true,
+    // So the shared money fixture can be imported rather than read off disk —
+    // reading it would need Node's types in here, and app code has no business
+    // seeing those.
+    "resolveJsonModule": true,
     "skipLibCheck": true,
 
     /* Bundler mode */

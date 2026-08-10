@@ -3,8 +3,14 @@
 The exponent decides what a stored integer is worth, so these are value-meaning
 tests, not formatting ones: a wrong answer here doesn't look wrong, it looks like
 a different price.
+
+The shared cases come from `frontend/src/lib/__fixtures__/money-cases.json`, which
+`format.test.ts` reads as well — a currency that converts one way here and another
+way in the browser fails on both sides rather than reaching the database. Add a
+cross-layer case to that file; keep Python-only ones here.
 """
 
+import json
 import re
 from decimal import Decimal
 from pathlib import Path
@@ -13,69 +19,45 @@ import pytest
 
 from app.services import currency
 
-_MIRROR = Path(__file__).resolve().parents[2] / "frontend/src/lib/currency.ts"
+_FRONTEND = Path(__file__).resolve().parents[2] / "frontend/src/lib"
+_MIRROR = _FRONTEND / "currency.ts"
+_CASES = json.loads((_FRONTEND / "__fixtures__/money-cases.json").read_text(encoding="utf-8"))
+
+
+def _ids(cases: list[dict], *fields: str) -> list[str]:
+    return [" ".join(str(case[field]) for field in fields) for case in cases]
 
 
 @pytest.mark.parametrize(
-    ("code", "digits"),
-    [
-        ("JPY", 0),  # zero-decimal: yen are already minor units
-        ("AUD", 2),
-        ("USD", 2),
-        ("KWD", 3),  # 1000 fils
-        ("CLF", 4),
-        # The four where CLDR — and so `Intl` in the browser, which is where the
-        # frontend used to read this — disagrees with ISO 4217. Pinned so nobody
-        # "corrects" the table back to what a browser reports.
-        ("IQD", 3),
-        ("HUF", 2),
-        ("COP", 2),
-        ("MGA", 2),
-        # Unknown codes take the documented default rather than erroring.
-        ("ZZZ", 2),
-        ("", 2),
-        (None, 2),
-    ],
+    "case", _CASES["minor_fraction_digits"], ids=_ids(_CASES["minor_fraction_digits"], "currency")
 )
-def test_minor_fraction_digits(code, digits):
-    assert currency.minor_fraction_digits(code) == digits
+def test_minor_fraction_digits(case):
+    assert currency.minor_fraction_digits(case["currency"]) == case["digits"]
+
+
+@pytest.mark.parametrize("code", ["", None])
+def test_missing_currency_takes_the_default(code):
+    """No frontend counterpart: its callers are typed to always pass a code."""
+    assert currency.minor_fraction_digits(code) == currency.DEFAULT_MINOR_UNITS
 
 
 @pytest.mark.parametrize(
-    ("major", "code", "expected"),
-    [
-        ("49.99", "AUD", 4999),
-        ("1200", "JPY", 1200),
-        ("1,299.50", "AUD", 129950),  # spreadsheets love a thousands separator
-        ("0.5", "USD", 50),
-        ("1.234", "KWD", 1234),  # the headline case: was 123
-        ("1.2345", "CLF", 12345),
-        ("0.001", "KWD", 1),
-        ("38.50", "JPY", 39),  # no minor unit to hold the half
-        ("1.005", "AUD", 101),  # half-up, away from zero
-    ],
+    "case", _CASES["major_to_minor"], ids=_ids(_CASES["major_to_minor"], "major", "currency")
 )
-def test_major_to_minor(major, code, expected):
-    assert currency.major_to_minor(major, code) == expected
+def test_major_to_minor(case):
+    assert currency.major_to_minor(case["major"], case["currency"]) == case["minor"]
 
 
 @pytest.mark.parametrize(
-    ("minor", "code", "expected"),
-    [
-        (4999, "AUD", "49.99"),
-        (1200, "JPY", "1200"),
-        (1234, "KWD", "1.234"),  # was "12.34"
-        (12345, "CLF", "1.2345"),
-        (1, "KWD", "0.001"),
-    ],
+    "case", _CASES["minor_to_major"], ids=_ids(_CASES["minor_to_major"], "minor", "currency")
 )
-def test_minor_to_major(minor, code, expected):
-    assert currency.minor_to_major(minor, code) == expected
+def test_minor_to_major(case):
+    assert currency.minor_to_major(case["minor"], case["currency"]) == case["major"]
 
 
-@pytest.mark.parametrize("code", ["JPY", "AUD", "KWD", "CLF", "IQD", "ZZZ"])
-@pytest.mark.parametrize("minor", [0, 1, 7, 4999, 123456])
-def test_round_trips_without_changing_value(code, minor):
+@pytest.mark.parametrize("code", _CASES["round_trips"]["currencies"])
+@pytest.mark.parametrize("minor", _CASES["round_trips"]["minor_amounts"])
+def test_round_trips_without_changing_value(minor, code):
     """Export then re-import has to land on the integer it started from."""
     assert currency.major_to_minor(currency.minor_to_major(minor, code), code) == minor
 
