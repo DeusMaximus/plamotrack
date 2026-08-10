@@ -46,21 +46,31 @@ export function minorToMajor(minor: number, currency: string): string {
  * The backend rounds half away from zero; so does this. */
 export function majorToMinor(major: string | number, currency: string): number {
   const digits = minorFractionDigits(currency);
-  // toFixed rather than String() on the number path: it keeps 1e-7 out of the
-  // regex below, and one spare digit is enough to decide the rounding.
-  const text = (typeof major === "number" ? major.toFixed(digits + 1) : major)
-    .trim()
-    .replace(/[\s,]/g, "");
-  const parts = /^([+-]?)(\d*)(?:\.(\d*))?$/.exec(text);
+  const text = (typeof major === "number" ? String(major) : major).trim().replace(/[\s,]/g, "");
+  // Exponent notation is not exotic here: `<input type="number">` treats "1e2" as a
+  // valid value and hands it over unchanged, and Decimal reads it on the backend. A
+  // parser that ignored it would return 0 for a field the user filled in.
+  const parts = /^([+-]?)(\d*)(?:\.(\d*))?(?:[eE]([+-]?\d+))?$/.exec(text);
   if (!parts || (!parts[2] && !parts[3])) return 0;
 
-  const [, sign, whole = "", fraction = ""] = parts;
-  // One digit past the cut is all a half-up decision needs; the rest can't reach it.
-  const scaled = (fraction + "0".repeat(digits + 1)).slice(0, digits + 1);
-  const kept = Number(whole + scaled.slice(0, digits));
+  const [, sign, whole = "", fraction = "", exponent] = parts;
+  const mantissa = whole + fraction;
+  // Where the decimal point ends up once the amount is counted in minor units:
+  // its position in `mantissa`, moved right by the currency's digits and by the
+  // exponent. Everything left of it is the answer; the digit on it decides the
+  // rounding, and nothing further right can reach the decision.
+  const point = whole.length + digits + Number(exponent ?? 0);
+  if (point <= 0) {
+    // Below half a minor unit, unless the leading digit sits exactly on the cut.
+    const rounds = point === 0 && Number(mantissa[0]) >= 5;
+    return rounds ? (sign === "-" ? -1 : 1) : 0;
+  }
+
+  const padded = mantissa.padEnd(point + 1, "0");
+  const kept = Number(padded.slice(0, point));
   if (!Number.isFinite(kept)) return 0;
 
-  const magnitude = kept + (Number(scaled[digits]) >= 5 ? 1 : 0);
+  const magnitude = kept + (Number(padded[point]) >= 5 ? 1 : 0);
   return sign === "-" ? -magnitude : magnitude;
 }
 
