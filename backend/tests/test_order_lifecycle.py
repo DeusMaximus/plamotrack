@@ -430,3 +430,76 @@ async def test_item_type_change_rejected(client, retailer):
         },
     )
     assert resp.status_code == 422
+
+
+# --- applied upgrades protect a spawned kit -------------------------------------
+
+
+async def apply_an_upgrade(client, kit_id: str, quantity: int = 1) -> dict:
+    """Spend one upgrade on a kit. That record is what explains where the stock
+    went, so from here the kit cannot be deleted by any route."""
+    upgrade = (
+        await client.post(
+            "/upgrades",
+            json={"name": "Metal thrusters", "manufacturer": "Metal Build", "quantity_on_hand": 3},
+        )
+    ).json()
+    resp = await client.post(
+        f"/upgrades/{upgrade['id']}/apply", json={"kit_id": kit_id, "quantity": quantity}
+    )
+    assert resp.status_code == 201, resp.text
+    return upgrade
+
+
+async def test_line_quantity_decrease_blocked_by_an_applied_upgrade(client, retailer):
+    order = await make_order(client, retailer, [kit_line(quantity=2)])
+    line = order["items"][0]
+    for kit_id in line["spawned_kit_ids"]:
+        await apply_an_upgrade(client, kit_id)
+
+    resp = await client.patch(
+        f"/orders/{order['id']}", json={"items": [kit_line(quantity=1) | {"id": line["id"]}]}
+    )
+    assert resp.status_code == 409
+    assert "upgrades applied" in resp.json()["detail"]
+    assert len((await client.get("/kits")).json()) == 2  # neither kit removed
+
+
+async def test_line_removal_blocked_by_an_applied_upgrade(client, retailer):
+    consumable = await make_consumable(client)
+    order = await make_order(
+        client, retailer, [kit_line(quantity=1), consumable_line(consumable["id"])]
+    )
+    await apply_an_upgrade(client, order["items"][0]["spawned_kit_ids"][0])
+
+    # Drop the kit line, keeping the consumable one.
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={"items": [consumable_line(consumable["id"]) | {"id": order["items"][1]["id"]}]},
+    )
+    assert resp.status_code == 409
+    assert len((await client.get("/kits")).json()) == 1
+
+
+async def test_order_delete_blocked_by_an_applied_upgrade(client, retailer):
+    order = await make_order(client, retailer, [kit_line(quantity=1)])
+    await apply_an_upgrade(client, order["items"][0]["spawned_kit_ids"][0])
+
+    resp = await client.delete(f"/orders/{order['id']}")
+    assert resp.status_code == 409
+    assert (await client.get("/orders")).json() != []  # order survived
+    assert len((await client.get("/kits")).json()) == 1
+    # The application is what the guard exists for: it is still there, and the
+    # stock it spent is still spent.
+    assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 2
+
+
+async def test_a_line_whose_kits_are_untouched_still_reduces(client, retailer):
+    """The control: the new term must not freeze ordinary order edits."""
+    order = await make_order(client, retailer, [kit_line(quantity=2)])
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={"items": [kit_line(quantity=1) | {"id": order["items"][0]["id"]}]},
+    )
+    assert resp.status_code == 200, resp.text
+    assert len((await client.get("/kits")).json()) == 1

@@ -34,6 +34,13 @@ class Kit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     photos: Mapped[list["KitPhoto"]] = relationship(
         back_populates="kit", cascade="all, delete-orphan"
     )
+    # Read-only, and deliberately no ORM cascade. `upgrade_applications.kit_id` is
+    # ON DELETE CASCADE at the database, which is what silently erased build history
+    # (and left the stock it consumed still consumed) whenever a kit was deleted.
+    # This relationship exists so the service layer can *see* those rows and refuse,
+    # per rule 3: history is fact. Adding a delete cascade here would automate the
+    # very thing the guard exists to prevent.
+    upgrade_applications: Mapped[list["UpgradeApplication"]] = relationship(viewonly=True)
 
     __table_args__ = (CheckConstraint("rating BETWEEN 1 AND 5", name="rating_range"),)
 
@@ -50,3 +57,6 @@ class KitPhoto(UUIDPrimaryKeyMixin, Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     kit: Mapped[Kit] = relationship(back_populates="photos")
+
+
+from app.models.catalog import UpgradeApplication  # noqa: E402,F401  (resolve the string above)

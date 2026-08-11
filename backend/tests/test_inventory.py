@@ -98,6 +98,31 @@ async def test_delete_applied_upgrade_blocked(client):
     assert "applied" in resp.json()["detail"]
 
 
+async def test_delete_kit_with_an_applied_upgrade_blocked(client):
+    """The other end of the same join, which nothing guarded.
+
+    `upgrade_applications.kit_id` is ON DELETE CASCADE, so deleting the kit used to
+    return 204 and take the application with it — while the upgrade stock it spent
+    stayed spent. Rule 3 applies in both directions: history is fact.
+    """
+    upgrade = await _make_upgrade(client, 2)
+    kit = await _make_kit(client)
+    await client.post(f"/upgrades/{upgrade['id']}/apply", json={"kit_id": kit["id"], "quantity": 1})
+
+    resp = await client.delete(f"/kits/{kit['id']}")
+    assert resp.status_code == 409
+    assert "applied" in resp.json()["detail"]
+    assert len((await client.get("/kits")).json()) == 1  # still there
+    assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 1  # still spent
+
+
+async def test_delete_kit_without_applications_still_works(client):
+    """The control: the guard must not make every standalone kit undeletable."""
+    kit = await _make_kit(client)
+    assert (await client.delete(f"/kits/{kit['id']}")).status_code == 204
+    assert (await client.get("/kits")).json() == []
+
+
 async def test_retailer_report_card_fields(client):
     resp = await client.post(
         "/retailers",

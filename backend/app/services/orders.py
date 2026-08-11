@@ -28,7 +28,7 @@ from app.schemas.orders import (
     RetailerUpdate,
 )
 from app.services.catalog import CATALOG_MODELS
-from app.services.kits import default_scale_for_grade
+from app.services.kits import default_scale_for_grade, has_applied_upgrades
 
 
 def _converted_snapshot(line: OrderItemCreate) -> tuple[int | None, str | None]:
@@ -269,14 +269,27 @@ async def _line_kits(session: AsyncSession, item_id: uuid.UUID) -> list[Kit]:
     stmt = (
         select(Kit)
         .where(Kit.order_item_id == item_id)
-        .options(selectinload(Kit.photos))
+        .options(selectinload(Kit.photos), selectinload(Kit.upgrade_applications))
         .order_by(Kit.created_at, Kit.id)
     )
     return list((await session.scalars(stmt)).all())
 
 
 def _kit_progressed(kit: Kit) -> bool:
-    return kit.status in PROGRESSED_STATUSES or kit.rating is not None or len(kit.photos) > 0
+    """Visible evidence that this kit is more than a row an order created.
+
+    Applied upgrades count for a different reason than the rest: status, rating and
+    photos are effort that would be lost, while an application is stock already
+    spent. Deleting the kit cascades the application away and leaves that stock
+    unexplained, so the same predicate covers line reduction, line removal and
+    order deletion in one place.
+    """
+    return (
+        kit.status in PROGRESSED_STATUSES
+        or kit.rating is not None
+        or len(kit.photos) > 0
+        or has_applied_upgrades(kit)
+    )
 
 
 async def _delete_line_kits(session: AsyncSession, item: OrderItem, count: int | None) -> None:
@@ -287,8 +300,8 @@ async def _delete_line_kits(session: AsyncSession, item: OrderItem, count: int |
     if len(safe) < needed:
         raise ConflictError(
             f"cannot remove {needed} kit(s) from this line: only {len(safe)} can be "
-            "deleted safely — the rest are building/complete, rated, or have photos. "
-            "Move or edit those kits first."
+            "deleted safely — the rest are building/complete, rated, have photos, or "
+            "have upgrades applied to them. Move or edit those kits first."
         )
     targets = safe if count is None else list(reversed(safe))[:count]  # newest first
     for kit in targets:
