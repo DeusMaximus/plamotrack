@@ -30,6 +30,14 @@ interface ItemFormValues {
   condition_notes: string;
 }
 
+/** Gate on meta before the form exists at all.
+ *
+ * `useForm` snapshots `defaultValues` on its first render and never revisits them,
+ * so a form mounted while this query is still in flight would pick the fallback
+ * currency and keep it — on a JPY instance, a new tool's cost quietly filed as AUD.
+ * Not rendering isn't the same as not mounting, which is the same trap OrderFormModal
+ * documents. InventoryPage warms the query, so this loading state is rarely seen —
+ * "rarely" being exactly why the bug would survive. */
 function ItemFormModal({
   tab,
   item,
@@ -39,10 +47,33 @@ function ItemFormModal({
   item?: InventoryItem;
   onClose: () => void;
 }) {
+  const { data: meta } = useQuery(metaQuery);
+
+  if (!meta) {
+    return (
+      <Modal title={item ? `Edit ${item.name}` : `Add ${tab.slice(0, -1)}`} onClose={onClose}>
+        <EmptyState>Loading…</EmptyState>
+      </Modal>
+    );
+  }
+  return (
+    <ItemForm tab={tab} item={item} onClose={onClose} referenceCurrency={meta.reference_currency} />
+  );
+}
+
+function ItemForm({
+  tab,
+  item,
+  onClose,
+  referenceCurrency,
+}: {
+  tab: Tab;
+  item?: InventoryItem;
+  onClose: () => void;
+  referenceCurrency: string;
+}) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
-  const { data: meta } = useQuery(metaQuery);
-  const referenceCurrency = meta?.reference_currency ?? "AUD";
   // A stored cost is read back in the code it was recorded under, never today's
   // reference currency — a JPY tool must not be re-read with two decimal places (§6).
   const storedCurrency =
@@ -274,6 +305,8 @@ export function InventoryPage() {
     }
   };
 
+  // Warms the shared cache so the form modal has it the moment it opens.
+  useQuery(metaQuery);
   const tools = useQuery({ queryKey: ["tools"], queryFn: api.listTools, enabled: tab === "tools" });
   const consumables = useQuery({
     queryKey: ["consumables"],

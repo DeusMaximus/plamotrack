@@ -873,3 +873,102 @@ async def test_import_of_a_pre_0_2_3_tools_export_stamps_the_instance_currency(
     tool = next(t for t in (await client.get("/tools")).json() if t["name"] == "Legacy nippers")
     assert tool["unit_cost_reference_currency"] == "JPY"
     assert tool["unit_cost_reference_minor"] == 1200  # not 120000
+
+
+async def test_import_ignores_a_tool_currency_column_with_no_amount_column(client):
+    """A sheet naming only the currency isn't asking to redenominate. The REST API
+    refuses a code with no amount; the importer must not quietly do it instead."""
+    tool = await make_tool(
+        client,
+        name="Mr Cement S",
+        unit_cost_reference_minor=1200,
+        unit_cost_reference_currency="JPY",
+    )
+    content = tools_csv(
+        ["id", "name", "category", "quantity_on_hand", "unit_cost_reference_currency"],
+        [
+            {
+                "id": tool["id"],
+                "name": "Mr Cement S",
+                "category": "gluing",
+                "quantity_on_hand": "1",
+                "unit_cost_reference_currency": "GBP",
+            }
+        ],
+    )
+    resp = await import_tools(client, content)
+    assert resp.status_code == 200, resp.text
+
+    updated = next(t for t in (await client.get("/tools")).json() if t["id"] == tool["id"])
+    assert updated["unit_cost_reference_minor"] == 1200
+    assert updated["unit_cost_reference_currency"] == "JPY"  # not relabelled GBP
+
+
+async def test_import_of_a_lone_tool_currency_on_a_new_row_is_not_a_500(client):
+    content = tools_csv(
+        ["name", "category", "quantity_on_hand", "unit_cost_reference_currency"],
+        [
+            {
+                "name": "Bare currency",
+                "category": "filing",
+                "quantity_on_hand": "1",
+                "unit_cost_reference_currency": "GBP",
+            }
+        ],
+    )
+    resp = await import_tools(client, content)
+    assert resp.status_code == 200, resp.text
+
+    tool = next(t for t in (await client.get("/tools")).json() if t["name"] == "Bare currency")
+    assert tool["unit_cost_reference_minor"] is None
+    assert tool["unit_cost_reference_currency"] is None
+
+
+async def test_import_ignores_a_lone_snapshot_currency_column_too(client, retailer):
+    """The same hole existed on order_items before `money_pairs` generalised it — a
+    sheet naming converted_currency_code and no amount column relabelled the
+    snapshot, which is the very thing #12 fixed on the other paths."""
+    order = await seeded_order_with_snapshot(client, retailer, 3200, "JPY")
+    content = order_items_csv(
+        ["id", "order_id", "item_type", "quantity", "currency_code", "converted_currency_code"],
+        [
+            {
+                "id": order["items"][0]["id"],
+                "order_id": order["id"],
+                "item_type": "kit",
+                "quantity": "1",
+                "currency_code": "JPY",
+                "converted_currency_code": "GBP",
+            }
+        ],
+    )
+    resp = await client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert updated["converted_price_minor"] == 3200
+    assert updated["converted_currency_code"] == "JPY"  # not relabelled GBP
+
+
+async def test_preview_says_a_lone_currency_column_is_being_ignored(client):
+    """Dropping it silently would be its own bug — the sheet asked for something,
+    and the person applying the import should see that it isn't happening."""
+    content = tools_csv(
+        ["name", "category", "quantity_on_hand", "unit_cost_reference_currency"],
+        [
+            {
+                "name": "Bare currency",
+                "category": "filing",
+                "quantity_on_hand": "1",
+                "unit_cost_reference_currency": "GBP",
+            }
+        ],
+    )
+    resp = await client.post("/import/preview", files={"file": ("tools.csv", content, "text/csv")})
+    assert resp.status_code == 200, resp.text
+    row = resp.json()["tables"][0]["rows"][0]
+    assert any("unit_cost_reference_currency: ignored" in m for m in row["messages"]), row

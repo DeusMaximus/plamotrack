@@ -1033,15 +1033,36 @@ def _default_money_currency(
 
 
 def _clear_orphan_money_currency(spec: TableSpec, row: _Row) -> None:
-    """A currency with no amount beside it denominates nothing, so it is cleared
-    rather than stored.
+    """A currency with no amount beside it denominates nothing, so it is never stored.
 
     Runs **after** `_apply_money_alternates`, which is the last chance for a
     major-unit twin to supply the amount — judging this at parse time would drop the
     code off a row whose amount had not been scaled across yet.
+
+    Two shapes, and the difference matters:
+
+      * The amount column is there and blank. The sheet has said "no amount", so the
+        code is cleared alongside it.
+      * The amount column isn't in the file at all. Then a lone currency cell is not
+        a redenomination request — `OrderItemCreate` refuses exactly this shape, and
+        the importer must not quietly do what the API forbids. Writing it would
+        relabel a recorded amount (#12) on an existing row, or land a code beside a
+        NULL and trip the paired CHECK on a new one. It is dropped, and the preview
+        says so rather than swallowing it.
     """
     for amount_column, currency_column in spec.money_pairs:
+        if currency_column not in row.present:
+            continue
         if amount_column not in row.present:
+            supplied = row.values.get(currency_column) is not None
+            row.present.discard(currency_column)
+            row.values.pop(currency_column, None)
+            if supplied:
+                row.messages.append(
+                    f"{currency_column}: ignored — this file has no {amount_column} "
+                    "column, and a currency can't be changed without restating the "
+                    "amount it applies to"
+                )
             continue
         if row.values.get(amount_column) is None:
             row.values[currency_column] = None
