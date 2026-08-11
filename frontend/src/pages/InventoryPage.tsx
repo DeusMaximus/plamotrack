@@ -3,7 +3,14 @@ import { useState } from "react";
 import { useForm } from "react-hook-form";
 
 import { api, ApiError, metaQuery } from "../api/client";
-import type { Consumable, Tool, Upgrade } from "../api/types";
+import type {
+  Consumable,
+  ConsumableUpdate,
+  Tool,
+  ToolUpdate,
+  Upgrade,
+  UpgradeUpdate,
+} from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
@@ -28,6 +35,49 @@ interface ItemFormValues {
   unit_cost_reference: string;
   unit_cost_reference_currency: string;
   condition_notes: string;
+}
+
+/** Which form field(s) each payload key is derived from.
+ *
+ * One-to-one everywhere except the tool cost pair: the stored minor amount is
+ * scaled by the currency's exponent, so switching AUD to JPY changes the number
+ * even when the typed figure hasn't. Both halves therefore move whenever either
+ * does — which is also what the paired CHECK constraint requires.
+ *
+ * Keyed off the API's own update types, so adding a column there stops
+ * compiling until it is mapped here rather than silently dropping out of edits. */
+const PAYLOAD_SOURCES: Record<
+  keyof ToolUpdate | keyof ConsumableUpdate | keyof UpgradeUpdate,
+  (keyof ItemFormValues)[]
+> = {
+  name: ["name"],
+  category: ["category"],
+  manufacturer: ["manufacturer"],
+  quantity_on_hand: ["quantity_on_hand"],
+  low_stock_threshold: ["low_stock_threshold"],
+  condition_notes: ["condition_notes"],
+  unit_cost_reference_minor: ["unit_cost_reference", "unit_cost_reference_currency"],
+  unit_cost_reference_currency: ["unit_cost_reference", "unit_cost_reference_currency"],
+};
+
+/** Drop the keys this edit didn't touch.
+ *
+ * The form renders every column of the row, so a PATCH restating all of them
+ * makes an unrelated edit authoritative over whatever another writer changed in
+ * the meantime — which is how saving a notes-only edit resurrected a stock count
+ * from whenever the modal was opened. Three writer types exist by design, so the
+ * form has to say what it means rather than everything it can see.
+ *
+ * Every *Update schema is `exclude_unset`, so an omitted key is genuinely left
+ * alone by the service. Creates are unfiltered: there, every field is intended. */
+function editedOnly<T extends object>(
+  full: T,
+  changed: (field: keyof ItemFormValues) => boolean,
+): Partial<T> {
+  const entries = Object.entries(full).filter(([key]) =>
+    PAYLOAD_SOURCES[key as keyof typeof PAYLOAD_SOURCES].some(changed),
+  );
+  return Object.fromEntries(entries) as Partial<T>;
 }
 
 /** Gate on meta before the form exists at all.
@@ -84,7 +134,7 @@ function ItemForm({
     register,
     watch,
     handleSubmit,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<ItemFormValues>({
     defaultValues: {
       name: item?.name ?? "",
@@ -103,6 +153,7 @@ function ItemForm({
   });
 
   const onSubmit = handleSubmit(async (values) => {
+    const changed = (field: keyof ItemFormValues) => Boolean(dirtyFields[field]);
     try {
       if (tab === "tools") {
         // Both halves move together — the API refuses an amount with no code, and a
@@ -118,7 +169,9 @@ function ItemForm({
           unit_cost_reference_currency: hasCost ? values.unit_cost_reference_currency : null,
           condition_notes: values.condition_notes || null,
         };
-        await (item ? api.updateTool(item.id, payload) : api.createTool(payload));
+        await (item
+          ? api.updateTool(item.id, editedOnly(payload, changed))
+          : api.createTool(payload));
       } else if (tab === "consumables") {
         const payload = {
           name: values.name,
@@ -127,14 +180,18 @@ function ItemForm({
           low_stock_threshold:
             values.low_stock_threshold === "" ? null : Number(values.low_stock_threshold),
         };
-        await (item ? api.updateConsumable(item.id, payload) : api.createConsumable(payload));
+        await (item
+          ? api.updateConsumable(item.id, editedOnly(payload, changed))
+          : api.createConsumable(payload));
       } else {
         const payload = {
           name: values.name,
           manufacturer: values.manufacturer,
           quantity_on_hand: Number(values.quantity_on_hand),
         };
-        await (item ? api.updateUpgrade(item.id, payload) : api.createUpgrade(payload));
+        await (item
+          ? api.updateUpgrade(item.id, editedOnly(payload, changed))
+          : api.createUpgrade(payload));
       }
       await queryClient.invalidateQueries({ queryKey: [tab] });
       onClose();
