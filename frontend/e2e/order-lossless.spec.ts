@@ -130,14 +130,19 @@ test("editing only the tracking number leaves currency, scale and free shipping 
 });
 
 test("a cold edit waits for the data it rebuilds the form from", async ({ page }) => {
-  // A kit line's name, grade, scale and number live on the spawned kits, not the
-  // line. Mounting the form before that query resolves captured blanks in
-  // defaultValues — which react-hook-form never revisits — and wrote them back.
+  // Mounting the form before its queries resolve captured blanks in defaultValues,
+  // which react-hook-form never revisits, and wrote them back.
+  //
+  // This used to hold `/api/kits`, because kit details were read from that list.
+  // They now arrive on the order itself (#65), so the list is no longer a
+  // dependency and holding it would prove nothing. The gate that remains covers
+  // catalog naming, so that is what this holds — and the kit assertions below
+  // still stand, because those values must survive regardless of which query is slow.
   let release = () => {};
   const held = new Promise<void>((resolve) => {
     release = resolve;
   });
-  await page.route("**/api/kits", async (route) => {
+  await page.route("**/api/consumables", async (route) => {
     await held;
     await route.continue();
   });
@@ -155,6 +160,125 @@ test("a cold edit waits for the data it rebuilds the form from", async ({ page }
   release();
   await expect(page.getByPlaceholder("Kit name *")).toHaveValue(KIT);
   await expect(page.getByLabel("Scale")).toHaveValue("1/100");
+});
+
+/** Issue #65: the same invariant, for the kits a line spawned rather than the line.
+ *
+ * A line renders one set of kit fields but can own several kits, so the form shows
+ * the first and every save echoed it back over all of them. Two spawned kits made
+ * deliberately different were flattened by an edit that never mentioned kits.
+ */
+const MULTI = `MULTI-${suffix}`;
+
+type SpawnedKit = { id: string; scale: string | null; kit_number: string | null; name: string };
+
+/** Resolved through `/kits` rather than the order payload's nested kits, so this
+ *  reads the same on either side of the fix — these tests are about what ends up
+ *  stored, and the payload's shape is the backend suite's business. */
+async function kitsOf(orderNumber: string): Promise<SpawnedKit[]> {
+  const api = await request.newContext({ baseURL: API });
+  const orders = (await (await api.get("/orders")).json()) as StoredOrder[];
+  const ids = orders.find((order) => order.order_number === orderNumber)!.items[0].spawned_kit_ids;
+  const all = (await (await api.get("/kits")).json()) as SpawnedKit[];
+  await api.dispose();
+  return ids.map((id) => all.find((kit) => kit.id === id)!);
+}
+
+async function patchKit(id: string, data: Record<string, string>): Promise<void> {
+  const api = await request.newContext({ baseURL: API });
+  const resp = await api.patch(`/kits/${id}`, { data });
+  expect(resp.status(), await resp.text()).toBe(200);
+  await api.dispose();
+}
+
+test.beforeAll("seed a two-kit line whose kits are then made different", async () => {
+  const api = await request.newContext({ baseURL: API });
+  const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
+  const created = await api.post("/orders", {
+    data: {
+      retailer_id: retailers.find((r) => r.name === SHOP)!.id,
+      order_date: "2026-08-01",
+      order_number: MULTI,
+      currency_code: reference,
+      items: [
+        {
+          item_type: "kit",
+          quantity: 2,
+          unit_price_minor: 4999,
+          currency_code: reference,
+          kit: { name: `${KIT} pair`, grade: "HG", kit_number: "HGUC 210" },
+        },
+      ],
+    },
+  });
+  expect(created.status(), await created.text()).toBe(201);
+  await api.dispose();
+
+  // Through the supported Kits path, exactly as an owner would.
+  const [, second] = await kitsOf(MULTI);
+  await patchKit(second.id, { scale: "1/60", kit_number: "DIVERGENT" });
+});
+
+test("a tracking-only edit leaves two divergent kits on the same line divergent", async ({
+  page,
+}) => {
+  const [firstBefore, secondBefore] = await kitsOf(MULTI);
+  expect(secondBefore.scale).toBe("1/60"); // control: the seed diverged
+
+  await page.goto("/orders");
+  const row = page.getByRole("row").filter({ hasText: MULTI });
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "Edit" }).click();
+  // The form shows the *first* kit — it has one set of fields for two kits, which
+  // is exactly why echoing them back was destructive.
+  await expect(page.getByLabel("Scale")).toHaveValue(firstBefore.scale!);
+
+  await page.getByLabel("Tracking number").fill(`TRK-MULTI-${suffix}`);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeHidden();
+
+  const [firstAfter, secondAfter] = await kitsOf(MULTI);
+  expect(secondAfter.scale).toBe("1/60");
+  expect(secondAfter.kit_number).toBe("DIVERGENT");
+  expect(firstAfter).toEqual(firstBefore); // and the one it did show is untouched
+});
+
+test("a warm page does not revert a kit changed while it was open", async ({ page }) => {
+  // The cached kit list satisfied the old hydration gate instantly, so the form
+  // snapshotted values already superseded in the database and wrote them back.
+  await page.goto("/orders");
+  await expect(page.getByRole("row").filter({ hasText: MULTI })).toBeVisible();
+
+  // From here the kit list is frozen at what the page already holds. Opening the
+  // editor does trigger a refetch, and on localhost it usually wins the race — so
+  // without this the test passes against the broken code and detects nothing.
+  // Stalling it makes the stale window certain instead of likely.
+  let release = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/kits", async (route) => {
+    await held;
+    await route.continue();
+  });
+
+  const [first] = await kitsOf(MULTI);
+  await patchKit(first.id, { scale: "1/48", kit_number: "CACHE-NEW" });
+
+  // No reload: the page has been sitting there since before that change landed.
+  const row = page.getByRole("row").filter({ hasText: MULTI });
+  await row.getByRole("button", { name: "Edit" }).click();
+  await page.getByLabel("Tracking number").fill(`TRK-WARM-${suffix}`);
+  await page.getByRole("button", { name: "Save changes" }).click();
+  // Released as soon as the click lands: the form's defaults were frozen at mount,
+  // so the payload is already decided, and holding it any longer only blocks the
+  // cache invalidation the save does on its way out.
+  release();
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeHidden();
+
+  const [firstAfter] = await kitsOf(MULTI);
+  expect(firstAfter.scale).toBe("1/48");
+  expect(firstAfter.kit_number).toBe("CACHE-NEW");
 });
 
 test.afterAll("clean up everything this run created", async () => {

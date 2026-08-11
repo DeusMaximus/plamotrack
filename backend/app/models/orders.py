@@ -88,7 +88,10 @@ class OrderItem(UUIDPrimaryKeyMixin, Base):
 
     order: Mapped[Order] = relationship(back_populates="items")
     # Kits spawned by this line (kit-type lines only); read-only convenience.
-    kits: Mapped[list["Kit"]] = relationship(viewonly=True)
+    # Ordered to match `_line_kits`, because "the first spawned kit" is a value the
+    # order editor hydrates from and the service compares against — unordered, the
+    # same line could seed the form from a different kit on every load.
+    kits: Mapped[list["Kit"]] = relationship(viewonly=True, order_by="(Kit.created_at, Kit.id)")
 
     @property
     def spawned_kit_ids(self) -> list[uuid.UUID]:

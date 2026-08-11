@@ -440,14 +440,37 @@ async def _update_line(
         scale = (
             details.scale if details.scale is not None else default_scale_for_grade(details.grade)
         )
-        # Kit details propagate to every kit this line spawned (single source of
-        # truth for "I misspelled the name at order entry").
         line_kits = await _line_kits(session, item.id)
-        for kit in line_kits:
-            kit.name = details.name
-            kit.grade = details.grade
-            kit.scale = scale
-            kit.kit_number = details.kit_number
+        # Kit details propagate to every kit this line spawned — but only the fields
+        # this edit actually restated (#65).
+        #
+        # Propagation exists so "I misspelled the name at order entry" has one place
+        # to fix (rule 2). Applied unconditionally it also meant an edit that never
+        # mentioned the kits — a tracking number, a unit price — rewrote all of them
+        # from whatever the caller happened to echo back, flattening kits the owner
+        # had deliberately made different. Spawned kits are allowed to diverge from
+        # their line; only a value that changed is worth pushing down.
+        #
+        # "Changed" is judged against the first spawned kit, because that is what
+        # every client renders for the line and therefore what it echoes back
+        # unedited. Judging it server-side rather than trusting the caller to send a
+        # partial payload keeps REST and MCP on the same footing as the browser —
+        # neither has to opt in to not destroying data.
+        if line_kits:
+            reference = line_kits[0]
+            restated = {
+                field: value
+                for field, value in (
+                    ("name", details.name),
+                    ("grade", details.grade),
+                    ("scale", scale),
+                    ("kit_number", details.kit_number),
+                )
+                if value != getattr(reference, field)
+            }
+            for kit in line_kits:
+                for field, value in restated.items():
+                    setattr(kit, field, value)
         # Diff against the actual surviving kit count, not item.quantity —
         # defense in depth should the two ever drift.
         delta = line.quantity - len(line_kits)
