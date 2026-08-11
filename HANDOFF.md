@@ -16,6 +16,62 @@ Template:
 
 ---
 
+## 2026-08-11 — Claude Code — second gate failure on the same invariant; v0.2.4.2-alpha out
+
+**v0.2.4.1 also failed its release gate.** #69 filed, fixed in PR #70, released as
+**v0.2.4.2-alpha** (tag `f66e46e` on `a728d69`). 245 backend, 80 vitest, 11 Playwright.
+`main` clean, no local branches, `M5 hardening — v0.2.4-alpha` at zero open issues and
+still deliberately open. Three releases in one day on one invariant.
+
+- **#69 was a defect in #66's own fix, and a different class again.** `_update_line`
+  resolved a null scale to the grade default *before* comparing it against the stored
+  kit. A kit may legitimately have **no scale** — `KitUpdate.scale` is nullable and the
+  Kits page can clear it — and the form echoes that back as null, indistinguishable
+  from "not mentioned". So `"1/144" != None` read as an edit and a **price-only** change
+  rewrote every kit on the line: `[null, 1/60]` → `[1/144, 1/144]`. No stale cache, no
+  second writer, so not #67. Fixed by comparing the value **as sent** and never treating
+  a null as a restatement; same reading covers `kit_number`. Spawning still derives, in
+  `spawn_kits`, which is the only place a missing scale means "work one out".
+
+- **Behaviour change to know before someone "restores" it:** clearing a scale or kit
+  number from the *order editor* now does nothing — that belongs on the Kits page, which
+  can say null and mean it. The frontend comment that claimed blank means "derive from
+  the grade" was corrected in the same branch; believing it is how the defect was
+  written, and it would have sent the next person straight back to it.
+
+- **Read the new `AGENTS.md` section before writing regression tests here.** "Writing the
+  test: sweep the values, not just the paths", added because three consecutive suites
+  were written for a known defect, **run against the unfixed code**, and still missed the
+  next one: #65 seeded quantity **one** for a divergence bug, #66's warm-cache detector
+  won its race on localhost until the request was stalled, #69 compared a field only
+  where both sides already held the same non-null value. Running red against broken code
+  proves a test catches the case you thought of and nothing else.
+
+- **Copilot review is OFF** — the owner disabled auto-review to conserve Copilot Pro
+  credits until **1 September**. Don't request one casually. Evidence for that being
+  fine: Copilot reviewed #66 and left **zero** comments, and #66 is the PR that shipped
+  #69. Its one useful find (#62's dangling reference) was API state semantics, a class it
+  can actually read off the diff. For value-space defects, do the adversarial pass
+  yourself — doing that on #70 found the stale comment above.
+
+- **Process:** `.claude/settings.local.json` (gitignored) allows `Bash(gh pr merge:*)` and
+  `Bash(git push origin v*)`; tag pushes and `gh release create` now run unprompted, and
+  the rules load without a restart. `gh pr merge` is still owner-only. Remember
+  `--prerelease` on `gh release create`. **`CLAUDE.md` is a symlink to `AGENTS.md`** —
+  edit the real file. GitHub Actions stalled several jobs today with every step green but
+  the job stuck `in_progress`; `gh run rerun <run> --job <id>` clears it.
+
+- **State:** `main` at `a728d69` plus this entry, clean. Dev Postgres in Docker; a uvicorn
+  on :8000 and Vite on :5173 were restarted for verification and may still be running.
+  Dev database left as found.
+
+- **Next: v0.2.5 / #39** — ingress, in a fresh session by the owner's call. Unchanged
+  sharp edge: `POST /api/import/apply` is multipart and therefore CORS-preflight-exempt,
+  so any page the owner visits can drive a `replace_all` cross-origin. Note that v0.2.5
+  is the first milestone where a mistake lands on the network rather than in the
+  database — the "verify against the unfixed code first" habit needs a different shape,
+  because a CORS policy can't be stashed and re-run the way a lock or a form can.
+
 ## 2026-08-11 — Claude Code — v0.2.4 failed its release gate; #65 fixed, v0.2.4.1-alpha out
 
 **An external review (GPT-5.6 Max) of v0.2.4-alpha returned NO-GO**, and it was right.
