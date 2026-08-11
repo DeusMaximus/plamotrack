@@ -207,6 +207,11 @@ class ColumnSpec:
     ref_table: str | None = None
     #: ALT_* only — the canonical column this mirrors.
     mirrors: str | None = None
+    #: ALT_MONEY only — the column holding the code this amount is denominated in.
+    #: Orders and order lines carry a single `currency_code`; a table whose money
+    #: names its currency differently says so here, or its major units get scaled by
+    #: the two-decimal default and a JPY or KWD amount silently lands wrong.
+    currency_column: str = "currency_code"
     #: Exists in the CSV but not on the model — order_items' kit_* columns mirror
     #: the kits a line spawned, which are rows of their own.
     virtual: bool = False
@@ -239,6 +244,7 @@ def col(
     required: bool = False,
     ref_table: str | None = None,
     mirrors: str | None = None,
+    currency_column: str = "currency_code",
     virtual: bool = False,
     aliases: tuple[str, ...] = (),
     alias_fills: tuple[tuple[str, str], ...] = (),
@@ -252,6 +258,7 @@ def col(
         required=required,
         ref_table=ref_table,
         mirrors=mirrors,
+        currency_column=currency_column,
         virtual=virtual,
         aliases=aliases,
         alias_fills=alias_fills,
@@ -278,6 +285,12 @@ class TableSpec:
     #: auto-matched (kits: a second RX-78 is a second physical kit, not a duplicate).
     natural_key: Callable[[dict], tuple | None] | None = None
     depends_on: tuple[str, ...] = ()
+    #: (amount, currency) column pairs whose currency half is *optional* in the sheet
+    #: and defaults to the instance reference currency. Listed here so the importer's
+    #: pair handling is declared with the shape rather than hardcoded per table (rule
+    #: 9). A pair whose currency column is `required` does not belong here — there is
+    #: no blank to fill, e.g. order_items' unit_price_minor / currency_code.
+    money_pairs: tuple[tuple[str, str], ...] = ()
     #: Handled by dedicated importer logic rather than the generic row path.
     special: bool = False
     description: str = ""
@@ -302,6 +315,18 @@ class TableSpec:
     def column(self, name: str) -> ColumnSpec | None:
         """Resolves current names and retired aliases alike."""
         return self._by_name.get(name)
+
+    def money_mirror(self, amount_column: str) -> str | None:
+        """The major-unit column that can fill `amount_column`, if the table has one.
+
+        Needed because a sheet may supply only the major-unit twin, and the currency
+        has to be settled before that twin is scaled — the exponent comes from the
+        code, so a code resolved afterwards reads 1200 JPY as 120000.
+        """
+        for column in self.columns:
+            if column.role is ColumnRole.ALT_MONEY and column.mirrors == amount_column:
+                return column.name
+        return None
 
     def canonicalise(self, raw: dict[str, str]) -> dict[str, str]:
         """Rewrite retired header names to their current ones, plus whatever the
@@ -398,11 +423,30 @@ TOOLS = TableSpec(
         col("name", parse_text, required=True),
         col("category", parse_text, required=True, help="cutting / filing / gluing / ..."),
         col("quantity_on_hand", parse_int, help="Physically on hand. Not derived from orders."),
-        col("unit_cost_reference", parse_decimal, help="Last known price, informational only."),
+        col("unit_cost_reference_minor", parse_int, help=_MONEY_HELP),
+        col(
+            # Pre-0.2.3 exports named this column and held major units in it, with no
+            # currency anywhere on the table — which is the ambiguity #19 removed. It
+            # keeps working as the major-unit mirror, and a row arriving without a code
+            # is stamped with the instance default like any other blank currency cell.
+            "unit_cost_reference",
+            parse_decimal,
+            get=lambda t: None,
+            role=ColumnRole.ALT_MONEY,
+            mirrors="unit_cost_reference_minor",
+            currency_column="unit_cost_reference_currency",
+            help="Major units, e.g. 12.50.",
+        ),
+        col(
+            "unit_cost_reference_currency",
+            parse_currency,
+            help="Currency the price was recorded in. Blank = the instance default.",
+        ),
         col("condition_notes", parse_text),
     ),
     label=lambda row: row.get("name") or "(unnamed tool)",
     natural_key=_name_key,
+    money_pairs=(("unit_cost_reference_minor", "unit_cost_reference_currency"),),
 )
 
 CONSUMABLES = TableSpec(
@@ -564,6 +608,7 @@ ORDER_ITEMS = TableSpec(
         + (f" — {row['catalog_name']}" if row.get("catalog_name") else "")
         + (f" — {row['kit_name']}" if row.get("kit_name") else "")
     ),
+    money_pairs=(("converted_price_minor", "converted_currency_code"),),
 )
 
 KITS = TableSpec(

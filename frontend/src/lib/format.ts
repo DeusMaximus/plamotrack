@@ -1,7 +1,7 @@
 import type { KitStatus } from "../api/types";
 import { minorFractionDigits } from "./currency";
 
-export { minorFractionDigits, stepFor } from "./currency";
+export { COMMON_CURRENCIES, currencyOptions, minorFractionDigits, stepFor } from "./currency";
 
 export const STATUS_LABELS: Record<KitStatus, string> = {
   pre_ordered: "Pre-ordered",

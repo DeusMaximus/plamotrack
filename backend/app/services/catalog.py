@@ -105,6 +105,15 @@ async def update_catalog_item(
         if value is None and key in _NON_NULLABLE:
             raise InvalidInputError(f"{key} cannot be null")
         setattr(row, key, value)
+    # After applying, not before: a PATCH carrying one half of the pair is fine when
+    # the row already holds the other, so only the merged result can be judged (§6).
+    if isinstance(row, Tool) and (
+        (row.unit_cost_reference_minor is None) != (row.unit_cost_reference_currency is None)
+    ):
+        raise InvalidInputError(
+            "unit_cost_reference_minor and unit_cost_reference_currency must be set "
+            "together or cleared together"
+        )
     await session.flush()
     await session.commit()
     return row

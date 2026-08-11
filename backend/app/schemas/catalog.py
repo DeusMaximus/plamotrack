@@ -1,27 +1,47 @@
 import uuid
 from datetime import datetime
-from decimal import Decimal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.enums import ItemType
+from app.services.currency import CURRENCY_CODE_PATTERN
+
+_COST_HELP = "Integer minor units — cents for AUD, whole yen for JPY, fils for KWD."
 
 
 class ToolCreate(BaseModel):
     name: str = Field(min_length=1)
     category: str = Field(min_length=1)
     quantity_on_hand: int = Field(default=0, ge=0)
-    unit_cost_reference: Decimal | None = None
+    unit_cost_reference_minor: int | None = Field(default=None, ge=0, description=_COST_HELP)
+    unit_cost_reference_currency: str | None = Field(default=None, pattern=CURRENCY_CODE_PATTERN)
     condition_notes: str | None = None
+
+    @model_validator(mode="after")
+    def _validate_cost_pair(self) -> "ToolCreate":
+        # Mirrors the ck_tools_unit_cost_reference_currency_paired constraint, so the
+        # caller gets a 422 naming the field instead of an integrity error naming a
+        # constraint. An amount without a code is the ambiguity this column pair exists
+        # to remove; a code without an amount states a currency for nothing.
+        if (self.unit_cost_reference_minor is None) != (self.unit_cost_reference_currency is None):
+            raise ValueError(
+                "unit_cost_reference_minor and unit_cost_reference_currency must be set "
+                "together or left out together"
+            )
+        return self
 
 
 class ToolUpdate(BaseModel):
+    # No pair validator here: a PATCH may legitimately send one half and leave the
+    # other on the row. The resulting pair is checked in services/catalog.py, which
+    # is the only place that can see both the payload and the stored row.
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1)
     category: str | None = Field(default=None, min_length=1)
     quantity_on_hand: int | None = Field(default=None, ge=0)
-    unit_cost_reference: Decimal | None = None
+    unit_cost_reference_minor: int | None = Field(default=None, ge=0, description=_COST_HELP)
+    unit_cost_reference_currency: str | None = Field(default=None, pattern=CURRENCY_CODE_PATTERN)
     condition_notes: str | None = None
 
 
@@ -32,7 +52,8 @@ class ToolRead(BaseModel):
     name: str
     category: str
     quantity_on_hand: int
-    unit_cost_reference: Decimal | None
+    unit_cost_reference_minor: int | None
+    unit_cost_reference_currency: str | None
     condition_notes: str | None
 
 

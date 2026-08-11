@@ -582,3 +582,393 @@ async def test_exports_only_ever_name_the_current_column(client, retailer):
     header = resp.text.splitlines()[0]
     assert "converted_price_minor" in header
     assert "converted_price_aud_minor" not in header
+
+
+# --- a tool's reference cost (#19) ----------------------------------------------
+#
+# The same invariant one table over: an amount records the code it was entered
+# under, so nothing later reinterprets it. `tools.unit_cost_reference` was the last
+# amount in the schema outside §6 — a scaled decimal with no currency anywhere on
+# the table, so a recorded 45.00 could not be compared, converted, or explained.
+
+
+def tools_csv(header: list[str], rows: list[dict[str, str]]) -> bytes:
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=header, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return out.getvalue().encode()
+
+
+async def import_tools(client, content: bytes):
+    return await client.post(
+        "/import/apply",
+        files={"file": ("tools.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+
+
+async def make_tool(client, **overrides) -> dict:
+    resp = await client.post(
+        "/tools", json={"name": "Godhand SPN-120", "category": "cutting", **overrides}
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def tool_line(**overrides) -> dict:
+    return {
+        "item_type": "tool",
+        "quantity": 1,
+        "unit_price_minor": 3980,
+        "currency_code": "JPY",
+        "new_item": {"name": "Tamiya cement", "category": "gluing"},
+        **overrides,
+    }
+
+
+async def test_a_tool_cost_records_its_currency(client):
+    tool = await make_tool(
+        client, unit_cost_reference_minor=4500, unit_cost_reference_currency="AUD"
+    )
+    assert tool["unit_cost_reference_minor"] == 4500
+    assert tool["unit_cost_reference_currency"] == "AUD"
+
+
+async def test_a_tool_cost_without_a_currency_is_refused(client):
+    resp = await client.post(
+        "/tools",
+        json={"name": "Godhand", "category": "cutting", "unit_cost_reference_minor": 4500},
+    )
+    assert resp.status_code == 422
+
+
+async def test_a_tool_currency_without_a_cost_is_refused(client):
+    resp = await client.post(
+        "/tools",
+        json={"name": "Godhand", "category": "cutting", "unit_cost_reference_currency": "AUD"},
+    )
+    assert resp.status_code == 422
+
+
+async def test_correcting_only_a_tool_cost_keeps_its_currency(client, reference_currency):
+    """The rule #3 established, on the other table: a PATCH that carries the amount
+    and not the code is a correction, not a redenomination."""
+    reference_currency("AUD")
+    tool = await make_tool(
+        client, unit_cost_reference_minor=1200, unit_cost_reference_currency="JPY"
+    )
+
+    resp = await client.patch(f"/tools/{tool['id']}", json={"unit_cost_reference_minor": 1400})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["unit_cost_reference_minor"] == 1400
+    assert resp.json()["unit_cost_reference_currency"] == "JPY"
+
+
+async def test_clearing_only_a_tool_currency_is_refused(client):
+    """Breaking the pair across a PATCH boundary is a domain error naming the field,
+    not an integrity error naming a constraint."""
+    tool = await make_tool(
+        client, unit_cost_reference_minor=4500, unit_cost_reference_currency="AUD"
+    )
+    resp = await client.patch(f"/tools/{tool['id']}", json={"unit_cost_reference_currency": None})
+    assert resp.status_code == 422
+    assert "together" in resp.json()["detail"]
+
+
+async def test_clearing_both_halves_of_a_tool_cost_is_allowed(client):
+    tool = await make_tool(
+        client, unit_cost_reference_minor=4500, unit_cost_reference_currency="AUD"
+    )
+    resp = await client.patch(
+        f"/tools/{tool['id']}",
+        json={"unit_cost_reference_minor": None, "unit_cost_reference_currency": None},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["unit_cost_reference_minor"] is None
+    assert resp.json()["unit_cost_reference_currency"] is None
+
+
+async def test_an_order_line_stamps_its_own_currency_on_a_new_tool(
+    client, retailer, reference_currency
+):
+    """The select-or-create path (§3.9) is the one place a tool's cost arrives with
+    its currency already known — the line states it. Falling back to the instance
+    default here would invent an exchange rate nobody supplied."""
+    reference_currency("AUD")
+    resp = await make_order(
+        client,
+        retailer,
+        [
+            tool_line(
+                new_item={
+                    "name": "Tamiya cement",
+                    "category": "gluing",
+                    "unit_cost_reference_minor": 385,
+                }
+            )
+        ],
+    )
+    assert resp.status_code == 201, resp.text
+
+    tool = next(t for t in (await client.get("/tools")).json() if t["name"] == "Tamiya cement")
+    assert tool["unit_cost_reference_minor"] == 385
+    assert tool["unit_cost_reference_currency"] == "JPY"  # the line's, not AUD
+
+
+async def test_an_order_line_without_a_cost_invents_no_currency(client, retailer):
+    resp = await make_order(client, retailer, [tool_line()])
+    assert resp.status_code == 201, resp.text
+
+    tool = next(t for t in (await client.get("/tools")).json() if t["name"] == "Tamiya cement")
+    assert tool["unit_cost_reference_minor"] is None
+    assert tool["unit_cost_reference_currency"] is None
+
+
+async def test_import_scales_a_tool_cost_by_its_own_currency(client, reference_currency):
+    """The major-unit column is scaled by the row's *own* currency column, not by a
+    column named `currency_code` — tools have no such column, and the two-decimal
+    default would have read ¥1200 as ¥120000."""
+    reference_currency("AUD")
+    content = tools_csv(
+        [
+            "name",
+            "category",
+            "quantity_on_hand",
+            "unit_cost_reference",
+            "unit_cost_reference_currency",
+        ],
+        [
+            {
+                "name": "Mr Cement S",
+                "category": "gluing",
+                "quantity_on_hand": "1",
+                "unit_cost_reference": "1200",
+                "unit_cost_reference_currency": "JPY",
+            }
+        ],
+    )
+    assert (await import_tools(client, content)).status_code == 200
+
+    tool = next(t for t in (await client.get("/tools")).json() if t["name"] == "Mr Cement S")
+    assert tool["unit_cost_reference_minor"] == 1200
+    assert tool["unit_cost_reference_currency"] == "JPY"
+
+
+async def test_import_stamps_the_instance_currency_on_a_blank_tool_code(client, reference_currency):
+    reference_currency("EUR")
+    content = tools_csv(
+        [
+            "name",
+            "category",
+            "quantity_on_hand",
+            "unit_cost_reference_minor",
+            "unit_cost_reference_currency",
+        ],
+        [
+            {
+                "name": "Tamiya nippers",
+                "category": "cutting",
+                "quantity_on_hand": "1",
+                "unit_cost_reference_minor": "2500",
+                "unit_cost_reference_currency": "",
+            }
+        ],
+    )
+    assert (await import_tools(client, content)).status_code == 200
+
+    tool = next(t for t in (await client.get("/tools")).json() if t["name"] == "Tamiya nippers")
+    assert tool["unit_cost_reference_minor"] == 2500
+    assert tool["unit_cost_reference_currency"] == "EUR"
+
+
+async def test_import_without_a_tool_currency_column_keeps_the_recorded_code(
+    client, reference_currency
+):
+    """#12's rule, generalised: a sheet with no currency column at all hasn't asked
+    to relabel anything, so an existing row keeps the code it recorded."""
+    reference_currency("AUD")
+    tool = await make_tool(
+        client,
+        name="Mr Cement S",
+        unit_cost_reference_minor=1200,
+        unit_cost_reference_currency="JPY",
+    )
+    content = tools_csv(
+        ["id", "name", "category", "quantity_on_hand", "unit_cost_reference_minor"],
+        [
+            {
+                "id": tool["id"],
+                "name": "Mr Cement S",
+                "category": "cutting",
+                "quantity_on_hand": "1",
+                "unit_cost_reference_minor": "1400",
+            }
+        ],
+    )
+    assert (await import_tools(client, content)).status_code == 200
+
+    updated = next(t for t in (await client.get("/tools")).json() if t["id"] == tool["id"])
+    assert updated["unit_cost_reference_minor"] == 1400
+    assert updated["unit_cost_reference_currency"] == "JPY"  # not restamped AUD
+
+
+async def test_import_drops_a_tool_currency_that_has_no_amount(client):
+    content = tools_csv(
+        [
+            "name",
+            "category",
+            "quantity_on_hand",
+            "unit_cost_reference_minor",
+            "unit_cost_reference_currency",
+        ],
+        [
+            {
+                "name": "Plain file",
+                "category": "filing",
+                "quantity_on_hand": "1",
+                "unit_cost_reference_minor": "",
+                "unit_cost_reference_currency": "GBP",
+            }
+        ],
+    )
+    assert (await import_tools(client, content)).status_code == 200
+
+    tool = next(t for t in (await client.get("/tools")).json() if t["name"] == "Plain file")
+    assert tool["unit_cost_reference_minor"] is None
+    assert tool["unit_cost_reference_currency"] is None
+
+
+async def test_tool_exports_carry_the_currency_column(client):
+    await make_tool(client, unit_cost_reference_minor=4500, unit_cost_reference_currency="AUD")
+    resp = await client.get("/export/tools.csv")
+    assert resp.status_code == 200
+    header = resp.text.splitlines()[0]
+    assert "unit_cost_reference_minor" in header
+    assert "unit_cost_reference_currency" in header
+
+
+async def test_import_of_a_pre_0_2_3_tools_export_stamps_the_instance_currency(
+    client, reference_currency
+):
+    """The old shape: a major-unit `unit_cost_reference` column and no currency column
+    anywhere. The amount still has to land with a code beside it, or it trips the
+    paired CHECK — and the code has to be settled *before* the major units are scaled,
+    or ¥1200 is read with two decimal places."""
+    reference_currency("JPY")
+    content = tools_csv(
+        ["name", "category", "quantity_on_hand", "unit_cost_reference"],
+        [
+            {
+                "name": "Legacy nippers",
+                "category": "cutting",
+                "quantity_on_hand": "1",
+                "unit_cost_reference": "1200",
+            }
+        ],
+    )
+    resp = await import_tools(client, content)
+    assert resp.status_code == 200, resp.text
+
+    tool = next(t for t in (await client.get("/tools")).json() if t["name"] == "Legacy nippers")
+    assert tool["unit_cost_reference_currency"] == "JPY"
+    assert tool["unit_cost_reference_minor"] == 1200  # not 120000
+
+
+async def test_import_ignores_a_tool_currency_column_with_no_amount_column(client):
+    """A sheet naming only the currency isn't asking to redenominate. The REST API
+    refuses a code with no amount; the importer must not quietly do it instead."""
+    tool = await make_tool(
+        client,
+        name="Mr Cement S",
+        unit_cost_reference_minor=1200,
+        unit_cost_reference_currency="JPY",
+    )
+    content = tools_csv(
+        ["id", "name", "category", "quantity_on_hand", "unit_cost_reference_currency"],
+        [
+            {
+                "id": tool["id"],
+                "name": "Mr Cement S",
+                "category": "gluing",
+                "quantity_on_hand": "1",
+                "unit_cost_reference_currency": "GBP",
+            }
+        ],
+    )
+    resp = await import_tools(client, content)
+    assert resp.status_code == 200, resp.text
+
+    updated = next(t for t in (await client.get("/tools")).json() if t["id"] == tool["id"])
+    assert updated["unit_cost_reference_minor"] == 1200
+    assert updated["unit_cost_reference_currency"] == "JPY"  # not relabelled GBP
+
+
+async def test_import_of_a_lone_tool_currency_on_a_new_row_is_not_a_500(client):
+    content = tools_csv(
+        ["name", "category", "quantity_on_hand", "unit_cost_reference_currency"],
+        [
+            {
+                "name": "Bare currency",
+                "category": "filing",
+                "quantity_on_hand": "1",
+                "unit_cost_reference_currency": "GBP",
+            }
+        ],
+    )
+    resp = await import_tools(client, content)
+    assert resp.status_code == 200, resp.text
+
+    tool = next(t for t in (await client.get("/tools")).json() if t["name"] == "Bare currency")
+    assert tool["unit_cost_reference_minor"] is None
+    assert tool["unit_cost_reference_currency"] is None
+
+
+async def test_import_ignores_a_lone_snapshot_currency_column_too(client, retailer):
+    """The same hole existed on order_items before `money_pairs` generalised it — a
+    sheet naming converted_currency_code and no amount column relabelled the
+    snapshot, which is the very thing #12 fixed on the other paths."""
+    order = await seeded_order_with_snapshot(client, retailer, 3200, "JPY")
+    content = order_items_csv(
+        ["id", "order_id", "item_type", "quantity", "currency_code", "converted_currency_code"],
+        [
+            {
+                "id": order["items"][0]["id"],
+                "order_id": order["id"],
+                "item_type": "kit",
+                "quantity": "1",
+                "currency_code": "JPY",
+                "converted_currency_code": "GBP",
+            }
+        ],
+    )
+    resp = await client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+
+    updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert updated["converted_price_minor"] == 3200
+    assert updated["converted_currency_code"] == "JPY"  # not relabelled GBP
+
+
+async def test_preview_says_a_lone_currency_column_is_being_ignored(client):
+    """Dropping it silently would be its own bug — the sheet asked for something,
+    and the person applying the import should see that it isn't happening."""
+    content = tools_csv(
+        ["name", "category", "quantity_on_hand", "unit_cost_reference_currency"],
+        [
+            {
+                "name": "Bare currency",
+                "category": "filing",
+                "quantity_on_hand": "1",
+                "unit_cost_reference_currency": "GBP",
+            }
+        ],
+    )
+    resp = await client.post("/import/preview", files={"file": ("tools.csv", content, "text/csv")})
+    assert resp.status_code == 200, resp.text
+    row = resp.json()["tables"][0]["rows"][0]
+    assert any("unit_cost_reference_currency: ignored" in m for m in row["messages"]), row

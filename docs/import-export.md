@@ -130,12 +130,12 @@ quietly double your paint collection.
 restores nulls faithfully. (The starter sheet only ever emits columns it actually
 knows about, so importing a kit list won't wipe a retailer's rating.)
 
-The conversion pair on `order_items` bends the first half of that rule, because an
-amount with no currency isn't storable: leaving `converted_currency_code` blank in a
-column you *did* include means "the instance's reference currency", not "empty". The
-second half holds as written — leave the column out of the file and an amount you
-correct keeps the currency it was already recorded in, rather than being relabelled
-with yours.
+Money pairs bend the first half of that rule, because an amount with no currency
+isn't storable: leaving `converted_currency_code` on `order_items` — or
+`unit_cost_reference_currency` on `tools` — blank in a column you *did* include means
+"the instance's reference currency", not "empty". The second half holds as written:
+leave the column out of the file and an amount you correct keeps the currency it was
+already recorded in, rather than being relabelled with yours.
 
 ---
 
@@ -174,6 +174,15 @@ So far there is one:
 | Old column | Current columns | Notes |
 | --- | --- | --- |
 | `converted_price_aud_minor` | `converted_price_minor` + `converted_currency_code` | Rows under the old name are read as **AUD**, since that's what the name meant — even if your instance uses a different reference currency. |
+
+One column changed meaning rather than name. Before v0.2.3-alpha, `tools.csv` held a
+tool's price in a `unit_cost_reference` column of major units and recorded no currency
+at all. That column still exists and still takes major units — it is now the readable
+twin of `unit_cost_reference_minor` — but a row that doesn't name a currency is read
+as being in your instance's reference currency. Re-importing a pre-0.2.3 `tools.csv`
+into an instance whose reference currency isn't the one those prices were entered in
+will therefore label them wrongly; set `unit_cost_reference_currency` in the file to
+say what they really were.
 
 ---
 

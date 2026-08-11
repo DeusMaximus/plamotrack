@@ -1,6 +1,5 @@
 import uuid
 from datetime import date, datetime
-from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -11,8 +10,7 @@ from app.models.enums import (
     ShippingSpeed,
     WouldOrderAgain,
 )
-
-_CURRENCY_PATTERN = r"^[A-Z]{3}$"
+from app.services.currency import CURRENCY_CODE_PATTERN as _CURRENCY_PATTERN
 
 
 class RetailerCreate(BaseModel):
@@ -68,7 +66,10 @@ class NewCatalogItem(BaseModel):
     category: str | None = None  # tools/consumables
     manufacturer: str | None = None  # upgrades
     low_stock_threshold: int | None = Field(default=None, ge=0)
-    unit_cost_reference: Decimal | None = None
+    # Tools only. Minor units, with no currency field of its own — the line already
+    # states the currency this was bought in, and asking twice invites the two to
+    # disagree. The service stamps the line's code onto the row it creates.
+    unit_cost_reference_minor: int | None = Field(default=None, ge=0)
     condition_notes: str | None = None
 
 

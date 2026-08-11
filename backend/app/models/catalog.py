@@ -1,8 +1,7 @@
 import uuid
 from datetime import datetime
-from decimal import Decimal
 
-from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Numeric, func
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, UUIDPrimaryKeyMixin
@@ -16,10 +15,21 @@ class Tool(UUIDPrimaryKeyMixin, Base):
     name: Mapped[str] = mapped_column(index=True)
     category: Mapped[str]
     quantity_on_hand: Mapped[int] = mapped_column(default=0)
-    unit_cost_reference: Mapped[Decimal | None] = mapped_column(Numeric(10, 2))
+    # Informational "last known price" (§6). Integer minor units plus the code they
+    # were recorded under, like every other amount — a bare number here could not be
+    # compared or converted, and read differently depending on who was looking.
+    unit_cost_reference_minor: Mapped[int | None]
+    unit_cost_reference_currency: Mapped[str | None] = mapped_column(String(3))
     condition_notes: Mapped[str | None]
 
-    __table_args__ = (CheckConstraint("quantity_on_hand >= 0", name="quantity_non_negative"),)
+    __table_args__ = (
+        CheckConstraint("quantity_on_hand >= 0", name="quantity_non_negative"),
+        CheckConstraint("unit_cost_reference_minor >= 0", name="unit_cost_reference_non_negative"),
+        CheckConstraint(
+            "(unit_cost_reference_minor IS NULL) = (unit_cost_reference_currency IS NULL)",
+            name="unit_cost_reference_currency_paired",
+        ),
+    )
 
 
 class Consumable(UUIDPrimaryKeyMixin, Base):
