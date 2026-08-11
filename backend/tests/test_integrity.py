@@ -611,6 +611,42 @@ async def test_editing_an_order_while_an_upgrade_is_applied_does_not_deadlock(cl
         assert outcome is None or isinstance(outcome, ConflictError | NotFoundError), outcome
 
 
+async def test_a_line_left_dangling_by_the_old_delete_says_so_instead_of_404ing(client, retailer):
+    """The residue the lock cannot help with (#63).
+
+    A database that ran the pre-0.2.4 unlocked delete can hold a line pointing at a
+    catalog row that is gone. Every path that touches such a line reverses its stock
+    first and so cannot proceed — but "consumable <uuid> not found" reads as though
+    the *caller* named something missing, and sends the owner hunting a request they
+    never made. Forged here with a raw delete, because the fixed code will no longer
+    produce it.
+    """
+    consumable = (
+        await client.post("/consumables", json={"name": "Ghost cement", "category": "cement"})
+    ).json()
+    consumable_id = uuid.UUID(consumable["id"])
+    order_id = await _catalog_order(retailer["id"], (consumable_id, 2))
+
+    async with session_scope() as session:
+        await session.execute(text("DELETE FROM consumables WHERE id = :id"), {"id": consumable_id})
+        await session.commit()
+
+    with pytest.raises(ConflictError) as refusal:
+        async with session_scope() as session:
+            await orders_service.delete_order(session, order_id)
+    assert "no longer in the catalog" in str(refusal.value)
+    assert str(consumable_id) in str(refusal.value)
+
+    # Header-only edits stay possible: an unrelated field must not be held hostage
+    # by a corrupt line, which is why the up-front locking skips missing rows rather
+    # than refusing outright.
+    async with session_scope() as session:
+        edited = await orders_service.update_order(
+            session, order_id, OrderUpdate(tracking_number="EE123456789AU")
+        )
+    assert edited.tracking_number == "EE123456789AU"
+
+
 async def test_two_lines_on_one_order_share_a_target_without_losing_an_increment(client, retailer):
     """Not a race — the ordering inside a single transaction that the locked reads
     depend on. Re-reading the row under its lock is only correct because the

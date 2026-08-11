@@ -237,7 +237,21 @@ async def _adjust_ref(
     model = CATALOG_MODELS[item_type]
     row = await lock_catalog_row(session, model, ref_id)
     if row is None:
-        raise NotFoundError(f"{item_type} {ref_id} not found")
+        # Reachable only from a stored reference, never a payload one — every caller
+        # either passes `item.catalog_ref_id` or a target this transaction has just
+        # validated under its lock. So this is not "you named something that doesn't
+        # exist", it is a line left dangling by the unlocked delete this release fixed,
+        # and 404 sends the owner looking for a request they never made. It is a
+        # conflict with what is stored, and there is currently no way out of it
+        # through the API — every path that touches the line reverses its stock first
+        # and lands back here. Filed as #63; the message says so rather than
+        # suggesting a repair that doesn't work.
+        raise ConflictError(
+            f"this order line points at a {item_type} ({ref_id}) that is no longer in "
+            "the catalog, so its stock cannot be adjusted. A pre-0.2.4 catalog delete "
+            "could race an order and leave a line behind like this; the row needs "
+            "repairing in the database"
+        )
     new_quantity = row.quantity_on_hand + delta
     if new_quantity < 0:
         raise ConflictError(
