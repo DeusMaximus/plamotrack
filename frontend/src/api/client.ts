@@ -172,3 +172,13 @@ export const api = {
     return upload<ImportResult>("/import/apply", form);
   },
 };
+
+/** Instance config: static for the life of the process, so fetch it once. Shared
+ * key, so whichever page loads first warms the cache for every form that needs the
+ * reference currency. Declared here rather than in a page — two copies would be two
+ * cache keys the day one of them was edited. */
+export const metaQuery = {
+  queryKey: ["meta"],
+  queryFn: api.getMeta,
+  staleTime: Infinity,
+} as const;

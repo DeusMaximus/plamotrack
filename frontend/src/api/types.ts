@@ -53,7 +53,8 @@ export interface Tool {
   name: string;
   category: string;
   quantity_on_hand: number;
-  unit_cost_reference: string | null;
+  unit_cost_reference_minor: number | null;
+  unit_cost_reference_currency: string | null;
   condition_notes: string | null;
 }
 
@@ -61,7 +62,8 @@ export interface ToolCreate {
   name: string;
   category: string;
   quantity_on_hand?: number;
-  unit_cost_reference?: string | null;
+  unit_cost_reference_minor?: number | null;
+  unit_cost_reference_currency?: string | null;
   condition_notes?: string | null;
 }
 
@@ -232,7 +234,8 @@ export interface ToolUpdate {
   name?: string;
   category?: string;
   quantity_on_hand?: number;
-  unit_cost_reference?: string | null;
+  unit_cost_reference_minor?: number | null;
+  unit_cost_reference_currency?: string | null;
   condition_notes?: string | null;
 }
 

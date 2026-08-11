@@ -57,3 +57,14 @@ export function stepFor(currency: string): string {
   const digits = minorFractionDigits(currency);
   return digits === 0 ? "1" : `0.${"0".repeat(digits - 1)}1`;
 }
+
+/** Suggestions for a currency picker. Not a validation list — the API accepts any
+ * three-letter code, and an instance already holding an obscure one keeps it. */
+export const COMMON_CURRENCIES = ["AUD", "USD", "JPY", "EUR", "GBP", "SGD", "HKD", "CNY", "KRW"];
+
+/** The suggestions with this instance's own currency first — it's the likely pick.
+ * Lives here rather than beside one form: every money input in the app offers the
+ * same list, and two copies would drift the moment one of them gained a currency. */
+export function currencyOptions(reference: string): string[] {
+  return [reference, ...COMMON_CURRENCIES.filter((code) => code !== reference)];
+}

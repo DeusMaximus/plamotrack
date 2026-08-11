@@ -2,11 +2,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 
-import { api, ApiError } from "../api/client";
+import { api, ApiError, metaQuery } from "../api/client";
 import type { Consumable, Tool, Upgrade } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
+import { currencyOptions, formatMoney, majorToMinor, minorToMajor, stepFor } from "../lib/format";
 
 type Tab = "tools" | "consumables" | "upgrades";
 type InventoryItem = Tool | Consumable | Upgrade;
@@ -23,7 +24,9 @@ interface ItemFormValues {
   manufacturer: string;
   quantity_on_hand: number;
   low_stock_threshold: string;
+  /** Major units of `unit_cost_reference_currency`. "" = no recorded cost. */
   unit_cost_reference: string;
+  unit_cost_reference_currency: string;
   condition_notes: string;
 }
 
@@ -38,8 +41,17 @@ function ItemFormModal({
 }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const { data: meta } = useQuery(metaQuery);
+  const referenceCurrency = meta?.reference_currency ?? "AUD";
+  // A stored cost is read back in the code it was recorded under, never today's
+  // reference currency — a JPY tool must not be re-read with two decimal places (§6).
+  const storedCurrency =
+    item && "unit_cost_reference_currency" in item ? item.unit_cost_reference_currency : null;
+  const storedMinor =
+    item && "unit_cost_reference_minor" in item ? item.unit_cost_reference_minor : null;
   const {
     register,
+    watch,
     handleSubmit,
     formState: { errors, isSubmitting },
   } = useForm<ItemFormValues>({
@@ -51,7 +63,10 @@ function ItemFormModal({
       low_stock_threshold:
         item && "low_stock_threshold" in item ? (item.low_stock_threshold?.toString() ?? "") : "",
       unit_cost_reference:
-        item && "unit_cost_reference" in item ? (item.unit_cost_reference ?? "") : "",
+        storedMinor === null || storedCurrency === null
+          ? ""
+          : minorToMajor(storedMinor, storedCurrency),
+      unit_cost_reference_currency: storedCurrency ?? referenceCurrency,
       condition_notes: item && "condition_notes" in item ? (item.condition_notes ?? "") : "",
     },
   });
@@ -59,11 +74,17 @@ function ItemFormModal({
   const onSubmit = handleSubmit(async (values) => {
     try {
       if (tab === "tools") {
+        // Both halves move together — the API refuses an amount with no code, and a
+        // code on its own denominates nothing.
+        const hasCost = values.unit_cost_reference.trim() !== "";
         const payload = {
           name: values.name,
           category: values.category,
           quantity_on_hand: Number(values.quantity_on_hand),
-          unit_cost_reference: values.unit_cost_reference || null,
+          unit_cost_reference_minor: hasCost
+            ? majorToMinor(values.unit_cost_reference, values.unit_cost_reference_currency)
+            : null,
+          unit_cost_reference_currency: hasCost ? values.unit_cost_reference_currency : null,
           condition_notes: values.condition_notes || null,
         };
         await (item ? api.updateTool(item.id, payload) : api.createTool(payload));
@@ -123,15 +144,28 @@ function ItemFormModal({
             </Field>
           )}
           {tab === "tools" && (
-            <Field label="Reference cost">
-              <Input
-                type="number"
-                step="0.01"
-                min={0}
-                {...register("unit_cost_reference")}
-                placeholder="informational"
-              />
-            </Field>
+            <>
+              <Field label="Reference cost">
+                <Input
+                  type="number"
+                  // Derived from the picked currency, so a yen amount can't be typed
+                  // with cents and a dinar can reach its third decimal place.
+                  step={stepFor(watch("unit_cost_reference_currency"))}
+                  min={0}
+                  {...register("unit_cost_reference")}
+                  placeholder="informational"
+                />
+              </Field>
+              <Field label="Cost currency">
+                <Select {...register("unit_cost_reference_currency")}>
+                  {currencyOptions(referenceCurrency).map((code) => (
+                    <option key={code} value={code}>
+                      {code}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </>
           )}
         </div>
         {tab === "tools" && (
@@ -302,7 +336,15 @@ export function InventoryPage() {
                     <td className="px-3 py-2 font-medium">{tool.name}</td>
                     <td className="px-3 py-2">{tool.category}</td>
                     <td className="px-3 py-2">{tool.quantity_on_hand}</td>
-                    <td className="px-3 py-2">{tool.unit_cost_reference ?? "—"}</td>
+                    <td className="px-3 py-2">
+                      {tool.unit_cost_reference_minor === null ||
+                      tool.unit_cost_reference_currency === null
+                        ? "—"
+                        : formatMoney(
+                            tool.unit_cost_reference_minor,
+                            tool.unit_cost_reference_currency,
+                          )}
+                    </td>
                     <td className="px-3 py-2 text-zinc-500">{tool.condition_notes ?? "—"}</td>
                     <td className="px-3 py-2 text-right">
                       <div className="flex justify-end gap-1">

@@ -174,8 +174,15 @@ split is warranted at this scale.
 | name | text | e.g. "Godhand Ultimate Nippers" |
 | category | text | cutting / filing / gluing / etc |
 | quantity_on_hand | int | |
-| unit_cost_reference | numeric (nullable) | last known price, informational only |
+| unit_cost_reference_minor | int (nullable) | last known price, informational only |
+| unit_cost_reference_currency | text(3) (nullable) | the code that price was recorded in |
 | condition_notes | text (nullable) | |
+
+The cost pair is null-or-present together, enforced by a CHECK constraint. It was a
+single `numeric(10, 2)` with no currency until #19: a bare 45.00 could not be compared
+or converted, and scale 2 could not represent a KWD tool at all. Created from an order
+line, the row takes **that line's** currency rather than the instance default — the
+purchase already states what it was bought in (§6).
 
 ### 3.4 `consumables`
 

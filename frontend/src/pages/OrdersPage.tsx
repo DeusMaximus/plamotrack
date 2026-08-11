@@ -9,7 +9,7 @@ import type {
 } from "react-hook-form";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
 
-import { api, ApiError } from "../api/client";
+import { api, ApiError, metaQuery } from "../api/client";
 import type {
   ItemType,
   Kit,
@@ -23,6 +23,7 @@ import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
 import {
+  currencyOptions,
   formatDate,
   formatMoney,
   majorToMinor,
@@ -30,21 +31,6 @@ import {
   stepFor,
   todayISO,
 } from "../lib/format";
-
-const COMMON_CURRENCIES = ["AUD", "USD", "JPY", "EUR", "GBP", "SGD", "HKD", "CNY", "KRW"];
-
-/** Suggestions, with this instance's own currency first — it's the likely pick. */
-function currencyOptions(reference: string): string[] {
-  return [reference, ...COMMON_CURRENCIES.filter((code) => code !== reference)];
-}
-
-/** Instance config: static for the life of the process, so fetch it once.
- * Shared key, so the page warms the cache before the form modal needs it. */
-const metaQuery = {
-  queryKey: ["meta"],
-  queryFn: api.getMeta,
-  staleTime: Infinity,
-} as const;
 
 interface LineValues {
   id?: string;

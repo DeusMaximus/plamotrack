@@ -58,6 +58,10 @@ MINOR_UNITS: dict[str, int] = {
 #: What a currency has unless the table above says otherwise.
 DEFAULT_MINOR_UNITS = 2
 
+#: Shape of a currency code on the way in. Deliberately not a membership test against
+#: KNOWN_CURRENCIES — see that set's note on why an unrecognised code is accepted.
+CURRENCY_CODE_PATTERN = r"^[A-Z]{3}$"
+
 #: Codes in current use per ISO 4217. Only used to tell "a currency we don't
 #: recognise" from "a currency with two decimals" — an unknown code is still
 #: accepted everywhere, because rejecting one would strand anyone already storing

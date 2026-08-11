@@ -152,17 +152,22 @@ async def delete_retailer(session: AsyncSession, retailer_id: uuid.UUID) -> None
 
 
 def _build_catalog_row(
-    item_type: ItemType, new_item: NewCatalogItem
+    item_type: ItemType, new_item: NewCatalogItem, currency_code: str
 ) -> Tool | Consumable | Upgrade:
     if item_type in (ItemType.TOOL, ItemType.CONSUMABLE):
         if not new_item.category:
             raise InvalidInputError(f"new {item_type} items require a category")
     if item_type is ItemType.TOOL:
+        # The line's own currency, not the instance default: this row is being created
+        # from a purchase that states what it was bought in, and that is the one place
+        # a tool's cost ever arrives with its currency already known (§6).
+        cost_minor = new_item.unit_cost_reference_minor
         return Tool(
             name=new_item.name,
             category=new_item.category,
             quantity_on_hand=0,
-            unit_cost_reference=new_item.unit_cost_reference,
+            unit_cost_reference_minor=cost_minor,
+            unit_cost_reference_currency=currency_code if cost_minor is not None else None,
             condition_notes=new_item.condition_notes,
         )
     if item_type is ItemType.CONSUMABLE:
@@ -313,7 +318,7 @@ async def _add_line(
         await _spawn_from_details(session, item, line.kit, line.quantity, received)
     else:
         if line.new_item is not None:
-            row = _build_catalog_row(line.item_type, line.new_item)
+            row = _build_catalog_row(line.item_type, line.new_item, line.currency_code)
             session.add(row)
             await session.flush()
         else:
@@ -373,7 +378,7 @@ async def _update_line(
     else:
         old_ref = item.catalog_ref_id
         if line.new_item is not None:
-            new_row = _build_catalog_row(line.item_type, line.new_item)
+            new_row = _build_catalog_row(line.item_type, line.new_item, line.currency_code)
             session.add(new_row)
             await session.flush()
             new_ref = new_row.id
