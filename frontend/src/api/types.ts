@@ -153,6 +153,10 @@ export interface OrderItem {
   converted_price_minor: number | null;
   converted_currency_code: string | null;
   spawned_kit_ids: string[];
+  /** The spawned kits themselves. Hydrate the editor from these, never from a
+   * separately cached kit list — that second cache going stale is how a warm page
+   * reverted a kit somebody had just changed (#65). */
+  kits: Kit[];
 }
 
 export interface Order {

@@ -12,7 +12,6 @@ import { Controller, useFieldArray, useForm } from "react-hook-form";
 import { api, ApiError, metaQuery } from "../api/client";
 import type {
   ItemType,
-  Kit,
   Order,
   OrderItemUpsert,
   OrderUpdate,
@@ -87,11 +86,16 @@ function emptyLine(currency: string): LineValues {
   };
 }
 
-function orderToFormValues(
-  order: Order,
-  kitById: Map<string, Kit>,
-  catalogName: Map<string, string>,
-): OrderFormValues {
+/** Any `true` anywhere inside react-hook-form's nested dirty-field tree.
+ *
+ * Checking the object's own truthiness isn't enough: an untouched line can still be
+ * present as `{}`, and a nested `catalog` shows up as an object rather than a flag. */
+function anyDirty(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return value === true;
+  return Object.values(value).some(anyDirty);
+}
+
+function orderToFormValues(order: Order, catalogName: Map<string, string>): OrderFormValues {
   return {
     retailer_id: order.retailer_id,
     order_date: order.order_date,
@@ -108,7 +112,11 @@ function orderToFormValues(
     tracking_url: order.tracking_url ?? "",
     received: order.received_at !== null,
     items: order.items.map((item) => {
-      const firstKit = kitById.get(item.spawned_kit_ids[0] ?? "");
+      // Read off the order being edited, not a cached kit list. The line can only
+      // show one set of kit fields, so it shows the first spawned kit's — the
+      // service compares against that same kit to decide what an edit restated,
+      // and the API orders them so "first" is stable across reads (#65).
+      const firstKit = item.kits[0];
       return {
         id: item.id,
         item_type: item.item_type,
@@ -406,7 +414,6 @@ function LineEditor({
  * "rarely" being exactly why the bug would have survived. */
 function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void }) {
   const { data: meta } = useQuery(metaQuery);
-  const { data: kits } = useQuery({ queryKey: ["kits"], queryFn: () => api.listKits() });
   const { data: tools } = useQuery({ queryKey: ["tools"], queryFn: api.listTools });
   const { data: consumables } = useQuery({
     queryKey: ["consumables"],
@@ -414,7 +421,16 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
   });
   const { data: upgrades } = useQuery({ queryKey: ["upgrades"], queryFn: api.listUpgrades });
 
-  const hydrated = !order || (kits && tools && consumables && upgrades);
+  // Kit details are no longer in this list: they arrive on the order itself, so
+  // there is no second cache to be stale. What's left is only the catalog naming
+  // for existing lines, which the order payload genuinely doesn't carry.
+  //
+  // These are still presence checks, and presence is all they can be — TanStack
+  // serves a cached array instantly and refetches behind it, so "arrived" never
+  // means "fresh". That was survivable for kit details only because it isn't kit
+  // details any more; a stale catalog name is a display string the form rewrites
+  // nothing with (#65).
+  const hydrated = !order || (tools && consumables && upgrades);
   if (!meta || !hydrated) {
     return (
       <Modal title={order ? "Edit order" : "New order"} onClose={onClose} wide>
@@ -427,7 +443,6 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
       order={order}
       onClose={onClose}
       referenceCurrency={meta.reference_currency}
-      kits={kits ?? []}
       catalog={[...(tools ?? []), ...(consumables ?? []), ...(upgrades ?? [])]}
     />
   );
@@ -437,13 +452,11 @@ function OrderForm({
   order,
   onClose,
   referenceCurrency,
-  kits,
   catalog,
 }: {
   order?: Order;
   onClose: () => void;
   referenceCurrency: string;
-  kits: Kit[];
   catalog: { id: string; name: string }[];
 }) {
   const queryClient = useQueryClient();
@@ -470,9 +483,8 @@ function OrderForm({
         items: [emptyLine(referenceCurrency)],
       };
     }
-    const kitById = new Map(kits.map((kit) => [kit.id, kit]));
     const catalogName = new Map(catalog.map((row) => [row.id, row.name]));
-    return orderToFormValues(order, kitById, catalogName);
+    return orderToFormValues(order, catalogName);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot once per open
   }, [order?.id]);
 
@@ -483,7 +495,7 @@ function OrderForm({
     handleSubmit,
     watch,
     setValue,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<OrderFormValues>({ defaultValues: defaults });
   const { fields, append, remove } = useFieldArray({ control, name: "items" });
 
@@ -501,6 +513,10 @@ function OrderForm({
 
   const onSubmit = handleSubmit(async (values) => {
     setError(null);
+    // A length change covers add and remove, which `dirtyFields` cannot describe —
+    // it tracks fields, and a deleted line has none.
+    const lineDirty =
+      !order || values.items.length !== order.items.length || anyDirty(dirtyFields.items);
     const payload: OrderUpdate = {
       retailer_id: values.retailer_id,
       order_date: values.order_date,
@@ -515,7 +531,14 @@ function OrderForm({
       delivery_service: values.delivery_service || null,
       tracking_number: values.tracking_number || null,
       tracking_url: values.tracking_url || null,
-      items: values.items.map((line) => toOrderItem(line, referenceCurrency)),
+      // Omitted entirely when the edit never touched a line. `items: undefined`
+      // means "leave the lines alone" to the API, and sending them anyway is how a
+      // tracking-number change reached the kits at all (#65) — every save re-ran
+      // the whole dispatch diff. A new order still sends its lines below; only an
+      // edit can decline to.
+      items: lineDirty
+        ? values.items.map((line) => toOrderItem(line, referenceCurrency))
+        : undefined,
     };
     try {
       if (order) {
@@ -663,9 +686,10 @@ function OrderForm({
           </div>
           {order && (
             <p className="text-xs text-zinc-500">
-              Kit detail edits apply to every kit this line spawned. Removing a line undoes it
-              (kits deleted, stock reversed) — kits that are building/complete, rated, or have
-              photos are protected.
+              A kit detail you change here is applied to every kit this line spawned; one you
+              leave alone stays as it is on each of them, so kits edited individually keep
+              their own. Removing a line undoes it (kits deleted, stock reversed) — kits that
+              are building/complete, rated, or have photos are protected.
             </p>
           )}
           {fields.map((field, index) => (
@@ -731,6 +755,9 @@ export function OrdersPage() {
     error,
   } = useQuery({ queryKey: ["orders"], queryFn: api.listOrders });
   const { data: retailers } = useQuery({ queryKey: ["retailers"], queryFn: api.listRetailers });
+  // Names for the list below only. The editor deliberately does *not* read kit
+  // details from here any more — it takes them from the order it is editing, so a
+  // stale entry can never be written back (#65). Stale here is a label in a table.
   const { data: kits } = useQuery({ queryKey: ["kits"], queryFn: () => api.listKits() });
   const { data: tools } = useQuery({ queryKey: ["tools"], queryFn: api.listTools });
   const { data: consumables } = useQuery({

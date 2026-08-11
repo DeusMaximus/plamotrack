@@ -10,6 +10,7 @@ from app.models.enums import (
     ShippingSpeed,
     WouldOrderAgain,
 )
+from app.schemas.kits import KitRead
 from app.services.currency import CURRENCY_CODE_PATTERN as _CURRENCY_PATTERN
 
 
@@ -188,6 +189,12 @@ class OrderItemRead(BaseModel):
     converted_price_minor: int | None
     converted_currency_code: str | None
     spawned_kit_ids: list[uuid.UUID] = []
+    # The spawned kits themselves, not just their ids (#65). The rows are already
+    # eager-loaded for `spawned_kit_ids`, so this costs nothing — and it means an
+    # editor can read a line's kit details from the order it is editing instead of
+    # joining the ids against a separately cached kit list. That second cache going
+    # stale is how a warm page reverted a kit somebody had just changed.
+    kits: list[KitRead] = []
 
 
 class OrderRead(BaseModel):

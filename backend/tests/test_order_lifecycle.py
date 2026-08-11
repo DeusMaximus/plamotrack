@@ -196,6 +196,110 @@ async def test_kit_line_edit_propagates_details(client, retailer):
     assert all(k["name"] == "RX-79[G] Gundam Ground Type" for k in kits)
 
 
+async def _diverge(client, order, scale="1/60", kit_number="DIVERGENT"):
+    """Spawn two kits from one line and make the second one deliberately different,
+    through the supported Kits path. Returns (line, first_kit_id, second_kit_id)."""
+    line = order["items"][0]
+    first, second = line["spawned_kit_ids"]
+    resp = await client.patch(f"/kits/{second}", json={"scale": scale, "kit_number": kit_number})
+    assert resp.status_code == 200, resp.text
+    return line, first, second
+
+
+async def test_a_line_edit_that_restates_no_kit_detail_leaves_diverged_kits_alone(client, retailer):
+    """Editing a line's price must not rewrite its kits (#65).
+
+    Clients render one set of kit fields per line and echo them back on every save —
+    they can only show one kit, so they show the first. Propagating that
+    unconditionally meant a price change flattened every kit the owner had
+    deliberately made different. Only a value that actually changed propagates now.
+    """
+    order = await make_order(client, retailer, [kit_line(quantity=2)])
+    line, first, second = await _diverge(client, order)
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={
+            "items": [
+                {
+                    "id": line["id"],
+                    "item_type": "kit",
+                    "quantity": 2,
+                    "unit_price_minor": 5999,  # the only thing this edit changes
+                    "currency_code": "AUD",
+                    # Echoed back exactly as a client reads them off the first kit.
+                    "kit": {
+                        "name": "RX-79[G] Gundam Ground Type",
+                        "grade": "HG",
+                        "kit_number": "HGUC 210",
+                    },
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items"][0]["unit_price_minor"] == 5999
+
+    kits = {k["id"]: k for k in (await client.get("/kits")).json()}
+    assert kits[second]["scale"] == "1/60", "the divergent kit was flattened onto the first"
+    assert kits[second]["kit_number"] == "DIVERGENT"
+    assert kits[first]["kit_number"] == "HGUC 210"  # and the first is untouched too
+
+
+async def test_a_line_edit_that_does_restate_a_detail_reaches_every_kit_field_by_field(
+    client, retailer
+):
+    """The other half: propagation still exists, so one typo fix reaches every kit
+    the line spawned — but it carries only the field that changed, leaving the rest
+    of a divergent kit divergent."""
+    order = await make_order(client, retailer, [kit_line(quantity=2, name="RX-79[G] Gound Type")])
+    line, first, second = await _diverge(client, order)
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={
+            "items": [
+                {
+                    "id": line["id"],
+                    "item_type": "kit",
+                    "quantity": 2,
+                    "unit_price_minor": 4999,
+                    "currency_code": "AUD",
+                    "kit": {
+                        "name": "RX-79[G] Gundam Ground Type",  # the typo, corrected
+                        "grade": "HG",
+                        "kit_number": "HGUC 210",
+                    },
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    kits = {k["id"]: k for k in (await client.get("/kits")).json()}
+    assert all(k["name"] == "RX-79[G] Gundam Ground Type" for k in kits.values())
+    # ... and the fields the edit did not restate stayed where they were.
+    assert kits[second]["scale"] == "1/60"
+    assert kits[second]["kit_number"] == "DIVERGENT"
+
+
+async def test_an_order_read_carries_its_spawned_kits_not_just_their_ids(client, retailer):
+    """So an editor can hydrate from the order it is editing. Reading these details
+    off a separately cached kit list is how a warm page reverted a kit that had just
+    been changed — the ids were fresh and the list behind them was not."""
+    order = await make_order(client, retailer, [kit_line(quantity=2)])
+    _, _, second = await _diverge(client, order)
+
+    line = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert [k["id"] for k in line["kits"]] == line["spawned_kit_ids"]
+    divergent = next(k for k in line["kits"] if k["id"] == second)
+    assert (divergent["scale"], divergent["kit_number"]) == ("1/60", "DIVERGENT")
+    # Ordered, so "the first spawned kit" means the same kit on every read.
+    assert [k["id"] for k in line["kits"]] == sorted(
+        (k["id"] for k in line["kits"]), key=lambda i: line["spawned_kit_ids"].index(i)
+    )
+
+
 async def test_kit_line_quantity_increase_spawns(client, retailer):
     order = await make_order(client, retailer, [kit_line(quantity=2)])
     line = order["items"][0]
