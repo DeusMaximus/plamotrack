@@ -16,6 +16,67 @@ Template:
 
 ---
 
+## 2026-08-11 — Claude Code — #36 shipped; v0.2.4-alpha bumped, tag not yet pushed
+
+**Merged to `main`: #36 (PR #62), then the version bump (PR #64).** `main` at `c562438`,
+`__version__ = "0.2.4"` verified on both `GET /meta` and the MCP handshake. 240 backend
+tests, all green. The `M5 hardening — v0.2.4-alpha` milestone is empty.
+
+- **The release is finished except for two commands the owner has to run.** The
+  annotated tag `v0.2.4-alpha` **exists locally on `c562438` but is not pushed**, and no
+  GitHub release is created. Draft notes were handed to the owner (scratchpad file,
+  session `d87d280d`) — if that's gone, rewrite from the five issues; the two things
+  that must survive any rewrite are the ⚠️ sections about data people already hold:
+  order lines whose currency the editor rewrote, and upgrade applications the old
+  kit-delete cascade destroyed unrecoverably.
+
+- **`gh pr merge` and `git push origin <tag>` are now both denied by the auto-mode
+  permission classifier**, standalone, not just chained — the older "run it alone"
+  workaround no longer applies. Hand them to the owner rather than retrying, and do not
+  route around via `gh api -X PUT .../merge`; that is the same action through a
+  different door. Cost two round-trips this session.
+
+- **#36's shape was not what the issue predicted, and the difference is worth knowing.**
+  The "lock that returns a pre-lock value" is *real* — `session.get(..., with_for_update=)`
+  without `populate_existing` genuinely serves stale attributes, verified directly — but
+  **it is not reachable through any code path today**, because SQLAlchemy's identity map
+  holds weak references and the one preloading site discards its result, so CPython
+  collects it and the locked read comes back fresh. Its test is therefore an honest
+  contract test of `lock_catalog_row` with a reference held alive, not an end-to-end
+  race. Don't "fix" that test into a race; it can't be one.
+
+- **Deterministic ordering, not delta aggregation, is what fixes the deadlock.** The
+  issue proposed aggregating per-target deltas in `update_order`; the actual fix is
+  `_lock_catalog_targets`, which drains an order write's catalog locks up front in uuid
+  order. It also covers `create_order`/`receive_order`/`delete_order`, which aggregation
+  inside `update_order` would not have. The **global rule is now: catalog rows (by uuid),
+  then kits** — `apply_upgrade` already went that way, so order writes were changed to
+  match. Documented in `docs/design.md` §3.9. Anything that takes two locks must obey it.
+
+- **Test technique that worked, and is reusable.** The concurrency tests here are
+  *pinned*, not repeated like #37's. The barrier is a third transaction holding
+  `FOR UPDATE` on one row: writers park on it, so the test controls what has committed
+  before they wake. That is safe **only because the gate holds a single lock and always
+  releases it** — it can never be half of a cycle. The #37 warning still stands for
+  barriers held *inside* the code under test. Every new test was checked against the
+  unfixed code first; all three defect tests reproduce deterministically.
+
+- **#63 filed** out of Copilot's review. A pre-0.2.4 dangling `catalog_ref_id` cannot be
+  repaired through the API at all — delete, receive and retarget all reverse the line's
+  stock first and land on the same refusal. Copilot wanted a blanket 409 when a stored
+  target is missing; **not taken**, because it would block header-only edits too, and a
+  tracking-number change shouldn't be hostage to a corrupt line. What shipped is a
+  legible `ConflictError` naming the id instead of a 404. v0.2.8.
+
+- **State:** working tree clean on `main`. Dev Postgres up in Docker. GitHub Actions
+  stalled two jobs this session with every step `completed/success` but the job stuck
+  `in_progress` — `gh run rerun <run> --job <id>` clears it; not a project problem.
+
+- **Next:** push the tag and cut the release, then **v0.2.5 / #39** — the ingress work.
+  The sharpest thing in it is already known: `POST /api/import/apply` is multipart and
+  therefore CORS-preflight-exempt, so any page the owner visits can drive a
+  `replace_all` cross-origin.
+
 ## 2026-08-11 — Claude Code — Shipped four of the five v0.2.4 fixes
 
 **Merged to `main`: #34 (PR #57), #35 (#58), #38 (#59), #37 (#60).** All green, all
