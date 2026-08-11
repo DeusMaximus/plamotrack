@@ -16,6 +16,26 @@ Template:
 
 ---
 
+## 2026-08-11 — Codex — Published the M5.1 settings roadmap
+
+- **Done:** GitHub planning now tracks #19 in `M5 hardening — v0.2.3-alpha`,
+  M5.1 implementation issues #22–#27, M7's storage decision in #28, and M6's
+  threat-model and owner-auth decisions in #29–#30. PR #31 merged the matching
+  `AGENTS.md` and `docs/design.md` updates at `0ec250f` (`fbee2bd` plus Copilot's
+  one-word grammar fix `ed6c0a3`).
+- **Decisions:** plamotrack remains single-owner. Interface language, formatting
+  locale, timezone, date style, hour cycle, and reference currency are
+  instance-wide settings; `en-AU` is the canonical fallback; language and region
+  stay independently selectable; additional languages arrive through reviewed
+  PRs; Settings absorbs Data. M5.1 does not require a non-English translation.
+- **State:** `main` is aligned with `origin/main`. PR #31's Backend, Frontend, and
+  Integration checks are green. This was documentation/planning work, so no local
+  application tests were run. The merged feature branch still exists locally and
+  on `origin`.
+- **Next:** implement #19 first, then the #22 catalogue foundation and #23 settings
+  service. Sequence #24–#27 from those dependencies, and do not describe the
+  planned settings endpoints as implemented before they exist.
+
 ## 2026-08-10 — Claude Code — Released v0.2.2-alpha
 
 **Shipped.** Tag `v0.2.2-alpha` on `b911dae`, published as a pre-release. Version bump
