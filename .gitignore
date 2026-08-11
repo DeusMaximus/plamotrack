@@ -23,3 +23,6 @@ playwright-report/
 
 # OS
 .DS_Store
+
+# Claude Code personal settings — permission rules are per-machine, not shared
+.claude/settings.local.json
