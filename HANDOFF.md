@@ -16,6 +16,91 @@ Template:
 
 ---
 
+## 2026-08-11 — Claude Code — Tool cost carries its currency; a sweep rule to find the next one
+
+**Merged to `main` in PR #32 (`a48eef9`), closing #19.** Verified green on `main` after
+the merge: 220 backend tests, ruff check + format, 80 frontend tests, oxlint,
+`npm run build`, 4 Playwright e2e, and `alembic upgrade head`. Branch deleted, local and
+remote. `M5 hardening — v0.2.3-alpha` now holds nothing open.
+
+Also on `main`, committed directly per the AGENTS.md exception: **`264a0d4`, a new
+`AGENTS.md` section — "Fixing a defect: sweep the class first."** The numbered
+architecture rules describe *classes*, so a violation found in one path is evidence
+about every other path under the same rule. Enumerate them before fixing, file the
+siblings, keep cross-layer cases in the shared fixture. It carries the #3 → #12 → #6 →
+#19 chain as evidence, because the rule reads as generic advice without it.
+
+- **What #19 actually was.** `tools.unit_cost_reference` was a `Numeric(10, 2)` with no
+  currency column anywhere on the table — the only amount in the schema outside §6. Now
+  `unit_cost_reference_minor` + `unit_cost_reference_currency`, paired null-or-present
+  by a CHECK. It was the **only** `Numeric` in the schema; that claim was re-verified
+  independently rather than taken from the issue.
+
+- **The issue's plan covered three paths. The class had five.** Sweeping first found:
+  the order-line select-or-create path built a `Tool` with no currency at all;
+  `_apply_money_alternates` scaled every major-unit column by a column literally named
+  `currency_code`, which tools don't have (¥1200 would have stored as ¥120000); and the
+  importer's pair handling was hardcoded to `order_items`.
+
+- **Two mechanisms worth knowing before you add another money column.**
+  `ColumnSpec.currency_column` names the code an ALT_MONEY column is denominated in
+  (defaults to `currency_code`, so order lines are unchanged). `TableSpec.money_pairs`
+  lists `(amount, currency)` pairs whose currency is *optional* in the sheet — a pair
+  whose currency column is `required` does not belong there. Declaring both is what
+  makes a new money column work across export, import and the templates without
+  touching the importer (rule 9). Confirmed: the template pack picked up all three new
+  tool columns with correct help text, unprompted.
+
+- **Ordering in the importer is load-bearing, and it bit.** `_default_money_currency`
+  runs at parse time and must settle the code **before** `_apply_money_alternates`
+  scales anything, because the exponent comes from the code — and it counts a
+  major-unit twin as an amount, or a pre-0.2.3 `tools.csv` carrying only
+  `unit_cost_reference` gets scaled before its currency exists.
+  `_clear_orphan_money_currency` runs **after**, because the twin is the last chance
+  for the amount to appear. Getting this backwards produced ¥120000 *and* an unpaired
+  NULL that 500s. Self-review found it; reasoning about the order had not.
+
+- **Copilot found two more, and one predates the PR.** A sheet naming a currency column
+  with **no amount column at all** was written straight through: on an existing row
+  that relabelled `1200 JPY` to `1200 GBP` with the number untouched — #12's exact bug,
+  reachable through the importer, and present on `order_items` before this PR under the
+  hardcoded guard. Generalising to `money_pairs` is what exposed it on two tables at
+  once. It is now dropped with a preview message, matching `OrderItemCreate`, which
+  refuses the same shape. The other: `ItemFormModal` read the reference currency into
+  `useForm` defaults before the meta query resolved, so a JPY instance could file a new
+  tool's cost as AUD — **the same bug `OrderFormModal` already carries a comment about**,
+  reintroduced one page over while copying `currencyOptions` out of that very file.
+  Gate on meta before the form exists; a fallback in `defaultValues` is not a fallback,
+  it is a default.
+
+- **The migration guesses, and the release must say so.** Existing rows had an amount
+  and no currency, so there was nothing to convert *from* — the instance's
+  `REFERENCE_CURRENCY` is the only candidate, and its **exponent** drives the conversion
+  (a JPY instance's `45.00` is 45 minor units, not 4500). Run up and down against
+  seeded rows: AUD round-trips exactly, GBP and JPY are dropped on downgrade rather than
+  relabelled, both CHECKs confirmed firing. **v0.2.3-alpha needs a note telling anyone
+  who recorded tool prices in a non-default currency to check those rows.**
+
+- **The field had zero test coverage**, which is why a schema change to it passed 202
+  tests silently. It has 18 now, in `test_reference_currency.py` beside the same
+  invariant one table over. All the sweep fixes have negative controls — each was
+  confirmed to fail with its fix reverted, including in the browser, where the useForm
+  gate was checked with the API *stopped* (the modal must mount no form at all; a warm
+  cache would have hidden a broken gate).
+
+- **Honest read on the sweep rule's first outing.** It caught three instances the issue
+  never mentioned. It did not catch the two Copilot found, one of which was pre-existing
+  and one of which the fix introduced. So it narrows what review has to find; it does
+  not replace review, and the entry above is the argument for keeping both gates.
+
+- **Next:** cut **v0.2.3-alpha** — nothing is open in its milestone, and the version is
+  still `0.2.2` in `backend/app/__init__.py`, `backend/pyproject.toml`, and
+  `backend/uv.lock` (`uv lock`, never hand-edited). After that, M5.1: #23 (singleton
+  settings) then #22 (en-AU catalogue), per the entry below. **#23 moves
+  `reference_currency` out of env config into the database** — `_default_money_currency`
+  and `_build_catalog_row` both read `get_settings().reference_currency` at write time
+  and will need updating with it.
+
 ## 2026-08-11 — Codex — Published the M5.1 settings roadmap
 
 - **Done:** GitHub planning now tracks #19 in `M5 hardening — v0.2.3-alpha`,
