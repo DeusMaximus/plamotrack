@@ -36,6 +36,11 @@ interface LineValues {
   id?: string;
   item_type: ItemType;
   quantity: number;
+  /** The currency this line was purchased in. Held per line, not read off the
+   *  order header: the schema stores one code per line and REST, MCP and CSV can
+   *  all write an order whose lines disagree. Reading the header instead meant a
+   *  ¥1200 line on an A$ order was re-scaled to A$120.00 by any edit at all. */
+  currency_code: string;
   unit_price: string;
   /** The §6 snapshot, in major units of `converted_currency_code`. "" = none. */
   converted_price: string;
@@ -44,6 +49,9 @@ interface LineValues {
   converted_currency_code: string | null;
   kit_name: string;
   kit_grade: string;
+  /** "" = derive from the grade, matching the API. A kit whose scale was set
+   *  deliberately must survive an edit that never mentions it. */
+  kit_scale: string;
   kit_number: string;
   kit_status: "ordered" | "pre_ordered";
   catalog: CatalogSelection | null;
@@ -62,15 +70,17 @@ interface OrderFormValues {
   items: LineValues[];
 }
 
-function emptyLine(): LineValues {
+function emptyLine(currency: string): LineValues {
   return {
     item_type: "kit",
     quantity: 1,
+    currency_code: currency,
     unit_price: "",
     converted_price: "",
     converted_currency_code: null,
     kit_name: "",
     kit_grade: "",
+    kit_scale: "",
     kit_number: "",
     kit_status: "ordered",
     catalog: null,
@@ -87,9 +97,12 @@ function orderToFormValues(
     order_date: order.order_date,
     order_number: order.order_number ?? "",
     currency_code: order.currency_code,
-    shipping_cost: order.shipping_cost_minor
-      ? minorToMajor(order.shipping_cost_minor, order.currency_code)
-      : "",
+    // `=== null`, not falsy: free shipping is a recorded 0, and reading it as
+    // "no value" turned it back into null on the next save.
+    shipping_cost:
+      order.shipping_cost_minor === null
+        ? ""
+        : minorToMajor(order.shipping_cost_minor, order.currency_code),
     delivery_service: order.delivery_service ?? "",
     tracking_number: order.tracking_number ?? "",
     tracking_url: order.tracking_url ?? "",
@@ -100,6 +113,7 @@ function orderToFormValues(
         id: item.id,
         item_type: item.item_type,
         quantity: item.quantity,
+        currency_code: item.currency_code,
         unit_price: minorToMajor(item.unit_price_minor, item.currency_code),
         // In the snapshot's own currency, not the line's — a JPY purchase with an
         // AUD snapshot would otherwise be read with yen's zero decimal places.
@@ -110,6 +124,7 @@ function orderToFormValues(
         converted_currency_code: item.converted_currency_code,
         kit_name: firstKit?.name ?? "",
         kit_grade: firstKit?.grade ?? "",
+        kit_scale: firstKit?.scale ?? "",
         kit_number: firstKit?.kit_number ?? "",
         kit_status: firstKit?.status === "pre_ordered" ? "pre_ordered" : "ordered",
         catalog:
@@ -140,11 +155,8 @@ function snapshotIsDerivable(
   return lineId === undefined && lineCurrency === referenceCurrency;
 }
 
-function toOrderItem(
-  line: LineValues,
-  currency: string,
-  referenceCurrency: string,
-): OrderItemUpsert {
+function toOrderItem(line: LineValues, referenceCurrency: string): OrderItemUpsert {
+  const currency = line.currency_code;
   const unitPriceMinor = majorToMinor(line.unit_price, currency);
   // A snapshot already taken keeps its own currency; a newly typed one is in the
   // instance's. Either way the amount below is read with that code's decimals.
@@ -175,6 +187,10 @@ function toOrderItem(
       kit: {
         name: line.kit_name,
         grade: line.kit_grade,
+        // Blank means "derive from the grade", the same rule the API applies.
+        // Omitting the field entirely made every edit re-derive it, overwriting
+        // a scale that had been set deliberately.
+        scale: line.kit_scale.trim() || null,
         kit_number: line.kit_number || null,
         status: line.kit_status,
       },
@@ -220,12 +236,16 @@ function LineEditor({
 }) {
   const itemType = watch(`items.${index}.item_type`);
   const lineErrors = errors.items?.[index];
+  // This line's own currency, never the order header's. Every amount below is
+  // read and written with it, so a line recorded in another currency keeps its
+  // decimals and its code through an edit that never mentions either.
+  const lineCurrency = watch(`items.${index}.currency_code`);
   // Shown exactly when the browser can't derive the snapshot itself — so what the
   // form displays and what toOrderItem submits are decided by the same rule.
   const snapshotCode = watch(`items.${index}.converted_currency_code`) ?? referenceCurrency;
   const showSnapshot = !snapshotIsDerivable(
     watch(`items.${index}.id`),
-    watch("currency_code"),
+    lineCurrency,
     referenceCurrency,
   );
 
@@ -258,13 +278,17 @@ function LineEditor({
         </Field>
         <Input
           type="number"
-          step={stepFor(watch("currency_code"))}
+          step={stepFor(lineCurrency)}
           min={0}
           aria-label="Unit price"
           placeholder="Unit price"
           className="!w-28"
           {...register(`items.${index}.unit_price`, { required: "required" })}
         />
+        {/* Stated, not editable: the header picker sets it for new lines, and a
+            recorded line keeps what it was bought in. Shown so a mixed-currency
+            order — which REST, MCP and CSV can all create — is legible here. */}
+        <span className="text-sm text-zinc-600">{lineCurrency}</span>
         <div className="flex-1" />
         {canRemove && (
           <button
@@ -279,15 +303,23 @@ function LineEditor({
       </div>
 
       {itemType === "kit" ? (
-        <div className="grid grid-cols-2 gap-2">
+        // A third for the name, two thirds for the four short fields — four of
+        // them in half the row left the status select too narrow to read.
+        <div className="grid grid-cols-3 gap-2">
           <Input
             placeholder="Kit name *"
             {...register(`items.${index}.kit_name`, { required: "Kit name is required" })}
           />
-          <div className="grid grid-cols-3 gap-2">
+          <div className="col-span-2 grid grid-cols-4 gap-2">
             <Input
               placeholder="Grade *"
               {...register(`items.${index}.kit_grade`, { required: "Grade is required" })}
+            />
+            <Input
+              aria-label="Scale"
+              placeholder="Scale"
+              title="Blank = derived from the grade"
+              {...register(`items.${index}.kit_scale`)}
             />
             <Input placeholder="Kit #" {...register(`items.${index}.kit_number`)} />
             <Select {...register(`items.${index}.kit_status`)}>
@@ -296,7 +328,7 @@ function LineEditor({
             </Select>
           </div>
           {(lineErrors?.kit_name || lineErrors?.kit_grade) && (
-            <span className="col-span-2 text-xs text-red-600">
+            <span className="col-span-3 text-xs text-red-600">
               {lineErrors?.kit_name?.message ?? lineErrors?.kit_grade?.message}
             </span>
           )}
@@ -356,18 +388,34 @@ function LineEditor({
   );
 }
 
-/** Gate, so the form below is only ever *mounted* with a real reference currency.
+/** Gate, so the form below is only ever *mounted* with everything it reconstructs
+ * the stored order from.
  *
  * It has to be a separate component rather than an early return inside the form:
- * hooks run before any return, so `useForm` would already have captured a
- * defaultValues with an empty currency, and react-hook-form does not revisit
- * defaults when the query later resolves. Not rendering isn't the same as not
- * mounting. In practice OrdersPage warms this query, so the loading state is
- * rarely seen — "rarely" being exactly why the bug would have survived. */
+ * hooks run before any return, so `useForm` would already have captured its
+ * defaultValues, and react-hook-form does not revisit defaults when a query later
+ * resolves. Not rendering isn't the same as not mounting.
+ *
+ * `meta` supplies the reference currency. The other four are what an *edit* rebuilds
+ * a line from — a kit line's name, grade, scale and number live on the spawned kits,
+ * and a catalog line's label on the catalog row. Mounting before they arrive filled
+ * the form with blanks and then wrote those blanks back, so a cold edit silently
+ * stripped kit_number and scale. A new order needs none of them, hence the `!order`.
+ *
+ * In practice OrdersPage warms all five, so the loading state is rarely seen —
+ * "rarely" being exactly why the bug would have survived. */
 function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void }) {
   const { data: meta } = useQuery(metaQuery);
+  const { data: kits } = useQuery({ queryKey: ["kits"], queryFn: () => api.listKits() });
+  const { data: tools } = useQuery({ queryKey: ["tools"], queryFn: api.listTools });
+  const { data: consumables } = useQuery({
+    queryKey: ["consumables"],
+    queryFn: api.listConsumables,
+  });
+  const { data: upgrades } = useQuery({ queryKey: ["upgrades"], queryFn: api.listUpgrades });
 
-  if (!meta) {
+  const hydrated = !order || (kits && tools && consumables && upgrades);
+  if (!meta || !hydrated) {
     return (
       <Modal title={order ? "Edit order" : "New order"} onClose={onClose} wide>
         <EmptyState>Loading…</EmptyState>
@@ -379,6 +427,8 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
       order={order}
       onClose={onClose}
       referenceCurrency={meta.reference_currency}
+      kits={kits ?? []}
+      catalog={[...(tools ?? []), ...(consumables ?? []), ...(upgrades ?? [])]}
     />
   );
 }
@@ -387,23 +437,24 @@ function OrderForm({
   order,
   onClose,
   referenceCurrency,
+  kits,
+  catalog,
 }: {
   order?: Order;
   onClose: () => void;
   referenceCurrency: string;
+  kits: Kit[];
+  catalog: { id: string; name: string }[];
 }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [newRetailerName, setNewRetailerName] = useState<string | null>(null);
   const { data: retailers } = useQuery({ queryKey: ["retailers"], queryFn: api.listRetailers });
-  const { data: kits } = useQuery({ queryKey: ["kits"], queryFn: () => api.listKits() });
-  const { data: tools } = useQuery({ queryKey: ["tools"], queryFn: api.listTools });
-  const { data: consumables } = useQuery({
-    queryKey: ["consumables"],
-    queryFn: api.listConsumables,
-  });
-  const { data: upgrades } = useQuery({ queryKey: ["upgrades"], queryFn: api.listUpgrades });
 
+  // Snapshotted once per open, deliberately: react-hook-form owns these values
+  // from mount onwards and re-deriving them would discard what the user typed.
+  // Safe to key on the order id alone because the gate above has already resolved
+  // `kits` and `catalog` — they cannot arrive after the first render.
   const defaults = useMemo((): OrderFormValues => {
     if (!order) {
       return {
@@ -416,16 +467,11 @@ function OrderForm({
         tracking_number: "",
         tracking_url: "",
         received: false,
-        items: [emptyLine()],
+        items: [emptyLine(referenceCurrency)],
       };
     }
-    const kitById = new Map((kits ?? []).map((kit) => [kit.id, kit]));
-    const catalogName = new Map(
-      [...(tools ?? []), ...(consumables ?? []), ...(upgrades ?? [])].map((row) => [
-        row.id,
-        row.name,
-      ]),
-    );
+    const kitById = new Map(kits.map((kit) => [kit.id, kit]));
+    const catalogName = new Map(catalog.map((row) => [row.id, row.name]));
     return orderToFormValues(order, kitById, catalogName);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- snapshot once per open
   }, [order?.id]);
@@ -433,6 +479,7 @@ function OrderForm({
   const {
     register,
     control,
+    getValues,
     handleSubmit,
     watch,
     setValue,
@@ -459,15 +506,16 @@ function OrderForm({
       order_date: values.order_date,
       order_number: values.order_number || null,
       currency_code: values.currency_code,
-      shipping_cost_minor: values.shipping_cost
-        ? majorToMinor(values.shipping_cost, values.currency_code)
-        : null,
+      // Only an empty field means "no shipping cost". A typed 0 is free postage,
+      // which is a different fact and has to survive the round trip.
+      shipping_cost_minor:
+        values.shipping_cost.trim() === ""
+          ? null
+          : majorToMinor(values.shipping_cost, values.currency_code),
       delivery_service: values.delivery_service || null,
       tracking_number: values.tracking_number || null,
       tracking_url: values.tracking_url || null,
-      items: values.items.map((line) =>
-        toOrderItem(line, values.currency_code, referenceCurrency),
-      ),
+      items: values.items.map((line) => toOrderItem(line, referenceCurrency)),
     };
     try {
       if (order) {
@@ -544,6 +592,18 @@ function OrderForm({
               {...register("currency_code", {
                 required: true,
                 pattern: { value: /^[A-Z]{3}$/, message: "3-letter ISO code" },
+                onChange: (event) => {
+                  // Lines being created here follow the picker, so entering an
+                  // order in one currency stays a single choice. A line that is
+                  // already recorded keeps the code it was bought in — restating
+                  // that from the header is the defect this whole change is about.
+                  const next = (event.target as HTMLInputElement).value;
+                  getValues("items").forEach((line, index) => {
+                    if (line.id === undefined) {
+                      setValue(`items.${index}.currency_code`, next);
+                    }
+                  });
+                },
               })}
             />
             <datalist id="currencies">
@@ -593,7 +653,11 @@ function OrderForm({
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold text-zinc-700">Items</h3>
-            <Button type="button" variant="secondary" onClick={() => append(emptyLine())}>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => append(emptyLine(getValues("currency_code")))}
+            >
               + Add line
             </Button>
           </div>
