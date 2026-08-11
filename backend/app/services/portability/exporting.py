@@ -127,7 +127,16 @@ def _fill_alternates(spec: TableSpec, row: dict[str, str], instance: Any, data: 
         if column.role is ColumnRole.ALT_MONEY:
             minor = getattr(instance, column.mirrors, None)
             if minor is not None:
-                row[column.name] = minor_to_major(minor, getattr(instance, "currency_code", None))
+                # `column.currency_column`, not a hardcoded "currency_code": that is
+                # the mechanism #19 added so a table whose money names its currency
+                # differently still scales by the right exponent. Tools have no
+                # `currency_code` at all, so the literal resolved to None and every
+                # zero-decimal tool cost exported a hundred times too small — ¥1200
+                # written out as 12.00. The importer already reads this field; the
+                # exporter is the half of the pair that was never updated.
+                row[column.name] = minor_to_major(
+                    minor, getattr(instance, column.currency_column, None)
+                )
         elif column.role is ColumnRole.ALT_REF:
             ref_id = getattr(instance, column.mirrors, None)
             if ref_id is None:
