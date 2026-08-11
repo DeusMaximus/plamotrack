@@ -214,6 +214,35 @@ touching money would have found at the start.
   cases there. This is also the check on the fix itself: the #6 rewrite silently broke
   exponent input (`1e2` stored as `0`) in a file that then had no tests.
 
+## Writing the test: sweep the values, not just the paths
+
+The sweep above finds code paths that drifted apart. It does nothing about a test that
+walks the right path carrying the wrong values — and that is now the more expensive
+mistake on this repo's record.
+
+Three consecutive regression suites were written for a known defect, reviewed, run
+against the unfixed code, and still missed it. Each failed differently:
+
+- **#65** seeded a **quantity-one** kit line. The defect was one line's kits being
+  flattened onto each other, which a single kit cannot express. The test drove the
+  exact code path and proved nothing.
+- **#66**'s warm-cache detector was **timing-dependent**. It passed against the broken
+  code because on localhost the refetch beat the assertion; only stalling the request
+  with `page.route` made the stale window certain.
+- **#69** compared a field where both sides already held the same non-null value, so the
+  derivation that caused the defect was a no-op. The comparison was exercised only where
+  it could not be wrong.
+
+So when a fix turns on **comparing or branching on a field**, enumerate what that field
+can legitimately hold before writing the assertions: null, empty, whitespace, the derived
+or default value, and something that genuinely differs. Drive at least the null and the
+default. If the rule is about rows diverging, seed more than one row. If the rule is
+about timing, pin the timing rather than hoping.
+
+**Running the test against the unfixed code is necessary and not sufficient.** All three
+above were, and passed. A red test proves it detects the case you thought of; it says
+nothing about the case you didn't. The value space is where that second case lives.
+
 ## Roadmap (design notes §11)
 
 1. ~~Schema + migrations + REST CRUD~~ ✅
