@@ -16,6 +16,52 @@ Template:
 
 ---
 
+## 2026-08-11 — Claude Code — Released v0.2.3-alpha
+
+**Shipped.** Tag `v0.2.3-alpha` on `fe4e1af`, published as a pre-release. The version
+bump went through PR #33 (`1a442a6`), green before merge. Milestone
+`M5 hardening — v0.2.3-alpha` closed holding the one issue that shipped: #19. No
+branches outstanding, working tree clean.
+
+- **The known-issues list is empty for the first time.** v0.2.1 and v0.2.2 both carried
+  items forward; this one carries nothing. Every open issue is now forward planning
+  (M5.1 #22–#27, M6 #29–#30, M7 #28) and none is labelled `bug`.
+
+- **The release notes disclose a migration that guesses**, and anyone answering a
+  question about it needs to know why. Existing tool prices recorded an amount and no
+  currency — that was the bug — so there is nothing to convert *from*, and the
+  instance's `REFERENCE_CURRENCY` is the only candidate. The notes say to check tool
+  prices entered in any other currency rather than offering a migration that would have
+  to invent an exchange rate. They also state the **rollback** consequence, which the
+  issue never mentioned: downgrading to v0.2.2 clears any tool price not in the
+  reference currency, because the restored column cannot say what currency it holds.
+
+- **Notes led with the import bug, not the headline feature.** A CSV naming a currency
+  column with no amount column could relabel an existing order line — £42 becoming
+  A$42 — which is the only thing in the release that alters data someone already had.
+  The tool-cost work is bigger but affects a field nothing calculates with.
+
+- **Version bump mechanics, confirmed again:** `backend/app/__init__.py`,
+  `backend/pyproject.toml`, and the `plamotrack-backend` entry in `backend/uv.lock`
+  (`uv lock`, never hand-edited). Check the two surfaces rather than trusting the
+  edit — `GET /meta` and the MCP handshake's `serverInfo` both reported `0.2.3` before
+  the tag was pushed. No test pins the version string, so nothing else would catch a
+  missed file. Published with `gh release create --prerelease --verify-tag` so it
+  attaches to an already-pushed tag instead of creating one of its own. Tags are
+  annotated, subject line `vX.Y.Z-alpha — <short theme>`.
+
+- **Why now:** the owner is about to start using this instance for a real collection.
+  Cutting immediately before that matters because the #19 migration has nothing to
+  guess at on a fresh database — the disclosure above is a non-event for a new install,
+  and only bites instances that already hold tool prices.
+
+- **Next:** M5.1. #23 (singleton settings) then #22 (en-AU catalogue), per the entries
+  below. #23 moves `reference_currency` out of env config into the database, and
+  `_default_money_currency` (importing.py) plus `_build_catalog_row` (services/orders.py)
+  both read `get_settings().reference_currency` at write time — they need updating with
+  it. Expect real-usage feedback to arrive alongside, and to be worth more than the
+  issue text where the two disagree.
+
 ## 2026-08-11 — Claude Code — Tool cost carries its currency; a sweep rule to find the next one
 
 **Merged to `main` in PR #32 (`a48eef9`), closing #19.** Verified green on `main` after
