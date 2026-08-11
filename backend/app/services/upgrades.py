@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import Kit, Upgrade, UpgradeApplication
+from app.services.catalog import lock_catalog_row
 
 
 async def apply_upgrade(
@@ -17,7 +18,10 @@ async def apply_upgrade(
     if quantity <= 0:
         raise InvalidInputError("quantity must be a positive integer")
 
-    upgrade = await session.get(Upgrade, upgrade_id, with_for_update=True)
+    # Catalog row first, then the kit — the order every writer takes (see
+    # `_lock_catalog_targets`). Reversing it here would put this back in a cycle with
+    # order edits, which lock catalog targets and then the kits a line spawned.
+    upgrade = await lock_catalog_row(session, Upgrade, upgrade_id)
     if upgrade is None:
         raise NotFoundError(f"upgrade {upgrade_id} not found")
     kit = await session.get(Kit, kit_id)
