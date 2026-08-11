@@ -181,6 +181,39 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     separate from regional formatting, keep canonical API/MCP/database/CSV identifiers
     untranslated, and never let a settings change reinterpret historical money.
 
+## Fixing a defect: sweep the class first
+
+The rules above define defect *classes*, not just defects. A violation found in one
+code path is evidence about every other path under the same rule — so before fixing
+the instance in hand, enumerate the rest of the class.
+
+The cost of not doing this is on the record. #3 (an order-line edit discarding its
+conversion snapshot) was one rule-4 money defect. Fixing it exposed #12 (a CSV import
+relabelling that same snapshot), which exposed #6 (minor units read off the runtime
+instead of ISO 4217), which exposed #19 (`tools.unit_cost_reference` — a scaled
+decimal with no currency column at all). Four branches, four reviews and two releases,
+for four instances of one rule applied unevenly, all of which one pass over the paths
+touching money would have found at the start.
+
+- **Name the rule** the defect violates — a numbered rule above, or a `§n`. If it
+  violates none, it's a one-off: fix it and move on.
+- **Enumerate the paths that rule governs** before writing the fix: service layer,
+  REST, MCP, CSV import, CSV export, the browser, and the schema itself. They diverge
+  independently — a corrected service function does not mean the importer agrees.
+  `services/portability/spec.py`, `frontend/src/lib/format.ts` and the models are
+  where the last four hid.
+- **File the siblings even if you won't fix them now.** An unfiled sibling is
+  indistinguishable from a bug nobody has noticed. Milestone or don't, but file.
+- **Fix the class in one branch** where the instances share a root cause, and say so
+  in the PR. Where they genuinely don't — a schema migration, an open design question
+  — separate branches are right, but the issues should already exist.
+- **Cross-layer behaviour gets a shared fixture, not one test suite per side.**
+  `frontend/src/lib/__fixtures__/money-cases.json` is read by both `format.test.ts`
+  and `backend/tests/test_currency.py`. Two hand-maintained lists drift, and a drifted
+  pair reads green on both sides with a wrong number in the database. Add cross-layer
+  cases there. This is also the check on the fix itself: the #6 rewrite silently broke
+  exponent input (`1e2` stored as `0`) in a file that then had no tests.
+
 ## Roadmap (design notes §11)
 
 1. ~~Schema + migrations + REST CRUD~~ ✅
