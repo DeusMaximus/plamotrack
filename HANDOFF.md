@@ -16,6 +16,72 @@ Template:
 
 ---
 
+## 2026-08-11 — Claude Code — v0.2.4 failed its release gate; #65 fixed, v0.2.4.1-alpha out
+
+**An external review (GPT-5.6 Max) of v0.2.4-alpha returned NO-GO**, and it was right.
+#65 filed, fixed in PR #66, released as **v0.2.4.1-alpha** (tag `e74b6c4` on `130a0b3`).
+243 backend, 80 vitest, 11 Playwright. `main` clean, no local branches, milestone
+`M5 hardening — v0.2.4-alpha` now at zero open issues and **still deliberately open**.
+
+- **What the review caught, and why our own tests didn't.** An order line can own
+  several kits; the editor shows the *first* one's details and every save echoed them
+  back for all of them. So a tracking-only edit flattened kits that had been edited
+  individually, and a warm page reverted a kit changed through REST/MCP behind it.
+  `order-lossless.spec.ts` should have caught it and didn't — it seeded **quantity 1**
+  with no kit number, and tested only *absent* cold data, never *stale-but-present*
+  warm data. Worth remembering when writing any "form doesn't lose data" test: the
+  interesting case is not the empty cache, it's the confidently wrong one.
+
+- **Three fixes, and the reason it wasn't one.** (1) `OrderItemRead` now carries the
+  spawned kits, not just ids — they were already eager-loaded, and hydrating from the
+  order being edited deletes the second cache that made stale kit data reachable at
+  all. (2) The form omits `items` for header-only edits; `OrderUpdate.items = None`
+  always meant this and **#34 listed it as "Optional, only if it stays small" and
+  skipped it** — that was the whole gap. (3) `_update_line` propagates only fields
+  that actually changed, compared server-side against the first spawned kit, so REST
+  and MCP get the same protection without sending partial payloads.
+
+- **Design decision, owner's call, don't re-litigate:** spawned kits may diverge from
+  their order line. No arrival- or status-conditional propagation — considered and
+  rejected as hidden machinery for a rare case. `OrderItem.kits` gained an `order_by`
+  because "the first spawned kit" is now load-bearing in both the form and the service.
+
+- **The warm-cache e2e test needed its `/api/kits` refetch stalled to detect anything.**
+  First version passed against the broken code — on localhost the refetch wins the
+  race. Same trap as #37's flaky detector, second time this month. If anyone
+  "simplifies" the `page.route` hold out of `order-lossless.spec.ts`, the test goes
+  green and stops meaning anything. Every new test here was run against stashed-out
+  source first and reproduces the review's exact numbers (1/60→1/144, 1/48→1/144).
+
+- **#67 filed (v0.2.8), explicitly not a blocker.** The orders *list* query is itself
+  cached, so a **line** edit (not a header edit) from a stale page can still echo a
+  stale kit detail that the service reads as intentional. Header edits are safe. The
+  server-side comparison cannot fix this — it can't distinguish "user typed it" from
+  "client echoed a stale value"; the missing information is when the client last saw
+  the row. Options costed in the issue; option 3 is optimistic concurrency, which #36
+  deferred.
+
+- **v0.2.4-alpha's published notes were amended in place**, since they claimed the
+  release made browser use safe for real data. The amendment says so at the top rather
+  than quietly patching it. v0.2.4.1's notes supersede it and are written for someone
+  who never saw it.
+
+- **Process notes.** `.claude/settings.local.json` now allows `Bash(gh pr merge:*)` and
+  `Bash(git push origin v*)`; the tag push and `gh release create` both ran unprompted
+  this session, so the rules load without a restart. `gh pr merge` is still owner-only.
+  Remember `--prerelease` on `gh release create` — every release carries it and I had
+  to correct it after the fact. GitHub Actions stalled three jobs across the day with
+  every step green but the job stuck `in_progress`; `gh run rerun <run> --job <id>`
+  clears it.
+
+- **State:** `main` at `130a0b3` plus this entry, clean. Dev Postgres in Docker; a
+  uvicorn on :8000 and Vite on :5173 may still be running from browser verification.
+  Dev database left as found (the visual-check order and retailer were deleted).
+
+- **Next: v0.2.5 / #39** — ingress. The sharpest item is already known and unchanged:
+  `POST /api/import/apply` is multipart and therefore CORS-preflight-exempt, so any
+  page the owner visits can drive a `replace_all` cross-origin.
+
 ## 2026-08-11 — Claude Code — #36 shipped and v0.2.4-alpha released
 
 **Merged to `main`: #36 (PR #62), then the version bump (PR #64).** `__version__ = "0.2.4"`
