@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import Kit, KitStatus
@@ -75,8 +76,38 @@ async def update_kit(session: AsyncSession, kit_id: uuid.UUID, data: KitUpdate) 
     return kit
 
 
+def has_applied_upgrades(kit: Kit) -> bool:
+    """Whether upgrade stock is recorded as having gone onto this kit.
+
+    Requires `upgrade_applications` to be eager-loaded; a lazy load here would
+    raise outside the async context.
+
+    Rule 3 governs both ends of this join, and only one end was guarded.
+    `delete_catalog_item` refuses to remove an upgrade that has been applied,
+    because the application explains where the stock went. Nothing said the same
+    about the kit, so the `ON DELETE CASCADE` on `upgrade_applications.kit_id`
+    dropped that history from the other direction — silently, and with the stock
+    still counted as consumed.
+    """
+    return len(kit.upgrade_applications) > 0
+
+
 async def delete_kit(session: AsyncSession, kit_id: uuid.UUID) -> None:
-    kit = await get_kit(session, kit_id)
+    # FOR UPDATE, because the check below and the delete after it have to be one
+    # decision. `apply_upgrade` locks the *upgrade* row, not this one, so without a
+    # lock here it can commit an application between the two — and the DELETE then
+    # cascades the brand-new row away, which is the exact inconsistency this guard
+    # exists to stop. The insert takes FOR KEY SHARE on this row, which conflicts,
+    # so holding FOR UPDATE makes the concurrent application wait and then fail its
+    # foreign key rather than being silently swallowed.
+    kit = await session.scalar(
+        select(Kit)
+        .where(Kit.id == kit_id)
+        .options(selectinload(Kit.upgrade_applications))
+        .with_for_update()
+    )
+    if kit is None:
+        raise NotFoundError(f"kit {kit_id} not found")
     if kit.order_item_id is not None:
         # Deleting a spawned kit directly would leave its order line claiming a
         # quantity the collection no longer backs. Undo happens at the order.
@@ -84,6 +115,17 @@ async def delete_kit(session: AsyncSession, kit_id: uuid.UUID) -> None:
             f"'{kit.name}' was spawned by an order line — edit that order "
             "(reduce the line quantity or remove the line) instead, so the "
             "purchase record and the collection stay consistent"
+        )
+    if has_applied_upgrades(kit):
+        # Deliberately a hard stop with no escape hatch offered, because there
+        # isn't one: applications can be recorded but not withdrawn. Saying
+        # "remove the application first" would send someone looking for a route
+        # that does not exist. The same dead end already applies from the upgrade
+        # side, so this is symmetric rather than new.
+        raise ConflictError(
+            f"'{kit.name}' has {len(kit.upgrade_applications)} upgrade(s) applied to it — "
+            "that record is what explains the stock they used, so the kit is kept. "
+            "Withdrawing an application isn't supported yet"
         )
     await session.delete(kit)
     await session.flush()

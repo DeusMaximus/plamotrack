@@ -7,11 +7,15 @@ import uuid
 import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
+from sqlalchemy import func, select
 
 from app.db import session_scope
 from app.exceptions import ConflictError
 from app.mcp import mcp
+from app.models import Kit, Upgrade, UpgradeApplication
+from app.services import kits as kits_service
 from app.services import orders as orders_service
+from app.services import upgrades as upgrades_service
 
 
 async def test_concurrent_receive_applies_stock_once(client, retailer):
@@ -136,3 +140,72 @@ async def test_order_spawned_kit_blocked_from_direct_delete(client, retailer):
     # kits without order provenance still delete fine
     standalone = (await client.post("/kits", json={"name": "Backlog kit", "grade": "HG"})).json()
     assert (await client.delete(f"/kits/{standalone['id']}")).status_code == 204
+
+
+async def test_applying_an_upgrade_while_the_kit_is_deleted_keeps_the_two_in_step(client):
+    """Whichever wins, the stock and the record of where it went must still agree.
+
+    `apply_upgrade` locks the *upgrade* row and `delete_kit` locks the *kit*, so
+    neither sees the other's lock directly. What serializes them is the kit row:
+    inserting an application needs FOR KEY SHARE on it, which the delete's FOR
+    UPDATE conflicts with. Without that lock the delete decides "no applications",
+    the application commits, and the DELETE cascades it away with the stock still
+    spent.
+
+    Deliberately raced rather than pinned. Forcing the losing interleaving would
+    mean pausing the delete between its check and its delete *while holding FOR
+    UPDATE* — at which point the concurrent application blocks on that very lock
+    and the test deadlocks instead of asserting. So this asserts the invariant
+    whoever wins, the same shape as test_concurrent_receive_applies_stock_once.
+
+    Repeated, because one race is a coin flip: against the unlocked code a single
+    pass caught the defect roughly twice in eight runs, which is a detector worth
+    nothing. Ten passes turn that into a near-certainty while still costing under
+    a second.
+    """
+    for attempt in range(10):
+        upgrade = (
+            await client.post(
+                "/upgrades",
+                json={
+                    "name": f"Metal thrusters {attempt}",
+                    "manufacturer": "Metal Build",
+                    "quantity_on_hand": 3,
+                },
+            )
+        ).json()
+        kit = (
+            await client.post("/kits", json={"name": f"Sazabi Ver.Ka {attempt}", "grade": "MG"})
+        ).json()
+        kit_id, upgrade_id = uuid.UUID(kit["id"]), uuid.UUID(upgrade["id"])
+
+        async def delete(kit_id=kit_id) -> None:
+            async with session_scope() as session:
+                await kits_service.delete_kit(session, kit_id)
+
+        async def apply(kit_id=kit_id, upgrade_id=upgrade_id) -> None:
+            async with session_scope() as session:
+                await upgrades_service.apply_upgrade(session, upgrade_id, kit_id, 1)
+
+        # Any refusal from either side is a legal outcome; only the end state matters.
+        await asyncio.gather(delete(), apply(), return_exceptions=True)
+
+        async with session_scope() as session:
+            remaining = await session.scalar(
+                select(Upgrade.quantity_on_hand).where(Upgrade.id == upgrade_id)
+            )
+            applications = await session.scalar(
+                select(func.count())
+                .select_from(UpgradeApplication)
+                .where(UpgradeApplication.kit_id == kit_id)
+            )
+            kit_rows = await session.scalar(
+                select(func.count()).select_from(Kit).where(Kit.id == kit_id)
+            )
+
+        # The forbidden state is stock spent with nothing left to explain it.
+        if remaining < 3:
+            assert applications == 1, f"attempt {attempt}: stock spent, application gone"
+            assert kit_rows == 1, f"attempt {attempt}: stock spent on a kit that no longer exists"
+        else:
+            assert applications == 0, f"attempt {attempt}: application recorded, stock untouched"
