@@ -195,9 +195,14 @@ function toOrderItem(line: LineValues, referenceCurrency: string): OrderItemUpse
       kit: {
         name: line.kit_name,
         grade: line.kit_grade,
-        // Blank means "derive from the grade", the same rule the API applies.
-        // Omitting the field entirely made every edit re-derive it, overwriting
-        // a scale that had been set deliberately.
+        // Blank sends null, which the API reads two different ways by design: on a
+        // *new* line it means "derive from the grade", and on an edit it means "not
+        // mentioned", so the stored kits keep whatever they have. A kit can be given
+        // no scale at all from the Kits page, and deriving that back into 1/144 on
+        // the way past is exactly what #69 was.
+        //
+        // So clearing this field no longer clears anything — that belongs on the
+        // Kits page, which can say null and mean it. Same for the kit number below.
         scale: line.kit_scale.trim() || null,
         kit_number: line.kit_number || null,
         status: line.kit_status,
