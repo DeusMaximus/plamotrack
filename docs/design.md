@@ -298,6 +298,26 @@ Gundam markers on hand while they were still in a warehouse in Osaka. Quantity m
   receive/edit/delete calls serialize instead of double-applying stock — three writer
   types (§2) makes this a real race, not a theoretical one
 
+**One lock order, application-wide.** Every writer that touches catalog stock takes
+its rows through a single locked-read helper, and takes them in one agreed sequence:
+**catalog rows first, in uuid order, then kits.** Order writes are the only place that
+holds more than one row lock at once, so they are the only place that can deadlock —
+and they were doing it two ways. Locking in payload order let two edits naming the same
+two items in opposite orders each hold what the other wanted; and taking kit locks
+before catalog locks put order edits head-on against `apply_upgrade`, which locks the
+upgrade and then needs the kit to record an application. Neither could corrupt
+anything — Postgres breaks a cycle by aborting one side — but the owner saw a 500 on an
+edit that was never wrong. So order writes drain their catalog locks up front, before
+the first kit lock, which is also `apply_upgrade`'s order.
+
+The same helper is where the read is refreshed under the lock. `SELECT … FOR UPDATE`
+through the ORM will happily serve the attribute values the session already had, which
+is worse than not locking at all: the delta is computed from a number another writer has
+since moved, and both the row and the response look right. Optimistic version columns
+were considered instead and rejected — three models, a mapper change and every catalog
+write path, to close a hole that locking plus a dirty-field PATCH already closes for a
+single-owner application. Worth revisiting only when that stops being true.
+
 **Duplicate-catalog prevention.** Order entry uses search-and-select-or-create (a
 typeahead against existing tools/consumables/upgrades) rather than a free-text name
 field. This is a deliberate constraint rather than a UX nicety: free-text entry

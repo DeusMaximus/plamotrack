@@ -1,4 +1,5 @@
 import uuid
+from collections.abc import Iterable
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
@@ -27,7 +28,7 @@ from app.schemas.orders import (
     RetailerCreate,
     RetailerUpdate,
 )
-from app.services.catalog import CATALOG_MODELS
+from app.services.catalog import CATALOG_MODELS, lock_catalog_row
 from app.services.kits import default_scale_for_grade, has_applied_upgrades
 
 
@@ -186,14 +187,71 @@ def _build_catalog_row(
     )
 
 
+async def _lock_catalog_targets(
+    session: AsyncSession,
+    *,
+    items: Iterable[OrderItem] = (),
+    lines: Iterable[OrderItemCreate] = (),
+) -> None:
+    """Take every catalog lock this order write will need, before it needs any of them.
+
+    Order writes are the only place in the application that holds more than one row
+    lock at a time, so they are the only place that can deadlock, and they were doing
+    it two ways. Both surface as a 500 on an edit that was never wrong — Postgres
+    breaks the cycle itself, so integrity is never at risk, but neither is the owner's
+    edit ever going to succeed on retry-by-hand if the ordering is what's wrong.
+
+    * **Catalog against catalog.** Locks were taken in payload order, so two edits
+      naming the same two items in opposite orders could each end up holding what the
+      other was waiting for. Sorting by uuid gives every writer the same sequence;
+      whoever arrives second simply waits.
+    * **Catalog against kits.** `_line_kits` locks kits and `_adjust_ref` locks catalog
+      rows, in whatever order the lines happen to appear — while `apply_upgrade` locks
+      the upgrade and *then* needs FOR KEY SHARE on the kit to record an application.
+      Held at once those are a cycle. Draining the catalog locks here, before the first
+      kit lock is taken, puts order writes on `apply_upgrade`'s catalog → kits path.
+
+    Both arguments are supplied where both exist: an edit can drop a target the stored
+    line still holds, and adopt one only the payload names. Rows that turn out not to
+    exist are skipped rather than reported — the per-line code raises that, with the
+    message that knows which item was asked for.
+    """
+    targets: dict[uuid.UUID, type[Tool | Consumable | Upgrade]] = {}
+    for referrer in (*items, *lines):
+        ref_id = referrer.catalog_ref_id
+        if referrer.item_type is not ItemType.KIT and ref_id is not None:
+            targets[ref_id] = CATALOG_MODELS[referrer.item_type]
+    for ref_id in sorted(targets):
+        await lock_catalog_row(session, targets[ref_id], ref_id)
+
+
 async def _adjust_ref(
     session: AsyncSession, item_type: ItemType, ref_id: uuid.UUID, delta: int
 ) -> None:
-    """Row-locked stock adjustment with a can't-go-negative guard."""
+    """Row-locked stock adjustment with a can't-go-negative guard.
+
+    Called after `_lock_catalog_targets` has already taken this row's lock, so the
+    re-lock here is free — it exists so the arithmetic reads the row it is about to
+    write, whether or not the caller pre-locked.
+    """
     model = CATALOG_MODELS[item_type]
-    row = await session.get(model, ref_id, with_for_update=True)
+    row = await lock_catalog_row(session, model, ref_id)
     if row is None:
-        raise NotFoundError(f"{item_type} {ref_id} not found")
+        # Reachable only from a stored reference, never a payload one — every caller
+        # either passes `item.catalog_ref_id` or a target this transaction has just
+        # validated under its lock. So this is not "you named something that doesn't
+        # exist", it is a line left dangling by the unlocked delete this release fixed,
+        # and 404 sends the owner looking for a request they never made. It is a
+        # conflict with what is stored, and there is currently no way out of it
+        # through the API — every path that touches the line reverses its stock first
+        # and lands back here. Filed as #63; the message says so rather than
+        # suggesting a repair that doesn't work.
+        raise ConflictError(
+            f"this order line points at a {item_type} ({ref_id}) that is no longer in "
+            "the catalog, so its stock cannot be adjusted. A pre-0.2.4 catalog delete "
+            "could race an order and leave a line behind like this; the row needs "
+            "repairing in the database"
+        )
     new_quantity = row.quantity_on_hand + delta
     if new_quantity < 0:
         raise ConflictError(
@@ -345,7 +403,7 @@ async def _add_line(
             await session.flush()
         else:
             model = CATALOG_MODELS[line.item_type]
-            row = await session.get(model, line.catalog_ref_id, with_for_update=True)
+            row = await lock_catalog_row(session, model, line.catalog_ref_id)
             if row is None:
                 raise NotFoundError(f"{line.item_type} {line.catalog_ref_id} not found")
         item.catalog_ref_id = row.id
@@ -407,8 +465,13 @@ async def _update_line(
         else:
             new_ref = line.catalog_ref_id
             if new_ref != old_ref:
+                # Locked, not merely checked: an unlocked existence check leaves the
+                # row free to be deleted before this edit commits, and the line would
+                # be left pointing at nothing (there is no FK to stop it). The lock
+                # also has to be held even when the order isn't received and no stock
+                # moves — the reference is the thing being protected, not the count.
                 model = CATALOG_MODELS[line.item_type]
-                if await session.get(model, new_ref) is None:
+                if await lock_catalog_row(session, model, new_ref) is None:
                     raise NotFoundError(f"{line.item_type} {new_ref} not found")
         if received:
             if new_ref == old_ref:
@@ -442,6 +505,7 @@ async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
     session.add(order)
     await session.flush()
 
+    await _lock_catalog_targets(session, lines=data.items)
     for line in data.items:
         await _add_line(session, order, line, received=data.received)
 
@@ -468,6 +532,7 @@ async def _get_order_for_write(session: AsyncSession, order_id: uuid.UUID) -> Or
 async def update_order(session: AsyncSession, order_id: uuid.UUID, data: OrderUpdate) -> Order:
     order = await _get_order_for_write(session, order_id)
     received = order.received_at is not None
+    await _lock_catalog_targets(session, items=order.items, lines=data.items or ())
 
     header = data.model_dump(exclude_unset=True, exclude={"items"})
     if "retailer_id" in header:
@@ -510,6 +575,7 @@ async def receive_order(session: AsyncSession, order_id: uuid.UUID) -> Order:
     order = await _get_order_for_write(session, order_id)
     if order.received_at is not None:
         raise ConflictError("order is already marked received")
+    await _lock_catalog_targets(session, items=order.items)
 
     now = datetime.now(UTC)
     order.received_at = now
@@ -534,6 +600,7 @@ async def delete_order(session: AsyncSession, order_id: uuid.UUID) -> None:
     the delete with a 409 rather than silently losing history."""
     order = await _get_order_for_write(session, order_id)
     received = order.received_at is not None
+    await _lock_catalog_targets(session, items=order.items)
     for item in list(order.items):
         # dispatch undo only — deleting the order cascades the items themselves
         await _undo_line_dispatch(session, item, received)
