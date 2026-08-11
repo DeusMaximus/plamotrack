@@ -246,6 +246,83 @@ async def test_a_line_edit_that_restates_no_kit_detail_leaves_diverged_kits_alon
     assert kits[first]["kit_number"] == "HGUC 210"  # and the first is untouched too
 
 
+async def test_a_line_edit_leaves_a_deliberately_cleared_scale_cleared(client, retailer):
+    """A kit may legitimately have *no* scale — the Kits page can clear it — and a
+    client echoes that back as null, indistinguishable from "I didn't say".
+
+    Resolving that null to the grade's default before comparing made an untouched
+    null look like a change (`1/144 != None`), so a price-only edit rewrote every
+    kit on the line. Deterministic, no second writer, and the reason the tests above
+    missed it is that their reference kit always kept a non-null 1/144.
+    """
+    order = await make_order(client, retailer, [kit_line(quantity=2)])
+    line = order["items"][0]
+    first, second = line["spawned_kit_ids"]
+    assert (await client.patch(f"/kits/{first}", json={"scale": None})).status_code == 200
+    assert (await client.patch(f"/kits/{second}", json={"scale": "1/60"})).status_code == 200
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={
+            "items": [
+                {
+                    "id": line["id"],
+                    "item_type": "kit",
+                    "quantity": 2,
+                    "unit_price_minor": 5999,  # the only thing this edit changes
+                    "currency_code": "AUD",
+                    # No scale key at all — exactly what the form sends for a kit
+                    # whose scale is null.
+                    "kit": {
+                        "name": "RX-79[G] Gundam Ground Type",
+                        "grade": "HG",
+                        "kit_number": "HGUC 210",
+                    },
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+
+    kits = {k["id"]: k for k in (await client.get("/kits")).json()}
+    assert kits[first]["scale"] is None, "an unstated scale was written as the grade default"
+    assert kits[second]["scale"] == "1/60"
+
+
+async def test_a_stated_scale_still_propagates_even_onto_a_cleared_one(client, retailer):
+    """The other side of it: naming a scale is still an edit, including onto kits
+    that have none. Only silence is silence."""
+    order = await make_order(client, retailer, [kit_line(quantity=2)])
+    line = order["items"][0]
+    first, second = line["spawned_kit_ids"]
+    assert (await client.patch(f"/kits/{first}", json={"scale": None})).status_code == 200
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={
+            "items": [
+                {
+                    "id": line["id"],
+                    "item_type": "kit",
+                    "quantity": 2,
+                    "unit_price_minor": 4999,
+                    "currency_code": "AUD",
+                    "kit": {
+                        "name": "RX-79[G] Gundam Ground Type",
+                        "grade": "HG",
+                        "scale": "1/100",  # stated, so meant
+                        "kit_number": "HGUC 210",
+                    },
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    kits = {k["id"]: k for k in (await client.get("/kits")).json()}
+    assert kits[first]["scale"] == "1/100"
+    assert kits[second]["scale"] == "1/100"
+
+
 async def test_a_line_edit_that_does_restate_a_detail_reaches_every_kit_field_by_field(
     client, retailer
 ):
