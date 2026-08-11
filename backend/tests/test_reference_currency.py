@@ -848,6 +848,48 @@ async def test_tool_exports_carry_the_currency_column(client):
     assert "unit_cost_reference_currency" in header
 
 
+@pytest.mark.parametrize(
+    ("code", "minor", "major"),
+    [("AUD", 4500, "45.00"), ("JPY", 1200, "1200"), ("KWD", 4500, "4.500")],
+)
+async def test_a_tool_cost_exports_its_major_units_in_its_own_currency(client, code, minor, major):
+    """The readable twin is scaled by the code on the row, not by two decimals.
+
+    Tools have no `currency_code` column — their money is denominated by
+    `unit_cost_reference_currency`, which is what `ColumnSpec.currency_column`
+    names. Reading the wrong field made every zero-decimal cost export a hundred
+    times small (¥1200 as `12.00`) and every three-decimal one ten times large.
+
+    Asserted as a value, not a header: the header-only version of the test above
+    is why this shipped in the first place.
+    """
+    await make_tool(client, unit_cost_reference_minor=minor, unit_cost_reference_currency=code)
+    rows = list(csv.DictReader(io.StringIO((await client.get("/export/tools.csv")).text)))
+    row = next(r for r in rows if r["name"] == "Godhand SPN-120")
+    assert row["unit_cost_reference_minor"] == str(minor)  # canonical, unchanged
+    assert row["unit_cost_reference_currency"] == code
+    assert row["unit_cost_reference"] == major
+
+
+@pytest.mark.parametrize(
+    ("code", "minor", "major"),
+    [("AUD", 4999, "49.99"), ("JPY", 4999, "4999"), ("KWD", 4999, "4.999")],
+)
+async def test_an_order_line_exports_its_major_units_in_its_own_currency(
+    client, retailer, code, minor, major
+):
+    """The control on the test above: order lines *do* name their currency
+    `currency_code`, so they exercise the default and must not move."""
+    resp = await make_order(
+        client, retailer, [kit_line(unit_price_minor=minor, currency_code=code)]
+    )
+    assert resp.status_code == 201, resp.text
+    rows = list(csv.DictReader(io.StringIO((await client.get("/export/order_items.csv")).text)))
+    assert rows[0]["currency_code"] == code
+    assert rows[0]["unit_price_minor"] == str(minor)
+    assert rows[0]["unit_price"] == major
+
+
 async def test_import_of_a_pre_0_2_3_tools_export_stamps_the_instance_currency(
     client, reference_currency
 ):
