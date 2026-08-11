@@ -16,6 +16,72 @@ Template:
 
 ---
 
+## 2026-08-11 — Claude Code — Triaged an external review into five hardening milestones
+
+**Planning only. No code changed, working tree clean on `main`.** An external review of
+v0.2.3-alpha (run outside this repo, and *not* checked in — the issues below are written
+to stand alone) was verified against the code and filed as **23 issues across five new
+milestones**, `M5 hardening — v0.2.4-alpha` through `v0.2.8-alpha`. Continuing that title
+pattern rather than inventing `M5.0.x` numbers means the `AGENTS.md` roadmap needs no
+renumbering — these are hardening passes inside M5, before 5.1 starts.
+
+- **v0.2.4 (#34–#38) is the one that matters first.** Its theme is *a write changes only
+  what it was asked to change*: an order edit restating line currency, kit scale and zero
+  shipping; an inventory edit restating stock; a lock that computes from a pre-lock value;
+  a kit delete cascading upgrade history away; an export rendering an amount in a currency
+  it isn't denominated in. Clearing it is also what makes **manual UI use safe for real
+  collection data** — that fell out of the theme rather than being scoped to it.
+  v0.2.5 is ingress (#39), v0.2.6–v0.2.7 are the importer (#40–#48), v0.2.8 is loose ends.
+
+- **Five decisions that are already made — don't re-litigate them from the issue text.**
+  (1) **Do not reroute import through the order service** (#44). Calling `receive_order`
+  would apply stock, which is rule 10 head-on. The fix is a declarative invariant pass in
+  `services/portability/` that *rejects* what the service would refuse; what's shared with
+  `orders.py` is the predicates, not the mutation path. (2) **No repair migration** for the
+  `6cbd8315df95` legacy state (#54) — it would run today and overwrite kit statuses the
+  owner has since set by hand; document it. (3) **No optimistic version columns** yet (#36)
+  — locking plus dirty-field PATCH closes the same hole without three mapper changes.
+  (4) **No dialog dependency** for #51; `Modal` is fifty lines. (5) The #41 plan hash
+  **must exclude synthesized ids and clock defaults** (`uuid4()` at `importing.py:582`,
+  `_create_stub`, the two `lambda: datetime.now(UTC)` column defaults) or preview and apply
+  can never agree — that trap is what makes "just hash the whole plan" wrong.
+
+- **Five things the review missed, found while verifying it.** `parse_int("inf")` raises
+  `OverflowError`, which `_parse_row` doesn't catch — an unhandled 500, not a row error.
+  `parse_int` accepts Python underscore literals (`1_000` → 1000). Comma-stripping lives in
+  three places, not one (`spec.parse_decimal`, `currency.major_to_minor`,
+  `format.ts:majorToMinor`). `POST /api/import/apply` is multipart and therefore
+  preflight-exempt, so any page the owner visits can drive a `replace_all` cross-origin —
+  that's the sharpest edge in #39, sharper than the DNS-rebinding case. And `adjust_stock`
+  is MCP-only with no REST route (#55), which is *why* the browser has to PATCH absolutes.
+
+- **The review was right about the defects and wrong about several remedies.** Worth
+  knowing if anyone reads it later: it was correct that `session.get(..., with_for_update=)`
+  serves stale attributes, but only one call path actually preloads (`orders.py:389`), not
+  the five it listed; its `formatDate` remedy would break `received_at`, which is a real
+  timestamp and *should* convert; and it treated the always-empty `kit_photos` export as a
+  fidelity bug when it's deliberate until M7.
+
+- **#41 carries the test churn.** Roughly 25 tests call the `apply()` helper without a plan
+  hash (`tests/test_portability.py:70`) and become preview-then-apply. Do it there, before
+  #44/#45/#46 change what a plan contains, or it gets done repeatedly. The browser already
+  sends the hash, so no UI change.
+
+- **#39 needs care on this machine specifically.** It's the only change that can lock the
+  operator out of their own instance — the Proxmox LXC's hostname has to be in the new
+  allowlist. Setting, default and `docs/operations.md` ship in one commit, and it gets its
+  own release so nobody upgrading urgently for a data fix inherits the lockout risk. It's
+  explicitly a stopgap #29 will absorb.
+
+- **State:** no tests run this session (nothing was changed). Milestone descriptions carry
+  the theme and the reasoning, so `gh api repos/:owner/:repo/milestones` is worth reading
+  before picking work.
+
+- **Next:** #34 and #35 are the cheapest and cover the paths a human can't avoid. #36 and
+  #37 finish the milestone; #38 is a one-line exporter fix that belongs in the same money
+  pass. Dependencies are recorded on the issues: #44/#46 need #40 and #41, #45 needs #41,
+  #47 needs only #40 and can jump the queue if starter-sheet onboarding is wanted early.
+
 ## 2026-08-11 — Claude Code — Released v0.2.3-alpha
 
 **Shipped.** Tag `v0.2.3-alpha` on `fe4e1af`, published as a pre-release. The version
