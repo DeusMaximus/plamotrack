@@ -16,6 +16,62 @@ Template:
 
 ---
 
+## 2026-08-11 — Claude Code — Shipped four of the five v0.2.4 fixes
+
+**Merged to `main`: #34 (PR #57), #35 (#58), #38 (#59), #37 (#60).** All green, all
+reviewed by Copilot, branches deleted. `M5 hardening — v0.2.4-alpha` holds only **#36**
+(catalog lock discipline). 233 backend tests, 9 Playwright, 80 vitest.
+
+- **Copilot found a real defect in #37 that I introduced**, and it is the most useful
+  thing in this entry. The applied-upgrade guard read the kit's applications *unlocked*,
+  then deleted. `apply_upgrade` locks the **upgrade** row and reads the kit unlocked, so
+  the only `kits` lock it takes is the `FOR KEY SHARE` implied by inserting the
+  application. A concurrent apply could therefore commit between the check and the
+  delete, and the `ON DELETE CASCADE` swallowed it. The `DELETE` does block on that
+  key-share lock — **blocking is not rejecting**, the decision was already made. Fixed
+  with `FOR UPDATE` at both read sites (`delete_kit`, `_line_kits`). Note that
+  `_get_order_for_write`'s order lock is no help here: `apply_upgrade` never touches
+  the order row.
+
+- **The test lesson is worth more than the fix.** My first race test caught the unlocked
+  code **2 runs in 8** — a detector that would have read green forever after. Only
+  checking told me. It now runs the race ten times (6/6 against broken, stable against
+  fixed, under two seconds). **Pinning the interleaving is impossible here** and it is
+  worth not re-attempting: forcing it means pausing the delete while holding `FOR
+  UPDATE`, at which point the concurrent apply blocks on that lock and the test
+  deadlocks instead of asserting. Assert the end state, repeat the race.
+
+- **Before starting #36, read this.** (1) There is now a **deadlock cycle**:
+  `delete_order` can hold kit locks and then want upgrade locks via `_adjust_ref`, while
+  `apply_upgrade` holds an upgrade lock and then wants the kit's key-share lock. It
+  pre-existed through the `DELETE`'s implicit lock; #37 widened the window. Postgres
+  aborts one side, so it is a 500, not corruption — and deterministic lock ordering is
+  #36's job. (2) `session.get(..., with_for_update=)` **does** emit `SELECT … FOR UPDATE`
+  (it skips the identity-map shortcut), but without `populate_existing` an
+  already-loaded instance keeps its stale attributes. (3) Tracing every caller, exactly
+  **one** path preloads before locking — the unlocked existence check in `_update_line`
+  before `_adjust_ref`. The review's "five writers" framing was wrong; `receive_order`,
+  `delete_order`, `_add_line` and `adjust_stock` all touch the row first under the lock.
+
+- **#61 filed, and it is a product decision not a bug.** An upgrade application can be
+  recorded but **never withdrawn** — no endpoint, no MCP tool, no service function. #37's
+  guard therefore has no escape hatch, and its error says so rather than pointing at a
+  route that does not exist. The open question is what withdrawing should do to stock:
+  restore it, leave it, or ask. Filed to v0.2.8 rather than folded into #37.
+
+- **Release-note material for v0.2.4-alpha**, both about data someone already has:
+  the order editor was silently converting foreign-currency lines into the order's
+  currency (¥1200 → A$120.00 on any edit); and databases that already ran the kit-delete
+  cascade have **lost upgrade applications unrecoverably**.
+
+- **State:** `main` at `443f180`, clean, in sync. Dev servers may still be running on
+  :8000 and :5173 from browser verification. The dev database was left as found.
+
+- **Next:** #36 — the last v0.2.4 item, and the one that wants a fresh session: it is
+  barrier-controlled concurrency tests against real Postgres. Then tag v0.2.4-alpha
+  (version lives in `backend/app/__init__.py`, `backend/pyproject.toml`, and
+  `backend/uv.lock` via `uv lock`), then the v0.2.5 ingress work.
+
 ## 2026-08-11 — Claude Code — Triaged an external review into five hardening milestones
 
 **Planning only. No code changed, working tree clean on `main`.** An external review of
