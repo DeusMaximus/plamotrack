@@ -437,9 +437,6 @@ async def _update_line(
 
     if item.item_type is ItemType.KIT:
         details = line.kit
-        scale = (
-            details.scale if details.scale is not None else default_scale_for_grade(details.grade)
-        )
         line_kits = await _line_kits(session, item.id)
         # Kit details propagate to every kit this line spawned — but only the fields
         # this edit actually restated (#65).
@@ -456,6 +453,19 @@ async def _update_line(
         # unedited. Judging it server-side rather than trusting the caller to send a
         # partial payload keeps REST and MCP on the same footing as the browser —
         # neither has to opt in to not destroying data.
+        #
+        # `scale` is compared exactly as sent, never resolved to the grade's default
+        # first. A kit may legitimately have *no* scale — the Kits page can clear one
+        # — and a client echoes that back as null, which is indistinguishable from
+        # "I didn't mention it". Deriving before comparing made that untouched null
+        # read as a change (`1/144 != None`) and a price edit rewrote every kit on the
+        # line. So an unstated scale is never a restated one; resetting one to the
+        # grade default means typing it. Spawning still derives (`spawn_kits`), which
+        # is the only place a missing scale legitimately means "work one out".
+        #
+        # The same reading covers `kit_number`, the other nullable one: null is "not
+        # mentioned", so clearing either belongs on the Kits page, which can say null
+        # and mean it. `name` and `grade` are required, so the guard never sees them.
         if line_kits:
             reference = line_kits[0]
             restated = {
@@ -463,10 +473,10 @@ async def _update_line(
                 for field, value in (
                     ("name", details.name),
                     ("grade", details.grade),
-                    ("scale", scale),
+                    ("scale", details.scale),
                     ("kit_number", details.kit_number),
                 )
-                if value != getattr(reference, field)
+                if value is not None and value != getattr(reference, field)
             }
             for kit in line_kits:
                 for field, value in restated.items():
