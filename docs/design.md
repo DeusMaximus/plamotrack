@@ -62,11 +62,13 @@ else's UI. This is the same app, owned outright.
 - ✅ MCP-native: agents can add orders, update build status, and adjust stock without a
   human touching the UI
 - ✅ Data that can leave: CSV export and import, so the collection is never trapped (§12)
-- 🔨 **Planned (M5)** `docker compose up` → ready-to-use local instance, no manual
-  runtime or schema setup
-- 🔨 **Planned (M5.1)** Internationalisation foundations: English strings behind a
-  translation layer, locale-aware formatting, structured errors, and a configurable
-  reference currency — no translations yet
+- ✅ **M5** `docker compose up` → ready-to-use local instance, no manual runtime or
+  schema setup; reference currency is configurable, and every historical conversion
+  stores the currency code it was captured under
+- 🔨 **Planned (M5.1)** Instance-wide settings and internationalisation foundations:
+  `en-AU` source catalogue and fallback, reviewed language contributions, locale-aware
+  presentation, a Settings page, and structured REST/import diagnostics — no
+  non-English translation is required to complete the foundation
 - 🔨 **Planned (M6)** Authenticated remote access for the web UI, REST API, and MCP,
   including OAuth-compatible MCP clients and a tested VPS deployment path
 - 🔨 **Planned (M6.1)** Dual-era MCP compatibility, adding `2026-07-28` without
@@ -329,6 +331,9 @@ Standard CRUD plus a few purpose-built endpoints.
 
 **Planned 🔨**
 
+- `GET /settings`, `PATCH /settings` — **M5.1**, singleton settings shared by every
+  client of this single-owner instance. Not implemented; runtime defaults still come
+  from application configuration
 - `GET /kits/{id}/photos`, `POST /kits/{id}/photos` (multipart upload) — **M7**, blocked
   on the §9.2 storage decision. Not implemented; the `kit_photos` table exists but
   nothing writes to it
@@ -395,6 +400,12 @@ written **at entry time**, not read from config on the way out: an amount whose 
 can be changed by editing an env var is not a snapshot. Moving `REFERENCE_CURRENCY`
 later therefore changes what *new* entries default to and nothing else.
 
+M5.1 moves that runtime default into the singleton instance-settings record so the
+owner can change it from the Settings page and every REST, MCP, and browser client sees
+the same value. The existing environment value becomes a first-run/upgrade bootstrap,
+not a permanent override. That changes where the default lives, not the historical rule:
+stored amounts keep their recorded currency and are never restated when the default moves.
+
 Two compatibility notes for anyone who used the 0.1.0 alpha:
 
 - the migration renames the column rather than replacing it, and backfills `AUD` for
@@ -437,30 +448,56 @@ restamped as yen, which is precisely the drift this section exists to prevent. N
 is a record, not a rounding error. Correcting or removing a snapshot is a thing the
 operator does on purpose, in a field put there for it.
 
-### 6.1 Internationalisation 🔨 **Planned (M5.1) — no translations yet**
+### 6.1 Instance settings & internationalisation 🔨 **Planned (M5.1)**
 
-The first localisation milestone is infrastructure, not a partially translated UI:
+The first localisation milestone is infrastructure, not a promise to ship a particular
+translation. It also supplies the settings surface the localisation controls need.
 
-- move every user-facing frontend string into an English source catalogue with semantic
-  keys, interpolation, and plural rules
-- route dates, times, numbers, and currency through locale-aware formatters; browser
-  locale is the initial default, with an explicit persisted override
-- set the document language and direction from the active locale, and prefer logical
-  layout properties where practical so a future right-to-left language is not a rewrite
-- return stable error codes and parameters from REST alongside the existing English
-  `detail`; the browser can translate known errors while API and MCP clients still get a
-  useful message
-- keep API enum values, MCP tool names, database values, and canonical CSV headers
-  stable and untranslated. Translation happens at the presentation boundary; user-entered
-  kit names, notes, retailers, and categories remain exactly what the owner wrote
+**One owner, one settings record.** Plamotrack remains a single-owner application after
+authentication lands, so interface language, formatting locale, IANA time zone, date
+style, hour cycle, and reference currency belong to the instance rather than one
+browser's local storage. Every device reads the same values. `en-AU` is the deterministic
+language and formatting fallback; the time zone also has one explicit instance value
+rather than being inferred independently by each browser.
 
-Shipping the English catalogue before adding photos, authentication screens, or the
-showcase prevents each of those features from creating another pile of embedded copy.
+Language and regional presentation are separate settings. Selecting Japanese may suggest
+`ja-JP`, for example, but it does not silently replace a formatting locale the owner chose
+on purpose. Presentation settings may change what a value looks like; they never change
+the canonical API value or what is stored.
 
-The configurable reference currency listed above was split out and shipped early, with
-M5 — it is a schema migration and a CSV rename, unrelated to translation, and it got
-cheaper the sooner it happened: every archive exported under the old column name is one
-more file the compatibility alias has to keep understanding.
+**Catalogues ship with the repository.** `en-AU` is the canonical source catalogue and
+fallback. Each additional catalogue carries BCP 47 tag, native name, direction, and
+readiness metadata in a small manifest. Languages arrive through reviewed PRs, with
+automated checks for known keys, interpolation parameters, plural shapes, and coverage.
+An incomplete catalogue may exist in-tree, but is not offered as finished until it meets
+the documented review/coverage bar. Adding a language should normally change catalogue
+and manifest data, not application logic. Runtime language uploads are out of scope.
+
+The presentation boundary follows from that contract:
+
+- move every user-facing frontend string into semantic catalogue keys with interpolation
+  and plural rules
+- route dates, times, numbers, counts, and money through formatters that receive the
+  instance's explicit regional settings; the stored ISO 4217 exponent still decides what
+  an integer monetary value means
+- set document language and direction from catalogue metadata, and use logical layout
+  properties where direction carries meaning
+- keep API enum values, MCP tool names, database values, canonical CSV headers, and
+  user-entered kit names, notes, retailers, and categories stable and untranslated
+
+REST errors gain stable codes and parameters alongside useful English `detail`, so the
+browser can translate known conditions without making an English sentence the API
+contract. Import preview is a separate case because its warnings, row failures, and
+blocking diagnostics live inside successful responses; those become structured
+code/parameter/detail objects too. Neither wording nor active language participates in
+the import `plan_hash`.
+
+The frontend exposes all of this at `/settings`: General, Language & region, Data
+management, and About. The existing import/export workflow moves under Data management
+without weakening preview, confirmation, or destructive-operation warnings; `/data`
+redirects there for compatibility. Shipping this foundation before photos,
+authentication screens, or the showcase prevents each new surface from creating another
+pile of embedded copy.
 
 ---
 
@@ -655,9 +692,10 @@ Unchanged from the original plan:
    stack is internet-safe. The configurable reference currency was pulled forward from
    M5.1 and shipped here — it is a schema migration, not translation work, and its
    compatibility cost grows with every archive exported under the old column name
-8. 🔨 **M5.1 — Internationalisation foundation:** English source catalogue,
-   locale-aware formatting, and structured API errors. No translations in this
-   milestone
+8. 🔨 **M5.1 — Instance settings & internationalisation foundation:** singleton
+   instance-wide preferences, `en-AU` source catalogue and fallback, reviewed language
+   contributions, locale-aware presentation, a Settings page that absorbs Data, and
+   structured REST/import diagnostics. No non-English translation is required
 9. 🔨 **M6 — Secure remote access:** single-owner browser authentication, scoped
    REST/MCP bearer tokens, OAuth-compatible MCP access, and a tested TLS/VPS deployment
    path. This is the gate for deliberately exposing an instance
@@ -700,6 +738,10 @@ yours" means in practice.
 Export, import, and blank-template generation all read it, so they cannot drift; a test
 asserts template headers are byte-identical to export headers. Adding a model column is
 one `col(...)` line.
+
+M5.1 extends the full archive with the singleton instance-settings record through this
+same registry. Restoring a setting is an explicit previewed change; starter sheets and
+partial table imports never silently replace instance defaults.
 
 `virtual=True` marks CSV columns with no backing model attribute — the `order_items`
 `kit_*` columns mirror the kits a line spawned (kit details live on the kits, not the

@@ -173,6 +173,13 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     must be a no-op, and deriving stock from received orders would double it.
     Kits are the mirror image: they're spawned from an order line *only* when
     nothing else in the upload supplies them (§3.9 hybrid dispatch).
+11. **Instance settings and localisation (Milestone 5.1):** plamotrack remains a
+    single-owner application, so interface language, formatting locale, time zone,
+    date style, hour cycle, and reference currency are instance-wide settings — not
+    browser-only preferences. `en-AU` is the canonical source catalogue and fallback;
+    additional languages ship from the repository through reviewed PRs. Keep language
+    separate from regional formatting, keep canonical API/MCP/database/CSV identifiers
+    untranslated, and never let a settings change reinterpret historical money.
 
 ## Roadmap (design notes §11)
 
@@ -185,8 +192,10 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
 5. ~~Installability: full local Docker Compose stack, safe loopback defaults,
    migrations, health checks, backup/upgrade docs~~ ✅ (§8, `docs/operations.md`)
    — also shipped the configurable reference currency, pulled forward from 5.1
-5.1. Internationalisation foundation: English catalogue, locale-aware formatting,
-     structured errors; no translations yet
+5.1. Instance settings + internationalisation foundation: singleton settings,
+     `en-AU` source catalogue and fallback, reviewed language contributions,
+     locale-aware presentation, Settings page (absorbing Data), and structured
+     REST/import diagnostics; no non-English translation required
 6. Secure remote access: single-owner browser auth, scoped REST/MCP tokens,
    OAuth-compatible MCP, tested TLS/VPS deployment path
 6.1. MCP modernisation: dual-era current + `2026-07-28` compatibility with
