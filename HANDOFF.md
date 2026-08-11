@@ -16,19 +16,13 @@ Template:
 
 ---
 
-## 2026-08-11 — Claude Code — #36 shipped; v0.2.4-alpha bumped, tag not yet pushed
+## 2026-08-11 — Claude Code — #36 shipped and v0.2.4-alpha released
 
-**Merged to `main`: #36 (PR #62), then the version bump (PR #64).** `main` at `c562438`,
-`__version__ = "0.2.4"` verified on both `GET /meta` and the MCP handshake. 240 backend
-tests, all green. The `M5 hardening — v0.2.4-alpha` milestone is empty.
-
-- **The release is finished except for two commands the owner has to run.** The
-  annotated tag `v0.2.4-alpha` **exists locally on `c562438` but is not pushed**, and no
-  GitHub release is created. Draft notes were handed to the owner (scratchpad file,
-  session `d87d280d`) — if that's gone, rewrite from the five issues; the two things
-  that must survive any rewrite are the ⚠️ sections about data people already hold:
-  order lines whose currency the editor rewrote, and upgrade applications the old
-  kit-delete cascade destroyed unrecoverably.
+**Merged to `main`: #36 (PR #62), then the version bump (PR #64).** `__version__ = "0.2.4"`
+verified on both `GET /meta` and the MCP handshake. 240 backend tests, all green.
+**Released:** tag `v0.2.4-alpha` on `c562438`, GitHub release published. The
+`M5 hardening — v0.2.4-alpha` milestone is empty but **deliberately left open** — the
+owner's call, so don't tidy it closed. Its 9 closed items are the 5 issues plus 4 PRs.
 
 - **`gh pr merge` and `git push origin <tag>` are now both denied by the auto-mode
   permission classifier**, standalone, not just chained — the older "run it alone"
@@ -68,14 +62,15 @@ tests, all green. The `M5 hardening — v0.2.4-alpha` milestone is empty.
   tracking-number change shouldn't be hostage to a corrupt line. What shipped is a
   legible `ConflictError` naming the id instead of a 404. v0.2.8.
 
-- **State:** working tree clean on `main`. Dev Postgres up in Docker. GitHub Actions
-  stalled two jobs this session with every step `completed/success` but the job stuck
-  `in_progress` — `gh run rerun <run> --job <id>` clears it; not a project problem.
+- **State:** `main` at `adb8813`, clean, in sync, and the only local branch — the two
+  merged ones were deleted along with their remotes. Dev Postgres up in Docker; the dev
+  database was left as found. GitHub Actions stalled two jobs this session with every
+  step `completed/success` but the job stuck `in_progress` — `gh run rerun <run> --job
+  <id>` clears it; not a project problem.
 
-- **Next:** push the tag and cut the release, then **v0.2.5 / #39** — the ingress work.
-  The sharpest thing in it is already known: `POST /api/import/apply` is multipart and
-  therefore CORS-preflight-exempt, so any page the owner visits can drive a
-  `replace_all` cross-origin.
+- **Next: v0.2.5 / #39** — the ingress work. The sharpest thing in it is already known:
+  `POST /api/import/apply` is multipart and therefore CORS-preflight-exempt, so any page
+  the owner visits can drive a `replace_all` cross-origin.
 
 ## 2026-08-11 — Claude Code — Shipped four of the five v0.2.4 fixes
 
