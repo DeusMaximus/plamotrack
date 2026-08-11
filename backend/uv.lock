@@ -949,7 +949,7 @@ wheels = [
 
 [[package]]
 name = "plamotrack-backend"
-version = "0.2.4.1"
+version = "0.2.4.2"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
