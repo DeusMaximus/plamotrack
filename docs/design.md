@@ -466,7 +466,7 @@ on purpose. Presentation settings may change what a value looks like; they never
 the canonical API value or what is stored.
 
 **Catalogues ship with the repository.** `en-AU` is the canonical source catalogue and
-fallback. Each additional catalogue carries BCP 47 tag, native name, direction, and
+fallback. Each additional catalogue carries a BCP 47 tag, native name, direction, and
 readiness metadata in a small manifest. Languages arrive through reviewed PRs, with
 automated checks for known keys, interpolation parameters, plural shapes, and coverage.
 An incomplete catalogue may exist in-tree, but is not offered as finished until it meets
