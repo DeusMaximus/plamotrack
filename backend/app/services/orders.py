@@ -266,11 +266,20 @@ async def _spawn_from_details(
 
 
 async def _line_kits(session: AsyncSession, item_id: uuid.UUID) -> list[Kit]:
+    """This line's kits, row-locked. Every caller mutates or deletes them.
+
+    The order lock in `_get_order_for_write` serializes order mutations against each
+    other, but `apply_upgrade` never touches the order row — so it can commit an
+    application between the progression check below and the delete that follows,
+    and the cascade then removes it. Locking the kits closes that window: the
+    application's insert needs FOR KEY SHARE on these rows, which conflicts.
+    """
     stmt = (
         select(Kit)
         .where(Kit.order_item_id == item_id)
         .options(selectinload(Kit.photos), selectinload(Kit.upgrade_applications))
         .order_by(Kit.created_at, Kit.id)
+        .with_for_update()
     )
     return list((await session.scalars(stmt)).all())
 

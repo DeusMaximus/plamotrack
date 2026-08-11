@@ -93,8 +93,18 @@ def has_applied_upgrades(kit: Kit) -> bool:
 
 
 async def delete_kit(session: AsyncSession, kit_id: uuid.UUID) -> None:
+    # FOR UPDATE, because the check below and the delete after it have to be one
+    # decision. `apply_upgrade` locks the *upgrade* row, not this one, so without a
+    # lock here it can commit an application between the two — and the DELETE then
+    # cascades the brand-new row away, which is the exact inconsistency this guard
+    # exists to stop. The insert takes FOR KEY SHARE on this row, which conflicts,
+    # so holding FOR UPDATE makes the concurrent application wait and then fail its
+    # foreign key rather than being silently swallowed.
     kit = await session.scalar(
-        select(Kit).where(Kit.id == kit_id).options(selectinload(Kit.upgrade_applications))
+        select(Kit)
+        .where(Kit.id == kit_id)
+        .options(selectinload(Kit.upgrade_applications))
+        .with_for_update()
     )
     if kit is None:
         raise NotFoundError(f"kit {kit_id} not found")
