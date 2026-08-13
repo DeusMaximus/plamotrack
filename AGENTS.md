@@ -220,8 +220,8 @@ The sweep above finds code paths that drifted apart. It does nothing about a tes
 walks the right path carrying the wrong values — and that is now the more expensive
 mistake on this repo's record.
 
-Three consecutive regression suites were written for a known defect, reviewed, run
-against the unfixed code, and still missed it. Each failed differently:
+Four regression suites have now been written for a known defect, reviewed, run against
+the unfixed code, and still missed something. Each failed differently:
 
 - **#65** seeded a **quantity-one** kit line. The defect was one line's kits being
   flattened onto each other, which a single kit cannot express. The test drove the
@@ -232,6 +232,12 @@ against the unfixed code, and still missed it. Each failed differently:
 - **#69** compared a field where both sides already held the same non-null value, so the
   derivation that caused the defect was a no-op. The comparison was exercised only where
   it could not be wrong.
+- **#41** swept its field's values properly — absent column, blank cell, sheet-supplied
+  id, conjured stub — and ran every one of them through a **create**. The leak it existed
+  to prevent puts a minted uuid in a row's `changes` list, and `changes` is empty on a
+  create, so it could not appear in any test in the suite. It was latent in the *previous*
+  fingerprint too and the rewrite inherited it unseen; an external review found it. No
+  additional *value* would have helped — the axis never varied was the row's **action**.
 
 So when a fix turns on **comparing or branching on a field**, enumerate what that field
 can legitimately hold before writing the assertions: null, empty, whitespace, the derived
@@ -239,9 +245,18 @@ or default value, and something that genuinely differs. Drive at least the null 
 default. If the rule is about rows diverging, seed more than one row. If the rule is
 about timing, pin the timing rather than hoping.
 
-**Running the test against the unfixed code is necessary and not sufficient.** All three
+**Values are one axis. The state the row is in is another, and it decides whether the
+field is even present to be wrong.** `changes` is empty on a create; `matched_id` is null
+until something matches; a spawn descriptor exists only for a kit line short of kits; a
+`replace_all` has a deletion set and a merge has none. Twenty values inside one action
+say nothing about the actions never entered. So where a fix touches a structure whose
+*shape* is decided by a classification — an action, a mode, a status — drive at least two
+of them, and prefer the one that makes the structure non-empty.
+
+**Running the test against the unfixed code is necessary and not sufficient.** All four
 above were, and passed. A red test proves it detects the case you thought of; it says
-nothing about the case you didn't. The value space is where that second case lives.
+nothing about the case you didn't, and nothing at all about the states you never put the
+row into. #41's suite was red exactly where it looked and blind everywhere else.
 
 ## Roadmap (design notes §11)
 
