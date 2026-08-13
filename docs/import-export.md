@@ -171,9 +171,9 @@ different number from the one you wrote.
 
 - **Whole-number columns** — quantities, ratings, thresholds, `*_minor` amounts —
   take whole numbers only. `3` and `3.0` both mean three; `1.9` is an error rather
-  than a silent `1`. They also have to fit in a 32-bit integer, so anything beyond
-  ±2,147,483,647 is reported on the row instead of failing partway through the
-  import.
+  than a silent `1`. They also have to fit in a 32-bit integer — anything below
+  -2,147,483,648 or above 2,147,483,647 is reported on the row instead of failing
+  partway through the import.
 - **A comma is only ever a thousands separator**, and only where it can't be
   anything else. `1,299.50` and `1,234,567` are fine — a decimal point already
   present, or a second comma, rules out any other reading. `12,34` is refused,

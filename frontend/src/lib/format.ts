@@ -40,7 +40,7 @@ export function minorToMajor(minor: number, currency: string): string {
 
 /** Thousands separators removed, or `null` where the comma is ambiguous.
  *
- * The mirror of `strip_numeric_grouping` in `backend/app/services/currency.py`;
+ * The mirror of `strip_numeric_grouping` in `backend/app/services/numeric.py`;
  * `__fixtures__/money-cases.json` is read by both suites so the two cannot drift.
  * A comma used to be stripped unconditionally on both sides, which made `12,34` —
  * how much of the world writes 12.34 — into 1234 major units, a hundredfold error.
