@@ -18,46 +18,9 @@ well want forint shown without decimals. That is a formatting choice layered on 
 of a stored amount, not a change to what the stored integer counts.
 """
 
-import re
 from decimal import Decimal
 
-#: A digit run grouped in threes, which is the only reading of a comma this parser
-#: will accept: "1,299" and "1,234,567", never "12,34".
-_GROUPED_INTEGER = re.compile(r"[+-]?\d{1,3}(?:,\d{3})+")
-
-
-def strip_numeric_grouping(raw: str) -> str:
-    """Numeric text with thousands separators removed, or a ValueError saying why not.
-
-    Shared by `spec.parse_int`, `spec.parse_decimal` and `major_to_minor` so the three
-    cannot disagree about what a cell means — the same rule also lives in
-    `frontend/src/lib/majorToMinor`, held to it by `__fixtures__/money-cases.json`.
-
-    Two characters used to be read generously and both changed the number:
-
-    * **A comma was stripped unconditionally**, so `12,34` — how most of Europe writes
-      12.34 — became 1234 major units and stored as a hundredfold error. A comma is
-      genuinely ambiguous between grouping and decimal separator, so it is accepted
-      only where it *cannot* be a decimal point: grouped in threes, with no comma
-      after the decimal point. `1,299.50` and `1,234` still read as they look;
-      `12,34` and `1.234,56` are now refused rather than guessed at.
-    * **`Decimal()` honours Python's numeric-literal underscores**, so `1_000` parsed
-      as 1000 — a number no spreadsheet wrote and no human typed.
-    """
-    value = raw.strip()
-    if "_" in value:
-        raise ValueError(f"'{raw}' isn't a number — remove the underscores")
-    if "," not in value:
-        return value
-    head, point, tail = value.partition(".")
-    if "," in tail or not _GROUPED_INTEGER.fullmatch(head):
-        raise ValueError(
-            f"a comma in '{raw}' is ambiguous — it reads as a thousands separator to "
-            "this importer and as a decimal point to much of the world. Write it "
-            "without one, or as a decimal point."
-        )
-    return head.replace(",", "") + point + tail
-
+from app.services.numeric import is_lone_group, strip_numeric_grouping
 
 #: Currencies whose exponent is not 2. Everything else in ISO 4217 has two minor
 #: units, so listing only the exceptions keeps the table short enough to audit.
@@ -142,7 +105,28 @@ def minor_fraction_digits(currency_code: str | None) -> int:
 
 
 def major_to_minor(major: str | Decimal, currency_code: str | None) -> int:
-    """ "49.99" + AUD -> 4999. Rounds half-up, like the money it represents."""
+    """ "49.99" + AUD -> 4999. Rounds half-up, like the money it represents.
+
+    A **lone grouped** amount is refused unless the currency has no minor unit.
+    `1,234` is valid grouping and an equally valid European spelling of `1.234`, and
+    in KWD those are 1,234,000 fils and the 1234 fils §6 exists over. The text cannot
+    settle it; only the exponent can, and only in one direction — with no subunit
+    there is nowhere for a decimal reading to land, so `1,234` JPY is plainly ¥1234.
+
+    A `Decimal` argument has already lost the comma, so its caller is the one holding
+    the raw cell and has to make this call itself. `importing._apply_money_alternates`
+    does, through the same `is_lone_group` predicate.
+    """
+    if (
+        not isinstance(major, Decimal)
+        and is_lone_group(str(major))
+        and minor_fraction_digits(currency_code) != 0
+    ):
+        raise ValueError(
+            f"a comma is ambiguous in {normalise_code(currency_code) or 'this currency'} — "
+            f"'{major}' reads as a thousands separator here and a decimal point to much "
+            "of the world. Write it with a decimal point, or with no separator at all."
+        )
     value = major if isinstance(major, Decimal) else Decimal(strip_numeric_grouping(str(major)))
     scaled = value * (10 ** minor_fraction_digits(currency_code))
     return int(scaled.quantize(Decimal(1), rounding="ROUND_HALF_UP"))

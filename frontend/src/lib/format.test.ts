@@ -17,7 +17,7 @@ import { formatMoney, majorToMinor, minorToMajor } from "./format";
 const cases = moneyCases as {
   minor_fraction_digits: { currency: string; digits: number }[];
   major_to_minor: { major: string; currency: string; minor: number }[];
-  major_to_minor_refused: { cases: { major: string; why?: string }[] };
+  major_to_minor_refused: { cases: { major: string; currency: string; why?: string }[] };
   minor_to_major: { minor: number; currency: string; major: string }[];
   round_trips: { currencies: string[]; minor_amounts: number[] };
 };
@@ -35,12 +35,13 @@ test.for(cases.major_to_minor)("$major $currency → $minor minor units", ({ maj
 });
 
 test.for(cases.major_to_minor_refused.cases)(
-  "$major is refused rather than guessed at",
-  ({ major }) => {
+  "$major is refused in $currency rather than guessed at",
+  ({ major, currency }) => {
     // The backend raises on these; here the refusal is 0, so the field visibly
     // empties instead of silently multiplying by a hundred. The fixture pins which
-    // inputs are refused — each side keeps its own way of saying so (#40).
-    expect(majorToMinor(major, "AUD")).toBe(0);
+    // inputs are refused — each side keeps its own way of saying so (#40). The
+    // currency matters: "1,234" is unambiguous only where there is no minor unit.
+    expect(majorToMinor(major, currency)).toBe(0);
   },
 );
 

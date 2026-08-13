@@ -1,75 +1,313 @@
 {
   "note": "Cross-layer money cases (#6). Read by frontend/src/lib/format.test.ts AND backend/tests/test_currency.py, so an amount that means one thing in the browser and another in Python fails a test instead of reaching the database. Add a case here rather than to either suite. `why` is for the reader; nothing asserts on it.",
-
   "minor_fraction_digits": [
-    { "currency": "AUD", "digits": 2, "why": "the ordinary case" },
-    { "currency": "USD", "digits": 2 },
-    { "currency": "JPY", "digits": 0, "why": "yen are already minor units" },
-    { "currency": "KWD", "digits": 3, "why": "1000 fils" },
-    { "currency": "CLF", "digits": 4 },
-    { "currency": "IQD", "digits": 3, "why": "CLDR says 0; ISO 4217 says 3, and storage follows ISO" },
-    { "currency": "HUF", "digits": 2, "why": "CLDR says 0 — an ordinary currency the two layers used to disagree about" },
-    { "currency": "COP", "digits": 2, "why": "CLDR says 0" },
-    { "currency": "MGA", "digits": 2, "why": "CLDR says 0" },
-    { "currency": "ZZZ", "digits": 2, "why": "unrecognised: the documented default, not an error" }
+    {
+      "currency": "AUD",
+      "digits": 2,
+      "why": "the ordinary case"
+    },
+    {
+      "currency": "USD",
+      "digits": 2
+    },
+    {
+      "currency": "JPY",
+      "digits": 0,
+      "why": "yen are already minor units"
+    },
+    {
+      "currency": "KWD",
+      "digits": 3,
+      "why": "1000 fils"
+    },
+    {
+      "currency": "CLF",
+      "digits": 4
+    },
+    {
+      "currency": "IQD",
+      "digits": 3,
+      "why": "CLDR says 0; ISO 4217 says 3, and storage follows ISO"
+    },
+    {
+      "currency": "HUF",
+      "digits": 2,
+      "why": "CLDR says 0 — an ordinary currency the two layers used to disagree about"
+    },
+    {
+      "currency": "COP",
+      "digits": 2,
+      "why": "CLDR says 0"
+    },
+    {
+      "currency": "MGA",
+      "digits": 2,
+      "why": "CLDR says 0"
+    },
+    {
+      "currency": "ZZZ",
+      "digits": 2,
+      "why": "unrecognised: the documented default, not an error"
+    }
   ],
-
   "major_to_minor": [
-    { "major": "49.99", "currency": "AUD", "minor": 4999 },
-    { "major": "0.5", "currency": "USD", "minor": 50 },
-    { "major": ".5", "currency": "USD", "minor": 50, "why": "no leading zero" },
-    { "major": "+42", "currency": "AUD", "minor": 4200 },
-    { "major": "1,299.50", "currency": "AUD", "minor": 129950, "why": "spreadsheets love a thousands separator" },
-    { "major": "1,234", "currency": "AUD", "minor": 123400, "why": "grouped with no decimal point — still unambiguous" },
-    { "major": "1,234", "currency": "JPY", "minor": 1234, "why": "the zero-digit currency where a grouped integer is the normal way to write money" },
-    { "major": "1,234,567.89", "currency": "AUD", "minor": 123456789 },
-    { "major": "1200", "currency": "JPY", "minor": 1200 },
-    { "major": "38.50", "currency": "JPY", "minor": 39, "why": "no minor unit to hold the half — rounds, and the form now says so" },
-    { "major": "1.005", "currency": "AUD", "minor": 101, "why": "half away from zero; the float route gave 100" },
-    { "major": "1.234", "currency": "KWD", "minor": 1234, "why": "the headline case — used to import as 123" },
-    { "major": "0.001", "currency": "KWD", "minor": 1 },
-    { "major": "1.234", "currency": "IQD", "minor": 1234, "why": "Intl would have made this 1" },
-    { "major": "1.2345", "currency": "CLF", "minor": 12345 },
-    { "major": "1e2", "currency": "AUD", "minor": 10000, "why": "<input type=number> passes exponent notation through verbatim" },
-    { "major": "1E2", "currency": "AUD", "minor": 10000 },
-    { "major": "1.5e3", "currency": "AUD", "minor": 150000 },
-    { "major": "1e-2", "currency": "AUD", "minor": 1 },
-    { "major": "55e-3", "currency": "AUD", "minor": 6, "why": "0.055 → half away from zero" },
-    { "major": "5e-3", "currency": "AUD", "minor": 1, "why": "exactly half a minor unit" },
-    { "major": "4e-3", "currency": "AUD", "minor": 0, "why": "below half — genuinely zero, not a parse failure" },
-    { "major": "1e-4", "currency": "AUD", "minor": 0 },
-    { "major": "1e3", "currency": "JPY", "minor": 1000 },
-    { "major": "1.5e1", "currency": "KWD", "minor": 15000 },
-    { "major": "1e2", "currency": "CLF", "minor": 1000000 }
+    {
+      "major": "49.99",
+      "currency": "AUD",
+      "minor": 4999
+    },
+    {
+      "major": "0.5",
+      "currency": "USD",
+      "minor": 50
+    },
+    {
+      "major": ".5",
+      "currency": "USD",
+      "minor": 50,
+      "why": "no leading zero"
+    },
+    {
+      "major": "+42",
+      "currency": "AUD",
+      "minor": 4200
+    },
+    {
+      "major": "1,299.50",
+      "currency": "AUD",
+      "minor": 129950,
+      "why": "spreadsheets love a thousands separator"
+    },
+    {
+      "major": "1,234",
+      "currency": "JPY",
+      "minor": 1234,
+      "why": "the zero-digit currency where a grouped integer is the normal way to write money"
+    },
+    {
+      "major": "1,234,567.89",
+      "currency": "AUD",
+      "minor": 123456789
+    },
+    {
+      "major": "1200",
+      "currency": "JPY",
+      "minor": 1200
+    },
+    {
+      "major": "38.50",
+      "currency": "JPY",
+      "minor": 39,
+      "why": "no minor unit to hold the half — rounds, and the form now says so"
+    },
+    {
+      "major": "1.005",
+      "currency": "AUD",
+      "minor": 101,
+      "why": "half away from zero; the float route gave 100"
+    },
+    {
+      "major": "1.234",
+      "currency": "KWD",
+      "minor": 1234,
+      "why": "the headline case — used to import as 123"
+    },
+    {
+      "major": "0.001",
+      "currency": "KWD",
+      "minor": 1
+    },
+    {
+      "major": "1.234",
+      "currency": "IQD",
+      "minor": 1234,
+      "why": "Intl would have made this 1"
+    },
+    {
+      "major": "1.2345",
+      "currency": "CLF",
+      "minor": 12345
+    },
+    {
+      "major": "1e2",
+      "currency": "AUD",
+      "minor": 10000,
+      "why": "<input type=number> passes exponent notation through verbatim"
+    },
+    {
+      "major": "1E2",
+      "currency": "AUD",
+      "minor": 10000
+    },
+    {
+      "major": "1.5e3",
+      "currency": "AUD",
+      "minor": 150000
+    },
+    {
+      "major": "1e-2",
+      "currency": "AUD",
+      "minor": 1
+    },
+    {
+      "major": "55e-3",
+      "currency": "AUD",
+      "minor": 6,
+      "why": "0.055 → half away from zero"
+    },
+    {
+      "major": "5e-3",
+      "currency": "AUD",
+      "minor": 1,
+      "why": "exactly half a minor unit"
+    },
+    {
+      "major": "4e-3",
+      "currency": "AUD",
+      "minor": 0,
+      "why": "below half — genuinely zero, not a parse failure"
+    },
+    {
+      "major": "1e-4",
+      "currency": "AUD",
+      "minor": 0
+    },
+    {
+      "major": "1e3",
+      "currency": "JPY",
+      "minor": 1000
+    },
+    {
+      "major": "1.5e1",
+      "currency": "KWD",
+      "minor": 15000
+    },
+    {
+      "major": "1e2",
+      "currency": "CLF",
+      "minor": 1000000
+    }
   ],
-
   "major_to_minor_refused": {
-    "why": "#40. A comma was stripped unconditionally, so '12,34' — how much of the world writes 12.34 — became 1234 major units and stored a hundredfold error. These are the inputs neither layer may guess at. The two signal it differently and that is fine: the backend raises (a cell gets a row diagnostic and the import stops), the browser returns 0 (a form field visibly empties instead of silently multiplying by 100). What must not differ is WHICH inputs are refused.",
+    "why": "#40. A comma was stripped unconditionally, so '12,34' — how much of the world writes 12.34 — became 1234 major units and stored a hundredfold error. These are the inputs neither layer may guess at. Some are ungrammatical whatever the currency; the rest are grammatical but ambiguous, and only the exponent settles them, so each case carries the currency it is refused in. The two layers signal it differently and that is fine: the backend raises (a cell gets a row diagnostic and the import stops), the browser returns 0 (a form field visibly empties instead of silently multiplying by 100). What must not differ is WHICH inputs are refused.",
     "cases": [
-      { "major": "12,34", "why": "the headline case — a European decimal comma" },
-      { "major": "1.234,56", "why": "fully European: grouped by point, decimal by comma" },
-      { "major": "1,2345", "why": "four digits after the comma is no grouping anyone uses" },
-      { "major": "1,23", "why": "two digits — the shape of a decimal comma" },
-      { "major": ",5", "why": "a leading comma groups nothing" },
-      { "major": "1,234,", "why": "trailing comma" },
-      { "major": "1,23,456", "why": "an inconsistent group in the middle" },
-      { "major": "1_000", "why": "Decimal() honours Python literal underscores; the sheet said no such number" }
+      {
+        "major": "12,34",
+        "currency": "AUD",
+        "why": "the headline case — a European decimal comma"
+      },
+      {
+        "major": "1.234,56",
+        "currency": "AUD",
+        "why": "fully European: grouped by point, decimal by comma"
+      },
+      {
+        "major": "1,2345",
+        "currency": "AUD",
+        "why": "four digits after the comma is no grouping anyone uses"
+      },
+      {
+        "major": "1,23",
+        "currency": "AUD",
+        "why": "two digits — the shape of a decimal comma"
+      },
+      {
+        "major": ",5",
+        "currency": "AUD",
+        "why": "a leading comma groups nothing"
+      },
+      {
+        "major": "1,234,",
+        "currency": "AUD",
+        "why": "trailing comma"
+      },
+      {
+        "major": "1,23,456",
+        "currency": "AUD",
+        "why": "an inconsistent group in the middle"
+      },
+      {
+        "major": "1_000",
+        "currency": "AUD",
+        "why": "Decimal() honours Python literal underscores; the sheet said no such number"
+      },
+      {
+        "major": "1,234",
+        "currency": "AUD",
+        "why": "grammatical grouping, but 1.234 AUD is also a real amount — the readings are 1000x apart"
+      },
+      {
+        "major": "1,234",
+        "currency": "KWD",
+        "why": "the #6 currency: 1,234,000 fils grouped, or the 1234 fils that whole defect was about"
+      },
+      {
+        "major": "1,234",
+        "currency": "CLF",
+        "why": "four-decimal currency; same ambiguity"
+      },
+      {
+        "major": "1,234",
+        "currency": "ZZZ",
+        "why": "unrecognised codes take the 2-digit default, so they are refused too"
+      }
     ]
   },
-
   "minor_to_major": [
-    { "minor": 4999, "currency": "AUD", "major": "49.99" },
-    { "minor": 1200, "currency": "JPY", "major": "1200" },
-    { "minor": 1234, "currency": "KWD", "major": "1.234", "why": "was 12.34" },
-    { "minor": 1, "currency": "KWD", "major": "0.001" },
-    { "minor": 12345, "currency": "CLF", "major": "1.2345" },
-    { "minor": 1234, "currency": "IQD", "major": "1.234" },
-    { "minor": 0, "currency": "AUD", "major": "0.00" }
+    {
+      "minor": 4999,
+      "currency": "AUD",
+      "major": "49.99"
+    },
+    {
+      "minor": 1200,
+      "currency": "JPY",
+      "major": "1200"
+    },
+    {
+      "minor": 1234,
+      "currency": "KWD",
+      "major": "1.234",
+      "why": "was 12.34"
+    },
+    {
+      "minor": 1,
+      "currency": "KWD",
+      "major": "0.001"
+    },
+    {
+      "minor": 12345,
+      "currency": "CLF",
+      "major": "1.2345"
+    },
+    {
+      "minor": 1234,
+      "currency": "IQD",
+      "major": "1.234"
+    },
+    {
+      "minor": 0,
+      "currency": "AUD",
+      "major": "0.00"
+    }
   ],
-
   "round_trips": {
     "why": "Every amount against every currency: export writes major units and import reads them back, so the pair has to land on the integer it started from. Expressed as a product rather than a list so adding one currency covers all the awkward amounts at once.",
-    "currencies": ["JPY", "AUD", "KWD", "CLF", "IQD", "ZZZ"],
-    "minor_amounts": [0, 1, 7, 999, 4999, 123456]
+    "currencies": [
+      "JPY",
+      "AUD",
+      "KWD",
+      "CLF",
+      "IQD",
+      "ZZZ"
+    ],
+    "minor_amounts": [
+      0,
+      1,
+      7,
+      999,
+      4999,
+      123456
+    ]
   }
 }

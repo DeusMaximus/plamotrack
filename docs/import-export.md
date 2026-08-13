@@ -175,9 +175,16 @@ different number from the one you wrote.
   ±2,147,483,647 is reported on the row instead of failing partway through the
   import.
 - **A comma is only ever a thousands separator**, and only where it can't be
-  anything else: `1,234` and `1,299.50` read as you'd expect. `12,34` is refused,
+  anything else. `1,299.50` and `1,234,567` are fine — a decimal point already
+  present, or a second comma, rules out any other reading. `12,34` is refused,
   because most of the world writes 12.34 that way and reading it as `1234` would
-  store a hundred times the real price. Write a decimal point, or no separator.
+  store a hundred times the real price.
+- **A single comma with no decimal point depends on the currency.** `1,234` is
+  either one thousand two hundred and thirty-four, or the way much of the world
+  writes `1.234` — a thousandfold difference. Where the currency has no minor unit
+  it can only be the first, so `1,234` JPY imports as ¥1234. Everywhere else it's
+  refused: in KWD it would be either 1,234,000 fils or 1234, and nothing in the
+  cell says which. Write `1234`, or `1.234`, and it's unambiguous.
 - **`1e2` works**, in both whole-number and money columns — spreadsheets and number
   inputs emit exponent notation on their own, so it's read the way they mean it.
 

@@ -46,12 +46,17 @@ export function minorToMajor(minor: number, currency: string): string {
  * how much of the world writes 12.34 — into 1234 major units, a hundredfold error.
  * It is accepted only where it cannot be a decimal point: grouped in threes, and
  * never after the decimal point. */
-function degroup(text: string): string | null {
+function degroup(text: string, digits: number): string | null {
   if (!text.includes(",")) return text;
   const point = text.indexOf(".");
   const head = point === -1 ? text : text.slice(0, point);
   const tail = point === -1 ? "" : text.slice(point);
   if (tail.includes(",") || !/^[+-]?\d{1,3}(?:,\d{3})+$/.test(head)) return null;
+  // A *lone* group is grammatical and still ambiguous: "1,234" is equally a
+  // European spelling of 1.234, and in KWD those are 1,234,000 fils and 1234 fils.
+  // Only the exponent settles it, and only one way — with no minor unit there is
+  // nowhere for a decimal reading to land, so "1,234" JPY is plainly ¥1234.
+  if (digits !== 0 && (text.match(/,/g) ?? []).length === 1 && point === -1) return null;
   return head.replace(/,/g, "") + tail;
 }
 
@@ -63,7 +68,10 @@ function degroup(text: string): string | null {
  * The backend rounds half away from zero; so does this. */
 export function majorToMinor(major: string | number, currency: string): number {
   const digits = minorFractionDigits(currency);
-  const text = degroup((typeof major === "number" ? String(major) : major).replace(/\s/g, ""));
+  const text = degroup(
+    (typeof major === "number" ? String(major) : major).replace(/\s/g, ""),
+    digits,
+  );
   if (text === null) return 0;
   // Exponent notation is not exotic here: `<input type="number">` treats "1e2" as a
   // valid value and hands it over unchanged, and Decimal reads it on the backend. A

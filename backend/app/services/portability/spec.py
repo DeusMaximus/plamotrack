@@ -50,7 +50,7 @@ from app.models.enums import (
     ShippingSpeed,
     WouldOrderAgain,
 )
-from app.services.currency import strip_numeric_grouping
+from app.services.numeric import require_int4, strip_numeric_grouping
 
 # --- cell parsers --------------------------------------------------------------
 
@@ -61,12 +61,6 @@ _FALSE = {"false", "f", "no", "n", "0"}
 def parse_text(raw: str) -> str | None:
     value = raw.strip()
     return value or None
-
-
-#: PostgreSQL `integer`. Every one of the twelve int4 columns in the schema is parsed
-#: by `parse_int`, so checking the bound here is what keeps an oversized cell a row
-#: diagnostic instead of an IntegrityError at flush, three tables into the transaction.
-INT4_MIN, INT4_MAX = -2_147_483_648, 2_147_483_647
 
 
 def parse_int(raw: str) -> int | None:
@@ -94,10 +88,7 @@ def parse_int(raw: str) -> int | None:
         raise ValueError(f"'{raw}' is not a whole number")
     # Before `to_integral_value`, so an absurd exponent is refused by comparison
     # rather than expanded into a million-digit integer first.
-    if not INT4_MIN <= number <= INT4_MAX:
-        raise ValueError(
-            f"'{raw}' is out of range — whole numbers here go from {INT4_MIN:,} to {INT4_MAX:,}"
-        )
+    require_int4(number, f"'{raw}'")
     if number != number.to_integral_value():
         raise ValueError(f"'{raw}' is not a whole number — it has a fractional part")
     return int(number)
