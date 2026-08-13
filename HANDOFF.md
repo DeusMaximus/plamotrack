@@ -18,9 +18,29 @@ Template:
 
 ## 2026-08-13 — Claude Code — #41 fixed in PR #72; v0.2.5 branch shape settled
 
-**PR #72 is open and unmerged** on `fix/import-apply-plan-binding`. 252 backend
+**PR #72 is open and unmerged** on `fix/import-apply-plan-binding`, at `f183b91`
+after an external review found a defect in the first commit (see below). 254 backend
 (245 before), ruff clean, frontend builds. No e2e change — nothing in `frontend/e2e`
 exercises import. `main` holds only this entry beyond `eb9e262`.
+
+- **An external review (Codex 5.6 Sol) returned NO-GO on `4369d36`, and was right.**
+  `_classify` records a field change as `after=render(new_value)`, and
+  `_plan_fingerprint` hashed `c.after` verbatim — so where a change repointed a
+  reference at a stub conjured during the same plan, the raw minted uuid went into
+  the digest while `values` tokenised the identical value beside it. Previewing an
+  unchanged file twice gave two hashes. Fixed in `f183b91` by recomputing `after`
+  from the row's own value through the token map. `before` deliberately stays
+  rendered: it reflects what the database holds, so it is never a minted uuid, and
+  it has to stay in to catch a target changing under an open preview.
+
+- **Read this before writing the next importer regression suite.** Every stability
+  test on the branch drove a **CREATE**, and `changes` is empty on a create — so the
+  leaking field was *structurally unreachable* from the cases chosen, and no number
+  of extra id shapes would have found it. The id field's value space was swept
+  properly (absent column, blank cell, sheet-supplied, stub); the row **action** was
+  a second axis and was held constant throughout. That is the same failure `AGENTS.md`
+  records for #65/#66/#69, in a new shape: when a fix touches a field, enumerate the
+  *states the row can be in* as well as the values the field can hold.
 
 - **v0.2.5 is four branches, not one.** The earlier note in this log called #40–#43
   "one branch"; that was written before anyone read the importer and it was wrong.
