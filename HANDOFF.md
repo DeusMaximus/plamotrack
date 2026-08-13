@@ -16,6 +16,68 @@ Template:
 
 ---
 
+## 2026-08-14 — Claude Code — #40 merged (PR #73); two external reviews, two real finds
+
+**`main` at `07be49b`, clean, no branches local or remote.** 316 backend, 94 vitest,
+ruff + oxlint clean, all three CI jobs green. `M5 hardening — v0.2.5-alpha` is at
+**two open** (#42, #43); #40 and #41 are closed. PR #72 and #73 both merged.
+
+- **#40 shipped with #43's integer range checks.** `parse_int` refuses fractional,
+  non-finite, underscored and out-of-int4 cells (`1.9` used to import as `1`, `inf`
+  escaped as a 500). The comma rule is two-stage: shape first, then — for major-unit
+  ALT_MONEY columns — the **currency** settles a lone group. Rules live in the new
+  `app/services/numeric.py` (`strip_numeric_grouping`, `is_lone_group`, `INT4_MIN/MAX`,
+  `require_int4`), mirrored by `degroup` in `format.ts` and pinned by
+  `money-cases.json`, which both suites read.
+
+- **Reviews found two defects the local suite could not.** Both were in a *fix*, both
+  were the same class as the thing being fixed:
+  1. **#72:** `_plan_fingerprint` hashed `changes[].after` verbatim, so a minted uuid
+     went in raw. Latent in `eb9e262`'s `_hash_plan` too; the rewrite inherited it.
+  2. **#73:** validating comma *grammar* alone accepted `1,234` for every currency —
+     which in KWD is 1,234,000 fils or the 1234 fils **#6 was about**. The first fix
+     reopened #6 through different syntax. Now accepted only where
+     `minor_fraction_digits == 0`, because that is the only case with no subunit for
+     a decimal reading to land in. `1,234` JPY is fine; `1,234` AUD/KWD/CLF is not.
+
+- **`require_int4` is deliberately NOT called inside `major_to_minor`.** int4 is a
+  storage bound, not a currency property, and `currency.py` is mirrored by
+  `frontend/src/lib/currency.ts` where no such bound exists. The reviewer initially
+  asked for it there and agreed with the reasoning. Don't "consolidate" it later.
+
+- **Three tests in #73 were false detectors before being caught**, all found by
+  checking *which* tests went red against unfixed code rather than counting them. Two
+  errored for unrelated reasons (a required `category` left blank; a kit line short of
+  `kit_name`/`kit_grade` erroring in `_plan_spawns`). The third was the ALT_MONEY
+  matrix, written first as a unit test of `require_int4` that never entered the
+  importer — **a matrix over the wrong axis is still a matrix**. Every detector now
+  asserts the error *names the column under test*, which is what makes a false
+  positive impossible.
+
+- **`test_every_int4_column_is_declared_with_parse_int` proves less than its old name
+  claimed.** It stays green if the `_apply_money_alternates` range check is deleted.
+  Behavioural coverage of that route is the ALT_MONEY matrix (3 columns × 4
+  exponents), which fails 12/12 against pre-#40 `main`.
+
+- **#74 filed:** REST and MCP accept integers PostgreSQL cannot store — *no* integer
+  field in `app/schemas/` has an upper bound (`grep "le=\|lt=" app/schemas/*.py`
+  returns nothing), and the stock/order arithmetic checks the lower bound only. Same
+  class as #40, no CSV involved. In v0.2.6.
+
+- **Process note:** `git checkout <branch> -- <paths>` discarded uncommitted work
+  mid-session, and a later `git stash pop` collided with it. Both recovered in full,
+  but the stash/checkout dance used to run tests against old code is what caused it —
+  **commit first, then swap files**, or use a worktree.
+
+- **Next: #42 + #43's expanded-byte budget**, one branch — both restructure the same
+  `_read_zip` loop (`importing.py`, the `for entry in names` block). Then #43's
+  per-line quantity ceiling on its own: it is an orders-service invariant reachable
+  from REST and MCP, not an importer fix. Per the owner's call these ride the release
+  gate rather than getting their own external review; #40 was bought a review because
+  `parse_int` is a shared mechanism everything flows through.
+
+---
+
 ## 2026-08-13 — Claude Code — #41 fixed in PR #72; v0.2.5 branch shape settled
 
 **PR #72 is open and unmerged** on `fix/import-apply-plan-binding`, at `f183b91`
