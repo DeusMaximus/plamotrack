@@ -16,6 +16,54 @@ Template:
 
 ---
 
+## 2026-08-13 — Claude Code — #41 fixed in PR #72; v0.2.5 branch shape settled
+
+**PR #72 is open and unmerged** on `fix/import-apply-plan-binding`. 252 backend
+(245 before), ruff clean, frontend builds. No e2e change — nothing in `frontend/e2e`
+exercises import. `main` holds only this entry beyond `eb9e262`.
+
+- **v0.2.5 is four branches, not one.** The earlier note in this log called #40–#43
+  "one branch"; that was written before anyone read the importer and it was wrong.
+  They share the parse → plan → apply *path*, which is not the same as sharing a root
+  cause. Settled shape: **#41 first** (contract, done — PR #72), then **#40 + #43's
+  integer range checks** (numeric grammar, same edit in `parse_int`, carries the
+  cross-layer comma sweep), then **#42 + #43's expanded-byte budget** (both rewrite
+  the same `_read_zip` loop), then **#43's quantity ceiling** on its own. #43 closes
+  only when all three of its pieces land.
+
+- **#43's quantity ceiling is not an importer fix.** `schemas/orders.py` has
+  `quantity: int = Field(gt=0)` — a floor and no ceiling — so `spawn_kits` fan-out is
+  unbounded from **REST and MCP** with no CSV anywhere in it. Rule 1 says that belongs
+  in its own branch, not buried in a diff labelled CSV parsing.
+
+- **#41 went in first on purpose and it paid.** The churn was **33** apply call sites,
+  not the ~25 the issue estimated — `test_reference_currency.py` had its own inline
+  posts plus a second local helper (`import_tools`). Both files now go through a
+  preview-then-apply helper, so the three remaining importer branches inherit it.
+
+- **Two things the issue didn't specify, both found by writing the test.** (1) The
+  "deletion set" has to be the row **ids**, not the counts — the first implementation
+  hashed counts, which is what the *old* hash already did, so swapping one collection
+  for another of equal size stayed invisible. (2) A near-miss regression: "was this id
+  minted?" was first keyed off `"id" not in row.present`, but a CSV with an `id`
+  **column** and an empty **cell** still puts `id` in `present` — and every export
+  template ships that column. Every hand-edited archive carrying a name reference
+  would have 409'd on a file nobody touched. Both are pinned by tests.
+
+- **The hash must not contain rendered English.** `row.label` and `row.error` were in
+  it briefly; design §6.1 says neither wording nor active language may participate, or
+  translating a diagnostic in M5.1 invalidates every outstanding preview. They're out,
+  with the reasoning in `_plan_fingerprint`'s docstring — nothing is lost, since a
+  label derives from values hashed in full and an error is carried by the row's action.
+  **Don't add them back.**
+
+- **Next: #40 + #43's range checks.** Watch `1e2` — `AGENTS.md` records that the #6
+  rewrite silently broke exponent input in a file that then had no tests, and #40 is
+  the branch most likely to repeat it. Cross-layer cases go in
+  `frontend/src/lib/__fixtures__/money-cases.json`, which both sides read.
+
+---
+
 ## 2026-08-13 — Claude Code — #39 deferred to M6; hardening milestones renumbered
 
 **Planning only. No code changed; the only tracked file touched is this one.** The
