@@ -70,6 +70,23 @@ async def preview(client, content: bytes, *, mode="merge", filename="archive.zip
 
 
 async def apply(client, content: bytes, *, mode="merge", filename="archive.zip", **extra):
+    """Preview, then apply exactly what the preview showed.
+
+    The hash is mandatory (#41), so an apply is always a two-step. Pass
+    `plan_hash=` explicitly to drive the stale-hash and missing-hash paths on
+    purpose; leaving it off exercises the honest round trip, which is also the
+    standing check that the fingerprint is stable across two runs of the same
+    file — the id-less sheets in this module mint fresh uuids on every plan.
+    """
+    if "plan_hash" not in extra:
+        seen = await client.post(
+            "/import/preview",
+            files={"file": (filename, content, "application/octet-stream")},
+            data={"mode": mode},
+        )
+        # A file the preview itself rejects has no hash to quote. Send none and
+        # let the apply answer for it, rather than masking the status under test.
+        extra["plan_hash"] = seen.json().get("plan_hash", "") if seen.status_code == 200 else ""
     data = {"mode": mode, **extra}
     return await client.post(
         "/import/apply",
@@ -783,3 +800,328 @@ async def test_known_currency_import_is_not_warned_about(client, retailer):
     )
     plan = await preview(client, content, filename="orders.csv")
     assert plan["tables"][0]["rows"][0]["messages"] == []
+
+
+# --- the preview is binding (#41) ------------------------------------------------
+#
+# Every test below drives a *value* the old fingerprint could not see. It read
+# `(row_number, action, matched_id, changes)`, so a CREATE contributed only its
+# position and the word "create" — two different files of the same shape hashed
+# identically. Asserting a mismatched hash is rejected proves nothing here: that
+# path always worked. The cases that matter are the ones where the shape is equal
+# and the content is not.
+
+
+def _retailer_sheet(name: str) -> bytes:
+    """One id-less create. Same shape every time, so only the value can move the hash."""
+    return make_csv(spec.RETAILERS.header, [{"name": name, "country": "JP"}])
+
+
+async def test_apply_without_a_plan_hash_is_refused(client):
+    # The defect was `if plan_hash and ...` — falsy skipped the recheck entirely.
+    # A wrong hash was always caught; an *absent* one was not, so absent is the
+    # case under test, along with the two falsy strings a form can actually send.
+    content = _retailer_sheet("Nippon Hobby")
+
+    for missing in ("", "   "):
+        resp = await apply(client, content, filename="retailers.csv", plan_hash=missing)
+        assert resp.status_code == 422, f"blank hash {missing!r} was accepted"
+        assert "preview" in resp.json()["detail"]
+
+    # Omitted entirely — no form field at all, which is what the old code let past.
+    resp = await client.post(
+        "/import/apply",
+        files={"file": ("retailers.csv", content, "application/octet-stream")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, "an apply with no plan_hash field was accepted"
+    assert (await client.get("/retailers")).json() == []
+
+
+async def test_a_same_shaped_file_cannot_reuse_another_files_hash(client):
+    # Both files plan one create at row 2. Identical under the old fingerprint.
+    previewed = await preview(client, _retailer_sheet("Previewed"), filename="retailers.csv")
+
+    resp = await apply(
+        client,
+        _retailer_sheet("Different"),
+        filename="retailers.csv",
+        plan_hash=previewed["plan_hash"],
+    )
+    assert resp.status_code == 409, resp.text
+    assert (await client.get("/retailers")).json() == []
+
+
+async def test_changed_spawn_attributes_invalidate_the_hash(client):
+    # `kits_spawned` was in the old hash, so a changed *quantity* was caught. The
+    # kit's identity was not — same count, different kit, same fingerprint.
+    retailer = (await client.post("/retailers", json={"name": "Gundam Base"})).json()
+
+    def archive(kit_name: str) -> bytes:
+        return make_archive(
+            {
+                "orders": [
+                    {
+                        "id": "11111111-1111-4111-8111-111111111111",
+                        "retailer_id": retailer["id"],
+                        "order_date": "2026-05-02",
+                        "order_number": "GB-1",
+                        "currency_code": "AUD",
+                    }
+                ],
+                "order_items": [
+                    {
+                        "id": "22222222-2222-4222-8222-222222222222",
+                        "order_id": "11111111-1111-4111-8111-111111111111",
+                        "item_type": "kit",
+                        "quantity": "3",
+                        "unit_price_minor": "1999",
+                        "currency_code": "AUD",
+                        "kit_name": kit_name,
+                        "kit_grade": "HG",
+                    }
+                ],
+            }
+        )
+
+    previewed = await preview(client, archive("Gouf Custom"))
+    assert previewed["derived"]["kits_spawned"] == 3
+
+    resp = await apply(client, archive("Zaku II"), plan_hash=previewed["plan_hash"])
+    assert resp.status_code == 409, resp.text
+    assert (await client.get("/kits")).json() == []
+
+
+async def test_a_changed_stub_reference_invalidates_the_hash(client):
+    # A retailer named but never declared is conjured as a stub. Stubs are pure
+    # creates with a minted id, so under the old fingerprint every stub in a given
+    # position hashed the same no matter who it was.
+    def sheet(retailer_name: str) -> bytes:
+        return make_csv(
+            spec.ORDERS.header,
+            [
+                {
+                    "retailer_name": retailer_name,
+                    "order_date": "2026-05-02",
+                    "order_number": "X-1",
+                    "currency_code": "AUD",
+                }
+            ],
+        )
+
+    previewed = await preview(client, sheet("Hobby Link Japan"), filename="orders.csv")
+
+    resp = await apply(
+        client, sheet("Some Other Shop"), filename="orders.csv", plan_hash=previewed["plan_hash"]
+    )
+    assert resp.status_code == 409, resp.text
+    assert (await client.get("/retailers")).json() == []
+
+
+async def test_changed_deletion_identity_invalidates_the_hash(client):
+    # replace_all previews a count of rows to destroy. Swapping which rows those
+    # are, without changing how many, is a different loss at the same number.
+    await client.post("/retailers", json={"name": "Doomed One"})
+    content = _retailer_sheet("Replacement")
+
+    previewed = await preview(client, content, filename="retailers.csv", mode="replace_all")
+    assert previewed["derived"]["rows_deleted"] == {"retailers": 1}
+
+    existing = (await client.get("/retailers")).json()
+    await client.delete(f"/retailers/{existing[0]['id']}")
+    await client.post("/retailers", json={"name": "A Different Doomed One"})
+
+    resp = await apply(
+        client,
+        content,
+        filename="retailers.csv",
+        mode="replace_all",
+        confirm="REPLACE",
+        plan_hash=previewed["plan_hash"],
+    )
+    assert resp.status_code == 409, resp.text
+    assert {r["name"] for r in (await client.get("/retailers")).json()} == {
+        "A Different Doomed One"
+    }
+
+
+async def test_the_same_id_less_file_previews_to_the_same_hash(client):
+    """Negative control for the trap in `_plan_fingerprint`.
+
+    Every create here mints a fresh `uuid4()` per plan, the referenced retailer is
+    conjured as a stub with another, and the kits carry a `status_updated_at`
+    default off the clock. Hash any of those directly and the honest round trip
+    below fails 409 every time, on a file nobody touched.
+    """
+    content = make_csv(
+        spec.ORDERS.header,
+        [
+            {
+                "retailer_name": "Conjured Shop",
+                "order_date": "2026-05-02",
+                "order_number": "X-1",
+                "currency_code": "AUD",
+            }
+        ],
+    )
+
+    first = await preview(client, content, filename="orders.csv")
+    second = await preview(client, content, filename="orders.csv")
+    assert first["plan_hash"] == second["plan_hash"]
+
+    resp = await apply(client, content, filename="orders.csv", plan_hash=first["plan_hash"])
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["created"] == 2  # the order, and the retailer it named
+
+
+async def test_a_blank_id_column_still_hashes_stably_through_a_reference(client):
+    """The id-less case has two shapes, and only one is obvious.
+
+    A sheet with no `id` column at all leaves `id` out of the row's `present` set.
+    A sheet that *has* the column and leaves the cell empty does not — and every
+    export template ships the column, so that is the common one. Both mint a uuid,
+    and when a second row resolves to that row by name, the reference carries the
+    minted value. Hash it raw and the round trip 409s on a file nobody edited.
+    """
+    tables = {
+        # A blank id cell, not an absent column: make_archive writes the full header.
+        "retailers": [{"name": "Conjured Shop", "country": "JP"}],
+        "orders": [
+            {
+                "retailer_name": "Conjured Shop",
+                "order_date": "2026-05-02",
+                "order_number": "X-1",
+                "currency_code": "AUD",
+            }
+        ],
+    }
+    content = make_archive(tables)
+
+    first = await preview(client, content)
+    second = await preview(client, content)
+    assert first["plan_hash"] == second["plan_hash"], "a blank id cell moved the hash"
+
+    resp = await apply(client, content, plan_hash=first["plan_hash"])
+    assert resp.status_code == 200, resp.text
+    orders = (await client.get("/orders")).json()
+    retailers = (await client.get("/retailers")).json()
+    assert len(orders) == 1 and len(retailers) == 1
+    assert orders[0]["retailer_id"] == retailers[0]["id"]
+
+
+async def test_an_update_to_a_conjured_reference_hashes_stably(client):
+    """The other half of the minted-uuid trap, and it isn't in `values`.
+
+    `_classify` records a reference change as `after=render(new_value)`. When the
+    new value is a stub this planner just conjured, that render is a fresh uuid —
+    so an UPDATE pointing at a conjured retailer moved the hash on every pass even
+    though `values` was tokenised correctly. Reported by an external review of #72.
+    """
+    old = (await client.post("/retailers", json={"name": "Old Shop"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": old["id"],
+                "order_date": "2026-05-02",
+                "order_number": "X-1",
+                "currency_code": "AUD",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2450,
+                        "currency_code": "AUD",
+                        "kit": {"name": "Gouf Custom", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    # Existing order (matched by id), repointed at a retailer that does not exist
+    # yet — so `_resolve_ref` conjures a stub and the change's `after` is its uuid.
+    content = make_csv(
+        spec.ORDERS.header,
+        [
+            {
+                "id": order["id"],
+                "retailer_name": "Conjured Replacement Shop",
+                "order_date": "2026-05-02",
+                "order_number": "X-1",
+                "currency_code": "AUD",
+            }
+        ],
+    )
+
+    first = await preview(client, content, filename="orders.csv")
+    assert actions(first, "orders") == ["update"], first["tables"]
+    second = await preview(client, content, filename="orders.csv")
+    assert first["plan_hash"] == second["plan_hash"], "a conjured reference moved the hash"
+
+    resp = await apply(client, content, filename="orders.csv", plan_hash=first["plan_hash"])
+    assert resp.status_code == 200, resp.text
+    names = {r["name"] for r in (await client.get("/retailers")).json()}
+    assert names == {"Old Shop", "Conjured Replacement Shop"}
+
+
+async def test_an_update_to_a_conjured_catalog_reference_hashes_stably(client):
+    """The same defect on a different table, ref column and stub type.
+
+    The fix canonicalises every change's `after`, so it is not order-specific —
+    this drives an order *line* repointed at a conjured consumable, which also
+    goes through `_resolve_ref`'s `catalog` indirection (the target table is
+    chosen from `item_type` rather than named on the column).
+    """
+    retailer = (await client.post("/retailers", json={"name": "Gundam Base"})).json()
+    consumable = (
+        await client.post(
+            "/consumables",
+            json={"name": "Mr Color 1", "category": "paint", "quantity_on_hand": 1},
+        )
+    ).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-05-02",
+                "order_number": "GB-9",
+                "currency_code": "AUD",
+                "items": [
+                    {
+                        "item_type": "consumable",
+                        "catalog_ref_id": consumable["id"],
+                        "quantity": 1,
+                        "unit_price_minor": 400,
+                        "currency_code": "AUD",
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    content = make_csv(
+        spec.ORDER_ITEMS.header,
+        [
+            {
+                "id": order["items"][0]["id"],
+                "order_id": order["id"],
+                "item_type": "consumable",
+                "catalog_name": "Conjured Paint",
+                "quantity": "1",
+                "unit_price_minor": "400",
+                "currency_code": "AUD",
+            }
+        ],
+    )
+
+    first = await preview(client, content, filename="order_items.csv")
+    assert actions(first, "order_items") == ["update"], first["tables"]
+    second = await preview(client, content, filename="order_items.csv")
+    assert first["plan_hash"] == second["plan_hash"], "a conjured catalog ref moved the hash"
+
+    resp = await apply(client, content, filename="order_items.csv", plan_hash=first["plan_hash"])
+    assert resp.status_code == 200, resp.text
+    names = {c["name"] for c in (await client.get("/consumables")).json()}
+    assert names == {"Mr Color 1", "Conjured Paint"}

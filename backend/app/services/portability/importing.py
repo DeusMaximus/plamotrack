@@ -6,9 +6,11 @@ resolves every incoming row against what's already in the database, classifies i
 effects, without writing anything. That plan *is* the preview payload.
 
 Applying re-parses and re-plans, compares the resulting `plan_hash` against the
-one the user was shown, and refuses with a 409 if they differ. Nothing is stored
-between the two calls: the plan can't go stale in a cache, survives a container
-restart, and the recheck closes the window between looking and committing.
+one the user was shown, and refuses with a 409 if they differ. The hash is
+required — an apply without one is a 422, because it is an apply nobody reviewed.
+Nothing is stored between the two calls: the plan can't go stale in a cache,
+survives a container restart, and the recheck closes the window between looking
+and committing. What the hash does and does not cover is `_plan_fingerprint`.
 
 Two rules do most of the work of not duplicating things:
 
@@ -238,6 +240,11 @@ class _Row:
     messages: list[str] = field(default_factory=list)
     error: str | None = None
     new_id: uuid.UUID | None = None
+    #: This row's `id` was minted here rather than read from the sheet — a stub
+    #: conjured from a reference. Sheet-supplied ids are facts about the file and
+    #: hash as themselves; minted ones are fresh on every run, so
+    #: `_plan_fingerprint` replaces them with a positional token.
+    synthetic_id: bool = False
 
 
 @dataclass
@@ -447,6 +454,7 @@ class _Planner:
             present=present,
             label=spec.label(values),
             new_id=new_id,
+            synthetic_id=True,
             messages=[
                 f"created from a reference on {source.table} row {source.row_number}"
                 + (" at 0 on hand" if table != "retailers" else "")
@@ -820,6 +828,17 @@ class _Planner:
         deletes = (
             {key: len(rows) for key, rows in self.existing.items() if rows} if replace_all else {}
         )
+        # The preview shows counts, but the hash has to cover *which* rows go: two
+        # collections of the same size are the same number and a different loss.
+        deleted_ids = (
+            {
+                key: sorted(str(instance.id) for instance in rows)
+                for key, rows in self.existing.items()
+                if rows
+            }
+            if replace_all
+            else {}
+        )
         derived = DerivedEffects(
             kits_spawned=sum(spawn.count for spawn in self.spawns),
             stock_changes=0,
@@ -831,7 +850,9 @@ class _Planner:
         )
 
         plan = ImportPlan(
-            plan_hash="",
+            plan_hash=_plan_fingerprint(
+                self.mode, self.upload.source, self.rows, self.spawns, deleted_ids
+            ),
             mode=self.mode,
             source=self.upload.source,
             manifest=self.upload.manifest,
@@ -840,35 +861,116 @@ class _Planner:
             warnings=self.warnings,
             blocking_errors=self.blocking,
         )
-        plan.plan_hash = _hash_plan(plan)
         return ExecutionPlan(mode=self.mode, rows=self.rows, spawns=self.spawns, plan=plan)
 
 
-def _hash_plan(plan: ImportPlan) -> str:
-    """Fingerprints the decisions, not the file: if the collection changed under a
-    preview such that any row would now resolve differently, the hash moves."""
+def _plan_fingerprint(
+    mode: ImportMode,
+    source: str,
+    rows: dict[str, list[_Row]],
+    spawns: list[_Spawn],
+    deleted_ids: dict[str, list[str]],
+) -> str:
+    """Fingerprints what would be written, not the file it came from.
+
+    Covers the resolved value set of every row, the spawn descriptors and the
+    deletion set — so a second file that merely *plans the same shape* (same row
+    count, same actions) no longer passes a hash taken against the first. The
+    previous fingerprint read only `(row_number, action, matched_id, changes)`,
+    which a CREATE contributes nothing to beyond its position and the word
+    "create".
+
+    Two families of value must stay out of it, or preview and apply can never
+    agree on a sheet that supplies no ids:
+
+    * **Minted uuids.** `_classify` mints one for every id-less create and
+      `_create_stub` mints another per conjured reference, freshly random each
+      run. They are replaced here by a positional token, which keeps what
+      actually matters — *which planned row* a foreign key lands on — while
+      dropping the part that is noise. Any reference pointing at one is rewritten
+      through the same map, so an id-less retailer named by an order still hashes
+      stably.
+    * **Clock-derived defaults.** `_COLUMN_DEFAULTS` holds three
+      `datetime.now(UTC)` lambdas. They stay out for free because that table is
+      applied in `_build_instance` at apply time and never reaches a planned
+      row's values — if that ever moves into planning, it has to be excluded
+      here explicitly.
+
+    Rendered English stays out as well, and deliberately: `row.label` and
+    `row.error` are both wording (`"(unnamed retailer)"`, `"upgrade application
+    × 2"`), and §6.1 holds that neither wording nor the active language may
+    participate in the hash — otherwise translating a diagnostic silently
+    invalidates every outstanding preview. Nothing is lost by omitting them. A
+    label is derived from values that are hashed here in full, and an error is
+    already carried by the row's action, which cannot reach the comparison
+    anyway: `apply_import` rejects a plan holding blocking errors first.
+    """
+    synthetic: dict[uuid.UUID, str] = {}
+    for spec in TABLE_SPECS:
+        for index, row in enumerate(rows.get(spec.key, [])):
+            # Minted, not read: `_classify` falls back to `uuid4()` whenever the
+            # sheet supplied no id, so a `new_id` that doesn't equal the row's own
+            # `id` value was invented here. Testing `"id" in present` instead would
+            # miss the common case by a mile — every export template ships the
+            # column, so a hand-added row has the id *column* and an empty *cell*.
+            # Stubs need the flag as well: they set `values["id"]` to the uuid they
+            # just minted, so the two match and only the flag can tell them apart.
+            if row.new_id is not None and (row.synthetic_id or row.values.get("id") != row.new_id):
+                synthetic[row.new_id] = f"new:{spec.key}:{index}"
+
+    def canon(value: Any) -> str:
+        if isinstance(value, uuid.UUID):
+            return synthetic.get(value, str(value))
+        return render(value)
+
     payload = {
-        "mode": plan.mode.value,
-        "source": plan.source,
+        "mode": mode.value,
+        "source": source,
+        "deletes": deleted_ids,
         "tables": [
             {
-                "table": table.table,
+                "table": spec.key,
                 "rows": [
-                    [
-                        row.row_number,
-                        row.action.value,
-                        str(row.matched_id) if row.matched_id else None,
-                        [[c.field, c.before, c.after] for c in row.changes],
-                    ]
-                    for row in table.rows
+                    {
+                        "row": row.row_number,
+                        "action": row.action.value,
+                        "matched": str(row.matched_id) if row.matched_id else None,
+                        # Sorted so that reordering a column in the spec doesn't
+                        # invalidate every hash for no behavioural reason.
+                        "values": sorted(
+                            [column.name, canon(row.values.get(column.name))]
+                            for column in spec.columns
+                            if column.persisted and column.name in row.present
+                        ),
+                        # `c.after` is `render(new_value)` — already rendered, so a
+                        # minted uuid would go in raw and move the hash every pass.
+                        # Re-canonicalise from the row's own value instead. `before`
+                        # is safe as-is: it renders what the database already holds,
+                        # which is never a uuid this planner invented, and it has to
+                        # stay in so a target changing under the preview is caught.
+                        "changes": [
+                            [c.field, c.before, canon(row.values.get(c.field))] for c in row.changes
+                        ],
+                    }
+                    for row in rows.get(spec.key, [])
                 ],
             }
-            for table in plan.tables
+            for spec in TABLE_SPECS
+            if rows.get(spec.key)
         ],
-        "derived": {
-            "kits_spawned": plan.derived.kits_spawned,
-            "rows_deleted": plan.derived.rows_deleted,
-        },
+        "spawns": [
+            [
+                canon(spawn.order_item_id),
+                spawn.count,
+                spawn.name,
+                spawn.grade,
+                spawn.scale or "",
+                spawn.kit_number or "",
+                spawn.status,
+                spawn.row_number,
+            ]
+            for spawn in spawns
+        ],
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -933,13 +1035,22 @@ async def apply_import(
             "replacing everything wipes the current collection first — "
             "send confirm='REPLACE' to go ahead"
         )
+    # Before parsing anything: an apply with no hash is an apply nobody reviewed.
+    # This used to short-circuit on falsy further down, which meant *omitting* the
+    # field skipped the recheck entirely rather than failing it.
+    plan_hash = (plan_hash or "").strip()
+    if not plan_hash:
+        raise InvalidInputError(
+            "preview this import first and send back the plan_hash it returned — "
+            "an apply is only allowed to do what a preview showed"
+        )
 
     execution = await plan_import(session, filename, content, mode)
     plan = execution.plan
 
     if plan.blocking_errors:
         raise ConflictError("; ".join(plan.blocking_errors))
-    if plan_hash and plan_hash != plan.plan_hash:
+    if plan_hash != plan.plan_hash:
         raise ConflictError(
             "the collection changed since you previewed this import, so the preview "
             "no longer matches what would happen — run the preview again"

@@ -78,7 +78,11 @@ async def apply_import(
     confirm: Annotated[str | None, Form()] = None,
 ) -> ImportResult:
     """Re-plans the same file and refuses (409) if the outcome no longer matches the
-    previewed `plan_hash`. Runs as one transaction — any bad row imports nothing."""
+    previewed `plan_hash`. Runs as one transaction — any bad row imports nothing.
+
+    `plan_hash` is required and stays typed as optional here so the service raises
+    the domain error (422) that says *why*, rather than FastAPI rejecting the form
+    field with a validation shape that doesn't mention previewing (rule 6)."""
     return await importing.apply_import(
         session, file.filename or "upload.csv", await file.read(), mode, plan_hash, confirm
     )
