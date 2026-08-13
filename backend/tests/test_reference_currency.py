@@ -25,6 +25,28 @@ def reference_currency(monkeypatch):
     get_settings.cache_clear()
 
 
+async def _preview_then_apply(client, filename: str, content: bytes):
+    """Import the way a client has to since #41: preview, then apply that plan.
+
+    The hash is mandatory, so these tests can no longer post straight to apply.
+    Faults are deliberately left to the caller's own assertion — a preview that
+    fails yields no hash, and the apply then reports why in its own status.
+    """
+    seen = await client.post(
+        "/import/preview",
+        files={"file": (filename, content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    return await client.post(
+        "/import/apply",
+        files={"file": (filename, content, "text/csv")},
+        data={
+            "mode": "merge",
+            "plan_hash": seen.json().get("plan_hash", "") if seen.status_code == 200 else "",
+        },
+    )
+
+
 def kit_line(**overrides) -> dict:
     return {
         "item_type": "kit",
@@ -289,11 +311,7 @@ async def test_legacy_converted_price_column_is_read_as_aud(client, retailer, re
             }
         ],
     )
-    resp = await client.post(
-        "/import/apply",
-        files={"file": ("order_items.csv", content, "text/csv")},
-        data={"mode": "merge"},
-    )
+    resp = await _preview_then_apply(client, "order_items.csv", content)
     assert resp.status_code == 200, resp.text
 
     updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
@@ -353,11 +371,7 @@ async def test_current_column_wins_when_both_are_present(client, retailer):
             }
         ],
     )
-    resp = await client.post(
-        "/import/apply",
-        files={"file": ("order_items.csv", content, "text/csv")},
-        data={"mode": "merge"},
-    )
+    resp = await _preview_then_apply(client, "order_items.csv", content)
     assert resp.status_code == 200, resp.text
 
     updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
@@ -395,11 +409,7 @@ async def test_import_stamps_the_instance_currency_on_a_blank_code(
             }
         ],
     )
-    resp = await client.post(
-        "/import/apply",
-        files={"file": ("order_items.csv", content, "text/csv")},
-        data={"mode": "merge"},
-    )
+    resp = await _preview_then_apply(client, "order_items.csv", content)
     assert resp.status_code == 200, resp.text
 
     updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
@@ -447,11 +457,7 @@ async def test_import_without_a_currency_column_keeps_the_recorded_code(
     reference_currency("AUD")
     order = await seeded_order_with_snapshot(client, retailer, 4200, "GBP")
 
-    resp = await client.post(
-        "/import/apply",
-        files={"file": ("order_items.csv", amount_only_csv(order, "4400"), "text/csv")},
-        data={"mode": "merge"},
-    )
+    resp = await _preview_then_apply(client, "order_items.csv", amount_only_csv(order, "4400"))
     assert resp.status_code == 200, resp.text
 
     updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
@@ -486,11 +492,7 @@ async def test_import_without_a_currency_column_still_fills_a_missing_code(
     reference_currency("EUR")
     order = await seeded_order(client, retailer)  # no snapshot on the line
 
-    resp = await client.post(
-        "/import/apply",
-        files={"file": ("order_items.csv", amount_only_csv(order, "3200"), "text/csv")},
-        data={"mode": "merge"},
-    )
+    resp = await _preview_then_apply(client, "order_items.csv", amount_only_csv(order, "3200"))
     assert resp.status_code == 200, resp.text
 
     updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
@@ -526,11 +528,7 @@ async def test_a_blank_cell_still_means_the_instance_default(client, retailer, r
             }
         ],
     )
-    resp = await client.post(
-        "/import/apply",
-        files={"file": ("order_items.csv", content, "text/csv")},
-        data={"mode": "merge"},
-    )
+    resp = await _preview_then_apply(client, "order_items.csv", content)
     assert resp.status_code == 200, resp.text
 
     updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
@@ -563,11 +561,7 @@ async def test_import_drops_a_currency_that_has_no_amount(client, retailer):
             }
         ],
     )
-    resp = await client.post(
-        "/import/apply",
-        files={"file": ("order_items.csv", content, "text/csv")},
-        data={"mode": "merge"},
-    )
+    resp = await _preview_then_apply(client, "order_items.csv", content)
     assert resp.status_code == 200, resp.text
 
     updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
@@ -601,11 +595,7 @@ def tools_csv(header: list[str], rows: list[dict[str, str]]) -> bytes:
 
 
 async def import_tools(client, content: bytes):
-    return await client.post(
-        "/import/apply",
-        files={"file": ("tools.csv", content, "text/csv")},
-        data={"mode": "merge"},
-    )
+    return await _preview_then_apply(client, "tools.csv", content)
 
 
 async def make_tool(client, **overrides) -> dict:
@@ -984,11 +974,7 @@ async def test_import_ignores_a_lone_snapshot_currency_column_too(client, retail
             }
         ],
     )
-    resp = await client.post(
-        "/import/apply",
-        files={"file": ("order_items.csv", content, "text/csv")},
-        data={"mode": "merge"},
-    )
+    resp = await _preview_then_apply(client, "order_items.csv", content)
     assert resp.status_code == 200, resp.text
 
     updated = (await client.get(f"/orders/{order['id']}")).json()["items"][0]

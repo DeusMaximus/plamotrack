@@ -780,7 +780,20 @@ doesn't supply the kits itself.
 `POST /import/preview` returns an `ImportPlan`: per-row action (create / update /
 unchanged / skip / error), what it matched and how, field-level diffs, warnings, and
 derived effects. `POST /import/apply` **re-parses and re-plans**, then compares a
-`plan_hash` of the decisions against the one previewed — a mismatch is a 409.
+`plan_hash` against the one previewed — a mismatch is a 409.
+
+The hash is **required**: applying without one is a 422, not an unchecked apply. It
+covers the resolved value set of every row, the spawn descriptors and the identity of
+what a `replace_all` would destroy — not merely the shape of the plan. Two files that
+plan the same *actions* at the same *positions* are otherwise indistinguishable, so a
+hash taken against one would authorise the other.
+
+Two things are excluded by necessity rather than oversight. Uuids minted during
+planning — every id-less create, every catalog or retailer stub conjured from a
+reference — are freshly random per run and are replaced by a positional token, so a
+foreign key still records *which planned row* it resolves to. Clock-derived column
+defaults are applied at write time and never reach a planned row at all. Hash either
+directly and preview and apply can never agree on a sheet that supplies no ids.
 
 Nothing is cached server-side. The plan can't go stale, it survives a container restart,
 and the recheck closes the window between looking and committing. The frontend just

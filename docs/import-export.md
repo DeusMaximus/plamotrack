@@ -192,5 +192,9 @@ say what they really were.
   shows you which line, and why, before you get that far.
 - 10 MB / 50,000 rows per import.
 - Apply re-checks the plan against a fingerprint of what you previewed. If the
-  collection changed in between, it refuses and asks you to preview again rather
-  than writing something you didn't agree to.
+  collection changed in between — or if the file itself did — it refuses and asks
+  you to preview again rather than writing something you didn't agree to.
+- **Every import is previewed first.** The browser does this for you. If you're
+  driving the API yourself, `POST /import/apply` requires the `plan_hash` that
+  `POST /import/preview` returned for that same file and mode; without it you get
+  a 422. There is no way to apply an import nobody looked at.
