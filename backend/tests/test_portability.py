@@ -1007,3 +1007,121 @@ async def test_a_blank_id_column_still_hashes_stably_through_a_reference(client)
     retailers = (await client.get("/retailers")).json()
     assert len(orders) == 1 and len(retailers) == 1
     assert orders[0]["retailer_id"] == retailers[0]["id"]
+
+
+async def test_an_update_to_a_conjured_reference_hashes_stably(client):
+    """The other half of the minted-uuid trap, and it isn't in `values`.
+
+    `_classify` records a reference change as `after=render(new_value)`. When the
+    new value is a stub this planner just conjured, that render is a fresh uuid —
+    so an UPDATE pointing at a conjured retailer moved the hash on every pass even
+    though `values` was tokenised correctly. Reported by an external review of #72.
+    """
+    old = (await client.post("/retailers", json={"name": "Old Shop"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": old["id"],
+                "order_date": "2026-05-02",
+                "order_number": "X-1",
+                "currency_code": "AUD",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2450,
+                        "currency_code": "AUD",
+                        "kit": {"name": "Gouf Custom", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    # Existing order (matched by id), repointed at a retailer that does not exist
+    # yet — so `_resolve_ref` conjures a stub and the change's `after` is its uuid.
+    content = make_csv(
+        spec.ORDERS.header,
+        [
+            {
+                "id": order["id"],
+                "retailer_name": "Conjured Replacement Shop",
+                "order_date": "2026-05-02",
+                "order_number": "X-1",
+                "currency_code": "AUD",
+            }
+        ],
+    )
+
+    first = await preview(client, content, filename="orders.csv")
+    assert actions(first, "orders") == ["update"], first["tables"]
+    second = await preview(client, content, filename="orders.csv")
+    assert first["plan_hash"] == second["plan_hash"], "a conjured reference moved the hash"
+
+    resp = await apply(client, content, filename="orders.csv", plan_hash=first["plan_hash"])
+    assert resp.status_code == 200, resp.text
+    names = {r["name"] for r in (await client.get("/retailers")).json()}
+    assert names == {"Old Shop", "Conjured Replacement Shop"}
+
+
+async def test_an_update_to_a_conjured_catalog_reference_hashes_stably(client):
+    """The same defect on a different table, ref column and stub type.
+
+    The fix canonicalises every change's `after`, so it is not order-specific —
+    this drives an order *line* repointed at a conjured consumable, which also
+    goes through `_resolve_ref`'s `catalog` indirection (the target table is
+    chosen from `item_type` rather than named on the column).
+    """
+    retailer = (await client.post("/retailers", json={"name": "Gundam Base"})).json()
+    consumable = (
+        await client.post(
+            "/consumables",
+            json={"name": "Mr Color 1", "category": "paint", "quantity_on_hand": 1},
+        )
+    ).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-05-02",
+                "order_number": "GB-9",
+                "currency_code": "AUD",
+                "items": [
+                    {
+                        "item_type": "consumable",
+                        "catalog_ref_id": consumable["id"],
+                        "quantity": 1,
+                        "unit_price_minor": 400,
+                        "currency_code": "AUD",
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    content = make_csv(
+        spec.ORDER_ITEMS.header,
+        [
+            {
+                "id": order["items"][0]["id"],
+                "order_id": order["id"],
+                "item_type": "consumable",
+                "catalog_name": "Conjured Paint",
+                "quantity": "1",
+                "unit_price_minor": "400",
+                "currency_code": "AUD",
+            }
+        ],
+    )
+
+    first = await preview(client, content, filename="order_items.csv")
+    assert actions(first, "order_items") == ["update"], first["tables"]
+    second = await preview(client, content, filename="order_items.csv")
+    assert first["plan_hash"] == second["plan_hash"], "a conjured catalog ref moved the hash"
+
+    resp = await apply(client, content, filename="order_items.csv", plan_hash=first["plan_hash"])
+    assert resp.status_code == 200, resp.text
+    names = {c["name"] for c in (await client.get("/consumables")).json()}
+    assert names == {"Mr Color 1", "Conjured Paint"}

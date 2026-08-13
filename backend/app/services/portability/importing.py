@@ -942,7 +942,15 @@ def _plan_fingerprint(
                             for column in spec.columns
                             if column.persisted and column.name in row.present
                         ),
-                        "changes": [[c.field, c.before, c.after] for c in row.changes],
+                        # `c.after` is `render(new_value)` — already rendered, so a
+                        # minted uuid would go in raw and move the hash every pass.
+                        # Re-canonicalise from the row's own value instead. `before`
+                        # is safe as-is: it renders what the database already holds,
+                        # which is never a uuid this planner invented, and it has to
+                        # stay in so a target changing under the preview is caught.
+                        "changes": [
+                            [c.field, c.before, canon(row.values.get(c.field))] for c in row.changes
+                        ],
                     }
                     for row in rows.get(spec.key, [])
                 ],
