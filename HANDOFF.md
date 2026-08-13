@@ -16,6 +16,56 @@ Template:
 
 ---
 
+## 2026-08-13 — Claude Code — #39 deferred to M6; hardening milestones renumbered
+
+**Planning only. No code changed; the only tracked file touched is this one.** The
+v0.2.5 release theme changed and the hardening milestones were renumbered, so read this
+before trusting any version number in the entries below.
+
+- **#39 (hostile Host/Origin) moved from v0.2.5 to `M6 — Secure remote access`**, folded
+  into #29. It was scheduled early for being exploitable today; that doesn't hold up.
+  Exploiting it needs a payload written against plamotrack's specific API
+  (`/api/import/apply`, `mode=replace_all`, `confirm=REPLACE`), so it is a targeted
+  attack or nothing, and the project has no adoption to attract one. Against that: the
+  fix is explicitly a stopgap #29 absorbs, it carries the **only lockout risk** in the
+  hardening sequence, it needs the nginx `envsubst` rework, and it leaves a permanent
+  dev-proxy workaround behind. Nothing was fixed — the code is still as #39 describes.
+
+- **Two implementation traps are recorded on #29 so they aren't rediscovered.**
+  (1) `frontend/vite.config.ts` sets `changeOrigin: true`, so the browser sends
+  `Origin: http://localhost:5173` while the app sees `Host: 127.0.0.1:8000` — a naive
+  Origin-vs-Host check fails the **entire** Playwright suite on first run, since it all
+  runs through that proxy. (2) Behind TLS termination `Origin` is `https://…` while the
+  app sees plain HTTP, so the check either ignores scheme or trusts `X-Forwarded-Proto`
+  — which makes it depend on #29's proxy-trust decision rather than preceding it.
+
+- **The sharp edge closes on its own path.** `POST /api/import/apply` is the *only*
+  CORS-safelisted write in the API — every other write is JSON and dies at the preflight
+  — and `plan_hash` is checked only when present (`importing.py`,
+  `if plan_hash and plan_hash != …`). **#41 removes the drive-by entirely if it makes
+  `plan_hash` mandatory rather than checked-when-present.** Decide that deliberately; it
+  is now a security property, not only a data-integrity one, and #29 asks the threat
+  model to say whether it relies on it.
+
+- **Milestones renumbered — old references below are stale.** #40–#43 pulled forward
+  into **v0.2.5**, which took over the importer-reading theme. The now-empty
+  `v0.2.6-alpha` milestone was **deleted**, and the two after it shifted down: old
+  v0.2.7 (#44–#48) is now **v0.2.6**, old v0.2.8 (#49–#55, #61, #63, #67) is now
+  **v0.2.7**. Entries below this one predate that and still say v0.2.6–v0.2.8 in the old
+  numbering; they were accurate when written and were deliberately not rewritten.
+
+- **State:** no branches, no code changes, tests not run (nothing to run them against).
+  `main` is unchanged apart from this entry. Milestone/issue edits are all server-side
+  on GitHub.
+
+- **Next: v0.2.5 = #40, #41, #42, #43** — one branch, not four. They share the parse →
+  plan → apply path, and #41's change to the apply signature is what #43's budgets gate.
+  The value-space rule in `AGENTS.md` bites hardest on **#41**: the whole defect is a
+  field checked *only when present*, so a test that supplies a mismatched `plan_hash`
+  proves nothing. It has to drive the **absent** case.
+
+---
+
 ## 2026-08-11 — Claude Code — second gate failure on the same invariant; v0.2.4.2-alpha out
 
 **v0.2.4.1 also failed its release gate.** #69 filed, fixed in PR #70, released as
