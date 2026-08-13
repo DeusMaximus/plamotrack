@@ -50,6 +50,7 @@ from app.models.enums import (
     ShippingSpeed,
     WouldOrderAgain,
 )
+from app.services.currency import strip_numeric_grouping
 
 # --- cell parsers --------------------------------------------------------------
 
@@ -62,24 +63,59 @@ def parse_text(raw: str) -> str | None:
     return value or None
 
 
+#: PostgreSQL `integer`. Every one of the twelve int4 columns in the schema is parsed
+#: by `parse_int`, so checking the bound here is what keeps an oversized cell a row
+#: diagnostic instead of an IntegrityError at flush, three tables into the transaction.
+INT4_MIN, INT4_MAX = -2_147_483_648, 2_147_483_647
+
+
 def parse_int(raw: str) -> int | None:
-    value = raw.strip()
+    """A whole number, or a ValueError naming the cell.
+
+    Was `int(Decimal(value))`, which truncated rather than refusing: `1.9` imported
+    as `1` and `-0.5` as `0`, so a mistyped quantity became a different quantity
+    instead of a question. Anything with a fractional part is now an error — the
+    sheet has to say which whole number it means.
+
+    `3.0` still reads as 3. Spreadsheets format integer columns that way constantly
+    and it states one number, unambiguously.
+    """
+    value = strip_numeric_grouping(raw)
     if not value:
         return None
     try:
-        return int(Decimal(value))  # tolerate "3" and spreadsheet-flavoured "3.0"
+        number = Decimal(value)
     except (InvalidOperation, ValueError) as exc:
         raise ValueError(f"'{raw}' is not a whole number") from exc
+    # `inf` and `nan` parse fine and then raise OverflowError out of int() — which
+    # `_parse_row` did not catch, so a three-character cell was a 500 rather than a
+    # row error.
+    if not number.is_finite():
+        raise ValueError(f"'{raw}' is not a whole number")
+    # Before `to_integral_value`, so an absurd exponent is refused by comparison
+    # rather than expanded into a million-digit integer first.
+    if not INT4_MIN <= number <= INT4_MAX:
+        raise ValueError(
+            f"'{raw}' is out of range — whole numbers here go from {INT4_MIN:,} to {INT4_MAX:,}"
+        )
+    if number != number.to_integral_value():
+        raise ValueError(f"'{raw}' is not a whole number — it has a fractional part")
+    return int(number)
 
 
 def parse_decimal(raw: str) -> Decimal | None:
-    value = raw.strip().replace(",", "")
+    """A major-unit amount. Range is not checked here — the minor-unit integer it
+    scales into is, once the currency is known (`_apply_money_alternates`)."""
+    value = strip_numeric_grouping(raw)
     if not value:
         return None
     try:
-        return Decimal(value)
-    except InvalidOperation as exc:
+        number = Decimal(value)
+    except (InvalidOperation, ValueError) as exc:
         raise ValueError(f"'{raw}' is not a number") from exc
+    if not number.is_finite():
+        raise ValueError(f"'{raw}' is not a number")
+    return number
 
 
 def parse_bool(raw: str) -> bool | None:

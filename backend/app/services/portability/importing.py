@@ -62,6 +62,8 @@ from app.services.portability.exporting import (
 )
 from app.services.portability.spec import (
     CATALOG_TABLE_BY_ITEM_TYPE,
+    INT4_MAX,
+    INT4_MIN,
     SPEC_BY_KEY,
     TABLE_SPECS,
     ColumnRole,
@@ -343,7 +345,10 @@ class _Planner:
             cell = raw[column.name]
             try:
                 values[column.name] = column.parse(cell)
-            except ValueError as exc:
+            except (ArithmeticError, ValueError) as exc:
+                # ArithmeticError as well as ValueError: a cell is data, and no
+                # arrangement of it should be able to leave here as a 500. `inf` in
+                # an integer column used to raise OverflowError straight past this.
                 errors.append(f"{column.name}: {exc}")
                 values[column.name] = None
 
@@ -679,7 +684,16 @@ class _Planner:
 
     def _apply_money_alternates(self, spec: TableSpec, row: _Row) -> None:
         """Major units fill in only where the canonical minor-unit column is absent
-        or blank — §6 keeps integer minor units authoritative."""
+        or blank — §6 keeps integer minor units authoritative.
+
+        This is the **second** way a value reaches an int4 money column, and it does
+        not pass through `parse_int`: three ALT_MONEY columns scale a major-unit
+        amount into `*_minor` here instead. So the range has to be re-checked on the
+        product — the scaling is what breaks the bound, since a major amount well
+        inside int4 is a hundred or a thousand times larger once counted in minor
+        units. Without this a large `unit_price` was an IntegrityError at flush,
+        which is a 500 rather than a row diagnostic (#43).
+        """
         for column in spec.columns:
             if column.role is not ColumnRole.ALT_MONEY:
                 continue
@@ -689,9 +703,10 @@ class _Planner:
             if major is None:
                 continue
             try:
-                row.values[column.mirrors] = major_to_minor(
-                    major, row.values.get(column.currency_column)
-                )
+                minor = major_to_minor(major, row.values.get(column.currency_column))
+                if not INT4_MIN <= minor <= INT4_MAX:
+                    raise ValueError("out of range")
+                row.values[column.mirrors] = minor
                 row.present.add(column.mirrors)
             except (ArithmeticError, ValueError):
                 row.action = RowAction.ERROR

@@ -163,6 +163,27 @@ creates them from.
 Dates are `YYYY-MM-DD` (though `14/03/2026` and `03/14/2026` are accepted).
 Leave `id` blank on rows you add by hand.
 
+### How numbers are read
+
+A cell that can be read two ways is refused rather than guessed at, and the preview
+names the row and column. The rule is that plamotrack will never quietly store a
+different number from the one you wrote.
+
+- **Whole-number columns** — quantities, ratings, thresholds, `*_minor` amounts —
+  take whole numbers only. `3` and `3.0` both mean three; `1.9` is an error rather
+  than a silent `1`. They also have to fit in a 32-bit integer, so anything beyond
+  ±2,147,483,647 is reported on the row instead of failing partway through the
+  import.
+- **A comma is only ever a thousands separator**, and only where it can't be
+  anything else: `1,234` and `1,299.50` read as you'd expect. `12,34` is refused,
+  because most of the world writes 12.34 that way and reading it as `1234` would
+  store a hundred times the real price. Write a decimal point, or no separator.
+- **`1e2` works**, in both whole-number and money columns — spreadsheets and number
+  inputs emit exponent notation on their own, so it's read the way they mean it.
+
+If a sheet imported cleanly before and now reports errors on these, the errors are
+the point: those cells were being read as numbers the sheet didn't say.
+
 ### Older exports still import
 
 Column names occasionally change. When one does, the old name keeps working as an

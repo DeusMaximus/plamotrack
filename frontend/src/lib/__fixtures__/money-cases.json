@@ -20,6 +20,9 @@
     { "major": ".5", "currency": "USD", "minor": 50, "why": "no leading zero" },
     { "major": "+42", "currency": "AUD", "minor": 4200 },
     { "major": "1,299.50", "currency": "AUD", "minor": 129950, "why": "spreadsheets love a thousands separator" },
+    { "major": "1,234", "currency": "AUD", "minor": 123400, "why": "grouped with no decimal point — still unambiguous" },
+    { "major": "1,234", "currency": "JPY", "minor": 1234, "why": "the zero-digit currency where a grouped integer is the normal way to write money" },
+    { "major": "1,234,567.89", "currency": "AUD", "minor": 123456789 },
     { "major": "1200", "currency": "JPY", "minor": 1200 },
     { "major": "38.50", "currency": "JPY", "minor": 39, "why": "no minor unit to hold the half — rounds, and the form now says so" },
     { "major": "1.005", "currency": "AUD", "minor": 101, "why": "half away from zero; the float route gave 100" },
@@ -39,6 +42,20 @@
     { "major": "1.5e1", "currency": "KWD", "minor": 15000 },
     { "major": "1e2", "currency": "CLF", "minor": 1000000 }
   ],
+
+  "major_to_minor_refused": {
+    "why": "#40. A comma was stripped unconditionally, so '12,34' — how much of the world writes 12.34 — became 1234 major units and stored a hundredfold error. These are the inputs neither layer may guess at. The two signal it differently and that is fine: the backend raises (a cell gets a row diagnostic and the import stops), the browser returns 0 (a form field visibly empties instead of silently multiplying by 100). What must not differ is WHICH inputs are refused.",
+    "cases": [
+      { "major": "12,34", "why": "the headline case — a European decimal comma" },
+      { "major": "1.234,56", "why": "fully European: grouped by point, decimal by comma" },
+      { "major": "1,2345", "why": "four digits after the comma is no grouping anyone uses" },
+      { "major": "1,23", "why": "two digits — the shape of a decimal comma" },
+      { "major": ",5", "why": "a leading comma groups nothing" },
+      { "major": "1,234,", "why": "trailing comma" },
+      { "major": "1,23,456", "why": "an inconsistent group in the middle" },
+      { "major": "1_000", "why": "Decimal() honours Python literal underscores; the sheet said no such number" }
+    ]
+  },
 
   "minor_to_major": [
     { "minor": 4999, "currency": "AUD", "major": "49.99" },
