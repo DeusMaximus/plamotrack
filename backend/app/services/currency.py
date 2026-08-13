@@ -20,6 +20,8 @@ of a stored amount, not a change to what the stored integer counts.
 
 from decimal import Decimal
 
+from app.services.numeric import is_lone_group, strip_numeric_grouping
+
 #: Currencies whose exponent is not 2. Everything else in ISO 4217 has two minor
 #: units, so listing only the exceptions keeps the table short enough to audit.
 MINOR_UNITS: dict[str, int] = {
@@ -103,8 +105,29 @@ def minor_fraction_digits(currency_code: str | None) -> int:
 
 
 def major_to_minor(major: str | Decimal, currency_code: str | None) -> int:
-    """ "49.99" + AUD -> 4999. Rounds half-up, like the money it represents."""
-    value = major if isinstance(major, Decimal) else Decimal(str(major).strip().replace(",", ""))
+    """ "49.99" + AUD -> 4999. Rounds half-up, like the money it represents.
+
+    A **lone grouped** amount is refused unless the currency has no minor unit.
+    `1,234` is valid grouping and an equally valid European spelling of `1.234`, and
+    in KWD those are 1,234,000 fils and the 1234 fils §6 exists over. The text cannot
+    settle it; only the exponent can, and only in one direction — with no subunit
+    there is nowhere for a decimal reading to land, so `1,234` JPY is plainly ¥1234.
+
+    A `Decimal` argument has already lost the comma, so its caller is the one holding
+    the raw cell and has to make this call itself. `importing._apply_money_alternates`
+    does, through the same `is_lone_group` predicate.
+    """
+    if (
+        not isinstance(major, Decimal)
+        and is_lone_group(str(major))
+        and minor_fraction_digits(currency_code) != 0
+    ):
+        raise ValueError(
+            f"a comma is ambiguous in {normalise_code(currency_code) or 'this currency'} — "
+            f"'{major}' reads as a thousands separator here and a decimal point to much "
+            "of the world. Write it with a decimal point, or with no separator at all."
+        )
+    value = major if isinstance(major, Decimal) else Decimal(strip_numeric_grouping(str(major)))
     scaled = value * (10 ** minor_fraction_digits(currency_code))
     return int(scaled.quantize(Decimal(1), rounding="ROUND_HALF_UP"))
 

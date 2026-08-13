@@ -1125,3 +1125,408 @@ async def test_an_update_to_a_conjured_catalog_reference_hashes_stably(client):
     assert resp.status_code == 200, resp.text
     names = {c["name"] for c in (await client.get("/consumables")).json()}
     assert names == {"Mr Color 1", "Conjured Paint"}
+
+
+# --- numeric grammar (#40, #43) --------------------------------------------------
+#
+# The parsers used to accept whatever `Decimal()` accepted and then truncate, so a
+# malformed cell imported as a *different number* instead of as an error. These
+# assert the whole value space of the field, and — because a parse failure is what
+# decides whether a row is an ERROR at all — that the row state follows.
+
+
+@pytest.mark.parametrize(
+    ("cell", "expected"),
+    [
+        ("3", 3),
+        (
+            "3.0",
+            3,
+        ),
+        (" 7 ", 7),
+        ("1e2", 100),  # AGENTS.md: the #6 rewrite broke exponent input once already
+        ("1,234", 1234),  # unambiguous grouping stays readable
+        ("2147483647", 2147483647),  # int4 max, inclusive
+        ("-2147483648", -2147483648),  # int4 min, inclusive
+        ("", None),
+        ("   ", None),
+    ],
+)
+def test_parse_int_accepts(cell, expected):
+    assert spec.parse_int(cell) == expected
+
+
+@pytest.mark.parametrize(
+    "cell",
+    [
+        "1.9",  # truncated to 1
+        "-0.5",  # truncated to 0
+        "0.4",
+        "1_000",  # Decimal honours Python literal underscores → 1000
+        "inf",  # OverflowError out of int(), which _parse_row did not catch → 500
+        "-inf",
+        "nan",
+        "Infinity",
+        "2147483648",  # one past int4 → IntegrityError at flush → 500
+        "-2147483649",
+        "1e10",  # in range as a float, nowhere near it as an int4
+        "12,34",  # a European decimal comma, silently 100× out
+        "abc",
+        "1.2.3",
+    ],
+)
+def test_parse_int_refuses(cell):
+    with pytest.raises(ValueError):
+        spec.parse_int(cell)
+
+
+def test_every_int4_column_is_declared_with_parse_int(client):
+    """A structural guarantee, and only that one — it stays green if the range check
+    in `_apply_money_alternates` is deleted, so it is not evidence that route works.
+
+    What it does catch is a *new* int4 column declared with some other parser, which
+    would reach PostgreSQL unbounded. The behaviour of the two range checks is
+    covered by `test_parse_int_refuses` and the ALT_MONEY matrix below.
+    """
+    import sqlalchemy as sa
+
+    from app.models.base import Base
+
+    unchecked = []
+    for table in Base.metadata.sorted_tables:
+        table_spec = spec.SPEC_BY_KEY.get(table.name)
+        if table_spec is None:
+            continue
+        for column in table.columns:
+            if not isinstance(column.type, sa.Integer) or isinstance(column.type, sa.BigInteger):
+                continue
+            declared = table_spec.column(column.name)
+            if declared is not None and declared.parse is spec.parse_int:
+                continue
+            unchecked.append(f"{table.name}.{column.name}")
+
+    assert unchecked == [], f"int4 columns with no parse-time range check: {unchecked}"
+
+
+async def test_a_fractional_quantity_is_refused_and_blocks_the_import(client):
+    """The row state is the point, not just the value.
+
+    A cell that won't parse turns its row into an ERROR before matching runs, so it
+    is never a create *or* an update — and one bad row blocks the whole file. Under
+    the old parser this imported silently as quantity 1.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Gundam Base"})).json()
+    content = make_csv(
+        spec.ORDERS.header,
+        [
+            {
+                "retailer_id": retailer["id"],
+                "order_date": "2026-05-02",
+                "order_number": "GB-1",
+                "currency_code": "AUD",
+                "shipping_cost_minor": "1.9",
+            }
+        ],
+    )
+
+    plan = await preview(client, content, filename="orders.csv")
+    assert actions(plan, "orders") == ["error"]
+    assert "shipping_cost_minor" in plan["tables"][0]["rows"][0]["error"]
+    assert plan["blocking_errors"]
+
+    resp = await apply(client, content, filename="orders.csv")
+    assert resp.status_code == 409, resp.text
+    assert (await client.get("/orders")).json() == []
+
+
+async def test_a_bad_cell_errors_an_update_row_too(client):
+    """The same value in the other row state.
+
+    #41's suite proved a field can be structurally unreachable in the state a test
+    never drives. Here the row *matches* an existing record, so without the parse
+    error it would be an UPDATE — the assertion is that the error still wins, and
+    that the existing row is left exactly as it was rather than half-written.
+    """
+    tool = (
+        await client.post(
+            "/tools",
+            json={"name": "Godhand Nippers", "category": "cutting", "quantity_on_hand": 4},
+        )
+    ).json()
+    content = make_csv(
+        spec.TOOLS.header,
+        [
+            {
+                "id": tool["id"],
+                "name": "Godhand Nippers",
+                # `category` is required, and a blank one errors the row on its own —
+                # leaving it out made this pass against the unfixed parser for a
+                # reason that had nothing to do with 2.5.
+                "category": "cutting",
+                "quantity_on_hand": "2.5",
+            }
+        ],
+    )
+
+    plan = await preview(client, content, filename="tools.csv")
+    assert actions(plan, "tools") == ["error"]
+    assert "quantity_on_hand" in plan["tables"][0]["rows"][0]["error"]
+
+    resp = await apply(client, content, filename="tools.csv")
+    assert resp.status_code == 409, resp.text
+    assert (await client.get("/tools")).json()[0]["quantity_on_hand"] == 4
+
+
+async def test_infinity_in_an_integer_column_is_a_row_error_not_a_500(client):
+    """`parse_int` raised OverflowError, which `_parse_row` caught nothing of."""
+    content = make_csv(
+        spec.CONSUMABLES.header,
+        [{"name": "Mr Color 1", "category": "paint", "quantity_on_hand": "inf"}],
+    )
+    plan = await preview(client, content, filename="consumables.csv")
+    assert actions(plan, "consumables") == ["error"]
+    assert "quantity_on_hand" in plan["tables"][0]["rows"][0]["error"]
+    assert (await apply(client, content, filename="consumables.csv")).status_code == 409
+
+
+async def test_an_ambiguous_comma_in_a_money_column_is_refused(client):
+    """`12,34` used to strip to `1234` and store 123400 — a hundredfold error, in
+    the column where being wrong costs the most."""
+    retailer = (await client.post("/retailers", json={"name": "Gundam Base"})).json()
+    content = make_csv(
+        spec.ORDERS.header,
+        [
+            {
+                "retailer_id": retailer["id"],
+                "order_date": "2026-05-02",
+                "order_number": "GB-2",
+                "currency_code": "AUD",
+                "shipping_cost": "12,34",
+            }
+        ],
+    )
+    plan = await preview(client, content, filename="orders.csv")
+    assert actions(plan, "orders") == ["error"]
+    assert "shipping_cost" in plan["tables"][0]["rows"][0]["error"]
+    assert (await client.get("/orders")).json() == []
+
+
+async def test_a_major_amount_that_scales_out_of_int4_is_a_row_error(client):
+    """The route `parse_int` never sees.
+
+    `unit_price` is well inside int4 as written and 100× out once counted in cents,
+    so the bound has to be re-checked on the product. It reached PostgreSQL as an
+    IntegrityError at flush before — a 500, several tables into the transaction.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Gundam Base"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-05-02",
+                "order_number": "GB-3",
+                "currency_code": "AUD",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2450,
+                        "currency_code": "AUD",
+                        "kit": {"name": "Gouf Custom", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    content = make_csv(
+        spec.ORDER_ITEMS.header,
+        [
+            {
+                "order_id": order["id"],
+                "item_type": "kit",
+                "quantity": "1",
+                "currency_code": "AUD",
+                # A kit line short of kits errors in `_plan_spawns` when it has no
+                # kit_name/kit_grade to build them from. Omitting these made this
+                # test pass against the unfixed code without ever reaching the
+                # overflow it was written for.
+                "kit_name": "Zaku II",
+                "kit_grade": "HG",
+                "unit_price": "99999999999",  # 9,999,999,999,900 cents
+            }
+        ],
+    )
+    plan = await preview(client, content, filename="order_items.csv")
+    assert actions(plan, "order_items") == ["error"]
+    assert "unit_price" in plan["tables"][0]["rows"][0]["error"]
+    assert (await apply(client, content, filename="order_items.csv")).status_code == 409
+
+
+async def test_exponent_notation_still_imports(client):
+    """The regression AGENTS.md names by hand: the #6 rewrite silently broke `1e2`
+    in a file that then had no tests. Both the integer and the money route."""
+    content = make_csv(
+        spec.CONSUMABLES.header,
+        [{"name": "Mr Color 2", "category": "paint", "quantity_on_hand": "1e2"}],
+    )
+    assert (await apply(client, content, filename="consumables.csv")).status_code == 200
+    assert (await client.get("/consumables")).json()[0]["quantity_on_hand"] == 100
+
+
+def _alt_money_columns() -> list[tuple[str, str, str, str]]:
+    """Every ALT_MONEY declaration, as (table, major column, minor column, currency)."""
+    return [
+        (table.key, column.name, column.mirrors, column.currency_column)
+        for table in spec.TABLE_SPECS
+        for column in table.columns
+        if column.role is spec.ColumnRole.ALT_MONEY
+    ]
+
+
+def test_the_alt_money_column_set_is_what_these_tests_think_it_is():
+    """If a fourth major-unit mirror is added, the matrix below has to cover it."""
+    assert _alt_money_columns() == [
+        (
+            "tools",
+            "unit_cost_reference",
+            "unit_cost_reference_minor",
+            "unit_cost_reference_currency",
+        ),
+        ("orders", "shipping_cost", "shipping_cost_minor", "currency_code"),
+        ("order_items", "unit_price", "unit_price_minor", "currency_code"),
+    ]
+
+
+async def _alt_money_sheet(client, table, major_col, currency_col, code, amount):
+    """A one-row sheet for whichever ALT_MONEY column is under test, with every
+    other required field filled so the only thing that can error is the amount."""
+    if table == "tools":
+        return make_csv(
+            spec.TOOLS.header,
+            [{"name": "Nippers", "category": "cutting", major_col: amount, currency_col: code}],
+        ), "tools.csv"
+
+    retailer = (await client.post("/retailers", json={"name": f"Shop {code}"})).json()
+    if table == "orders":
+        return make_csv(
+            spec.ORDERS.header,
+            [
+                {
+                    "retailer_id": retailer["id"],
+                    "order_date": "2026-05-02",
+                    "order_number": f"B-{code}",
+                    "currency_code": code,
+                    major_col: amount,
+                }
+            ],
+        ), "orders.csv"
+
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-05-02",
+                "order_number": f"L-{code}",
+                "currency_code": code,
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 100,
+                        "currency_code": code,
+                        "kit": {"name": "Gouf", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    return make_csv(
+        spec.ORDER_ITEMS.header,
+        [
+            {
+                "order_id": order["id"],
+                "item_type": "kit",
+                "quantity": "1",
+                "currency_code": code,
+                # A kit line short of kits errors in _plan_spawns without these, which
+                # would mask the overflow this test exists for.
+                "kit_name": "Zaku II",
+                "kit_grade": "HG",
+                major_col: amount,
+            }
+        ],
+    ), "order_items.csv"
+
+
+@pytest.mark.parametrize("code", ["JPY", "AUD", "KWD", "CLF"], ids=["0-digit", "2", "3", "4"])
+@pytest.mark.parametrize("table, major_col, minor_col, currency_col", _alt_money_columns())
+async def test_alt_money_scaling_respects_the_int4_bound(
+    client, table, major_col, minor_col, currency_col, code
+):
+    """Just inside and just outside the bound, per column and per exponent.
+
+    The bound is on the *scaled* integer, so where it falls in major units depends on
+    the currency: 21,474,836.47 AUD and 2,147,483.647 KWD are the same int4 ceiling.
+    Driven through the importer, not through `require_int4` — a unit test of the
+    helper would stay green if any one of the three columns stopped calling it.
+    """
+    from decimal import Decimal
+
+    from app.services.currency import minor_fraction_digits
+    from app.services.numeric import INT4_MAX
+
+    scale = Decimal(10) ** minor_fraction_digits(code)
+    inside = Decimal(INT4_MAX) / scale
+    outside = (Decimal(INT4_MAX) + 1) / scale
+
+    content, filename = await _alt_money_sheet(
+        client, table, major_col, currency_col, code, str(inside)
+    )
+    plan = await preview(client, content, filename=filename)
+    assert actions(plan, table) != ["error"], plan["tables"][0]["rows"][0]
+
+    content, filename = await _alt_money_sheet(
+        client, table, major_col, currency_col, code, str(outside)
+    )
+    plan = await preview(client, content, filename=filename)
+    assert actions(plan, table) == ["error"], plan["tables"][0]["rows"][0]
+    assert major_col in plan["tables"][0]["rows"][0]["error"]
+
+
+@pytest.mark.parametrize(
+    "code, refused",
+    [("JPY", False), ("AUD", True), ("KWD", True), ("CLF", True), ("ZZZ", True)],
+)
+async def test_a_lone_grouped_amount_is_settled_by_the_currency(client, code, refused):
+    """`1,234` is grammatical grouping and an equally valid European `1.234`.
+
+    Only the exponent settles it, and only one way: with no minor unit there is
+    nowhere for a decimal reading to land. Driven through the importer rather than
+    the parser, because the currency is not known until the money step — the whole
+    point of the deferral.
+    """
+    retailer = (await client.post("/retailers", json={"name": f"Shop {code}"})).json()
+    content = make_csv(
+        spec.ORDERS.header,
+        [
+            {
+                "retailer_id": retailer["id"],
+                "order_date": "2026-05-02",
+                "order_number": f"LG-{code}",
+                "currency_code": code,
+                "shipping_cost": "1,234",
+            }
+        ],
+    )
+    plan = await preview(client, content, filename="orders.csv")
+
+    if refused:
+        assert actions(plan, "orders") == ["error"]
+        assert "shipping_cost" in plan["tables"][0]["rows"][0]["error"]
+    else:
+        assert actions(plan, "orders") == ["create"], plan["tables"][0]["rows"][0]
+        assert (await apply(client, content, filename="orders.csv")).status_code == 200
+        assert (await client.get("/orders")).json()[0]["shipping_cost_minor"] == 1234

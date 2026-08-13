@@ -49,6 +49,22 @@ def test_major_to_minor(case):
 
 
 @pytest.mark.parametrize(
+    "case",
+    _CASES["major_to_minor_refused"]["cases"],
+    ids=_ids(_CASES["major_to_minor_refused"]["cases"], "major", "currency"),
+)
+def test_major_to_minor_refuses_an_ambiguous_comma(case):
+    """The browser's half of this list returns 0; here it has to raise.
+
+    Both are refusals — what the fixture pins is that the same inputs are refused
+    on both sides, not that they are refused the same way (#40). The currency is
+    part of each case because a lone group like `1,234` is only unambiguous where
+    the currency has no minor unit for a decimal reading to land in."""
+    with pytest.raises(ValueError):
+        currency.major_to_minor(case["major"], case["currency"])
+
+
+@pytest.mark.parametrize(
     "case", _CASES["minor_to_major"], ids=_ids(_CASES["minor_to_major"], "minor", "currency")
 )
 def test_minor_to_major(case):

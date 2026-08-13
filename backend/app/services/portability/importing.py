@@ -50,8 +50,9 @@ from app.schemas.portability import (
     RowAction,
     TablePlan,
 )
-from app.services.currency import is_known_currency, major_to_minor
+from app.services.currency import is_known_currency, major_to_minor, minor_fraction_digits
 from app.services.kits import default_scale_for_grade
+from app.services.numeric import is_lone_group, require_int4
 from app.services.orders import spawn_kits
 from app.services.portability import starter_sheet
 from app.services.portability.exporting import (
@@ -240,6 +241,10 @@ class _Row:
     messages: list[str] = field(default_factory=list)
     error: str | None = None
     new_id: uuid.UUID | None = None
+    #: ALT_MONEY columns whose cell was grouped in a way a decimal separator could
+    #: equally explain (`1,234`). Valid grammar, but only the currency settles which
+    #: number it is, and that isn't known until `_apply_money_alternates`.
+    lone_grouped: set[str] = field(default_factory=set)
     #: This row's `id` was minted here rather than read from the sheet — a stub
     #: conjured from a reference. Sheet-supplied ids are facts about the file and
     #: hash as themselves; minted ones are fresh on every run, so
@@ -336,14 +341,20 @@ class _Planner:
                 if message not in self.warnings:
                     self.warnings.append(message)
 
+        lone_grouped: set[str] = set()
         for column in spec.columns:
             if column.name not in raw:
                 continue
             present.add(column.name)
             cell = raw[column.name]
+            if column.role is ColumnRole.ALT_MONEY and is_lone_group(cell):
+                lone_grouped.add(column.name)
             try:
                 values[column.name] = column.parse(cell)
-            except ValueError as exc:
+            except (ArithmeticError, ValueError) as exc:
+                # ArithmeticError as well as ValueError: a cell is data, and no
+                # arrangement of it should be able to leave here as a 500. `inf` in
+                # an integer column used to raise OverflowError straight past this.
                 errors.append(f"{column.name}: {exc}")
                 values[column.name] = None
 
@@ -361,6 +372,7 @@ class _Planner:
             values=values,
             present=present,
             filled=filled,
+            lone_grouped=lone_grouped,
         )
         row.label = spec.label(values)
         if errors:
@@ -679,7 +691,25 @@ class _Planner:
 
     def _apply_money_alternates(self, spec: TableSpec, row: _Row) -> None:
         """Major units fill in only where the canonical minor-unit column is absent
-        or blank — §6 keeps integer minor units authoritative."""
+        or blank — §6 keeps integer minor units authoritative.
+
+        This is the **second** way a value reaches an int4 money column, and it does
+        not pass through `parse_int`: three ALT_MONEY columns scale a major-unit
+        amount into `*_minor` here instead. So the range has to be re-checked on the
+        product — the scaling is what breaks the bound, since a major amount well
+        inside int4 is a hundred or a thousand times larger once counted in minor
+        units. Without this a large `unit_price` was an IntegrityError at flush,
+        which is a 500 rather than a row diagnostic (#43).
+
+        It is also where a **lone grouped amount** is settled. `1,234` is valid
+        grouping and an equally valid European spelling of `1.234`, and the two are a
+        thousand apart — `1,234` KWD is either 1,234,000 fils or the 1234 fils that
+        §6 exists over. Only the currency can decide, and only in one direction: where
+        it has no minor unit there is nowhere for a decimal reading to land, so
+        `1,234` JPY is unambiguously ¥1234. Everywhere else it is refused rather than
+        guessed at. Making the sheet's numeric locale explicit is the real answer and
+        belongs with the import diagnostics work in M5.1.
+        """
         for column in spec.columns:
             if column.role is not ColumnRole.ALT_MONEY:
                 continue
@@ -688,14 +718,23 @@ class _Planner:
             major = row.values.get(column.name)
             if major is None:
                 continue
-            try:
-                row.values[column.mirrors] = major_to_minor(
-                    major, row.values.get(column.currency_column)
-                )
-                row.present.add(column.mirrors)
-            except (ArithmeticError, ValueError):
+            code = row.values.get(column.currency_column)
+            if column.name in row.lone_grouped and minor_fraction_digits(code) != 0:
                 row.action = RowAction.ERROR
-                row.error = f"{column.name}: '{major}' is not a valid amount"
+                row.error = (
+                    f"{column.name}: a comma is ambiguous in {code or 'this currency'} — "
+                    f"this cell reads as {render(major)} if the comma groups thousands, "
+                    f"or {major / 1000} if it is a decimal point. Write it with a decimal "
+                    "point, or with no separator at all."
+                )
+                continue
+            try:
+                minor = require_int4(major_to_minor(major, code), f"{column.name}: '{major}'")
+                row.values[column.mirrors] = minor
+                row.present.add(column.mirrors)
+            except (ArithmeticError, ValueError) as exc:
+                row.action = RowAction.ERROR
+                row.error = f"{column.name}: {exc}"
 
     def _warn_unknown_currency(self, spec: TableSpec, row: _Row) -> None:
         """A code outside ISO 4217 is stored as typed, with its decimals guessed.
