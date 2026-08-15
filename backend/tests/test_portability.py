@@ -2909,6 +2909,93 @@ async def test_apply_is_rejected_if_the_order_is_received_mid_apply(client, monk
     assert {k["name"] for k in (await client.get("/kits")).json()} == {"Zaku II"}
 
 
+async def test_apply_is_rejected_if_the_order_is_deleted_mid_apply(http_client, monkeypatch):
+    """The sibling of the mid-apply receive race, on the other side of a boolean:
+    a parent order *deleted* — rather than received — between `plan_import()`
+    returning and the lock/verify step used to vanish from the locked query
+    result and default to "unreceived". The plan itself expected unreceived here
+    too (the common case for a brand new line), so the guard compared
+    unreceived-and-missing against unreceived-and-expected, saw no difference,
+    and let the write proceed straight into a foreign-key violation on the
+    order_items insert instead of the clean 409 this guard exists to give
+    (review of #79/#47). A missing id now fails the check on its own, regardless
+    of what the plan expected.
+
+    Driven through `http_client` because the point of the test is which status a
+    write against a vanished parent earns — the default client fixture would
+    re-raise the unhandled `IntegrityError` into the test as an error instead.
+    """
+    retailer = (await http_client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await http_client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    line = {
+        "order_id": order["id"],
+        "item_type": "kit",
+        "quantity": "1",
+        "unit_price_minor": "2800",
+        "currency_code": "JPY",
+        "kit_name": "Char's Zaku II",
+        "kit_grade": "HG",
+    }
+    content = make_csv(spec.ORDER_ITEMS.header, [line])
+
+    preview_resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    plan_hash = preview_resp.json()["plan_hash"]
+
+    original_plan_import = importing.plan_import
+    deleted_mid_apply = False
+
+    async def delete_between_plan_and_write(*args, **kwargs):
+        nonlocal deleted_mid_apply
+        execution = await original_plan_import(*args, **kwargs)
+        # A wholly separate request undoes the parent right in the window this
+        # apply's lock/verify step hasn't reached yet.
+        async with AsyncClient(
+            transport=ASGITransport(app=fastapi_app), base_url="http://test"
+        ) as other:
+            resp = await other.delete(f"/orders/{order['id']}")
+            deleted_mid_apply = resp.status_code == 204
+        return execution
+
+    monkeypatch.setattr(importing, "plan_import", delete_between_plan_and_write)
+
+    applied = await http_client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge", "plan_hash": plan_hash},
+    )
+
+    assert deleted_mid_apply, "the interleaved delete didn't commit — not exercising the race"
+    assert applied.status_code == 409, applied.text
+    # Rejected, not half-applied — and there is no parent left to attach anything to.
+    assert (await http_client.get("/orders")).json() == []
+    assert (await http_client.get("/kits")).json() == []
+
+
 # --- the version an archive claims (release prep) ---------------------------------
 
 

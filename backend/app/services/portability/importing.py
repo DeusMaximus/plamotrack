@@ -1451,7 +1451,13 @@ async def _lock_and_verify_spawn_orders(session: AsyncSession, execution: Execut
     )
     actual = {order.id: order.received_at is not None for order in locked}
     for order_id, wanted_received in expected.items():
-        if actual.get(order_id, False) != wanted_received:
+        # A missing id is its own conflict, distinct from a present-but-wrong
+        # received state — the order was deleted between planning and this lock.
+        # Defaulting a miss to "unreceived" would pass silently whenever the plan
+        # itself expected unreceived, and the write below would then hit a
+        # foreign-key violation instead of the clean 409 this guard exists to
+        # give (review of #79/#47).
+        if order_id not in actual or actual[order_id] != wanted_received:
             raise ConflictError(
                 "the collection changed since you previewed this import, so the "
                 "preview no longer matches what would happen — run the preview again"
