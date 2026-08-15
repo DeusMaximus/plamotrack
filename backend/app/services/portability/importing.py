@@ -1520,9 +1520,19 @@ def _advance_kits_for_newly_received_orders(execution: ExecutionPlan) -> None:
     `quantity_on_hand` (rule 10 keeps stock out of anything import derives from a
     receipt) and never overrides a kit this same upload explicitly gives its own
     `status` cell — an explicit value in the file always wins over a derived one.
-    Only a transition *into* received is handled; clearing `received_at` doesn't
-    have an established "un-arrive" equivalent to mirror, so it's left alone,
-    same as before this function existed.
+    Only the explicit `unreceived -> received` transition counts as an arrival —
+    correcting an already-received order's timestamp to a different non-null
+    value is not one, and clearing `received_at` doesn't have an established
+    "un-arrive" equivalent to mirror, so both are left alone.
+
+    Reads whether the order was received *before* this apply from `row.changes`
+    rather than `row.target`: this runs after the main write loop, which already
+    applied `setattr` to every changed field on `row.target`, so its
+    `received_at` is the new value by the time this function sees it. `changes`
+    was computed during planning, before that mutation, and `FieldChange.before`
+    is `render()`'s output for the old value — `""` for `None`, and non-empty for
+    an already-set timestamp — so it's the one place that still distinguishes a
+    genuine arrival from a same-state correction (review of #79/#47).
     """
     explicit_status_ids = {
         row.matched_id
@@ -1533,10 +1543,14 @@ def _advance_kits_for_newly_received_orders(execution: ExecutionPlan) -> None:
     for row in execution.rows.get("orders", []):
         if row.action is not RowAction.UPDATE or row.target is None:
             continue
-        if not any(change.field == "received_at" for change in row.changes):
+        received_change = next((c for c in row.changes if c.field == "received_at"), None)
+        if received_change is None or received_change.before:
+            # `received_at` wasn't touched, or it already held a value before
+            # this apply — a timestamp correction and a clear-while-received
+            # both leave `before` non-empty, and neither is an arrival. Only
+            # `before == ""` (was null) with a change registered at all — which
+            # therefore can only be a transition to non-null — is one.
             continue
-        if row.target.received_at is None:
-            continue  # cleared, not newly set — nothing arrived
         for item in row.target.items:
             if item.item_type is not ItemType.KIT:
                 continue

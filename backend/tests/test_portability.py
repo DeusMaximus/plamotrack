@@ -3122,6 +3122,76 @@ async def test_clearing_an_orders_received_at_does_not_touch_its_kits(client):
     assert stored_kit["status"] == "building"  # untouched, not reverted
 
 
+async def test_correcting_an_already_received_orders_timestamp_does_not_touch_its_kits(client):
+    """A third state for `received_at`, distinct from both the arrival case and
+    the clearing case above: an already-received order whose timestamp is
+    corrected to a *different* non-null value. No transition into received
+    happens here — it already was — so nothing about a pipeline kit on that
+    order should move, even though `row.target.received_at` is non-null both
+    before and after the write and a naive "is it non-null now" check can't
+    tell this apart from a genuine arrival (review of #79/#47).
+
+    No spawn anywhere in this import, on purpose: the earlier fix for the
+    false-conflict case threaded `received_before_apply` through `_Spawn`, but
+    this repro has none, so that alone couldn't have caught it — the fix has to
+    live in `_advance_kits_for_newly_received_orders` itself.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "received": True,
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    original_received_at = order["received_at"]
+    assert original_received_at is not None
+
+    kit_id = order["items"][0]["kits"][0]["id"]
+    # Arrival-eligible, and NOT the status a receive would have left it in — so
+    # an incorrect advance to `backlog` is unmistakable in the assertion below.
+    await client.patch(f"/kits/{kit_id}", json={"status": "ordered"})
+    kit_before = (await client.get(f"/kits/{kit_id}")).json()
+    assert kit_before["status"] == "ordered"
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "received_at": "2026-04-01T00:00:00Z",  # a correction, not a first arrival
+    }
+    archive = make_archive({"orders": [orders_row]})
+
+    plan = await preview(client, archive, mode="merge")
+    assert actions(plan, "orders") == ["update"], plan
+
+    applied = await apply(client, archive, mode="merge")
+    assert applied.status_code == 200, applied.text
+
+    stored_order = (await client.get(f"/orders/{order['id']}")).json()
+    assert stored_order["received_at"] != original_received_at  # the correction landed
+
+    kit_after = (await client.get(f"/kits/{kit_id}")).json()
+    assert kit_after["status"] == "ordered"  # not advanced to backlog
+    assert kit_after["status_updated_at"] == kit_before["status_updated_at"]
+
+
 # --- the version an archive claims (release prep) ---------------------------------
 
 
