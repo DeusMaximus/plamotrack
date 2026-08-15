@@ -42,6 +42,7 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app.exceptions import ConflictError, DomainError, InvalidInputError
 from app.models import ItemType, Kit, Order, OrderItem
+from app.models.enums import KitStatus
 from app.schemas.portability import (
     DerivedEffects,
     FieldChange,
@@ -56,7 +57,7 @@ from app.schemas.portability import (
 from app.services.currency import is_known_currency, major_to_minor, minor_fraction_digits
 from app.services.kits import default_scale_for_grade
 from app.services.numeric import is_lone_group, require_int4
-from app.services.orders import require_line_quantity, spawn_kits
+from app.services.orders import ARRIVAL_ELIGIBLE, require_line_quantity, spawn_kits
 from app.services.portability import starter_sheet
 from app.services.portability.exporting import (
     ARCHIVE_FORMAT,
@@ -563,6 +564,11 @@ class _Spawn:
     status: str
     row_number: int
     received: bool
+    #: The parent order's received state *before* this apply's own write, used
+    #: only to re-check the locked row in `_lock_and_verify_spawn_orders` —
+    #: distinct from `received`, which already reflects this apply's own
+    #: transition and drives the fan-out's status instead (#47 review).
+    received_before_apply: bool
 
 
 @dataclass
@@ -1123,6 +1129,31 @@ class _Planner:
         existing = self.by_id["orders"].get(order_id)
         return existing is not None and existing.received_at is not None
 
+    def _order_received_before_apply(self, order_id: uuid.UUID) -> bool:
+        """The persisted received state as planning read it — before this apply's
+        own write, if any, lands.
+
+        `_order_received` deliberately answers with the *post-apply* state for an
+        order this import itself updates, because that is the right input for a
+        spawn's fan-out: a line added in the same apply that also receives its
+        order should spawn `backlog`, not `ordered`. But `_lock_and_verify_spawn_
+        orders` needs the other half — what the row already locked under `FOR
+        UPDATE` is expected to look like *before* that write — or it compares a
+        planned outcome to a pre-write reality and reports every legitimate
+        "receive this order and add a line to it" apply as a stale conflict
+        (review of #79/#47). This is `_order_received` with the write-vs-file
+        branch removed: it always reads the row as it already stood.
+        """
+        for row in self.rows.get("orders", []):
+            candidate = row.new_id if row.action is RowAction.CREATE else row.matched_id
+            if candidate != order_id:
+                continue
+            if row.target is not None:
+                return row.target.received_at is not None
+            return False
+        existing = self.by_id["orders"].get(order_id)
+        return existing is not None and existing.received_at is not None
+
     def _plan_spawns(self, replace_all: bool) -> None:
         """Hybrid dispatch: a kit line spawns only the kits nothing else provides."""
         kit_rows = self.rows.get("kits", [])
@@ -1173,6 +1204,7 @@ class _Planner:
                     status=str(status) if status else "",
                     row_number=row.row_number,
                     received=self._order_received(order_id),
+                    received_before_apply=self._order_received_before_apply(order_id),
                 )
             )
             row.messages.append(f"will create {missing} kit(s) from this line")
@@ -1430,6 +1462,12 @@ async def _lock_and_verify_spawn_orders(session: AsyncSession, execution: Execut
     order mutation already does (rule 2/7) — it either waits behind us, or beat us
     to the commit and we catch the mismatch below and ask for a fresh preview.
 
+    Checked against `spawn.received_before_apply`, not `spawn.received`: the
+    latter already reflects this *same* apply's own pending write when its own
+    orders row transitions received state, so comparing it to the pre-write
+    locked row made a legitimate "receive this order and add a line" apply fail
+    as a false stale conflict every time (review of #79/#47).
+
     A spawn whose order this same apply is about to *create* is exempt: nothing
     external can hold a reference to an id that doesn't exist until this
     transaction commits, so there is no lock to take and no drift to catch.
@@ -1440,7 +1478,7 @@ async def _lock_and_verify_spawn_orders(session: AsyncSession, execution: Execut
         if row.action is RowAction.CREATE and row.new_id is not None
     }
     expected = {
-        spawn.order_id: spawn.received
+        spawn.order_id: spawn.received_before_apply
         for spawn in execution.spawns
         if spawn.order_id not in new_order_ids
     }
@@ -1462,6 +1500,52 @@ async def _lock_and_verify_spawn_orders(session: AsyncSession, execution: Execut
                 "the collection changed since you previewed this import, so the "
                 "preview no longer matches what would happen — run the preview again"
             )
+
+
+def _advance_kits_for_newly_received_orders(execution: ExecutionPlan) -> None:
+    """Mirror `receive_order()`'s kit-arrival side effect (rule 2) for a kit that
+    already existed before this apply, under an order this same apply is the one
+    marking received.
+
+    A kit this apply spawns already lands `backlog` on its own, through
+    `spawn.received` (#47). A pre-existing kit under that same order — one
+    nothing in this upload otherwise mentions — used to just sit wherever it
+    already was: the importer writes model rows directly, so none of
+    `receive_order()`'s side effects ran, even though the REST/MCP path never
+    allows an order to become received without advancing every arrival-eligible
+    kit on it. Caught by review of #79/#47, alongside the false-conflict fix
+    above that this same scenario triggered in `_lock_and_verify_spawn_orders`.
+
+    Deliberately narrower than `receive_order()`: this never touches
+    `quantity_on_hand` (rule 10 keeps stock out of anything import derives from a
+    receipt) and never overrides a kit this same upload explicitly gives its own
+    `status` cell — an explicit value in the file always wins over a derived one.
+    Only a transition *into* received is handled; clearing `received_at` doesn't
+    have an established "un-arrive" equivalent to mirror, so it's left alone,
+    same as before this function existed.
+    """
+    explicit_status_ids = {
+        row.matched_id
+        for row in execution.rows.get("kits", [])
+        if row.matched_id is not None and "status" in row.present
+    }
+    now = datetime.now(UTC)
+    for row in execution.rows.get("orders", []):
+        if row.action is not RowAction.UPDATE or row.target is None:
+            continue
+        if not any(change.field == "received_at" for change in row.changes):
+            continue
+        if row.target.received_at is None:
+            continue  # cleared, not newly set — nothing arrived
+        for item in row.target.items:
+            if item.item_type is not ItemType.KIT:
+                continue
+            for kit in item.kits:
+                if kit.id in explicit_status_ids:
+                    continue
+                if kit.status in ARRIVAL_ELIGIBLE:
+                    kit.status = KitStatus.BACKLOG
+                    kit.status_updated_at = now
 
 
 async def apply_import(
@@ -1528,6 +1612,8 @@ async def apply_import(
             elif row.action is RowAction.SKIP:
                 skipped += 1
         await session.flush()
+
+    _advance_kits_for_newly_received_orders(execution)
 
     spawned = 0
     for spawn in execution.spawns:

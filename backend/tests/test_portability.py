@@ -2996,6 +2996,132 @@ async def test_apply_is_rejected_if_the_order_is_deleted_mid_apply(http_client, 
     assert (await http_client.get("/kits")).json() == []
 
 
+async def test_an_import_that_both_receives_an_order_and_adds_a_line_succeeds(client):
+    """No concurrency here — this is the false-positive the lock/verify guard's
+    first cut produced on its own: `_order_received()` answers a matched UPDATE
+    row with the *post-apply* state (right for fan-out — a line added in the same
+    apply that also receives its order should spawn `backlog`), but comparing
+    that same value to the pre-write locked row made this ordinary, single-request
+    apply fail as a stale conflict every time. Splitting `received` (post-apply,
+    for fan-out) from `received_before_apply` (pre-apply, for the lock/verify
+    check) is what a concurrent race actually needs to distinguish (review of
+    #79/#47).
+
+    Also covers the sibling gap the same review raised: `receive_order()` always
+    advances every arrival-eligible kit on the order it receives, but the
+    importer writes model rows directly and skips that side effect for a kit
+    this import doesn't otherwise mention. The order's pre-existing line here
+    must land `backlog` right alongside the newly added one.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    assert order["received_at"] is None
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "received_at": "2026-03-20T00:00:00Z",
+    }
+    line = {
+        "order_id": order["id"],
+        "item_type": "kit",
+        "quantity": "1",
+        "unit_price_minor": "2800",
+        "currency_code": "JPY",
+        "kit_name": "Char's Zaku II",
+        "kit_grade": "HG",
+    }
+    archive = make_archive({"orders": [orders_row], "order_items": [line]})
+
+    plan = await preview(client, archive, mode="merge")
+    assert plan["blocking_errors"] == [], plan
+    assert actions(plan, "orders") == ["update"], plan
+    assert plan["derived"]["kits_spawned"] == 1
+
+    applied = await apply(client, archive, mode="merge")
+    assert applied.status_code == 200, applied.text
+
+    stored_order = (await client.get(f"/orders/{order['id']}")).json()
+    assert stored_order["received_at"] is not None
+
+    kits = {k["name"]: k["status"] for k in (await client.get("/kits")).json()}
+    assert kits == {"Zaku II": "backlog", "Char's Zaku II": "backlog"}
+
+
+async def test_clearing_an_orders_received_at_does_not_touch_its_kits(client):
+    """The other half of the transition: nothing established mirrors an
+    "un-arrive" for a kit, so an import that clears `received_at` back to blank
+    must not silently move a kit backwards out of `backlog` — it just leaves
+    kits exactly as they already were, the same as before this behaviour
+    existed (review of #79/#47).
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "received": True,
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    assert order["received_at"] is not None
+    kit_id = order["items"][0]["kits"][0]["id"]
+    await client.patch(f"/kits/{kit_id}", json={"status": "building"})
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "received_at": "",
+    }
+    archive = make_archive({"orders": [orders_row]})
+
+    applied = await apply(client, archive, mode="merge")
+    assert applied.status_code == 200, applied.text
+
+    stored_order = (await client.get(f"/orders/{order['id']}")).json()
+    assert stored_order["received_at"] is None
+    stored_kit = (await client.get(f"/kits/{kit_id}")).json()
+    assert stored_kit["status"] == "building"  # untouched, not reverted
+
+
 # --- the version an archive claims (release prep) ---------------------------------
 
 
