@@ -16,6 +16,65 @@ Template:
 
 ---
 
+## 2026-08-15 — Claude Code — #42 and #43 in two PRs, both open
+
+**`main` at `01fc77e`.** Two branches pushed, neither merged: **PR #75**
+(`fix/import-archive-integrity-budgets`, 336 backend) and **PR #76**
+(`fix/order-line-quantity-ceiling`, 330 backend). Both branch from `01fc77e`, so
+#76 is *not* on top of #75 — they overlap only in `docs/import-export.md`, in
+different sections. Whichever merges second may need a trivial rebase.
+`M5 hardening — v0.2.5-alpha` closes when both land.
+
+- **#75 = #42 in full + #43's expanded-byte budget**, one branch, as planned. The
+  manifest's `tables` block was written by `build_manifest` and thrown away by
+  `_read_manifest`; it is now reconciled — a file the manifest names but the zip
+  lacks **blocks**, a file present but short **warns**. `_read_csv_text` decodes
+  strictly and names the file and line. `_ExpansionBudget` streams every member
+  against one cumulative 100 MB ceiling, hit while reading. `kit_photos` exporting
+  empty is asserted as intended, not "fixed".
+
+- **A third defect surfaced while restructuring the loop.** `ZipFile()` only reads
+  the central directory, so a member with a damaged payload got past construction
+  and raised a bare `zlib.error` out of `archive.read()` as a **500**. Now a 422
+  naming the member. It is in #75 because it is the same `_read_zip` rewrite.
+
+- **The false-detector trap caught both branches, and the two cases differ.**
+  - #75's three budget tests first went red only on
+    `AttributeError: no MAX_EXPANDED_BYTES` — the test sized its payload off the
+    new constant. Rewritten with a literal 120 MB it fails on the *message*:
+    `assert 'unpacks to more than' in 'that import holds 2,287,802 rows'`. That is
+    the real defect — the whole 120 MB read and parsed before `MAX_ROWS` objects,
+    long after the memory the budget defends has been spent.
+  - #76's tests reference `MAX_LINE_QUANTITY`, which main lacks, so the module
+    fails to *import* and every test in the file errors — strictly worse, since it
+    masks the file. Verified instead by shimming the constant alone into main's
+    `orders.py`, leaving every failure about enforcement.
+  - **Generalisation: a test that names the fix's new symbol cannot be run against
+    the code without it.** Size and assert off literals, or shim the name in.
+
+- **#76 drives the action axis, not just values.** An over-ceiling `order_items`
+  row matched to an existing line is an `update` on unfixed code
+  (`assert ['update'] == ['error']`), and the ceiling check sits after
+  `_parse_row` in the main pass rather than inside `_plan_spawns` — a check on the
+  fan-out alone would never see a catalog line or an update that supplies its own
+  kits.
+
+- **Two of #76's params attempt two billion inserts against unfixed code and
+  hang** — a 10-minute timeout, not a failure. That is the defect demonstrated, but
+  it means `-k "not absurd"` before running that suite against any pre-fix tree.
+
+- **Process:** the worktree (not `git checkout -- <paths>`) was used for both
+  pre-fix runs, per the last session's note, and nothing was lost. Also: **never
+  run two pytest sessions at once** — a background run overlapping a foreground one
+  deadlocked on `TRUNCATE` and reported 19 phantom failures.
+
+- **Next:** both PRs need review and merge; #43 stays open until #76 lands. Then
+  **#74** (REST/MCP integers with no upper bound, v0.2.6) — note #76 bounds the
+  order-line *quantity* only, on product grounds, and deliberately does not touch
+  the int4 question #74 is about.
+
+---
+
 ## 2026-08-14 — Claude Code — #40 merged (PR #73); two external reviews, two real finds
 
 **`main` at `07be49b`, clean, no branches local or remote.** 316 backend, 94 vitest,
