@@ -4,6 +4,7 @@ The duplication tests are the point of the feature — an import that quietly
 doubles someone's order history is worse than no import at all.
 """
 
+import asyncio
 import csv
 import io
 import json
@@ -13,8 +14,10 @@ import tomllib
 import zipfile
 
 import pytest
+from sqlalchemy import text as sa_text
 
 from app import __version__ as app_version
+from app.db import session_scope
 from app.services import orders
 from app.services.portability import exporting, importing, spec, starter_sheet
 
@@ -98,6 +101,21 @@ async def apply(client, content: bytes, *, mode="merge", filename="archive.zip",
         files={"file": (filename, content, "application/octet-stream")},
         data=data,
     )
+
+
+async def _a_writer_is_parked_on_the_gate() -> bool:
+    """Whether Postgres currently has someone blocked on the collection write gate
+    (#80). Asked from a separate connection, so it observes the server's own view
+    rather than anything this test arranged."""
+    async with session_scope() as probe:
+        blocked = await probe.scalar(
+            sa_text(
+                "SELECT count(*) FROM pg_stat_activity "
+                "WHERE datname = current_database() "
+                "AND wait_event_type = 'Lock' AND wait_event = 'advisory'"
+            )
+        )
+    return bool(blocked)
 
 
 def actions(plan: dict, table: str) -> list[str]:
@@ -2620,6 +2638,687 @@ async def test_the_expansion_budget_is_cumulative_across_zip_members(http_client
     assert resp.status_code == 422, resp.text
     assert "expands to more than" in resp.json()["detail"]
     assert built == 1_000, f"{built} rows were built — the second sheet got its own budget"
+
+
+# --- received state feeding the fan-out (#47) --------------------------------------
+
+
+def _two_line_order(first_received: str, second_received: str) -> bytes:
+    """One order, two kit rows — the ordinary multi-kit haul shape."""
+    shared = {
+        "retailer": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "unit_price": "24.50",
+        "currency": "AUD",
+        "quantity": "1",
+    }
+    return starter_sheet_csv(
+        [
+            {"kit_name": "Zaku II", "grade": "HG", "received": first_received, **shared},
+            {"kit_name": "Gouf", "grade": "HG", "received": second_received, **shared},
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "outcome"),
+    [
+        pytest.param("yes", "", "received", id="stated on the first row only"),
+        pytest.param("", "yes", "received", id="stated on the later row only"),
+        pytest.param("no", "", "not received", id="no on the first row only"),
+        pytest.param("", "no", "not received", id="no on the later row only"),
+        pytest.param("yes", "yes", "received", id="agreeing"),
+        pytest.param("no", "no", "not received", id="agreeing on no"),
+        pytest.param("", "", "received", id="neither row says"),
+        pytest.param("yes", "no", "conflict", id="contradicting"),
+        pytest.param("no", "yes", "conflict", id="contradicting the other way"),
+        pytest.param("yes", "maybe", "error", id="a typo on the later row"),
+        pytest.param("maybe", "yes", "error", id="a typo on the first row"),
+    ],
+)
+async def test_received_is_resolved_across_every_row_of_one_order(client, first, second, outcome):
+    """`received` used to be read from the row that *opened* an order group and
+    nowhere else, because the parse sat inside `if key not in orders`. A five-kit
+    haul is five rows and one order, so a typo on rows 2-5 silently meant
+    "received" and an explicit `no` down there was dropped on the floor — on the
+    single most ordinary shape this sheet has (review of #79/#47).
+
+    Every row is parsed now, and the group is resolved from whatever the rows
+    actually state: blank is "didn't say" rather than "no", so stating it once is
+    enough, while two rows stating *different* things is refused rather than
+    resolved by position.
+    """
+    sheet = _two_line_order(first, second)
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+
+    if outcome in {"conflict", "error"}:
+        reported = plan["blocking_errors"] + [
+            r["error"] for t in plan["tables"] for r in t["rows"] if r["error"]
+        ]
+        assert any("received" in str(said) for said in reported), plan
+        if outcome == "conflict":
+            assert any("has to agree" in str(said) for said in reported), reported
+        assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 409
+        assert (await client.get("/orders")).json() == []
+        return
+
+    assert plan["blocking_errors"] == [], plan
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+
+    orders = (await client.get("/orders")).json()
+    assert len(orders) == 1, "two rows sharing retailer + date + number are one order"
+    assert len(orders[0]["items"]) == 2
+    if outcome == "received":
+        assert orders[0]["received_at"] is not None
+    else:
+        assert orders[0]["received_at"] is None
+
+
+@pytest.mark.parametrize(
+    ("first_pass", "second_pass", "ends_received"),
+    [
+        pytest.param("no", "yes", True, id="no -> yes"),
+        pytest.param("yes", "no", False, id="yes -> no"),
+    ],
+)
+async def test_re_importing_a_starter_sheet_moves_receipt_in_both_directions(
+    client, first_pass, second_pass, ends_received
+):
+    """The update axis, which the create-only matrix above cannot reach.
+
+    `no` resolves to an empty `received_at`, and `_present()` drops empty cells —
+    so the matched `orders` row carried no `received_at` at all and the generic
+    classifier had nothing to clear. Importing `yes` and then `no` left the order
+    received, which is the sheet failing to say something it plainly said. The
+    expansion now sets `received_at` unconditionally, so an explicit `no` reaches
+    the classifier as a real "clear this" (review of #79/#47).
+    """
+    row = {
+        "kit_name": "Zaku II",
+        "grade": "HG",
+        "quantity": "1",
+        "retailer": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "unit_price": "24.50",
+        "currency": "AUD",
+    }
+
+    first = starter_sheet_csv([{**row, "received": first_pass}])
+    assert (await apply(client, first, filename="starter-sheet.csv")).status_code == 200
+    started_received = (await client.get("/orders")).json()[0]["received_at"] is not None
+    assert started_received is (first_pass == "yes")
+
+    second = starter_sheet_csv([{**row, "received": second_pass}])
+    assert (await apply(client, second, filename="starter-sheet.csv")).status_code == 200
+
+    orders = (await client.get("/orders")).json()
+    assert len(orders) == 1, "the re-import must match the same order, not add one"
+    assert (orders[0]["received_at"] is not None) is ends_received
+
+
+@pytest.mark.parametrize(
+    ("cell", "outcome"),
+    [
+        pytest.param("", "received", id="blank"),
+        pytest.param("no", "not received", id="no"),
+        pytest.param("FALSE", "not received", id="FALSE"),
+        pytest.param("yes", "received", id="yes"),
+        pytest.param("maybe", "error", id="maybe"),
+    ],
+)
+async def test_received_cell_is_parsed_as_a_boolean(client, cell, outcome):
+    """`received` used to be a hand-rolled string check recognising only a fixed
+    negative set, so a typo like `maybe` silently read as "received" instead of
+    being refused. It's declared and parsed as `parse_bool` now, so anything that
+    isn't a yes/no spelling is a row error rather than a guess.
+    """
+    row = sheet_row("1", retailer="Hobby Link Japan")
+    row["received"] = cell
+    sheet = starter_sheet_csv([row])
+
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+
+    if outcome == "error":
+        reported = plan["blocking_errors"] + [
+            r["error"] for t in plan["tables"] for r in t["rows"] if r["error"]
+        ]
+        assert any("received" in str(said) for said in reported), plan
+        return
+
+    assert plan["blocking_errors"] == [], plan
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+    order = (await client.get("/orders")).json()[0]
+    if outcome == "received":
+        assert order["received_at"] is not None
+    else:
+        assert order["received_at"] is None
+
+
+async def test_a_received_starter_order_lands_its_kits_in_backlog(client):
+    """A received order used to spawn its kits `ordered` regardless: `apply_import`
+    called `spawn_kits` without `received`, so `_initial_kit_status` never ran and
+    the collection was wrong the moment onboarding finished (#47).
+    """
+    row = sheet_row("1", retailer="Hobby Link Japan")
+    row.pop("status", None)  # blank -> spawn_kits' own default of `ordered`
+    row["received"] = "yes"
+    sheet = starter_sheet_csv([row])
+
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+    kits = (await client.get("/kits")).json()
+    assert [k["status"] for k in kits] == ["backlog"]
+
+
+async def test_an_unreceived_starter_order_leaves_its_kits_on_the_way(client):
+    """The mirror of the case above: an order that hasn't arrived must not have its
+    kits advanced to `backlog`."""
+    row = sheet_row("1", retailer="Hobby Link Japan")
+    row.pop("status", None)
+    row["received"] = "no"
+    sheet = starter_sheet_csv([row])
+
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+    kits = (await client.get("/kits")).json()
+    assert [k["status"] for k in kits] == ["ordered"]
+
+
+async def test_apply_is_rejected_once_the_parent_order_is_received_after_preview(http_client):
+    """Whether a spawn lands `backlog` depends on the parent order's `received_at` —
+    a value no row in the plan carries directly — so the fingerprint has to read it
+    from the order, not assume a spawn with the same shape means the same outcome.
+
+    Before `_Spawn.received` joined `_plan_fingerprint`'s payload, two plans built
+    from the same file — one before the order was received, one after — hashed
+    identically even though one spawns an `ordered` kit and the other a `backlog`
+    one. That let a stale preview apply cleanly: exactly the drift #41's plan_hash
+    exists to catch (review of #79/#47).
+    """
+    retailer = (await http_client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await http_client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    line = {
+        "order_id": order["id"],
+        "item_type": "kit",
+        "quantity": "1",
+        "unit_price_minor": "2800",
+        "currency_code": "JPY",
+        "kit_name": "Char's Zaku II",
+        "kit_grade": "HG",
+    }
+    content = make_csv(spec.ORDER_ITEMS.header, [line])
+
+    preview_resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    plan_hash = preview_resp.json()["plan_hash"]
+
+    # The order arrives between preview and apply — the exact race the hash exists
+    # to catch.
+    assert (await http_client.post(f"/orders/{order['id']}/receive")).status_code == 200
+
+    applied = await http_client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge", "plan_hash": plan_hash},
+    )
+    assert applied.status_code == 409, applied.text
+    # Rejected, not half-applied.
+    assert {k["name"] for k in (await http_client.get("/kits")).json()} == {"Zaku II"}
+
+
+async def test_add_only_reads_received_state_off_the_order_it_will_keep_not_the_file(
+    http_client,
+):
+    """`add_only` leaves a matched order row completely alone (SKIP) — but the
+    fan-out for a *new* line on that same order used to read the order's received
+    state off the uploaded cell regardless, rather than the persisted row that
+    import will actually leave standing. An add-only file with a blank
+    `received_at` on an already-received order therefore spawned an `ordered` kit
+    instead of `backlog` (review of #79/#47).
+    """
+    retailer = (await http_client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await http_client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "received": True,
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "received_at": "",  # blank on the file; the order this import keeps is received
+    }
+    line = {
+        "order_id": order["id"],
+        "item_type": "kit",
+        "quantity": "1",
+        "unit_price_minor": "2800",
+        "currency_code": "JPY",
+        "kit_name": "Char's Zaku II",
+        "kit_grade": "HG",
+    }
+    archive = make_archive({"orders": [orders_row], "order_items": [line]})
+
+    plan = await preview(http_client, archive, mode="add_only")
+    assert actions(plan, "orders") == ["skip"], plan
+
+    resp = await apply(http_client, archive, mode="add_only")
+    assert resp.status_code == 200, resp.text
+
+    stored_order = (await http_client.get(f"/orders/{order['id']}")).json()
+    assert stored_order["received_at"] is not None  # untouched by add_only
+
+    kits = {k["name"]: k for k in (await http_client.get("/kits")).json()}
+    assert kits["Char's Zaku II"]["status"] == "backlog"
+
+
+async def test_a_spawn_free_import_that_edits_a_line_and_receives_its_order_succeeds(client):
+    """An `order_items.csv` price correction on an existing line, combined with an
+    `orders.csv` receipt transition on its parent, in one apply — with no spawn
+    anywhere in it.
+
+    Both halves land, and the kit-arrival side effect still reaches the line's
+    pre-existing kit even though nothing in the upload mentions that kit and no
+    fan-out put it there. The two tables are planned and written independently,
+    so this is the case where an order-level derivation has to survive a
+    same-apply edit to its own child rows (review of #79/#47).
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    assert order["received_at"] is None
+    item_id = order["items"][0]["id"]
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "received_at": "2026-03-20T00:00:00Z",
+    }
+    line = {
+        "id": item_id,
+        "order_id": order["id"],
+        "item_type": "kit",
+        "quantity": "1",
+        "unit_price_minor": "3000",  # the correction — no new line
+        "currency_code": "JPY",
+        "kit_name": "Zaku II",
+        "kit_grade": "HG",
+    }
+    archive = make_archive({"orders": [orders_row], "order_items": [line]})
+
+    plan = await preview(client, archive, mode="merge")
+    assert plan["blocking_errors"] == [], plan
+    assert actions(plan, "orders") == ["update"], plan
+    assert actions(plan, "order_items") == ["update"], plan
+    assert plan["derived"]["kits_spawned"] == 0
+
+    applied = await apply(client, archive, mode="merge")
+    assert applied.status_code == 200, applied.text
+
+    stored_order = (await client.get(f"/orders/{order['id']}")).json()
+    assert stored_order["received_at"] is not None
+    assert stored_order["items"][0]["unit_price_minor"] == 3000
+
+    kits = (await client.get("/kits")).json()
+    assert [k["status"] for k in kits] == ["backlog"]
+
+
+async def test_an_import_that_both_receives_an_order_and_adds_a_line_succeeds(client):
+    """One apply that both receives an existing order and adds a line to it.
+
+    `_order_received()` answers a matched UPDATE row with the *post-apply* state,
+    which is what the fan-out needs: a line added in the same apply that also
+    receives its order should spawn `backlog`, not `ordered`.
+
+    Also covers the sibling gap the same review raised: `receive_order()` always
+    advances every arrival-eligible kit on the order it receives, but the
+    importer writes model rows directly and skipped that side effect for a kit
+    this import doesn't otherwise mention. The order's pre-existing kit here must
+    land `backlog` right alongside the newly spawned one (review of #79/#47).
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    assert order["received_at"] is None
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "received_at": "2026-03-20T00:00:00Z",
+    }
+    line = {
+        "order_id": order["id"],
+        "item_type": "kit",
+        "quantity": "1",
+        "unit_price_minor": "2800",
+        "currency_code": "JPY",
+        "kit_name": "Char's Zaku II",
+        "kit_grade": "HG",
+    }
+    archive = make_archive({"orders": [orders_row], "order_items": [line]})
+
+    plan = await preview(client, archive, mode="merge")
+    assert plan["blocking_errors"] == [], plan
+    assert actions(plan, "orders") == ["update"], plan
+    assert plan["derived"]["kits_spawned"] == 1
+
+    applied = await apply(client, archive, mode="merge")
+    assert applied.status_code == 200, applied.text
+
+    stored_order = (await client.get(f"/orders/{order['id']}")).json()
+    assert stored_order["received_at"] is not None
+
+    kits = {k["name"]: k["status"] for k in (await client.get("/kits")).json()}
+    assert kits == {"Zaku II": "backlog", "Char's Zaku II": "backlog"}
+
+
+async def test_clearing_an_orders_received_at_does_not_touch_its_kits(client):
+    """The other half of the transition: nothing established mirrors an
+    "un-arrive" for a kit, so an import that clears `received_at` back to blank
+    must not silently move a kit backwards out of `backlog` — it just leaves
+    kits exactly as they already were, the same as before this behaviour
+    existed (review of #79/#47).
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "received": True,
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    assert order["received_at"] is not None
+    kit_id = order["items"][0]["kits"][0]["id"]
+    await client.patch(f"/kits/{kit_id}", json={"status": "building"})
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "received_at": "",
+    }
+    archive = make_archive({"orders": [orders_row]})
+
+    applied = await apply(client, archive, mode="merge")
+    assert applied.status_code == 200, applied.text
+
+    stored_order = (await client.get(f"/orders/{order['id']}")).json()
+    assert stored_order["received_at"] is None
+    stored_kit = (await client.get(f"/kits/{kit_id}")).json()
+    assert stored_kit["status"] == "building"  # untouched, not reverted
+
+
+async def test_correcting_an_already_received_orders_timestamp_does_not_touch_its_kits(client):
+    """A third state for `received_at`, distinct from both the arrival case and
+    the clearing case above: an already-received order whose timestamp is
+    corrected to a *different* non-null value. No transition into received
+    happens here — it already was — so nothing about a pipeline kit on that
+    order should move, even though `row.target.received_at` is non-null both
+    before and after the write and a naive "is it non-null now" check can't
+    tell this apart from a genuine arrival (review of #79/#47).
+
+    No spawn anywhere in this import, on purpose: nothing on the fan-out path
+    could have caught it, so the distinction has to live in
+    `_advance_kits_for_newly_received_orders` itself.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "received": True,
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    original_received_at = order["received_at"]
+    assert original_received_at is not None
+
+    kit_id = order["items"][0]["kits"][0]["id"]
+    # Arrival-eligible, and NOT the status a receive would have left it in — so
+    # an incorrect advance to `backlog` is unmistakable in the assertion below.
+    await client.patch(f"/kits/{kit_id}", json={"status": "ordered"})
+    kit_before = (await client.get(f"/kits/{kit_id}")).json()
+    assert kit_before["status"] == "ordered"
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "received_at": "2026-04-01T00:00:00Z",  # a correction, not a first arrival
+    }
+    archive = make_archive({"orders": [orders_row]})
+
+    plan = await preview(client, archive, mode="merge")
+    assert actions(plan, "orders") == ["update"], plan
+
+    applied = await apply(client, archive, mode="merge")
+    assert applied.status_code == 200, applied.text
+
+    stored_order = (await client.get(f"/orders/{order['id']}")).json()
+    assert stored_order["received_at"] != original_received_at  # the correction landed
+
+    kit_after = (await client.get(f"/kits/{kit_id}")).json()
+    assert kit_after["status"] == "ordered"  # not advanced to backlog
+    assert kit_after["status_updated_at"] == kit_before["status_updated_at"]
+
+
+async def test_an_import_does_not_revert_a_kit_someone_moved_on_during_it(client, monkeypatch):
+    """Codex repro 3 from the #79 review, reachable only now that the importer has
+    a kit-arrival side effect at all.
+
+    An orders-only receipt update plans just the Order, but
+    `_advance_kits_for_newly_received_orders` also mutates pre-existing kits — off
+    the relationship snapshot planning loaded. A normal `PATCH /kits/{id}` to
+    `building` landing between the plan and that write used to be overwritten back
+    to `backlog`, which the REST receive path would never do.
+
+    The write gate (#80) makes that interleaving unreachable: the PATCH waits for
+    the apply to commit, then lands on top. `building` survives, and `backlog` is
+    never what the kit ends on.
+
+    The racer is launched as a task and awaited *after* the apply — under the gate
+    it blocks until the apply commits, so awaiting it inline would deadlock the
+    test against the serialization it is checking.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    kit_id = order["items"][0]["kits"][0]["id"]
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "received_at": "2026-03-20T00:00:00Z",
+    }
+    archive = make_archive({"orders": [orders_row]})
+
+    plan = await preview(client, archive, mode="merge")
+    assert plan["blocking_errors"] == [], plan
+    plan_hash = plan["plan_hash"]
+
+    original_plan_import = importing.plan_import
+    racer: dict[str, asyncio.Task] = {}
+    patched: list[int] = []
+
+    async def plan_then_patch_the_kit(*args, **kwargs):
+        execution = await original_plan_import(*args, **kwargs)
+
+        async def move_it_on() -> None:
+            resp = await client.patch(f"/kits/{kit_id}", json={"status": "building"})
+            patched.append(resp.status_code)
+
+        task = asyncio.create_task(move_it_on())
+        racer["task"] = task
+        # Waits for an observable state, not a duration: either the racer is
+        # parked on the gate (the guard working) or it has finished (the guard
+        # gone, and its write lands before the apply's — the interleaving this
+        # regression needs). A fixed sleep only creates the opportunity for one
+        # of those; it never establishes that either happened.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if task.done() or await _a_writer_is_parked_on_the_gate():
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError(
+                "the racing PATCH neither completed nor blocked on the gate — "
+                "this test is not exercising the interleaving it claims to"
+            )
+        return execution
+
+    monkeypatch.setattr(importing, "plan_import", plan_then_patch_the_kit)
+
+    applied = await client.post(
+        "/import/apply",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "merge", "plan_hash": plan_hash},
+    )
+    await racer["task"]
+
+    assert applied.status_code == 200, applied.text
+    assert patched == [200], f"the racing PATCH didn't land: {patched}"
+
+    stored = (await client.get(f"/kits/{kit_id}")).json()
+    assert stored["status"] == "building", (
+        "an import's kit-arrival side effect reverted a kit somebody had already moved to building"
+    )
 
 
 # --- the version an archive claims (release prep) ---------------------------------

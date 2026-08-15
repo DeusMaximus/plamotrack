@@ -55,7 +55,7 @@ Download `starter-sheet.csv`, fill it in, import it.
 | `retailer` | Where you bought it. **Blank = no order recorded**, just a kit in the collection. |
 | `order_date`, `order_number` | The purchase. Rows sharing a retailer + date + number collapse into **one order**. |
 | `unit_price`, `currency` | Major units (`49.99`). Currency blank = your instance's `REFERENCE_CURRENCY` (`AUD` unless you changed it). The example rows in the downloaded sheet are already filled in with yours. |
-| `received` | `yes`/`no`. Blank = yes. Received-on defaults to the order date, not today. |
+| `received` | `yes`/`no`. Blank = yes. Received-on defaults to the order date, not today. When several rows collapse into one order you only need to say it once — but if two rows of the same order say *different* things, that's an error rather than a guess. Re-importing with `no` un-marks an order you'd previously imported as received. |
 
 You write kits; plamotrack works out the retailers, orders, and order lines.
 

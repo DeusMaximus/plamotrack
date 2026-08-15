@@ -42,6 +42,7 @@ from sqlalchemy.orm import selectinload
 from app.config import get_settings
 from app.exceptions import ConflictError, DomainError, InvalidInputError
 from app.models import ItemType, Kit, Order, OrderItem
+from app.models.enums import KitStatus
 from app.schemas.portability import (
     DerivedEffects,
     FieldChange,
@@ -56,7 +57,7 @@ from app.schemas.portability import (
 from app.services.currency import is_known_currency, major_to_minor, minor_fraction_digits
 from app.services.kits import default_scale_for_grade
 from app.services.numeric import is_lone_group, require_int4
-from app.services.orders import require_line_quantity, spawn_kits
+from app.services.orders import ARRIVAL_ELIGIBLE, require_line_quantity, spawn_kits
 from app.services.portability import starter_sheet
 from app.services.portability.exporting import (
     ARCHIVE_FORMAT,
@@ -554,6 +555,7 @@ class _Row:
 @dataclass
 class _Spawn:
     order_item_id: uuid.UUID
+    order_id: uuid.UUID
     count: int
     name: str
     grade: str
@@ -561,6 +563,7 @@ class _Spawn:
     kit_number: str | None
     status: str
     row_number: int
+    received: bool
 
 
 @dataclass
@@ -1097,6 +1100,30 @@ class _Planner:
                     "importing adds another, since two of the same kit are two kits"
                 )
 
+    def _order_received(self, order_id: uuid.UUID) -> bool:
+        """Whether the order a kit line belongs to has arrived, so a spawned kit
+        lands in the right status instead of always `_initial_kit_status`'s default
+        of "still on the way" (#47). Checks this import's own orders rows first —
+        covering both a freshly created order and an existing one this import
+        updates — and falls back to the persisted row for an order the upload
+        doesn't touch at all.
+        """
+        for row in self.rows.get("orders", []):
+            candidate = row.new_id if row.action is RowAction.CREATE else row.matched_id
+            if candidate != order_id:
+                continue
+            # Only a row that will actually be written can answer from the file —
+            # `add_only` deliberately leaves a matched order untouched (SKIP), so
+            # its uploaded `received_at` cell describes nothing that will land.
+            writes = row.action in (RowAction.CREATE, RowAction.UPDATE)
+            if writes and "received_at" in row.present:
+                return row.values.get("received_at") is not None
+            if row.target is not None:
+                return row.target.received_at is not None
+            return False
+        existing = self.by_id["orders"].get(order_id)
+        return existing is not None and existing.received_at is not None
+
     def _plan_spawns(self, replace_all: bool) -> None:
         """Hybrid dispatch: a kit line spawns only the kits nothing else provides."""
         kit_rows = self.rows.get("kits", [])
@@ -1132,9 +1159,13 @@ class _Planner:
                 )
                 continue
             status = row.values.get("kit_status")
+            # order_id is a required REF, already validated by `_resolve_all_refs` —
+            # a row that reached here without one would already be RowAction.ERROR.
+            order_id = row.values["order_id"]
             self.spawns.append(
                 _Spawn(
                     order_item_id=line_id,
+                    order_id=order_id,
                     count=missing,
                     name=name,
                     grade=grade,
@@ -1142,6 +1173,7 @@ class _Planner:
                     kit_number=row.values.get("kit_number"),
                     status=str(status) if status else "",
                     row_number=row.row_number,
+                    received=self._order_received(order_id),
                 )
             )
             row.messages.append(f"will create {missing} kit(s) from this line")
@@ -1327,6 +1359,7 @@ def _plan_fingerprint(
                 spawn.kit_number or "",
                 spawn.status,
                 spawn.row_number,
+                spawn.received,
             ]
             for spawn in spawns
         ],
@@ -1379,6 +1412,65 @@ async def preview_import(
     session: AsyncSession, filename: str, content: bytes, mode: ImportMode
 ) -> ImportPlan:
     return (await plan_import(session, filename, content, mode)).plan
+
+
+def _advance_kits_for_newly_received_orders(execution: ExecutionPlan) -> None:
+    """Mirror `receive_order()`'s kit-arrival side effect (rule 2) for a kit that
+    already existed before this apply, under an order this same apply is the one
+    marking received.
+
+    A kit this apply spawns already lands `backlog` on its own, through
+    `spawn.received` (#47). A pre-existing kit under that same order — one
+    nothing in this upload otherwise mentions — used to just sit wherever it
+    already was: the importer writes model rows directly, so none of
+    `receive_order()`'s side effects ran, even though the REST/MCP path never
+    allows an order to become received without advancing every arrival-eligible
+    kit on it (review of #79/#47).
+
+    Deliberately narrower than `receive_order()`: this never touches
+    `quantity_on_hand` (rule 10 keeps stock out of anything import derives from a
+    receipt) and never overrides a kit this same upload explicitly gives its own
+    `status` cell — an explicit value in the file always wins over a derived one.
+    Only the explicit `unreceived -> received` transition counts as an arrival —
+    correcting an already-received order's timestamp to a different non-null
+    value is not one, and clearing `received_at` doesn't have an established
+    "un-arrive" equivalent to mirror, so both are left alone.
+
+    Reads whether the order was received *before* this apply from `row.changes`
+    rather than `row.target`: this runs after the main write loop, which already
+    applied `setattr` to every changed field on `row.target`, so its
+    `received_at` is the new value by the time this function sees it. `changes`
+    was computed during planning, before that mutation, and `FieldChange.before`
+    is `render()`'s output for the old value — `""` for `None`, and non-empty for
+    an already-set timestamp — so it's the one place that still distinguishes a
+    genuine arrival from a same-state correction (review of #79/#47).
+    """
+    explicit_status_ids = {
+        row.matched_id
+        for row in execution.rows.get("kits", [])
+        if row.matched_id is not None and "status" in row.present
+    }
+    now = datetime.now(UTC)
+    for row in execution.rows.get("orders", []):
+        if row.action is not RowAction.UPDATE or row.target is None:
+            continue
+        received_change = next((c for c in row.changes if c.field == "received_at"), None)
+        if received_change is None or received_change.before:
+            # `received_at` wasn't touched, or it already held a value before
+            # this apply — a timestamp correction and a clear-while-received
+            # both leave `before` non-empty, and neither is an arrival. Only
+            # `before == ""` (was null) with a change registered at all — which
+            # therefore can only be a transition to non-null — is one.
+            continue
+        for item in row.target.items:
+            if item.item_type is not ItemType.KIT:
+                continue
+            for kit in item.kits:
+                if kit.id in explicit_status_ids:
+                    continue
+                if kit.status in ARRIVAL_ELIGIBLE:
+                    kit.status = KitStatus.BACKLOG
+                    kit.status_updated_at = now
 
 
 async def apply_import(
@@ -1442,6 +1534,8 @@ async def apply_import(
                 skipped += 1
         await session.flush()
 
+    _advance_kits_for_newly_received_orders(execution)
+
     spawned = 0
     for spawn in execution.spawns:
         item = await session.get(OrderItem, spawn.order_item_id)
@@ -1456,6 +1550,7 @@ async def apply_import(
             kit_number=spawn.kit_number,
             status=spawn.status or None,
             count=spawn.count,
+            received=spawn.received,
         )
         spawned += spawn.count
 

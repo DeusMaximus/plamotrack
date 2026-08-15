@@ -13,6 +13,7 @@ lines, so a five-kit haul is five rows here and one order in the app.
 
 import uuid
 from collections import OrderedDict
+from dataclasses import dataclass
 
 from app.config import get_settings
 from app.exceptions import InvalidInputError
@@ -22,6 +23,7 @@ from app.services.portability.spec import (
     ColumnSpec,
     col,
     enum_parser,
+    parse_bool,
     parse_date,
     parse_decimal,
     parse_int,
@@ -69,7 +71,12 @@ STARTER_SHEET_COLUMNS: tuple[ColumnSpec, ...] = (
         parse_text,
         help="3-letter ISO code, e.g. JPY. Blank = this instance's reference currency.",
     ),
-    col("received", parse_text, help="yes/no — has it arrived? Blank = yes."),
+    col(
+        "received",
+        parse_bool,
+        help="yes/no — has it arrived? Blank = yes. State it on any row of an "
+        "order; rows of the same order must not contradict each other.",
+    ),
 )
 
 STARTER_SHEET_HEADER: list[str] = [column.name for column in STARTER_SHEET_COLUMNS]
@@ -184,6 +191,35 @@ def _standalone_count(cell: str) -> int:
     return require_line_quantity(count)
 
 
+#: How a resolved receipt reads back in a diagnostic, so the message quotes the
+#: sheet's own vocabulary rather than Python's.
+_YES_NO = {True: "yes", False: "no"}
+
+
+@dataclass(frozen=True)
+class _Receipt:
+    """An explicit `received` value, and the row that stated it."""
+
+    stated: bool
+    row: str
+
+
+def _received(cell: str) -> bool | None:
+    """What one row's `received` cell states, or None if it states nothing.
+
+    Anything that isn't blank has to actually parse as yes/no, so a typo like
+    `maybe` is a row error rather than a silent "received". The blank default is
+    *not* applied here: this sheet is denormalized, so several rows can describe
+    one order, and a blank cell on one of them has to stay distinguishable from
+    an explicit `no` on another until the whole group has been read (`_resolve_
+    receipt`).
+    """
+    try:
+        return parse_bool(cell)
+    except ValueError as exc:
+        raise InvalidInputError(f"received: {exc}") from exc
+
+
 def expand(
     rows: list[dict[str, str]],
     *,
@@ -204,6 +240,9 @@ def expand(
     """
     retailers: OrderedDict[str, dict[str, str]] = OrderedDict()
     orders: OrderedDict[str, dict[str, str]] = OrderedDict()
+    #: Explicit receipt statements per order key. An order with no entry was
+    #: never told either way, and falls back to the documented "blank = yes".
+    receipts: dict[str, _Receipt] = {}
     order_items: list[dict[str, str]] = []
     kits: list[dict[str, str]] = []
     problems: list[str] = []
@@ -268,13 +307,22 @@ def expand(
         order_number = (row.get("order_number") or "").strip()
         key = _order_key(retailer_name, order_date, order_number)
 
+        # Every retailer-bearing row, not only the one that opens the group. A
+        # five-kit haul is five rows and one order, so parsing `received` on the
+        # first alone left a typo on rows 2-5 silently meaning "received", and an
+        # explicit `no` down there ignored outright.
+        try:
+            stated = _received(row.get("received") or "")
+        except InvalidInputError as exc:
+            problems.append(f"row {source_row}: {exc}")
+            continue
+
         if retailer_name.lower() not in retailers:
             spend(1)
             retailers[retailer_name.lower()] = _present(source_row, name=retailer_name)
 
         if key not in orders:
             spend(1)
-            received = (row.get("received") or "").strip().lower()
             orders[key] = _present(
                 source_row,
                 id=str(uuid.uuid5(_NAMESPACE, key)),
@@ -282,11 +330,19 @@ def expand(
                 order_date=order_date,
                 order_number=order_number,
                 currency_code=currency,
-                # Blank means "yes, I have it" — the common case for a migration.
-                # Received-on defaults to the order date rather than today, so a
-                # migrated collection doesn't claim it all arrived on import day.
-                received_at="" if received in {"no", "n", "false", "0"} else order_date,
             )
+        if stated is not None:
+            settled = receipts.get(key)
+            if settled is not None and settled.stated != stated:
+                problems.append(
+                    f"row {source_row}: received is '{_YES_NO[stated]}', but row "
+                    f"{settled.row} of the same order ({retailer_name}"
+                    f"{', ' + order_number if order_number else ''}) says "
+                    f"'{_YES_NO[settled.stated]}' — an order either arrived or it "
+                    "didn't, so every row of one order has to agree"
+                )
+                continue
+            receipts[key] = _Receipt(stated=stated, row=source_row)
 
         spend(1)
         order_items.append(
@@ -304,6 +360,19 @@ def expand(
                 kit_status=status,
             )
         )
+
+    # Settled after the whole sheet has been read, because any row of a group may
+    # be the one that states it — and set unconditionally, bypassing `_present`.
+    # `_present` drops empty cells so a kit list can't blank a shop's report card,
+    # but an explicit `no` is the sheet having an opinion, and it can only be
+    # carried as a present-and-empty `received_at`: absent means "says nothing",
+    # which left a re-import unable to un-receive an order it had marked received.
+    for key, order_row in orders.items():
+        settled = receipts.get(key)
+        received = settled.stated if settled is not None else True
+        # Received-on defaults to the order date rather than today, so a migrated
+        # collection doesn't claim it all arrived on import day.
+        order_row["received_at"] = order_row.get("order_date", "") if received else ""
 
     expanded: dict[str, list[dict[str, str]]] = {}
     if retailers:
