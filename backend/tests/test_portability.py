@@ -14,8 +14,10 @@ import tomllib
 import zipfile
 
 import pytest
+from sqlalchemy import text as sa_text
 
 from app import __version__ as app_version
+from app.db import session_scope
 from app.services import orders
 from app.services.portability import exporting, importing, spec, starter_sheet
 
@@ -99,6 +101,21 @@ async def apply(client, content: bytes, *, mode="merge", filename="archive.zip",
         files={"file": (filename, content, "application/octet-stream")},
         data=data,
     )
+
+
+async def _a_writer_is_parked_on_the_gate() -> bool:
+    """Whether Postgres currently has someone blocked on the collection write gate
+    (#80). Asked from a separate connection, so it observes the server's own view
+    rather than anything this test arranged."""
+    async with session_scope() as probe:
+        blocked = await probe.scalar(
+            sa_text(
+                "SELECT count(*) FROM pg_stat_activity "
+                "WHERE datname = current_database() "
+                "AND wait_event_type = 'Lock' AND wait_event = 'advisory'"
+            )
+        )
+    return bool(blocked)
 
 
 def actions(plan: dict, table: str) -> list[str]:
@@ -2626,6 +2643,121 @@ async def test_the_expansion_budget_is_cumulative_across_zip_members(http_client
 # --- received state feeding the fan-out (#47) --------------------------------------
 
 
+def _two_line_order(first_received: str, second_received: str) -> bytes:
+    """One order, two kit rows — the ordinary multi-kit haul shape."""
+    shared = {
+        "retailer": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "unit_price": "24.50",
+        "currency": "AUD",
+        "quantity": "1",
+    }
+    return starter_sheet_csv(
+        [
+            {"kit_name": "Zaku II", "grade": "HG", "received": first_received, **shared},
+            {"kit_name": "Gouf", "grade": "HG", "received": second_received, **shared},
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "outcome"),
+    [
+        pytest.param("yes", "", "received", id="stated on the first row only"),
+        pytest.param("", "yes", "received", id="stated on the later row only"),
+        pytest.param("no", "", "not received", id="no on the first row only"),
+        pytest.param("", "no", "not received", id="no on the later row only"),
+        pytest.param("yes", "yes", "received", id="agreeing"),
+        pytest.param("no", "no", "not received", id="agreeing on no"),
+        pytest.param("", "", "received", id="neither row says"),
+        pytest.param("yes", "no", "conflict", id="contradicting"),
+        pytest.param("no", "yes", "conflict", id="contradicting the other way"),
+        pytest.param("yes", "maybe", "error", id="a typo on the later row"),
+        pytest.param("maybe", "yes", "error", id="a typo on the first row"),
+    ],
+)
+async def test_received_is_resolved_across_every_row_of_one_order(client, first, second, outcome):
+    """`received` used to be read from the row that *opened* an order group and
+    nowhere else, because the parse sat inside `if key not in orders`. A five-kit
+    haul is five rows and one order, so a typo on rows 2-5 silently meant
+    "received" and an explicit `no` down there was dropped on the floor — on the
+    single most ordinary shape this sheet has (review of #79/#47).
+
+    Every row is parsed now, and the group is resolved from whatever the rows
+    actually state: blank is "didn't say" rather than "no", so stating it once is
+    enough, while two rows stating *different* things is refused rather than
+    resolved by position.
+    """
+    sheet = _two_line_order(first, second)
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+
+    if outcome in {"conflict", "error"}:
+        reported = plan["blocking_errors"] + [
+            r["error"] for t in plan["tables"] for r in t["rows"] if r["error"]
+        ]
+        assert any("received" in str(said) for said in reported), plan
+        if outcome == "conflict":
+            assert any("has to agree" in str(said) for said in reported), reported
+        assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 409
+        assert (await client.get("/orders")).json() == []
+        return
+
+    assert plan["blocking_errors"] == [], plan
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+
+    orders = (await client.get("/orders")).json()
+    assert len(orders) == 1, "two rows sharing retailer + date + number are one order"
+    assert len(orders[0]["items"]) == 2
+    if outcome == "received":
+        assert orders[0]["received_at"] is not None
+    else:
+        assert orders[0]["received_at"] is None
+
+
+@pytest.mark.parametrize(
+    ("first_pass", "second_pass", "ends_received"),
+    [
+        pytest.param("no", "yes", True, id="no -> yes"),
+        pytest.param("yes", "no", False, id="yes -> no"),
+    ],
+)
+async def test_re_importing_a_starter_sheet_moves_receipt_in_both_directions(
+    client, first_pass, second_pass, ends_received
+):
+    """The update axis, which the create-only matrix above cannot reach.
+
+    `no` resolves to an empty `received_at`, and `_present()` drops empty cells —
+    so the matched `orders` row carried no `received_at` at all and the generic
+    classifier had nothing to clear. Importing `yes` and then `no` left the order
+    received, which is the sheet failing to say something it plainly said. The
+    expansion now sets `received_at` unconditionally, so an explicit `no` reaches
+    the classifier as a real "clear this" (review of #79/#47).
+    """
+    row = {
+        "kit_name": "Zaku II",
+        "grade": "HG",
+        "quantity": "1",
+        "retailer": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "unit_price": "24.50",
+        "currency": "AUD",
+    }
+
+    first = starter_sheet_csv([{**row, "received": first_pass}])
+    assert (await apply(client, first, filename="starter-sheet.csv")).status_code == 200
+    started_received = (await client.get("/orders")).json()[0]["received_at"] is not None
+    assert started_received is (first_pass == "yes")
+
+    second = starter_sheet_csv([{**row, "received": second_pass}])
+    assert (await apply(client, second, filename="starter-sheet.csv")).status_code == 200
+
+    orders = (await client.get("/orders")).json()
+    assert len(orders) == 1, "the re-import must match the same order, not add one"
+    assert (orders[0]["received_at"] is not None) is ends_received
+
+
 @pytest.mark.parametrize(
     ("cell", "outcome"),
     [
@@ -3152,8 +3284,23 @@ async def test_an_import_does_not_revert_a_kit_someone_moved_on_during_it(client
             resp = await client.patch(f"/kits/{kit_id}", json={"status": "building"})
             patched.append(resp.status_code)
 
-        racer["task"] = asyncio.create_task(move_it_on())
-        await asyncio.sleep(0.05)  # let it reach — and block on — the gate
+        task = asyncio.create_task(move_it_on())
+        racer["task"] = task
+        # Waits for an observable state, not a duration: either the racer is
+        # parked on the gate (the guard working) or it has finished (the guard
+        # gone, and its write lands before the apply's — the interleaving this
+        # regression needs). A fixed sleep only creates the opportunity for one
+        # of those; it never establishes that either happened.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if task.done() or await _a_writer_is_parked_on_the_gate():
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError(
+                "the racing PATCH neither completed nor blocked on the gate — "
+                "this test is not exercising the interleaving it claims to"
+            )
         return execution
 
     monkeypatch.setattr(importing, "plan_import", plan_then_patch_the_kit)
