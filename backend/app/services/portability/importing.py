@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -416,8 +417,33 @@ def _read_zip(content: bytes) -> ParsedUpload:
                 # indistinguishable from a failed parse and it slipped through
                 # unremarked while `[]` and `"text"` warned.
                 if isinstance(data, dict):
-                    manifest = _read_manifest(data)
+                    # Declarations first, and deliberately not inside the guard
+                    # below: `tables` is validated on its own terms by
+                    # `_declared_tables`, so an `exported_at` of the wrong type says
+                    # nothing about whether the file list is readable. Losing the
+                    # reconciliation over a bad metadata field would be discarding
+                    # the more useful half.
                     declared = _declared_tables(data)
+                    try:
+                        manifest = _read_manifest(data)
+                    except ValidationError as exc:
+                        # `ManifestInfo` is a Pydantic model, so a field of the wrong
+                        # type raises here — and `ValidationError` is a `ValueError`,
+                        # which is why this was covered for free while the parse and
+                        # the model build were one expression inside the `try` above.
+                        # Splitting them to tell `null` apart from a parse failure
+                        # took the cover away without replacing it (rule 6).
+                        #
+                        # Named fields, not `{exc}`: a Pydantic report runs to
+                        # several lines and a docs URL, and this lands in a preview
+                        # panel someone is reading to decide whether to import.
+                        fields = ", ".join(
+                            str(error["loc"][0]) for error in exc.errors() if error.get("loc")
+                        )
+                        warnings.append(
+                            f"manifest.json has metadata this instance can't read "
+                            f"({fields or 'unknown field'}) — continuing without it"
+                        )
                 else:
                     warnings.append(
                         f"manifest.json is {_json_shape(data)}, not an object, so it "

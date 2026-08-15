@@ -2114,3 +2114,78 @@ async def test_archive_structure_is_processed_in_linear_time(client):
     )
     # And it still did the work: every declaration is missing, and says so.
     assert len(upload.errors) >= _STRUCTURAL_MEMBERS // 4
+
+
+# --- manifest metadata is data too (third-pass review of #75) --------------------
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("export_version", "not-an-integer", id="an integer field given a string"),
+        pytest.param("format", [], id="a string field given a list"),
+        pytest.param("schema_version", {}, id="a string field given an object"),
+        pytest.param("exported_at", 42, id="a string field given a number"),
+        pytest.param("app_version", True, id="a string field given a boolean"),
+    ],
+)
+async def test_unreadable_manifest_metadata_warns_rather_than_500s(http_client, field, value):
+    """The document is an object and its `tables` block is fine — it's the metadata
+    that won't validate. `ManifestInfo` is a Pydantic model, so `ValidationError`
+    lands here, and that is a `ValueError`: it was covered for free while parsing and
+    model-building were one expression inside the same `try`. Splitting them to tell
+    JSON `null` apart from a parse failure took the cover away, and this asserts it
+    back.
+    """
+    archive = zip_members({"retailers.csv": RETAILERS_CSV}, manifest={field: value})
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+    plan = resp.json()
+    assert plan["blocking_errors"] == []
+    assert actions(plan, "retailers") == ["create"]
+
+    said = [w for w in plan["warnings"] if "metadata this instance can't read" in w]
+    assert len(said) == 1, plan["warnings"]
+    assert field in said[0], said[0]
+    # The report itself stays out of the preview panel — the field name is the part
+    # a person can act on.
+    assert "pydantic" not in said[0].lower()
+
+
+async def test_valid_metadata_is_not_warned_about(http_client):
+    """The control for the matrix above: a manifest that validates says nothing."""
+    archive = zip_members(
+        {"retailers.csv": RETAILERS_CSV},
+        manifest={"format": "plamotrack-archive", "export_version": exporting.EXPORT_VERSION},
+    )
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert [w for w in resp.json()["warnings"] if "manifest" in w] == []
+
+
+async def test_bad_metadata_does_not_discard_a_good_tables_block(client):
+    """Metadata and declarations fail independently. `exported_at` being the wrong
+    type says nothing about whether the file list is readable, and dropping the whole
+    manifest would throw away the reconciliation — the half that actually protects
+    the import."""
+    archive = zip_members(
+        {"retailers.csv": RETAILERS_CSV},
+        manifest={"exported_at": 42, "tables": {"kits": {"file": "kits.csv", "rows": 3}}},
+    )
+
+    plan = await preview(client, archive)
+    assert any("exported_at" in warning for warning in plan["warnings"]), plan["warnings"]
+    # The declaration was still read, and still held the archive to it.
+    assert any("kits.csv" in error and "truncated" in error for error in plan["blocking_errors"]), (
+        plan["blocking_errors"]
+    )
