@@ -17,6 +17,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app import __version__
 from app.exceptions import NotFoundError
 from app.models import (
     Consumable,
@@ -189,7 +190,7 @@ async def build_manifest(session: AsyncSession, counts: dict[str, int]) -> dict:
         "format": ARCHIVE_FORMAT,
         "export_version": EXPORT_VERSION,
         "schema_version": await schema_version(session),
-        "app_version": "0.1.0",
+        "app_version": __version__,
         "exported_at": datetime.now(UTC).isoformat(),
         "tables": {
             spec.key: {"file": spec.filename, "rows": counts.get(spec.key, 0)}

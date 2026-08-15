@@ -7,11 +7,14 @@ doubles someone's order history is worse than no import at all.
 import csv
 import io
 import json
+import pathlib
 import time
+import tomllib
 import zipfile
 
 import pytest
 
+from app import __version__ as app_version
 from app.services import orders
 from app.services.portability import exporting, importing, spec, starter_sheet
 
@@ -2617,3 +2620,27 @@ async def test_the_expansion_budget_is_cumulative_across_zip_members(http_client
     assert resp.status_code == 422, resp.text
     assert "expands to more than" in resp.json()["detail"]
     assert built == 1_000, f"{built} rows were built — the second sheet got its own budget"
+
+
+# --- the version an archive claims (release prep) ---------------------------------
+
+
+async def test_the_manifest_reports_this_instances_version(client):
+    """`app_version` was a literal `"0.1.0"` from the day it was written, and stayed
+    that way through six releases: it is written into every archive and read by
+    nobody, so nothing ever noticed. It now comes from the same `__version__` that
+    `/meta` and the MCP handshake report, and this is what keeps it there."""
+    await seed_collection(client)
+    archive = (await client.get("/export/archive")).content
+
+    assert read_manifest(archive)["app_version"] == app_version
+    assert (await client.get("/meta")).json()["version"] == app_version
+
+
+def test_the_packaging_version_matches_the_one_the_app_reports():
+    """`pyproject.toml` carries a comment saying to keep it in step with
+    `app/__init__.py`, and until now that comment was the only thing enforcing it."""
+    declared = tomllib.loads(
+        (pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
+    )["project"]["version"]
+    assert declared == app_version
