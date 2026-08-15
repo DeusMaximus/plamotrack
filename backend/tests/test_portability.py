@@ -11,7 +11,7 @@ import zipfile
 
 import pytest
 
-from app.services.portability import exporting, spec, starter_sheet
+from app.services.portability import exporting, importing, spec, starter_sheet
 
 # --- helpers --------------------------------------------------------------------
 
@@ -1530,3 +1530,273 @@ async def test_a_lone_grouped_amount_is_settled_by_the_currency(client, code, re
         assert actions(plan, "orders") == ["create"], plan["tables"][0]["rows"][0]
         assert (await apply(client, content, filename="orders.csv")).status_code == 200
         assert (await client.get("/orders")).json()[0]["shipping_cost_minor"] == 1234
+
+
+# --- archive integrity (#42) -----------------------------------------------------
+
+
+def rebuild_archive(
+    content: bytes, *, drop: str = "", edit: dict[str, bytes] | None = None
+) -> bytes:
+    """Re-zip a real export, optionally losing or rewriting one member.
+
+    The manifest is carried through untouched, which is what makes the result a
+    *truncated export* rather than a different archive — the claim about what the
+    zip holds survives the thing it describes going missing.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(content)) as source:
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as out:
+            for name in source.namelist():
+                if name == drop:
+                    continue
+                out.writestr(name, (edit or {}).get(name, source.read(name)))
+    return buffer.getvalue()
+
+
+def drop_rows(csv_bytes: bytes, keep: int) -> bytes:
+    """Keep the header and the first `keep` data lines — a half-written file."""
+    lines = csv_bytes.split(b"\r\n")
+    return b"\r\n".join(lines[: keep + 1]) + b"\r\n"
+
+
+async def test_an_intact_export_reconciles_against_its_own_manifest(client):
+    """The check has to be silent on a real archive, or it is just noise.
+
+    Every table is declared, including the ones that export empty, so this also
+    pins that a legitimately zero-row file is not read as a missing one.
+    """
+    await seed_collection(client)
+    archive = (await client.get("/export/archive")).content
+
+    plan = await preview(client, archive)
+    assert plan["blocking_errors"] == []
+    assert [w for w in plan["warnings"] if "manifest" in w or "isn't intact" in w] == []
+
+
+async def test_kit_photos_is_exported_empty_on_purpose(client):
+    """Schema-only until M7. The archive shape is correct in advance, so an empty
+    kit_photos.csv is the intended output and not a hole in the export (#42)."""
+    await seed_collection(client)
+    archive = (await client.get("/export/archive")).content
+
+    assert read_archive(archive)["kit_photos"] == []
+    assert read_manifest(archive)["tables"]["kit_photos"] == {"file": "kit_photos.csv", "rows": 0}
+
+
+async def test_a_file_the_manifest_names_but_the_zip_lacks_blocks_the_import(client):
+    await seed_collection(client)
+    archive = (await client.get("/export/archive")).content
+    truncated = rebuild_archive(archive, drop="orders.csv")
+
+    plan = await preview(client, truncated)
+    assert any(
+        "orders.csv" in error and "truncated" in error for error in plan["blocking_errors"]
+    ), plan["blocking_errors"]
+
+    resp = await apply(client, truncated)
+    assert resp.status_code == 409
+
+
+async def test_a_short_file_is_reported_against_the_manifest_count(client):
+    """Present but half there. Not blocking — a hand-trimmed export is a
+    legitimate thing to import — but it can no longer pass unremarked."""
+    await seed_collection(client)
+    archive = (await client.get("/export/archive")).content
+    with zipfile.ZipFile(io.BytesIO(archive)) as source:
+        short = drop_rows(source.read("kits.csv"), keep=1)
+    assert read_manifest(archive)["tables"]["kits"]["rows"] == 2
+
+    plan = await preview(client, rebuild_archive(archive, edit={"kits.csv": short}))
+    assert any(
+        "kits.csv" in warning and "says 2 row(s) but 1" in warning for warning in plan["warnings"]
+    ), plan["warnings"]
+    assert plan["blocking_errors"] == []
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        pytest.param(None, id="no tables block at all — an older manifest"),
+        pytest.param("kits.csv", id="tables is a string"),
+        pytest.param({"kits": "kits.csv"}, id="entry is not an object"),
+        pytest.param({"kits": {"file": "kits.csv"}}, id="entry has no row count"),
+        pytest.param({"kits": {"file": "kits.csv", "rows": "two"}}, id="row count is not a number"),
+        pytest.param({"kits": {"file": None, "rows": 2}}, id="file name is null"),
+        pytest.param({"kits": {"file": "kits.csv", "rows": True}}, id="row count is a bool"),
+    ],
+)
+async def test_an_unreconcilable_manifest_is_read_as_far_as_it_goes(client, block):
+    """A manifest that can't be checked against must not become a parse error on a
+    file that is otherwise fine — the counts are a cross-check, not a schema."""
+    manifest = {"format": "plamotrack-archive", "export_version": exporting.EXPORT_VERSION}
+    if block is not None:
+        manifest["tables"] = block
+    archive = make_archive({"retailers": [{"id": "", "name": "Gundam Base"}]}, manifest=manifest)
+
+    plan = await preview(client, archive)
+    assert plan["blocking_errors"] == []
+    assert actions(plan, "retailers") == ["create"]
+
+
+async def test_a_damaged_member_is_a_diagnosis_not_a_500(client):
+    """`ZipFile()` only reads the central directory, so a member whose own payload
+    is corrupt gets past construction and blows up on read."""
+    await seed_collection(client)
+    archive = bytearray((await client.get("/export/archive")).content)
+    offset = archive.index(b"kits.csv") + len(b"kits.csv")
+    archive[offset + 8] ^= 0xFF  # inside the deflated payload
+
+    resp = await client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", bytes(archive), "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "kits.csv" in resp.json()["detail"]
+    assert "damaged" in resp.json()["detail"]
+
+
+# --- encoding (#42) --------------------------------------------------------------
+
+
+def latin1_csv(header: list[str], rows: list[dict[str, str]]) -> bytes:
+    """Valid CSV, wrong encoding — what Excel writes on a non-UTF-8 default."""
+    return make_csv(header, rows).decode().encode("latin-1")
+
+
+async def test_undecodable_bytes_in_a_single_csv_name_the_file_and_line(client):
+    content = latin1_csv(
+        spec.RETAILERS.header,
+        [
+            {"id": "", "name": "Gundam Base"},
+            {"id": "", "name": "Hobby Search"},
+            {"id": "", "name": "Café Kaiyodo"},  # line 4: the é is 0xE9 in latin-1
+        ],
+    )
+    resp = await client.post(
+        "/import/preview",
+        files={"file": ("retailers.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert "retailers.csv" in detail
+    assert "line 4" in detail, detail
+    assert (await client.get("/retailers")).json() == []
+
+
+async def test_undecodable_bytes_in_an_archive_member_name_the_member(client):
+    archive = make_archive({"retailers": [{"id": "", "name": "Gundam Base"}]})
+    broken = rebuild_archive(
+        archive,
+        edit={
+            "retailers.csv": latin1_csv(spec.RETAILERS.header, [{"id": "", "name": "Café Kaiyodo"}])
+        },
+    )
+
+    resp = await client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", broken, "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "retailers.csv" in resp.json()["detail"]
+    assert "UTF-8" in resp.json()["detail"]
+
+
+async def test_non_ascii_utf8_still_imports(client):
+    """The other half of decoding strictly: refusing bad bytes must not turn into
+    refusing bytes that are merely not English."""
+    content = make_csv(spec.RETAILERS.header, [{"id": "", "name": "ホビーサーチ"}])
+    assert (await apply(client, content, filename="retailers.csv")).status_code == 200
+    assert [r["name"] for r in (await client.get("/retailers")).json()] == ["ホビーサーチ"]
+
+
+async def test_a_utf8_bom_is_still_stripped(client):
+    """utf-8-sig, not utf-8 — Excel writes the BOM, and decoding it as a character
+    would put it on the front of the first header name and lose that column."""
+    content = b"\xef\xbb\xbf" + make_csv(spec.RETAILERS.header, [{"id": "", "name": "Gundam Base"}])
+    assert (await apply(client, content, filename="retailers.csv")).status_code == 200
+    assert [r["name"] for r in (await client.get("/retailers")).json()] == ["Gundam Base"]
+
+
+# --- expansion budget (#43) ------------------------------------------------------
+
+
+def zip_of(payload: bytes, name: str = "kits.csv") -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(name, payload)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("slack", "accepted"),
+    [
+        pytest.param(0, True, id="exactly at the budget"),
+        pytest.param(-1, False, id="one byte over"),
+    ],
+)
+async def test_the_expanded_budget_is_enforced_at_its_boundary(
+    client, monkeypatch, slack, accepted
+):
+    payload = make_csv(spec.RETAILERS.header, [{"id": "", "name": "Gundam Base"}])
+    monkeypatch.setattr(importing, "MAX_EXPANDED_BYTES", len(payload) + slack)
+
+    resp = await client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", zip_of(payload, "retailers.csv"), "application/zip")},
+        data={"mode": "merge"},
+    )
+    if accepted:
+        assert resp.status_code == 200, resp.text
+        assert actions(resp.json(), "retailers") == ["create"]
+    else:
+        assert resp.status_code == 422, resp.text
+        assert "unpacks to more than" in resp.json()["detail"]
+
+
+async def test_the_budget_is_cumulative_across_members(client, monkeypatch):
+    """Per-member would let an archive of N files spend the budget N times over."""
+    payload = make_csv(spec.RETAILERS.header, [{"id": "", "name": "Gundam Base"}])
+    monkeypatch.setattr(importing, "MAX_EXPANDED_BYTES", len(payload))
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("retailers.csv", payload)
+        archive.writestr("kits.csv", payload)
+
+    resp = await client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", buffer.getvalue(), "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "unpacks to more than" in resp.json()["detail"]
+
+
+async def test_a_compressible_archive_cannot_expand_past_the_real_budget(client):
+    """The shipped default, not a patched one: an upload well inside the 10 MB
+    compressed limit that unpacks to 120 MB of CSV.
+
+    The size is written out rather than derived from `MAX_EXPANDED_BYTES`, so the
+    test still means something against code that has no such constant — which is
+    what makes it a detector and not a tautology. Against the unfixed importer it
+    fails on the *message*: the whole 120 MB is read and parsed, and the refusal
+    that eventually comes is `MAX_ROWS` complaining about a row count, long after
+    the memory it was supposed to defend has been spent. Raising the budget past
+    120 MB is a policy change and is supposed to turn this red.
+    """
+    row = b"00000000-0000-0000-0000-000000000000,Gundam Base,note\r\n"
+    payload = b"id,name,notes\r\n" + row * (120 * 1024 * 1024 // len(row))
+    bomb = zip_of(payload, "retailers.csv")
+    assert len(bomb) < importing.MAX_UPLOAD_BYTES, "the compressed limit would catch it first"
+
+    resp = await client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", bomb, "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "unpacks to more than" in resp.json()["detail"]

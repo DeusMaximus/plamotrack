@@ -28,6 +28,7 @@ import io
 import json
 import uuid
 import zipfile
+import zlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -72,6 +73,12 @@ from app.services.portability.spec import (
 )
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+#: What a zip is allowed to expand to, cumulatively across its members. The upload
+#: limit bounds *compressed* bytes, which says nothing about what they unpack to —
+#: 10 MB of repeated text is gigabytes of CSV (#43). A full 50,000-row export is
+#: comfortably under 50 MB, so this is headroom, not a working constraint.
+MAX_EXPANDED_BYTES = 100 * 1024 * 1024
+_EXPAND_CHUNK = 64 * 1024
 MAX_ROWS = 50_000
 
 #: Same list tests/conftest.py truncates — every table a replace-all restore owns.
@@ -95,8 +102,20 @@ class ParsedUpload:
     errors: list[str] = field(default_factory=list)
 
 
-def _read_csv_text(raw: bytes) -> tuple[list[str], list[dict[str, str]]]:
-    text_content = raw.decode("utf-8-sig", errors="replace")
+def _read_csv_text(raw: bytes, source: str) -> tuple[list[str], list[dict[str, str]]]:
+    try:
+        # Strict, not `errors="replace"` (#42): a mis-encoded name used to import as
+        # U+FFFD and look like a successful import of a slightly wrong retailer.
+        # A file that isn't UTF-8 is a file the user has to re-save, and they can
+        # only do that if they're told which one and where.
+        text_content = raw.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        line = raw.count(b"\n", 0, exc.start) + 1
+        raise InvalidInputError(
+            f"{source}: line {line} isn't valid UTF-8 (byte {exc.start}, "
+            f"{bytes(raw[exc.start : exc.end])!r}). Re-save the file as UTF-8 "
+            "— in Excel, 'CSV UTF-8' — and import it again."
+        ) from exc
     reader = csv.DictReader(io.StringIO(text_content))
     header = [name.strip() for name in (reader.fieldnames or [])]
     rows: list[dict[str, str]] = []
@@ -144,11 +163,101 @@ def read_upload(filename: str, content: bytes) -> ParsedUpload:
     raise InvalidInputError("unsupported file — import a .csv or a .zip archive")
 
 
+class _ExpansionBudget:
+    """A cumulative ceiling on the bytes a zip may unpack to.
+
+    Members are streamed against one shared remaining count, so the budget is hit
+    *while* reading rather than after the archive is already resident — which is
+    the whole point, since the thing being defended against is a small file that
+    expands without bound (#43).
+    """
+
+    def __init__(self, limit: int | None = None) -> None:
+        # Read off the module rather than defaulting the argument, which would bind
+        # the constant once at import and leave no way to drive the boundary.
+        self.limit = MAX_EXPANDED_BYTES if limit is None else limit
+        self.remaining = self.limit
+
+    def read(self, archive: zipfile.ZipFile, entry: str) -> bytes:
+        chunks: list[bytes] = []
+        try:
+            with archive.open(entry) as stream:
+                while chunk := stream.read(_EXPAND_CHUNK):
+                    self.remaining -= len(chunk)
+                    if self.remaining < 0:
+                        raise InvalidInputError(
+                            f"that archive unpacks to more than "
+                            f"{self.limit // 1024 // 1024} MB, which is the import "
+                            "limit. Split it into separate files."
+                        )
+                    chunks.append(chunk)
+        except (zipfile.BadZipFile, EOFError, zlib.error) as exc:
+            # Reaches here when the member's own data is damaged — a bad CRC, or a
+            # payload that ends early — which `ZipFile()` construction cannot see,
+            # because it only reads the central directory.
+            raise InvalidInputError(
+                f"{entry} could not be unpacked ({exc}) — the archive looks damaged "
+                "or incompletely downloaded. Export it again."
+            ) from exc
+        return b"".join(chunks)
+
+
+def _declared_files(data: dict) -> dict[str, int]:
+    """The `tables` block `build_manifest` writes, as file name -> row count.
+
+    Deliberately tolerant: a hand-edited or older manifest that says something
+    unexpected here just can't be reconciled, and must not become a parse error
+    on a file that is otherwise fine.
+    """
+    declared: dict[str, int] = {}
+    block = data.get("tables")
+    if not isinstance(block, dict):
+        return declared
+    for entry in block.values():
+        if not isinstance(entry, dict):
+            continue
+        name, rows = entry.get("file"), entry.get("rows")
+        if isinstance(name, str) and isinstance(rows, int) and not isinstance(rows, bool):
+            declared[name.rsplit("/", 1)[-1]] = rows
+    return declared
+
+
+def _reconcile_manifest(
+    declared: dict[str, int],
+    present: set[str],
+    parsed: dict[str, int],
+    warnings: list[str],
+    errors: list[str],
+) -> None:
+    """Hold the archive to what its own manifest claims (#42).
+
+    The counts were written and then never read, so a truncated or partly
+    extracted archive imported whatever survived and said nothing. A file the
+    manifest names but the zip doesn't hold is missing data and blocks; a file
+    that's present but short is reported and left to the user, because a
+    hand-trimmed export is a legitimate thing to import.
+    """
+    for filename, expected in sorted(declared.items()):
+        if filename not in present:
+            errors.append(
+                f"the manifest lists {filename}, but it isn't in this archive — "
+                "the zip is truncated or was only partly extracted"
+            )
+        elif (actual := parsed.get(filename, 0)) != expected:
+            warnings.append(
+                f"{filename}: the manifest says {expected:,} row(s) but {actual:,} "
+                "could be read — this archive isn't intact"
+            )
+
+
 def _read_zip(content: bytes) -> ParsedUpload:
     tables: dict[str, list[dict[str, str]]] = {}
     warnings: list[str] = []
     errors: list[str] = []
     manifest: ManifestInfo | None = None
+    declared: dict[str, int] = {}
+    parsed_counts: dict[str, int] = {}
+    budget = _ExpansionBudget()
 
     try:
         archive = zipfile.ZipFile(io.BytesIO(content))
@@ -160,7 +269,9 @@ def _read_zip(content: bytes) -> ParsedUpload:
         manifest_name = next((n for n in names if n.rsplit("/", 1)[-1] == MANIFEST_NAME), None)
         if manifest_name:
             try:
-                manifest = _read_manifest(json.loads(archive.read(manifest_name)))
+                data = json.loads(budget.read(archive, manifest_name))
+                manifest = _read_manifest(data)
+                declared = _declared_files(data)
             except (json.JSONDecodeError, ValueError) as exc:
                 warnings.append(f"manifest.json could not be read ({exc}) — continuing without it")
         else:
@@ -171,7 +282,8 @@ def _read_zip(content: bytes) -> ParsedUpload:
         for entry in names:
             if not entry.lower().endswith(".csv"):
                 continue
-            header, rows = _read_csv_text(archive.read(entry))
+            header, rows = _read_csv_text(budget.read(archive, entry), entry)
+            parsed_counts[entry.rsplit("/", 1)[-1]] = len(rows)
             if starter_sheet.is_starter_sheet(header):
                 for key, expanded in starter_sheet.expand(rows).items():
                     tables.setdefault(key, []).extend(expanded)
@@ -181,6 +293,14 @@ def _read_zip(content: bytes) -> ParsedUpload:
                 warnings.append(f"{entry}: not recognised as any known table — skipped")
                 continue
             tables.setdefault(table_key, []).extend(rows)
+
+        _reconcile_manifest(
+            declared,
+            {n.rsplit("/", 1)[-1] for n in names},
+            parsed_counts,
+            warnings,
+            errors,
+        )
 
     if not tables:
         errors.append("that archive contained no readable table data")
@@ -194,7 +314,7 @@ def _read_zip(content: bytes) -> ParsedUpload:
 
 
 def _read_single_csv(filename: str, content: bytes) -> ParsedUpload:
-    header, rows = _read_csv_text(content)
+    header, rows = _read_csv_text(content, filename or "upload")
     if starter_sheet.is_starter_sheet(header):
         return ParsedUpload(source="starter-sheet", tables=starter_sheet.expand(rows))
     table_key = _detect_table(filename, header)
