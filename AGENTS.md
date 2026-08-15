@@ -176,6 +176,20 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    conversion are already wired — don't raise HTTP exceptions from services.
 7. **Stock mutations** use row locks (`with_for_update`) — three concurrent writer
    types exist by design (UI, REST, MCP agents).
+7.1. **Every mutating service takes the write gate first** —
+   `await acquire_write_gate(session)` from `services/write_gate.py`, before it
+   *reads the state it will decide from*, not merely before it writes. Row locks
+   only serialize writers touching the same row; they cannot protect a
+   read-decide-write span whose decision depends on rows the plan never names,
+   which is the shape `apply_import` has (and why it gates before `plan_import`,
+   not after). The gate is collection-wide and transaction-scoped: it releases on
+   commit or rollback, so there is nothing to release by hand and no way for an
+   error path to strand it. Reads never take it — import preview and every
+   list/detail path stay unlocked and concurrent. A new mutating service function
+   that skips it reopens a defect class this repo has already paid for across
+   seven review rounds on #79: a plan read outside the gate is stale by the time
+   it is written, and the failure modes are 500s and silent data loss, not
+   conflicts.
 8. **Public read paths (Milestone 8)** must be genuinely separate route handlers
    under `/public/*` — not filtered views (§5). Public ingress must not expose an
    unauthenticated admin or MCP route; route separation is enforced at both the app

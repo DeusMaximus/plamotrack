@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import Kit, KitStatus
 from app.schemas.kits import KitCreate, KitUpdate
+from app.services.write_gate import acquire_write_gate
 
 # Derived default scale per grade, overridable per kit (§3.1). SD kits are non-scale.
 GRADE_DEFAULT_SCALE: dict[str, str | None] = {
@@ -29,6 +30,7 @@ def default_scale_for_grade(grade: str) -> str | None:
 
 
 async def create_kit(session: AsyncSession, data: KitCreate) -> Kit:
+    await acquire_write_gate(session)
     kit = Kit(**data.model_dump())
     if kit.scale is None:
         kit.scale = default_scale_for_grade(kit.grade)
@@ -59,6 +61,7 @@ async def get_kit(session: AsyncSession, kit_id: uuid.UUID) -> Kit:
 
 
 async def update_kit(session: AsyncSession, kit_id: uuid.UUID, data: KitUpdate) -> Kit:
+    await acquire_write_gate(session)
     kit = await get_kit(session, kit_id)
     fields = data.model_dump(exclude_unset=True)
     for non_nullable in ("name", "grade", "status"):
@@ -93,6 +96,7 @@ def has_applied_upgrades(kit: Kit) -> bool:
 
 
 async def delete_kit(session: AsyncSession, kit_id: uuid.UUID) -> None:
+    await acquire_write_gate(session)
     # FOR UPDATE, because the check below and the delete after it have to be one
     # decision. `apply_upgrade` locks the *upgrade* row, not this one, so without a
     # lock here it can commit an application between the two — and the DELETE then
