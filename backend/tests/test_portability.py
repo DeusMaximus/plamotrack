@@ -2578,3 +2578,42 @@ async def test_the_expansion_stops_before_building_the_rows_it_cannot_keep(
     assert resp.status_code == 422, resp.text
     assert "expands to more than" in resp.json()["detail"]
     assert built == 1_000, f"{built} rows were built before the budget stopped it"
+
+
+async def test_the_expansion_budget_is_cumulative_across_zip_members(http_client, monkeypatch):
+    """Two starter sheets in one zip share one allowance.
+
+    The single-CSV test above proves the charge happens before the rows are built;
+    this proves the allowance isn't handed out fresh per member. A per-member budget
+    would let an archive of N sheets spend `MAX_ROWS` N times over, which is the same
+    defect the compressed-vs-expanded byte budget exists to prevent one layer down.
+
+    Counted rather than timed, for the same reason: with 1,500 allowed and two sheets
+    of 1,000, the first is built and the second is refused, so `_present` stops at
+    exactly 1,000 rather than 2,000.
+    """
+    monkeypatch.setattr(importing, "MAX_ROWS", 1_500)
+    built = 0
+    original = starter_sheet._present
+
+    def counting(*args, **kwargs):
+        nonlocal built
+        built += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(starter_sheet, "_present", counting)
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for member in ("sheet-one.csv", "sheet-two.csv"):
+            archive.writestr(member, starter_sheet_csv([sheet_row("1000", name=member)]))
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", buffer.getvalue(), "application/zip")},
+        data={"mode": "merge"},
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert "expands to more than" in resp.json()["detail"]
+    assert built == 1_000, f"{built} rows were built — the second sheet got its own budget"
