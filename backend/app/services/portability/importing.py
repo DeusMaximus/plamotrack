@@ -1110,7 +1110,11 @@ class _Planner:
             candidate = row.new_id if row.action is RowAction.CREATE else row.matched_id
             if candidate != order_id:
                 continue
-            if "received_at" in row.present:
+            # Only a row that will actually be written can answer from the file —
+            # `add_only` deliberately leaves a matched order untouched (SKIP), so
+            # its uploaded `received_at` cell describes nothing that will land.
+            writes = row.action in (RowAction.CREATE, RowAction.UPDATE)
+            if writes and "received_at" in row.present:
                 return row.values.get("received_at") is not None
             if row.target is not None:
                 return row.target.received_at is not None
@@ -1350,6 +1354,7 @@ def _plan_fingerprint(
                 spawn.kit_number or "",
                 spawn.status,
                 spawn.row_number,
+                spawn.received,
             ]
             for spawn in spawns
         ],

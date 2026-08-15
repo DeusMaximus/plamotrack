@@ -2691,6 +2691,137 @@ async def test_an_unreceived_starter_order_leaves_its_kits_on_the_way(client):
     assert [k["status"] for k in kits] == ["ordered"]
 
 
+async def test_apply_is_rejected_once_the_parent_order_is_received_after_preview(http_client):
+    """Whether a spawn lands `backlog` depends on the parent order's `received_at` —
+    a value no row in the plan carries directly — so the fingerprint has to read it
+    from the order, not assume a spawn with the same shape means the same outcome.
+
+    Before `_Spawn.received` joined `_plan_fingerprint`'s payload, two plans built
+    from the same file — one before the order was received, one after — hashed
+    identically even though one spawns an `ordered` kit and the other a `backlog`
+    one. That let a stale preview apply cleanly: exactly the drift #41's plan_hash
+    exists to catch (review of #79/#47).
+    """
+    retailer = (await http_client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await http_client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    line = {
+        "order_id": order["id"],
+        "item_type": "kit",
+        "quantity": "1",
+        "unit_price_minor": "2800",
+        "currency_code": "JPY",
+        "kit_name": "Char's Zaku II",
+        "kit_grade": "HG",
+    }
+    content = make_csv(spec.ORDER_ITEMS.header, [line])
+
+    preview_resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    plan_hash = preview_resp.json()["plan_hash"]
+
+    # The order arrives between preview and apply — the exact race the hash exists
+    # to catch.
+    assert (await http_client.post(f"/orders/{order['id']}/receive")).status_code == 200
+
+    applied = await http_client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge", "plan_hash": plan_hash},
+    )
+    assert applied.status_code == 409, applied.text
+    # Rejected, not half-applied.
+    assert {k["name"] for k in (await http_client.get("/kits")).json()} == {"Zaku II"}
+
+
+async def test_add_only_reads_received_state_off_the_order_it_will_keep_not_the_file(
+    http_client,
+):
+    """`add_only` leaves a matched order row completely alone (SKIP) — but the
+    fan-out for a *new* line on that same order used to read the order's received
+    state off the uploaded cell regardless, rather than the persisted row that
+    import will actually leave standing. An add-only file with a blank
+    `received_at` on an already-received order therefore spawned an `ordered` kit
+    instead of `backlog` (review of #79/#47).
+    """
+    retailer = (await http_client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await http_client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "received": True,
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "received_at": "",  # blank on the file; the order this import keeps is received
+    }
+    line = {
+        "order_id": order["id"],
+        "item_type": "kit",
+        "quantity": "1",
+        "unit_price_minor": "2800",
+        "currency_code": "JPY",
+        "kit_name": "Char's Zaku II",
+        "kit_grade": "HG",
+    }
+    archive = make_archive({"orders": [orders_row], "order_items": [line]})
+
+    plan = await preview(http_client, archive, mode="add_only")
+    assert actions(plan, "orders") == ["skip"], plan
+
+    resp = await apply(http_client, archive, mode="add_only")
+    assert resp.status_code == 200, resp.text
+
+    stored_order = (await http_client.get(f"/orders/{order['id']}")).json()
+    assert stored_order["received_at"] is not None  # untouched by add_only
+
+    kits = {k["name"]: k for k in (await http_client.get("/kits")).json()}
+    assert kits["Char's Zaku II"]["status"] == "backlog"
+
+
 # --- the version an archive claims (release prep) ---------------------------------
 
 
