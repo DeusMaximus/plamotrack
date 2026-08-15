@@ -16,7 +16,103 @@ Template:
 
 ---
 
-## 2026-08-15 — Claude Code — #75 at `07ae427` after two review rounds; #76 ready
+## 2026-08-15 — Claude Code — #75 merged; #76 at `8e0d465` after two review rounds
+
+**`main` is at `2a09272` — PR #75 squash-merged, #42 CLOSED, CI green.** The
+archive-integrity and expansion-budget work is in. **PR #76 is open at `8e0d465`**
+(398 backend, ruff clean, CI green, mergeable) awaiting a third Codex pass. **#43
+stays open until it lands.** **#77 filed** for aggregate fan-out.
+
+### The pattern, before anything else
+
+**Five external review rounds across the two PRs. Every single one found a defect
+in the previous round's fix, and the local suite was green every time.** #75 took
+four rounds to reach GO. #76 is two in. Nothing here was found by writing more
+tests for the thing already understood; every one came from someone else varying
+an axis the author had not.
+
+Budget for this. A branch that touches a boundary is not one review away from done.
+
+### #75 — merged at `2a09272` after four rounds
+
+Rounds 3 and 4, not previously recorded:
+
+- **Round 3 (NO-GO on `07ae427`):** a manifest that is a valid JSON *object* whose
+  metadata fails `ManifestInfo` — `export_version` a string, `format` a list — left
+  as a **500**. `ValidationError` is a `ValueError`, so it had been caught for free
+  while `_read_manifest(json.loads(...))` was one expression inside the `try`.
+  - **The provenance matters more than the fix.** The cover was lost in `9d751ca`,
+    not `07ae427`: pulling `json.loads` out of the combined expression so the result
+    could be `isinstance`-checked left `_read_manifest` after the `except`. `e2ad4ff`
+    still had it inside. **So it shipped through a whole review round unnoticed**, and
+    the round-2 restructure preserved a hole rather than opening one.
+  - **Restructuring for a new check silently dropped an old one.** That is the same
+    shape as round 2's `null` finding, and neither had a test asserting the *old*
+    behaviour to notice it going.
+- **Round 4: GO on `0099b59`.** Declarations are read before the metadata guard, so
+  bad metadata no longer discards a good `tables` block.
+
+### #76 — two rounds, both NO-GO
+
+- **Round 1 (`7f858ea`):** `starter_sheet.expand()` read `quantity` and discarded it
+  on the blank-retailer branch, emitting one kit and continuing. `quantity: 3` with
+  no shop named silently became one kit — **data loss present on `main`**, unrelated
+  to the ceiling, in a file #76 never opened. Per the owner's call the branch now
+  **fans out**: N units, N standalone kits. `expand()` returns problems alongside its
+  tables rather than raising, because a retailer-free row has no order line for
+  `_check_line_quantity` to hang an error on.
+- **Round 2 (`a53d2fe`):** two more, both mirrors of the round-1 fix.
+  - **The lower bound was still asymmetric.** `require_line_quantity` checked
+    `> MAX` only; the retailer-free branch refused zero because `_standalone_count`
+    had its own hand-written `< 1`. REST and MCP get the floor from `Field(gt=0)`,
+    but **the importer builds models directly and never constructs
+    `OrderItemCreate`** — so `quantity: 0` on a retailer-backed row previewed as a
+    clean create and applied as a **500** against `quantity_positive`.
+    **A shared invariant covering one end of a range is two invariants, and the half
+    that isn't shared is the half that drifts.**
+  - **The fan-out materialised before any budget could see it** — a hole opened by
+    round 1's fix, inside #43's own scope. `plan_import` compares `MAX_ROWS` against
+    what expansion *returned*, which is too late by construction: a 1,915-byte,
+    51-row sheet at `quantity: 1000` built **51,000** dictionaries before anything
+    objected. `expand()` now charges a cumulative row budget before appending,
+    threaded from the caller so a zip of sheets can't get a fresh budget per member.
+
+### Test lessons worth keeping
+
+- **The #76 miss was avoidable from inside the file.** The invalid-quantity matrix
+  drove `0`, `-2`, `1.5`, `many` with the retailer cell blank only — while the
+  *ceiling* matrix immediately above it varied retailer present/absent. Values and
+  state were both in the suite, **on adjacent tests, and neither crossed**. Recorded
+  in `AGENTS.md`.
+- **Prove a resource guard by counting, not timing.** The expansion-budget regression
+  wraps `starter_sheet._present` and asserts exactly 1,000 rows were built where an
+  unbudgeted expansion builds 5,000. Deterministic; no wall-clock threshold.
+- **The structural-cost guard is the exception** and is a timing test on purpose
+  (30,000 members, 1.5 s, two orders of magnitude of margin). If it ever reddens on a
+  slow runner, check the scans before raising the number.
+
+### Housekeeping
+
+- **`gh pr merge` works again.** It was denied by the auto-mode classifier through
+  2026-08-11; `/auto-mode-setup` ran this session and #75 merged first try.
+- **Agent-authored PR comments must name the model** — added to `AGENTS.md` Git
+  conventions, with the header/sign-off format. Both agents post through the owner's
+  account, so an unsigned comment reads as the owner speaking.
+- **Known stale, not blocking:** `build_manifest` stamps `"app_version": "0.1.0"`
+  (`exporting.py`), wrong since v0.2.1-alpha. Written into every archive, read by
+  nobody. Owner deferred it; worth doing as release prep. No issue filed.
+
+### Next
+
+1. Third Codex pass on #76, then merge it — **`#43` closes with it and
+   `M5 hardening — v0.2.5-alpha` is done** (#40, #41, #42 already closed).
+2. Cut the release.
+3. Then **#74** (REST/MCP integers with no upper bound) and **#77** (aggregate
+   fan-out), both v0.2.6.
+
+---
+
+## 2026-08-15 — Claude Code — #75 through two review rounds (superseded by the entry above)
 
 **Two Codex passes on #75, both NO-GO, five findings, all reproduced and fixed.**
 Head is **`07ae427`**: 355 backend, ruff clean, CI green, awaiting a third look.

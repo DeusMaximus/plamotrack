@@ -262,6 +262,17 @@ the unfixed code, and still missed something. Each failed differently:
   matrix could reach. The axis was the container, not the thing inside it. Its sibling test
   drove one member-decompression failure (a bad CRC) and so missed the other two the same
   `except` clause was meant to cover. Both found by external review.
+- **#43** knew the axis and applied it to one matrix and not its neighbour. The starter
+  sheet reads `quantity` down two branches, chosen by whether the row names a retailer.
+  The *ceiling* matrix varied that cell; the *invalid-value* matrix sitting immediately
+  above it in the same file drove `0`, `-2`, `1.5` and `many` with the cell blank only.
+  So the ceiling was fixed in both branches while the floor was fixed in one, and
+  `quantity: 0` on a retailer-backed row planned as a clean create and 500'd at flush.
+  Values and state were both already in the suite, on adjacent tests, and neither
+  crossed. External review again.
+
+**When one matrix in a file varies a state axis, every matrix over the same field owes
+you a reason why it doesn't.** The neighbour is the cheapest place to notice.
 
 So when a fix turns on **comparing or branching on a field**, enumerate what that field
 can legitimately hold before writing the assertions: null, empty, whitespace, the derived
