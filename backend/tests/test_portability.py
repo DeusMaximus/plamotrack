@@ -4,6 +4,7 @@ The duplication tests are the point of the feature — an import that quietly
 doubles someone's order history is worse than no import at all.
 """
 
+import asyncio
 import csv
 import io
 import json
@@ -13,10 +14,8 @@ import tomllib
 import zipfile
 
 import pytest
-from httpx import ASGITransport, AsyncClient
 
 from app import __version__ as app_version
-from app.main import app as fastapi_app
 from app.services import orders
 from app.services.portability import exporting, importing, spec, starter_sheet
 
@@ -2824,461 +2823,16 @@ async def test_add_only_reads_received_state_off_the_order_it_will_keep_not_the_
     assert kits["Char's Zaku II"]["status"] == "backlog"
 
 
-async def test_apply_is_rejected_if_the_order_is_received_mid_apply(client, monkeypatch):
-    """The narrower race one layer in from the plan_hash check: nothing stops a
-    concurrent `POST /orders/{id}/receive` from committing *after* `apply_import`'s
-    own `plan_import()` call has already captured `spawn.received`, but *before*
-    the apply's write loop runs. `plan_hash` can't see this — the request that
-    computed it never returns to the caller until after the whole apply, hash
-    included, is already done. `_lock_and_verify_spawn_orders` has to catch this
-    window on its own, by re-reading the order under a row lock immediately before
-    any write (review of #79/#47).
-
-    The interleaving is forced by making a *second*, fully independent request —
-    its own session, its own transaction — receive the order from inside a patched
-    `plan_import`, exactly where apply_import calls it and exactly before its own
-    write loop runs.
-    """
-    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
-    order = (
-        await client.post(
-            "/orders",
-            json={
-                "retailer_id": retailer["id"],
-                "order_date": "2026-03-14",
-                "order_number": "HLJ-1",
-                "currency_code": "JPY",
-                "items": [
-                    {
-                        "item_type": "kit",
-                        "quantity": 1,
-                        "unit_price_minor": 2800,
-                        "currency_code": "JPY",
-                        "kit": {"name": "Zaku II", "grade": "HG"},
-                    }
-                ],
-            },
-        )
-    ).json()
-
-    line = {
-        "order_id": order["id"],
-        "item_type": "kit",
-        "quantity": "1",
-        "unit_price_minor": "2800",
-        "currency_code": "JPY",
-        "kit_name": "Char's Zaku II",
-        "kit_grade": "HG",
-    }
-    content = make_csv(spec.ORDER_ITEMS.header, [line])
-
-    preview_resp = await client.post(
-        "/import/preview",
-        files={"file": ("order_items.csv", content, "text/csv")},
-        data={"mode": "merge"},
-    )
-    assert preview_resp.status_code == 200, preview_resp.text
-    plan_hash = preview_resp.json()["plan_hash"]
-
-    original_plan_import = importing.plan_import
-    received_mid_apply = False
-
-    async def receive_between_plan_and_write(*args, **kwargs):
-        nonlocal received_mid_apply
-        execution = await original_plan_import(*args, **kwargs)
-        # A wholly separate request — its own session, its own transaction —
-        # commits the receive right in the window this apply hasn't reached yet.
-        async with AsyncClient(
-            transport=ASGITransport(app=fastapi_app), base_url="http://test"
-        ) as other:
-            resp = await other.post(f"/orders/{order['id']}/receive")
-            received_mid_apply = resp.status_code == 200
-        return execution
-
-    monkeypatch.setattr(importing, "plan_import", receive_between_plan_and_write)
-
-    applied = await client.post(
-        "/import/apply",
-        files={"file": ("order_items.csv", content, "text/csv")},
-        data={"mode": "merge", "plan_hash": plan_hash},
-    )
-
-    assert received_mid_apply, "the interleaved receive didn't commit — not exercising the race"
-    assert applied.status_code == 409, applied.text
-    # Rejected, not half-applied: no kit spawned under either status.
-    assert {k["name"] for k in (await client.get("/kits")).json()} == {"Zaku II"}
-
-
-async def test_apply_is_rejected_if_the_order_is_deleted_mid_apply(http_client, monkeypatch):
-    """The sibling of the mid-apply receive race, on the other side of a boolean:
-    a parent order *deleted* — rather than received — between `plan_import()`
-    returning and the lock/verify step used to vanish from the locked query
-    result and default to "unreceived". The plan itself expected unreceived here
-    too (the common case for a brand new line), so the guard compared
-    unreceived-and-missing against unreceived-and-expected, saw no difference,
-    and let the write proceed straight into a foreign-key violation on the
-    order_items insert instead of the clean 409 this guard exists to give
-    (review of #79/#47). A missing id now fails the check on its own, regardless
-    of what the plan expected.
-
-    Driven through `http_client` because the point of the test is which status a
-    write against a vanished parent earns — the default client fixture would
-    re-raise the unhandled `IntegrityError` into the test as an error instead.
-    """
-    retailer = (await http_client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
-    order = (
-        await http_client.post(
-            "/orders",
-            json={
-                "retailer_id": retailer["id"],
-                "order_date": "2026-03-14",
-                "order_number": "HLJ-1",
-                "currency_code": "JPY",
-                "items": [
-                    {
-                        "item_type": "kit",
-                        "quantity": 1,
-                        "unit_price_minor": 2800,
-                        "currency_code": "JPY",
-                        "kit": {"name": "Zaku II", "grade": "HG"},
-                    }
-                ],
-            },
-        )
-    ).json()
-
-    line = {
-        "order_id": order["id"],
-        "item_type": "kit",
-        "quantity": "1",
-        "unit_price_minor": "2800",
-        "currency_code": "JPY",
-        "kit_name": "Char's Zaku II",
-        "kit_grade": "HG",
-    }
-    content = make_csv(spec.ORDER_ITEMS.header, [line])
-
-    preview_resp = await http_client.post(
-        "/import/preview",
-        files={"file": ("order_items.csv", content, "text/csv")},
-        data={"mode": "merge"},
-    )
-    assert preview_resp.status_code == 200, preview_resp.text
-    plan_hash = preview_resp.json()["plan_hash"]
-
-    original_plan_import = importing.plan_import
-    deleted_mid_apply = False
-
-    async def delete_between_plan_and_write(*args, **kwargs):
-        nonlocal deleted_mid_apply
-        execution = await original_plan_import(*args, **kwargs)
-        # A wholly separate request undoes the parent right in the window this
-        # apply's lock/verify step hasn't reached yet.
-        async with AsyncClient(
-            transport=ASGITransport(app=fastapi_app), base_url="http://test"
-        ) as other:
-            resp = await other.delete(f"/orders/{order['id']}")
-            deleted_mid_apply = resp.status_code == 204
-        return execution
-
-    monkeypatch.setattr(importing, "plan_import", delete_between_plan_and_write)
-
-    applied = await http_client.post(
-        "/import/apply",
-        files={"file": ("order_items.csv", content, "text/csv")},
-        data={"mode": "merge", "plan_hash": plan_hash},
-    )
-
-    assert deleted_mid_apply, "the interleaved delete didn't commit — not exercising the race"
-    assert applied.status_code == 409, applied.text
-    # Rejected, not half-applied — and there is no parent left to attach anything to.
-    assert (await http_client.get("/orders")).json() == []
-    assert (await http_client.get("/kits")).json() == []
-
-
-async def test_apply_is_rejected_if_a_spawn_free_receipt_update_is_deleted_mid_apply(
-    http_client, monkeypatch
-):
-    """The lock/verify guard used to build its lock set entirely from
-    `execution.spawns` — which covers a new kit line, but not a plain
-    `orders.csv` receipt-state update with no line at all. That write has no
-    spawn to hang a lock off of, so it went straight to the main loop's
-    `UPDATE` completely unlocked: a concurrent delete in that same window
-    surfaced as a `StaleDataError` (0 rows matched) — a 500 — instead of the
-    clean 409 every other stale-collection case gets (review of #79/#47).
-
-    Reuses the forced-interleaving technique from the earlier delete-mid-apply
-    test, but with an import that spawns nothing at all, so only the general
-    "every order this apply writes to" half of the fix can catch it.
-    """
-    retailer = (await http_client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
-    order = (
-        await http_client.post(
-            "/orders",
-            json={
-                "retailer_id": retailer["id"],
-                "order_date": "2026-03-14",
-                "order_number": "HLJ-1",
-                "currency_code": "JPY",
-                "items": [
-                    {
-                        "item_type": "kit",
-                        "quantity": 1,
-                        "unit_price_minor": 2800,
-                        "currency_code": "JPY",
-                        "kit": {"name": "Zaku II", "grade": "HG"},
-                    }
-                ],
-            },
-        )
-    ).json()
-    assert order["received_at"] is None
-
-    orders_row = {
-        "id": order["id"],
-        "retailer_name": "Hobby Link Japan",
-        "order_date": "2026-03-14",
-        "order_number": "HLJ-1",
-        "currency_code": "JPY",
-        "received_at": "2026-03-20T00:00:00Z",
-    }
-    archive = make_archive({"orders": [orders_row]})  # no order_items.csv — no spawn possible
-
-    preview_resp = await http_client.post(
-        "/import/preview",
-        files={"file": ("archive.zip", archive, "application/zip")},
-        data={"mode": "merge"},
-    )
-    assert preview_resp.status_code == 200, preview_resp.text
-    plan = preview_resp.json()
-    assert actions(plan, "orders") == ["update"], plan
-    assert plan["derived"]["kits_spawned"] == 0
-    plan_hash = plan["plan_hash"]
-
-    original_plan_import = importing.plan_import
-    deleted_mid_apply = False
-
-    async def delete_between_plan_and_write(*args, **kwargs):
-        nonlocal deleted_mid_apply
-        execution = await original_plan_import(*args, **kwargs)
-        async with AsyncClient(
-            transport=ASGITransport(app=fastapi_app), base_url="http://test"
-        ) as other:
-            resp = await other.delete(f"/orders/{order['id']}")
-            deleted_mid_apply = resp.status_code == 204
-        return execution
-
-    monkeypatch.setattr(importing, "plan_import", delete_between_plan_and_write)
-
-    applied = await http_client.post(
-        "/import/apply",
-        files={"file": ("archive.zip", archive, "application/zip")},
-        data={"mode": "merge", "plan_hash": plan_hash},
-    )
-
-    assert deleted_mid_apply, "the interleaved delete didn't commit — not exercising the race"
-    assert applied.status_code == 409, applied.text
-    assert (await http_client.get("/orders")).json() == []
-    assert (await http_client.get("/kits")).json() == []
-
-
-async def test_apply_is_rejected_if_a_line_updates_parent_is_deleted_mid_apply(
-    http_client, monkeypatch
-):
-    """The lock/verify guard used to derive its lock set entirely from spawn
-    parents and `orders` rows — an `order_items` line update belongs to its
-    parent order just as much as an order-header update does, but it appeared
-    in neither set when it creates no missing kit. A concurrent delete of the
-    parent (which cascades to the line itself — `order_items.order_id` is
-    `ondelete=CASCADE`) then left the write loop's own `UPDATE` targeting a row
-    that no longer existed: a `StaleDataError`, surfaced as a 500, instead of
-    the clean 409 every other stale-collection case gets (review of #79/#47).
-
-    The general per-table lock closes this without any order-specific carve
-    out: `order_items` is just another table with an `UPDATE` row here.
-    """
-    retailer = (await http_client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
-    order = (
-        await http_client.post(
-            "/orders",
-            json={
-                "retailer_id": retailer["id"],
-                "order_date": "2026-03-14",
-                "order_number": "HLJ-1",
-                "currency_code": "JPY",
-                "items": [
-                    {
-                        "item_type": "kit",
-                        "quantity": 1,
-                        "unit_price_minor": 2800,
-                        "currency_code": "JPY",
-                        "kit": {"name": "Zaku II", "grade": "HG"},
-                    }
-                ],
-            },
-        )
-    ).json()
-    item_id = order["items"][0]["id"]
-
-    line = {
-        "id": item_id,
-        "order_id": order["id"],
-        "item_type": "kit",
-        "quantity": "1",
-        "unit_price_minor": "3000",  # the only change — no new line, no spawn
-        "currency_code": "JPY",
-        "kit_name": "Zaku II",
-        "kit_grade": "HG",
-    }
-    content = make_csv(spec.ORDER_ITEMS.header, [line])
-
-    preview_resp = await http_client.post(
-        "/import/preview",
-        files={"file": ("order_items.csv", content, "text/csv")},
-        data={"mode": "merge"},
-    )
-    assert preview_resp.status_code == 200, preview_resp.text
-    plan = preview_resp.json()
-    assert actions(plan, "order_items") == ["update"], plan
-    assert plan["derived"]["kits_spawned"] == 0
-    plan_hash = plan["plan_hash"]
-
-    original_plan_import = importing.plan_import
-    deleted_mid_apply = False
-
-    async def delete_between_plan_and_write(*args, **kwargs):
-        nonlocal deleted_mid_apply
-        execution = await original_plan_import(*args, **kwargs)
-        async with AsyncClient(
-            transport=ASGITransport(app=fastapi_app), base_url="http://test"
-        ) as other:
-            resp = await other.delete(f"/orders/{order['id']}")
-            deleted_mid_apply = resp.status_code == 204
-        return execution
-
-    monkeypatch.setattr(importing, "plan_import", delete_between_plan_and_write)
-
-    applied = await http_client.post(
-        "/import/apply",
-        files={"file": ("order_items.csv", content, "text/csv")},
-        data={"mode": "merge", "plan_hash": plan_hash},
-    )
-
-    assert deleted_mid_apply, "the interleaved delete didn't commit — not exercising the race"
-    assert applied.status_code == 409, applied.text
-    assert (await http_client.get("/orders")).json() == []
-    assert (await http_client.get("/kits")).json() == []
-
-
-async def test_apply_is_rejected_if_a_field_it_plans_to_write_changes_mid_apply(
-    http_client, monkeypatch
-):
-    """The general form of the same gap, with no deletion and no receipt state
-    involved at all: `_lock_and_verify_spawn_parents` (as it used to be scoped)
-    only ever compared `received_at`, so a concurrent edit to any *other*
-    column — here, `tracking_number` — passed the guard silently and the write
-    loop overwrote it with the import's own, now-stale value. A lost update,
-    not caught as a conflict at all (review of #79/#47).
-
-    The general per-field check closes this: every `FieldChange` this row
-    plans to write is re-verified against the freshly locked row, not only the
-    one field the old guard happened to know about.
-    """
-    retailer = (await http_client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
-    order = (
-        await http_client.post(
-            "/orders",
-            json={
-                "retailer_id": retailer["id"],
-                "order_date": "2026-03-14",
-                "order_number": "HLJ-1",
-                "currency_code": "JPY",
-                "tracking_number": "ORIGINAL",
-                "items": [
-                    {
-                        "item_type": "kit",
-                        "quantity": 1,
-                        "unit_price_minor": 2800,
-                        "currency_code": "JPY",
-                        "kit": {"name": "Zaku II", "grade": "HG"},
-                    }
-                ],
-            },
-        )
-    ).json()
-    assert order["tracking_number"] == "ORIGINAL"
-
-    orders_row = {
-        "id": order["id"],
-        "retailer_name": "Hobby Link Japan",
-        "order_date": "2026-03-14",
-        "order_number": "HLJ-1",
-        "currency_code": "JPY",
-        "tracking_number": "FROM-THE-IMPORT",
-    }
-    archive = make_archive({"orders": [orders_row]})
-
-    preview_resp = await http_client.post(
-        "/import/preview",
-        files={"file": ("archive.zip", archive, "application/zip")},
-        data={"mode": "merge"},
-    )
-    assert preview_resp.status_code == 200, preview_resp.text
-    plan = preview_resp.json()
-    assert actions(plan, "orders") == ["update"], plan
-    assert plan["derived"]["kits_spawned"] == 0
-    plan_hash = plan["plan_hash"]
-
-    original_plan_import = importing.plan_import
-    edited_mid_apply = False
-
-    async def edit_between_plan_and_write(*args, **kwargs):
-        nonlocal edited_mid_apply
-        execution = await original_plan_import(*args, **kwargs)
-        # An ordinary concurrent PATCH — not a receive, not a delete — changes
-        # the very field this import is about to overwrite.
-        async with AsyncClient(
-            transport=ASGITransport(app=fastapi_app), base_url="http://test"
-        ) as other:
-            resp = await other.patch(
-                f"/orders/{order['id']}", json={"tracking_number": "FROM-CONCURRENT-EDIT"}
-            )
-            edited_mid_apply = resp.status_code == 200
-        return execution
-
-    monkeypatch.setattr(importing, "plan_import", edit_between_plan_and_write)
-
-    applied = await http_client.post(
-        "/import/apply",
-        files={"file": ("archive.zip", archive, "application/zip")},
-        data={"mode": "merge", "plan_hash": plan_hash},
-    )
-
-    assert edited_mid_apply, "the interleaved edit didn't commit — not exercising the race"
-    assert applied.status_code == 409, applied.text
-    # Rejected, not half-applied — the concurrent edit is what's still there.
-    stored = (await http_client.get(f"/orders/{order['id']}")).json()
-    assert stored["tracking_number"] == "FROM-CONCURRENT-EDIT"
-
-
 async def test_a_spawn_free_import_that_edits_a_line_and_receives_its_order_succeeds(client):
-    """No concurrency here either, and no spawn at all: an `order_items.csv` price
-    correction on an existing line, combined with an `orders.csv` receipt
-    transition on its parent, in the same apply.
+    """An `order_items.csv` price correction on an existing line, combined with an
+    `orders.csv` receipt transition on its parent, in one apply — with no spawn
+    anywhere in it.
 
-    This combination is what caught a second bug behind the general lock/verify
-    fix: `_lock_and_verify_pending_updates`'s fresh re-`SELECT` for the
-    `order_items` row used `populate_existing`, which resets *every* attribute
-    including relationships — wiping the `kits` collection `load_existing()` had
-    eagerly loaded onto that same identity-mapped `OrderItem`. The `orders` row's
-    own re-`SELECT` re-populates `items`/`kits` on the order, but the order and
-    the line are processed as two separate tables in `_lock_and_verify_pending_
-    updates`' loop, so whichever ran last left its relationship state as the one
-    `_advance_kits_for_newly_received_orders` saw — and if that pass belonged to
-    `order_items` (no eager options of its own), reading `item.kits` off it a
-    moment later raised `MissingGreenlet`. Fixed by sharing one `_eager_load_
-    options()` helper between `load_existing()` and every later re-`SELECT`, so
-    they can never drift apart again (review of #79/#47).
+    Both halves land, and the kit-arrival side effect still reaches the line's
+    pre-existing kit even though nothing in the upload mentions that kit and no
+    fan-out put it there. The two tables are planned and written independently,
+    so this is the case where an order-level derivation has to survive a
+    same-apply edit to its own child rows (review of #79/#47).
     """
     retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
     order = (
@@ -3342,21 +2896,17 @@ async def test_a_spawn_free_import_that_edits_a_line_and_receives_its_order_succ
 
 
 async def test_an_import_that_both_receives_an_order_and_adds_a_line_succeeds(client):
-    """No concurrency here — this is the false-positive the lock/verify guard's
-    first cut produced on its own: `_order_received()` answers a matched UPDATE
-    row with the *post-apply* state (right for fan-out — a line added in the same
-    apply that also receives its order should spawn `backlog`), but comparing
-    that same value to the pre-write locked row made this ordinary, single-request
-    apply fail as a stale conflict every time. Splitting `received` (post-apply,
-    for fan-out) from `received_before_apply` (pre-apply, for the lock/verify
-    check) is what a concurrent race actually needs to distinguish (review of
-    #79/#47).
+    """One apply that both receives an existing order and adds a line to it.
+
+    `_order_received()` answers a matched UPDATE row with the *post-apply* state,
+    which is what the fan-out needs: a line added in the same apply that also
+    receives its order should spawn `backlog`, not `ordered`.
 
     Also covers the sibling gap the same review raised: `receive_order()` always
     advances every arrival-eligible kit on the order it receives, but the
-    importer writes model rows directly and skips that side effect for a kit
-    this import doesn't otherwise mention. The order's pre-existing line here
-    must land `backlog` right alongside the newly added one.
+    importer writes model rows directly and skipped that side effect for a kit
+    this import doesn't otherwise mention. The order's pre-existing kit here must
+    land `backlog` right alongside the newly spawned one (review of #79/#47).
     """
     retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
     order = (
@@ -3476,10 +3026,9 @@ async def test_correcting_an_already_received_orders_timestamp_does_not_touch_it
     before and after the write and a naive "is it non-null now" check can't
     tell this apart from a genuine arrival (review of #79/#47).
 
-    No spawn anywhere in this import, on purpose: the earlier fix for the
-    false-conflict case threaded `received_before_apply` through `_Spawn`, but
-    this repro has none, so that alone couldn't have caught it — the fix has to
-    live in `_advance_kits_for_newly_received_orders` itself.
+    No spawn anywhere in this import, on purpose: nothing on the fan-out path
+    could have caught it, so the distinction has to live in
+    `_advance_kits_for_newly_received_orders` itself.
     """
     retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
     order = (
@@ -3535,6 +3084,94 @@ async def test_correcting_an_already_received_orders_timestamp_does_not_touch_it
     kit_after = (await client.get(f"/kits/{kit_id}")).json()
     assert kit_after["status"] == "ordered"  # not advanced to backlog
     assert kit_after["status_updated_at"] == kit_before["status_updated_at"]
+
+
+async def test_an_import_does_not_revert_a_kit_someone_moved_on_during_it(client, monkeypatch):
+    """Codex repro 3 from the #79 review, reachable only now that the importer has
+    a kit-arrival side effect at all.
+
+    An orders-only receipt update plans just the Order, but
+    `_advance_kits_for_newly_received_orders` also mutates pre-existing kits — off
+    the relationship snapshot planning loaded. A normal `PATCH /kits/{id}` to
+    `building` landing between the plan and that write used to be overwritten back
+    to `backlog`, which the REST receive path would never do.
+
+    The write gate (#80) makes that interleaving unreachable: the PATCH waits for
+    the apply to commit, then lands on top. `building` survives, and `backlog` is
+    never what the kit ends on.
+
+    The racer is launched as a task and awaited *after* the apply — under the gate
+    it blocks until the apply commits, so awaiting it inline would deadlock the
+    test against the serialization it is checking.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    kit_id = order["items"][0]["kits"][0]["id"]
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "received_at": "2026-03-20T00:00:00Z",
+    }
+    archive = make_archive({"orders": [orders_row]})
+
+    plan = await preview(client, archive, mode="merge")
+    assert plan["blocking_errors"] == [], plan
+    plan_hash = plan["plan_hash"]
+
+    original_plan_import = importing.plan_import
+    racer: dict[str, asyncio.Task] = {}
+    patched: list[int] = []
+
+    async def plan_then_patch_the_kit(*args, **kwargs):
+        execution = await original_plan_import(*args, **kwargs)
+
+        async def move_it_on() -> None:
+            resp = await client.patch(f"/kits/{kit_id}", json={"status": "building"})
+            patched.append(resp.status_code)
+
+        racer["task"] = asyncio.create_task(move_it_on())
+        await asyncio.sleep(0.05)  # let it reach — and block on — the gate
+        return execution
+
+    monkeypatch.setattr(importing, "plan_import", plan_then_patch_the_kit)
+
+    applied = await client.post(
+        "/import/apply",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "merge", "plan_hash": plan_hash},
+    )
+    await racer["task"]
+
+    assert applied.status_code == 200, applied.text
+    assert patched == [200], f"the racing PATCH didn't land: {patched}"
+
+    stored = (await client.get(f"/kits/{kit_id}")).json()
+    assert stored["status"] == "building", (
+        "an import's kit-arrival side effect reverted a kit somebody had already moved to building"
+    )
 
 
 # --- the version an archive claims (release prep) ---------------------------------
