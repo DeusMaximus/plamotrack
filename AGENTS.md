@@ -238,6 +238,13 @@ the unfixed code, and still missed something. Each failed differently:
   create, so it could not appear in any test in the suite. It was latent in the *previous*
   fingerprint too and the rewrite inherited it unseen; an external review found it. No
   additional *value* would have helped — the axis never varied was the row's **action**.
+- **#42** had a seven-case matrix over `manifest.json`'s `tables` block — absent, a string,
+  a non-object entry, a missing count, a non-numeric count, a null name, a boolean count —
+  and every case wrote it inside a JSON **object**. The importer's first act is
+  `data.get("tables")`, so a manifest of `[]` was an `AttributeError` 500 no case in the
+  matrix could reach. The axis was the container, not the thing inside it. Its sibling test
+  drove one member-decompression failure (a bad CRC) and so missed the other two the same
+  `except` clause was meant to cover. Both found by external review.
 
 So when a fix turns on **comparing or branching on a field**, enumerate what that field
 can legitimately hold before writing the assertions: null, empty, whitespace, the derived
@@ -257,6 +264,12 @@ of them, and prefer the one that makes the structure non-empty.
 above were, and passed. A red test proves it detects the case you thought of; it says
 nothing about the case you didn't, and nothing at all about the states you never put the
 row into. #41's suite was red exactly where it looked and blind everywhere else.
+
+**A test that asserts a status has to be able to see one.** The default `client` fixture
+re-raises unhandled application exceptions into the test, so a route that 500s fails the
+assertion as an *error* naming some internal exception — red, but silent on what the status
+should have been. Use the `http_client` fixture, which returns the 500 as a response,
+wherever the point of the test is which status a bad input earns (rule 6).
 
 ## Roadmap (design notes §11)
 

@@ -16,7 +16,54 @@ Template:
 
 ---
 
-## 2026-08-15 — Claude Code — #42 and #43 in two PRs; #75 is out for external review
+## 2026-08-15 — Claude Code — #75 reviewed NO-GO and fixed at `9d751ca`; #76 open
+
+**Update to the entry below, after Codex reviewed #75.** It returned **NO-GO on
+`e2ad4ff`** with two P2s. Both reproduced at the service boundary before anything
+was changed; all seven shapes are fixed in **`9d751ca`**, 351 backend, CI green.
+#75 is back with the reviewer. #76 is untouched and still open.
+
+- **It agreed with the missing-file policy** — the thing I flagged as the weakest
+  call — on the grounds that #42 asks for exactly that asymmetry. So that one was
+  fine, and the flag was still worth raising.
+
+- **It found the basename collision I flagged, plus three siblings I did not.** The
+  real fault was bigger than the symptom: reconciliation was over *the names in the
+  zip*, not the rows the importer consumed. `_declared_files` reduced the block to
+  `basename -> count` and dropped the table key; `_read_zip` assigned rather than
+  accumulated. Four shapes fell out of that — an undeclared member imported beside
+  the declared ones, `a/x.csv` vs `b/x.csv` overwriting each other, two members
+  under one path, and a declaration filed under a table its file doesn't route to.
+  Declarations now keep their table key and resolve **one-to-one** against members
+  recorded as `(path, routed_table, rows)`.
+
+- **The duplicate-path case is worse than a counting bug.** `archive.open(name)`
+  resolves through `NameToInfo`, so iterating `namelist()` reads the last-written
+  member **twice** and the other **never** — wrong rows, not just wrong counts.
+  That check runs with or without a manifest, and it was pre-existing, not new
+  in #75.
+
+- **Three malformed inputs were still 500s**, against rule 6: a manifest that is
+  valid JSON but not an object (`AttributeError` past the
+  `(JSONDecodeError, ValueError)` handler), an encrypted member (`RuntimeError`)
+  and an unknown compression method (`NotImplementedError`), both past
+  `(BadZipFile, EOFError, zlib.error)`. `DomainError` is now re-raised ahead of the
+  widened tuple so the budget refusal can't be swallowed and relabelled as damage.
+
+- **Both test matrices were over the wrong axis, and that is the lesson.** Recorded
+  in `AGENTS.md` as the fifth entry in the list: the manifest matrix varied what
+  `tables` held while every case kept the document an **object**, so no case could
+  reach a non-dict manifest; the damaged-member test drove one decompression
+  failure out of three. Also added there: a status assertion needs the new
+  `http_client` fixture (`raise_app_exceptions=False`), because the default
+  transport re-raises a 500 into the test, which goes red without pinning anything.
+
+- **11 of the 15 new tests fail against `e2ad4ff`.** The CRC case passes on both and
+  is now the control in its family.
+
+---
+
+## 2026-08-15 — Claude Code — #42 and #43 in two PRs; #75 went out for external review
 
 **`main` at `01fc77e`.** Two branches pushed, neither merged: **PR #75**
 (`fix/import-archive-integrity-budgets`, 336 backend) and **PR #76**
