@@ -812,16 +812,72 @@ async def test_reads_do_not_wait_behind_the_gate(client):
 # it arrives with #47/#79. Its regression belongs on that branch, not here.
 
 
-def _race_after_planning(monkeypatch, launch):
-    """Patch `plan_import` so `launch()` fires once the plan exists, and hand the
-    caller the task to await after the apply has finished."""
+async def _a_writer_is_parked_on_the_gate() -> bool:
+    """Whether Postgres currently has someone blocked on the advisory lock.
+
+    Asked from a separate connection, so it observes the server's own view rather
+    than anything this test arranged.
+    """
+    async with session_scope() as probe:
+        blocked = await probe.scalar(
+            text(
+                "SELECT count(*) FROM pg_stat_activity "
+                "WHERE datname = current_database() "
+                "AND wait_event_type = 'Lock' AND wait_event = 'advisory'"
+            )
+        )
+    return bool(blocked)
+
+
+async def _race_after_planning(monkeypatch, launch):
+    """Patch `plan_import` so `launch()` fires once the plan exists, and let the
+    apply resume only once that racer has provably reached a decisive state. Hands
+    back the task, to await after the apply has finished.
+
+    **Not a sleep, and not a plain event either.** A fixed delay creates an
+    *opportunity* for the racer to get somewhere without establishing that it did
+    — the flaw this repo has shipped before (#66's warm-cache check passed against
+    broken code because the refetch beat the assertion).
+
+    Signalling from a wrapper around the racer's `acquire_write_gate`, just before
+    it awaits the real one, fixes that half but breaks the other half: it releases
+    the apply the instant the racer *reaches* the gate, before it has done any
+    work. With the gate removed, the apply then finishes first and the racing
+    mutation lands harmlessly afterwards — so both endpoint regressions go green
+    against the very code they exist to catch. Measured, not assumed: with the
+    gate commented out of `apply_import`, that version reported `2 passed`.
+
+    So this waits for whichever decisive state actually arrives, and both are
+    observable rather than timed:
+
+    * **the racer finished** — only possible when nothing is holding it back, i.e.
+      the guard is gone. Its mutation is committed before the apply writes, which
+      is exactly the interleaving the regression needs.
+    * **the racer is parked on the advisory lock** — Postgres reporting it blocked
+      behind this apply, which is the guard working.
+
+    Polling for a state the server reports is not the same as sleeping for a
+    duration: it ends the moment the condition holds, and raises rather than
+    proceeding if neither ever does.
+    """
     original_plan_import = importing.plan_import
     holder: dict[str, asyncio.Task] = {}
 
     async def plan_then_race(*args, **kwargs):
         execution = await original_plan_import(*args, **kwargs)
-        holder["task"] = asyncio.create_task(launch())
-        await asyncio.sleep(0.05)  # let it reach — and block on — the gate
+        task = asyncio.create_task(launch())
+        holder["task"] = task
+
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if task.done() or await _a_writer_is_parked_on_the_gate():
+                break
+            await asyncio.sleep(0.01)
+        else:
+            raise AssertionError(
+                "the racing mutation neither completed nor blocked on the gate — "
+                "this test is not exercising the interleaving it claims to"
+            )
         return execution
 
     monkeypatch.setattr(importing, "plan_import", plan_then_race)
@@ -868,7 +924,7 @@ async def test_a_create_whose_parent_is_deleted_mid_apply_is_never_a_500(http_cl
         resp = await http_client.delete(f"/orders/{order['id']}")
         deleted.append(resp.status_code)
 
-    racing = _race_after_planning(monkeypatch, delete_the_parent)
+    racing = await _race_after_planning(monkeypatch, delete_the_parent)
 
     applied = await http_client.post(
         "/import/apply",
@@ -913,7 +969,7 @@ async def test_replace_all_cannot_truncate_a_row_its_preview_never_listed(client
             )
             created.append(str(kit.id))
 
-    racing = _race_after_planning(monkeypatch, create_a_kit)
+    racing = await _race_after_planning(monkeypatch, create_a_kit)
 
     applied = await client.post(
         "/import/apply",
