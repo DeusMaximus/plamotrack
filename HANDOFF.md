@@ -16,6 +16,72 @@ Template:
 
 ---
 
+## 2026-08-15 — Claude Code — v0.2.5-alpha released; M5 hardening closed
+
+**`main` is at `ddcda16` and tagged `v0.2.5-alpha`** (pre-release, published).
+401 backend, ruff clean, frontend builds and lints, all three CI jobs green on the
+tagged commit. **`M5 hardening — v0.2.5-alpha` is 0 open / 4 closed** — #40, #41,
+#42, #43. PRs #75, #76 and #78 all merged and their branches deleted. Nothing is
+in flight.
+
+- **What shipped:** the apply is bound to the reviewed plan (#41); numeric cells
+  that could mean two things are refused (#40); an archive is held to its own
+  manifest, decoded strictly, and damaged/encrypted/oddly-compressed members are
+  diagnosed rather than 500'd (#42); the import path has an expanded-byte budget, a
+  per-line quantity range, and a starter-sheet expansion budget charged before the
+  rows are built (#43). No migration.
+- **`app_version` now comes from `app.__version__`** instead of the literal
+  `"0.1.0"` it had carried through six releases (#78). Two tests hold it, one of
+  which also pins `pyproject.toml` against `app/__init__.py` — the comment saying
+  to keep those in step was previously the only thing enforcing it.
+
+### The release gate is worth running, and here is its trap
+
+`docker compose up -d --wait` **without `--build`** failed with
+`Can't locate revision identified by '24ee4c9024e4'`. That is not a defect: the
+local image was five days stale and predated that migration while the dev database
+was already on it. **Use `docker compose up -d --wait --build`.** With it: four
+healthy services, `migrate` exit 0, `/api/meta` reporting 0.2.5, and an archive
+exported *from the container* carrying the right `app_version` and schema.
+
+Running the packaged stack replaces the dev `db` container. Afterwards, bring the
+dev overlay back:
+`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db --wait`.
+
+### What the six review rounds cost, and what they bought
+
+**Six external review rounds across #75 and #76. Every one found a defect in the
+previous round's fix, with a green local suite each time.** #75 took four to reach
+GO, #76 took three. Nothing was found by writing more tests for the thing already
+understood.
+
+The four shapes worth remembering, all now in `AGENTS.md`:
+
+1. **A matrix that varies what a container holds, never the container.** Seven cases
+   over `manifest.json`'s `tables` block, every one inside a JSON object — so a
+   manifest of `[]` was an `AttributeError` 500 none of them could reach.
+2. **A sentinel that is also a legitimate parse result.** `None` meant both "parse
+   failed" and "the document was JSON null", and the colliding case went silent.
+3. **Restructuring for a new check silently dropping an old one.** Splitting
+   `_read_manifest(json.loads(...))` to `isinstance`-check the result moved the call
+   out from under its `except`. It survived a whole review round unnoticed.
+4. **Applying a state axis to one matrix and not its neighbour.** The ceiling matrix
+   varied retailer present/absent; the invalid-value matrix directly above it did
+   not — so the ceiling was fixed in both branches while the floor was fixed in one.
+
+Also: **a shared invariant covering one end of a range is two invariants**, and the
+half that isn't shared is the half that drifts.
+
+### Next
+
+- **v0.2.6-alpha** holds **#74** (REST/MCP integers with no upper bound) and **#77**
+  (aggregate fan-out: one line is capped at 1,000 but a file with many lines is not).
+  They are siblings — both are bounds the service layer doesn't enforce on numbers
+  reaching the write path — and plausibly one branch.
+- Then **M5.1** (instance settings + i18n foundation), the next roadmap milestone.
+
+---
+
 ## 2026-08-15 — Claude Code — #75 merged; #76 at `8e0d465` after two review rounds
 
 **`main` is at `2a09272` — PR #75 squash-merged, #42 CLOSED, CI green.** The
