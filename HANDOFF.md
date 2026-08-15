@@ -16,12 +16,54 @@ Template:
 
 ---
 
-## 2026-08-15 — Claude Code — #75 reviewed NO-GO and fixed at `9d751ca`; #76 open
+## 2026-08-15 — Claude Code — #75 at `07ae427` after two review rounds; #76 ready
 
-**Update to the entry below, after Codex reviewed #75.** It returned **NO-GO on
-`e2ad4ff`** with two P2s. Both reproduced at the service boundary before anything
-was changed; all seven shapes are fixed in **`9d751ca`**, 351 backend, CI green.
-#75 is back with the reviewer. #76 is untouched and still open.
+**Two Codex passes on #75, both NO-GO, five findings, all reproduced and fixed.**
+Head is **`07ae427`**: 355 backend, ruff clean, CI green, awaiting a third look.
+**#76 is untouched, green, and ready to merge.** Nothing found in either round
+reaches it.
+
+- **Round 2 (NO-GO on `9d751ca`) — two P2s and a test gap, all real:**
+  - **Both structural scans were quadratic in uploader-chosen numbers.**
+    `names.count(n)` per member, and `_reconcile_manifest` re-walking every member
+    per declaration. Empty zip members are near-free, so 10 MB permits ~100,000 of
+    them, and **both scans run over the central directory before any member content
+    is read** — so the expansion budget this branch adds could not have helped. A
+    DoS inside the code added to prevent one. 10k/20k/30k members: 0.76 / 3.01 /
+    6.73 s, now 0.02 / 0.04 / 0.06 s via `Counter` and a `by_filename` index.
+  - **Manifest selection took the first match**, so two manifests meant the archive
+    was governed by member order and re-zipping changed what it claimed. Now blocks,
+    which is what the branch's own stated rule already required.
+  - **`manifest.json = null` was ignored in silence** — `json.loads` returns `None`
+    for it, colliding with the `None` used as the "couldn't parse" sentinel, so the
+    one non-object shape needing the warning was the one that skipped it. This was a
+    defect *in the fix for round 1*. Sentinel replaced with `try/except/else`.
+
+- **Sentinel collision is the durable lesson here.** `None` meant two different
+  things — "parse failed" and "the document was JSON null" — and the case that
+  collided was invisible. Don't reuse a value that is also a legitimate parse result
+  as an error sentinel.
+
+- **The matrix asserted status and imported action, so a case that quietly did
+  nothing passed.** It now asserts *which shape was found* (`is null` vs `is a
+  list`). Be precise about the detection claim: of the five non-object cases, only
+  **`null`** fails against `9d751ca` behaviourally; the other four fail on message
+  wording tightened at the same time. Eight fail in total — those five, both
+  manifest orderings, and the structural guard at `6.77s < 1.5s`.
+
+- **There is now a complexity guard in the suite** (`test_archive_structure_is_
+  processed_in_linear_time`): 30,000 members, 7,500 declarations, 1.5 s budget.
+  Deliberately not a benchmark — sized off a two-orders-of-magnitude gap, ~25×
+  headroom linear, ~4.5× margin before quadratic could sneak under. If it ever goes
+  red on a slow runner, check the scans before raising the number.
+
+- **#76 conflicts with #75 on `backend/tests/test_portability.py`** — both append at
+  the end, plus one import line. Trivial. Resolved locally as a dry run: keep both
+  import lines merged, keep both appended blocks, run `ruff format` (it wants one
+  blank line at the seam). **The merged result is 369 backend, all passing** — that
+  was verified, not assumed. `docs/import-export.md` does *not* conflict.
+
+- **Round 1 (NO-GO on `e2ad4ff`)** — kept below for the record.
 
 - **It agreed with the missing-file policy** — the thing I flagged as the weakest
   call — on the grounds that #42 asks for exactly that asymmetry. So that one was
@@ -60,6 +102,16 @@ was changed; all seven shapes are fixed in **`9d751ca`**, 351 backend, CI green.
 
 - **11 of the 15 new tests fail against `e2ad4ff`.** The CRC case passes on both and
   is now the control in its family.
+
+- **Next:** #75 waits on the third review pass — merging now discards the review it
+  was sent out for, and each round so far has found its defect *inside the previous
+  round's fix*. #76 can merge whenever. Merge #75 first, then #76, resolving the
+  test-file conflict as described above. Both closed, `M5 hardening — v0.2.5-alpha`
+  is done (#42 by #75, #43 by the pair) and the release can be cut.
+
+- **Known stale, not blocking:** `build_manifest` stamps `"app_version": "0.1.0"`
+  (`exporting.py`), which has been wrong since v0.2.1-alpha. It is written into
+  every archive and read by nobody. Worth fixing as release prep; no issue filed.
 
 ---
 
