@@ -554,6 +554,7 @@ class _Row:
 @dataclass
 class _Spawn:
     order_item_id: uuid.UUID
+    order_id: uuid.UUID
     count: int
     name: str
     grade: str
@@ -1157,10 +1158,13 @@ class _Planner:
                 )
                 continue
             status = row.values.get("kit_status")
-            order_id = row.values.get("order_id")
+            # order_id is a required REF, already validated by `_resolve_all_refs` —
+            # a row that reached here without one would already be RowAction.ERROR.
+            order_id = row.values["order_id"]
             self.spawns.append(
                 _Spawn(
                     order_item_id=line_id,
+                    order_id=order_id,
                     count=missing,
                     name=name,
                     grade=grade,
@@ -1168,7 +1172,7 @@ class _Planner:
                     kit_number=row.values.get("kit_number"),
                     status=str(status) if status else "",
                     row_number=row.row_number,
-                    received=self._order_received(order_id) if order_id else False,
+                    received=self._order_received(order_id),
                 )
             )
             row.messages.append(f"will create {missing} kit(s) from this line")
@@ -1409,6 +1413,51 @@ async def preview_import(
     return (await plan_import(session, filename, content, mode)).plan
 
 
+async def _lock_and_verify_spawn_orders(session: AsyncSession, execution: ExecutionPlan) -> None:
+    """Row-lock every pre-existing order a spawn's fan-out depends on, and re-check
+    its received state under that lock before any write happens.
+
+    `plan_import` reads orders with a plain `SELECT` — right for a preview, which
+    writes nothing. `apply_import` derives a spawned kit's status from
+    `spawn.received`, captured at planning time, and used to just trust it: a
+    concurrent `POST /orders/{id}/receive` could commit between `plan_import`
+    returning and this apply's own write loop, landing a kit at the status the
+    order held *before* it arrived. The `plan_hash` check catches the collection
+    changing before planning (#41); nothing previously caught it changing in that
+    narrower window between planning and writing (review of #79/#47).
+
+    Locking here serializes with that concurrent receive the same way every other
+    order mutation already does (rule 2/7) — it either waits behind us, or beat us
+    to the commit and we catch the mismatch below and ask for a fresh preview.
+
+    A spawn whose order this same apply is about to *create* is exempt: nothing
+    external can hold a reference to an id that doesn't exist until this
+    transaction commits, so there is no lock to take and no drift to catch.
+    """
+    new_order_ids = {
+        row.new_id
+        for row in execution.rows.get("orders", [])
+        if row.action is RowAction.CREATE and row.new_id is not None
+    }
+    expected = {
+        spawn.order_id: spawn.received
+        for spawn in execution.spawns
+        if spawn.order_id not in new_order_ids
+    }
+    if not expected:
+        return
+    locked = await session.scalars(
+        select(Order).where(Order.id.in_(expected.keys())).with_for_update()
+    )
+    actual = {order.id: order.received_at is not None for order in locked}
+    for order_id, wanted_received in expected.items():
+        if actual.get(order_id, False) != wanted_received:
+            raise ConflictError(
+                "the collection changed since you previewed this import, so the "
+                "preview no longer matches what would happen — run the preview again"
+            )
+
+
 async def apply_import(
     session: AsyncSession,
     filename: str,
@@ -1452,6 +1501,10 @@ async def apply_import(
             "the collection changed since you previewed this import, so the preview "
             "no longer matches what would happen — run the preview again"
         )
+
+    # Before any write: locks the orders the fan-out below depends on, and refuses
+    # to proceed if one of them was received after this plan was built.
+    await _lock_and_verify_spawn_orders(session, execution)
 
     if mode is ImportMode.REPLACE_ALL:
         await session.execute(text(f"TRUNCATE {_PORTABLE_TABLES} CASCADE"))

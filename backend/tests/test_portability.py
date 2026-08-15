@@ -13,8 +13,10 @@ import tomllib
 import zipfile
 
 import pytest
+from httpx import ASGITransport, AsyncClient
 
 from app import __version__ as app_version
+from app.main import app as fastapi_app
 from app.services import orders
 from app.services.portability import exporting, importing, spec, starter_sheet
 
@@ -2820,6 +2822,91 @@ async def test_add_only_reads_received_state_off_the_order_it_will_keep_not_the_
 
     kits = {k["name"]: k for k in (await http_client.get("/kits")).json()}
     assert kits["Char's Zaku II"]["status"] == "backlog"
+
+
+async def test_apply_is_rejected_if_the_order_is_received_mid_apply(client, monkeypatch):
+    """The narrower race one layer in from the plan_hash check: nothing stops a
+    concurrent `POST /orders/{id}/receive` from committing *after* `apply_import`'s
+    own `plan_import()` call has already captured `spawn.received`, but *before*
+    the apply's write loop runs. `plan_hash` can't see this — the request that
+    computed it never returns to the caller until after the whole apply, hash
+    included, is already done. `_lock_and_verify_spawn_orders` has to catch this
+    window on its own, by re-reading the order under a row lock immediately before
+    any write (review of #79/#47).
+
+    The interleaving is forced by making a *second*, fully independent request —
+    its own session, its own transaction — receive the order from inside a patched
+    `plan_import`, exactly where apply_import calls it and exactly before its own
+    write loop runs.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    line = {
+        "order_id": order["id"],
+        "item_type": "kit",
+        "quantity": "1",
+        "unit_price_minor": "2800",
+        "currency_code": "JPY",
+        "kit_name": "Char's Zaku II",
+        "kit_grade": "HG",
+    }
+    content = make_csv(spec.ORDER_ITEMS.header, [line])
+
+    preview_resp = await client.post(
+        "/import/preview",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    plan_hash = preview_resp.json()["plan_hash"]
+
+    original_plan_import = importing.plan_import
+    received_mid_apply = False
+
+    async def receive_between_plan_and_write(*args, **kwargs):
+        nonlocal received_mid_apply
+        execution = await original_plan_import(*args, **kwargs)
+        # A wholly separate request — its own session, its own transaction —
+        # commits the receive right in the window this apply hasn't reached yet.
+        async with AsyncClient(
+            transport=ASGITransport(app=fastapi_app), base_url="http://test"
+        ) as other:
+            resp = await other.post(f"/orders/{order['id']}/receive")
+            received_mid_apply = resp.status_code == 200
+        return execution
+
+    monkeypatch.setattr(importing, "plan_import", receive_between_plan_and_write)
+
+    applied = await client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge", "plan_hash": plan_hash},
+    )
+
+    assert received_mid_apply, "the interleaved receive didn't commit — not exercising the race"
+    assert applied.status_code == 409, applied.text
+    # Rejected, not half-applied: no kit spawned under either status.
+    assert {k["name"] for k in (await client.get("/kits")).json()} == {"Zaku II"}
 
 
 # --- the version an archive claims (release prep) ---------------------------------
