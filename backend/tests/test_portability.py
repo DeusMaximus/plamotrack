@@ -11,6 +11,7 @@ import zipfile
 
 import pytest
 
+from app.services import orders
 from app.services.portability import exporting, spec, starter_sheet
 
 # --- helpers --------------------------------------------------------------------
@@ -1530,3 +1531,133 @@ async def test_a_lone_grouped_amount_is_settled_by_the_currency(client, code, re
         assert actions(plan, "orders") == ["create"], plan["tables"][0]["rows"][0]
         assert (await apply(client, content, filename="orders.csv")).status_code == 200
         assert (await client.get("/orders")).json()[0]["shipping_cost_minor"] == 1234
+
+
+# --- the per-line quantity ceiling, through the sheet (#43) -----------------------
+
+
+def order_line_row(order_id: str, quantity: int, **extra) -> dict:
+    return {
+        "id": "",
+        "order_id": order_id,
+        "item_type": "kit",
+        "quantity": str(quantity),
+        "unit_price_minor": "2800",
+        "currency_code": "JPY",
+        "kit_name": "Zaku II",
+        "kit_grade": "HG",
+        **extra,
+    }
+
+
+async def seeded_order(client) -> dict:
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    return (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+
+@pytest.mark.parametrize(
+    ("quantity", "refused"),
+    [
+        pytest.param(orders.MAX_LINE_QUANTITY, False, id="exactly at the ceiling"),
+        pytest.param(orders.MAX_LINE_QUANTITY + 1, True, id="one over"),
+        pytest.param(2_000_000_000, True, id="absurd but a valid int4"),
+    ],
+)
+async def test_a_sheet_cannot_spawn_past_the_ceiling(client, quantity, refused):
+    """A kit line short of its kits is the importer's own fan-out route — it reaches
+    `spawn_kits` without ever building an `OrderItemCreate`, so the REST guard says
+    nothing about it."""
+    order = await seeded_order(client)
+    content = make_csv(spec.ORDER_ITEMS.header, [order_line_row(order["id"], quantity)])
+
+    plan = await preview(client, content, filename="order_items.csv")
+    if refused:
+        assert actions(plan, "order_items") == ["error"]
+        error = plan["tables"][0]["rows"][0]["error"]
+        assert "quantity" in error and "at most" in error, error
+        assert plan["blocking_errors"]
+        assert (await apply(client, content, filename="order_items.csv")).status_code == 409
+    else:
+        assert actions(plan, "order_items") == ["create"], plan["tables"][0]["rows"][0]
+        assert plan["derived"]["kits_spawned"] == quantity
+
+
+async def test_a_catalog_line_in_a_sheet_is_held_to_the_ceiling_too(client):
+    """Spawns nothing, so `_plan_spawns` never looks at it. The check has to sit on
+    the row rather than on the fan-out, or the two item types get two limits."""
+    order = await seeded_order(client)
+    content = make_csv(
+        spec.ORDER_ITEMS.header,
+        [
+            {
+                "id": "",
+                "order_id": order["id"],
+                "item_type": "consumable",
+                "quantity": str(orders.MAX_LINE_QUANTITY + 1),
+                "unit_price_minor": "500",
+                "currency_code": "JPY",
+                "catalog_item_name": "Mr Surfacer 1200",
+            }
+        ],
+    )
+
+    plan = await preview(client, content, filename="order_items.csv")
+    assert actions(plan, "order_items") == ["error"]
+    assert "quantity" in plan["tables"][0]["rows"][0]["error"]
+
+
+async def test_an_update_row_is_held_to_the_ceiling_as_well(client):
+    """The action axis, not another value on the same one. An update carries a
+    `changes` list and a `matched_id` that a create does not have, and it reaches
+    the quantity by a different branch of `_classify` — a check that only ever ran
+    on creates would read green here with the row still going through.
+    """
+    order = await seeded_order(client)
+    line = order["items"][0]
+
+    # Same line by id, so this is an update rather than a second line.
+    content = make_csv(
+        spec.ORDER_ITEMS.header,
+        [order_line_row(order["id"], orders.MAX_LINE_QUANTITY + 1, id=line["id"])],
+    )
+    plan = await preview(client, content, filename="order_items.csv")
+
+    assert actions(plan, "order_items") == ["error"]
+    assert "quantity" in plan["tables"][0]["rows"][0]["error"]
+    assert (await apply(client, content, filename="order_items.csv")).status_code == 409
+    # The stored line is untouched, and no kits were spawned against it.
+    assert (await client.get(f"/orders/{order['id']}")).json()["items"][0]["quantity"] == 1
+    assert len((await client.get("/kits")).json()) == 1
+
+
+async def test_an_update_that_stays_under_the_ceiling_still_applies(client):
+    """The control: refusing the over-ceiling update must not mean refusing updates."""
+    order = await seeded_order(client)
+    content = make_csv(
+        spec.ORDER_ITEMS.header,
+        [order_line_row(order["id"], 3, id=order["items"][0]["id"])],
+    )
+
+    plan = await preview(client, content, filename="order_items.csv")
+    assert actions(plan, "order_items") == ["update"], plan["tables"][0]["rows"][0]
+    assert (await apply(client, content, filename="order_items.csv")).status_code == 200
+    assert (await client.get(f"/orders/{order['id']}")).json()["items"][0]["quantity"] == 3

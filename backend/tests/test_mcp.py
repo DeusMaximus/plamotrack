@@ -3,6 +3,7 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
 from app.mcp import mcp
+from app.services import orders
 
 EXPECTED_TOOLS = {
     "list_kits",
@@ -198,3 +199,28 @@ async def test_apply_upgrade_stock_guard(client):
             await mcp_client.call_tool(
                 "apply_upgrade", {"upgrade_id": upgrade["id"], "kit_id": kit["id"]}
             )
+
+
+async def test_create_order_is_held_to_the_same_line_ceiling_as_rest(client):
+    """Rule 1 in the one place it is cheapest to break: the ceiling lives in the
+    service, so the tool inherits it rather than declaring a second number (#43)."""
+    async with Client(mcp) as mcp_client:
+        with pytest.raises(ToolError, match="at most"):
+            await mcp_client.call_tool(
+                "create_order",
+                {
+                    "retailer": "USA Gundam Store",
+                    "order_date": "2026-08-02",
+                    "currency_code": "USD",
+                    "items": [
+                        {
+                            "item_type": "kit",
+                            "quantity": orders.MAX_LINE_QUANTITY + 1,
+                            "unit_price_minor": 2999,
+                            "currency_code": "USD",
+                            "kit": {"name": "RG Nu Gundam", "grade": "RG"},
+                        }
+                    ],
+                },
+            )
+        assert (await mcp_client.call_tool("list_kits", {})).data == []

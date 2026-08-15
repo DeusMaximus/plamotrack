@@ -1,5 +1,12 @@
 import uuid
 
+import pytest
+
+from app.db import get_sessionmaker
+from app.exceptions import InvalidInputError
+from app.models import OrderItem
+from app.services import orders
+
 
 def kit_line(quantity: int = 1, status: str | None = None, **kit_overrides) -> dict:
     kit = {"name": "RX-79(G) Ground Type", "grade": "HG", "kit_number": "HGUC 210"}
@@ -299,3 +306,113 @@ async def test_order_unknown_retailer_404(client):
         },
     )
     assert resp.status_code == 404
+
+
+# --- the per-line quantity ceiling (#43) -----------------------------------------
+
+
+async def order_with(client, retailer, line: dict, **header):
+    return await client.post(
+        "/orders",
+        json={
+            "retailer_id": retailer["id"],
+            "order_date": "2026-08-01",
+            "currency_code": "JPY",
+            "items": [line],
+            **header,
+        },
+    )
+
+
+@pytest.mark.parametrize(
+    ("quantity", "accepted"),
+    [
+        pytest.param(orders.MAX_LINE_QUANTITY, True, id="exactly at the ceiling"),
+        pytest.param(orders.MAX_LINE_QUANTITY + 1, False, id="one over"),
+        pytest.param(2_000_000_000, False, id="absurd but a valid int4"),
+    ],
+)
+async def test_a_kit_line_cannot_ask_for_more_kits_than_the_ceiling(
+    client, retailer, quantity, accepted
+):
+    """`quantity` on a kit line is an insert count, not a number in a column — it
+    is the one cell in the app that decides how many rows get written."""
+    resp = await order_with(client, retailer, kit_line(quantity=quantity))
+
+    if accepted:
+        assert resp.status_code == 201, resp.text
+        assert len(resp.json()["items"][0]["spawned_kit_ids"]) == quantity
+    else:
+        assert resp.status_code == 422, resp.text
+        assert "at most" in resp.json()["detail"]
+        assert (await client.get("/kits")).json() == []
+        assert (await client.get("/orders")).json() == []  # not even the order header
+
+
+async def test_a_catalog_line_is_held_to_the_same_ceiling(client, retailer):
+    """No fan-out on this route — the ceiling is on the line, so a stock line that
+    spawns nothing is refused by the same number rather than a different one."""
+    resp = await order_with(
+        client,
+        retailer,
+        {
+            "item_type": "consumable",
+            "quantity": orders.MAX_LINE_QUANTITY + 1,
+            "unit_price_minor": 500,
+            "currency_code": "JPY",
+            "new_item": {"name": "Mr Surfacer 1200", "category": "primer"},
+        },
+        received=True,
+    )
+    assert resp.status_code == 422, resp.text
+    assert (await client.get("/consumables")).json() == []
+
+
+async def test_raising_an_existing_line_past_the_ceiling_is_refused(client, retailer):
+    """The edit route reaches the fan-out through `_update_line`, not `_add_line` —
+    a ceiling enforced only at entry is not a ceiling."""
+    order = (await order_with(client, retailer, kit_line(quantity=2))).json()
+    line = order["items"][0]
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={"items": [{**kit_line(quantity=orders.MAX_LINE_QUANTITY + 1), "id": line["id"]}]},
+    )
+    assert resp.status_code == 422, resp.text
+    assert len((await client.get("/kits")).json()) == 2  # the edit did not half-apply
+
+
+async def test_adding_an_over_ceiling_line_to_an_existing_order_is_refused(client, retailer):
+    order = (await order_with(client, retailer, kit_line(quantity=2))).json()
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={
+            "items": [
+                {**kit_line(quantity=2), "id": order["items"][0]["id"]},
+                kit_line(quantity=orders.MAX_LINE_QUANTITY + 1, name="Zaku II"),
+            ]
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert len((await client.get("/kits")).json()) == 2
+
+
+async def test_spawn_kits_refuses_the_count_itself(client, retailer):
+    """The backstop, driven directly. Every public route stops a bad quantity before
+    this, so the guard is unreachable through the API by design — which is exactly
+    why it needs a test that does not go through one. A fourth caller of the shared
+    fan-out inherits the invariant instead of rediscovering it.
+    """
+    order = (await order_with(client, retailer, kit_line(quantity=1))).json()
+
+    async with get_sessionmaker()() as session:
+        item = await session.get(OrderItem, uuid.UUID(order["items"][0]["id"]))
+        with pytest.raises(InvalidInputError, match="at most"):
+            await orders.spawn_kits(
+                session,
+                item,
+                name="Zaku II",
+                grade="HG",
+                count=orders.MAX_LINE_QUANTITY + 1,
+            )
