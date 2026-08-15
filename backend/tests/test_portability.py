@@ -7,6 +7,7 @@ doubles someone's order history is worse than no import at all.
 import csv
 import io
 import json
+import time
 import zipfile
 
 import pytest
@@ -1923,23 +1924,30 @@ async def test_a_short_declared_file_still_warns_when_another_shares_its_basenam
 
 
 @pytest.mark.parametrize(
-    "manifest",
+    ("manifest", "shape"),
     [
-        pytest.param([], id="a JSON list"),
-        pytest.param("plamotrack-archive", id="a bare JSON string"),
-        pytest.param(None, id="JSON null"),
-        pytest.param(1, id="a bare number"),
-        pytest.param({}, id="an object saying nothing"),
-        pytest.param({"tables": {}}, id="an object declaring no tables"),
+        pytest.param([], "a list", id="a JSON list"),
+        pytest.param("plamotrack-archive", "a string", id="a bare JSON string"),
+        pytest.param(None, "null", id="JSON null"),
+        pytest.param(1, "a number", id="a bare number"),
+        pytest.param(True, "a boolean", id="a bare boolean"),
+        pytest.param({}, None, id="an object saying nothing"),
+        pytest.param({"tables": {}}, None, id="an object declaring no tables"),
     ],
 )
-async def test_a_manifest_of_any_json_shape_is_read_as_far_as_it_goes(http_client, manifest):
+async def test_a_manifest_of_any_json_shape_is_read_as_far_as_it_goes(http_client, manifest, shape):
     """The outer shape, not the inner `tables` value.
 
     The first matrix here varied what `tables` held while every case kept the
     document an object — so every one of them reached `data.get(...)` on a dict and
     none of them could have caught `manifest.json = []`, which left as an
     `AttributeError` 500. The axis was the document itself.
+
+    `shape` is asserted, not just the status. Checking only "200, and the row still
+    imported" is what let `null` through the *second* time: it is the one non-object
+    that `json.loads` returns as `None`, which collided with the `None` used as the
+    "couldn't parse it" sentinel, so it silently skipped the warning every other
+    shape got while still passing a status-only assertion.
     """
     archive = zip_members({"retailers.csv": RETAILERS_CSV}, manifest=manifest)
 
@@ -1949,8 +1957,16 @@ async def test_a_manifest_of_any_json_shape_is_read_as_far_as_it_goes(http_clien
         data={"mode": "merge"},
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["blocking_errors"] == []
-    assert actions(resp.json(), "retailers") == ["create"]
+    plan = resp.json()
+    assert plan["blocking_errors"] == []
+    assert actions(plan, "retailers") == ["create"]
+
+    said = [w for w in plan["warnings"] if "not an object" in w]
+    if shape is None:
+        assert said == [], said  # an object, however empty, is a manifest
+    else:
+        assert len(said) == 1, plan["warnings"]
+        assert f"manifest.json is {shape}, not an object" in said[0]
 
 
 def flag_every_member(content: bytes, *, gp_flag: int = 0, method: int | None = None) -> bytes:
@@ -2011,3 +2027,90 @@ async def test_an_unreadable_member_is_a_422_naming_it(http_client, damage, id_)
     assert resp.status_code == 422, f"{id_}: {resp.status_code} {resp.text[:200]}"
     assert "retailers.csv" in resp.json()["detail"]
     assert (await http_client.get("/retailers")).json() == []
+
+
+# --- the archive structure itself is attacker-shaped (follow-up review of #75) ----
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        pytest.param(("a/manifest.json", "b/manifest.json"), id="a before b"),
+        pytest.param(("b/manifest.json", "a/manifest.json"), id="b before a"),
+    ],
+)
+async def test_two_competing_manifests_block(client, order):
+    """Taking the first left the governing manifest decided by member order, so the
+    same files re-zipped differently claimed different things. Both orderings are
+    driven precisely because order was the deciding input — one of them would have
+    passed a single-ordering test by luck.
+    """
+    describes_retailers = declaring(retailers=("retailers.csv", 1))
+    describes_kits = declaring(kits=("kits.csv", 99))
+    bodies = {"a/manifest.json": describes_retailers, "b/manifest.json": describes_kits}
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in order:
+            archive.writestr(name, json.dumps(bodies[name]))
+        archive.writestr("retailers.csv", RETAILERS_CSV)
+
+    plan = await preview(client, buffer.getvalue())
+    assert any(
+        "2 manifests" in error and "a/manifest.json" in error and "b/manifest.json" in error
+        for error in plan["blocking_errors"]
+    ), plan["blocking_errors"]
+    assert (await apply(client, buffer.getvalue())).status_code == 409
+    assert (await client.get("/retailers")).json() == []
+
+
+#: Members in the structural-cost archive below. Sized so the two complexities are
+#: unmistakable rather than merely different: on the machine this was written on,
+#: the quadratic scans took **6.73 s** here and the indexed ones take **0.06 s**.
+_STRUCTURAL_MEMBERS = 30_000
+#: Generous against a loaded or slower runner — 25x the linear cost measured above,
+#: and still 4.5x under the quadratic one. This is a complexity guard, not a
+#: benchmark: it exists to fail if the scans go back to being nested, and the gap it
+#: watches is two orders of magnitude wide.
+_STRUCTURAL_BUDGET_SECONDS = 1.5
+
+
+async def test_archive_structure_is_processed_in_linear_time(client):
+    """`names.count(n)` per member, and a fresh walk of every member per declaration,
+    are both quadratic in numbers the uploader chooses — and both ran over the
+    central directory *before* any member content was read, so the expanded-byte
+    budget could not have helped. A DoS in the middle of the code added to stop one.
+
+    Empty members are nearly free in a zip, so the 10 MB upload limit permits on the
+    order of 100,000 of them; this drives 30,000 and a manifest declaring 7,500
+    tables, well inside that.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr(
+            "manifest.json",
+            json.dumps(
+                declaring(
+                    **{
+                        f"t{i}": (f"declared{i:06d}.csv", 0)
+                        for i in range(_STRUCTURAL_MEMBERS // 4)
+                    }
+                )
+            ),
+        )
+        archive.writestr("retailers.csv", RETAILERS_CSV)
+        for i in range(_STRUCTURAL_MEMBERS):
+            archive.writestr(f"pad{i:06d}.txt", b"")
+    content = buffer.getvalue()
+    assert len(content) < importing.MAX_UPLOAD_BYTES, "the upload limit would catch it first"
+
+    started = time.perf_counter()
+    upload = importing.read_upload("archive.zip", content)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < _STRUCTURAL_BUDGET_SECONDS, (
+        f"{_STRUCTURAL_MEMBERS:,} members took {elapsed:.2f}s — the structural scans "
+        "look quadratic again"
+    )
+    # And it still did the work: every declaration is missing, and says so.
+    assert len(upload.errors) >= _STRUCTURAL_MEMBERS // 4

@@ -29,6 +29,7 @@ import json
 import uuid
 import zipfile
 import zlib
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -244,6 +245,16 @@ class _Member:
 _STARTER_SHEET = "<starter sheet>"
 
 
+def _json_shape(data: Any) -> str:
+    """Name what a manifest turned out to be, for a message that says which wrong
+    thing it was — `null` and `[]` are different mistakes with different fixes."""
+    if data is None:
+        return "null"
+    return {bool: "a boolean", int: "a number", float: "a number", str: "a string"}.get(
+        type(data), "a list"
+    )
+
+
 def _declared_tables(data: dict) -> list[_Declaration]:
     """The `tables` block `build_manifest` writes, table key included.
 
@@ -295,9 +306,17 @@ def _reconcile_manifest(
     if not declared:
         return  # nothing claimed, so nothing to hold it to
 
+    # Indexed once, not re-scanned per declaration. Both sides of this comparison are
+    # attacker-scaled — a manifest declares as many tables as it likes, and a 10 MB
+    # zip holds on the order of 100,000 empty members — so a nested walk here is a
+    # DoS in the middle of the code added to prevent one.
+    by_filename: dict[str, list[_Member]] = {}
+    for member in members:
+        by_filename.setdefault(member.filename, []).append(member)
+
     claimed: set[str] = set()
     for declaration in sorted(declared, key=lambda d: d.filename):
-        matches = [member for member in members if member.filename == declaration.filename]
+        matches = by_filename.get(declaration.filename, [])
         if not matches:
             errors.append(
                 f"the manifest lists {declaration.filename}, but it isn't in this "
@@ -363,29 +382,47 @@ def _read_zip(content: bytes) -> ParsedUpload:
         # resolves to whichever was written last — so iterating `namelist()` reads
         # that one twice and the other never. Manifest or no manifest, an archive
         # that names the same file twice cannot say what it holds.
-        for path in sorted({n for n in names if names.count(n) > 1}):
-            errors.append(
-                f"this archive holds more than one member called {path} — it can't be "
-                "read reliably, so nothing will be imported from it"
-            )
-
-        manifest_name = next((n for n in names if n.rsplit("/", 1)[-1] == MANIFEST_NAME), None)
-        if manifest_name:
-            try:
-                data = json.loads(budget.read(archive, manifest_name))
-            except (json.JSONDecodeError, ValueError) as exc:
-                data = None
-                warnings.append(f"manifest.json could not be read ({exc}) — continuing without it")
-            if isinstance(data, dict):
-                manifest = _read_manifest(data)
-                declared = _declared_tables(data)
-            elif data is not None:
-                # Valid JSON, but not an object — `[]`, `"text"`, `null`. Every read
-                # below is a `.get`, so this used to leave as an AttributeError 500.
-                warnings.append(
-                    "manifest.json isn't a JSON object, so it says nothing about this "
-                    "archive — continuing without it"
+        #
+        # Counted in one pass. `names.count(...)` per entry re-walked the whole list
+        # every time, which is quadratic on a member list the uploader chooses the
+        # length of, and it ran before a single byte of member content was read — so
+        # the expansion budget below could not have helped.
+        for path, count in sorted(Counter(names).items()):
+            if count > 1:
+                errors.append(
+                    f"this archive holds more than one member called {path} — it "
+                    "can't be read reliably, so nothing will be imported from it"
                 )
+
+        manifest_names = [n for n in names if n.rsplit("/", 1)[-1] == MANIFEST_NAME]
+        if len(manifest_names) > 1:
+            # Taking the first left the governing manifest decided by member order,
+            # so re-zipping the same files in a different order changed what the
+            # archive claimed. By the rule above, a zip that cannot say what it holds
+            # blocks rather than picking one.
+            errors.append(
+                f"this archive holds {len(manifest_names)} manifests "
+                f"({', '.join(sorted(manifest_names))}) — there is no telling which "
+                "one describes it, so nothing will be imported from it"
+            )
+        elif manifest_names:
+            try:
+                data = json.loads(budget.read(archive, manifest_names[0]))
+            except (json.JSONDecodeError, ValueError) as exc:
+                warnings.append(f"manifest.json could not be read ({exc}) — continuing without it")
+            else:
+                # `else`, not a `data is None` sentinel: `null` is valid JSON that
+                # parses to None, so a sentinel of None made a null manifest
+                # indistinguishable from a failed parse and it slipped through
+                # unremarked while `[]` and `"text"` warned.
+                if isinstance(data, dict):
+                    manifest = _read_manifest(data)
+                    declared = _declared_tables(data)
+                else:
+                    warnings.append(
+                        f"manifest.json is {_json_shape(data)}, not an object, so it "
+                        "says nothing about this archive — continuing without it"
+                    )
         else:
             warnings.append(
                 "no manifest.json in this zip, so it's being read as a loose set of CSVs"
