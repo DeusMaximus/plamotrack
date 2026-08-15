@@ -459,8 +459,10 @@ def _read_zip(content: bytes) -> ParsedUpload:
                 continue
             header, rows = _read_csv_text(budget.read(archive, entry), entry)
             if starter_sheet.is_starter_sheet(header):
-                for key, expanded in starter_sheet.expand(rows).items():
+                expanded_tables, problems = starter_sheet.expand(rows)
+                for key, expanded in expanded_tables.items():
                     tables.setdefault(key, []).extend(expanded)
+                errors.extend(problems)
                 members.append(_Member(entry, _STARTER_SHEET, len(rows)))
                 continue
             table_key = _detect_table(entry, header)
@@ -486,7 +488,8 @@ def _read_zip(content: bytes) -> ParsedUpload:
 def _read_single_csv(filename: str, content: bytes) -> ParsedUpload:
     header, rows = _read_csv_text(content, filename or "upload")
     if starter_sheet.is_starter_sheet(header):
-        return ParsedUpload(source="starter-sheet", tables=starter_sheet.expand(rows))
+        expanded, problems = starter_sheet.expand(rows)
+        return ParsedUpload(source="starter-sheet", tables=expanded, errors=problems)
     table_key = _detect_table(filename, header)
     if table_key is None:
         known = ", ".join(spec.filename for spec in TABLE_SPECS)

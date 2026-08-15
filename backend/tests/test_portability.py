@@ -2320,3 +2320,126 @@ async def test_bad_metadata_does_not_discard_a_good_tables_block(client):
     assert any("kits.csv" in error and "truncated" in error for error in plan["blocking_errors"]), (
         plan["blocking_errors"]
     )
+
+
+# --- the starter sheet's retailer-free branch (review of #76) ---------------------
+
+
+def sheet_row(quantity: str, *, retailer: str = "", name: str = "Zaku II") -> dict:
+    row = {"kit_name": name, "grade": "HG", "status": "backlog", "quantity": quantity}
+    if retailer:
+        row |= {
+            "retailer": retailer,
+            "order_date": "2026-03-14",
+            "order_number": "HLJ-1",
+            "unit_price": "24.50",
+            "currency": "AUD",
+            "received": "yes",
+        }
+    return row
+
+
+def starter_sheet_csv(rows: list[dict]) -> bytes:
+    return make_csv(starter_sheet.STARTER_SHEET_HEADER, rows)
+
+
+async def test_a_retailer_free_row_spawns_one_kit_per_unit(client):
+    """`quantity` used to be read and then dropped on this branch: a row with no
+    shop named emitted exactly one kit, so an ordinary `3` silently became `1`.
+
+    That is data loss with nothing to do with the ceiling — it is why the fix is to
+    fan out rather than to reject anything above 1. A column cannot mean "how many
+    of this kit" when a shop is named and nothing at all when one isn't.
+    """
+    sheet = starter_sheet_csv([sheet_row("3")])
+
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+    assert actions(plan, "kits") == ["create"] * 3, actions(plan, "kits")
+
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+    kits = (await client.get("/kits")).json()
+    assert len(kits) == 3
+    assert {k["name"] for k in kits} == {"Zaku II"}
+    assert (await client.get("/orders")).json() == []  # still no purchase record
+
+
+@pytest.mark.parametrize(
+    "quantity",
+    [pytest.param("", id="blank"), pytest.param("1", id="one")],
+)
+async def test_a_retailer_free_row_still_defaults_to_a_single_kit(client, quantity):
+    """The control. Blank means one, as the sheet's own guidance says, and the
+    fan-out must not turn an unstated quantity into zero kits or an error."""
+    sheet = starter_sheet_csv([sheet_row(quantity)])
+
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+    assert plan["blocking_errors"] == []
+    assert actions(plan, "kits") == ["create"]
+
+
+@pytest.mark.parametrize(
+    "retailer",
+    [
+        pytest.param("Hobby Link Japan", id="a row that names a shop"),
+        pytest.param("", id="a row that names no shop"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("quantity", "accepted"),
+    [
+        pytest.param(str(orders.MAX_LINE_QUANTITY), True, id="exactly at the ceiling"),
+        pytest.param(str(orders.MAX_LINE_QUANTITY + 1), False, id="one over"),
+    ],
+)
+async def test_the_ceiling_covers_both_starter_sheet_shapes(client, retailer, quantity, accepted):
+    """Both branches at the limit and above it.
+
+    Whether a row reaches the ceiling used to depend on whether it named a shop:
+    the retailer-bearing branch emits an order line that `_check_line_quantity`
+    sees, and the retailer-free branch emits kits that nothing checked. Same
+    column, same number, same sheet — so the coverage cannot come down to a value
+    in a different cell.
+    """
+    sheet = starter_sheet_csv([sheet_row(quantity, retailer=retailer)])
+
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+    if accepted:
+        assert plan["blocking_errors"] == []
+        expected = int(quantity)
+        spawned = len(actions(plan, "kits")) + plan["derived"]["kits_spawned"]
+        assert spawned == expected, f"{spawned} kits planned, expected {expected}"
+    else:
+        assert plan["blocking_errors"], plan
+        assert any("at most" in str(error) for error in plan["blocking_errors"]) or any(
+            "at most" in (row.get("error") or "")
+            for table in plan["tables"]
+            for row in table["rows"]
+        ), plan
+        assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 409
+        assert (await client.get("/kits")).json() == []
+
+
+@pytest.mark.parametrize(
+    ("quantity", "says"),
+    [
+        pytest.param("0", "at least one kit", id="zero"),
+        pytest.param("-2", "at least one kit", id="negative"),
+        pytest.param("1.5", "quantity", id="fractional"),
+        pytest.param("many", "quantity", id="not a number"),
+    ],
+)
+async def test_a_retailer_free_row_reports_a_quantity_it_cannot_honour(client, quantity, says):
+    """Reported in the preview as a blocking error naming the sheet line, not raised.
+
+    A retailer-free row produces no order line, so there is no planned row for the
+    importer to hang an error on — which is why `expand` has to carry the problem
+    out itself rather than leaving it to `_check_line_quantity`.
+    """
+    sheet = starter_sheet_csv([sheet_row(quantity)])
+
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+    assert any(says in error and "row 2" in error for error in plan["blocking_errors"]), plan[
+        "blocking_errors"
+    ]
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 409
+    assert (await client.get("/kits")).json() == []
