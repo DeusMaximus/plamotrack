@@ -16,7 +16,7 @@ Template:
 
 ---
 
-## 2026-08-15 — Claude Code (Sonnet 5) — #47 fixed; collection write gate added (rule 7.1)
+## 2026-08-15 — Claude Code (Sonnet 5) — #47 fixed; write gate (rule 7.1); M5 re-triaged
 
 **`main` is at `032e1df`.** 432 backend tests, ruff clean, all three CI jobs green.
 #79 and #80 merged and their branches deleted. Issues #47 and #52 closed. Nothing
@@ -64,6 +64,70 @@ function, the fix is probably an invariant one level up, not another branch insi
    commented out. `tests/test_integrity.py::_race_after_planning` now waits for
    either the racer finishing or Postgres reporting it parked on the advisory lock,
    and raises if neither happens.
+
+### The rest of M5 hardening — v0.2.6-alpha, re-triaged against `main`
+
+Six issues remain: #44, #45, #46, #48, #74, #77. All were filed before #79/#80 and
+every one was checked against `4a45e96`; each carries a signed comment recording
+what moved. **#44's body was amended** (its approach contradicted shipped
+behaviour); the others were left intact with comments only.
+
+- **#48 shrank by half.** Its own proposed fix — *"take a Postgres advisory lock
+  across the plan/apply window"* — **is** #80. The import symptom is closed; only
+  the export snapshot remains (`_load_all` at `exporting.py:82` takes no isolation
+  level, deliberately, since the gate is writers-only). It's now one small change:
+  wrap export in `REPEATABLE READ READ ONLY`. Its "lowest-value, drop this first"
+  note no longer holds — it's the cheapest item in the milestone and the surviving
+  half (an agent writing while a human exports) is the half that mattered.
+- **#44's approach was wrong after #79** and has been rewritten. It said to reject
+  `received_at` transitions in merge mode at preview; #79 deliberately made them
+  work, with three tests pinning it. The body now says *do not* reject them and
+  guards the two real accounting holes instead. Case 4 re-scoped: kits-unadvanced
+  **fixed**, stock-at-zero **intentional** (rule 10), and two open —
+  a receive-by-import strands the real receive (`receive_order` 409s on
+  `received_at is not None`, `orders.py:679`), and clearing re-arms the stock
+  increment. **The clear-then-re-receive double-count is the strongest single item
+  in this milestone** — silent corruption, verified against `main`.
+- **#74's "verified" section is wrong.** It claims `grep "le=\|lt=" app/schemas/*.py`
+  returns nothing; it returns three hits, dating to the original backend commit.
+  `kits.rating` and `retailers.rating` are already bounded `ge=1, le=5` on every
+  path that can set them (`KitCreate` doesn't accept `rating` at all). **Scope is
+  ten columns, not twelve.**
+- **#45, #46, #77** are substantively unaffected. #45/#46's line references had
+  drifted 300-500 lines and are refreshed in comments.
+
+### Suggested order, and why
+
+**#48 → #45 → #46 → #44**, one PR at a time. All four rewrite
+`services/portability/importing.py` — different regions, so contention is lower
+than it looks, but not something to run two agents across concurrently.
+
+#48 leads because it is now tiny and mostly outside `importing.py`. #45 and #46 sit
+together (both planning-time reference/identity correctness). **#44 goes last, not
+first** — an earlier draft of this advice had it first on the theory that it would
+restructure `apply_import` and reshape the others' fix sites. It won't: the issue
+explicitly forbids rerouting import through the order service, so its footprint is
+additive (a new `services/portability/invariants.py`, a `_plan_spawns` change, a
+`status_updated_at` fix). What it does have is an open design question, below.
+
+**#74 is the one that parallelises safely** — it's `app/schemas/*` plus arithmetic
+in the services, and touches `importing.py` not at all. **#77 does not** — it lands
+in the same plan/fan-out code, so sequence it rather than run it alongside.
+
+### Two decisions to make before starting, not during review
+
+1. **#44 may need a migration** — the only issue here that might. Guarding
+   "a receive-by-import strands the real receive" needs `receive_order` to tell
+   *received, stock applied* from *received by import, stock outstanding*, and
+   nothing on the row records that today. Either a column, or refuse the transition
+   only for orders with catalog lines (leaving the kit-only starter-sheet shape #79
+   serves working). Decide first; the issue lays out both.
+2. **#74 has three routes, not one.** Schemas, MCP, and *derived* arithmetic — a
+   legal input scaled or summed out of int4. `require_int4` has only two call sites
+   today, both on the CSV path; nothing in `orders.py`/`catalog.py` bounds an
+   arithmetic result. A fix that stops at the schemas passes locally and gets a
+   round-2 review. This is the residual of #73, which fixed the same class on one
+   path only — brief it as a sweep.
 
 ### Notes for whoever picks this up
 
