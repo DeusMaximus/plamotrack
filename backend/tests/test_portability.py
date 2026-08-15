@@ -2996,6 +2996,92 @@ async def test_apply_is_rejected_if_the_order_is_deleted_mid_apply(http_client, 
     assert (await http_client.get("/kits")).json() == []
 
 
+async def test_apply_is_rejected_if_a_spawn_free_receipt_update_is_deleted_mid_apply(
+    http_client, monkeypatch
+):
+    """The lock/verify guard used to build its lock set entirely from
+    `execution.spawns` — which covers a new kit line, but not a plain
+    `orders.csv` receipt-state update with no line at all. That write has no
+    spawn to hang a lock off of, so it went straight to the main loop's
+    `UPDATE` completely unlocked: a concurrent delete in that same window
+    surfaced as a `StaleDataError` (0 rows matched) — a 500 — instead of the
+    clean 409 every other stale-collection case gets (review of #79/#47).
+
+    Reuses the forced-interleaving technique from the earlier delete-mid-apply
+    test, but with an import that spawns nothing at all, so only the general
+    "every order this apply writes to" half of the fix can catch it.
+    """
+    retailer = (await http_client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await http_client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    assert order["received_at"] is None
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "received_at": "2026-03-20T00:00:00Z",
+    }
+    archive = make_archive({"orders": [orders_row]})  # no order_items.csv — no spawn possible
+
+    preview_resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    plan = preview_resp.json()
+    assert actions(plan, "orders") == ["update"], plan
+    assert plan["derived"]["kits_spawned"] == 0
+    plan_hash = plan["plan_hash"]
+
+    original_plan_import = importing.plan_import
+    deleted_mid_apply = False
+
+    async def delete_between_plan_and_write(*args, **kwargs):
+        nonlocal deleted_mid_apply
+        execution = await original_plan_import(*args, **kwargs)
+        async with AsyncClient(
+            transport=ASGITransport(app=fastapi_app), base_url="http://test"
+        ) as other:
+            resp = await other.delete(f"/orders/{order['id']}")
+            deleted_mid_apply = resp.status_code == 204
+        return execution
+
+    monkeypatch.setattr(importing, "plan_import", delete_between_plan_and_write)
+
+    applied = await http_client.post(
+        "/import/apply",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "merge", "plan_hash": plan_hash},
+    )
+
+    assert deleted_mid_apply, "the interleaved delete didn't commit — not exercising the race"
+    assert applied.status_code == 409, applied.text
+    assert (await http_client.get("/orders")).json() == []
+    assert (await http_client.get("/kits")).json() == []
+
+
 async def test_an_import_that_both_receives_an_order_and_adds_a_line_succeeds(client):
     """No concurrency here — this is the false-positive the lock/verify guard's
     first cut produced on its own: `_order_received()` answers a matched UPDATE

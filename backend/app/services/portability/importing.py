@@ -565,7 +565,7 @@ class _Spawn:
     row_number: int
     received: bool
     #: The parent order's received state *before* this apply's own write, used
-    #: only to re-check the locked row in `_lock_and_verify_spawn_orders` —
+    #: only to re-check the locked row in `_lock_and_verify_written_orders` —
     #: distinct from `received`, which already reflects this apply's own
     #: transition and drives the fan-out's status instead (#47 review).
     received_before_apply: bool
@@ -1445,32 +1445,44 @@ async def preview_import(
     return (await plan_import(session, filename, content, mode)).plan
 
 
-async def _lock_and_verify_spawn_orders(session: AsyncSession, execution: ExecutionPlan) -> None:
-    """Row-lock every pre-existing order a spawn's fan-out depends on, and re-check
-    its received state under that lock before any write happens.
+async def _lock_and_verify_written_orders(session: AsyncSession, execution: ExecutionPlan) -> None:
+    """Row-lock every pre-existing order this apply is about to write to — either
+    directly (an `orders` row update) or as the parent a spawn's fan-out depends
+    on — and re-check its received state under that lock before any write
+    happens.
 
     `plan_import` reads orders with a plain `SELECT` — right for a preview, which
-    writes nothing. `apply_import` derives a spawned kit's status from
-    `spawn.received`, captured at planning time, and used to just trust it: a
-    concurrent `POST /orders/{id}/receive` could commit between `plan_import`
-    returning and this apply's own write loop, landing a kit at the status the
-    order held *before* it arrived. The `plan_hash` check catches the collection
-    changing before planning (#41); nothing previously caught it changing in that
-    narrower window between planning and writing (review of #79/#47).
+    writes nothing. `apply_import` writes based on what planning resolved,
+    unchecked: a spawned kit's status comes from `spawn.received`, and the main
+    write loop's own `UPDATE` (plus the kit-arrival mirror in
+    `_advance_kits_for_newly_received_orders`) trusts `row.target` as read at
+    planning time. A concurrent mutation — a receive, a delete, an edit — can
+    commit in the window between `plan_import` returning and this apply's own
+    writes running. The `plan_hash` check catches the collection changing before
+    planning (#41); nothing previously caught it changing in that narrower
+    window between planning and writing (review of #79/#47).
 
-    Locking here serializes with that concurrent receive the same way every other
-    order mutation already does (rule 2/7) — it either waits behind us, or beat us
-    to the commit and we catch the mismatch below and ask for a fresh preview.
+    This used to lock only the orders a spawn depended on, which covers a new
+    kit line but not a plain receipt-state update with no line at all — that
+    write has no spawn to hang a lock off of, so it went straight to the main
+    loop's `UPDATE` unlocked. A concurrent delete in that same window then
+    surfaced as a `StaleDataError` (0 rows matched) instead of the clean 409
+    every other stale-collection case gets (review of #79/#47).
 
-    Checked against `spawn.received_before_apply`, not `spawn.received`: the
-    latter already reflects this *same* apply's own pending write when its own
-    orders row transitions received state, so comparing it to the pre-write
-    locked row made a legitimate "receive this order and add a line" apply fail
-    as a false stale conflict every time (review of #79/#47).
+    Locking here serializes with a concurrent mutation the same way every other
+    order mutation already does (rule 2/7) — it either waits behind us, or beat
+    us to the commit and we catch the mismatch below and ask for a fresh preview.
 
-    A spawn whose order this same apply is about to *create* is exempt: nothing
-    external can hold a reference to an id that doesn't exist until this
-    transaction commits, so there is no lock to take and no drift to catch.
+    Checked against the planning-time value read off `row.target`/
+    `spawn.received_before_apply`, never the post-apply value this same apply
+    intends to write: the latter already reflects this apply's own pending
+    change when its own orders row transitions received state, so comparing it
+    to the pre-write locked row made a legitimate "receive this order and add a
+    line" apply fail as a false stale conflict every time (review of #79/#47).
+
+    An order this same apply is about to *create* is exempt: nothing external
+    can hold a reference to an id that doesn't exist until this transaction
+    commits, so there is no lock to take and no drift to catch.
     """
     new_order_ids = {
         row.new_id
@@ -1482,6 +1494,12 @@ async def _lock_and_verify_spawn_orders(session: AsyncSession, execution: Execut
         for spawn in execution.spawns
         if spawn.order_id not in new_order_ids
     }
+    # Every existing order this apply's own write loop is about to UPDATE,
+    # whether or not any spawn depends on it — a plain receipt-state edit with
+    # no new kit line falls only in this set.
+    for row in execution.rows.get("orders", []):
+        if row.action is RowAction.UPDATE and row.matched_id is not None and row.target is not None:
+            expected[row.matched_id] = row.target.received_at is not None
     if not expected:
         return
     locked = await session.scalars(
@@ -1514,7 +1532,7 @@ def _advance_kits_for_newly_received_orders(execution: ExecutionPlan) -> None:
     `receive_order()`'s side effects ran, even though the REST/MCP path never
     allows an order to become received without advancing every arrival-eligible
     kit on it. Caught by review of #79/#47, alongside the false-conflict fix
-    above that this same scenario triggered in `_lock_and_verify_spawn_orders`.
+    above that this same scenario triggered in `_lock_and_verify_written_orders`.
 
     Deliberately narrower than `receive_order()`: this never touches
     `quantity_on_hand` (rule 10 keeps stock out of anything import derives from a
@@ -1606,9 +1624,10 @@ async def apply_import(
             "no longer matches what would happen — run the preview again"
         )
 
-    # Before any write: locks the orders the fan-out below depends on, and refuses
-    # to proceed if one of them was received after this plan was built.
-    await _lock_and_verify_spawn_orders(session, execution)
+    # Before any write: locks every order this apply is about to write to,
+    # directly or as a spawn's parent, and refuses to proceed if one of them
+    # changed after this plan was built.
+    await _lock_and_verify_written_orders(session, execution)
 
     if mode is ImportMode.REPLACE_ALL:
         await session.execute(text(f"TRUNCATE {_PORTABLE_TABLES} CASCADE"))
