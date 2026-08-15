@@ -16,7 +16,7 @@ Template:
 
 ---
 
-## 2026-08-15 — Claude Code — #42 and #43 in two PRs, both open
+## 2026-08-15 — Claude Code — #42 and #43 in two PRs; #75 is out for external review
 
 **`main` at `01fc77e`.** Two branches pushed, neither merged: **PR #75**
 (`fix/import-archive-integrity-budgets`, 336 backend) and **PR #76**
@@ -68,10 +68,52 @@ different sections. Whichever merges second may need a trivial rebase.
   run two pytest sessions at once** — a background run overlapping a foreground one
   deadlocked on `TRUNCATE` and reported 19 phantom failures.
 
-- **Next:** both PRs need review and merge; #43 stays open until #76 lands. Then
-  **#74** (REST/MCP integers with no upper bound, v0.2.6) — note #76 bounds the
-  order-line *quantity* only, on product grounds, and deliberately does not touch
-  the int4 question #74 is about.
+- **Review call: #75 goes out for an external review, #76 does not.** The standing
+  criterion is the owner's from #40 — buy a review for a shared mechanism
+  everything flows through. `_read_csv_text` is on every import path, and #75 does
+  three things at once: fixes a defect (strict decode), adds a mechanism (the
+  budget), and introduces policy (block vs warn). #76 is one constant, one guard
+  and three call sites, and can only turn previously-accepted input into a 422 —
+  the failure mode is a false refusal, not silent corruption. It rides the release
+  gate.
+
+### For the reviewer of #75
+
+`gh pr checkout 75` — `fix/import-archive-integrity-budgets` at `e2ad4ff`, off
+`01fc77e`. 336 backend, ruff clean, all three CI jobs green.
+
+Two things in it are **assumptions rather than proofs**, and are where to push:
+
+- **`_reconcile_manifest` blocks when the manifest names a file the zip lacks.**
+  That is what #42 asked for, but it also blocks "I deleted the CSVs I didn't want
+  to restore", which is a legitimate way to use an export. A product call made by
+  the agent that implemented it, and worth settling by someone else. Present-but-
+  short is only a warning, deliberately — the asymmetry is the part to argue with.
+- **`parsed_counts` is keyed by file basename**, so `a/kits.csv` and `b/kits.csv`
+  in one archive overwrite each other's count. Judged acceptable because the
+  exporter never writes nested paths — an assumption about the input, not a proof.
+
+**Deliberate non-changes**, so they are not read as omissions: `ManifestInfo` gains
+no `tables` field, because the reconciliation surfaces through the existing
+`warnings`/`blocking_errors` and so leaves the API and the hand-typed frontend
+types untouched; and `_ExpansionBudget` reads `MAX_EXPANDED_BYTES` off the module
+rather than defaulting the constructor argument, which is what makes the boundary
+drivable at all.
+
+**The claim most worth checking is the test claim**, not the diff. Which tests go
+red against unfixed `main`, and *why* each one does, is set out in the PR body. Both
+previous external reviews (#72, #73) found their defect **inside the fix**, in the
+same class as the thing being fixed, and in both cases the local suite was green.
+
+- **Then:** merge #75 first, then #76 — they touch `docs/import-export.md` in
+  different sections, so the second may need a trivial rebase. #43 stays open until
+  #76 lands. After that **#74** (REST/MCP integers with no upper bound, v0.2.6) —
+  note #76 bounds the order-line *quantity* only, on product grounds, and
+  deliberately does not touch the int4 question #74 is about.
+
+- **If you do run #76's suite against a pre-fix tree, deselect `-k "not absurd"`**
+  — two params attempt two billion inserts and hang for ten minutes rather than
+  failing. Reviewing #75 alone avoids it entirely.
 
 ---
 
