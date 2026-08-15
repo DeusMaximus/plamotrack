@@ -37,6 +37,23 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
 - Anything outward-facing — pushing a tag, cutting a release, changing repo
   settings or visibility — needs explicit confirmation each time. Approval for one
   doesn't carry to the next.
+- **Say which model wrote it.** Every agent here posts through the owner's GitHub
+  account, so an unsigned comment on a public repo reads as the owner speaking —
+  including its first-person claims about what was verified and its judgement calls
+  about severity. Any PR or issue comment an agent writes opens with a line naming
+  the model and what the comment is, and closes with a sign-off:
+
+  ```markdown
+  **Claude (Anthropic) — response to the Codex review, at head `9d751ca`.**
+  …
+  — **Claude Opus 5 (Anthropic)**, via Claude Code
+  ```
+
+  Codex's review of #75 did this; the reply to it did not, and had to be corrected
+  after the fact. Commits are already covered by their `Co-Authored-By` trailer —
+  this is the gap that leaves. It matters most on exactly the threads where it is
+  easiest to forget: a review exchange, where a reader is weighing whose reasoning
+  to trust, and where two different models may be arguing with each other.
 
 ## Layout
 
