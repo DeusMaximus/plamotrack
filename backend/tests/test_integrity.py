@@ -2,8 +2,12 @@
 double-receive concurrency, MCP order atomicity, and kit provenance."""
 
 import asyncio
+import csv
+import io
+import json
 import time
 import uuid
+import zipfile
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import date
@@ -17,12 +21,15 @@ from sqlalchemy.exc import DBAPIError
 from app.db import get_sessionmaker, session_scope
 from app.exceptions import ConflictError, NotFoundError
 from app.mcp import mcp
-from app.models import Consumable, ItemType, Kit, OrderItem, Upgrade, UpgradeApplication
+from app.models import Consumable, ItemType, Kit, KitStatus, OrderItem, Upgrade, UpgradeApplication
+from app.schemas.kits import KitCreate
 from app.schemas.orders import OrderCreate, OrderItemCreate, OrderItemUpsert, OrderUpdate
 from app.services import catalog as catalog_service
 from app.services import kits as kits_service
 from app.services import orders as orders_service
 from app.services import upgrades as upgrades_service
+from app.services.portability import exporting, importing, spec
+from app.services.write_gate import acquire_write_gate
 
 
 async def test_concurrent_receive_applies_stock_once(client, retailer):
@@ -665,3 +672,261 @@ async def test_two_lines_on_one_order_share_a_target_without_losing_an_increment
             select(Consumable.quantity_on_hand).where(Consumable.id == consumable_id)
         )
     assert stock == 7, f"two lines on one target should both count: expected 4 + 3, got {stock}"
+
+
+# --- the collection-wide write gate ---------------------------------------------
+#
+# Per-row locks serialize writers that touch the same row. They cannot express the
+# shape the importer has: read a lot of state, decide from it, then write across
+# many tables — where a concurrent write to a row the plan never named invalidates
+# the decision. These cover the gate that closes that (app/services/write_gate.py).
+#
+# Note on scope: every mutating service commits at the end of its own work, and the
+# gate is transaction-scoped, so it is held from acquisition to that commit — which
+# is exactly the read-decide-write unit. A test that sleeps *after* calling a
+# service is sleeping outside the gate and proves nothing.
+
+
+def _sheet(header: list[str], rows: list[dict[str, str]]) -> bytes:
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=header, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return out.getvalue().encode()
+
+
+def _archive(tables: dict[str, list[dict[str, str]]]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr(
+            "manifest.json",
+            json.dumps(
+                {"format": "plamotrack-archive", "export_version": exporting.EXPORT_VERSION}
+            ),
+        )
+        for key, rows in tables.items():
+            out = io.StringIO()
+            writer = csv.DictWriter(
+                out, fieldnames=spec.SPEC_BY_KEY[key].header, extrasaction="ignore"
+            )
+            writer.writeheader()
+            writer.writerows(rows)
+            archive.writestr(f"{key}.csv", out.getvalue())
+    return buffer.getvalue()
+
+
+async def _unreceived_order_with_a_kit(client) -> dict:
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    return (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+
+async def test_the_gate_blocks_a_second_writer_until_the_first_commits():
+    """The primitive's contract, pinned directly rather than inferred from a
+    service outcome: while one transaction holds the gate, a second one's
+    acquisition does not return.
+
+    Ordering is forced with an event rather than raced, so this is deterministic —
+    the holder is provably first, and the only question under test is whether the
+    waiter is made to wait for it.
+    """
+    holder_has_it = asyncio.Event()
+    sequence: list[str] = []
+
+    async def holder() -> None:
+        async with session_scope() as session:
+            await acquire_write_gate(session)
+            sequence.append("holder acquired")
+            holder_has_it.set()
+            await asyncio.sleep(0.3)
+            sequence.append("holder committing")
+        # session_scope commits on exit; Postgres drops the advisory lock there.
+
+    async def waiter() -> None:
+        await holder_has_it.wait()
+        async with session_scope() as session:
+            await acquire_write_gate(session)
+            sequence.append("waiter acquired")
+
+    await asyncio.gather(holder(), waiter())
+    assert sequence == ["holder acquired", "holder committing", "waiter acquired"], sequence
+
+
+async def test_reads_do_not_wait_behind_the_gate(client):
+    """The gate must not turn a read into a queue: import preview and every list
+    endpoint stay concurrent with a writer holding it.
+
+    Holds the gate explicitly for the duration of the read, because a real service
+    call would have committed — and released — long before the read was measured.
+    """
+    await _unreceived_order_with_a_kit(client)
+    gate_taken = asyncio.Event()
+    release = asyncio.Event()
+    latency: list[float] = []
+
+    async def hold_the_gate() -> None:
+        async with session_scope() as session:
+            await acquire_write_gate(session)
+            gate_taken.set()
+            await asyncio.wait_for(release.wait(), timeout=5)
+
+    async def timed_read() -> None:
+        await gate_taken.wait()
+        started = time.monotonic()
+        assert (await client.get("/kits")).status_code == 200
+        assert (await client.get("/orders")).status_code == 200
+        latency.append(time.monotonic() - started)
+        release.set()
+
+    await asyncio.gather(hold_the_gate(), timed_read())
+    assert latency[0] < 1.0, f"reads waited {latency[0]:.2f}s behind a writer — reads must not gate"
+
+
+# The two repros below force the genuinely dangerous window: the racing mutation
+# is launched *after* `plan_import` has returned, so without the gate it lands
+# between the plan and the writes — the interval no plan_hash and no per-row lock
+# can see. It is deliberately NOT awaited inside the patch: under the gate it
+# blocks until the apply commits, so awaiting it there would deadlock the test
+# against the very serialization it is checking.
+#
+# Codex's third repro (an import reverting a kit somebody moved to `building`)
+# needs the importer's kit-arrival side effect, which does not exist on main —
+# it arrives with #47/#79. Its regression belongs on that branch, not here.
+
+
+def _race_after_planning(monkeypatch, launch):
+    """Patch `plan_import` so `launch()` fires once the plan exists, and hand the
+    caller the task to await after the apply has finished."""
+    original_plan_import = importing.plan_import
+    holder: dict[str, asyncio.Task] = {}
+
+    async def plan_then_race(*args, **kwargs):
+        execution = await original_plan_import(*args, **kwargs)
+        holder["task"] = asyncio.create_task(launch())
+        await asyncio.sleep(0.05)  # let it reach — and block on — the gate
+        return execution
+
+    monkeypatch.setattr(importing, "plan_import", plan_then_race)
+    return holder
+
+
+async def test_a_create_whose_parent_is_deleted_mid_apply_is_never_a_500(http_client, monkeypatch):
+    """Codex repro 1. A catalog line CREATE has no existing row to re-verify and
+    no spawn parent, so no per-row guard covered it: a parent order deleted
+    between planning and the write turned the insert into a foreign-key 500.
+
+    The gate makes that interleaving unreachable — the delete waits until the
+    apply has committed — so the apply completes cleanly and the delete lands
+    afterwards, on an order whose new line it then cascades away.
+    """
+    order = await _unreceived_order_with_a_kit(http_client)
+    tool = (
+        await http_client.post("/tools", json={"name": "Godhand Nippers", "category": "cutting"})
+    ).json()
+
+    line = {
+        "order_id": order["id"],
+        "item_type": "tool",
+        "catalog_ref_id": tool["id"],
+        "quantity": "1",
+        "unit_price_minor": "2800",
+        "currency_code": "JPY",
+    }
+    content = _sheet(spec.ORDER_ITEMS.header, [line])
+
+    preview = await http_client.post(
+        "/import/preview",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert preview.status_code == 200, preview.text
+    plan = preview.json()
+    assert plan["derived"]["kits_spawned"] == 0  # no spawn: the old guards saw nothing here
+    plan_hash = plan["plan_hash"]
+
+    deleted: list[int] = []
+
+    async def delete_the_parent() -> None:
+        resp = await http_client.delete(f"/orders/{order['id']}")
+        deleted.append(resp.status_code)
+
+    racing = _race_after_planning(monkeypatch, delete_the_parent)
+
+    applied = await http_client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge", "plan_hash": plan_hash},
+    )
+    await racing["task"]
+
+    assert applied.status_code != 500, f"foreign-key violation surfaced raw: {applied.text[:300]}"
+    assert applied.status_code == 200, f"{applied.status_code}: {applied.text[:300]}"
+    assert deleted == [204], f"the racing delete didn't land: {deleted}"
+    assert (await http_client.get("/orders")).json() == []
+
+
+async def test_replace_all_cannot_truncate_a_row_its_preview_never_listed(client, monkeypatch):
+    """Codex repro 2, and the worst of the three: silent data loss.
+
+    `TRUNCATE` empties the table at execution time, so a row created after the
+    plan was built but before the truncate ran was destroyed without ever
+    appearing in the approved `rows_deleted`. Under the gate the create waits for
+    the apply to commit, so it lands on the far side of the truncate and survives
+    — it was never part of what the user approved deleting.
+    """
+    await client.post("/retailers", json={"name": "Hobby Link Japan"})
+    archive = (await client.get("/export/archive")).content
+
+    preview = await client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "replace_all"},
+    )
+    assert preview.status_code == 200, preview.text
+    plan_hash = preview.json()["plan_hash"]
+
+    created: list[str] = []
+
+    async def create_a_kit() -> None:
+        async with session_scope() as session:
+            kit = await kits_service.create_kit(
+                session,
+                KitCreate(name="Created mid-apply", grade="MG", status=KitStatus.BACKLOG),
+            )
+            created.append(str(kit.id))
+
+    racing = _race_after_planning(monkeypatch, create_a_kit)
+
+    applied = await client.post(
+        "/import/apply",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "replace_all", "plan_hash": plan_hash, "confirm": "REPLACE"},
+    )
+    await racing["task"]
+
+    assert applied.status_code == 200, applied.text
+    assert created, "the racing create never ran — not exercising the race"
+
+    names = {k["name"] for k in (await client.get("/kits")).json()}
+    assert "Created mid-apply" in names, (
+        "replace_all destroyed a kit created after its preview — the approved plan "
+        "never listed it as a deletion"
+    )

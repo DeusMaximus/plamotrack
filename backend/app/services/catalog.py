@@ -16,6 +16,7 @@ from app.schemas.catalog import (
     UpgradeCreate,
     UpgradeUpdate,
 )
+from app.services.write_gate import acquire_write_gate
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,7 @@ async def search(
 
 
 async def create_tool(session: AsyncSession, data: ToolCreate) -> Tool:
+    await acquire_write_gate(session)
     tool = Tool(**data.model_dump())
     session.add(tool)
     await session.flush()
@@ -95,6 +97,7 @@ async def create_tool(session: AsyncSession, data: ToolCreate) -> Tool:
 
 
 async def create_consumable(session: AsyncSession, data: ConsumableCreate) -> Consumable:
+    await acquire_write_gate(session)
     consumable = Consumable(**data.model_dump())
     session.add(consumable)
     await session.flush()
@@ -103,6 +106,7 @@ async def create_consumable(session: AsyncSession, data: ConsumableCreate) -> Co
 
 
 async def create_upgrade(session: AsyncSession, data: UpgradeCreate) -> Upgrade:
+    await acquire_write_gate(session)
     upgrade = Upgrade(**data.model_dump())
     session.add(upgrade)
     await session.flush()
@@ -126,6 +130,7 @@ async def update_catalog_item(
     item_id: uuid.UUID,
     data: ToolUpdate | ConsumableUpdate | UpgradeUpdate,
 ) -> Tool | Consumable | Upgrade:
+    await acquire_write_gate(session)
     model = CATALOG_MODELS[item_type]
     # Locked: this is a stock writer like any other — `quantity_on_hand` is a settable
     # field on the PATCH — so it belongs on the same lock as `adjust_stock` and the
@@ -157,6 +162,7 @@ async def delete_catalog_item(
 ) -> None:
     """History-preserving delete: items referenced by order lines (or, for
     upgrades, recorded applications) cannot be removed — edit them instead."""
+    await acquire_write_gate(session)
     model = CATALOG_MODELS[item_type]
     # Locked before the reference counts below, because the counts and the delete have
     # to be one decision. `OrderItem.catalog_ref_id` is polymorphic across three tables
@@ -196,6 +202,7 @@ async def adjust_stock(
     session: AsyncSession, catalog_id: uuid.UUID, delta: int, reason: str | None = None
 ) -> StockAdjustmentResult:
     """Resolve a catalog id across the three fungible tables and adjust its stock."""
+    await acquire_write_gate(session)
     for item_type, model in CATALOG_MODELS.items():
         row = await lock_catalog_row(session, model, catalog_id)
         if row is None:

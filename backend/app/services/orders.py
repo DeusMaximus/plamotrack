@@ -30,6 +30,7 @@ from app.schemas.orders import (
 )
 from app.services.catalog import CATALOG_MODELS, lock_catalog_row
 from app.services.kits import default_scale_for_grade, has_applied_upgrades
+from app.services.write_gate import acquire_write_gate
 
 #: The most units one order line may hold.
 #:
@@ -129,6 +130,7 @@ ARRIVAL_ELIGIBLE = {KitStatus.PRE_ORDERED, KitStatus.ORDERED, KitStatus.IN_TRANS
 
 
 async def create_retailer(session: AsyncSession, data: RetailerCreate) -> Retailer:
+    await acquire_write_gate(session)
     retailer = Retailer(**data.model_dump())
     session.add(retailer)
     await session.flush()
@@ -145,7 +147,15 @@ async def get_or_create_retailer(session: AsyncSession, name: str) -> Retailer:
     don't fragment the retailer list.
 
     Deliberately does NOT commit: it participates in the caller's transaction so
-    a failed order creation rolls the new retailer back too — no partial data."""
+    a failed order creation rolls the new retailer back too — no partial data.
+
+    Gated even though it doesn't commit, and gated *before* the lookup: this is a
+    check-then-insert, so two agents naming the same new shop would otherwise both
+    see nothing and both insert it — fragmenting the retailer list, which is the
+    one thing this function exists to prevent. MCP's create_order calls this
+    before the gated `create_order`, so without the gate here that read happens
+    outside it."""
+    await acquire_write_gate(session)
     retailer = await session.scalar(
         select(Retailer).where(Retailer.name.ilike(name.strip())).limit(1)
     )
@@ -159,6 +169,7 @@ async def get_or_create_retailer(session: AsyncSession, name: str) -> Retailer:
 async def update_retailer(
     session: AsyncSession, retailer_id: uuid.UUID, data: RetailerUpdate
 ) -> Retailer:
+    await acquire_write_gate(session)
     retailer = await session.get(Retailer, retailer_id)
     if retailer is None:
         raise NotFoundError(f"retailer {retailer_id} not found")
@@ -173,6 +184,7 @@ async def update_retailer(
 
 
 async def delete_retailer(session: AsyncSession, retailer_id: uuid.UUID) -> None:
+    await acquire_write_gate(session)
     retailer = await session.get(Retailer, retailer_id)
     if retailer is None:
         raise NotFoundError(f"retailer {retailer_id} not found")
@@ -574,6 +586,7 @@ async def _update_line(
 
 
 async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
+    await acquire_write_gate(session)
     for line in data.items:
         # Up front, before the retailer lookup and before `_lock_catalog_targets`
         # takes anything: an absurd payload should not get as far as holding row
@@ -615,6 +628,7 @@ async def _get_order_for_write(session: AsyncSession, order_id: uuid.UUID) -> Or
 
 
 async def update_order(session: AsyncSession, order_id: uuid.UUID, data: OrderUpdate) -> Order:
+    await acquire_write_gate(session)
     for line in data.items or ():
         require_line_quantity(line.quantity)
 
@@ -660,6 +674,7 @@ async def update_order(session: AsyncSession, order_id: uuid.UUID, data: OrderUp
 async def receive_order(session: AsyncSession, order_id: uuid.UUID) -> Order:
     """Mark an order arrived: apply catalog stock increments and advance kits
     still in the ordering pipeline to backlog (in hand, unbuilt)."""
+    await acquire_write_gate(session)
     order = await _get_order_for_write(session, order_id)
     if order.received_at is not None:
         raise ConflictError("order is already marked received")
@@ -686,6 +701,7 @@ async def delete_order(session: AsyncSession, order_id: uuid.UUID) -> None:
     """Delete = undo the order entry: spawned kits are removed and any applied
     stock increments reversed. Progressed kits or already-consumed stock block
     the delete with a 409 rather than silently losing history."""
+    await acquire_write_gate(session)
     order = await _get_order_for_write(session, order_id)
     received = order.received_at is not None
     await _lock_catalog_targets(session, items=order.items)

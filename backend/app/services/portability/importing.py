@@ -73,6 +73,7 @@ from app.services.portability.spec import (
     parse_currency,
     render,
 )
+from app.services.write_gate import acquire_write_gate
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 #: What a zip is allowed to expand to, cumulatively across its members. The upload
@@ -1402,6 +1403,16 @@ async def apply_import(
             "preview this import first and send back the plan_hash it returned — "
             "an apply is only allowed to do what a preview showed"
         )
+
+    # Before the re-plan, not merely before the writes. Everything this function
+    # decides — which rows match, what the hash comes to, which kits the fan-out
+    # owes, what `replace_all` is about to destroy — is read here and acted on
+    # below, so the read and the write have to be one serialized unit. Gating
+    # after the plan would leave exactly the window that makes a plan stale:
+    # a parent order deleted in it turns a create into a foreign-key 500, and a
+    # row created in it is truncated away by a `replace_all` whose approved
+    # preview never listed it.
+    await acquire_write_gate(session)
 
     execution = await plan_import(session, filename, content, mode)
     plan = execution.plan
