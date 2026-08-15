@@ -16,6 +16,68 @@ Template:
 
 ---
 
+## 2026-08-15 — Claude Code (Sonnet 5) — #47 fixed; collection write gate added (rule 7.1)
+
+**`main` is at `032e1df`.** 432 backend tests, ruff clean, all three CI jobs green.
+#79 and #80 merged and their branches deleted. Issues #47 and #52 closed. Nothing
+in flight. No migration.
+
+- **#80 — the collection write gate (new, `services/write_gate.py`).** Every
+  mutating service takes `acquire_write_gate(session)` **before reading the state
+  it decides from**; `apply_import` takes it before `plan_import`, not before the
+  writes. `pg_advisory_xact_lock`, so it releases on commit/rollback and there is
+  nothing to release by hand. Reads never take it — preview and every list/detail
+  path stay concurrent. Written up as **architecture rule 7.1** in `AGENTS.md`.
+- **#79 — #47's actual subject.** A received starter-sheet order spawned its kits
+  `ordered`; `received` was hand-parsed rather than using its declared `parse_bool`;
+  and receipt state is now resolved **per order group** — every retailer-bearing row
+  parses it, blank means "unstated" so saying it once on a multi-row order works,
+  two rows stating different things is refused naming both, and an explicit `no`
+  reaches a matched order as a present-and-empty `received_at` so a re-import can
+  un-receive it. #47's third symptom was already fixed by #43/#76.
+
+### Why the gate exists, and what it replaced
+
+Seven external review rounds on #79. Rounds 2–6 were all the *same* gap seen from
+different angles: apply-time locking scoped to whatever path the last review
+reported, so each fix left the next one open. Round 7 said stop, and the owner's
+call was to make the general guard a prerequisite PR and rebase onto it. That
+deleted ~220 lines of `importing.py` and ~580 of its tests — everything
+`_lock_and_verify_*` had accumulated became unreachable once one transaction holds
+the gate across plan-and-write.
+
+**The lesson worth carrying:** when several review rounds keep landing in one
+function, the fix is probably an invariant one level up, not another branch inside it.
+
+### Two test traps this session hit, both now avoided in-tree
+
+1. **Forced-interleaving tests deadlock under the gate.** All five race tests
+   written before it awaited their racing request *inline* inside a patched
+   `plan_import`, while the apply held the lock — so the test waited on itself.
+   Confirmed live via `pg_stat_activity` (`wait_event='advisory'`). Any race test
+   here must launch the racer as a task and await it **after** the apply.
+2. **Sleeping to coordinate a race proves nothing, and the obvious fix is worse.**
+   `asyncio.sleep(0.05)` creates an opportunity, not an occurrence. But signalling
+   from a wrapper around the racer's `acquire_write_gate` (the reviewer's
+   suggestion) releases the apply before the racer has *done* anything — measured:
+   that version reported `2 passed` against an `apply_import` with the gate
+   commented out. `tests/test_integrity.py::_race_after_planning` now waits for
+   either the racer finishing or Postgres reporting it parked on the advisory lock,
+   and raises if neither happens.
+
+### Notes for whoever picks this up
+
+- **#67 is not closed by the gate** — commented there. It's a stale *client
+  payload*, not an interleaving; the reverting value is in the request body before
+  any lock is taken. Option 3 (optimistic concurrency on kits) is still the only
+  listed option that closes it for every writer.
+- **Watch for competing pytest runs.** Two background runs against
+  `plamotrack_test` will interfere (the conftest truncates between tests and
+  migrates at session start). Run one at a time; a hung run parked on `advisory`
+  is the tell.
+
+---
+
 ## 2026-08-15 — Claude Code — v0.2.5-alpha released; M5 hardening closed
 
 **`main` is at `ddcda16` and tagged `v0.2.5-alpha`** (pre-release, published).
