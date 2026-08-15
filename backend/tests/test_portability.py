@@ -2622,6 +2622,75 @@ async def test_the_expansion_budget_is_cumulative_across_zip_members(http_client
     assert built == 1_000, f"{built} rows were built — the second sheet got its own budget"
 
 
+# --- received state feeding the fan-out (#47) --------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("cell", "outcome"),
+    [
+        pytest.param("", "received", id="blank"),
+        pytest.param("no", "not received", id="no"),
+        pytest.param("FALSE", "not received", id="FALSE"),
+        pytest.param("yes", "received", id="yes"),
+        pytest.param("maybe", "error", id="maybe"),
+    ],
+)
+async def test_received_cell_is_parsed_as_a_boolean(client, cell, outcome):
+    """`received` used to be a hand-rolled string check recognising only a fixed
+    negative set, so a typo like `maybe` silently read as "received" instead of
+    being refused. It's declared and parsed as `parse_bool` now, so anything that
+    isn't a yes/no spelling is a row error rather than a guess.
+    """
+    row = sheet_row("1", retailer="Hobby Link Japan")
+    row["received"] = cell
+    sheet = starter_sheet_csv([row])
+
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+
+    if outcome == "error":
+        reported = plan["blocking_errors"] + [
+            r["error"] for t in plan["tables"] for r in t["rows"] if r["error"]
+        ]
+        assert any("received" in str(said) for said in reported), plan
+        return
+
+    assert plan["blocking_errors"] == [], plan
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+    order = (await client.get("/orders")).json()[0]
+    if outcome == "received":
+        assert order["received_at"] is not None
+    else:
+        assert order["received_at"] is None
+
+
+async def test_a_received_starter_order_lands_its_kits_in_backlog(client):
+    """A received order used to spawn its kits `ordered` regardless: `apply_import`
+    called `spawn_kits` without `received`, so `_initial_kit_status` never ran and
+    the collection was wrong the moment onboarding finished (#47).
+    """
+    row = sheet_row("1", retailer="Hobby Link Japan")
+    row.pop("status", None)  # blank -> spawn_kits' own default of `ordered`
+    row["received"] = "yes"
+    sheet = starter_sheet_csv([row])
+
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+    kits = (await client.get("/kits")).json()
+    assert [k["status"] for k in kits] == ["backlog"]
+
+
+async def test_an_unreceived_starter_order_leaves_its_kits_on_the_way(client):
+    """The mirror of the case above: an order that hasn't arrived must not have its
+    kits advanced to `backlog`."""
+    row = sheet_row("1", retailer="Hobby Link Japan")
+    row.pop("status", None)
+    row["received"] = "no"
+    sheet = starter_sheet_csv([row])
+
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+    kits = (await client.get("/kits")).json()
+    assert [k["status"] for k in kits] == ["ordered"]
+
+
 # --- the version an archive claims (release prep) ---------------------------------
 
 

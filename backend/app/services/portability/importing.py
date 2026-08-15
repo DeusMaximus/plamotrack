@@ -561,6 +561,7 @@ class _Spawn:
     kit_number: str | None
     status: str
     row_number: int
+    received: bool
 
 
 @dataclass
@@ -1097,6 +1098,26 @@ class _Planner:
                     "importing adds another, since two of the same kit are two kits"
                 )
 
+    def _order_received(self, order_id: uuid.UUID) -> bool:
+        """Whether the order a kit line belongs to has arrived, so a spawned kit
+        lands in the right status instead of always `_initial_kit_status`'s default
+        of "still on the way" (#47). Checks this import's own orders rows first —
+        covering both a freshly created order and an existing one this import
+        updates — and falls back to the persisted row for an order the upload
+        doesn't touch at all.
+        """
+        for row in self.rows.get("orders", []):
+            candidate = row.new_id if row.action is RowAction.CREATE else row.matched_id
+            if candidate != order_id:
+                continue
+            if "received_at" in row.present:
+                return row.values.get("received_at") is not None
+            if row.target is not None:
+                return row.target.received_at is not None
+            return False
+        existing = self.by_id["orders"].get(order_id)
+        return existing is not None and existing.received_at is not None
+
     def _plan_spawns(self, replace_all: bool) -> None:
         """Hybrid dispatch: a kit line spawns only the kits nothing else provides."""
         kit_rows = self.rows.get("kits", [])
@@ -1132,6 +1153,7 @@ class _Planner:
                 )
                 continue
             status = row.values.get("kit_status")
+            order_id = row.values.get("order_id")
             self.spawns.append(
                 _Spawn(
                     order_item_id=line_id,
@@ -1142,6 +1164,7 @@ class _Planner:
                     kit_number=row.values.get("kit_number"),
                     status=str(status) if status else "",
                     row_number=row.row_number,
+                    received=self._order_received(order_id) if order_id else False,
                 )
             )
             row.messages.append(f"will create {missing} kit(s) from this line")
@@ -1456,6 +1479,7 @@ async def apply_import(
             kit_number=spawn.kit_number,
             status=spawn.status or None,
             count=spawn.count,
+            received=spawn.received,
         )
         spawned += spawn.count
 

@@ -22,6 +22,7 @@ from app.services.portability.spec import (
     ColumnSpec,
     col,
     enum_parser,
+    parse_bool,
     parse_date,
     parse_decimal,
     parse_int,
@@ -69,7 +70,7 @@ STARTER_SHEET_COLUMNS: tuple[ColumnSpec, ...] = (
         parse_text,
         help="3-letter ISO code, e.g. JPY. Blank = this instance's reference currency.",
     ),
-    col("received", parse_text, help="yes/no — has it arrived? Blank = yes."),
+    col("received", parse_bool, help="yes/no — has it arrived? Blank = yes."),
 )
 
 STARTER_SHEET_HEADER: list[str] = [column.name for column in STARTER_SHEET_COLUMNS]
@@ -184,6 +185,18 @@ def _standalone_count(cell: str) -> int:
     return require_line_quantity(count)
 
 
+def _received(cell: str) -> bool:
+    """Has the order arrived? Blank means "yes, I have it" — the common case for a
+    migration. Anything else has to actually parse as yes/no, so a typo like
+    `maybe` is a row error rather than a silent "received".
+    """
+    try:
+        value = parse_bool(cell)
+    except ValueError as exc:
+        raise InvalidInputError(f"received: {exc}") from exc
+    return True if value is None else value
+
+
 def expand(
     rows: list[dict[str, str]],
     *,
@@ -273,8 +286,12 @@ def expand(
             retailers[retailer_name.lower()] = _present(source_row, name=retailer_name)
 
         if key not in orders:
+            try:
+                received = _received(row.get("received") or "")
+            except InvalidInputError as exc:
+                problems.append(f"row {source_row}: {exc}")
+                continue
             spend(1)
-            received = (row.get("received") or "").strip().lower()
             orders[key] = _present(
                 source_row,
                 id=str(uuid.uuid5(_NAMESPACE, key)),
@@ -282,10 +299,9 @@ def expand(
                 order_date=order_date,
                 order_number=order_number,
                 currency_code=currency,
-                # Blank means "yes, I have it" — the common case for a migration.
                 # Received-on defaults to the order date rather than today, so a
                 # migrated collection doesn't claim it all arrived on import day.
-                received_at="" if received in {"no", "n", "false", "0"} else order_date,
+                received_at=order_date if received else "",
             )
 
         spend(1)
