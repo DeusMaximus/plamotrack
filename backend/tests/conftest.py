@@ -73,6 +73,22 @@ async def client():
 
 
 @pytest.fixture
+async def http_client():
+    """`client`, but an unhandled exception comes back as a 500 response instead of
+    being re-raised into the test.
+
+    The default transport re-raises, so a test asserting `== 422` against a route
+    that actually 500s fails as an *error* naming some internal exception. That
+    still goes red, but it pins nothing about the status contract, and the next
+    person to read it can't tell whether 500 or 422 is the agreed answer. Use this
+    wherever the point of the test is which status a bad upload earns (rule 6).
+    """
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+@pytest.fixture
 async def retailer(client) -> dict:
     resp = await client.post("/retailers", json={"name": "Hobby Link Japan"})
     assert resp.status_code == 201

@@ -218,7 +218,23 @@ say what they really were.
 
 - One transaction: if any row is unreadable, **nothing** is imported. The preview
   shows you which line, and why, before you get that far.
-- 10 MB / 50,000 rows per import.
+- 10 MB uploaded / 100 MB unpacked / 50,000 rows per import. The second one matters
+  only for zips: a small archive can hold a very large amount of CSV, and the limit
+  is checked while the archive is being read rather than after.
+- **Files must be UTF-8.** A file that isn't is refused by name and line number
+  rather than imported with the odd character replaced — if your spreadsheet offers
+  a plain "CSV" and a "CSV UTF-8", pick the second. A byte-order mark is fine.
+- An archive exported by plamotrack is checked against its own `manifest.json`, in
+  both directions. Missing data blocks the import; data that's merely not what the
+  manifest describes is reported and left to you:
+  - a file the manifest lists that isn't in the zip **blocks** — the archive is
+    truncated or was only partly extracted;
+  - two files with the same name — whether in one folder or in two — also **block**,
+    because there is then no telling which one the manifest is describing;
+  - a file that's shorter than the manifest says, a file the manifest never mentions,
+    and a file filed under the wrong table each **warn**, naming the file.
+  - A zip with no `manifest.json` is read as a loose set of CSVs and none of this
+    applies, which is the simplest way to import part of an export on purpose.
 - Apply re-checks the plan against a fingerprint of what you previewed. If the
   collection changed in between — or if the file itself did — it refuses and asks
   you to preview again rather than writing something you didn't agree to.
