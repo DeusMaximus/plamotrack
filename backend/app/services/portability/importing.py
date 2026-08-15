@@ -38,7 +38,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.config import get_settings
-from app.exceptions import ConflictError, InvalidInputError
+from app.exceptions import ConflictError, DomainError, InvalidInputError
 from app.models import ItemType, Kit, Order, OrderItem
 from app.schemas.portability import (
     DerivedEffects,
@@ -191,62 +191,155 @@ class _ExpansionBudget:
                             "limit. Split it into separate files."
                         )
                     chunks.append(chunk)
-        except (zipfile.BadZipFile, EOFError, zlib.error) as exc:
-            # Reaches here when the member's own data is damaged — a bad CRC, or a
-            # payload that ends early — which `ZipFile()` construction cannot see,
-            # because it only reads the central directory.
+        except DomainError:
+            # The budget above raises through here. Re-raised explicitly so it stays
+            # a budget refusal no matter what the tuple below grows to hold.
+            raise
+        except (
+            zipfile.BadZipFile,
+            EOFError,
+            zlib.error,
+            RuntimeError,
+            NotImplementedError,
+        ) as exc:
+            # Everything `zipfile` throws for a member it cannot hand back. Damage —
+            # a bad CRC, a payload that ends early — is invisible to `ZipFile()`
+            # construction, which only reads the central directory. The other two are
+            # not damage but are just as much the uploader's business: `RuntimeError`
+            # for an encrypted member, `NotImplementedError` for a compression method
+            # this build has no decompressor for. All three are properties of a file
+            # someone uploaded, so under rule 6 none of them is a 500.
             raise InvalidInputError(
-                f"{entry} could not be unpacked ({exc}) — the archive looks damaged "
-                "or incompletely downloaded. Export it again."
+                f"{entry} could not be unpacked ({exc}) — the archive may be damaged, "
+                "encrypted, or written with a compression method plamotrack can't "
+                "read. Export it again."
             ) from exc
         return b"".join(chunks)
 
 
-def _declared_files(data: dict) -> dict[str, int]:
-    """The `tables` block `build_manifest` writes, as file name -> row count.
+@dataclass
+class _Declaration:
+    """One entry from the manifest's `tables` block, with its table key kept."""
 
-    Deliberately tolerant: a hand-edited or older manifest that says something
-    unexpected here just can't be reconciled, and must not become a parse error
-    on a file that is otherwise fine.
+    table: str
+    filename: str
+    rows: int
+
+
+@dataclass
+class _Member:
+    """One CSV member of the archive, and what the importer actually did with it."""
+
+    path: str
+    #: The table its rows were routed to, `_STARTER_SHEET` if it was expanded, or
+    #: None if it was recognised as nothing and skipped.
+    routed: str | None
+    rows: int
+
+    @property
+    def filename(self) -> str:
+        return self.path.rsplit("/", 1)[-1]
+
+
+_STARTER_SHEET = "<starter sheet>"
+
+
+def _declared_tables(data: dict) -> list[_Declaration]:
+    """The `tables` block `build_manifest` writes, table key included.
+
+    The key is kept, not discarded: `{"kits": {"file": "retailers.csv"}}` is a
+    manifest that disagrees with itself, and reducing the block to
+    `filename -> count` is what made that indistinguishable from an intact archive.
+
+    Deliberately tolerant about *shape*: a hand-edited or older manifest that says
+    something unexpected here just can't be reconciled, and must not become a parse
+    error on a file that is otherwise fine.
     """
-    declared: dict[str, int] = {}
+    declared: list[_Declaration] = []
     block = data.get("tables")
     if not isinstance(block, dict):
         return declared
-    for entry in block.values():
-        if not isinstance(entry, dict):
+    for table, entry in block.items():
+        if not isinstance(entry, dict) or not isinstance(table, str):
             continue
         name, rows = entry.get("file"), entry.get("rows")
         if isinstance(name, str) and isinstance(rows, int) and not isinstance(rows, bool):
-            declared[name.rsplit("/", 1)[-1]] = rows
+            declared.append(_Declaration(table, name.rsplit("/", 1)[-1], rows))
     return declared
 
 
 def _reconcile_manifest(
-    declared: dict[str, int],
-    present: set[str],
-    parsed: dict[str, int],
+    declared: list[_Declaration],
+    members: list[_Member],
     warnings: list[str],
     errors: list[str],
 ) -> None:
     """Hold the archive to what its own manifest claims (#42).
 
-    The counts were written and then never read, so a truncated or partly
-    extracted archive imported whatever survived and said nothing. A file the
-    manifest names but the zip doesn't hold is missing data and blocks; a file
-    that's present but short is reported and left to the user, because a
-    hand-trimmed export is a legitimate thing to import.
+    The counts were written and then never read, so a truncated or partly extracted
+    archive imported whatever survived and said nothing.
+
+    The reconciliation is **over the rows the importer actually consumed**, not over
+    the names in the zip. Matching declarations to a flat `basename -> count` map
+    let the two diverge while this reported clean: an undeclared member imported
+    alongside the declared ones, two directories contributing the same basename, and
+    a declaration whose file routes to a table other than the one it is filed under
+    were all invisible. So each declaration is resolved to exactly one member, and
+    every consumed member has to be claimed by exactly one declaration.
+
+    Severity follows the same rule throughout: **data that isn't there, or a zip
+    that can't say what it holds, blocks; data that is there and merely disagrees
+    with the manifest warns.** A hand-trimmed export is a legitimate thing to
+    import, and the preview lists every row either way.
     """
-    for filename, expected in sorted(declared.items()):
-        if filename not in present:
+    if not declared:
+        return  # nothing claimed, so nothing to hold it to
+
+    claimed: set[str] = set()
+    for declaration in sorted(declared, key=lambda d: d.filename):
+        matches = [member for member in members if member.filename == declaration.filename]
+        if not matches:
             errors.append(
-                f"the manifest lists {filename}, but it isn't in this archive — "
-                "the zip is truncated or was only partly extracted"
+                f"the manifest lists {declaration.filename}, but it isn't in this "
+                "archive — the zip is truncated or was only partly extracted"
             )
-        elif (actual := parsed.get(filename, 0)) != expected:
+            continue
+        if len(matches) > 1:
+            paths = sorted({member.path for member in matches})
+            claimed.update(paths)
+            if len(paths) > 1:
+                # Distinct paths, one basename — `a/kits.csv` and `b/kits.csv`. Two
+                # members under one *path* is a different fault and has already been
+                # reported against the path itself; saying it twice helps nobody.
+                errors.append(
+                    f"this archive holds {len(paths)} files named "
+                    f"{declaration.filename} ({', '.join(paths)}) — which one the "
+                    "manifest describes can't be told, so the row counts can't be "
+                    "trusted"
+                )
+            continue
+
+        member = matches[0]
+        claimed.add(member.path)
+        if member.routed is not None and member.routed != declaration.table:
             warnings.append(
-                f"{filename}: the manifest says {expected:,} row(s) but {actual:,} "
-                "could be read — this archive isn't intact"
+                f"the manifest files {member.filename} under '{declaration.table}', "
+                f"but its columns are {member.routed} — importing it as {member.routed}"
+            )
+        if member.rows != declaration.rows:
+            warnings.append(
+                f"{member.filename}: the manifest says {declaration.rows:,} row(s) but "
+                f"{member.rows:,} could be read — this archive isn't intact"
+            )
+
+    for member in members:
+        # Only rows that actually went somewhere. A member recognised as nothing has
+        # already warned on its own account and contributed no data to be surprised by.
+        if member.path not in claimed and member.routed is not None:
+            warnings.append(
+                f"{member.path} isn't listed in this archive's manifest, but "
+                f"{member.rows:,} row(s) were read from it as {member.routed} — "
+                "the manifest doesn't describe everything in this zip"
             )
 
 
@@ -255,8 +348,8 @@ def _read_zip(content: bytes) -> ParsedUpload:
     warnings: list[str] = []
     errors: list[str] = []
     manifest: ManifestInfo | None = None
-    declared: dict[str, int] = {}
-    parsed_counts: dict[str, int] = {}
+    declared: list[_Declaration] = []
+    members: list[_Member] = []
     budget = _ExpansionBudget()
 
     try:
@@ -266,14 +359,33 @@ def _read_zip(content: bytes) -> ParsedUpload:
 
     with archive:
         names = [n for n in archive.namelist() if not n.endswith("/") and "__MACOSX" not in n]
+        # A zip may legally hold two members under one path, and `archive.open(name)`
+        # resolves to whichever was written last — so iterating `namelist()` reads
+        # that one twice and the other never. Manifest or no manifest, an archive
+        # that names the same file twice cannot say what it holds.
+        for path in sorted({n for n in names if names.count(n) > 1}):
+            errors.append(
+                f"this archive holds more than one member called {path} — it can't be "
+                "read reliably, so nothing will be imported from it"
+            )
+
         manifest_name = next((n for n in names if n.rsplit("/", 1)[-1] == MANIFEST_NAME), None)
         if manifest_name:
             try:
                 data = json.loads(budget.read(archive, manifest_name))
-                manifest = _read_manifest(data)
-                declared = _declared_files(data)
             except (json.JSONDecodeError, ValueError) as exc:
+                data = None
                 warnings.append(f"manifest.json could not be read ({exc}) — continuing without it")
+            if isinstance(data, dict):
+                manifest = _read_manifest(data)
+                declared = _declared_tables(data)
+            elif data is not None:
+                # Valid JSON, but not an object — `[]`, `"text"`, `null`. Every read
+                # below is a `.get`, so this used to leave as an AttributeError 500.
+                warnings.append(
+                    "manifest.json isn't a JSON object, so it says nothing about this "
+                    "archive — continuing without it"
+                )
         else:
             warnings.append(
                 "no manifest.json in this zip, so it's being read as a loose set of CSVs"
@@ -283,24 +395,19 @@ def _read_zip(content: bytes) -> ParsedUpload:
             if not entry.lower().endswith(".csv"):
                 continue
             header, rows = _read_csv_text(budget.read(archive, entry), entry)
-            parsed_counts[entry.rsplit("/", 1)[-1]] = len(rows)
             if starter_sheet.is_starter_sheet(header):
                 for key, expanded in starter_sheet.expand(rows).items():
                     tables.setdefault(key, []).extend(expanded)
+                members.append(_Member(entry, _STARTER_SHEET, len(rows)))
                 continue
             table_key = _detect_table(entry, header)
+            members.append(_Member(entry, table_key, len(rows)))
             if table_key is None:
                 warnings.append(f"{entry}: not recognised as any known table — skipped")
                 continue
             tables.setdefault(table_key, []).extend(rows)
 
-        _reconcile_manifest(
-            declared,
-            {n.rsplit("/", 1)[-1] for n in names},
-            parsed_counts,
-            warnings,
-            errors,
-        )
+        _reconcile_manifest(declared, members, warnings, errors)
 
     if not tables:
         errors.append("that archive contained no readable table data")

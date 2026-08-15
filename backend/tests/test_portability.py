@@ -1800,3 +1800,214 @@ async def test_a_compressible_archive_cannot_expand_past_the_real_budget(client)
     )
     assert resp.status_code == 422, resp.text
     assert "unpacks to more than" in resp.json()["detail"]
+
+
+# --- reconciliation is over the rows actually consumed (external review of #75) ---
+
+
+def zip_members(members: dict[str, bytes], *, manifest: object = ...) -> bytes:
+    """Build an archive member by member, with no assumption that a file's name,
+    its manifest entry and the table it routes to agree."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        if manifest is not ...:
+            archive.writestr("manifest.json", json.dumps(manifest))
+        for name, body in members.items():
+            archive.writestr(name, body)
+    return buffer.getvalue()
+
+
+def declaring(**tables: tuple[str, int]) -> dict:
+    return {
+        "format": "plamotrack-archive",
+        "export_version": exporting.EXPORT_VERSION,
+        "tables": {key: {"file": name, "rows": rows} for key, (name, rows) in tables.items()},
+    }
+
+
+RETAILERS_CSV = make_csv(spec.RETAILERS.header, [{"id": "", "name": "Gundam Base"}])
+OTHER_RETAILERS_CSV = make_csv(spec.RETAILERS.header, [{"id": "", "name": "Hobby Search"}])
+
+
+async def test_a_member_the_manifest_never_mentions_is_reported(client):
+    """The manifest is a claim about what the archive holds, and it was only ever
+    checked in one direction. An undeclared file imported alongside the declared
+    ones while reconciliation reported the archive intact."""
+    archive = zip_members(
+        {"retailers.csv": RETAILERS_CSV, "extra.csv": OTHER_RETAILERS_CSV},
+        manifest=declaring(retailers=("retailers.csv", 1)),
+    )
+
+    plan = await preview(client, archive)
+    assert any(
+        "extra.csv" in warning and "isn't listed" in warning for warning in plan["warnings"]
+    ), plan["warnings"]
+    # Reported, not blocked: the rows are there, and the preview lists them.
+    assert plan["blocking_errors"] == []
+    assert sum(len(table["rows"]) for table in plan["tables"]) == 2
+
+
+async def test_one_basename_from_two_directories_blocks(client):
+    """`a/retailers.csv` and `b/retailers.csv` are two files and one basename. Keyed
+    by basename, the second silently replaced the first's count."""
+    archive = zip_members(
+        {"a/retailers.csv": RETAILERS_CSV, "b/retailers.csv": OTHER_RETAILERS_CSV},
+        manifest=declaring(retailers=("retailers.csv", 1)),
+    )
+
+    plan = await preview(client, archive)
+    assert any(
+        "a/retailers.csv" in error and "b/retailers.csv" in error
+        for error in plan["blocking_errors"]
+    ), plan["blocking_errors"]
+    assert (await apply(client, archive)).status_code == 409
+    assert (await client.get("/retailers")).json() == []
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        pytest.param(declaring(retailers=("retailers.csv", 1)), id="with a manifest"),
+        pytest.param(..., id="no manifest at all"),
+    ],
+)
+async def test_two_members_under_one_name_block(client, manifest):
+    """A zip may legally carry the same path twice, and `archive.open(name)` resolves
+    to whichever was written last — so one member is read twice and the other never.
+    That is true whether or not a manifest is there to notice it.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        if manifest is not ...:
+            archive.writestr("manifest.json", json.dumps(manifest))
+        archive.writestr("retailers.csv", RETAILERS_CSV)
+        archive.writestr("retailers.csv", OTHER_RETAILERS_CSV)
+
+    plan = await preview(client, buffer.getvalue())
+    assert any(
+        "more than one member" in error and "retailers.csv" in error
+        for error in plan["blocking_errors"]
+    ), plan["blocking_errors"]
+    assert (await apply(client, buffer.getvalue())).status_code == 409
+    assert (await client.get("/retailers")).json() == []
+
+
+async def test_a_declaration_filed_under_the_wrong_table_is_reported(client):
+    """Reducing the block to `filename -> count` threw the table key away, so a
+    manifest that disagreed with its own contents reconciled clean."""
+    archive = zip_members(
+        {"retailers.csv": RETAILERS_CSV},
+        manifest=declaring(kits=("retailers.csv", 1)),
+    )
+
+    plan = await preview(client, archive)
+    assert any("retailers.csv" in warning and "kits" in warning for warning in plan["warnings"]), (
+        plan["warnings"]
+    )
+    assert actions(plan, "retailers") == ["create"]  # imported as what it actually is
+
+
+async def test_a_short_declared_file_still_warns_when_another_shares_its_basename(client):
+    """The count comparison has to survive the one-to-one resolution above: a
+    declaration that resolves cleanly is still compared, not skipped."""
+    archive = zip_members(
+        {"retailers.csv": make_csv(spec.RETAILERS.header, [])},
+        manifest=declaring(retailers=("retailers.csv", 4)),
+    )
+
+    plan = await preview(client, archive)
+    assert any("says 4 row(s) but 0" in warning for warning in plan["warnings"]), plan["warnings"]
+
+
+# --- a malformed archive is a diagnosis, never a 500 (external review of #75) -----
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        pytest.param([], id="a JSON list"),
+        pytest.param("plamotrack-archive", id="a bare JSON string"),
+        pytest.param(None, id="JSON null"),
+        pytest.param(1, id="a bare number"),
+        pytest.param({}, id="an object saying nothing"),
+        pytest.param({"tables": {}}, id="an object declaring no tables"),
+    ],
+)
+async def test_a_manifest_of_any_json_shape_is_read_as_far_as_it_goes(http_client, manifest):
+    """The outer shape, not the inner `tables` value.
+
+    The first matrix here varied what `tables` held while every case kept the
+    document an object — so every one of them reached `data.get(...)` on a dict and
+    none of them could have caught `manifest.json = []`, which left as an
+    `AttributeError` 500. The axis was the document itself.
+    """
+    archive = zip_members({"retailers.csv": RETAILERS_CSV}, manifest=manifest)
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["blocking_errors"] == []
+    assert actions(resp.json(), "retailers") == ["create"]
+
+
+def flag_every_member(content: bytes, *, gp_flag: int = 0, method: int | None = None) -> bytes:
+    """Rewrite the general-purpose flag and/or compression method on every header.
+
+    `zipfile` will not *write* an encrypted or exotically compressed member, so the
+    only way to hold the reader to what it does with one is to say so in the headers
+    of a zip it did write.
+    """
+    raw = bytearray(content)
+    for signature, flag_at, method_at in ((b"PK\x03\x04", 6, 8), (b"PK\x01\x02", 8, 10)):
+        index = 0
+        while (index := raw.find(signature, index)) != -1:
+            raw[index + flag_at] |= gp_flag
+            if method is not None:
+                raw[index + method_at : index + method_at + 2] = method.to_bytes(2, "little")
+            index += 4
+    return bytes(raw)
+
+
+def corrupt_payload(content: bytes) -> bytes:
+    raw = bytearray(content)
+    raw[len(raw) // 2] ^= 0xFF
+    return bytes(raw)
+
+
+@pytest.mark.parametrize(
+    ("damage", "id_"),
+    [
+        pytest.param(corrupt_payload, "corrupt", id="a payload that fails its CRC"),
+        pytest.param(
+            lambda c: flag_every_member(c, gp_flag=0x01), "encrypted", id="an encrypted member"
+        ),
+        pytest.param(
+            lambda c: flag_every_member(c, method=99),
+            "unsupported",
+            id="a compression method we can't read",
+        ),
+    ],
+)
+async def test_an_unreadable_member_is_a_422_naming_it(http_client, damage, id_):
+    """Rule 6: these are all properties of a file somebody uploaded, so none of them
+    is a 500. The first pass here caught only the decompression errors, and left an
+    encrypted member (`RuntimeError`) and an unknown method (`NotImplementedError`)
+    escaping to FastAPI.
+
+    Driven through `http_client` on purpose: under the default transport a 500 is
+    re-raised into the test and the assertion never sees a status at all, which
+    fails without pinning what the status should have been.
+    """
+    archive = zip_members({"retailers.csv": RETAILERS_CSV * 40}, manifest=...)
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", damage(archive), "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, f"{id_}: {resp.status_code} {resp.text[:200]}"
+    assert "retailers.csv" in resp.json()["detail"]
+    assert (await http_client.get("/retailers")).json() == []
