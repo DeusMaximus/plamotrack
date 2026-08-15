@@ -178,13 +178,16 @@ def _standalone_count(cell: str) -> int:
         raise InvalidInputError(f"quantity: {exc}") from exc
     if count is None:
         return 1
-    if count < 1:
-        raise InvalidInputError(f"quantity is {count} — a row stands for at least one kit")
+    # The whole range, from the shared invariant — not a second lower bound written
+    # out here, which is how the two branches of this sheet came to disagree about
+    # what `quantity: 0` means in the first place.
     return require_line_quantity(count)
 
 
 def expand(
     rows: list[dict[str, str]],
+    *,
+    row_budget: int,
 ) -> tuple[dict[str, list[dict[str, str]]], list[str]]:
     """Flat sheet rows -> normalized {table_key: [row, ...]}, plus what wouldn't go.
 
@@ -204,6 +207,24 @@ def expand(
     order_items: list[dict[str, str]] = []
     kits: list[dict[str, str]] = []
     problems: list[str] = []
+    produced = 0
+
+    def spend(count: int) -> None:
+        """Charge for rows *before* building them.
+
+        A kit line fans out one dictionary per unit, so this sheet is the one place
+        an import amplifies: 51 rows at `quantity: 1000` is 51,000 rows out of under
+        2 KB in. `MAX_ROWS` is checked by `plan_import` on what expansion returned,
+        which is far too late to be a budget — by then the rows exist. Charging up
+        front is what makes the refusal cheap.
+        """
+        nonlocal produced
+        produced += count
+        if produced > row_budget:
+            raise InvalidInputError(
+                f"this sheet expands to more than {row_budget:,} rows — the import "
+                "limit. Split it into separate files, or use fewer per row."
+            )
 
     for row in rows:
         source_row = row.get(_ROW_MARKER, "")
@@ -227,6 +248,7 @@ def expand(
             except InvalidInputError as exc:
                 problems.append(f"row {source_row}: {exc}")
                 continue
+            spend(count)
             for _ in range(count):
                 kits.append(
                     _present(
@@ -247,9 +269,11 @@ def expand(
         key = _order_key(retailer_name, order_date, order_number)
 
         if retailer_name.lower() not in retailers:
+            spend(1)
             retailers[retailer_name.lower()] = _present(source_row, name=retailer_name)
 
         if key not in orders:
+            spend(1)
             received = (row.get("received") or "").strip().lower()
             orders[key] = _present(
                 source_row,
@@ -264,6 +288,7 @@ def expand(
                 received_at="" if received in {"no", "n", "false", "0"} else order_date,
             )
 
+        spend(1)
         order_items.append(
             _present(
                 source_row,

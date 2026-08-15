@@ -416,3 +416,35 @@ async def test_spawn_kits_refuses_the_count_itself(client, retailer):
                 grade="HG",
                 count=orders.MAX_LINE_QUANTITY + 1,
             )
+
+
+@pytest.mark.parametrize("count", [pytest.param(0, id="zero"), pytest.param(-1, id="negative")])
+async def test_spawn_kits_refuses_a_non_positive_count(client, count):
+    """The backstop covers the range, not one end of it. A count of 0 used to be an
+    empty loop that quietly did nothing, which is not the same as being asked for
+    nothing and is exactly the kind of silence the ceiling exists to prevent."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-08-01",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    async with get_sessionmaker()() as session:
+        item = await session.get(OrderItem, uuid.UUID(order["items"][0]["id"]))
+        with pytest.raises(InvalidInputError, match="at least 1"):
+            await orders.spawn_kits(session, item, name="Zaku II", grade="HG", count=count)

@@ -45,12 +45,25 @@ MAX_LINE_QUANTITY = 1_000
 
 
 def require_line_quantity(quantity: int, *, label: str = "quantity") -> int:
-    """The one ceiling REST, MCP and the CSV importer all answer to (rule 1).
+    """The whole valid range REST, MCP and the CSV importer all answer to (rule 1).
 
     Three writers reach the same fan-out by three different routes, and a limit
     enforced on one of them is not a limit. `label` exists so the importer can name
     the column it read rather than a payload field the sheet has never heard of.
+
+    **Both ends, not just the ceiling.** REST and MCP get the lower bound from
+    `Field(gt=0)` on `OrderItemCreate`, but the importer builds models directly and
+    never constructs one — so while this checked `> MAX` alone, a `quantity` of 0 or
+    -2 in a CSV planned as a clean create and hit the `quantity_positive` database
+    constraint at flush, which is a 500 rather than a row diagnostic. A shared
+    invariant that covers one end of the range is two invariants, and the half that
+    isn't shared is the half that drifts.
     """
+    if quantity < 1:
+        raise InvalidInputError(
+            f"{label} is {quantity:,} — that has to be at least 1. "
+            "To record nothing, leave the line out."
+        )
     if quantity > MAX_LINE_QUANTITY:
         raise InvalidInputError(
             f"{label} is {quantity:,} — an order line holds at most "

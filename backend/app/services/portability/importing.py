@@ -459,7 +459,12 @@ def _read_zip(content: bytes) -> ParsedUpload:
                 continue
             header, rows = _read_csv_text(budget.read(archive, entry), entry)
             if starter_sheet.is_starter_sheet(header):
-                expanded_tables, problems = starter_sheet.expand(rows)
+                # Cumulative across members: a zip of starter sheets must not get
+                # a fresh budget per file.
+                spent = sum(len(existing) for existing in tables.values())
+                expanded_tables, problems = starter_sheet.expand(
+                    rows, row_budget=max(0, MAX_ROWS - spent)
+                )
                 for key, expanded in expanded_tables.items():
                     tables.setdefault(key, []).extend(expanded)
                 errors.extend(problems)
@@ -488,7 +493,7 @@ def _read_zip(content: bytes) -> ParsedUpload:
 def _read_single_csv(filename: str, content: bytes) -> ParsedUpload:
     header, rows = _read_csv_text(content, filename or "upload")
     if starter_sheet.is_starter_sheet(header):
-        expanded, problems = starter_sheet.expand(rows)
+        expanded, problems = starter_sheet.expand(rows, row_budget=MAX_ROWS)
         return ParsedUpload(source="starter-sheet", tables=expanded, errors=problems)
     table_key = _detect_table(filename, header)
     if table_key is None:
