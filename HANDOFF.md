@@ -16,6 +16,206 @@ Template:
 
 ---
 
+## 2026-08-15 — Claude Code — #75 at `07ae427` after two review rounds; #76 ready
+
+**Two Codex passes on #75, both NO-GO, five findings, all reproduced and fixed.**
+Head is **`07ae427`**: 355 backend, ruff clean, CI green, awaiting a third look.
+**#76 is untouched, green, and ready to merge.** Nothing found in either round
+reaches it.
+
+- **Round 2 (NO-GO on `9d751ca`) — two P2s and a test gap, all real:**
+  - **Both structural scans were quadratic in uploader-chosen numbers.**
+    `names.count(n)` per member, and `_reconcile_manifest` re-walking every member
+    per declaration. Empty zip members are near-free, so 10 MB permits ~100,000 of
+    them, and **both scans run over the central directory before any member content
+    is read** — so the expansion budget this branch adds could not have helped. A
+    DoS inside the code added to prevent one. 10k/20k/30k members: 0.76 / 3.01 /
+    6.73 s, now 0.02 / 0.04 / 0.06 s via `Counter` and a `by_filename` index.
+  - **Manifest selection took the first match**, so two manifests meant the archive
+    was governed by member order and re-zipping changed what it claimed. Now blocks,
+    which is what the branch's own stated rule already required.
+  - **`manifest.json = null` was ignored in silence** — `json.loads` returns `None`
+    for it, colliding with the `None` used as the "couldn't parse" sentinel, so the
+    one non-object shape needing the warning was the one that skipped it. This was a
+    defect *in the fix for round 1*. Sentinel replaced with `try/except/else`.
+
+- **Sentinel collision is the durable lesson here.** `None` meant two different
+  things — "parse failed" and "the document was JSON null" — and the case that
+  collided was invisible. Don't reuse a value that is also a legitimate parse result
+  as an error sentinel.
+
+- **The matrix asserted status and imported action, so a case that quietly did
+  nothing passed.** It now asserts *which shape was found* (`is null` vs `is a
+  list`). Be precise about the detection claim: of the five non-object cases, only
+  **`null`** fails against `9d751ca` behaviourally; the other four fail on message
+  wording tightened at the same time. Eight fail in total — those five, both
+  manifest orderings, and the structural guard at `6.77s < 1.5s`.
+
+- **There is now a complexity guard in the suite** (`test_archive_structure_is_
+  processed_in_linear_time`): 30,000 members, 7,500 declarations, 1.5 s budget.
+  Deliberately not a benchmark — sized off a two-orders-of-magnitude gap, ~25×
+  headroom linear, ~4.5× margin before quadratic could sneak under. If it ever goes
+  red on a slow runner, check the scans before raising the number.
+
+- **#76 conflicts with #75 on `backend/tests/test_portability.py`** — both append at
+  the end, plus one import line. Trivial. Resolved locally as a dry run: keep both
+  import lines merged, keep both appended blocks, run `ruff format` (it wants one
+  blank line at the seam). **The merged result is 369 backend, all passing** — that
+  was verified, not assumed. `docs/import-export.md` does *not* conflict.
+
+- **Round 1 (NO-GO on `e2ad4ff`)** — kept below for the record.
+
+- **It agreed with the missing-file policy** — the thing I flagged as the weakest
+  call — on the grounds that #42 asks for exactly that asymmetry. So that one was
+  fine, and the flag was still worth raising.
+
+- **It found the basename collision I flagged, plus three siblings I did not.** The
+  real fault was bigger than the symptom: reconciliation was over *the names in the
+  zip*, not the rows the importer consumed. `_declared_files` reduced the block to
+  `basename -> count` and dropped the table key; `_read_zip` assigned rather than
+  accumulated. Four shapes fell out of that — an undeclared member imported beside
+  the declared ones, `a/x.csv` vs `b/x.csv` overwriting each other, two members
+  under one path, and a declaration filed under a table its file doesn't route to.
+  Declarations now keep their table key and resolve **one-to-one** against members
+  recorded as `(path, routed_table, rows)`.
+
+- **The duplicate-path case is worse than a counting bug.** `archive.open(name)`
+  resolves through `NameToInfo`, so iterating `namelist()` reads the last-written
+  member **twice** and the other **never** — wrong rows, not just wrong counts.
+  That check runs with or without a manifest, and it was pre-existing, not new
+  in #75.
+
+- **Three malformed inputs were still 500s**, against rule 6: a manifest that is
+  valid JSON but not an object (`AttributeError` past the
+  `(JSONDecodeError, ValueError)` handler), an encrypted member (`RuntimeError`)
+  and an unknown compression method (`NotImplementedError`), both past
+  `(BadZipFile, EOFError, zlib.error)`. `DomainError` is now re-raised ahead of the
+  widened tuple so the budget refusal can't be swallowed and relabelled as damage.
+
+- **Both test matrices were over the wrong axis, and that is the lesson.** Recorded
+  in `AGENTS.md` as the fifth entry in the list: the manifest matrix varied what
+  `tables` held while every case kept the document an **object**, so no case could
+  reach a non-dict manifest; the damaged-member test drove one decompression
+  failure out of three. Also added there: a status assertion needs the new
+  `http_client` fixture (`raise_app_exceptions=False`), because the default
+  transport re-raises a 500 into the test, which goes red without pinning anything.
+
+- **11 of the 15 new tests fail against `e2ad4ff`.** The CRC case passes on both and
+  is now the control in its family.
+
+- **Next:** #75 waits on the third review pass — merging now discards the review it
+  was sent out for, and each round so far has found its defect *inside the previous
+  round's fix*. #76 can merge whenever. Merge #75 first, then #76, resolving the
+  test-file conflict as described above. Both closed, `M5 hardening — v0.2.5-alpha`
+  is done (#42 by #75, #43 by the pair) and the release can be cut.
+
+- **Known stale, not blocking:** `build_manifest` stamps `"app_version": "0.1.0"`
+  (`exporting.py`), which has been wrong since v0.2.1-alpha. It is written into
+  every archive and read by nobody. Worth fixing as release prep; no issue filed.
+
+---
+
+## 2026-08-15 — Claude Code — #42 and #43 in two PRs; #75 went out for external review
+
+**`main` at `01fc77e`.** Two branches pushed, neither merged: **PR #75**
+(`fix/import-archive-integrity-budgets`, 336 backend) and **PR #76**
+(`fix/order-line-quantity-ceiling`, 330 backend). Both branch from `01fc77e`, so
+#76 is *not* on top of #75 — they overlap only in `docs/import-export.md`, in
+different sections. Whichever merges second may need a trivial rebase.
+`M5 hardening — v0.2.5-alpha` closes when both land.
+
+- **#75 = #42 in full + #43's expanded-byte budget**, one branch, as planned. The
+  manifest's `tables` block was written by `build_manifest` and thrown away by
+  `_read_manifest`; it is now reconciled — a file the manifest names but the zip
+  lacks **blocks**, a file present but short **warns**. `_read_csv_text` decodes
+  strictly and names the file and line. `_ExpansionBudget` streams every member
+  against one cumulative 100 MB ceiling, hit while reading. `kit_photos` exporting
+  empty is asserted as intended, not "fixed".
+
+- **A third defect surfaced while restructuring the loop.** `ZipFile()` only reads
+  the central directory, so a member with a damaged payload got past construction
+  and raised a bare `zlib.error` out of `archive.read()` as a **500**. Now a 422
+  naming the member. It is in #75 because it is the same `_read_zip` rewrite.
+
+- **The false-detector trap caught both branches, and the two cases differ.**
+  - #75's three budget tests first went red only on
+    `AttributeError: no MAX_EXPANDED_BYTES` — the test sized its payload off the
+    new constant. Rewritten with a literal 120 MB it fails on the *message*:
+    `assert 'unpacks to more than' in 'that import holds 2,287,802 rows'`. That is
+    the real defect — the whole 120 MB read and parsed before `MAX_ROWS` objects,
+    long after the memory the budget defends has been spent.
+  - #76's tests reference `MAX_LINE_QUANTITY`, which main lacks, so the module
+    fails to *import* and every test in the file errors — strictly worse, since it
+    masks the file. Verified instead by shimming the constant alone into main's
+    `orders.py`, leaving every failure about enforcement.
+  - **Generalisation: a test that names the fix's new symbol cannot be run against
+    the code without it.** Size and assert off literals, or shim the name in.
+
+- **#76 drives the action axis, not just values.** An over-ceiling `order_items`
+  row matched to an existing line is an `update` on unfixed code
+  (`assert ['update'] == ['error']`), and the ceiling check sits after
+  `_parse_row` in the main pass rather than inside `_plan_spawns` — a check on the
+  fan-out alone would never see a catalog line or an update that supplies its own
+  kits.
+
+- **Two of #76's params attempt two billion inserts against unfixed code and
+  hang** — a 10-minute timeout, not a failure. That is the defect demonstrated, but
+  it means `-k "not absurd"` before running that suite against any pre-fix tree.
+
+- **Process:** the worktree (not `git checkout -- <paths>`) was used for both
+  pre-fix runs, per the last session's note, and nothing was lost. Also: **never
+  run two pytest sessions at once** — a background run overlapping a foreground one
+  deadlocked on `TRUNCATE` and reported 19 phantom failures.
+
+- **Review call: #75 goes out for an external review, #76 does not.** The standing
+  criterion is the owner's from #40 — buy a review for a shared mechanism
+  everything flows through. `_read_csv_text` is on every import path, and #75 does
+  three things at once: fixes a defect (strict decode), adds a mechanism (the
+  budget), and introduces policy (block vs warn). #76 is one constant, one guard
+  and three call sites, and can only turn previously-accepted input into a 422 —
+  the failure mode is a false refusal, not silent corruption. It rides the release
+  gate.
+
+### For the reviewer of #75
+
+`gh pr checkout 75` — `fix/import-archive-integrity-budgets` at `e2ad4ff`, off
+`01fc77e`. 336 backend, ruff clean, all three CI jobs green.
+
+Two things in it are **assumptions rather than proofs**, and are where to push:
+
+- **`_reconcile_manifest` blocks when the manifest names a file the zip lacks.**
+  That is what #42 asked for, but it also blocks "I deleted the CSVs I didn't want
+  to restore", which is a legitimate way to use an export. A product call made by
+  the agent that implemented it, and worth settling by someone else. Present-but-
+  short is only a warning, deliberately — the asymmetry is the part to argue with.
+- **`parsed_counts` is keyed by file basename**, so `a/kits.csv` and `b/kits.csv`
+  in one archive overwrite each other's count. Judged acceptable because the
+  exporter never writes nested paths — an assumption about the input, not a proof.
+
+**Deliberate non-changes**, so they are not read as omissions: `ManifestInfo` gains
+no `tables` field, because the reconciliation surfaces through the existing
+`warnings`/`blocking_errors` and so leaves the API and the hand-typed frontend
+types untouched; and `_ExpansionBudget` reads `MAX_EXPANDED_BYTES` off the module
+rather than defaulting the constructor argument, which is what makes the boundary
+drivable at all.
+
+**The claim most worth checking is the test claim**, not the diff. Which tests go
+red against unfixed `main`, and *why* each one does, is set out in the PR body. Both
+previous external reviews (#72, #73) found their defect **inside the fix**, in the
+same class as the thing being fixed, and in both cases the local suite was green.
+
+- **Then:** merge #75 first, then #76 — they touch `docs/import-export.md` in
+  different sections, so the second may need a trivial rebase. #43 stays open until
+  #76 lands. After that **#74** (REST/MCP integers with no upper bound, v0.2.6) —
+  note #76 bounds the order-line *quantity* only, on product grounds, and
+  deliberately does not touch the int4 question #74 is about.
+
+- **If you do run #76's suite against a pre-fix tree, deselect `-k "not absurd"`**
+  — two params attempt two billion inserts and hang for ten minutes rather than
+  failing. Reviewing #75 alone avoids it entirely.
+
+---
+
 ## 2026-08-14 — Claude Code — #40 merged (PR #73); two external reviews, two real finds
 
 **`main` at `07be49b`, clean, no branches local or remote.** 316 backend, 94 vitest,

@@ -7,12 +7,13 @@ doubles someone's order history is worse than no import at all.
 import csv
 import io
 import json
+import time
 import zipfile
 
 import pytest
 
 from app.services import orders
-from app.services.portability import exporting, spec, starter_sheet
+from app.services.portability import exporting, importing, spec, starter_sheet
 
 # --- helpers --------------------------------------------------------------------
 
@@ -1661,3 +1662,661 @@ async def test_an_update_that_stays_under_the_ceiling_still_applies(client):
     assert actions(plan, "order_items") == ["update"], plan["tables"][0]["rows"][0]
     assert (await apply(client, content, filename="order_items.csv")).status_code == 200
     assert (await client.get(f"/orders/{order['id']}")).json()["items"][0]["quantity"] == 3
+
+
+# --- archive integrity (#42) -----------------------------------------------------
+
+
+def rebuild_archive(
+    content: bytes, *, drop: str = "", edit: dict[str, bytes] | None = None
+) -> bytes:
+    """Re-zip a real export, optionally losing or rewriting one member.
+
+    The manifest is carried through untouched, which is what makes the result a
+    *truncated export* rather than a different archive — the claim about what the
+    zip holds survives the thing it describes going missing.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(content)) as source:
+        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as out:
+            for name in source.namelist():
+                if name == drop:
+                    continue
+                out.writestr(name, (edit or {}).get(name, source.read(name)))
+    return buffer.getvalue()
+
+
+def drop_rows(csv_bytes: bytes, keep: int) -> bytes:
+    """Keep the header and the first `keep` data lines — a half-written file."""
+    lines = csv_bytes.split(b"\r\n")
+    return b"\r\n".join(lines[: keep + 1]) + b"\r\n"
+
+
+async def test_an_intact_export_reconciles_against_its_own_manifest(client):
+    """The check has to be silent on a real archive, or it is just noise.
+
+    Every table is declared, including the ones that export empty, so this also
+    pins that a legitimately zero-row file is not read as a missing one.
+    """
+    await seed_collection(client)
+    archive = (await client.get("/export/archive")).content
+
+    plan = await preview(client, archive)
+    assert plan["blocking_errors"] == []
+    assert [w for w in plan["warnings"] if "manifest" in w or "isn't intact" in w] == []
+
+
+async def test_kit_photos_is_exported_empty_on_purpose(client):
+    """Schema-only until M7. The archive shape is correct in advance, so an empty
+    kit_photos.csv is the intended output and not a hole in the export (#42)."""
+    await seed_collection(client)
+    archive = (await client.get("/export/archive")).content
+
+    assert read_archive(archive)["kit_photos"] == []
+    assert read_manifest(archive)["tables"]["kit_photos"] == {"file": "kit_photos.csv", "rows": 0}
+
+
+async def test_a_file_the_manifest_names_but_the_zip_lacks_blocks_the_import(client):
+    await seed_collection(client)
+    archive = (await client.get("/export/archive")).content
+    truncated = rebuild_archive(archive, drop="orders.csv")
+
+    plan = await preview(client, truncated)
+    assert any(
+        "orders.csv" in error and "truncated" in error for error in plan["blocking_errors"]
+    ), plan["blocking_errors"]
+
+    resp = await apply(client, truncated)
+    assert resp.status_code == 409
+
+
+async def test_a_short_file_is_reported_against_the_manifest_count(client):
+    """Present but half there. Not blocking — a hand-trimmed export is a
+    legitimate thing to import — but it can no longer pass unremarked."""
+    await seed_collection(client)
+    archive = (await client.get("/export/archive")).content
+    with zipfile.ZipFile(io.BytesIO(archive)) as source:
+        short = drop_rows(source.read("kits.csv"), keep=1)
+    assert read_manifest(archive)["tables"]["kits"]["rows"] == 2
+
+    plan = await preview(client, rebuild_archive(archive, edit={"kits.csv": short}))
+    assert any(
+        "kits.csv" in warning and "says 2 row(s) but 1" in warning for warning in plan["warnings"]
+    ), plan["warnings"]
+    assert plan["blocking_errors"] == []
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        pytest.param(None, id="no tables block at all — an older manifest"),
+        pytest.param("kits.csv", id="tables is a string"),
+        pytest.param({"kits": "kits.csv"}, id="entry is not an object"),
+        pytest.param({"kits": {"file": "kits.csv"}}, id="entry has no row count"),
+        pytest.param({"kits": {"file": "kits.csv", "rows": "two"}}, id="row count is not a number"),
+        pytest.param({"kits": {"file": None, "rows": 2}}, id="file name is null"),
+        pytest.param({"kits": {"file": "kits.csv", "rows": True}}, id="row count is a bool"),
+    ],
+)
+async def test_an_unreconcilable_manifest_is_read_as_far_as_it_goes(client, block):
+    """A manifest that can't be checked against must not become a parse error on a
+    file that is otherwise fine — the counts are a cross-check, not a schema."""
+    manifest = {"format": "plamotrack-archive", "export_version": exporting.EXPORT_VERSION}
+    if block is not None:
+        manifest["tables"] = block
+    archive = make_archive({"retailers": [{"id": "", "name": "Gundam Base"}]}, manifest=manifest)
+
+    plan = await preview(client, archive)
+    assert plan["blocking_errors"] == []
+    assert actions(plan, "retailers") == ["create"]
+
+
+async def test_a_damaged_member_is_a_diagnosis_not_a_500(client):
+    """`ZipFile()` only reads the central directory, so a member whose own payload
+    is corrupt gets past construction and blows up on read."""
+    await seed_collection(client)
+    archive = bytearray((await client.get("/export/archive")).content)
+    offset = archive.index(b"kits.csv") + len(b"kits.csv")
+    archive[offset + 8] ^= 0xFF  # inside the deflated payload
+
+    resp = await client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", bytes(archive), "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "kits.csv" in resp.json()["detail"]
+    assert "damaged" in resp.json()["detail"]
+
+
+# --- encoding (#42) --------------------------------------------------------------
+
+
+def latin1_csv(header: list[str], rows: list[dict[str, str]]) -> bytes:
+    """Valid CSV, wrong encoding — what Excel writes on a non-UTF-8 default."""
+    return make_csv(header, rows).decode().encode("latin-1")
+
+
+async def test_undecodable_bytes_in_a_single_csv_name_the_file_and_line(client):
+    content = latin1_csv(
+        spec.RETAILERS.header,
+        [
+            {"id": "", "name": "Gundam Base"},
+            {"id": "", "name": "Hobby Search"},
+            {"id": "", "name": "Café Kaiyodo"},  # line 4: the é is 0xE9 in latin-1
+        ],
+    )
+    resp = await client.post(
+        "/import/preview",
+        files={"file": ("retailers.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, resp.text
+    detail = resp.json()["detail"]
+    assert "retailers.csv" in detail
+    assert "line 4" in detail, detail
+    assert (await client.get("/retailers")).json() == []
+
+
+async def test_undecodable_bytes_in_an_archive_member_name_the_member(client):
+    archive = make_archive({"retailers": [{"id": "", "name": "Gundam Base"}]})
+    broken = rebuild_archive(
+        archive,
+        edit={
+            "retailers.csv": latin1_csv(spec.RETAILERS.header, [{"id": "", "name": "Café Kaiyodo"}])
+        },
+    )
+
+    resp = await client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", broken, "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "retailers.csv" in resp.json()["detail"]
+    assert "UTF-8" in resp.json()["detail"]
+
+
+async def test_non_ascii_utf8_still_imports(client):
+    """The other half of decoding strictly: refusing bad bytes must not turn into
+    refusing bytes that are merely not English."""
+    content = make_csv(spec.RETAILERS.header, [{"id": "", "name": "ホビーサーチ"}])
+    assert (await apply(client, content, filename="retailers.csv")).status_code == 200
+    assert [r["name"] for r in (await client.get("/retailers")).json()] == ["ホビーサーチ"]
+
+
+async def test_a_utf8_bom_is_still_stripped(client):
+    """utf-8-sig, not utf-8 — Excel writes the BOM, and decoding it as a character
+    would put it on the front of the first header name and lose that column."""
+    content = b"\xef\xbb\xbf" + make_csv(spec.RETAILERS.header, [{"id": "", "name": "Gundam Base"}])
+    assert (await apply(client, content, filename="retailers.csv")).status_code == 200
+    assert [r["name"] for r in (await client.get("/retailers")).json()] == ["Gundam Base"]
+
+
+# --- expansion budget (#43) ------------------------------------------------------
+
+
+def zip_of(payload: bytes, name: str = "kits.csv") -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(name, payload)
+    return buffer.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("slack", "accepted"),
+    [
+        pytest.param(0, True, id="exactly at the budget"),
+        pytest.param(-1, False, id="one byte over"),
+    ],
+)
+async def test_the_expanded_budget_is_enforced_at_its_boundary(
+    client, monkeypatch, slack, accepted
+):
+    payload = make_csv(spec.RETAILERS.header, [{"id": "", "name": "Gundam Base"}])
+    monkeypatch.setattr(importing, "MAX_EXPANDED_BYTES", len(payload) + slack)
+
+    resp = await client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", zip_of(payload, "retailers.csv"), "application/zip")},
+        data={"mode": "merge"},
+    )
+    if accepted:
+        assert resp.status_code == 200, resp.text
+        assert actions(resp.json(), "retailers") == ["create"]
+    else:
+        assert resp.status_code == 422, resp.text
+        assert "unpacks to more than" in resp.json()["detail"]
+
+
+async def test_the_budget_is_cumulative_across_members(client, monkeypatch):
+    """Per-member would let an archive of N files spend the budget N times over."""
+    payload = make_csv(spec.RETAILERS.header, [{"id": "", "name": "Gundam Base"}])
+    monkeypatch.setattr(importing, "MAX_EXPANDED_BYTES", len(payload))
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("retailers.csv", payload)
+        archive.writestr("kits.csv", payload)
+
+    resp = await client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", buffer.getvalue(), "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "unpacks to more than" in resp.json()["detail"]
+
+
+async def test_a_compressible_archive_cannot_expand_past_the_real_budget(client):
+    """The shipped default, not a patched one: an upload well inside the 10 MB
+    compressed limit that unpacks to 120 MB of CSV.
+
+    The size is written out rather than derived from `MAX_EXPANDED_BYTES`, so the
+    test still means something against code that has no such constant — which is
+    what makes it a detector and not a tautology. Against the unfixed importer it
+    fails on the *message*: the whole 120 MB is read and parsed, and the refusal
+    that eventually comes is `MAX_ROWS` complaining about a row count, long after
+    the memory it was supposed to defend has been spent. Raising the budget past
+    120 MB is a policy change and is supposed to turn this red.
+    """
+    row = b"00000000-0000-0000-0000-000000000000,Gundam Base,note\r\n"
+    payload = b"id,name,notes\r\n" + row * (120 * 1024 * 1024 // len(row))
+    bomb = zip_of(payload, "retailers.csv")
+    assert len(bomb) < importing.MAX_UPLOAD_BYTES, "the compressed limit would catch it first"
+
+    resp = await client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", bomb, "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "unpacks to more than" in resp.json()["detail"]
+
+
+# --- reconciliation is over the rows actually consumed (external review of #75) ---
+
+
+def zip_members(members: dict[str, bytes], *, manifest: object = ...) -> bytes:
+    """Build an archive member by member, with no assumption that a file's name,
+    its manifest entry and the table it routes to agree."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        if manifest is not ...:
+            archive.writestr("manifest.json", json.dumps(manifest))
+        for name, body in members.items():
+            archive.writestr(name, body)
+    return buffer.getvalue()
+
+
+def declaring(**tables: tuple[str, int]) -> dict:
+    return {
+        "format": "plamotrack-archive",
+        "export_version": exporting.EXPORT_VERSION,
+        "tables": {key: {"file": name, "rows": rows} for key, (name, rows) in tables.items()},
+    }
+
+
+RETAILERS_CSV = make_csv(spec.RETAILERS.header, [{"id": "", "name": "Gundam Base"}])
+OTHER_RETAILERS_CSV = make_csv(spec.RETAILERS.header, [{"id": "", "name": "Hobby Search"}])
+
+
+async def test_a_member_the_manifest_never_mentions_is_reported(client):
+    """The manifest is a claim about what the archive holds, and it was only ever
+    checked in one direction. An undeclared file imported alongside the declared
+    ones while reconciliation reported the archive intact."""
+    archive = zip_members(
+        {"retailers.csv": RETAILERS_CSV, "extra.csv": OTHER_RETAILERS_CSV},
+        manifest=declaring(retailers=("retailers.csv", 1)),
+    )
+
+    plan = await preview(client, archive)
+    assert any(
+        "extra.csv" in warning and "isn't listed" in warning for warning in plan["warnings"]
+    ), plan["warnings"]
+    # Reported, not blocked: the rows are there, and the preview lists them.
+    assert plan["blocking_errors"] == []
+    assert sum(len(table["rows"]) for table in plan["tables"]) == 2
+
+
+async def test_one_basename_from_two_directories_blocks(client):
+    """`a/retailers.csv` and `b/retailers.csv` are two files and one basename. Keyed
+    by basename, the second silently replaced the first's count."""
+    archive = zip_members(
+        {"a/retailers.csv": RETAILERS_CSV, "b/retailers.csv": OTHER_RETAILERS_CSV},
+        manifest=declaring(retailers=("retailers.csv", 1)),
+    )
+
+    plan = await preview(client, archive)
+    assert any(
+        "a/retailers.csv" in error and "b/retailers.csv" in error
+        for error in plan["blocking_errors"]
+    ), plan["blocking_errors"]
+    assert (await apply(client, archive)).status_code == 409
+    assert (await client.get("/retailers")).json() == []
+
+
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        pytest.param(declaring(retailers=("retailers.csv", 1)), id="with a manifest"),
+        pytest.param(..., id="no manifest at all"),
+    ],
+)
+async def test_two_members_under_one_name_block(client, manifest):
+    """A zip may legally carry the same path twice, and `archive.open(name)` resolves
+    to whichever was written last — so one member is read twice and the other never.
+    That is true whether or not a manifest is there to notice it.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        if manifest is not ...:
+            archive.writestr("manifest.json", json.dumps(manifest))
+        archive.writestr("retailers.csv", RETAILERS_CSV)
+        archive.writestr("retailers.csv", OTHER_RETAILERS_CSV)
+
+    plan = await preview(client, buffer.getvalue())
+    assert any(
+        "more than one member" in error and "retailers.csv" in error
+        for error in plan["blocking_errors"]
+    ), plan["blocking_errors"]
+    assert (await apply(client, buffer.getvalue())).status_code == 409
+    assert (await client.get("/retailers")).json() == []
+
+
+async def test_a_declaration_filed_under_the_wrong_table_is_reported(client):
+    """Reducing the block to `filename -> count` threw the table key away, so a
+    manifest that disagreed with its own contents reconciled clean."""
+    archive = zip_members(
+        {"retailers.csv": RETAILERS_CSV},
+        manifest=declaring(kits=("retailers.csv", 1)),
+    )
+
+    plan = await preview(client, archive)
+    assert any("retailers.csv" in warning and "kits" in warning for warning in plan["warnings"]), (
+        plan["warnings"]
+    )
+    assert actions(plan, "retailers") == ["create"]  # imported as what it actually is
+
+
+async def test_a_short_declared_file_still_warns_when_another_shares_its_basename(client):
+    """The count comparison has to survive the one-to-one resolution above: a
+    declaration that resolves cleanly is still compared, not skipped."""
+    archive = zip_members(
+        {"retailers.csv": make_csv(spec.RETAILERS.header, [])},
+        manifest=declaring(retailers=("retailers.csv", 4)),
+    )
+
+    plan = await preview(client, archive)
+    assert any("says 4 row(s) but 0" in warning for warning in plan["warnings"]), plan["warnings"]
+
+
+# --- a malformed archive is a diagnosis, never a 500 (external review of #75) -----
+
+
+@pytest.mark.parametrize(
+    ("manifest", "shape"),
+    [
+        pytest.param([], "a list", id="a JSON list"),
+        pytest.param("plamotrack-archive", "a string", id="a bare JSON string"),
+        pytest.param(None, "null", id="JSON null"),
+        pytest.param(1, "a number", id="a bare number"),
+        pytest.param(True, "a boolean", id="a bare boolean"),
+        pytest.param({}, None, id="an object saying nothing"),
+        pytest.param({"tables": {}}, None, id="an object declaring no tables"),
+    ],
+)
+async def test_a_manifest_of_any_json_shape_is_read_as_far_as_it_goes(http_client, manifest, shape):
+    """The outer shape, not the inner `tables` value.
+
+    The first matrix here varied what `tables` held while every case kept the
+    document an object — so every one of them reached `data.get(...)` on a dict and
+    none of them could have caught `manifest.json = []`, which left as an
+    `AttributeError` 500. The axis was the document itself.
+
+    `shape` is asserted, not just the status. Checking only "200, and the row still
+    imported" is what let `null` through the *second* time: it is the one non-object
+    that `json.loads` returns as `None`, which collided with the `None` used as the
+    "couldn't parse it" sentinel, so it silently skipped the warning every other
+    shape got while still passing a status-only assertion.
+    """
+    archive = zip_members({"retailers.csv": RETAILERS_CSV}, manifest=manifest)
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+    plan = resp.json()
+    assert plan["blocking_errors"] == []
+    assert actions(plan, "retailers") == ["create"]
+
+    said = [w for w in plan["warnings"] if "not an object" in w]
+    if shape is None:
+        assert said == [], said  # an object, however empty, is a manifest
+    else:
+        assert len(said) == 1, plan["warnings"]
+        assert f"manifest.json is {shape}, not an object" in said[0]
+
+
+def flag_every_member(content: bytes, *, gp_flag: int = 0, method: int | None = None) -> bytes:
+    """Rewrite the general-purpose flag and/or compression method on every header.
+
+    `zipfile` will not *write* an encrypted or exotically compressed member, so the
+    only way to hold the reader to what it does with one is to say so in the headers
+    of a zip it did write.
+    """
+    raw = bytearray(content)
+    for signature, flag_at, method_at in ((b"PK\x03\x04", 6, 8), (b"PK\x01\x02", 8, 10)):
+        index = 0
+        while (index := raw.find(signature, index)) != -1:
+            raw[index + flag_at] |= gp_flag
+            if method is not None:
+                raw[index + method_at : index + method_at + 2] = method.to_bytes(2, "little")
+            index += 4
+    return bytes(raw)
+
+
+def corrupt_payload(content: bytes) -> bytes:
+    raw = bytearray(content)
+    raw[len(raw) // 2] ^= 0xFF
+    return bytes(raw)
+
+
+@pytest.mark.parametrize(
+    ("damage", "id_"),
+    [
+        pytest.param(corrupt_payload, "corrupt", id="a payload that fails its CRC"),
+        pytest.param(
+            lambda c: flag_every_member(c, gp_flag=0x01), "encrypted", id="an encrypted member"
+        ),
+        pytest.param(
+            lambda c: flag_every_member(c, method=99),
+            "unsupported",
+            id="a compression method we can't read",
+        ),
+    ],
+)
+async def test_an_unreadable_member_is_a_422_naming_it(http_client, damage, id_):
+    """Rule 6: these are all properties of a file somebody uploaded, so none of them
+    is a 500. The first pass here caught only the decompression errors, and left an
+    encrypted member (`RuntimeError`) and an unknown method (`NotImplementedError`)
+    escaping to FastAPI.
+
+    Driven through `http_client` on purpose: under the default transport a 500 is
+    re-raised into the test and the assertion never sees a status at all, which
+    fails without pinning what the status should have been.
+    """
+    archive = zip_members({"retailers.csv": RETAILERS_CSV * 40}, manifest=...)
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", damage(archive), "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 422, f"{id_}: {resp.status_code} {resp.text[:200]}"
+    assert "retailers.csv" in resp.json()["detail"]
+    assert (await http_client.get("/retailers")).json() == []
+
+
+# --- the archive structure itself is attacker-shaped (follow-up review of #75) ----
+
+
+@pytest.mark.parametrize(
+    "order",
+    [
+        pytest.param(("a/manifest.json", "b/manifest.json"), id="a before b"),
+        pytest.param(("b/manifest.json", "a/manifest.json"), id="b before a"),
+    ],
+)
+async def test_two_competing_manifests_block(client, order):
+    """Taking the first left the governing manifest decided by member order, so the
+    same files re-zipped differently claimed different things. Both orderings are
+    driven precisely because order was the deciding input — one of them would have
+    passed a single-ordering test by luck.
+    """
+    describes_retailers = declaring(retailers=("retailers.csv", 1))
+    describes_kits = declaring(kits=("kits.csv", 99))
+    bodies = {"a/manifest.json": describes_retailers, "b/manifest.json": describes_kits}
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for name in order:
+            archive.writestr(name, json.dumps(bodies[name]))
+        archive.writestr("retailers.csv", RETAILERS_CSV)
+
+    plan = await preview(client, buffer.getvalue())
+    assert any(
+        "2 manifests" in error and "a/manifest.json" in error and "b/manifest.json" in error
+        for error in plan["blocking_errors"]
+    ), plan["blocking_errors"]
+    assert (await apply(client, buffer.getvalue())).status_code == 409
+    assert (await client.get("/retailers")).json() == []
+
+
+#: Members in the structural-cost archive below. Sized so the two complexities are
+#: unmistakable rather than merely different: on the machine this was written on,
+#: the quadratic scans took **6.73 s** here and the indexed ones take **0.06 s**.
+_STRUCTURAL_MEMBERS = 30_000
+#: Generous against a loaded or slower runner — 25x the linear cost measured above,
+#: and still 4.5x under the quadratic one. This is a complexity guard, not a
+#: benchmark: it exists to fail if the scans go back to being nested, and the gap it
+#: watches is two orders of magnitude wide.
+_STRUCTURAL_BUDGET_SECONDS = 1.5
+
+
+async def test_archive_structure_is_processed_in_linear_time(client):
+    """`names.count(n)` per member, and a fresh walk of every member per declaration,
+    are both quadratic in numbers the uploader chooses — and both ran over the
+    central directory *before* any member content was read, so the expanded-byte
+    budget could not have helped. A DoS in the middle of the code added to stop one.
+
+    Empty members are nearly free in a zip, so the 10 MB upload limit permits on the
+    order of 100,000 of them; this drives 30,000 and a manifest declaring 7,500
+    tables, well inside that.
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr(
+            "manifest.json",
+            json.dumps(
+                declaring(
+                    **{
+                        f"t{i}": (f"declared{i:06d}.csv", 0)
+                        for i in range(_STRUCTURAL_MEMBERS // 4)
+                    }
+                )
+            ),
+        )
+        archive.writestr("retailers.csv", RETAILERS_CSV)
+        for i in range(_STRUCTURAL_MEMBERS):
+            archive.writestr(f"pad{i:06d}.txt", b"")
+    content = buffer.getvalue()
+    assert len(content) < importing.MAX_UPLOAD_BYTES, "the upload limit would catch it first"
+
+    started = time.perf_counter()
+    upload = importing.read_upload("archive.zip", content)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < _STRUCTURAL_BUDGET_SECONDS, (
+        f"{_STRUCTURAL_MEMBERS:,} members took {elapsed:.2f}s — the structural scans "
+        "look quadratic again"
+    )
+    # And it still did the work: every declaration is missing, and says so.
+    assert len(upload.errors) >= _STRUCTURAL_MEMBERS // 4
+
+
+# --- manifest metadata is data too (third-pass review of #75) --------------------
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        pytest.param("export_version", "not-an-integer", id="an integer field given a string"),
+        pytest.param("format", [], id="a string field given a list"),
+        pytest.param("schema_version", {}, id="a string field given an object"),
+        pytest.param("exported_at", 42, id="a string field given a number"),
+        pytest.param("app_version", True, id="a string field given a boolean"),
+    ],
+)
+async def test_unreadable_manifest_metadata_warns_rather_than_500s(http_client, field, value):
+    """The document is an object and its `tables` block is fine — it's the metadata
+    that won't validate. `ManifestInfo` is a Pydantic model, so `ValidationError`
+    lands here, and that is a `ValueError`: it was covered for free while parsing and
+    model-building were one expression inside the same `try`. Splitting them to tell
+    JSON `null` apart from a parse failure took the cover away, and this asserts it
+    back.
+    """
+    archive = zip_members({"retailers.csv": RETAILERS_CSV}, manifest={field: value})
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+    plan = resp.json()
+    assert plan["blocking_errors"] == []
+    assert actions(plan, "retailers") == ["create"]
+
+    said = [w for w in plan["warnings"] if "metadata this instance can't read" in w]
+    assert len(said) == 1, plan["warnings"]
+    assert field in said[0], said[0]
+    # The report itself stays out of the preview panel — the field name is the part
+    # a person can act on.
+    assert "pydantic" not in said[0].lower()
+
+
+async def test_valid_metadata_is_not_warned_about(http_client):
+    """The control for the matrix above: a manifest that validates says nothing."""
+    archive = zip_members(
+        {"retailers.csv": RETAILERS_CSV},
+        manifest={"format": "plamotrack-archive", "export_version": exporting.EXPORT_VERSION},
+    )
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert [w for w in resp.json()["warnings"] if "manifest" in w] == []
+
+
+async def test_bad_metadata_does_not_discard_a_good_tables_block(client):
+    """Metadata and declarations fail independently. `exported_at` being the wrong
+    type says nothing about whether the file list is readable, and dropping the whole
+    manifest would throw away the reconciliation — the half that actually protects
+    the import."""
+    archive = zip_members(
+        {"retailers.csv": RETAILERS_CSV},
+        manifest={"exported_at": 42, "tables": {"kits": {"file": "kits.csv", "rows": 3}}},
+    )
+
+    plan = await preview(client, archive)
+    assert any("exported_at" in warning for warning in plan["warnings"]), plan["warnings"]
+    # The declaration was still read, and still held the archive to it.
+    assert any("kits.csv" in error and "truncated" in error for error in plan["blocking_errors"]), (
+        plan["blocking_errors"]
+    )
