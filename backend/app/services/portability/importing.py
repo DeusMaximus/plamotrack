@@ -565,7 +565,7 @@ class _Spawn:
     row_number: int
     received: bool
     #: The parent order's received state *before* this apply's own write, used
-    #: only to re-check the locked row in `_lock_and_verify_written_orders` —
+    #: only to re-check the locked row in `_lock_and_verify_spawn_parents` —
     #: distinct from `received`, which already reflects this apply's own
     #: transition and drives the fan-out's status instead (#47 review).
     received_before_apply: bool
@@ -581,6 +581,25 @@ class ExecutionPlan:
 
 def _instance_dict(spec: TableSpec, instance: Any) -> dict[str, Any]:
     return {column.name: column.get(instance) for column in spec.columns if column.persisted}
+
+
+def _eager_load_options(spec: TableSpec) -> tuple[Any, ...]:
+    """Relationships a query for this table needs eagerly loaded.
+
+    One source of truth for both `load_existing()`'s planning-time read and any
+    later re-`SELECT` of the same rows (`_lock_and_verify_pending_updates`,
+    `_lock_and_verify_spawn_parents`) — a re-fetch that omits an option
+    `load_existing()` used leaves the *other* one's relationship state expired
+    on what's frequently the exact same identity-mapped object, and reading it
+    afterwards (`_advance_kits_for_newly_received_orders` walks `order.items`
+    and `item.kits`) tries a lazy load outside the async context and raises
+    `MissingGreenlet` (review of #79/#47).
+    """
+    if spec.key == "orders":
+        return (selectinload(Order.items).selectinload(OrderItem.kits),)
+    if spec.key == "order_items":
+        return (selectinload(OrderItem.kits),)
+    return ()
 
 
 def _norm_name(value: Any) -> str:
@@ -608,11 +627,7 @@ class _Planner:
 
     async def load_existing(self) -> None:
         for spec in TABLE_SPECS:
-            stmt = select(spec.model)
-            if spec.key == "orders":
-                stmt = stmt.options(selectinload(Order.items).selectinload(OrderItem.kits))
-            elif spec.key == "order_items":
-                stmt = stmt.options(selectinload(OrderItem.kits))
+            stmt = select(spec.model).options(*_eager_load_options(spec))
             instances = list((await self.session.scalars(stmt)).all())
             self.existing[spec.key] = instances
             self.by_id[spec.key] = {instance.id: instance for instance in instances}
@@ -1445,44 +1460,127 @@ async def preview_import(
     return (await plan_import(session, filename, content, mode)).plan
 
 
-async def _lock_and_verify_written_orders(session: AsyncSession, execution: ExecutionPlan) -> None:
-    """Row-lock every pre-existing order this apply is about to write to — either
-    directly (an `orders` row update) or as the parent a spawn's fan-out depends
-    on — and re-check its received state under that lock before any write
-    happens.
+async def _lock_and_verify_pending_updates(session: AsyncSession, execution: ExecutionPlan) -> None:
+    """Row-lock every existing row this apply is about to `UPDATE`, across every
+    table, and verify each changed field's currently-persisted value still
+    matches what planning read as its `before` — before any write happens.
 
-    `plan_import` reads orders with a plain `SELECT` — right for a preview, which
-    writes nothing. `apply_import` writes based on what planning resolved,
-    unchecked: a spawned kit's status comes from `spawn.received`, and the main
-    write loop's own `UPDATE` (plus the kit-arrival mirror in
-    `_advance_kits_for_newly_received_orders`) trusts `row.target` as read at
-    planning time. A concurrent mutation — a receive, a delete, an edit — can
-    commit in the window between `plan_import` returning and this apply's own
-    writes running. The `plan_hash` check catches the collection changing before
-    planning (#41); nothing previously caught it changing in that narrower
-    window between planning and writing (review of #79/#47).
+    `plan_import` reads everything with a plain `SELECT` — right for a preview,
+    which writes nothing. `apply_import` re-plans, then trusts that plan and
+    writes it: `setattr(row.target, field, new_value)` for every `FieldChange`,
+    unconditionally. A concurrent edit, receive, or delete can commit in the
+    window between `plan_import` returning and this apply's own write loop
+    running. `plan_hash` catches the collection changing *before* planning
+    (#41); nothing previously caught it changing in this narrower window.
 
-    This used to lock only the orders a spawn depended on, which covers a new
-    kit line but not a plain receipt-state update with no line at all — that
-    write has no spawn to hang a lock off of, so it went straight to the main
-    loop's `UPDATE` unlocked. A concurrent delete in that same window then
-    surfaced as a `StaleDataError` (0 rows matched) instead of the clean 409
-    every other stale-collection case gets (review of #79/#47).
+    This grew out of three rounds of narrower fixes that each covered one path
+    into that same window and missed the next one: locking only the orders a
+    spawn's fan-out depended on (missed a receipt-only update with no line),
+    then only orders themselves (missed an order-line update whose parent order
+    is deleted — cascades take the line with it, so the row this function
+    would `UPDATE` is simply gone), and along the way, checking only
+    `received_at` rather than every field actually being written (a concurrent
+    edit to some other column, e.g. `tracking_number`, was silently overwritten
+    with no conflict raised at all — a lost update). This is the general form:
+    every table, every changed field, not one column on one table (review of
+    #79/#47).
 
-    Locking here serializes with a concurrent mutation the same way every other
-    order mutation already does (rule 2/7) — it either waits behind us, or beat
-    us to the commit and we catch the mismatch below and ask for a fresh preview.
+    `row.changes` already carries exactly what's needed: `FieldChange.before`
+    is `render()`'s output for the value planning read, captured before this
+    apply's write loop runs. A locked row whose current value renders
+    differently, for any changed field, has drifted since planning; a locked
+    row that isn't found at all was deleted. Either way: the same "run the
+    preview again" 409 every other stale-collection case gets, and no write is
+    the caller's problem to unwind.
 
-    Checked against the planning-time value read off `row.target`/
-    `spawn.received_before_apply`, never the post-apply value this same apply
-    intends to write: the latter already reflects this apply's own pending
-    change when its own orders row transitions received state, so comparing it
-    to the pre-write locked row made a legitimate "receive this order and add a
-    line" apply fail as a false stale conflict every time (review of #79/#47).
+    Scoped to `RowAction.UPDATE`: a `CREATE` has no existing row to protect
+    (its natural-key/id collision risk is `plan_hash`'s job, not this one's),
+    and `SKIP`/`UNCHANGED` write nothing, so there's nothing here for a
+    concurrent change to corrupt.
+
+    `execution_options(populate_existing=True)` is load-bearing, not
+    decoration: `load_existing()` already pulled every row of every table into
+    this same session's identity map, so a plain re-`SELECT` for a primary key
+    already present there hands back the *same Python object*, its attributes
+    exactly as first loaded — genuinely locked at the database level, but
+    silently still reading planning-time values on the Python side. Caught by
+    this function initially comparing a concurrently-edited field against
+    itself and finding no difference (review of #79/#47).
+
+    `populate_existing` resets *every* attribute to what this query loaded,
+    relationships included — an `orders` or `order_items` row loses the
+    eager-loaded relationships `load_existing()` gave it, which `row.target`
+    is frequently the exact same Python object as, so
+    `_advance_kits_for_newly_received_orders` reading `row.target.items`/
+    `item.kits` afterwards tried a lazy load outside the async context and
+    raised `MissingGreenlet`. `_eager_load_options()` is what keeps that
+    relationship state intact through the refresh — the same options
+    `load_existing()` used, so the two can never drift apart.
+    """
+    for spec in TABLE_SPECS:
+        rows = [
+            row
+            for row in execution.rows.get(spec.key, [])
+            if row.action is RowAction.UPDATE and row.matched_id is not None
+        ]
+        if not rows:
+            continue
+        stmt = (
+            select(spec.model)
+            .where(spec.model.id.in_({row.matched_id for row in rows}))
+            .with_for_update()
+            .execution_options(populate_existing=True)
+            .options(*_eager_load_options(spec))
+        )
+        locked = await session.scalars(stmt)
+        current_by_id = {instance.id: instance for instance in locked}
+        for row in rows:
+            current = current_by_id.get(row.matched_id)
+            if current is None:
+                raise ConflictError(
+                    "the collection changed since you previewed this import, so "
+                    "the preview no longer matches what would happen — run the "
+                    "preview again"
+                )
+            for change in row.changes:
+                column = spec.column(change.field)
+                if column is not None and render(column.get(current)) != change.before:
+                    raise ConflictError(
+                        "the collection changed since you previewed this import, "
+                        "so the preview no longer matches what would happen — run "
+                        "the preview again"
+                    )
+
+
+async def _lock_and_verify_spawn_parents(session: AsyncSession, execution: ExecutionPlan) -> None:
+    """Row-lock every pre-existing order a spawn's fan-out *reads from* but does
+    not itself `UPDATE`, and re-check its received state under that lock.
+
+    A spawned kit's status comes from `spawn.received`, resolved at planning
+    time off the parent order — which may not have any row of its own in this
+    upload at all (only its id, referenced from an `order_items` line). Nothing
+    in `_lock_and_verify_pending_updates` protects a row this apply only reads,
+    so a concurrent receive on exactly that order, landing in the window
+    between planning and this apply's write loop, would otherwise go
+    undetected (review of #79/#47).
+
+    Checked against `spawn.received_before_apply`, the planning-time value —
+    never `spawn.received`, which already reflects this apply's own pending
+    change when the order's own row (if it has one) transitions received state
+    in the same apply. Comparing that post-apply value to the pre-write locked
+    row made a legitimate "receive this order and add a line" apply fail as a
+    false stale conflict every time (review of #79/#47).
 
     An order this same apply is about to *create* is exempt: nothing external
     can hold a reference to an id that doesn't exist until this transaction
-    commits, so there is no lock to take and no drift to catch.
+    commits, so there is no lock to take and no drift to catch. An order this
+    apply is also *updating* is harmless to re-check here too — same lock,
+    same session, no deadlock — rather than threading an exclusion through.
+
+    `populate_existing=True` for the same reason as `_lock_and_verify_pending_
+    updates`: `load_existing()` already put this order in the session's
+    identity map, so a plain re-`SELECT` risks handing back the same,
+    not-actually-refreshed Python object.
     """
     new_order_ids = {
         row.new_id
@@ -1494,16 +1592,14 @@ async def _lock_and_verify_written_orders(session: AsyncSession, execution: Exec
         for spawn in execution.spawns
         if spawn.order_id not in new_order_ids
     }
-    # Every existing order this apply's own write loop is about to UPDATE,
-    # whether or not any spawn depends on it — a plain receipt-state edit with
-    # no new kit line falls only in this set.
-    for row in execution.rows.get("orders", []):
-        if row.action is RowAction.UPDATE and row.matched_id is not None and row.target is not None:
-            expected[row.matched_id] = row.target.received_at is not None
     if not expected:
         return
     locked = await session.scalars(
-        select(Order).where(Order.id.in_(expected.keys())).with_for_update()
+        select(Order)
+        .where(Order.id.in_(expected.keys()))
+        .with_for_update()
+        .execution_options(populate_existing=True)
+        .options(*_eager_load_options(SPEC_BY_KEY["orders"]))
     )
     actual = {order.id: order.received_at is not None for order in locked}
     for order_id, wanted_received in expected.items():
@@ -1532,7 +1628,7 @@ def _advance_kits_for_newly_received_orders(execution: ExecutionPlan) -> None:
     `receive_order()`'s side effects ran, even though the REST/MCP path never
     allows an order to become received without advancing every arrival-eligible
     kit on it. Caught by review of #79/#47, alongside the false-conflict fix
-    above that this same scenario triggered in `_lock_and_verify_written_orders`.
+    above that this same scenario triggered in `_lock_and_verify_spawn_parents`.
 
     Deliberately narrower than `receive_order()`: this never touches
     `quantity_on_hand` (rule 10 keeps stock out of anything import derives from a
@@ -1624,10 +1720,12 @@ async def apply_import(
             "no longer matches what would happen — run the preview again"
         )
 
-    # Before any write: locks every order this apply is about to write to,
-    # directly or as a spawn's parent, and refuses to proceed if one of them
-    # changed after this plan was built.
-    await _lock_and_verify_written_orders(session, execution)
+    # Before any write: locks every row this apply is about to update, across
+    # every table, plus every order a spawn depends on but doesn't itself
+    # update — and refuses to proceed if any of them changed after this plan
+    # was built.
+    await _lock_and_verify_pending_updates(session, execution)
+    await _lock_and_verify_spawn_parents(session, execution)
 
     if mode is ImportMode.REPLACE_ALL:
         await session.execute(text(f"TRUNCATE {_PORTABLE_TABLES} CASCADE"))

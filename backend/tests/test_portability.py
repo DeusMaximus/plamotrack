@@ -3082,6 +3082,265 @@ async def test_apply_is_rejected_if_a_spawn_free_receipt_update_is_deleted_mid_a
     assert (await http_client.get("/kits")).json() == []
 
 
+async def test_apply_is_rejected_if_a_line_updates_parent_is_deleted_mid_apply(
+    http_client, monkeypatch
+):
+    """The lock/verify guard used to derive its lock set entirely from spawn
+    parents and `orders` rows — an `order_items` line update belongs to its
+    parent order just as much as an order-header update does, but it appeared
+    in neither set when it creates no missing kit. A concurrent delete of the
+    parent (which cascades to the line itself — `order_items.order_id` is
+    `ondelete=CASCADE`) then left the write loop's own `UPDATE` targeting a row
+    that no longer existed: a `StaleDataError`, surfaced as a 500, instead of
+    the clean 409 every other stale-collection case gets (review of #79/#47).
+
+    The general per-table lock closes this without any order-specific carve
+    out: `order_items` is just another table with an `UPDATE` row here.
+    """
+    retailer = (await http_client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await http_client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    item_id = order["items"][0]["id"]
+
+    line = {
+        "id": item_id,
+        "order_id": order["id"],
+        "item_type": "kit",
+        "quantity": "1",
+        "unit_price_minor": "3000",  # the only change — no new line, no spawn
+        "currency_code": "JPY",
+        "kit_name": "Zaku II",
+        "kit_grade": "HG",
+    }
+    content = make_csv(spec.ORDER_ITEMS.header, [line])
+
+    preview_resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    plan = preview_resp.json()
+    assert actions(plan, "order_items") == ["update"], plan
+    assert plan["derived"]["kits_spawned"] == 0
+    plan_hash = plan["plan_hash"]
+
+    original_plan_import = importing.plan_import
+    deleted_mid_apply = False
+
+    async def delete_between_plan_and_write(*args, **kwargs):
+        nonlocal deleted_mid_apply
+        execution = await original_plan_import(*args, **kwargs)
+        async with AsyncClient(
+            transport=ASGITransport(app=fastapi_app), base_url="http://test"
+        ) as other:
+            resp = await other.delete(f"/orders/{order['id']}")
+            deleted_mid_apply = resp.status_code == 204
+        return execution
+
+    monkeypatch.setattr(importing, "plan_import", delete_between_plan_and_write)
+
+    applied = await http_client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge", "plan_hash": plan_hash},
+    )
+
+    assert deleted_mid_apply, "the interleaved delete didn't commit — not exercising the race"
+    assert applied.status_code == 409, applied.text
+    assert (await http_client.get("/orders")).json() == []
+    assert (await http_client.get("/kits")).json() == []
+
+
+async def test_apply_is_rejected_if_a_field_it_plans_to_write_changes_mid_apply(
+    http_client, monkeypatch
+):
+    """The general form of the same gap, with no deletion and no receipt state
+    involved at all: `_lock_and_verify_spawn_parents` (as it used to be scoped)
+    only ever compared `received_at`, so a concurrent edit to any *other*
+    column — here, `tracking_number` — passed the guard silently and the write
+    loop overwrote it with the import's own, now-stale value. A lost update,
+    not caught as a conflict at all (review of #79/#47).
+
+    The general per-field check closes this: every `FieldChange` this row
+    plans to write is re-verified against the freshly locked row, not only the
+    one field the old guard happened to know about.
+    """
+    retailer = (await http_client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await http_client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "tracking_number": "ORIGINAL",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    assert order["tracking_number"] == "ORIGINAL"
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "tracking_number": "FROM-THE-IMPORT",
+    }
+    archive = make_archive({"orders": [orders_row]})
+
+    preview_resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "merge"},
+    )
+    assert preview_resp.status_code == 200, preview_resp.text
+    plan = preview_resp.json()
+    assert actions(plan, "orders") == ["update"], plan
+    assert plan["derived"]["kits_spawned"] == 0
+    plan_hash = plan["plan_hash"]
+
+    original_plan_import = importing.plan_import
+    edited_mid_apply = False
+
+    async def edit_between_plan_and_write(*args, **kwargs):
+        nonlocal edited_mid_apply
+        execution = await original_plan_import(*args, **kwargs)
+        # An ordinary concurrent PATCH — not a receive, not a delete — changes
+        # the very field this import is about to overwrite.
+        async with AsyncClient(
+            transport=ASGITransport(app=fastapi_app), base_url="http://test"
+        ) as other:
+            resp = await other.patch(
+                f"/orders/{order['id']}", json={"tracking_number": "FROM-CONCURRENT-EDIT"}
+            )
+            edited_mid_apply = resp.status_code == 200
+        return execution
+
+    monkeypatch.setattr(importing, "plan_import", edit_between_plan_and_write)
+
+    applied = await http_client.post(
+        "/import/apply",
+        files={"file": ("archive.zip", archive, "application/zip")},
+        data={"mode": "merge", "plan_hash": plan_hash},
+    )
+
+    assert edited_mid_apply, "the interleaved edit didn't commit — not exercising the race"
+    assert applied.status_code == 409, applied.text
+    # Rejected, not half-applied — the concurrent edit is what's still there.
+    stored = (await http_client.get(f"/orders/{order['id']}")).json()
+    assert stored["tracking_number"] == "FROM-CONCURRENT-EDIT"
+
+
+async def test_a_spawn_free_import_that_edits_a_line_and_receives_its_order_succeeds(client):
+    """No concurrency here either, and no spawn at all: an `order_items.csv` price
+    correction on an existing line, combined with an `orders.csv` receipt
+    transition on its parent, in the same apply.
+
+    This combination is what caught a second bug behind the general lock/verify
+    fix: `_lock_and_verify_pending_updates`'s fresh re-`SELECT` for the
+    `order_items` row used `populate_existing`, which resets *every* attribute
+    including relationships — wiping the `kits` collection `load_existing()` had
+    eagerly loaded onto that same identity-mapped `OrderItem`. The `orders` row's
+    own re-`SELECT` re-populates `items`/`kits` on the order, but the order and
+    the line are processed as two separate tables in `_lock_and_verify_pending_
+    updates`' loop, so whichever ran last left its relationship state as the one
+    `_advance_kits_for_newly_received_orders` saw — and if that pass belonged to
+    `order_items` (no eager options of its own), reading `item.kits` off it a
+    moment later raised `MissingGreenlet`. Fixed by sharing one `_eager_load_
+    options()` helper between `load_existing()` and every later re-`SELECT`, so
+    they can never drift apart again (review of #79/#47).
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    assert order["received_at"] is None
+    item_id = order["items"][0]["id"]
+
+    orders_row = {
+        "id": order["id"],
+        "retailer_name": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-1",
+        "currency_code": "JPY",
+        "received_at": "2026-03-20T00:00:00Z",
+    }
+    line = {
+        "id": item_id,
+        "order_id": order["id"],
+        "item_type": "kit",
+        "quantity": "1",
+        "unit_price_minor": "3000",  # the correction — no new line
+        "currency_code": "JPY",
+        "kit_name": "Zaku II",
+        "kit_grade": "HG",
+    }
+    archive = make_archive({"orders": [orders_row], "order_items": [line]})
+
+    plan = await preview(client, archive, mode="merge")
+    assert plan["blocking_errors"] == [], plan
+    assert actions(plan, "orders") == ["update"], plan
+    assert actions(plan, "order_items") == ["update"], plan
+    assert plan["derived"]["kits_spawned"] == 0
+
+    applied = await apply(client, archive, mode="merge")
+    assert applied.status_code == 200, applied.text
+
+    stored_order = (await client.get(f"/orders/{order['id']}")).json()
+    assert stored_order["received_at"] is not None
+    assert stored_order["items"][0]["unit_price_minor"] == 3000
+
+    kits = (await client.get("/kits")).json()
+    assert [k["status"] for k in kits] == ["backlog"]
+
+
 async def test_an_import_that_both_receives_an_order_and_adds_a_line_succeeds(client):
     """No concurrency here — this is the false-positive the lock/verify guard's
     first cut produced on its own: `_order_received()` answers a matched UPDATE
