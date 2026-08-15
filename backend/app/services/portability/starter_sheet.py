@@ -15,7 +15,9 @@ import uuid
 from collections import OrderedDict
 
 from app.config import get_settings
+from app.exceptions import InvalidInputError
 from app.models.enums import KitStatus
+from app.services.orders import require_line_quantity
 from app.services.portability.spec import (
     ColumnSpec,
     col,
@@ -52,7 +54,12 @@ STARTER_SHEET_COLUMNS: tuple[ColumnSpec, ...] = (
     ),
     col("rating", parse_int, help="1-5, if you've finished it."),
     col("build_notes", parse_text),
-    col("quantity", parse_int, help="How many of this kit. Blank = 1."),
+    col(
+        "quantity",
+        parse_int,
+        help="How many of this kit. Blank = 1, at most 1000 — you get that many "
+        "kits whether or not the row names a retailer.",
+    ),
     col("retailer", parse_text, help="Where you bought it. Blank = no order recorded."),
     col("order_date", parse_date, help="YYYY-MM-DD. Required if a retailer is named."),
     col("order_number", parse_text, help="The shop's reference, if you have it."),
@@ -157,18 +164,67 @@ def _present(source_row: str, **cells: str) -> dict[str, str]:
     return row
 
 
-def expand(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
-    """Flat sheet rows -> normalized {table_key: [row, ...]}.
+def _standalone_count(cell: str) -> int:
+    """How many kits a retailer-free row stands for.
+
+    Blank is one, as the sheet's guidance says. Anything else has to be a whole
+    number of at least one, and is held to the same ceiling as an order line: this
+    branch is the one route to a kit that produces no order line, so it is also the
+    one route `_check_line_quantity` never sees.
+    """
+    try:
+        count = parse_int(cell)
+    except (ArithmeticError, ValueError) as exc:
+        raise InvalidInputError(f"quantity: {exc}") from exc
+    if count is None:
+        return 1
+    # The whole range, from the shared invariant — not a second lower bound written
+    # out here, which is how the two branches of this sheet came to disagree about
+    # what `quantity: 0` means in the first place.
+    return require_line_quantity(count)
+
+
+def expand(
+    rows: list[dict[str, str]],
+    *,
+    row_budget: int,
+) -> tuple[dict[str, list[dict[str, str]]], list[str]]:
+    """Flat sheet rows -> normalized {table_key: [row, ...]}, plus what wouldn't go.
 
     Cells stay strings: the output is fed straight back through the normal parsing
     and planning path, so the flat sheet gets identical validation and matching to
     a hand-written orders.csv. Row provenance is carried on `_source_row` so
     preview errors can still point at the line the human actually typed.
+
+    The second return value carries rows this expansion could not honour. They
+    become blocking errors on the upload rather than an exception, so a bad
+    quantity is shown in the preview beside the good rows — the same contract every
+    other row error gets. A retailer-free row has no order line for the importer to
+    hang an error on, which is why it has to be reported from here.
     """
     retailers: OrderedDict[str, dict[str, str]] = OrderedDict()
     orders: OrderedDict[str, dict[str, str]] = OrderedDict()
     order_items: list[dict[str, str]] = []
     kits: list[dict[str, str]] = []
+    problems: list[str] = []
+    produced = 0
+
+    def spend(count: int) -> None:
+        """Charge for rows *before* building them.
+
+        A kit line fans out one dictionary per unit, so this sheet is the one place
+        an import amplifies: 51 rows at `quantity: 1000` is 51,000 rows out of under
+        2 KB in. `MAX_ROWS` is checked by `plan_import` on what expansion returned,
+        which is far too late to be a budget — by then the rows exist. Charging up
+        front is what makes the refusal cheap.
+        """
+        nonlocal produced
+        produced += count
+        if produced > row_budget:
+            raise InvalidInputError(
+                f"this sheet expands to more than {row_budget:,} rows — the import "
+                "limit. Split it into separate files, or use fewer per row."
+            )
 
     for row in rows:
         source_row = row.get(_ROW_MARKER, "")
@@ -180,19 +236,32 @@ def expand(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
         status = (row.get("status") or "").strip()
 
         if not retailer_name:
-            # No purchase record — a kit that just exists in the collection.
-            kits.append(
-                _present(
-                    source_row,
-                    name=row.get("kit_name", ""),
-                    grade=row.get("grade", ""),
-                    scale=row.get("scale", ""),
-                    kit_number=row.get("kit_number", ""),
-                    status=status or KitStatus.BACKLOG.value,
-                    rating=row.get("rating", ""),
-                    build_notes=row.get("build_notes", ""),
+            # No purchase record — kits that just exist in the collection. One row
+            # per unit, exactly as the retailer-bearing branch fans out through
+            # `spawn_kits`. This branch used to emit a single kit and drop
+            # `quantity` on the floor, so `quantity: 3` with no shop named silently
+            # became one kit — and the ceiling could not reach a field nothing read.
+            # A column cannot mean "how many of this kit" when a shop is named and
+            # nothing at all when one isn't.
+            try:
+                count = _standalone_count(quantity)
+            except InvalidInputError as exc:
+                problems.append(f"row {source_row}: {exc}")
+                continue
+            spend(count)
+            for _ in range(count):
+                kits.append(
+                    _present(
+                        source_row,
+                        name=row.get("kit_name", ""),
+                        grade=row.get("grade", ""),
+                        scale=row.get("scale", ""),
+                        kit_number=row.get("kit_number", ""),
+                        status=status or KitStatus.BACKLOG.value,
+                        rating=row.get("rating", ""),
+                        build_notes=row.get("build_notes", ""),
+                    )
                 )
-            )
             continue
 
         order_date = (row.get("order_date") or "").strip()
@@ -200,9 +269,11 @@ def expand(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
         key = _order_key(retailer_name, order_date, order_number)
 
         if retailer_name.lower() not in retailers:
+            spend(1)
             retailers[retailer_name.lower()] = _present(source_row, name=retailer_name)
 
         if key not in orders:
+            spend(1)
             received = (row.get("received") or "").strip().lower()
             orders[key] = _present(
                 source_row,
@@ -217,6 +288,7 @@ def expand(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
                 received_at="" if received in {"no", "n", "false", "0"} else order_date,
             )
 
+        spend(1)
         order_items.append(
             _present(
                 source_row,
@@ -242,4 +314,4 @@ def expand(rows: list[dict[str, str]]) -> dict[str, list[dict[str, str]]]:
         expanded["order_items"] = order_items
     if kits:
         expanded["kits"] = kits
-    return expanded
+    return expanded, problems

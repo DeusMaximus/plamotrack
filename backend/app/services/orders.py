@@ -31,6 +31,46 @@ from app.schemas.orders import (
 from app.services.catalog import CATALOG_MODELS, lock_catalog_row
 from app.services.kits import default_scale_for_grade, has_applied_upgrades
 
+#: The most units one order line may hold.
+#:
+#: Not a field bound: a kit line fans out into this many `kits` rows at entry
+#: (§3.9), so the number is an insert count that a single cell decides, and
+#: nothing downstream of `quantity > 0` limited it (#43). int4 is no help — a
+#: quantity PostgreSQL stores happily is still two billion inserts.
+#:
+#: Set where one line stops being a plausible personal purchase for a
+#: single-collection tracker. A genuine bulk buy says so on more than one line,
+#: which is also how it reads on the order it came from.
+MAX_LINE_QUANTITY = 1_000
+
+
+def require_line_quantity(quantity: int, *, label: str = "quantity") -> int:
+    """The whole valid range REST, MCP and the CSV importer all answer to (rule 1).
+
+    Three writers reach the same fan-out by three different routes, and a limit
+    enforced on one of them is not a limit. `label` exists so the importer can name
+    the column it read rather than a payload field the sheet has never heard of.
+
+    **Both ends, not just the ceiling.** REST and MCP get the lower bound from
+    `Field(gt=0)` on `OrderItemCreate`, but the importer builds models directly and
+    never constructs one — so while this checked `> MAX` alone, a `quantity` of 0 or
+    -2 in a CSV planned as a clean create and hit the `quantity_positive` database
+    constraint at flush, which is a 500 rather than a row diagnostic. A shared
+    invariant that covers one end of the range is two invariants, and the half that
+    isn't shared is the half that drifts.
+    """
+    if quantity < 1:
+        raise InvalidInputError(
+            f"{label} is {quantity:,} — that has to be at least 1. "
+            "To record nothing, leave the line out."
+        )
+    if quantity > MAX_LINE_QUANTITY:
+        raise InvalidInputError(
+            f"{label} is {quantity:,} — an order line holds at most "
+            f"{MAX_LINE_QUANTITY:,}. Split it across several lines."
+        )
+    return quantity
+
 
 def _converted_snapshot(line: OrderItemCreate) -> tuple[int | None, str | None]:
     """The §6 conversion snapshot: an amount and the currency it was captured in.
@@ -285,7 +325,13 @@ async def spawn_kits(
     Shared with the CSV importer, which needs the same fan-out for order lines that
     arrive without their kits — hence the loose keyword signature rather than an
     `OrderKitDetails`, which is a REST-payload shape the importer doesn't have.
+
+    The ceiling is re-checked here rather than trusted from the caller, because this
+    is the function that does the inserting and it is reachable from a route that
+    never saw an `OrderItemCreate`. The importer stops a bad line long before this,
+    with a message naming the column; this is the backstop for the loop itself.
     """
+    require_line_quantity(count, label="the number of kits on this line")
     requested = KitStatus(status) if status else KitStatus.ORDERED
     final_status = _initial_kit_status(requested, received)
     resolved_scale = scale if scale is not None else default_scale_for_grade(grade)
@@ -528,6 +574,12 @@ async def _update_line(
 
 
 async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
+    for line in data.items:
+        # Up front, before the retailer lookup and before `_lock_catalog_targets`
+        # takes anything: an absurd payload should not get as far as holding row
+        # locks other writers are waiting on.
+        require_line_quantity(line.quantity)
+
     retailer = await session.get(Retailer, data.retailer_id)
     if retailer is None:
         raise NotFoundError(f"retailer {data.retailer_id} not found")
@@ -563,6 +615,9 @@ async def _get_order_for_write(session: AsyncSession, order_id: uuid.UUID) -> Or
 
 
 async def update_order(session: AsyncSession, order_id: uuid.UUID, data: OrderUpdate) -> Order:
+    for line in data.items or ():
+        require_line_quantity(line.quantity)
+
     order = await _get_order_for_write(session, order_id)
     received = order.received_at is not None
     await _lock_catalog_targets(session, items=order.items, lines=data.items or ())

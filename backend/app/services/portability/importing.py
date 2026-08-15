@@ -56,7 +56,7 @@ from app.schemas.portability import (
 from app.services.currency import is_known_currency, major_to_minor, minor_fraction_digits
 from app.services.kits import default_scale_for_grade
 from app.services.numeric import is_lone_group, require_int4
-from app.services.orders import spawn_kits
+from app.services.orders import require_line_quantity, spawn_kits
 from app.services.portability import starter_sheet
 from app.services.portability.exporting import (
     ARCHIVE_FORMAT,
@@ -459,8 +459,15 @@ def _read_zip(content: bytes) -> ParsedUpload:
                 continue
             header, rows = _read_csv_text(budget.read(archive, entry), entry)
             if starter_sheet.is_starter_sheet(header):
-                for key, expanded in starter_sheet.expand(rows).items():
+                # Cumulative across members: a zip of starter sheets must not get
+                # a fresh budget per file.
+                spent = sum(len(existing) for existing in tables.values())
+                expanded_tables, problems = starter_sheet.expand(
+                    rows, row_budget=max(0, MAX_ROWS - spent)
+                )
+                for key, expanded in expanded_tables.items():
                     tables.setdefault(key, []).extend(expanded)
+                errors.extend(problems)
                 members.append(_Member(entry, _STARTER_SHEET, len(rows)))
                 continue
             table_key = _detect_table(entry, header)
@@ -486,7 +493,8 @@ def _read_zip(content: bytes) -> ParsedUpload:
 def _read_single_csv(filename: str, content: bytes) -> ParsedUpload:
     header, rows = _read_csv_text(content, filename or "upload")
     if starter_sheet.is_starter_sheet(header):
-        return ParsedUpload(source="starter-sheet", tables=starter_sheet.expand(rows))
+        expanded, problems = starter_sheet.expand(rows, row_budget=MAX_ROWS)
+        return ParsedUpload(source="starter-sheet", tables=expanded, errors=problems)
     table_key = _detect_table(filename, header)
     if table_key is None:
         known = ", ".join(spec.filename for spec in TABLE_SPECS)
@@ -939,6 +947,7 @@ class _Planner:
             planned = self.rows.setdefault(spec.key, [])
             for raw in raw_rows:
                 row = self._parse_row(spec, raw)
+                self._check_line_quantity(spec, row)
                 self._resolve_all_refs(spec, row)
                 self._apply_money_alternates(spec, row)
                 _clear_orphan_money_currency(spec, row)
@@ -964,6 +973,26 @@ class _Planner:
 
         self._plan_spawns(replace_all)
         return self._finish()
+
+    def _check_line_quantity(self, spec: TableSpec, row: _Row) -> None:
+        """The fan-out ceiling, as a row diagnostic rather than a raised error.
+
+        `spawn_kits` enforces the same limit, but reaching it means the whole upload
+        dies on one cell with no line number attached. An import's contract is that a
+        bad row is named in the preview alongside the good ones (#43), so the ceiling
+        is asked about here — from the service that owns it, not a second copy of the
+        number — and answered as a row error.
+        """
+        if spec.key != "order_items" or row.action is RowAction.ERROR:
+            return
+        quantity = row.values.get("quantity")
+        if not isinstance(quantity, int):
+            return  # absent, blank, or already reported as unparseable
+        try:
+            require_line_quantity(quantity)
+        except InvalidInputError as exc:
+            row.action = RowAction.ERROR
+            row.error = str(exc)
 
     def _resolve_all_refs(self, spec: TableSpec, row: _Row) -> None:
         if row.action is RowAction.ERROR:

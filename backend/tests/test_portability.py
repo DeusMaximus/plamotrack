@@ -12,6 +12,7 @@ import zipfile
 
 import pytest
 
+from app.services import orders
 from app.services.portability import exporting, importing, spec, starter_sheet
 
 # --- helpers --------------------------------------------------------------------
@@ -1533,6 +1534,136 @@ async def test_a_lone_grouped_amount_is_settled_by_the_currency(client, code, re
         assert (await client.get("/orders")).json()[0]["shipping_cost_minor"] == 1234
 
 
+# --- the per-line quantity ceiling, through the sheet (#43) -----------------------
+
+
+def order_line_row(order_id: str, quantity: int, **extra) -> dict:
+    return {
+        "id": "",
+        "order_id": order_id,
+        "item_type": "kit",
+        "quantity": str(quantity),
+        "unit_price_minor": "2800",
+        "currency_code": "JPY",
+        "kit_name": "Zaku II",
+        "kit_grade": "HG",
+        **extra,
+    }
+
+
+async def seeded_order(client) -> dict:
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    return (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+
+@pytest.mark.parametrize(
+    ("quantity", "refused"),
+    [
+        pytest.param(orders.MAX_LINE_QUANTITY, False, id="exactly at the ceiling"),
+        pytest.param(orders.MAX_LINE_QUANTITY + 1, True, id="one over"),
+        pytest.param(2_000_000_000, True, id="absurd but a valid int4"),
+    ],
+)
+async def test_a_sheet_cannot_spawn_past_the_ceiling(client, quantity, refused):
+    """A kit line short of its kits is the importer's own fan-out route — it reaches
+    `spawn_kits` without ever building an `OrderItemCreate`, so the REST guard says
+    nothing about it."""
+    order = await seeded_order(client)
+    content = make_csv(spec.ORDER_ITEMS.header, [order_line_row(order["id"], quantity)])
+
+    plan = await preview(client, content, filename="order_items.csv")
+    if refused:
+        assert actions(plan, "order_items") == ["error"]
+        error = plan["tables"][0]["rows"][0]["error"]
+        assert "quantity" in error and "at most" in error, error
+        assert plan["blocking_errors"]
+        assert (await apply(client, content, filename="order_items.csv")).status_code == 409
+    else:
+        assert actions(plan, "order_items") == ["create"], plan["tables"][0]["rows"][0]
+        assert plan["derived"]["kits_spawned"] == quantity
+
+
+async def test_a_catalog_line_in_a_sheet_is_held_to_the_ceiling_too(client):
+    """Spawns nothing, so `_plan_spawns` never looks at it. The check has to sit on
+    the row rather than on the fan-out, or the two item types get two limits."""
+    order = await seeded_order(client)
+    content = make_csv(
+        spec.ORDER_ITEMS.header,
+        [
+            {
+                "id": "",
+                "order_id": order["id"],
+                "item_type": "consumable",
+                "quantity": str(orders.MAX_LINE_QUANTITY + 1),
+                "unit_price_minor": "500",
+                "currency_code": "JPY",
+                "catalog_item_name": "Mr Surfacer 1200",
+            }
+        ],
+    )
+
+    plan = await preview(client, content, filename="order_items.csv")
+    assert actions(plan, "order_items") == ["error"]
+    assert "quantity" in plan["tables"][0]["rows"][0]["error"]
+
+
+async def test_an_update_row_is_held_to_the_ceiling_as_well(client):
+    """The action axis, not another value on the same one. An update carries a
+    `changes` list and a `matched_id` that a create does not have, and it reaches
+    the quantity by a different branch of `_classify` — a check that only ever ran
+    on creates would read green here with the row still going through.
+    """
+    order = await seeded_order(client)
+    line = order["items"][0]
+
+    # Same line by id, so this is an update rather than a second line.
+    content = make_csv(
+        spec.ORDER_ITEMS.header,
+        [order_line_row(order["id"], orders.MAX_LINE_QUANTITY + 1, id=line["id"])],
+    )
+    plan = await preview(client, content, filename="order_items.csv")
+
+    assert actions(plan, "order_items") == ["error"]
+    assert "quantity" in plan["tables"][0]["rows"][0]["error"]
+    assert (await apply(client, content, filename="order_items.csv")).status_code == 409
+    # The stored line is untouched, and no kits were spawned against it.
+    assert (await client.get(f"/orders/{order['id']}")).json()["items"][0]["quantity"] == 1
+    assert len((await client.get("/kits")).json()) == 1
+
+
+async def test_an_update_that_stays_under_the_ceiling_still_applies(client):
+    """The control: refusing the over-ceiling update must not mean refusing updates."""
+    order = await seeded_order(client)
+    content = make_csv(
+        spec.ORDER_ITEMS.header,
+        [order_line_row(order["id"], 3, id=order["items"][0]["id"])],
+    )
+
+    plan = await preview(client, content, filename="order_items.csv")
+    assert actions(plan, "order_items") == ["update"], plan["tables"][0]["rows"][0]
+    assert (await apply(client, content, filename="order_items.csv")).status_code == 200
+    assert (await client.get(f"/orders/{order['id']}")).json()["items"][0]["quantity"] == 3
+
+
 # --- archive integrity (#42) -----------------------------------------------------
 
 
@@ -2189,3 +2320,300 @@ async def test_bad_metadata_does_not_discard_a_good_tables_block(client):
     assert any("kits.csv" in error and "truncated" in error for error in plan["blocking_errors"]), (
         plan["blocking_errors"]
     )
+
+
+# --- the starter sheet's retailer-free branch (review of #76) ---------------------
+
+
+def sheet_row(quantity: str, *, retailer: str = "", name: str = "Zaku II") -> dict:
+    row = {"kit_name": name, "grade": "HG", "status": "backlog", "quantity": quantity}
+    if retailer:
+        row |= {
+            "retailer": retailer,
+            "order_date": "2026-03-14",
+            "order_number": "HLJ-1",
+            "unit_price": "24.50",
+            "currency": "AUD",
+            "received": "yes",
+        }
+    return row
+
+
+def starter_sheet_csv(rows: list[dict]) -> bytes:
+    return make_csv(starter_sheet.STARTER_SHEET_HEADER, rows)
+
+
+async def test_a_retailer_free_row_spawns_one_kit_per_unit(client):
+    """`quantity` used to be read and then dropped on this branch: a row with no
+    shop named emitted exactly one kit, so an ordinary `3` silently became `1`.
+
+    That is data loss with nothing to do with the ceiling — it is why the fix is to
+    fan out rather than to reject anything above 1. A column cannot mean "how many
+    of this kit" when a shop is named and nothing at all when one isn't.
+    """
+    sheet = starter_sheet_csv([sheet_row("3")])
+
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+    assert actions(plan, "kits") == ["create"] * 3, actions(plan, "kits")
+
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+    kits = (await client.get("/kits")).json()
+    assert len(kits) == 3
+    assert {k["name"] for k in kits} == {"Zaku II"}
+    assert (await client.get("/orders")).json() == []  # still no purchase record
+
+
+@pytest.mark.parametrize(
+    "quantity",
+    [pytest.param("", id="blank"), pytest.param("1", id="one")],
+)
+async def test_a_retailer_free_row_still_defaults_to_a_single_kit(client, quantity):
+    """The control. Blank means one, as the sheet's own guidance says, and the
+    fan-out must not turn an unstated quantity into zero kits or an error."""
+    sheet = starter_sheet_csv([sheet_row(quantity)])
+
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+    assert plan["blocking_errors"] == []
+    assert actions(plan, "kits") == ["create"]
+
+
+@pytest.mark.parametrize(
+    "retailer",
+    [
+        pytest.param("Hobby Link Japan", id="a row that names a shop"),
+        pytest.param("", id="a row that names no shop"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("quantity", "accepted"),
+    [
+        pytest.param(str(orders.MAX_LINE_QUANTITY), True, id="exactly at the ceiling"),
+        pytest.param(str(orders.MAX_LINE_QUANTITY + 1), False, id="one over"),
+    ],
+)
+async def test_the_ceiling_covers_both_starter_sheet_shapes(client, retailer, quantity, accepted):
+    """Both branches at the limit and above it.
+
+    Whether a row reaches the ceiling used to depend on whether it named a shop:
+    the retailer-bearing branch emits an order line that `_check_line_quantity`
+    sees, and the retailer-free branch emits kits that nothing checked. Same
+    column, same number, same sheet — so the coverage cannot come down to a value
+    in a different cell.
+    """
+    sheet = starter_sheet_csv([sheet_row(quantity, retailer=retailer)])
+
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+    if accepted:
+        assert plan["blocking_errors"] == []
+        expected = int(quantity)
+        spawned = len(actions(plan, "kits")) + plan["derived"]["kits_spawned"]
+        assert spawned == expected, f"{spawned} kits planned, expected {expected}"
+    else:
+        assert plan["blocking_errors"], plan
+        assert any("at most" in str(error) for error in plan["blocking_errors"]) or any(
+            "at most" in (row.get("error") or "")
+            for table in plan["tables"]
+            for row in table["rows"]
+        ), plan
+        assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 409
+        assert (await client.get("/kits")).json() == []
+
+
+@pytest.mark.parametrize(
+    "retailer",
+    [
+        pytest.param("Hobby Link Japan", id="a row that names a shop"),
+        pytest.param("", id="a row that names no shop"),
+    ],
+)
+@pytest.mark.parametrize(
+    "quantity",
+    [
+        pytest.param("0", id="zero"),
+        pytest.param("-2", id="negative"),
+        pytest.param("1.5", id="fractional"),
+        pytest.param("many", id="not a number"),
+    ],
+)
+async def test_a_quantity_that_cannot_be_honoured_is_refused_in_both_shapes(
+    http_client, retailer, quantity
+):
+    """The *lower* end of the range, across the same two shapes as the ceiling.
+
+    The first version of this matrix drove these four values with the retailer cell
+    blank only — so it swept its values properly and never varied the one cell that
+    decides which code path reads them. The ceiling had been fixed in both branches
+    while the floor was still fixed in one: a retailer-backed row became an
+    `order_items` row whose only lower bound was the database's `quantity_positive`
+    constraint, so `quantity: 0` previewed as a clean create and applied as a 500.
+
+    Driven through `http_client` so the apply asserts a status rather than dying on
+    a re-raised `IntegrityError` that says nothing about which status was intended.
+    """
+    sheet = starter_sheet_csv([sheet_row(quantity, retailer=retailer)])
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("starter-sheet.csv", sheet, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+    plan = resp.json()
+
+    reported = plan["blocking_errors"] + [
+        row["error"] for table in plan["tables"] for row in table["rows"] if row["error"]
+    ]
+    assert any("quantity" in str(said) for said in reported), plan
+
+    applied = await http_client.post(
+        "/import/apply",
+        files={"file": ("starter-sheet.csv", sheet, "text/csv")},
+        data={"mode": "merge", "plan_hash": plan["plan_hash"]},
+    )
+    assert applied.status_code == 409, f"{applied.status_code}: {applied.text[:200]}"
+    assert (await http_client.get("/kits")).json() == []
+    assert (await http_client.get("/orders")).json() == []
+
+
+@pytest.mark.parametrize(
+    "quantity", [pytest.param("0", id="zero"), pytest.param("-2", id="negative")]
+)
+@pytest.mark.parametrize(
+    "row_state",
+    [pytest.param("create", id="a new line"), pytest.param("update", id="an existing line")],
+)
+async def test_a_normalized_order_line_is_held_to_the_lower_bound(http_client, quantity, row_state):
+    """The sibling path: `order_items.csv` reaches the same fan-out without the
+    starter sheet in front of it, and an update reaches it by a different branch of
+    `_classify` than a create."""
+    retailer = (await http_client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await http_client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+
+    line = {
+        "id": order["items"][0]["id"] if row_state == "update" else "",
+        "order_id": order["id"],
+        "item_type": "kit",
+        "quantity": quantity,
+        "unit_price_minor": "2800",
+        "currency_code": "JPY",
+        "kit_name": "Zaku II",
+        "kit_grade": "HG",
+    }
+    content = make_csv(spec.ORDER_ITEMS.header, [line])
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+    plan = resp.json()
+    assert actions(plan, "order_items") == ["error"], plan["tables"]
+    assert "quantity" in plan["tables"][0]["rows"][0]["error"]
+
+    applied = await http_client.post(
+        "/import/apply",
+        files={"file": ("order_items.csv", content, "text/csv")},
+        data={"mode": "merge", "plan_hash": plan["plan_hash"]},
+    )
+    assert applied.status_code == 409, f"{applied.status_code}: {applied.text[:200]}"
+    # The stored line is untouched.
+    stored = (await http_client.get(f"/orders/{order['id']}")).json()
+    assert stored["items"][0]["quantity"] == 1
+
+
+async def test_the_expansion_stops_before_building_the_rows_it_cannot_keep(
+    http_client, monkeypatch
+):
+    """Charged up front, not measured afterwards.
+
+    `plan_import` compares `MAX_ROWS` against what expansion *returned*, which is far
+    too late to be a budget: the rows already exist by then. On the reviewed head a
+    1,915-byte, 51-row sheet built 51,000 kit dictionaries before anything objected,
+    and the reachable worst case is a permitted 50,000-row sheet attempting
+    50,000,000.
+
+    Proved by counting `_present` calls rather than by timing it. With a budget of
+    1,500 and five rows of 1,000, an unbudgeted expansion builds 5,000 rows; charging
+    before each fan-out means the first row is built and the second is refused, so
+    the count stops at exactly 1,000.
+    """
+    monkeypatch.setattr(importing, "MAX_ROWS", 1_500)
+    built = 0
+    original = starter_sheet._present
+
+    def counting(*args, **kwargs):
+        nonlocal built
+        built += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(starter_sheet, "_present", counting)
+
+    sheet = starter_sheet_csv([sheet_row("1000", name=f"Kit {i}") for i in range(5)])
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("starter-sheet.csv", sheet, "text/csv")},
+        data={"mode": "merge"},
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert "expands to more than" in resp.json()["detail"]
+    assert built == 1_000, f"{built} rows were built before the budget stopped it"
+
+
+async def test_the_expansion_budget_is_cumulative_across_zip_members(http_client, monkeypatch):
+    """Two starter sheets in one zip share one allowance.
+
+    The single-CSV test above proves the charge happens before the rows are built;
+    this proves the allowance isn't handed out fresh per member. A per-member budget
+    would let an archive of N sheets spend `MAX_ROWS` N times over, which is the same
+    defect the compressed-vs-expanded byte budget exists to prevent one layer down.
+
+    Counted rather than timed, for the same reason: with 1,500 allowed and two sheets
+    of 1,000, the first is built and the second is refused, so `_present` stops at
+    exactly 1,000 rather than 2,000.
+    """
+    monkeypatch.setattr(importing, "MAX_ROWS", 1_500)
+    built = 0
+    original = starter_sheet._present
+
+    def counting(*args, **kwargs):
+        nonlocal built
+        built += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(starter_sheet, "_present", counting)
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for member in ("sheet-one.csv", "sheet-two.csv"):
+            archive.writestr(member, starter_sheet_csv([sheet_row("1000", name=member)]))
+
+    resp = await http_client.post(
+        "/import/preview",
+        files={"file": ("archive.zip", buffer.getvalue(), "application/zip")},
+        data={"mode": "merge"},
+    )
+
+    assert resp.status_code == 422, resp.text
+    assert "expands to more than" in resp.json()["detail"]
+    assert built == 1_000, f"{built} rows were built — the second sheet got its own budget"
