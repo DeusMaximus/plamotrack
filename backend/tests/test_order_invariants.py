@@ -1256,6 +1256,166 @@ async def test_a_child_this_upload_creates_protects_its_kit_from_removal(client,
         assert len(exported["upgrade_applications"]) == 1, "created, then cascaded away"
 
 
+CHILD_HEADERS = {
+    # Narrowed past `applied_at` / `created_at`: both are NOT NULL, and a blank
+    # cell in either is #88's 500, which has nothing to do with these cases.
+    "upgrade_applications": ["id", "upgrade_id", "kit_id", "quantity_used"],
+    "kit_photos": ["id", "kit_id", "file_path"],
+}
+
+
+async def _seed_child(client, table, kit_id):
+    """An existing child row on `kit_id`, and the ids needed to move it later."""
+    if table == "upgrade_applications":
+        upgrade = (
+            await client.post(
+                "/upgrades", json={"name": "Thruster", "manufacturer": "K", "quantity_on_hand": 4}
+            )
+        ).json()
+        applied = (
+            await client.post(
+                f"/upgrades/{upgrade['id']}/apply", json={"kit_id": kit_id, "quantity": 1}
+            )
+        ).json()
+        return {"id": applied["id"], "upgrade_id": upgrade["id"], "quantity_used": "1"}
+
+    photo_id = "b17c0a4e-9d33-4a51-8f60-2ee9c1130044"
+    seed = sheet(
+        "kit_photos",
+        ["id", "kit_id", "file_path"],
+        [{"id": photo_id, "kit_id": kit_id, "file_path": "shots/a.jpg"}],
+    )
+    assert (await apply(client, seed, filename="kit_photos.csv")).status_code == 200
+    return {"id": photo_id, "file_path": "shots/a.jpg"}
+
+
+@pytest.mark.parametrize("table", ["upgrade_applications", "kit_photos"])
+async def test_a_child_this_upload_moves_protects_the_kit_it_arrives_on(client, table):
+    """A child row does not have to be *created* to be evidence (external review of
+    #86, round four).
+
+    `upgrade_applications.kit_id` and `kit_photos.kit_id` are ordinary REF columns,
+    so an update can carry an existing child from one kit to another — and the kit
+    it lands on gains exactly what a create would have given it. Reading `CREATE`
+    alone let that arrival be picked as the removal victim: the child moved onto it
+    and was cascaded away with it, so an upgrade's stock stayed spent with no
+    application left anywhere to explain it.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(2)])
+    item = order["items"][0]
+    oldest, newest = (k["id"] for k in item["kits"])
+    spare = (
+        await client.post("/kits", json={"name": "Spare", "grade": "HG", "status": "backlog"})
+    ).json()
+    child = await _seed_child(client, table, spare["id"])
+
+    content = archive(
+        CHILD_HEADERS,
+        order_items=[line_row(order, item, quantity="1")],
+        **{table: [{**child, "kit_id": newest}]},
+    )
+    plan = await preview(client, content)
+    assert plan["blocking_errors"] == [], plan
+    assert actions(plan, table) == ["update"], plan["tables"]
+    assert plan["derived"]["kits_removed"] == 1, plan["derived"]
+    assert (await apply(client, content)).status_code == 200
+
+    survivors = {k["id"] for k in (await client.get("/kits")).json()}
+    assert newest in survivors, "the kit the child moved onto has to survive"
+    assert oldest not in survivors, "the safe kit is the one that goes"
+
+    if table == "upgrade_applications":
+        exported = read_archive((await client.get("/export/archive")).content)
+        assert len(exported["upgrade_applications"]) == 1, "moved, not cascaded away"
+        assert exported["upgrade_applications"][0]["kit_id"] == newest
+
+
+async def test_a_child_this_upload_moves_also_protects_that_kits_provenance(client):
+    """The same omission defeated the other consumer. A kit gaining a moved
+    application is protected, so the swap that would strip its purchase link is
+    refused — the count still balances, and the link is not the count."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    item = order["items"][0]
+    kit = item["kits"][0]["id"]
+    spare = (
+        await client.post("/kits", json={"name": "Spare", "grade": "HG", "status": "backlog"})
+    ).json()
+    child = await _seed_child(client, "upgrade_applications", spare["id"])
+
+    content = archive(
+        {**CHILD_HEADERS, "kits": ["id", "name", "grade", "order_item_id"]},
+        upgrade_applications=[{**child, "kit_id": kit}],
+        kits=[
+            {"id": kit, "name": "Zaku II", "grade": "HG", "order_item_id": ""},
+            {"id": "", "name": "Replacement", "grade": "HG", "order_item_id": item["id"]},
+        ],
+    )
+    plan = await preview(client, content)
+    assert plan["blocking_errors"], plan["tables"]
+    assert (await apply(client, content)).status_code == 409
+    assert (await client.get(f"/kits/{kit}")).json()["order_item_id"] == item["id"]
+
+
+@pytest.mark.parametrize("mode", ["merge", "add_only", "replace_all"], ids=lambda m: m)
+async def test_a_line_this_upload_creates_cannot_be_over_supplied_either(client, mode):
+    """The action axis of over-supply (external review of #86, round four).
+
+    `test_a_line_cannot_be_over_supplied_by_the_uploads_own_kits` drives an
+    *existing* line, where the surplus is measured against stored kits. On a line
+    the upload creates there are none, and `_plan_removals` returned before saying
+    anything at all — so a quantity-one line landed holding two kits, in every
+    mode. There is nothing to remove here and nothing stored to blame: the file
+    contradicts itself, and that is what the refusal has to say.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1, name="Existing")])
+    new_line = "7a1c0e55-3b90-4f22-9d81-6c22aa0e1177"
+
+    tables = {
+        "order_items": [
+            {
+                "id": new_line,
+                "order_id": order["id"],
+                "item_type": "kit",
+                "quantity": "1",
+                "unit_price_minor": "2500",
+                "currency_code": "JPY",
+                "kit_name": "New",
+                "kit_grade": "HG",
+            }
+        ],
+        "kits": [
+            {"name": "K1", "grade": "HG", "order_item_id": new_line},
+            {"name": "K2", "grade": "HG", "order_item_id": new_line},
+        ],
+    }
+    if mode == "replace_all":
+        tables["retailers"] = [{"id": retailer["id"], "name": "Hobby Link Japan"}]
+        tables["orders"] = [
+            {
+                "id": order["id"],
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+            }
+        ]
+
+    content = archive({"kits": ["name", "grade", "order_item_id"]}, **tables)
+    plan = await preview(client, content, mode=mode)
+    assert actions(plan, "order_items") == ["error"], plan["tables"]
+    lines_plan = next(t for t in plan["tables"] if t["table"] == "order_items")
+    error = next(r for r in lines_plan["rows"] if r["error"])["error"]
+    assert "this upload supplies 2 kit(s)" in error, error
+
+    extra = {"confirm": "REPLACE"} if mode == "replace_all" else {}
+    assert (await apply(client, content, mode=mode, **extra)).status_code == 409
+    lines = [i for o in (await client.get("/orders")).json() for i in o["items"]]
+    assert not any(i["id"] == new_line for i in lines), "nothing was created"
+
+
 async def test_a_reduction_is_refused_when_every_candidate_gains_a_child(client):
     """The other end of the same rule: with both kits protected by children this
     upload creates, there is nothing safe to remove and the reduction is refused

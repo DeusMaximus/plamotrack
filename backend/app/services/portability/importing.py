@@ -1541,11 +1541,25 @@ class _Planner:
             if "rating" in row.present and row.values.get("rating") is not None:
                 protected.add(kit_id)
 
+        # Every child row that will be written, at the kit it will be written
+        # *to* — not only the creates. `upgrade_applications.kit_id` and
+        # `kit_photos.kit_id` are ordinary REF columns, so an update can carry an
+        # existing child from one kit to another, and the kit it arrives at gains
+        # exactly the evidence a create would have given it. Reading `CREATE` alone
+        # let the arrival be chosen as a removal victim: the child moved onto it
+        # and was cascaded away with it, leaving an upgrade's stock spent with no
+        # application left to explain it (external review of #86, round four).
+        #
+        # The kit a child *leaves* stays protected by the stored evidence above.
+        # That is conservative and deliberate — see the union rule in the paragraph
+        # before this one.
         for table in ("upgrade_applications", "kit_photos"):
             for row in self.rows.get(table, []):
-                if row.action is not RowAction.CREATE:
+                if row.action in (RowAction.ERROR, RowAction.SKIP):
                     continue
-                kit_id = row.values.get("kit_id")
+                kit_id = row.values.get("kit_id") if "kit_id" in row.present else None
+                if kit_id is None and row.target is not None:
+                    kit_id = row.target.kit_id
                 if kit_id is not None:
                     protected.add(kit_id)
         return protected
@@ -1848,8 +1862,8 @@ class _Planner:
         interchangeable, and the one added last is the one least likely to be the
         one someone has been looking at.
         """
-        stated = row.values.get("quantity") if "quantity" in row.present else None
-        if row.target is None or not isinstance(stated, int):
+        stated = self._stated_quantity(row)
+        if not isinstance(stated, int):
             return
 
         described = {
@@ -1861,6 +1875,21 @@ class _Planner:
             kit for kit in attached if kit.id not in described and kit.id not in protected
         ]
         if len(candidates) < surplus:
+            if not attached:
+                # Nothing stored to give up: the surplus is entirely kits this
+                # upload itself supplies, which is the file contradicting itself
+                # rather than the collection disagreeing with it. Reachable on a
+                # line the upload *creates*, where an earlier `row.target is None`
+                # guard returned before saying anything at all and the line landed
+                # holding more kits than it claimed, in every mode (external review
+                # of #86, round four).
+                row.action = RowAction.ERROR
+                row.error = (
+                    f"this line says quantity {stated}, but this upload supplies "
+                    f"{surplus + stated} kit(s) for it in kits.csv. Take out the extra kit "
+                    "rows, or raise the quantity to match them"
+                )
+                return
             row.action = RowAction.ERROR
             row.error = (
                 f"this line says quantity {stated}, which is {surplus} fewer "
