@@ -601,6 +601,9 @@ class _Planner:
         # Upload-local identity, which `by_id`/`by_natural` cannot supply: those are
         # built once from the database and never learn what this upload is planning.
         # Row number of the row that claimed each, so the second one can point at it.
+        # Three, not one — the id a row writes, the row it resolves to, and the name
+        # it goes by are three different identities that come apart from each other.
+        self.claimed_source_ids: dict[str, dict[uuid.UUID, int]] = {key: {} for key in SPEC_BY_KEY}
         self.claimed_targets: dict[str, dict[uuid.UUID, int]] = {key: {} for key in SPEC_BY_KEY}
         self.claimed_natural: dict[str, dict[tuple, int]] = {key: {} for key in SPEC_BY_KEY}
 
@@ -948,6 +951,45 @@ class _Planner:
                 row.matched_id, row.matched_by, row.target = item.id, "order + line", item
                 return
 
+    def _claim_source_id(self, spec: TableSpec, row: _Row) -> None:
+        """The id the *file* wrote, claimed before anything resolves it.
+
+        This runs ahead of matching, and has to. The resolved target is not the same
+        identity as the id in the cell, and they come apart exactly when two rows
+        carrying one id resolve differently:
+
+            retailers.csv  id=X, name=Gundam Base   → natural-matches local row A
+            retailers.csv  id=X, name=Other Shop    → no match, creates at X
+
+        The targets are `A` and `X` — two distinct values, nothing to report — so a
+        target-only check previews `unchanged` + `create` and applies cleanly. But
+        row 2 recorded `remap[X] → A`, so every later row in the archive naming
+        `retailer_id=X` is rewritten to **Gundam Base**, while the row actually
+        created at X is **Other Shop**. The file's own id has been given two
+        meanings, and the import silently picks one. Found by external review of
+        #46's first cut, which claimed only the target.
+
+        Claiming before matching is the point: an id-duplicating row must not get as
+        far as contributing a `remap` entry that later tables resolve through, even
+        though the blocking error stops the apply either way. A preview that shows
+        references following a rewrite made by a row it is reporting as broken is
+        not a truthful preview.
+        """
+        if row.action is RowAction.ERROR:
+            return
+        source_id = row.values.get("id")
+        if source_id is None:
+            return
+        first = self.claimed_source_ids[spec.key].get(source_id)
+        if first is not None:
+            row.action = RowAction.ERROR
+            row.error = (
+                f"row {first} of {spec.key}.csv already uses id {source_id} — "
+                "two rows in one upload cannot carry the same id"
+            )
+            return
+        self.claimed_source_ids[spec.key][source_id] = row.row_number
+
     def _claim_identity(self, spec: TableSpec, row: _Row) -> None:
         """No two rows in one upload may name the same thing.
 
@@ -960,17 +1002,19 @@ class _Planner:
         creates, quietly producing the duplicate the whole select-or-create design
         exists to prevent (rule 3).
 
-        Two questions, because one identity does not imply the other:
+        Three questions in all, because no one of these identities implies another.
+        `_claim_source_id` above asks the first, before matching. The two here are
+        asked after it, once the row's fate is known:
 
         * **the target** — the row a plan writes, `matched_id` for an update and
-          `new_id` for a create. Catches the duplicate explicit id, whichever way
-          it resolved, and two rows matching one existing row.
+          `new_id` for a create. Catches two rows landing on one existing row from
+          *different* source ids, which neither other check can see.
         * **the natural key**, but only for a row that supplied no `id`. Two new
           retailers called "Gundam Base" get different random `new_id`s, so the
-          target check cannot see them. Restricting it to id-less rows is what
-          keeps a legitimate archive importable: nothing stops a collection holding
-          two retailers with the same name, an export writes both, and each of
-          those rows carries the id that says which is which.
+          target check cannot see them either. Restricting it to id-less rows is
+          what keeps a legitimate archive importable: nothing stops a collection
+          holding two retailers with the same name, an export writes both, and each
+          of those rows carries the id that says which is which.
 
         Reported rather than merged. A file listing one thing twice is a mistake in
         the file, and quietly folding the rows together is how an import surprises
@@ -1078,6 +1122,9 @@ class _Planner:
                 self._resolve_all_refs(spec, row, replace_all)
                 self._apply_money_alternates(spec, row)
                 _clear_orphan_money_currency(spec, row)
+                # Before matching: a row that duplicates a file id must not reach
+                # `_classify` and leave a `remap` entry behind it.
+                self._claim_source_id(spec, row)
 
                 if not replace_all and row.action is not RowAction.ERROR:
                     if spec.key == "orders":

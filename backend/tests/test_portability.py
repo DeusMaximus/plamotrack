@@ -3737,6 +3737,85 @@ async def test_two_rows_cannot_claim_one_id(http_client, mode, seed_it):
     assert [r["name"] for r in (await http_client.get("/retailers")).json()] == before
 
 
+async def test_one_file_id_cannot_mean_two_different_rows(http_client):
+    """Cause 3, and the state the first cut of this fix missed — found by external
+    review, verified against that cut before this test was written.
+
+    Both rows carry file id `X`, but they *resolve differently*: the first
+    natural-matches the retailer already here, the second matches nothing and plans
+    a create at `X`. Claiming the resolved target sees `A` and `X` — two distinct
+    values, nothing to report — so the preview said `unchanged` + `create` and the
+    apply returned 200.
+
+    The damage is in the third row. `orders.csv` names `retailer_id=X`, and row 2's
+    match recorded `remap[X] → A`, so the order was written pointing at **Gundam
+    Base** while the row actually created at `X` was **Other Shop**. One id, two
+    meanings, and the import silently picks one. The id in the cell has to be
+    claimed on its own, before anything resolves it.
+    """
+    local = (await http_client.post("/retailers", json={"name": "Gundam Base"})).json()
+    claimed = str(uuid.uuid4())
+    archive = make_archive(
+        {
+            "retailers": [
+                {"id": claimed, "name": "Gundam Base"},  # natural-matches the local row
+                {"id": claimed, "name": "Other Shop"},  # same file id, but creates
+            ],
+            "orders": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "retailer_id": claimed,  # which of the two does this mean?
+                    "order_date": "2026-04-02",
+                    "currency_code": "AUD",
+                }
+            ],
+        }
+    )
+
+    plan = await preview(http_client, archive)
+    assert plan["blocking_errors"], (
+        "two rows claiming one file id resolved to different targets and previewed "
+        "as clean — the order below would have been written against the wrong shop"
+    )
+    assert actions(plan, "retailers") == ["unchanged", "error"], actions(plan, "retailers")
+    error = _rows_of(plan, "retailers")[1]["error"]
+    assert "row 2" in error and claimed in error, error
+
+    resp = await apply(http_client, archive)
+    assert resp.status_code == 409, f"{resp.status_code}: {resp.text[:200]}"
+    assert [(r["id"], r["name"]) for r in (await http_client.get("/retailers")).json()] == [
+        (local["id"], "Gundam Base")
+    ]
+    assert (await http_client.get("/orders")).json() == []
+
+
+async def test_two_file_ids_cannot_land_on_one_existing_row(client):
+    """The case the *target* claim is for, and the reason it stays alongside the
+    file-id claim above rather than being replaced by it.
+
+    Two different file ids, so nothing is duplicated in the cells; both rows
+    natural-match the same local retailer, so both plan a write to it. Neither the
+    file-id check nor the natural-key check (skipped — both rows supply an id) can
+    see this one.
+    """
+    await client.post("/retailers", json={"name": "Gundam Base"})
+    content = make_csv(
+        spec.RETAILERS.header,
+        [
+            {"id": str(uuid.uuid4()), "name": "Gundam Base", "url": "https://one.example"},
+            {"id": str(uuid.uuid4()), "name": "gundam base", "url": "https://two.example"},
+        ],
+    )
+
+    plan = await preview(client, content, filename="retailers.csv")
+    assert plan["blocking_errors"], "two rows both updating one retailer previewed as clean"
+    assert actions(plan, "retailers")[1] == "error", actions(plan, "retailers")
+    assert "already claims this row" in _rows_of(plan, "retailers")[1]["error"]
+
+    assert (await apply(client, content, filename="retailers.csv")).status_code == 409
+    assert [r["url"] for r in (await client.get("/retailers")).json()] == [None]
+
+
 async def test_two_new_rows_cannot_describe_one_retailer(client):
     """Cause 3, second half. Neither row carries an id, so they get different random
     ones and the id check cannot see them — the natural key is the only thing that
