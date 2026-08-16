@@ -345,6 +345,84 @@ async def test_a_new_row_takes_the_schema_default_it_leaves_blank(client):
         assert kit[column] is not None, column
 
 
+# --- the mode axis ---------------------------------------------------------------
+#
+# Everything above runs in merge. The three modes reach these rules by different
+# routes — `_classify` is skipped entirely under `replace_all`, and returns SKIP
+# before the keep-the-stored-value rule under `add_only` — so "correct in merge"
+# says nothing about the other two. All three were verified correct before these
+# were written; they are here because untested-and-correct is one refactor from
+# untested-and-wrong, which is this repo's most expensive recurring mistake.
+
+
+async def test_replace_all_lets_a_blank_take_the_default_rather_than_refusing(client):
+    """`_classify` never runs in this mode — every row is a create — so the
+    keep-the-stored-value rule is unreachable and the defaults have to carry it."""
+    content = make_csv(
+        ["id", "name", "grade", "status", "created_at"],
+        [{"id": "", "name": "Gouf", "grade": "HG", "status": "", "created_at": ""}],
+    )
+    plan = await preview(client, content, mode="replace_all", filename="kits.csv")
+    assert actions(plan, "kits") == ["create"], plan["tables"]
+    resp = await apply(client, content, mode="replace_all", filename="kits.csv", confirm="REPLACE")
+    assert resp.status_code == 200, resp.text
+
+    kit = (await client.get("/kits")).json()[0]
+    assert kit["status"] == "backlog" and kit["created_at"] is not None
+
+
+async def test_replace_all_still_refuses_a_create_nothing_can_fill(client):
+    """`_refuse_unfillable_creates` is deliberately called outside the
+    replace-all/merge branch, because a create with nothing to fall back on is a
+    create in either mode."""
+    content = make_csv(
+        ["order_date", "currency_code", "retailer_id", "retailer_name"],
+        [
+            {
+                "order_date": "2026-03-14",
+                "currency_code": "JPY",
+                "retailer_id": "",
+                "retailer_name": "",
+            }
+        ],
+    )
+    plan = await preview(client, content, mode="replace_all", filename="orders.csv")
+    assert actions(plan, "orders") == ["error"], plan["tables"]
+    resp = await apply(
+        client, content, mode="replace_all", filename="orders.csv", confirm="REPLACE"
+    )
+    assert resp.status_code == 409
+
+
+async def test_add_only_leaves_a_matched_row_alone_blank_cells_and_all(client, collection):
+    """`_classify` returns SKIP before the keep-the-stored-value rule, so a blank
+    cell in this mode is not kept-with-a-message — it is not looked at, because
+    nothing about the row is being written."""
+    content = make_csv(
+        ["id", "name", "url"],
+        [{"id": collection["retailers"]["id"], "name": "Hobby Link Japan", "url": ""}],
+    )
+    plan = await preview(client, content, mode="add_only", filename="retailers.csv")
+    assert actions(plan, "retailers") == ["skip"], plan["tables"]
+    assert plan["tables"][0]["rows"][0]["messages"] == []
+    assert (
+        await apply(client, content, mode="add_only", filename="retailers.csv")
+    ).status_code == 200
+
+
+async def test_replace_all_still_blocks_a_dangling_reference_rather_than_noting_it(client):
+    """#45's rule outranks #82's message, and has to: a replace-all deletes
+    everything the upload doesn't contain, so a reference it cannot resolve names a
+    row that will not exist afterwards. The message is a merge-mode answer only."""
+    content = make_csv(
+        ["name", "grade", "order_item_id"],
+        [{"name": "Gouf", "grade": "HG", "order_item_id": MISSING}],
+    )
+    plan = await preview(client, content, mode="replace_all", filename="kits.csv")
+    assert actions(plan, "kits") == ["error"], plan["tables"]
+    assert "a replace-all import deletes everything" in plan["tables"][0]["rows"][0]["error"]
+
+
 # --- an optional reference that resolves to nothing (#82) -----------------------
 
 
