@@ -16,6 +16,110 @@ Template:
 
 ---
 
+## 2026-08-16 — Claude Code (Opus 5) — #45, #46, #74 closed; #44 decided (option B)
+
+**`main` is at `57813bf`.** 470 backend tests, ruff clean, all three CI jobs green.
+#83, #84 and #85 merged and their branches deleted; `main` is the only branch on the
+remote. #45, #46 and #74 closed. Nothing in flight. No migration.
+
+Same session as the #48 entry below — that one records `de8e19b`, this one the three
+issues after it.
+
+- **#45 — `replace_all` resolved references against rows it was about to truncate.**
+  `_resolve_ref` now consults `created_ids` and the planned rows only in that mode,
+  and returns the `(table, id)` it could not resolve so the error names the missing
+  row. Stub-from-a-name stays: a name is satisfiable by creating what it names, a
+  bare uuid is not. Measured on the unfixed code — the polymorphic
+  `order_items.catalog_ref_id` (no FK possible) applied **200** and left a dead uuid;
+  the other four raised `ForeignKeyViolationError` at flush, a 500 after the operator
+  typed REPLACE.
+- **#46 — import identity ignored currency, units, and the upload itself.** Currency
+  joined `_line_fingerprint`; `_apply_money_alternates` now runs in the order-matching
+  pre-pass so both sides of a comparison are in minor units; and three upload-local
+  identity claims were added. On the unfixed code: two rows sharing an explicit id
+  **500**'d, two rows sharing an id that existed silently overwrote each other, and
+  two id-less rows naming one retailer created it twice.
+- **#74 — every integer a request can set is now bounded.** `app/schemas/numeric.py`
+  (`NonNegativeInt4`, `PositiveInt4`, `Int4`), the three stock-arithmetic sites via
+  `guard_stock_ceiling`, and the MCP tool parameters. Two contract tests — one over
+  the Pydantic request schemas, one over the MCP tool input schemas — are what catch
+  the next unbounded field.
+
+### Four traps this session hit, all of them tests that read green
+
+Every one was caught by neutering the fix and re-running, not by reading. **Neuter
+each cause separately**: it is also what proves no test is passing on the back of a
+different fix.
+
+1. **A matrix that varied the wrong axis (#46, caught by external review).**
+   `_claim_identity` claimed the *resolved target*; the duplicate-id matrix drove
+   "id absent from the DB" and "id present" but held **both rows in the same
+   resolution state**. Target and file-id coincide unless the two rows resolve
+   *differently* — one natural-matching, one creating. That state wrote an order
+   against the wrong retailer, silently, at 200. The original matrix passes untouched
+   with `_claim_source_id` deleted; that is the measurement of its gap.
+2. **A field name found in a SQL dump (#74).** An MCP test asserted
+   `"unit_price_minor" in str(error)`. Without the bound the call still raises
+   `ToolError` — the value reaches Postgres — and SQLAlchemy stringifies the whole
+   `INSERT` into the message, column names included. Assert the *layer that spoke*
+   (Pydantic's phrasing, and no `sqlalchemy` in the message), not a substring both
+   layers happen to contain.
+3. **A guard whose outcome another guard already covered (#74).** The `adjust_stock`
+   delta bound never changes *whether* the call fails — any delta past int4 makes the
+   sum past int4 too, so the ceiling guard refuses it either way. The test passed with
+   the delta bound deleted. What the bound actually buys is the error *class*, so the
+   test now asserts `InvalidInputError` against the ceiling's `ConflictError`, at the
+   service, where the two are distinguishable.
+4. **A systematic test covering one of two front doors (#74, caught by external
+   review).** The JSON-schema contract test walked `app.schemas`, so an MCP tool —
+   a function signature, not a request model — was invisible to it. `apply_upgrade`
+   answered 422 on REST and 409 "insufficient stock … 2147483648 requested" on MCP
+   for the same value. **A sweep that claims to be systematic owes an answer for
+   every writer**, and this repo has three.
+
+### #44 is decided: option B, no column, no migration
+
+Full reasoning in [the issue comment](https://github.com/DeusMaximus/plamotrack/issues/44#issuecomment-5307474070).
+The short version, and the part that is *not* in the issue body:
+
+**`received_at is not None` is the proxy for "stock was applied" in four places** —
+`receive_order` (`orders.py:679`), `delete_order` (`:706`), `update_order` (`:636`),
+`create_order` (`:601`). The issue documents only the `receive_order` 409. Measured
+on an order marked received by a partial `orders.csv`: `DELETE` returns a **409 that
+makes the order undeletable** with a message blaming the wrong thing, and a `PATCH`
+of the quantity **silently moves stock** (0 → 2 on a 3 → 5 edit). A column teaches
+four stock mutators a distinction; the refusal removes the state so none of them need
+to know it.
+
+Build it against two things: the condition is "the order has **catalog lines**" (a
+kit-only order transitioning to received stays legal — that is #79's starter-sheet
+path), and the blocking message must **name the fix** ("state the quantity in
+`consumables.csv`"), not merely refuse.
+
+Case 4's second hole — clearing `received_at` re-arming the increment — is unaffected
+by the choice and still needs its own reject-at-preview guard. It is the most severe
+item in the issue.
+
+### The rest of the milestone
+
+**3 open: #44, #77, #82.** #44 is the big one and wants a session of its own — five
+cases, a new `services/portability/invariants.py`, downward reconciliation in
+`_plan_spawns`, and a shared invariant matrix driven through *both* REST and import.
+#77 lands in the same plan/fan-out code, so sequence it after rather than alongside.
+**#82 is new**, filed during #45: in merge mode an optional reference resolving to
+nothing is silently nulled. Deliberately not folded in — blocking it would refuse
+"import just `kits.csv` into a fresh instance", so it wants a row *message*, and
+whether that is per-row or a per-table summary is a design call.
+
+### Working note
+
+**Every PR this session went to external (Codex) review, and two came back NO-GO** —
+both findings real, both in the *tests* rather than the fix. Budget for a review round
+rather than hoping for none: reproduce the finding against the reviewed head first,
+then fix, then re-verify by neutering.
+
+---
+
 ## 2026-08-16 — Claude Code (Opus 5) — #48 closed: export reads one snapshot (rule 7.2)
 
 **`main` is at `de8e19b`.** 437 backend tests, ruff clean, all three CI jobs green.
