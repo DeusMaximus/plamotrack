@@ -17,11 +17,22 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from app.config import get_settings
 from app.db import get_sessionmaker, session_scope
 from app.exceptions import ConflictError, NotFoundError
 from app.mcp import mcp
-from app.models import Consumable, ItemType, Kit, KitStatus, OrderItem, Upgrade, UpgradeApplication
+from app.models import (
+    Consumable,
+    ItemType,
+    Kit,
+    KitStatus,
+    OrderItem,
+    Retailer,
+    Upgrade,
+    UpgradeApplication,
+)
 from app.schemas.kits import KitCreate
 from app.schemas.orders import OrderCreate, OrderItemCreate, OrderItemUpsert, OrderUpdate
 from app.services import catalog as catalog_service
@@ -29,6 +40,7 @@ from app.services import kits as kits_service
 from app.services import orders as orders_service
 from app.services import upgrades as upgrades_service
 from app.services.portability import exporting, importing, spec
+from app.services.read_snapshot import begin_read_snapshot
 from app.services.write_gate import acquire_write_gate
 
 
@@ -986,3 +998,222 @@ async def test_replace_all_cannot_truncate_a_row_its_preview_never_listed(client
         "replace_all destroyed a kit created after its preview — the approved plan "
         "never listed it as a deletion"
     )
+
+
+# --- the export read snapshot (#48) ---------------------------------------------
+#
+# The write gate is writers-only by design — `test_reads_do_not_wait_behind_the_gate`
+# above exists to keep it that way — so an export runs alongside every writer.
+# What that leaves is the seam inside the export itself: `_load_all` issues one
+# statement per table, and under READ COMMITTED each one sees a newer database
+# than the last. A write committing partway through lands in the archive on one
+# side of the seam and not the other, and the result is a zip whose files
+# contradict each other: an order line whose order is in no orders.csv, a kit
+# whose order line is in no order_items.csv. `begin_read_snapshot` pins the whole
+# transaction to the snapshot its first statement took.
+#
+# Forcing the interleave is the mirror image of the gate repros above, and that
+# changes how it must be written. Those launch their racer as a task and await it
+# only after the apply, because the apply holds the gate and awaiting inline would
+# deadlock the test against its own guard. An export holds no gate and takes no row
+# locks, so the racer runs immediately and awaiting it inline is both deadlock-free
+# and exactly deterministic: the write is provably committed before the export's
+# next read, with nothing timed and nothing to poll. That safety is specific to
+# ordinary row writes — a racer that TRUNCATEs (a `replace_all` import) wants
+# ACCESS EXCLUSIVE and would queue behind the export's ACCESS SHARE, so inline is
+# the wrong shape for one of those.
+
+
+def _read_archive(content: bytes) -> dict[str, list[dict[str, str]]]:
+    with zipfile.ZipFile(io.BytesIO(content)) as archive:
+        return {
+            table.key: list(csv.DictReader(io.StringIO(archive.read(table.filename).decode())))
+            for table in spec.TABLE_SPECS
+        }
+
+
+def _commit_a_write_after(monkeypatch, table_reads: int, racer) -> dict:
+    """Run `racer()` to completion after the export's `table_reads`-th table read.
+
+    The hook is installed by wrapping `begin_read_snapshot`, which is the only
+    point where the request's own session is in reach before any of the reads —
+    the real one is called first, so what is under test still runs untouched. It
+    counts `session.scalars` calls, i.e. logical table reads: `order_items` issues
+    two statements through one call because of its `selectinload`, and the second
+    is part of the same read.
+
+    Hooking the guard means the *regression* — an export that stops calling it —
+    unstages the race rather than losing it, so the returned dict reports whether
+    the hook ran at all and the caller says which of the two happened. Without
+    that, deleting the one line this all rests on fails these tests with "the
+    racing order never landed", which reads like a broken fixture.
+    """
+    real_begin = exporting.begin_read_snapshot
+    staged = {"begun": False, "reads": 0}
+
+    async def begin_then_hook(session) -> None:
+        await real_begin(session)
+        staged["begun"] = True
+        real_scalars = session.scalars
+
+        async def counting_scalars(*args, **kwargs):
+            result = await real_scalars(*args, **kwargs)
+            staged["reads"] += 1
+            if staged["reads"] == table_reads:
+                await racer()
+            return result
+
+        session.scalars = counting_scalars
+
+    monkeypatch.setattr(exporting, "begin_read_snapshot", begin_then_hook)
+    return staged
+
+
+@pytest.mark.parametrize(
+    "table_reads",
+    [
+        # `_load_all` reads orders, then order_items, then the catalog tables, then
+        # kits. Landing the write after the first read strands an order line whose
+        # order the archive never lists; after the second, a kit whose order line it
+        # never lists. Same seam, two different files torn apart by it — and only
+        # one of them is visible from any single position, which is why this varies
+        # the position rather than picking one.
+        pytest.param(1, id="between the orders and order_items reads"),
+        pytest.param(2, id="between the order_items and kits reads"),
+    ],
+)
+async def test_an_archive_never_mixes_states_from_either_side_of_a_write(
+    client, retailer, monkeypatch, table_reads
+):
+    """#48. A whole order — order, line, and the kit it fans out into — commits in
+    the middle of an export. The archive must be the collection as it stood when
+    the export began: the order absent from every file, not present in the files
+    read after the commit and missing from the ones read before it."""
+    raced: list[int] = []
+
+    async def order_mid_export() -> None:
+        resp = await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-08-16",
+                "order_number": "RACED-1",
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": "Raced In Zaku", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+        raced.append(resp.status_code)
+
+    staged = _commit_a_write_after(monkeypatch, table_reads, order_mid_export)
+
+    response = await client.get("/export/archive")
+    assert response.status_code == 200, response.text
+    tables = _read_archive(response.content)
+
+    assert staged["begun"], (
+        "the export never asked for a read snapshot — `_load_all` has stopped "
+        "calling `begin_read_snapshot`, which is the whole of #48's fix"
+    )
+    assert raced == [201], f"the racing order never landed: {raced}"
+    assert {o["order_number"] for o in (await client.get("/orders")).json()} == {"RACED-1"}, (
+        "the racing order isn't in the database afterwards — this test would pass "
+        "for the wrong reason"
+    )
+
+    order_ids = {row["id"] for row in tables["orders"]}
+    line_ids = {row["id"] for row in tables["order_items"]}
+    assert {row["order_id"] for row in tables["order_items"]} <= order_ids, (
+        "order_items.csv carries a line whose order is in no orders.csv — the two "
+        "files were read either side of a commit"
+    )
+    assert {row["order_item_id"] for row in tables["kits"] if row["order_item_id"]} <= line_ids, (
+        "kits.csv carries a kit whose order line is in no order_items.csv — the two "
+        "files were read either side of a commit"
+    )
+    assert not order_ids, f"the export began on an empty collection: {tables['orders']}"
+    assert not tables["kits"], f"the export began with no kits: {tables['kits']}"
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        pytest.param("/export/archive", id="the whole archive"),
+        # The single-table export reads every table too — the readable mirror
+        # columns are filled from the others — so it runs the same seam and needs
+        # the same snapshot. Its tear isn't visible in one file the way the
+        # archive's is across two, so it's pinned on the mechanism rather than on
+        # an inconsistency it can't express.
+        pytest.param("/export/orders.csv", id="a single table"),
+    ],
+)
+async def test_every_export_reads_from_a_read_only_snapshot(client, retailer, monkeypatch, path):
+    """Asked of Postgres inside the export's own transaction, rather than inferred
+    from the outcome above: a behavioural race can be won by luck, this can't.
+
+    READ ONLY is half the fix and has no behavioural test at all — nothing in an
+    export tries to write today, and the point of declaring it is that whatever
+    tries to write tomorrow is refused instead of writing from under the snapshot.
+    """
+    observed: list[tuple[str | None, str | None]] = []
+    real_begin = exporting.begin_read_snapshot
+
+    async def begin_then_ask(session) -> None:
+        await real_begin(session)
+        observed.append(
+            (
+                await session.scalar(text("SHOW transaction_isolation")),
+                await session.scalar(text("SHOW transaction_read_only")),
+            )
+        )
+
+    monkeypatch.setattr(exporting, "begin_read_snapshot", begin_then_ask)
+
+    assert (await client.get(path)).status_code == 200
+    assert observed, f"{path} never asked for a read snapshot at all"
+    assert observed == [("repeatable read", "on")], (
+        f"{path} read the collection under {observed} — under READ COMMITTED that is "
+        "one snapshot per table, each newer than the last"
+    )
+
+
+async def test_the_snapshot_does_not_follow_the_connection_back_into_the_pool():
+    """`READ ONLY` is a connection characteristic, and the whole test suite runs on
+    `NullPool` (conftest: pooled asyncpg connections are event-loop bound). So the
+    one configuration where a leak is possible — the pooled engine every real
+    deployment runs, `app/db.py` — is the one no other test here can observe, and
+    a leak there is not subtle: the next request to reuse that connection cannot
+    write at all.
+
+    SQLAlchemy resets the characteristic when the connection is returned. This
+    pins that on a `pool_size=1` engine, so the second transaction provably gets
+    the same physical backend as the export-shaped first one.
+    """
+    engine = create_async_engine(get_settings().database_url, pool_size=1, max_overflow=0)
+    maker = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        async with maker() as session:
+            await begin_read_snapshot(session)
+            snapshot_backend = await session.scalar(text("SELECT pg_backend_pid()"))
+            assert await session.scalar(text("SHOW transaction_read_only")) == "on"
+            await session.commit()
+
+        async with maker() as session:
+            assert await session.scalar(text("SELECT pg_backend_pid()")) == snapshot_backend, (
+                "the pool handed out a different connection — this test proves nothing "
+                "unless the write below reuses the one the snapshot ran on"
+            )
+            session.add(Retailer(name="Writes after an export"))
+            await session.commit()
+            assert await session.scalar(select(func.count()).select_from(Retailer)) == 1, (
+                "the write after the snapshot didn't land"
+            )
+    finally:
+        await engine.dispose()
