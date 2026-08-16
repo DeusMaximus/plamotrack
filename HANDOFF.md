@@ -16,21 +16,86 @@ Template:
 
 ---
 
-## 2026-08-17 — Claude Code (Opus 5) — #44 built and reviewed three times (PR #86)
+## 2026-08-17 — Claude Code (Opus 5) — #82 and #88 closed by PR #89
 
-**PR #86 is open at `c2eeb1a`, branch `fix/44-import-order-invariants`, NOT merged
-and NOT approved.** 544 backend tests, ruff clean, frontend builds and lints, all
-three CI jobs green. No migration. `main` is at `8d11368` plus this entry. **#87
-and #88 filed** during the work.
+**PR #89 is open at `3973ef5`, branch `fix/82-88-blank-and-dangling-cells`, NOT
+merged and NOT reviewed.** 491 backend tests, ruff clean, three CI jobs green. No
+migration. Branched from `main`, **independent of #86** — either can merge first.
 
-Supersedes the entry originally written here before the reviews; that one
-described a state three rounds out of date.
+**`main` is at `e45a62e` plus this entry.** Two PRs open, neither reviewed: #86
+(#44, four review rounds) and #89 (this).
+
+### They were one bug, not two
+
+The unified rule, as a ladder for a cell that says nothing usable:
+
+1. a readable mirror supplies it (`retailer_name`, `unit_price`) — already worked,
+   and the fix depends on it still running first;
+2. a default supplies it — the schema's, or the file format's;
+3. **on an update, the stored value stands** and the row says so;
+4. **on a create, the row is refused by name**;
+5. nullable column, blank cell → null, silently. Unchanged and documented;
+6. nullable column, unresolvable reference → null, with a row message naming the
+   column and the id it discarded.
+
+Rungs 3, 4 and 6 are new. Both product calls — keep-the-stored-value over
+refusing, per-row messages over a summary — are the owner's and are recorded on
+the issues.
+
+**The root cause was two lists disagreeing.** `_COLUMN_DEFAULTS` recorded both what
+the schema already defaults *and* what the file format forgives, and was wrong
+about the first: it was missing `kits.created_at` and `kits.updated_at`, which have
+server defaults, and those two were the 500s. Nullability and schema defaults are
+read off the model now (rule 9); the list keeps only format policy; a contract test
+holds them apart and is what catches the next column added to a model.
+
+### The lesson worth carrying: an empty parametrize is a skip, not a failure
+
+`tests/test_cell_semantics.py` enumerates its own subject — every NOT NULL column a
+sheet may leave blank — so a column added to a model reaches it for free. The first
+cut built that enumeration by calling **`_column_is_nullable`, the function under
+test**. Mutating it to `return True` emptied the list, `pytest.mark.parametrize`
+over an empty list *skips*, and the entire matrix silently stopped existing while
+the run stayed green with the rule deleted.
+
+This is a different failure mode from the ones in the entry below, and worse. Those
+were tests that ran and asserted the wrong thing; this one **stopped running and
+reported nothing**. No amount of reading finds it — a skipped test looks like a
+passing test in a `-q` summary.
+
+**A test that derives its own subject from the code it is testing can be disarmed
+rather than broken.** Read the enumeration from the schema, the fixtures, or a
+literal list — anywhere except the thing under test. Worth adding to AGENTS.md's
+"Writing the test" section as its own trap; not done yet.
+
+The other two survivors were the familiar shape: a clause in `_build_instance` that
+could not change an outcome (SQLAlchemy applies a column default even when the
+insert names the column as NULL), and a test asserting that *a* refusal happened
+rather than which rule made it.
+
+### State
+
+- 21 tests in `tests/test_cell_semantics.py`; **8 mutants, all killed**
+  (`backend/mutation_test.py`, tracked on this branch too).
+- `docs/import-export.md` updated with both rules in user-facing language.
+- **Not reviewed.** Given #86's record — four rounds, eleven findings, all real —
+  this wants a round before it merges, and the review budget resets Thursday
+  2026-08-20.
+
+---
+
+## 2026-08-17 — Claude Code (Opus 5) — #44 built and reviewed four times (PR #86)
+
+**PR #86 is open at `308c446`, branch `fix/44-import-order-invariants`, NOT merged
+and NOT approved.** 550 backend tests, ruff clean, frontend builds and lints, all
+three CI jobs green. No migration. **#87 and #88 filed** during the work; #88 is
+since closed by PR #89 (entry above).
 
 ### Where it stands
 
-**Three external (Codex) review rounds, all NO-GO, nine findings, every one real
-and reproduced at head before being fixed.** Round sizes: 3, 4, 2. The rate is
-falling but has not reached zero, so **do not read the current green suite as
+**Four external (Codex) review rounds, all NO-GO, eleven findings, every one real
+and reproduced at head before being fixed.** Round sizes: 3, 4, 2, 2. The rate is
+flattening but has not reached zero, so **do not read the current green suite as
 evidence the branch is finished.**
 
 **The review budget is spent.** Codex usage resets Thursday 2026-08-20; roughly 5%
@@ -40,12 +105,15 @@ remained when this was written. The next session inherits a real decision:
   pre-adoption alpha — and every round so far has found something a green suite
   did not. This is the recommendation.
 - **Merge unreviewed.** Defensible only if something starts depending on it. Given
-  9-for-9 on findings, treat it as knowingly shipping an unknown defect.
+  11-for-11 on findings, treat it as knowingly shipping an unknown defect.
 - **Review it another way.** Being investigated at the time of writing.
 
-If a fourth round happens, point it at **`_protected_kits`** — it is read by two
-rules and computed from four sources, so a way a kit acquires protection that
-nobody enumerated defeats both of round three's fixes at once.
+Round four was pointed at `_protected_kits` and found two more there, so a fifth
+round should go at it again: it is now read by two rules and computed from four
+sources, and both of round four's findings were inputs to it that nobody had
+enumerated. The other thing worth attacking is the **ordering** of the refusals
+against the fan-out — round two's fourth finding was fixed by moving refusals
+first, and a fix by reordering can quietly change something else.
 
 ### What shipped
 
@@ -95,23 +163,24 @@ mistakes:
 
 ### The mutation harness
 
-**`backend/mutation_test.py`, untracked, 39 cases, all killed.** One command,
-~40 seconds. Its docstring is the contract. It refuses to run on a dirty tree and
-reports a zero-or-two-match anchor as a failure — a mutant that never applied is
-not a mutant that passed, which caught three stale anchors after a refactor.
+**`backend/mutation_test.py`, now tracked on the branch, 43 cases, all killed.**
+One command, ~40 seconds. Its docstring is the contract. It refuses to run on a
+dirty tree and reports a zero-or-two-match anchor as a failure — a mutant that
+never applied is not a mutant that passed, which caught three stale anchors after
+a refactor.
 
-**Decide whether to track it.** Untracked cost real work once: a coarse range edit
-deleted about a dozen cases and there was no history to recover from (caught only
-because the total dropped). Against tracking: the anchors are exact source
-strings, so it rots the moment the code moves. A reasonable middle is to commit it
-on the branch as review scaffolding and decide at merge.
+Tracked at the owner's direction, after untracked cost a dozen cases to one
+careless edit with no history to recover them from. The anchors are exact source
+strings, so it rots when the code moves; **whoever merges decides whether it earns
+its keep on `main`** or comes out with the branch. #89 carries its own copy for
+the same reason.
 
 ### Still open
 
-**#77, #82, #87, #88.** #77 lands in the same fan-out code that now carries
+**#77 and #87.** #77 lands in the same fan-out code that now carries
 `_attached_after`, `_reconcilable_lines` and `_protected_kits` — read `_plan_spawns`
-end to end before starting it. #82 and #88 are one question ("what does a blank
-cell mean") asked of two column kinds and are cheaper together.
+end to end before starting it. #87 is a product call, not a defect hunt; four
+options are laid out on the issue. #82 and #88 are PR #89.
 
 ---
 
