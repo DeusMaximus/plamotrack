@@ -226,8 +226,9 @@ def _check_receipt_transitions(rows: dict[str, list["_Row"]]) -> None:
     **`replace_all` is carried by the `UPDATE` test, not by a mode check.** An
     explicit `if replace_all: return` sat here first and was removed: in that mode
     `build` marks every row `CREATE` and never matches a target, so the guard could
-    not be reached and no neutered build of it went red. What actually keeps an
-    archive restore importable is that a create is not a transition — the archive
+    not be reached, and a mutation-test build with it removed changed nothing. What
+    actually keeps an archive restore importable is that a create is not a
+    transition — the archive
     carries the received order and the post-receipt `quantity_on_hand` together
     (rule 10) — and `test_a_received_order_with_catalog_lines_still_restores_from_
     an_archive` drives both modes over it.
@@ -251,8 +252,8 @@ def _check_receipt_transitions(rows: dict[str, list["_Row"]]) -> None:
         # archive of a received order importable. An explicit
         # `if row.action is not RowAction.UPDATE` guard sat here first and was
         # removed: `changes` non-empty is exactly equivalent to UPDATE, so
-        # nothing could make the guard decide and no neutered build of it went
-        # red. #41 learned the same thing from the other side — a create's
+        # nothing could make the guard decide, and a mutation-test build with it
+        # removed changed nothing. #41 learned the same thing from the other side — a create's
         # `changes` is empty, so any rule written against it is silent there.
         arriving = not change.before and bool(change.after)
         clearing = bool(change.before) and not change.after

@@ -583,7 +583,7 @@ async def test_a_kits_sheet_that_never_mentions_order_item_id_moves_nothing(clie
     like it is emptying its line, and the fan-out spawns replacements for kits that
     never went anywhere.
 
-    Found by neutering: removing the `present` guard left the whole suite green,
+    Found by mutation testing: removing the `present` guard left the whole suite green,
     because every other kits row in it carries the column.
     """
     retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
@@ -1101,8 +1101,8 @@ async def test_a_generated_status_stamp_does_not_move_the_plan_hash(
     `datetime.now(UTC)` written into `values` hashes as nothing and this test
     passes against the broken build. The blank-cell shape has the column in
     `present`, which is where the clock would actually land — and `present.discard`
-    is what takes it back out. Found by neutering: the absent-column case alone
-    stayed green with the deferral removed.
+    is what takes it back out. Found by mutation testing: the absent-column case
+    alone stayed green with the deferral removed.
     """
     content = kit_sheet(spawned_kit["id"], "building", with_stamp_column=with_column)
     first = await preview(client, content, filename="kits.csv")
