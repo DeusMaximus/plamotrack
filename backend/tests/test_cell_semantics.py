@@ -20,17 +20,32 @@ import pytest
 from sqlalchemy import inspect
 
 from app.services.portability import spec
-from app.services.portability.importing import (
-    _COLUMN_DEFAULTS,
-    _column_has_own_default,
-    _column_is_nullable,
-)
+from app.services.portability.importing import _COLUMN_DEFAULTS
 from app.services.portability.spec import ColumnRole
 from tests.test_portability import actions, apply, make_csv, preview
 
 pytestmark = pytest.mark.anyio
 
 MISSING = "11111111-1111-1111-1111-111111111111"
+
+
+def nullable(table_key: str, name: str) -> bool:
+    """Read straight from the model, never through the importer's own helper.
+
+    These tests parametrise themselves off this enumeration, so calling the
+    function under test would let a mutation of it empty the list — and an empty
+    `parametrize` is a *skip*, not a failure. Mutation testing caught exactly that:
+    `_column_is_nullable` was replaced with `return True` and the whole matrix
+    quietly stopped existing while the run stayed green. A test that derives its
+    own subject from the code it is testing can be disarmed rather than broken.
+    """
+    column = spec.SPEC_BY_KEY[table_key].model.__table__.columns.get(name)
+    return column is None or column.nullable
+
+
+def has_own_default(table_key: str, name: str) -> bool:
+    column = spec.SPEC_BY_KEY[table_key].model.__table__.columns.get(name)
+    return column is not None and (column.default is not None or column.server_default is not None)
 
 
 def unstatable_columns() -> list[tuple[str, str]]:
@@ -41,7 +56,7 @@ def unstatable_columns() -> list[tuple[str, str]]:
         for column in table.columns:
             if column.name == "id" or not column.persisted or column.required:
                 continue
-            if not _column_is_nullable(table, column.name):
+            if not nullable(table.key, column.name):
                 found.append((table.key, column.name))
     return found
 
@@ -85,7 +100,7 @@ def test_every_column_the_database_requires_can_be_filled_from_somewhere():
     unfillable = []
     for table_key, name in unstatable_columns():
         table = spec.SPEC_BY_KEY[table_key]
-        if _column_has_own_default(table, name):
+        if has_own_default(table_key, name):
             continue
         if name in _COLUMN_DEFAULTS.get(table_key, {}):
             continue
@@ -107,7 +122,7 @@ def test_the_importers_default_list_claims_nothing_the_schema_already_covers():
         f"{table_key}.{name}"
         for table_key, names in _COLUMN_DEFAULTS.items()
         for name in names
-        if _column_has_own_default(spec.SPEC_BY_KEY[table_key], name)
+        if has_own_default(table_key, name)
     ]
     assert overlap == [], (
         "these are defaulted by the schema and restated by the importer — pick one"
