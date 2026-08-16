@@ -736,6 +736,244 @@ async def test_a_kit_move_the_upload_cannot_reconcile_is_refused(client, mode, s
     assert len(stored["kits"]) == 1, "nothing moved"
 
 
+@pytest.mark.parametrize("direction", ["attach", "detach"], ids=["attach", "detach"])
+@pytest.mark.parametrize("restated", [False, True], ids=["line unchanged", "line updated"])
+async def test_a_line_row_carrying_no_quantity_authorises_no_reconciliation(
+    client, direction, restated
+):
+    """Naming a line is not the same as saying what it holds (external review of
+    #86, round two).
+
+    `reconciled` was filled as a side effect of the fan-out loop, so it meant
+    *visited* rather than *reconciled*. A partial `order_items.csv` naming a line
+    without a `quantity` column marked it handled, the fan-out then did nothing
+    with it — `wanted` of 0 makes every branch a no-op — and the kit-move refusal
+    skipped it as somebody else's problem. Both directions applied at 200.
+
+    The line's own action is the second axis: an otherwise-identical row is
+    UNCHANGED or UPDATE depending on whether it restates anything, and the two
+    reach the fan-out down different branches of `_classify`.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    item = order["items"][0]
+
+    if direction == "attach":
+        subject = (
+            await client.post("/kits", json={"name": "Gouf", "grade": "HG", "status": "backlog"})
+        ).json()
+        parent = item["id"]
+    else:
+        subject = item["kits"][0]
+        parent = ""
+
+    line = {
+        "id": item["id"],
+        "order_id": order["id"],
+        "item_type": "kit",
+        "unit_price_minor": "3000" if restated else "2800",
+        "currency_code": "JPY",
+    }
+    content = archive(
+        {
+            "order_items": ["id", "order_id", "item_type", "unit_price_minor", "currency_code"],
+            "kits": ["id", "name", "grade", "order_item_id"],
+        },
+        order_items=[line],
+        kits=[
+            {"id": subject["id"], "name": subject["name"], "grade": "HG", "order_item_id": parent}
+        ],
+    )
+    plan = await preview(client, content)
+    assert actions(plan, "kits") == ["error"], plan["tables"]
+    # The stored quantity is what the line still says, so the refusal reports both
+    # numbers rather than pleading ignorance — the sheet's silence doesn't erase it.
+    error = plan["tables"][-1]["rows"][0]["error"]
+    assert "while the line says it bought 1" in error, error
+    assert (await apply(client, content)).status_code == 409
+
+    stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert (stored["quantity"], len(stored["kits"])) == (1, 1), "nothing moved"
+
+
+async def test_a_kit_moved_onto_a_new_line_that_states_no_quantity_is_refused(client):
+    """The branch where *nothing* knows the quantity: the line is created by this
+    upload and its sheet has no `quantity` column, so there is no stored row to
+    fall back on either.
+
+    Reachable, and worth refusing rather than letting through: `quantity` is NOT
+    NULL, so the row would otherwise reach the database as a null and come back as
+    a 500 rather than a named row (rule 6).
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    loose = (
+        await client.post("/kits", json={"name": "Gouf", "grade": "HG", "status": "backlog"})
+    ).json()
+    new_line = "5c1d77aa-9e02-4b31-8a44-2f0016cc9d10"
+
+    content = archive(
+        {
+            "order_items": ["id", "order_id", "item_type", "unit_price_minor", "currency_code"],
+            "kits": ["id", "name", "grade", "order_item_id"],
+        },
+        order_items=[
+            {
+                "id": new_line,
+                "order_id": order["id"],
+                "item_type": "kit",
+                "unit_price_minor": "2500",
+                "currency_code": "JPY",
+            }
+        ],
+        kits=[{"id": loose["id"], "name": "Gouf", "grade": "HG", "order_item_id": new_line}],
+    )
+    plan = await preview(client, content)
+    assert actions(plan, "kits") == ["error"], plan["tables"]
+    assert "no quantity column" in plan["tables"][-1]["rows"][0]["error"]
+    assert (await apply(client, content)).status_code == 409
+    assert (await client.get(f"/kits/{loose['id']}")).json()["order_item_id"] is None
+
+
+async def test_a_replace_all_plan_does_not_depend_on_rows_it_will_truncate(client):
+    """Rule #45, reached through the new refusal (external review of #86, round two).
+
+    A non-kit line leaves the fan-out *before* it is marked reconciled, so an
+    upload reusing a stored kit line's uuid for a consumable line fell through to
+    a `by_id` lookup — rows `TRUNCATE` is about to remove — and counted their kits.
+    The same upload previewed as two errors with the stored order present and
+    cleanly without it.
+
+    Asserted as the invariant rather than as a verdict: whatever `replace_all`
+    decides about an upload, it has to decide the same thing about it in an empty
+    instance and a populated one, because everything the stored rows say is about
+    to stop being true.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(2)])
+    line_id = order["items"][0]["id"]
+    paint = "aaaaaaaa-0000-4000-8000-000000000001"
+
+    content = archive(
+        {"kits": ["name", "grade", "order_item_id"]},
+        retailers=[{"id": retailer["id"], "name": "Hobby Link Japan"}],
+        consumables=[{"id": paint, "name": "Paint", "category": "paint", "quantity_on_hand": "0"}],
+        orders=[
+            {
+                "id": order["id"],
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-1",
+                "currency_code": "JPY",
+            }
+        ],
+        order_items=[
+            {
+                "id": line_id,  # the stored KIT line's uuid, reused for a catalog line
+                "order_id": order["id"],
+                "item_type": "consumable",
+                "catalog_ref_id": paint,
+                "quantity": "1",
+                "unit_price_minor": "500",
+                "currency_code": "JPY",
+            }
+        ],
+        kits=[
+            {"name": "A", "grade": "HG", "order_item_id": line_id},
+            {"name": "B", "grade": "HG", "order_item_id": line_id},
+        ],
+    )
+
+    with_stored = await preview(client, content, mode="replace_all")
+    assert (await client.delete(f"/orders/{order['id']}")).status_code == 204
+    without_stored = await preview(client, content, mode="replace_all")
+
+    assert bool(with_stored["blocking_errors"]) == bool(without_stored["blocking_errors"])
+    assert actions(with_stored, "kits") == actions(without_stored, "kits")
+    # And the verdict itself: the uploaded graph points kits at a consumable line.
+    assert actions(without_stored, "kits") == ["error", "error"], without_stored["tables"]
+
+
+async def test_a_kit_cannot_take_its_provenance_from_a_catalog_line(client):
+    """`kits.order_item_id` records which order line bought the kit, and a paint
+    line never bought one (external review of #86, round two).
+
+    §3.9 gives catalog lines a different dispatch entirely — they move
+    `quantity_on_hand`, they don't own kits — and neither REST nor MCP exposes any
+    way to write this column, so the importer was the only writer in the
+    application that could attach a kit to a consumable. The first cut of the
+    kit-move refusal skipped non-kit lines explicitly, which is what left the route
+    open.
+
+    Both row actions, because the structure differs: an UPDATE moves an existing
+    kit's provenance, a CREATE mints one already holding it.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    consumable = await make_consumable(client)
+    order = await make_order(client, retailer, [consumable_line(consumable["id"], quantity=1)])
+    line_id = order["items"][0]["id"]
+    loose = (
+        await client.post("/kits", json={"name": "Gouf", "grade": "HG", "status": "backlog"})
+    ).json()
+
+    content = sheet(
+        "kits",
+        ["id", "name", "grade", "order_item_id"],
+        [
+            {"id": loose["id"], "name": "Gouf", "grade": "HG", "order_item_id": line_id},
+            {"id": "", "name": "Zaku II", "grade": "HG", "order_item_id": line_id},
+        ],
+    )
+    plan = await preview(client, content, filename="kits.csv")
+    assert actions(plan, "kits") == ["error", "error"], plan["tables"]
+    error = plan["tables"][0]["rows"][0]["error"]
+    assert "is a consumable line" in error
+    assert "Point these kits at a kit line" in error, "the refusal has to name the fix"
+
+    assert (await apply(client, content, filename="kits.csv")).status_code == 409
+    kits = (await client.get("/kits")).json()
+    assert [k["id"] for k in kits if k["order_item_id"] == line_id] == []
+    assert (await client.get(f"/kits/{loose['id']}")).json()["order_item_id"] is None
+
+
+async def test_a_refused_move_contributes_no_planned_removal(client):
+    """The preview is binding (#41), so a destructive effect derived from a move
+    that will be refused cannot appear in it (external review of #86, round two).
+
+    The fan-out ran before the refusal, so it saw the move, found the destination
+    over-supplied, and planned to delete the destination's own kit. The refusal
+    then errored the move — because the *source* line would be left empty — and the
+    removal stayed in the plan: `kits_removed: 1` on a preview whose apply 409s and
+    removes nothing.
+
+    Fixed by ordering rather than by cleanup: the refusal runs first, so an errored
+    kits row is already out of `_attached_after` and the surplus never exists.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    source = await make_order(client, retailer, [kit_line(1, name="First")], number="A")
+    dest = await make_order(client, retailer, [kit_line(1, name="Second")], number="B")
+    moving = source["items"][0]["kits"][0]["id"]
+
+    content = archive(
+        {"kits": ["id", "name", "grade", "order_item_id"]},
+        order_items=[line_row(dest, dest["items"][0], quantity="1")],
+        kits=[
+            {
+                "id": moving,
+                "name": "First",
+                "grade": "HG",
+                "order_item_id": dest["items"][0]["id"],
+            }
+        ],
+    )
+    plan = await preview(client, content)
+    assert plan["blocking_errors"], "the source line would be left empty"
+    assert plan["derived"]["kits_removed"] == 0, "a refused move deletes nothing"
+
+    assert (await apply(client, content)).status_code == 409
+    assert len((await client.get("/kits")).json()) == 2
+
+
 async def test_a_kit_move_the_upload_does_reconcile_is_still_allowed(client):
     """The other side of that refusal: state the line's quantity in the same upload
     and the move lands, because now the file has said both halves out loud. This is
