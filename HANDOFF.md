@@ -16,6 +16,102 @@ Template:
 
 ---
 
+## 2026-08-16 — Claude Code (Opus 5) — #44 built: order invariants for the third writer
+
+**PR #86 is open at `cf42775`, branch `fix/44-import-order-invariants`, not merged.**
+515 backend tests (470 + 45), ruff clean, `npm run build` and `npm run lint` clean. No
+migration. `main` is at `8d21dac` plus this entry. **#87 and #88 filed** (the two
+siblings below). Expect a Codex review round — every PR this milestone has had one and
+two came back NO-GO.
+
+All five cases of #44 are closed, option B as decided. Each was measured on the
+unfixed code first and re-measured after.
+
+- **`services/portability/invariants.py` is new** — three preview-time refusals, run
+  from `_Planner.build()` *before* `_plan_spawns` so a refused line contributes no
+  fan-out either. It imports `kit_progressed` / `IMMUTABLE_LINE_COLUMNS` from
+  `services/orders.py`; the shared thing is the predicates, never the mutation path.
+  Written up as an addition to architecture rule 1 and a new rule 2.1.
+- **Cases 1 + 3 (`item_type`, `order_id`).** Both were 200s that left the collection
+  disagreeing with the record — a kit line became a tool with two kits still attached,
+  and a reparent moved a line *and its kits* between orders (first order: 2 lines → 0).
+- **Case 2 (quantity only reconciled upward).** `_plan_spawns` now calls
+  `_plan_removals`; kits go newest-first, skipping progressed ones and any the same
+  upload names. `DerivedEffects.kits_removed` / `ImportResult.kits_removed` are new,
+  and the preview shows the count in red beside `rows_deleted` — no row in the table
+  names these kits, so that line is the only warning there is.
+- **Case 4 (receipt).** Refused in *both* directions on an order with catalog lines;
+  kit-only orders keep #79's behaviour, and a create is untouched (an archive restore
+  is a create, and carries `quantity_on_hand` with it). Measured before: receive-by-
+  import → real receive 409, `DELETE` 409 (undeletable), `PATCH` 3→5 moved stock 0→2;
+  clearing → re-receive took stock 3 → **6**. After: 409 at preview, and the real
+  receive/edit/delete all behave.
+- **Case 5 (`status_updated_at`).** Deferred, not filled: the plan drops the column
+  from `present` and `_stamp_generated_status_changes` reads the clock at apply time.
+  A `datetime.now(UTC)` in `row.values` is hashed by `_plan_fingerprint`, so filling it
+  at plan time makes every status-moving import 409 against its own preview.
+
+### Neutering found four tests that read green — all four were mine
+
+Ran 16 separate neuters (`scratchpad/neuter.py`, not committed). Four passed against a
+broken build, and **three of them were redundant guards rather than missing tests**:
+
+1. **`if replace_all: return` in the receipt check was unreachable** — `build` marks
+   every row CREATE in that mode and never matches a target. Deleted.
+2. **`"quantity" in row.present` was covered by `isinstance(..., int)`** — nothing
+   fills `quantity`, so an absent column is also a `None` value. Collapsed to one
+   expression. Same shape as #74's trap 3.
+3. **`row.action is not RowAction.UPDATE` was covered by `changes` being empty** —
+   `changes` non-empty is exactly equivalent to UPDATE. Deleted, with the comment
+   explaining that `changes` is what keeps creates out. #41 hit this from the other
+   side: a create's `changes` is empty, so a rule written against it is silent there.
+4. **A real gap:** the status-stamp hash test drove only the *absent column* shape,
+   where the fingerprint never reads `status_updated_at` at all — so a plan-time clock
+   hashed as nothing and the test passed. It is parametrised over both shapes now.
+
+**Two of the neuters were also wrong** and had to be fixed before they proved
+anything: renaming a fingerprint key still hashed the same data, and one neuter's
+anchor matched two places. A neuter that doesn't change behaviour is a green that
+means nothing — check what the modified source actually does.
+
+### Two siblings found and deliberately not fixed — filed as #87 and #88
+
+1. **#87 — a catalog line added to an already-received order** reaches case 4a's end
+   state from the create side, and #86 does not refuse it: merge-import a new
+   consumable line onto a received order → 200, stock unchanged (rule 10), and the
+   order is then undeletable with the same misleading 409. Left open because the fix
+   is a product call — refusing the create would also refuse an archive re-import into
+   an instance whose local copy of that order lost a line, and the importer cannot
+   tell those apart. Four options are laid out in the issue.
+2. **#88 — a blank cell in a NOT NULL column is a 500.** Enumerated rather than
+   guessed at: **nine columns across six tables**, every persisted non-`id` column
+   that is NOT NULL in the model and not `required=True` in `spec.py`
+   (`quantity_on_hand` ×3, `orders.retailer_id`, `order_items.unit_price_minor`, and
+   all four of `kits.status` / `status_updated_at` / `created_at` / `updated_at`).
+   Each previews clean and 500s at apply. #86 fixes the `status_updated_at` slice
+   *only where the same row also moves `status`*. Same family as **#82** ("what does a
+   blank cell mean") and should be decided with it. `tests/test_order_invariants.py::
+   archive` takes a `headers` override specifically to steer its rows around this.
+
+### Notes for whoever reviews or extends it
+
+- `load_existing` now eager-loads `Kit.photos` and `Kit.upgrade_applications` under
+  order_items and orders. `kit_progressed` reads both, and a lazy load raises outside
+  the async context.
+- **Detail propagation is a real divergence, not an oversight.** `_update_line` pushes
+  a restated `kit_name` down onto the spawned kits; `order_items.csv` does not, because
+  its `kit_*` columns are virtual and mean "use these if nothing else supplies the
+  kits". Pinned in `test_kit_details_propagate_through_rest_and_not_through_a_sheet`,
+  and kept out of the shared matrix on purpose — the matrix asserts agreement.
+- The receipt refusal message names the fix (`consumables.csv`, or receive it in the
+  app), and a test asserts that. A refusal that only says no gets filed as a bug.
+
+**Milestone after this: #77, #82, #87, #88.** #77 lands in the same plan/fan-out code
+that `_plan_removals` now shares, so read `_plan_spawns` before starting it. #82 and
+#88 are one question asked of two column kinds and are cheaper together than apart.
+
+---
+
 ## 2026-08-16 — Claude Code (Opus 5) — #45, #46, #74 closed; #44 decided (option B)
 
 **`main` is at `57813bf`.** 470 backend tests, ruff clean, all three CI jobs green.
