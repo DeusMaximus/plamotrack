@@ -974,6 +974,42 @@ async def test_a_refused_move_contributes_no_planned_removal(client):
     assert len((await client.get("/kits")).json()) == 2
 
 
+async def test_a_move_onto_a_reconciled_line_may_still_leave_a_shortfall_to_spawn(client):
+    """Why the refusal yields to a line that states its own quantity, rather than
+    checking every line it can reach.
+
+    A move onto a line whose quantity is *higher* than the resulting count is not a
+    contradiction — it is a shortfall, and filling shortfalls is what the fan-out
+    is for. Checking the count here regardless would refuse a legitimate spawn.
+    Found by mutation testing: the sibling test below happens to land on a count
+    that matches, so with the `reconciled` skip removed it stayed green and nothing
+    pinned the difference.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    item = order["items"][0]
+    loose = (
+        await client.post("/kits", json={"name": "Gouf", "grade": "HG", "status": "backlog"})
+    ).json()
+
+    # Quantity 3, one kit already on the line, one moved on: a shortfall of one.
+    content = archive(
+        {"kits": ["id", "name", "grade", "order_item_id"]},
+        order_items=[line_row(order, item, quantity="3")],
+        kits=[{"id": loose["id"], "name": "Gouf", "grade": "HG", "order_item_id": item["id"]}],
+    )
+    plan = await preview(client, content)
+    assert plan["blocking_errors"] == [], plan
+    assert plan["derived"]["kits_spawned"] == 1, plan["derived"]
+    assert plan["derived"]["kits_removed"] == 0, plan["derived"]
+
+    assert (await apply(client, content)).status_code == 200
+    stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert stored["quantity"] == 3
+    assert len(stored["kits"]) == 3
+    assert loose["id"] in {k["id"] for k in stored["kits"]}
+
+
 async def test_a_kit_move_the_upload_does_reconcile_is_still_allowed(client):
     """The other side of that refusal: state the line's quantity in the same upload
     and the move lands, because now the file has said both halves out loud. This is
