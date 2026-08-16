@@ -92,7 +92,7 @@ CASES = [
     (
         "3. a dangling optional reference is silent again",
         IMP,
-        "            elif dangling is not None:",
+        "            elif dangling is not None and _column_is_nullable(spec, column.name):",
         "            elif False:",
         "dangling_optional_reference_is_reported",
     ),
@@ -102,6 +102,27 @@ CASES = [
         "            elif column.required:",
         "            elif False:",
         "required_column_still_blocks",
+    ),
+    (
+        "3b. the dangling message ignores whether the column can hold null",
+        IMP,
+        "            elif dangling is not None and _column_is_nullable(spec, column.name):",
+        "            elif dangling is not None:",
+        "the_row_keeps_anyway_says_only_that or refused_create_carries_no_message",
+    ),
+    (
+        "4. a refused create keeps the id it minted",
+        IMP,
+        "            if row.new_id is not None:\n                self.created_ids[spec.key].discard(row.new_id)\n                row.new_id = None",
+        "            pass",
+        "takes_back_the_id_it_minted",
+    ),
+    (
+        "5. a kit line drops its catalog reference silently",
+        IMP,
+        "                if discarded is not None:",
+        "                if False:",
+        "ignores_a_catalog_reference",
     ),
 ]
 
