@@ -1557,9 +1557,12 @@ class _Planner:
             for row in self.rows.get(table, []):
                 if row.action in (RowAction.ERROR, RowAction.SKIP):
                     continue
+                # Only what the row *states*. A child row that doesn't restate
+                # `kit_id` leaves the child where it is, and that kit already
+                # carries it as stored evidence in the first line of this
+                # function — a fallback to `row.target.kit_id` sat here and was
+                # removed as dead: no mutation of it could change an outcome.
                 kit_id = row.values.get("kit_id") if "kit_id" in row.present else None
-                if kit_id is None and row.target is not None:
-                    kit_id = row.target.kit_id
                 if kit_id is not None:
                     protected.add(kit_id)
         return protected
