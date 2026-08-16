@@ -22,10 +22,15 @@ from typing import Annotated
 
 from pydantic import Field
 
-from app.services.numeric import INT4_MAX
+from app.services.numeric import INT4_MAX, INT4_MIN
 
 #: Zero or more, up to what int4 holds. Stock levels, prices, thresholds.
 NonNegativeInt4 = Annotated[int, Field(ge=0, le=INT4_MAX)]
 
 #: One or more, up to what int4 holds. Quantities where zero is meaningless.
 PositiveInt4 = Annotated[int, Field(gt=0, le=INT4_MAX)]
+
+#: Signed, for a delta that may go either way. Nothing is *stored* signed — the
+#: floor on stock is zero — but an adjustment is arithmetic on a stored value and
+#: has to be a number the column could have held in the first place.
+Int4 = Annotated[int, Field(ge=INT4_MIN, le=INT4_MAX)]

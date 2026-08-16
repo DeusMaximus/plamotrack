@@ -8,8 +8,12 @@ different places:
    a constraint, raised after other rows in the same transaction have been written.
    Covered systematically by the contract test below, plus a live case per front
    door, because REST and MCP share the schemas but not the tests.
-2. **MCP tool signatures.** `adjust_stock(delta: int)` has no REST route and so no
-   request schema at all. The bound has to be in the service both callers reach.
+2. **MCP tool signatures.** An MCP tool is a function signature, not a request
+   model, so a bare `int` parameter carries no bound however well the REST side is
+   covered — `adjust_stock(delta)` has no REST route at all, and `apply_upgrade`
+   has one whose schema its MCP twin simply doesn't go through. The bound has to
+   be in the service both callers reach (rule 1), and is declared on the parameter
+   as well so the tool schema tells an agent the same thing.
 3. **Derived values.** Two legal numbers whose sum is not. No schema can see this
    one, and testing input alone will never reach it — it needs a stored row near the
    ceiling and an operation that crosses it.
@@ -33,6 +37,7 @@ from app.db import session_scope
 from app.exceptions import ConflictError, InvalidInputError
 from app.mcp import mcp
 from app.services import catalog as catalog_service
+from app.services import upgrades as upgrades_service
 from app.services.numeric import INT4_MAX
 
 #: Schemas that describe a request body. `*Read` models serialize rows that are
@@ -83,6 +88,38 @@ def test_every_integer_a_request_can_set_declares_its_ceiling():
     assert not unbounded, (
         "integer fields with no upper bound — a value past int4 reaches the database "
         f"and fails at flush as a 500 rather than a 422 naming the field: {unbounded}"
+    )
+
+
+async def test_every_integer_an_mcp_tool_takes_declares_its_ceiling():
+    """The same contract, asked of the other front door.
+
+    The Pydantic sweep above cannot see this one: an MCP tool is a function
+    signature, not a request model, so `adjust_stock(delta: int)` is invisible to
+    any test that walks `app.schemas`. That blind spot is not hypothetical — it is
+    how `apply_upgrade(quantity: int)` survived the first cut of this branch, with
+    REST answering 422 and MCP answering "insufficient stock … 2147483648
+    requested" as a 409 for the same value.
+
+    The service-level guard is what actually enforces the bound (rule 1 — both
+    callers meet there). Declaring it on the parameter as well is what makes it
+    visible to the agent reading the tool schema, and it is the only form the
+    contract can be *tested* in, which is the point of asserting it here.
+    """
+    async with Client(mcp) as mcp_client:
+        tools = await mcp_client.list_tools()
+    assert tools, "no MCP tools listed — this test is not looking anywhere"
+
+    unbounded = []
+    for tool in tools:
+        for name, prop in (tool.inputSchema or {}).get("properties", {}).items():
+            for node in _integer_nodes(prop):
+                if "maximum" not in node and "exclusiveMaximum" not in node:
+                    unbounded.append(f"{tool.name}.{name}")
+
+    assert not unbounded, (
+        "MCP tool parameters with no upper bound — an agent is the caller most "
+        f"likely to compute a number rather than type one: {unbounded}"
     )
 
 
@@ -325,3 +362,55 @@ def test_the_bound_is_read_from_one_place():
 
     assert schema_numeric.INT4_MAX == INT4_MAX == 2_147_483_647
     assert "2147483647" not in inspect.getsource(schema_numeric)
+
+
+async def test_an_unstorable_upgrade_quantity_is_invalid_input_at_both_doors(client):
+    """The gap external review found in this branch's first cut, and the reason the
+    MCP contract test above exists.
+
+    `UpgradeApplyRequest.quantity` bound the REST caller; the MCP tool passed a bare
+    int straight to the service, which checked only the floor and stock. So the two
+    front doors answered the *same value* differently — REST 422, MCP a 409 reading
+    "insufficient stock … 2147483648 requested". Both refuse, which is why nothing
+    caught it, but only one of them is right: an unstorable quantity is the caller's
+    mistake at any stock level, not the stored state's.
+
+    Driven at ordinary stock as well as at the ceiling, because the divergence was
+    never about how much was on hand — the original repro used INT4_MAX and that
+    detail is incidental.
+    """
+    kit = (await client.post("/kits", json={"name": "Zaku II", "grade": "HG"})).json()
+    upgrade = (
+        await client.post(
+            "/upgrades",
+            json={"name": "Metal thrusters", "manufacturer": "Metal Build", "quantity_on_hand": 5},
+        )
+    ).json()
+
+    rest = await client.post(
+        f"/upgrades/{upgrade['id']}/apply",
+        json={"kit_id": kit["id"], "quantity": INT4_MAX + 1},
+    )
+    assert rest.status_code == 422, f"{rest.status_code}: {rest.text[:200]}"
+
+    async with session_scope() as session:
+        with pytest.raises(InvalidInputError):
+            await upgrades_service.apply_upgrade(
+                session, uuid.UUID(upgrade["id"]), uuid.UUID(kit["id"]), INT4_MAX + 1
+            )
+        # ... and the stock check still answers for what it is actually for.
+        with pytest.raises(ConflictError):
+            await upgrades_service.apply_upgrade(
+                session, uuid.UUID(upgrade["id"]), uuid.UUID(kit["id"]), 6
+            )
+
+    async with Client(mcp) as mcp_client:
+        with pytest.raises(ToolError) as raised:
+            await mcp_client.call_tool(
+                "apply_upgrade",
+                {"upgrade_id": upgrade["id"], "kit_id": kit["id"], "quantity": INT4_MAX + 1},
+            )
+    assert "insufficient stock" not in str(raised.value), (
+        "MCP still reports an unstorable quantity as a stock conflict: " + str(raised.value)[:200]
+    )
+    assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 5
