@@ -835,7 +835,23 @@ async def test_a_kit_moved_onto_a_new_line_that_states_no_quantity_is_refused(cl
     assert (await client.get(f"/kits/{loose['id']}")).json()["order_item_id"] is None
 
 
-async def test_a_replace_all_plan_does_not_depend_on_rows_it_will_truncate(client):
+@pytest.mark.parametrize(
+    ("item_type", "quantity"),
+    [
+        # A catalog line: caught by the provenance rule, which reads the uploaded
+        # row and never consults a stored one.
+        ("consumable", "1"),
+        # A kit line stating no quantity: this one *does* reach the stored lookup,
+        # for its quantity and its kits, and is the reason the mode guard is
+        # load-bearing. Found by mutation testing — the consumable case alone
+        # stayed green with the guard removed, because it errors earlier.
+        ("kit", None),
+    ],
+    ids=["catalog line", "kit line with no quantity"],
+)
+async def test_a_replace_all_plan_does_not_depend_on_rows_it_will_truncate(
+    client, item_type, quantity
+):
     """Rule #45, reached through the new refusal (external review of #86, round two).
 
     A non-kit line leaves the fan-out *before* it is marked reconciled, so an
@@ -854,8 +870,22 @@ async def test_a_replace_all_plan_does_not_depend_on_rows_it_will_truncate(clien
     line_id = order["items"][0]["id"]
     paint = "aaaaaaaa-0000-4000-8000-000000000001"
 
+    headers = {"kits": ["name", "grade", "order_item_id"]}
+    if quantity is None:
+        # Genuinely absent, not a blank cell: a blank one is "quantity is required"
+        # and errors the line row for an unrelated reason, which would leave the
+        # path this case exists for unexercised.
+        headers["order_items"] = [
+            "id",
+            "order_id",
+            "item_type",
+            "unit_price_minor",
+            "currency_code",
+            "kit_name",
+            "kit_grade",
+        ]
     content = archive(
-        {"kits": ["name", "grade", "order_item_id"]},
+        headers,
         retailers=[{"id": retailer["id"], "name": "Hobby Link Japan"}],
         consumables=[{"id": paint, "name": "Paint", "category": "paint", "quantity_on_hand": "0"}],
         orders=[
@@ -869,13 +899,15 @@ async def test_a_replace_all_plan_does_not_depend_on_rows_it_will_truncate(clien
         ],
         order_items=[
             {
-                "id": line_id,  # the stored KIT line's uuid, reused for a catalog line
+                "id": line_id,  # the stored kit line's uuid, reused by this upload
                 "order_id": order["id"],
-                "item_type": "consumable",
-                "catalog_ref_id": paint,
-                "quantity": "1",
+                "item_type": item_type,
+                "catalog_ref_id": paint if item_type == "consumable" else "",
+                **({"quantity": quantity} if quantity else {}),
                 "unit_price_minor": "500",
                 "currency_code": "JPY",
+                "kit_name": "Gouf" if item_type == "kit" else "",
+                "kit_grade": "HG" if item_type == "kit" else "",
             }
         ],
         kits=[
@@ -888,9 +920,15 @@ async def test_a_replace_all_plan_does_not_depend_on_rows_it_will_truncate(clien
     assert (await client.delete(f"/orders/{order['id']}")).status_code == 204
     without_stored = await preview(client, content, mode="replace_all")
 
-    assert bool(with_stored["blocking_errors"]) == bool(without_stored["blocking_errors"])
+    # The whole row diagnosis, not just the action: a stored row can change *which*
+    # error is reported while leaving the count of them the same.
+    def kit_errors(plan):
+        return [r["error"] for r in next(t for t in plan["tables"] if t["table"] == "kits")["rows"]]
+
+    assert kit_errors(with_stored) == kit_errors(without_stored), (
+        "the plan changed with rows this mode is about to truncate"
+    )
     assert actions(with_stored, "kits") == actions(without_stored, "kits")
-    # And the verdict itself: the uploaded graph points kits at a consumable line.
     assert actions(without_stored, "kits") == ["error", "error"], without_stored["tables"]
 
 
