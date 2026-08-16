@@ -11,6 +11,7 @@ import json
 import pathlib
 import time
 import tomllib
+import uuid
 import zipfile
 
 import pytest
@@ -3552,4 +3553,309 @@ async def test_merge_still_resolves_a_reference_to_a_row_it_is_keeping(client):
     assert await snapshot(client) == before  # re-importing an archive is a no-op
     assert [r["name"] for r in (await client.get("/retailers")).json()] == [
         seeded["retailer"]["name"]
+    ]
+
+
+# --- import identity: currency, units, and the upload itself (#46) -----------------
+#
+# Three independent causes behind one symptom — an import conflating two things that
+# are not the same, or failing to see that one thing is in the file twice.
+#
+#  1. `_line_fingerprint` had no currency, so a stored ¥1000 line and an incoming
+#     A$1000 line were the same purchase and the apply relabelled the stored one.
+#  2. Order matching groups the incoming lines in a pre-pass that called `_parse_row`
+#     and nothing else, so a sheet stating major units fingerprinted as 0 against
+#     stored minor units and the fallback never matched.
+#  3. `by_id`/`by_natural` are built from the database and never learn what the
+#     upload is planning, so nothing could see a duplicate inside one file.
+
+
+async def _unnumbered_order(client) -> tuple[dict, dict]:
+    """An order with no `order_number`, so matching has to fall back to
+    retailer + date + lines — the path causes 1 and 2 both run through."""
+    retailer = (await client.post("/retailers", json={"name": "Gundam Base"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-04-02",
+                "currency_code": "AUD",
+                "items": [
+                    {
+                        "item_type": "consumable",
+                        "quantity": 2,
+                        "unit_price_minor": 1250,
+                        "currency_code": "AUD",
+                        "new_item": {"name": "Mr Surfacer 1200", "category": "paint"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    return retailer, order
+
+
+async def test_a_line_in_another_currency_is_a_different_purchase(client):
+    """Cause 1, and the one that corrupts rather than duplicates.
+
+    Same item, same quantity, same number — in yen instead of dollars. The line
+    fingerprint had no currency, so this matched the stored AUD line and the apply
+    wrote `currency_code: JPY` over it as an ordinary field update: #12's
+    relabelling reached from a different direction, and §6's whole point is that
+    the code on the row is what the amount means.
+    """
+    seeded = await seed_collection(client)
+    line = next(i for i in seeded["order"]["items"] if i["item_type"] == "consumable")
+
+    content = make_csv(
+        spec.ORDER_ITEMS.header,
+        [
+            {
+                "id": "",
+                "order_id": seeded["order"]["id"],
+                "item_type": "consumable",
+                "catalog_name": "Gundam Marker GM02",
+                "quantity": "3",
+                "unit_price_minor": "500",
+                "currency_code": "JPY",  # the stored line is AUD
+            }
+        ],
+    )
+
+    plan = await preview(client, content, filename="order_items.csv")
+    assert actions(plan, "order_items") == ["create"], (
+        "an amount in a different currency matched the stored line — the fingerprint "
+        "is comparing numbers without their units"
+    )
+
+    resp = await apply(client, content, filename="order_items.csv")
+    assert resp.status_code == 200, resp.text
+
+    stored = (await client.get("/orders")).json()[0]["items"]
+    original = next(i for i in stored if i["id"] == line["id"])
+    assert original["currency_code"] == "AUD", "the stored line was relabelled to JPY"
+    assert len(stored) == 3, "the yen line should have been recorded as its own purchase"
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "currency", "matches"),
+    [
+        # The control: the same amount, said the way the exporter says it.
+        pytest.param("unit_price_minor", "1250", "AUD", True, id="minor units, same currency"),
+        # Cause 2: the same amount in the major-unit twin. The pre-pass never ran
+        # `_apply_money_alternates`, so this fingerprinted as 0.
+        pytest.param("unit_price", "12.50", "AUD", True, id="major units, same currency"),
+        # Cause 1 again, one level up: the order-level fallback compares the same
+        # tuples, so a currency change has to stop the order matching too.
+        pytest.param("unit_price_minor", "1250", "JPY", False, id="minor units, other currency"),
+    ],
+)
+async def test_the_order_fallback_compares_amounts_in_the_same_units(
+    client, column, value, currency, matches
+):
+    """The `retailer + date + lines` match, driven by a foreign order id — the shape
+    an archive from another instance has, where nothing matches by id and the lines
+    are the only evidence the order is the one already on file."""
+    retailer, order = await _unnumbered_order(client)
+    foreign = str(uuid.uuid4())
+
+    archive = make_archive(
+        {
+            "orders": [
+                {
+                    "id": foreign,
+                    "retailer_id": retailer["id"],
+                    "order_date": "2026-04-02",
+                    "currency_code": "AUD",
+                }
+            ],
+            "order_items": [
+                {
+                    "id": "",
+                    "order_id": foreign,
+                    "item_type": "consumable",
+                    "catalog_name": "Mr Surfacer 1200",
+                    "quantity": "2",
+                    column: value,
+                    "currency_code": currency,
+                }
+            ],
+        }
+    )
+
+    plan = await preview(client, archive)
+    assert actions(plan, "orders") == (["unchanged"] if matches else ["create"]), (
+        f"a line stated as {column}={value} {currency} "
+        f"{'failed to match' if matches else 'matched'} the stored 1250 AUD line"
+    )
+
+    resp = await apply(client, archive)
+    assert resp.status_code == 200, resp.text
+    orders = (await client.get("/orders")).json()
+    assert len(orders) == (1 if matches else 2), [o["id"] for o in orders]
+
+
+@pytest.mark.parametrize(
+    ("mode", "seed_it"),
+    [
+        # Both rows become creates on one primary key: `session.add` twice, then an
+        # IntegrityError out of the flush — a 500 after a preview showing two clean
+        # creates. Asserted through `http_client` so the status is a response rather
+        # than a re-raised internal exception (rule 6).
+        pytest.param("merge", False, id="merge, an id this instance doesn't have"),
+        # Both rows match the same existing row instead. No exception — the second
+        # update simply overwrites the first, silently.
+        pytest.param("merge", True, id="merge, an id it does"),
+        # Nothing is matched in replace_all, so every row is a create and the
+        # collision is the first case again by another route.
+        pytest.param("replace_all", False, id="replace_all"),
+    ],
+)
+async def test_two_rows_cannot_claim_one_id(http_client, mode, seed_it):
+    """Cause 3, first half."""
+    if seed_it:
+        existing = (await http_client.post("/retailers", json={"name": "Gundam Base"})).json()
+        claimed = existing["id"]
+    else:
+        claimed = str(uuid.uuid4())
+
+    content = make_csv(
+        spec.RETAILERS.header,
+        [{"id": claimed, "name": "Gundam Base"}, {"id": claimed, "name": "Gundam Base Tokyo"}],
+    )
+    before = [r["name"] for r in (await http_client.get("/retailers")).json()]
+
+    plan = await preview(http_client, content, filename="retailers.csv", mode=mode)
+    assert plan["blocking_errors"], "two rows carrying one id previewed as clean"
+    assert actions(plan, "retailers")[1] == "error", actions(plan, "retailers")
+    assert "row 2" in _rows_of(plan, "retailers")[1]["error"]
+
+    extra = {"confirm": "REPLACE"} if mode == "replace_all" else {}
+    resp = await apply(http_client, content, filename="retailers.csv", mode=mode, **extra)
+    assert resp.status_code == 409, f"{resp.status_code}: {resp.text[:200]}"
+    assert [r["name"] for r in (await http_client.get("/retailers")).json()] == before
+
+
+async def test_one_file_id_cannot_mean_two_different_rows(http_client):
+    """Cause 3, and the state the first cut of this fix missed — found by external
+    review, verified against that cut before this test was written.
+
+    Both rows carry file id `X`, but they *resolve differently*: the first
+    natural-matches the retailer already here, the second matches nothing and plans
+    a create at `X`. Claiming the resolved target sees `A` and `X` — two distinct
+    values, nothing to report — so the preview said `unchanged` + `create` and the
+    apply returned 200.
+
+    The damage is in the third row. `orders.csv` names `retailer_id=X`, and row 2's
+    match recorded `remap[X] → A`, so the order was written pointing at **Gundam
+    Base** while the row actually created at `X` was **Other Shop**. One id, two
+    meanings, and the import silently picks one. The id in the cell has to be
+    claimed on its own, before anything resolves it.
+    """
+    local = (await http_client.post("/retailers", json={"name": "Gundam Base"})).json()
+    claimed = str(uuid.uuid4())
+    archive = make_archive(
+        {
+            "retailers": [
+                {"id": claimed, "name": "Gundam Base"},  # natural-matches the local row
+                {"id": claimed, "name": "Other Shop"},  # same file id, but creates
+            ],
+            "orders": [
+                {
+                    "id": str(uuid.uuid4()),
+                    "retailer_id": claimed,  # which of the two does this mean?
+                    "order_date": "2026-04-02",
+                    "currency_code": "AUD",
+                }
+            ],
+        }
+    )
+
+    plan = await preview(http_client, archive)
+    assert plan["blocking_errors"], (
+        "two rows claiming one file id resolved to different targets and previewed "
+        "as clean — the order below would have been written against the wrong shop"
+    )
+    assert actions(plan, "retailers") == ["unchanged", "error"], actions(plan, "retailers")
+    error = _rows_of(plan, "retailers")[1]["error"]
+    assert "row 2" in error and claimed in error, error
+
+    resp = await apply(http_client, archive)
+    assert resp.status_code == 409, f"{resp.status_code}: {resp.text[:200]}"
+    assert [(r["id"], r["name"]) for r in (await http_client.get("/retailers")).json()] == [
+        (local["id"], "Gundam Base")
+    ]
+    assert (await http_client.get("/orders")).json() == []
+
+
+async def test_two_file_ids_cannot_land_on_one_existing_row(client):
+    """The case the *target* claim is for, and the reason it stays alongside the
+    file-id claim above rather than being replaced by it.
+
+    Two different file ids, so nothing is duplicated in the cells; both rows
+    natural-match the same local retailer, so both plan a write to it. Neither the
+    file-id check nor the natural-key check (skipped — both rows supply an id) can
+    see this one.
+    """
+    await client.post("/retailers", json={"name": "Gundam Base"})
+    content = make_csv(
+        spec.RETAILERS.header,
+        [
+            {"id": str(uuid.uuid4()), "name": "Gundam Base", "url": "https://one.example"},
+            {"id": str(uuid.uuid4()), "name": "gundam base", "url": "https://two.example"},
+        ],
+    )
+
+    plan = await preview(client, content, filename="retailers.csv")
+    assert plan["blocking_errors"], "two rows both updating one retailer previewed as clean"
+    assert actions(plan, "retailers")[1] == "error", actions(plan, "retailers")
+    assert "already claims this row" in _rows_of(plan, "retailers")[1]["error"]
+
+    assert (await apply(client, content, filename="retailers.csv")).status_code == 409
+    assert [r["url"] for r in (await client.get("/retailers")).json()] == [None]
+
+
+async def test_two_new_rows_cannot_describe_one_retailer(client):
+    """Cause 3, second half. Neither row carries an id, so they get different random
+    ones and the id check cannot see them — the natural key is the only thing that
+    can. Cased differently on purpose: `_name_key` is case-insensitive, matching the
+    select-or-create rule the rest of the app de-dups by (rule 3)."""
+    content = make_csv(
+        spec.RETAILERS.header,
+        [{"id": "", "name": "Gundam Base"}, {"id": "", "name": "gundam base"}],
+    )
+
+    plan = await preview(client, content, filename="retailers.csv")
+    assert plan["blocking_errors"], "one upload created the same retailer twice"
+    assert actions(plan, "retailers") == ["create", "error"]
+    assert "name" in _rows_of(plan, "retailers")[1]["error"]
+
+    assert (await apply(client, content, filename="retailers.csv")).status_code == 409
+    assert (await client.get("/retailers")).json() == []
+
+
+@pytest.mark.parametrize("mode", ["merge", "replace_all"])
+async def test_two_retailers_with_one_name_still_round_trip(client, mode):
+    """The neighbour of the test above, and the reason the natural-key check is
+    restricted to rows that supply no id.
+
+    Nothing stops a collection holding two retailers with the same name — there is
+    no unique constraint, and `POST /retailers` doesn't dedupe. An export writes
+    both, and both rows carry the id that says which is which. Apply the natural-key
+    check to those and the archive this instance just produced becomes un-importable.
+    """
+    for _ in range(2):
+        assert (await client.post("/retailers", json={"name": "Gundam Base"})).status_code == 201
+    archive = (await client.get("/export/archive")).content
+
+    plan = await preview(client, archive, mode=mode)
+    assert not plan["blocking_errors"], plan["blocking_errors"]
+
+    extra = {"confirm": "REPLACE"} if mode == "replace_all" else {}
+    resp = await apply(client, archive, mode=mode, **extra)
+    assert resp.status_code == 200, resp.text
+    assert [r["name"] for r in (await client.get("/retailers")).json()] == [
+        "Gundam Base",
+        "Gundam Base",
     ]

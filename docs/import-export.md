@@ -101,7 +101,7 @@ exactly, so all the internal links survive untouched.
 | Retailers | Name, case-insensitive |
 | Tools / consumables / upgrades | Name, case-insensitive, within that table |
 | Orders | Retailer + order number. No order number? Retailer + date + the set of lines |
-| Order lines | Their line details, within the order they belong to |
+| Order lines | Item, quantity, unit price **and currency**, within their order |
 | Upgrade applications | Upgrade + kit + date applied |
 | **Kits** | **Never matched automatically** — see below |
 
@@ -110,6 +110,17 @@ same product are legitimately two rows. Matching them by name would silently mer
 purchases you actually made. Instead, importing a kit that looks like one you own
 tells you so in the preview — "you already have 2 kits called 'Gouf Custom'" — and
 lets you decide.
+
+**A price is a number *and* a currency.** ¥1000 and A$1000 are two different
+purchases, and neither matching nor the preview will treat one as the other. It
+doesn't matter which way you write the amount — `unit_price_minor` or the
+major-unit `unit_price` beside it — both are compared in the same units.
+
+**The same thing twice in one upload is refused.** Two rows sharing an `id`, or two
+new rows naming the same retailer or catalog item, are reported in the preview with
+the row numbers rather than merged or created twice. Two rows that each carry their
+own `id` are always two records, even if they have the same name — that is what
+keeps a collection holding two shops of the same name exportable and importable.
 
 **References follow the match.** If your archive's `orders.csv` points at retailer
 `abc-123`, and this instance already has that shop under a different uuid, the
