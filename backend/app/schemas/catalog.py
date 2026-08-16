@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.enums import ItemType
+from app.schemas.numeric import NonNegativeInt4, PositiveInt4
 from app.services.currency import CURRENCY_CODE_PATTERN
 
 _COST_HELP = "Integer minor units — cents for AUD, whole yen for JPY, fils for KWD."
@@ -12,8 +13,8 @@ _COST_HELP = "Integer minor units — cents for AUD, whole yen for JPY, fils for
 class ToolCreate(BaseModel):
     name: str = Field(min_length=1)
     category: str = Field(min_length=1)
-    quantity_on_hand: int = Field(default=0, ge=0)
-    unit_cost_reference_minor: int | None = Field(default=None, ge=0, description=_COST_HELP)
+    quantity_on_hand: NonNegativeInt4 = 0
+    unit_cost_reference_minor: NonNegativeInt4 | None = Field(default=None, description=_COST_HELP)
     unit_cost_reference_currency: str | None = Field(default=None, pattern=CURRENCY_CODE_PATTERN)
     condition_notes: str | None = None
 
@@ -39,8 +40,8 @@ class ToolUpdate(BaseModel):
 
     name: str | None = Field(default=None, min_length=1)
     category: str | None = Field(default=None, min_length=1)
-    quantity_on_hand: int | None = Field(default=None, ge=0)
-    unit_cost_reference_minor: int | None = Field(default=None, ge=0, description=_COST_HELP)
+    quantity_on_hand: NonNegativeInt4 | None = None
+    unit_cost_reference_minor: NonNegativeInt4 | None = Field(default=None, description=_COST_HELP)
     unit_cost_reference_currency: str | None = Field(default=None, pattern=CURRENCY_CODE_PATTERN)
     condition_notes: str | None = None
 
@@ -60,8 +61,8 @@ class ToolRead(BaseModel):
 class ConsumableCreate(BaseModel):
     name: str = Field(min_length=1)
     category: str = Field(min_length=1)
-    quantity_on_hand: int = Field(default=0, ge=0)
-    low_stock_threshold: int | None = Field(default=None, ge=0)
+    quantity_on_hand: NonNegativeInt4 = 0
+    low_stock_threshold: NonNegativeInt4 | None = None
 
 
 class ConsumableUpdate(BaseModel):
@@ -69,8 +70,8 @@ class ConsumableUpdate(BaseModel):
 
     name: str | None = Field(default=None, min_length=1)
     category: str | None = Field(default=None, min_length=1)
-    quantity_on_hand: int | None = Field(default=None, ge=0)
-    low_stock_threshold: int | None = Field(default=None, ge=0)
+    quantity_on_hand: NonNegativeInt4 | None = None
+    low_stock_threshold: NonNegativeInt4 | None = None
 
 
 class ConsumableRead(BaseModel):
@@ -86,7 +87,7 @@ class ConsumableRead(BaseModel):
 class UpgradeCreate(BaseModel):
     name: str = Field(min_length=1)
     manufacturer: str = Field(min_length=1)
-    quantity_on_hand: int = Field(default=0, ge=0)
+    quantity_on_hand: NonNegativeInt4 = 0
 
 
 class UpgradeUpdate(BaseModel):
@@ -94,7 +95,7 @@ class UpgradeUpdate(BaseModel):
 
     name: str | None = Field(default=None, min_length=1)
     manufacturer: str | None = Field(default=None, min_length=1)
-    quantity_on_hand: int | None = Field(default=None, ge=0)
+    quantity_on_hand: NonNegativeInt4 | None = None
 
 
 class UpgradeRead(BaseModel):
@@ -108,7 +109,7 @@ class UpgradeRead(BaseModel):
 
 class UpgradeApplyRequest(BaseModel):
     kit_id: uuid.UUID
-    quantity: int = Field(gt=0)
+    quantity: PositiveInt4
 
 
 class UpgradeApplicationRead(BaseModel):

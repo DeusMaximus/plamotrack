@@ -17,6 +17,7 @@ from app.db import session_scope
 from app.exceptions import DomainError
 from app.models.enums import KitStatus
 from app.schemas.kits import KitRead, KitUpdate
+from app.schemas.numeric import Int4, NonNegativeInt4, PositiveInt4
 from app.schemas.orders import OrderCreate, OrderItemCreate, OrderRead
 from app.services import catalog as catalog_service
 from app.services import kits as kits_service
@@ -120,7 +121,7 @@ async def create_order(
     items: list[OrderItemCreate],
     currency_code: str | None = None,
     order_number: str | None = None,
-    shipping_cost_minor: int | None = None,
+    shipping_cost_minor: NonNegativeInt4 | None = None,
     delivery_service: str | None = None,
     tracking_number: str | None = None,
     tracking_url: str | None = None,
@@ -185,7 +186,7 @@ async def mark_order_received(order_id: str) -> dict:
 
 
 @mcp.tool
-async def adjust_stock(catalog_id: str, delta: int, reason: str | None = None) -> dict:
+async def adjust_stock(catalog_id: str, delta: Int4, reason: str | None = None) -> dict:
     """Adjust on-hand quantity of a tool, consumable, or upgrade by a signed delta
     (e.g. -1 when a consumable runs out). Get ids from search_catalog. Fails if
     the adjustment would take stock below zero."""
@@ -196,7 +197,7 @@ async def adjust_stock(catalog_id: str, delta: int, reason: str | None = None) -
 
 
 @mcp.tool
-async def apply_upgrade(upgrade_id: str, kit_id: str, quantity: int = 1) -> dict:
+async def apply_upgrade(upgrade_id: str, kit_id: str, quantity: PositiveInt4 = 1) -> dict:
     """Record that an upgrade (decals, metal parts, ...) was used on a kit:
     decrements upgrade stock and links it to the kit."""
     parsed_upgrade = _parse_uuid(upgrade_id, "upgrade_id")
