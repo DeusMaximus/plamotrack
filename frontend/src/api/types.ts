@@ -298,6 +298,8 @@ export interface TablePlan {
 
 export interface DerivedEffects {
   kits_spawned: number;
+  /** Kits a reduced order-line quantity gives up. Destructive, and named by no row. */
+  kits_removed: number;
   stock_changes: number;
   stock_note: string;
   rows_deleted: Record<string, number>;
@@ -329,6 +331,7 @@ export interface ImportResult {
   updated: number;
   skipped: number;
   kits_spawned: number;
+  kits_removed: number;
   rows_deleted: Record<string, number>;
   warnings: string[];
 }

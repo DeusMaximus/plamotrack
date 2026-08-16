@@ -142,6 +142,15 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
 1. **Business logic lives in `app/services/` only.** Routers and MCP tools are thin
    wrappers over the same service functions — REST and MCP must never diverge. If
    you add an endpoint or tool, its logic goes in a service both can call.
+   - **There are three writers, not two.** The CSV importer reaches the same tables
+     by direct `setattr`, sharing no service function with the other two, so every
+     guard they hold is one it has to be given separately (#44). What the two sides
+     share is the **predicates** — `kit_progressed`, `PROGRESSED_STATUSES` and
+     `IMMUTABLE_LINE_COLUMNS` in `services/orders.py`, read by
+     `services/portability/invariants.py` — never the mutation path, which rule 10
+     forbids. A guard added to an order or order-line write owes an answer from
+     `invariants.py` as well, and the shared matrix in
+     `tests/test_order_invariants.py` is what makes a one-sided answer fail.
 2. **Order line dispatch (§3.9, amended):** `item_type=kit` lines fan out into N
    `kits` rows (with `order_item_id` provenance) at entry. Catalog lines increment
    `quantity_on_hand` **only when the order is received** (`received_at`) —
@@ -157,6 +166,17 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
      order line, so purchase records and the collection never drift.
    - All order mutations load the order row `FOR UPDATE` — concurrent
      receive/edit/delete serialize instead of double-applying stock.
+2.1. **`received_at is not None` means "stock was applied", everywhere** — it is the
+   proxy four stock mutators read (`create_order`, `update_order`, `receive_order`,
+   `delete_order`), so anything that can set the column owes that invariant. The CSV
+   importer could set it freely and produced a state none of the four could read: the
+   genuine receive 409'd as "already received", a delete became impossible, an edit
+   moved stock by the wrong delta, and *clearing* the column re-armed the increment
+   and double-counted a delivery (#44). The answer is to refuse the transition, not to
+   represent it — `invariants.py` blocks an import moving `received_at` into or out of
+   null on an order with catalog lines. Do not add a `stock_applied` column instead:
+   the backfill cannot be right on a live instance, and in the CSV (rule 9) it becomes
+   a sheet asserting that stock was applied, which is this defect on a worse field.
 3. **Catalog de-dup (§3.9):** catalog items are select-or-create — order lines take
    `catalog_ref_id` (from `/catalog/search` / `search_catalog`) or `new_item`, never
    free-text names. Don't add code paths that bypass this.

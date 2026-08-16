@@ -57,8 +57,13 @@ from app.schemas.portability import (
 from app.services.currency import is_known_currency, major_to_minor, minor_fraction_digits
 from app.services.kits import default_scale_for_grade
 from app.services.numeric import is_lone_group, require_int4
-from app.services.orders import ARRIVAL_ELIGIBLE, require_line_quantity, spawn_kits
-from app.services.portability import starter_sheet
+from app.services.orders import (
+    ARRIVAL_ELIGIBLE,
+    kit_progressed,
+    require_line_quantity,
+    spawn_kits,
+)
+from app.services.portability import invariants, starter_sheet
 from app.services.portability.exporting import (
     ARCHIVE_FORMAT,
     EXPORT_VERSION,
@@ -567,10 +572,20 @@ class _Spawn:
 
 
 @dataclass
+class _Removal:
+    """A stored kit a line's reduced quantity no longer accounts for (#44 case 2)."""
+
+    kit_id: uuid.UUID
+    order_item_id: uuid.UUID
+    row_number: int
+
+
+@dataclass
 class ExecutionPlan:
     mode: ImportMode
     rows: dict[str, list[_Row]]
     spawns: list[_Spawn]
+    removals: list[_Removal]
     plan: ImportPlan
 
 
@@ -594,6 +609,7 @@ class _Planner:
         self.created_ids: dict[str, set[uuid.UUID]] = {key: set() for key in SPEC_BY_KEY}
         self.rows: dict[str, list[_Row]] = {}
         self.spawns: list[_Spawn] = []
+        self.removals: list[_Removal] = []
         self.warnings: list[str] = list(upload.warnings)
         self.blocking: list[str] = list(upload.errors)
         self.catalog_names: dict[uuid.UUID, str] = {}
@@ -612,10 +628,20 @@ class _Planner:
     async def load_existing(self) -> None:
         for spec in TABLE_SPECS:
             stmt = select(spec.model)
+            # `kit_progressed` reads photos and upgrade_applications, and the
+            # downward reconciliation in `_plan_spawns` asks it about every kit on
+            # a shrinking line. Lazy-loading either raises outside the async
+            # context, so both come along with the kits themselves.
+            kit_evidence = (
+                selectinload(Kit.photos),
+                selectinload(Kit.upgrade_applications),
+            )
             if spec.key == "orders":
-                stmt = stmt.options(selectinload(Order.items).selectinload(OrderItem.kits))
+                stmt = stmt.options(
+                    selectinload(Order.items).selectinload(OrderItem.kits).options(*kit_evidence)
+                )
             elif spec.key == "order_items":
-                stmt = stmt.options(selectinload(OrderItem.kits))
+                stmt = stmt.options(selectinload(OrderItem.kits).options(*kit_evidence))
             instances = list((await self.session.scalars(stmt)).all())
             self.existing[spec.key] = instances
             self.by_id[spec.key] = {instance.id: instance for instance in instances}
@@ -1070,6 +1096,7 @@ class _Planner:
             return
 
         _defer_filled_money_currency(spec, row)
+        self._defer_generated_status_stamp(spec, row)
 
         changes = []
         for column in spec.columns:
@@ -1085,6 +1112,49 @@ class _Planner:
                 )
         row.changes = changes
         row.action = RowAction.UPDATE if changes else RowAction.UNCHANGED
+
+    def _defer_generated_status_stamp(self, spec: TableSpec, row: _Row) -> None:
+        """A kit whose status this sheet moves, without the sheet saying when (#44
+        case 5).
+
+        `update_kit` stamps `status_updated_at` on every status change, because the
+        board's "most recently moved" ordering is read off it. The importer assigns
+        `status` directly, so a merge that moved a kit from `ordered` to `building`
+        left the timestamp reading whenever it last moved for real — the board
+        silently lied about it, and the further back the original move was, the
+        further from the truth.
+
+        Deferred rather than filled in here: the value is `datetime.now(UTC)`, and
+        `_plan_fingerprint` hashes every value in `row.present`. A clock reading in
+        the plan is a different hash on every pass, so preview and apply could
+        never agree and every status-moving import would 409. What the plan carries
+        instead is the *absence* — the column is dropped from `present`, which is
+        the instruction `_stamp_generated_status_changes` reads at write time. The
+        drop is deterministic from the sheet and the stored row, so the hash is
+        stable, and it still moves the moment the stored status changes underneath
+        a preview, which is exactly when it should.
+
+        Dropping it also settles a blank cell, which the export template ships and
+        a hand-edited archive is full of. `status_updated_at` is NOT NULL, so
+        writing the blank through was an IntegrityError — a 500 out of the apply,
+        on the same row that needed a generated timestamp anyway.
+
+        An explicit timestamp always wins. A sheet that states both a status and a
+        time is describing a move it knows about, and inventing one over the top of
+        that is the same "config never overwrites a record" mistake `§6` keeps out
+        of money.
+        """
+        if spec.key != "kits" or row.target is None or "status" not in row.present:
+            return
+        if render(row.values.get("status")) == render(row.target.status):
+            return
+        if row.values.get("status_updated_at") is not None:
+            return
+        row.present.discard("status_updated_at")
+        row.messages.append(
+            "status_updated_at will be set to the time of this import — this row moves "
+            "the status without saying when it moved"
+        )
 
     # -- the main pass ---------------------------------------------------------
 
@@ -1146,6 +1216,14 @@ class _Planner:
                 self._annotate(spec, row, replace_all)
                 planned.append(row)
 
+        # Before the fan-out, not after: a line this refuses must not also
+        # contribute a spawn or a removal to the plan the operator is shown (#44).
+        invariants.check(
+            self.rows,
+            by_id=self.by_id,
+            created_ids=self.created_ids,
+            replace_all=replace_all,
+        )
         self._plan_spawns(replace_all)
         return self._finish()
 
@@ -1315,7 +1393,8 @@ class _Planner:
         return existing is not None and existing.received_at is not None
 
     def _plan_spawns(self, replace_all: bool) -> None:
-        """Hybrid dispatch: a kit line spawns only the kits nothing else provides."""
+        """Hybrid dispatch: a kit line spawns only the kits nothing else provides,
+        and gives up the kits its quantity no longer accounts for."""
         kit_rows = self.rows.get("kits", [])
         for row in self.rows.get("order_items", []):
             if row.action in (RowAction.ERROR, RowAction.SKIP):
@@ -1336,7 +1415,10 @@ class _Planner:
                 existing = len(row.target.kits)
             wanted = int(row.values.get("quantity") or 0)
             missing = wanted - covered - existing
-            if missing <= 0:
+            if missing < 0:
+                self._plan_removals(row, surplus=-missing, kit_rows=kit_rows)
+                continue
+            if missing == 0:
                 continue
 
             name = row.values.get("kit_name")
@@ -1367,6 +1449,72 @@ class _Planner:
                 )
             )
             row.messages.append(f"will create {missing} kit(s) from this line")
+
+    def _plan_removals(self, row: _Row, *, surplus: int, kit_rows: list[_Row]) -> None:
+        """The other half of §3.9 reconciliation: a line whose quantity dropped
+        gives up the kits it no longer accounts for (#44 case 2).
+
+        `_plan_spawns` only ever counted upward and returned early on a surplus, so
+        reducing a kit line's quantity through `order_items.csv` left every spawned
+        kit in place — the line said 1 and the collection held 2, permanently, with
+        nothing anywhere recording the disagreement. `_update_line` has always
+        removed them, so this is the importer catching up to the writer beside it
+        rather than new behaviour.
+
+        Three things are never a candidate, and the order they are excluded in is
+        the order they matter in:
+
+        * **A quantity the sheet never stated.** `quantity` is required, but only
+          when the column is *there* — a partial sheet may leave it out entirely,
+          and `values.get("quantity") or 0` reads that absence as zero. Counting
+          upward, zero asks for nothing; counting downward it asks for everything,
+          so a sheet correcting a tracking number would delete the order's kits.
+          Asked once, as `present` *and* a value: `present` alone is not load-
+          bearing today (nothing fills `quantity`, so an absent column is also a
+          `None` value) and a second guard whose outcome the first already decides
+          is a guard no test can find missing — #74 paid for that lesson.
+        * **A kit this upload describes.** An upload asserting a kit exists and a
+          quantity implying it doesn't is contradicting itself, and picking a
+          winner silently is how an import surprises someone. Excluded from the
+          candidates, so the shortfall below reports it.
+        * **A kit that has progressed.** Same predicate as the Orders page, from
+          `services/orders.py` rather than a second copy of the list — building or
+          complete, rated, photographed, or carrying an applied upgrade, which is
+          stock already spent that a cascade would leave unexplained.
+
+        Newest first among what's left, matching `_delete_line_kits`: the kits are
+        interchangeable, and the one added last is the one least likely to be the
+        one someone has been looking at.
+        """
+        stated = row.values.get("quantity") if "quantity" in row.present else None
+        if row.target is None or not isinstance(stated, int):
+            return
+
+        described = {
+            kit.matched_id
+            for kit in kit_rows
+            if kit.matched_id is not None and kit.action is not RowAction.ERROR
+        }
+        attached = list(row.target.kits)
+        candidates = [
+            kit for kit in attached if kit.id not in described and not kit_progressed(kit)
+        ]
+        if len(candidates) < surplus:
+            row.action = RowAction.ERROR
+            row.error = (
+                f"this line says quantity {stated}, which is {surplus} fewer "
+                f"than the {len(attached)} kit(s) attached to it, but only {len(candidates)} "
+                "can be removed safely — the rest are building/complete, rated, have photos, "
+                "have upgrades applied, or are described by this upload. Move or edit those "
+                "kits first, or leave the quantity as it was"
+            )
+            return
+
+        for kit in list(reversed(candidates))[:surplus]:
+            self.removals.append(
+                _Removal(kit_id=kit.id, order_item_id=row.target.id, row_number=row.row_number)
+            )
+        row.messages.append(f"will remove {surplus} kit(s) from this line")
 
     def _finish(self) -> ExecutionPlan:
         table_plans: list[TablePlan] = []
@@ -1422,6 +1570,7 @@ class _Planner:
         )
         derived = DerivedEffects(
             kits_spawned=sum(spawn.count for spawn in self.spawns),
+            kits_removed=len(self.removals),
             stock_changes=0,
             stock_note=(
                 "Stock levels come from the tools/consumables/upgrades files. "
@@ -1432,7 +1581,12 @@ class _Planner:
 
         plan = ImportPlan(
             plan_hash=_plan_fingerprint(
-                self.mode, self.upload.source, self.rows, self.spawns, deleted_ids
+                self.mode,
+                self.upload.source,
+                self.rows,
+                self.spawns,
+                self.removals,
+                deleted_ids,
             ),
             mode=self.mode,
             source=self.upload.source,
@@ -1442,7 +1596,13 @@ class _Planner:
             warnings=self.warnings,
             blocking_errors=self.blocking,
         )
-        return ExecutionPlan(mode=self.mode, rows=self.rows, spawns=self.spawns, plan=plan)
+        return ExecutionPlan(
+            mode=self.mode,
+            rows=self.rows,
+            spawns=self.spawns,
+            removals=self.removals,
+            plan=plan,
+        )
 
 
 def _plan_fingerprint(
@@ -1450,6 +1610,7 @@ def _plan_fingerprint(
     source: str,
     rows: dict[str, list[_Row]],
     spawns: list[_Spawn],
+    removals: list[_Removal],
     deleted_ids: dict[str, list[str]],
 ) -> str:
     """Fingerprints what would be written, not the file it came from.
@@ -1553,6 +1714,14 @@ def _plan_fingerprint(
             ]
             for spawn in spawns
         ],
+        # Which kits go, not how many. Two collections of the same size are the
+        # same number and a different loss — the same reason `deletes` above
+        # carries ids rather than counts. Every one of these is a stored uuid, so
+        # none of them needs `canon`.
+        "removals": sorted(
+            [str(removal.kit_id), str(removal.order_item_id), str(removal.row_number)]
+            for removal in removals
+        ),
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -1663,6 +1832,36 @@ def _advance_kits_for_newly_received_orders(execution: ExecutionPlan) -> None:
                     kit.status_updated_at = now
 
 
+def _stamp_generated_status_changes(execution: ExecutionPlan) -> None:
+    """Give every kit this apply moved a `status_updated_at` of now (#44 case 5).
+
+    The decision was made at plan time by `_defer_generated_status_stamp`, which
+    dropped the column from `present` precisely so the clock stays out of the plan
+    hash; this is where the clock is finally read. `"status_updated_at" not in
+    present` therefore covers both shapes it has to — a sheet that never carried
+    the column, and one that carried it blank — while a sheet that stated a time
+    keeps it in `present` and is left exactly as written.
+
+    Runs after the write loop for the same reason
+    `_advance_kits_for_newly_received_orders` does: `row.target` is the mapped
+    instance the loop just wrote through, so setting the attribute here marks it
+    dirty again and the flush before commit carries it.
+
+    Deliberately not merged into that function. This is the general
+    `kits.csv` status move; that one is the receipt derivation, keyed off an order
+    row, and it already skips any kit this upload gives an explicit status — so a
+    kit reachable by both is stamped here, once.
+    """
+    now = datetime.now(UTC)
+    for row in execution.rows.get("kits", []):
+        if row.action is not RowAction.UPDATE or row.target is None:
+            continue
+        if "status_updated_at" in row.present:
+            continue
+        if any(change.field == "status" for change in row.changes):
+            row.target.status_updated_at = now
+
+
 async def apply_import(
     session: AsyncSession,
     filename: str,
@@ -1724,7 +1923,17 @@ async def apply_import(
                 skipped += 1
         await session.flush()
 
+    _stamp_generated_status_changes(execution)
     _advance_kits_for_newly_received_orders(execution)
+
+    removed = 0
+    for removal in execution.removals:
+        kit = await session.get(Kit, removal.kit_id)
+        if kit is None:
+            continue
+        await session.delete(kit)
+        removed += 1
+    await session.flush()
 
     spawned = 0
     for spawn in execution.spawns:
@@ -1753,6 +1962,7 @@ async def apply_import(
         updated=updated,
         skipped=skipped,
         kits_spawned=spawned,
+        kits_removed=removed,
         rows_deleted=plan.derived.rows_deleted,
         warnings=plan.warnings,
     )

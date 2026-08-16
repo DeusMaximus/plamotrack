@@ -150,6 +150,64 @@ already recorded in, rather than being relabelled with yours.
 
 ---
 
+## What an import can't do to an order
+
+An order is a purchase record, and some of it is fact rather than a field. A sheet
+that would change one of these is refused in the preview, naming the row and the
+column, before anything is written.
+
+**A line can't change what it is or which order it's on.** `item_type` and
+`order_id` are settled when the line is entered. A kit line has already become
+kits; a tool line has already moved (or will move) your on-hand count, and the two
+can't swap without stranding whichever side effect already happened. Moving a line
+between orders would take its kits with it and quietly rewrite what was bought
+where. To correct either, leave the line alone and enter a new one. The Orders page
+refuses both for the same reasons.
+
+**A tool, consumable or upgrade line has to point at something.** Fill in
+`catalog_ref_id`, or name the item in `catalog_name` and it's created for you at 0
+on hand. A line pointing at nothing can never move stock in either direction, so
+it's refused rather than stored.
+
+**A received order can't become pending, and a pending order with a catalog line
+can't be marked received.** This is the one that surprises people, so:
+
+Importing never changes `quantity_on_hand` (the rule above). Marking a pending
+order received through `orders.csv` would therefore leave the paint and tools it
+bought uncounted, *and* leave the order reading as received — so the app would then
+refuse to receive it, and the stock would never be applied at all. Clearing
+`received_at` on an order that genuinely arrived is the mirror image: the stock it
+already added stays where it is, and the next receive adds it a second time.
+
+So on an order that holds a tool, consumable or upgrade line, `received_at` may not
+be moved into or out of "received" by an import. What you can do instead:
+
+- **State the on-hand quantity** in `tools.csv` / `consumables.csv` /
+  `upgrades.csv`. That's where stock comes from, and it settles the whole question.
+- **Or leave `received_at` out of the sheet** and mark the order received in the
+  app, which applies the stock properly.
+
+Everything else about receipt still imports:
+
+- an order that holds only kit lines moves in both directions — that's the ordinary
+  starter-sheet case, where a kit you already own arrives already received;
+- a **new** order imports with its receipt intact, in any mode. A full archive
+  carries the received order *and* the post-receipt `quantity_on_hand` together, so
+  restoring one is never ambiguous;
+- correcting a received order's date to a different date is fine — it changes when,
+  not whether.
+
+**Reducing a kit line's quantity removes kits.** A line that says 1 where the
+collection holds 3 is a disagreement, so the import gives up the extra kits — newest
+first, and never one you've started: a kit that's building or complete, rated,
+photographed, or carrying an applied upgrade is kept and the row is refused instead.
+Kits named in the same upload's `kits.csv` are kept too, and a sheet that both lists
+two kits and says the line bought one is refused rather than silently resolved. The
+preview counts these deletions before you apply, the same way it counts a
+replace-everything import's.
+
+---
+
 ## Editing the CSVs by hand
 
 Two conveniences make the files readable, and both follow the same rule — **the

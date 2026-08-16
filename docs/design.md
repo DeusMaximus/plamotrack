@@ -829,7 +829,34 @@ be misleading.
 - **Kits are hybrid-dispatched.** An order line spawns kits only for the shortfall
   nothing else supplies: `quantity − (kits.csv rows for this line) − (kits already on a
   matched line)`. An archive round-trips with zero spawns; a bare orders sheet builds the
-  collection. Same diff arithmetic as `_update_line`.
+  collection. Same diff arithmetic as `_update_line` — and, since #44, in both
+  directions: a surplus gives kits up, under `_update_line`'s own progression guard.
+
+### 12.5a The importer is the third writer (#44, 16/08/2026)
+
+`apply_import` writes model rows by direct `setattr`, so for a while every column was
+freely mutable and an import could do things REST and MCP refuse. Rule 1 says the
+writers share a service layer; it was written when there were two of them.
+
+The fix is **not** to route import through `services/orders.py` — `receive_order`
+applies stock, which the invariant above forbids, and `_update_line` fights the hybrid
+dispatch. What is shared is the *predicates*: `kit_progressed`, `PROGRESSED_STATUSES`
+and `IMMUTABLE_LINE_COLUMNS` live in `services/orders.py`, and
+`services/portability/invariants.py` reads them to refuse a plan at preview time. One
+parametrised matrix drives both writers over the same edits and asserts they agree.
+
+**Receipt is the one place the ambiguity was deleted rather than represented.**
+`received_at is not None` is the proxy for "stock was applied" in four separate stock
+mutators. An import that flipped the flag without restating stock created a state none
+of them could read: the real receive 409'd, a delete became impossible, and an edit
+moved stock by the wrong amount — while clearing the flag re-armed the increment and
+double-counted a delivery. Telling "received" from "received, stock outstanding" apart
+needs a column, and that column has no correct backfill, no answer in the CSV (rule 9),
+and four call sites to teach. So an import may not move `received_at` into or out of
+null on an order holding a catalog line. Kit-only orders move freely in both
+directions (that is the starter-sheet path), and a *create* is untouched — a full
+archive carries the received order and its post-receipt `quantity_on_hand` together,
+which is how the invariant survives a restore today.
 
 A blank cell in an *included* column means null; a column omitted from the file entirely
 is left alone. That's needed for archive fidelity, but it makes partial sheets dangerous

@@ -1,0 +1,999 @@
+"""What an order line and an order receipt are allowed to become, whichever
+writer asks (#44).
+
+The importer writes model rows by direct `setattr`, so it reached the same tables
+as REST and MCP without any of their guards. This module is the check on that:
+one table of edits, driven through **both** the REST order editor and a merge
+import, asserting each writer reaches the same verdict and the same collection
+state. Two suites, one per side, is how the two drifted apart in the first place
+— the whole point is that a scenario cannot be added to one driver without an
+answer from the other.
+
+Receipt is deliberately *not* in that table, and has its own section below. REST
+and import legitimately differ there: `POST /orders/{id}/receive` applies stock,
+and an import never invents stock (rule 10). So the receipt axis asserts what
+each one does rather than that they match.
+"""
+
+import csv
+import io
+import zipfile
+
+import pytest
+
+from app.services.portability import exporting, spec
+from tests.test_portability import actions, apply, preview
+
+pytestmark = pytest.mark.anyio
+
+
+# --- helpers --------------------------------------------------------------------
+
+
+def archive(headers: dict[str, list[str]] | None = None, **tables: list[dict]) -> bytes:
+    """A merge-importable zip of whole tables, written from the spec's own headers
+    (rule 9) so a column added to a model reaches these tests for free.
+
+    `headers` narrows one table to the columns named, for the rows whose point is
+    what the sheet does *not* say. A full `kits` header carries `created_at` and
+    `updated_at`, and those are NOT NULL — a blank cell in either is a 500 that has
+    nothing to do with what the test is about (see the note in HANDOFF).
+    """
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as zf:
+        zf.writestr(
+            "manifest.json",
+            f'{{"format": "plamotrack-archive", "export_version": {exporting.EXPORT_VERSION}}}',
+        )
+        for key, rows in tables.items():
+            out = io.StringIO()
+            fieldnames = (headers or {}).get(key) or spec.SPEC_BY_KEY[key].header
+            writer = csv.DictWriter(out, fieldnames=fieldnames, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(rows)
+            zf.writestr(f"{key}.csv", out.getvalue())
+    return buffer.getvalue()
+
+
+def sheet(table: str, header: list[str], rows: list[dict]) -> bytes:
+    """A single CSV with a header the caller chooses, for the cases whose whole
+    point is which columns the sheet carries."""
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=header, extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(rows)
+    return out.getvalue().encode()
+
+
+async def make_order(client, retailer, items, *, received=False, number="HLJ-1"):
+    resp = await client.post(
+        "/orders",
+        json={
+            "retailer_id": retailer["id"],
+            "order_date": "2026-03-14",
+            "order_number": number,
+            "currency_code": "JPY",
+            "received": received,
+            "items": items,
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+def kit_line(quantity=2, name="Zaku II"):
+    return {
+        "item_type": "kit",
+        "quantity": quantity,
+        "unit_price_minor": 2800,
+        "currency_code": "JPY",
+        "kit": {"name": name, "grade": "HG"},
+    }
+
+
+def consumable_line(ref_id, quantity=3):
+    return {
+        "item_type": "consumable",
+        "quantity": quantity,
+        "unit_price_minor": 500,
+        "currency_code": "JPY",
+        "catalog_ref_id": ref_id,
+    }
+
+
+async def make_consumable(client, name="Panel liner", on_hand=0):
+    resp = await client.post(
+        "/consumables",
+        json={"name": name, "category": "paint", "quantity_on_hand": on_hand},
+    )
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def stock_of(client, consumable_id) -> int:
+    rows = (await client.get("/consumables")).json()
+    return next(row["quantity_on_hand"] for row in rows if row["id"] == consumable_id)
+
+
+async def kit_states(client) -> list[tuple[str, str]]:
+    return sorted((k["name"], k["status"]) for k in (await client.get("/kits")).json())
+
+
+def order_row(order, retailer, **overrides) -> dict:
+    """The order exactly as it stands, so only `overrides` differ from stored."""
+    row = {
+        "id": order["id"],
+        "retailer_id": retailer["id"],
+        "order_date": order["order_date"],
+        "order_number": order["order_number"],
+        "currency_code": order["currency_code"],
+        "received_at": order["received_at"] or "",
+    }
+    row.update(overrides)
+    return row
+
+
+def line_row(order, item, **overrides) -> dict:
+    row = {
+        "id": item["id"],
+        "order_id": order["id"],
+        "item_type": item["item_type"],
+        "catalog_ref_id": item["catalog_ref_id"] or "",
+        "quantity": str(item["quantity"]),
+        "unit_price_minor": str(item["unit_price_minor"]),
+        "currency_code": item["currency_code"],
+    }
+    if item["item_type"] == "kit":
+        row["kit_name"] = "Zaku II"
+        row["kit_grade"] = "HG"
+    row.update(overrides)
+    return row
+
+
+def rest_line(item, **overrides) -> dict:
+    """The stored line echoed back the way a client hydrates a form from it —
+    which is what makes an unintended change unintended."""
+    payload = {
+        "id": item["id"],
+        "item_type": item["item_type"],
+        "quantity": item["quantity"],
+        "unit_price_minor": item["unit_price_minor"],
+        "currency_code": item["currency_code"],
+    }
+    if item["item_type"] == "kit":
+        payload["kit"] = {"name": "Zaku II", "grade": "HG"}
+    else:
+        payload["catalog_ref_id"] = item["catalog_ref_id"]
+    payload.update(overrides)
+    return payload
+
+
+# --- the shared matrix: one edit, two writers ------------------------------------
+#
+# Each scenario names an edit to a stored order line and says whether *both*
+# writers have to refuse it. `refused=True` means the collection must come back
+# untouched from each; `refused=False` means each applies it and lands on the same
+# kit list. The two drivers below read the same table.
+
+INVARIANTS = [
+    pytest.param(
+        {
+            "id": "item_type change",
+            "kits": 2,
+            "progress": (),
+            "rest": {"item_type": "consumable", "kit": None, "catalog_ref_id": None},
+            "sheet": {"item_type": "consumable"},
+            "refused": True,
+        },
+        id="item_type change",
+    ),
+    pytest.param(
+        {
+            "id": "reparent to another order",
+            "kits": 2,
+            "progress": (),
+            "rest": "other-order",
+            "sheet": "other-order",
+            "refused": True,
+        },
+        id="reparent",
+    ),
+    pytest.param(
+        {
+            "id": "quantity 2 -> 1, nothing started",
+            "kits": 2,
+            "progress": (),
+            "rest": {"quantity": 1},
+            "sheet": {"quantity": "1"},
+            "refused": False,
+            "kits_after": 1,
+        },
+        id="quantity down, clean",
+    ),
+    pytest.param(
+        {
+            "id": "quantity 2 -> 1, both kits building",
+            "kits": 2,
+            "progress": ("building", "building"),
+            "rest": {"quantity": 1},
+            "sheet": {"quantity": "1"},
+            "refused": True,
+        },
+        id="quantity down, progressed",
+    ),
+    pytest.param(
+        {
+            "id": "quantity 2 -> 1, both kits carry an applied upgrade",
+            "kits": 2,
+            "progress": (),
+            "apply_upgrades": True,
+            "rest": {"quantity": 1},
+            "sheet": {"quantity": "1"},
+            "refused": True,
+        },
+        id="quantity down, applied upgrade",
+    ),
+]
+
+
+async def _seed_scenario(client, case) -> tuple[dict, dict, dict]:
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(case["kits"])], number="HLJ-1")
+    other = await make_order(client, retailer, [kit_line(1, name="Gouf")], number="HLJ-2")
+    item = order["items"][0]
+
+    for kit, status in zip(item["kits"], case.get("progress", ()), strict=False):
+        resp = await client.patch(f"/kits/{kit['id']}", json={"status": status})
+        assert resp.status_code == 200, resp.text
+
+    if case.get("apply_upgrades"):
+        upgrade = (
+            await client.post(
+                "/upgrades",
+                json={
+                    "name": "Metal thruster",
+                    "manufacturer": "Kotobukiya",
+                    "quantity_on_hand": 5,
+                },
+            )
+        ).json()
+        for kit in item["kits"]:
+            resp = await client.post(
+                f"/upgrades/{upgrade['id']}/apply",
+                json={"kit_id": kit["id"], "quantity": 1},
+            )
+            assert resp.status_code == 201, resp.text
+
+    return retailer, order, other
+
+
+@pytest.mark.parametrize("case", INVARIANTS)
+async def test_the_rest_editor_answers_the_invariant_matrix(client, case):
+    retailer, order, other = await _seed_scenario(client, case)
+    item = order["items"][0]
+    before = await kit_states(client)
+
+    if case["rest"] == "other-order":
+        # There is no "move this line" payload: REST reaches reparenting only by
+        # offering a line id to an order that doesn't own it, which is the shape
+        # `update_order` refuses. Same intent as the sheet's order_id change.
+        resp = await client.patch(f"/orders/{other['id']}", json={"items": [rest_line(item)]})
+    else:
+        resp = await client.patch(
+            f"/orders/{order['id']}", json={"items": [rest_line(item, **case["rest"])]}
+        )
+
+    if case["refused"]:
+        assert resp.status_code in (409, 422), f"{case['id']}: {resp.status_code} {resp.text}"
+        assert await kit_states(client) == before, case["id"]
+    else:
+        assert resp.status_code == 200, f"{case['id']}: {resp.text}"
+        assert len(await kit_states(client)) == case["kits_after"] + 1, case["id"]
+
+
+@pytest.mark.parametrize("case", INVARIANTS)
+async def test_a_merge_import_answers_the_same_invariant_matrix(client, case):
+    retailer, order, other = await _seed_scenario(client, case)
+    item = order["items"][0]
+    before = await kit_states(client)
+
+    overrides = {"order_id": other["id"]} if case["sheet"] == "other-order" else case["sheet"]
+    content = archive(order_items=[line_row(order, item, **overrides)])
+
+    plan = await preview(client, content)
+    resp = await apply(client, content)
+
+    if case["refused"]:
+        assert actions(plan, "order_items") == ["error"], f"{case['id']}: {plan['tables']}"
+        assert plan["blocking_errors"], case["id"]
+        assert resp.status_code == 409, f"{case['id']}: {resp.text}"
+        assert await kit_states(client) == before, case["id"]
+    else:
+        assert plan["blocking_errors"] == [], f"{case['id']}: {plan}"
+        assert resp.status_code == 200, f"{case['id']}: {resp.text}"
+        assert len(await kit_states(client)) == case["kits_after"] + 1, case["id"]
+
+
+async def test_the_refusal_names_the_column_it_is_about(client):
+    """The matrix asserts the verdict; a verdict nobody can act on is half a fix.
+
+    Both refusals have to say which cell is wrong — the importer reports one error
+    per row, so a message naming only "this line" leaves the operator diffing a
+    sheet against a database by hand.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line()], number="HLJ-1")
+    other = await make_order(client, retailer, [kit_line(1, name="Gouf")], number="HLJ-2")
+    item = order["items"][0]
+
+    typed = await preview(client, archive(order_items=[line_row(order, item, item_type="tool")]))
+    moved = await preview(
+        client, archive(order_items=[line_row(order, item, order_id=other["id"])])
+    )
+    assert typed["tables"][0]["rows"][0]["error"].startswith("item_type:")
+    assert moved["tables"][0]["rows"][0]["error"].startswith("order_id:")
+    # And the fix, not merely the refusal.
+    assert "Remove the line and add a new one" in typed["tables"][0]["rows"][0]["error"]
+    assert "add a new line to the other order" in moved["tables"][0]["rows"][0]["error"]
+
+
+async def test_restating_item_type_and_order_id_unchanged_is_not_a_change(client):
+    """The immutability check reads `changes`, not values — so a full archive,
+    which restates every column of every row, is still a no-op. This is the case
+    that would have made the guard unusable if it compared values instead."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line()])
+    item = order["items"][0]
+
+    plan = await preview(client, archive(order_items=[line_row(order, item)]))
+    assert actions(plan, "order_items") == ["unchanged"], plan["tables"]
+    assert plan["blocking_errors"] == []
+
+
+async def test_kit_details_propagate_through_rest_and_not_through_a_sheet(client):
+    """The one documented divergence in the matrix's subject area, pinned so it
+    stays deliberate.
+
+    `_update_line` pushes a restated kit name down onto every kit the line spawned
+    (#65): the Orders page is the only place that edit can be made, so it has to
+    reach the kits. `order_items.csv`'s `kit_*` columns are virtual and mean
+    something narrower — the spec says they "only matter when no kits row covers
+    the line", because an archive carries `kits.csv` and that file is where a kit's
+    own name lives. A sheet that renames them there is not ambiguous; one that
+    renames them on the order line is, so the importer leaves the kits alone.
+
+    Not a refusal either way, which is why it is not in the table above.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line()])
+    item = order["items"][0]
+
+    resp = await apply(client, archive(order_items=[line_row(order, item, kit_name="Char's Zaku")]))
+    assert resp.status_code == 200, resp.text
+    assert {name for name, _ in await kit_states(client)} == {"Zaku II"}
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={"items": [rest_line(item, kit={"name": "Char's Zaku", "grade": "HG"})]},
+    )
+    assert resp.status_code == 200, resp.text
+    assert {name for name, _ in await kit_states(client)} == {"Char's Zaku"}
+
+
+# --- downward reconciliation: which kits go, and when none do --------------------
+
+
+async def test_a_reduced_line_removes_the_newest_kit_and_says_so_first(client):
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(3)])
+    item = order["items"][0]
+    oldest = item["kits"][0]["id"]
+
+    content = archive(order_items=[line_row(order, item, quantity="1")])
+    plan = await preview(client, content)
+    assert plan["derived"]["kits_removed"] == 2, plan["derived"]
+    assert "will remove 2 kit(s) from this line" in plan["tables"][0]["rows"][0]["messages"]
+
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["kits_removed"] == 2
+    remaining = (await client.get("/kits")).json()
+    assert [k["id"] for k in remaining] == [oldest], "the oldest kit is the one kept"
+
+
+async def test_a_reduced_line_will_not_remove_a_kit_the_same_upload_describes(client):
+    """The upload contradicting itself — a `kits.csv` asserting two kits exist and
+    an `order_items.csv` quantity implying one does. Neither half is wrong on its
+    own, so nothing but the pair can catch it, and picking a winner silently is
+    how an import surprises someone."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(2)])
+    item = order["items"][0]
+    kits = item["kits"]
+
+    content = archive(
+        order_items=[line_row(order, item, quantity="1")],
+        kits=[
+            {"id": k["id"], "name": "Zaku II", "grade": "HG", "order_item_id": item["id"]}
+            for k in kits
+        ],
+    )
+    plan = await preview(client, content)
+    assert actions(plan, "order_items") == ["error"], plan["tables"]
+    assert "described by this upload" in plan["tables"][0]["rows"][0]["error"]
+
+    resp = await apply(client, content)
+    assert resp.status_code == 409
+    assert len(await kit_states(client)) == 2
+
+
+async def test_a_line_cannot_be_over_supplied_by_the_uploads_own_kits(client):
+    """The same contradiction reached from the create side: `kits.csv` brings more
+    new kits for the line than its quantity admits. `covered` alone exceeds
+    `wanted`, so there is no stored kit to give up and the shortfall is the only
+    thing that can report it."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    item = order["items"][0]
+
+    content = archive(
+        order_items=[line_row(order, item, quantity="1")],
+        kits=[
+            {"name": "Zaku II", "grade": "HG", "order_item_id": item["id"]},
+            {"name": "Zaku II", "grade": "HG", "order_item_id": item["id"]},
+        ],
+    )
+    plan = await preview(client, content)
+    assert actions(plan, "order_items") == ["error"], plan["tables"]
+    assert plan["blocking_errors"]
+    assert (await apply(client, content)).status_code == 409
+
+
+@pytest.mark.parametrize(
+    ("header_has_quantity", "cell", "expected"),
+    [
+        # The column simply isn't there. `values.get("quantity") or 0` reads that as
+        # zero, and zero counting *downward* asks for every kit on the line — so a
+        # sheet fixing a tracking number would have emptied the order. This is the
+        # case the guard exists for, and no value in the cell can express it.
+        (False, None, "untouched"),
+        # There, but empty. `quantity` is required, so this is a row error rather
+        # than a silent nothing — and either way not a removal.
+        (True, "", "error"),
+        # There, and the same as stored: nothing to reconcile in either direction.
+        (True, "2", "untouched"),
+        # There, and lower: the reconciliation this parametrisation is bracketing.
+        (True, "1", "removed"),
+    ],
+    ids=["column absent", "blank cell", "same value", "lower"],
+)
+async def test_a_quantity_the_sheet_never_states_removes_nothing(
+    client, header_has_quantity, cell, expected
+):
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(2)])
+    item = order["items"][0]
+
+    header = ["id", "order_id", "item_type", "unit_price_minor", "currency_code"]
+    row = {
+        "id": item["id"],
+        "order_id": order["id"],
+        "item_type": "kit",
+        "unit_price_minor": "2800",
+        "currency_code": "JPY",
+    }
+    if header_has_quantity:
+        header.insert(3, "quantity")
+        row["quantity"] = cell
+
+    content = sheet("order_items", header, [row])
+    plan = await preview(client, content, filename="order_items.csv")
+    resp = await apply(client, content, filename="order_items.csv")
+
+    if expected == "error":
+        assert actions(plan, "order_items") == ["error"], plan["tables"]
+        assert resp.status_code == 409
+        assert len(await kit_states(client)) == 2
+    elif expected == "untouched":
+        assert plan["derived"]["kits_removed"] == 0, plan["derived"]
+        assert resp.status_code == 200, resp.text
+        assert len(await kit_states(client)) == 2
+    else:
+        assert plan["derived"]["kits_removed"] == 1, plan["derived"]
+        assert resp.status_code == 200, resp.text
+        assert len(await kit_states(client)) == 1
+
+
+async def test_a_replace_all_import_reconciles_nothing_downward(client):
+    """Every row is a create and every stored kit is truncated first, so `existing`
+    is zero by construction — there is no surplus to find, and a removal planned
+    against a row about to be truncated would be a delete of a row that no longer
+    exists."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(2)])
+    item = order["items"][0]
+
+    content = archive(
+        retailers=[{"id": retailer["id"], "name": "Hobby Link Japan"}],
+        orders=[order_row(order, retailer)],
+        order_items=[line_row(order, item, quantity="1")],
+    )
+    plan = await preview(client, content, mode="replace_all")
+    assert plan["derived"]["kits_removed"] == 0, plan["derived"]
+    assert plan["blocking_errors"] == [], plan
+
+    resp = await apply(client, content, mode="replace_all", confirm="REPLACE")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["kits_removed"] == 0
+    assert len(await kit_states(client)) == 1, "one kit, spawned fresh by the line"
+
+
+async def test_an_add_only_import_reconciles_nothing_downward(client):
+    """`add_only` leaves every matched row exactly as it is (SKIP), so a quantity
+    it would have reduced never lands — and a removal derived from a quantity that
+    isn't being written would delete kits on the strength of a cell the import is
+    ignoring."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(2)])
+    item = order["items"][0]
+
+    content = archive(order_items=[line_row(order, item, quantity="1")])
+    plan = await preview(client, content, mode="add_only")
+    assert actions(plan, "order_items") == ["skip"], plan["tables"]
+    assert plan["derived"]["kits_removed"] == 0, plan["derived"]
+
+    resp = await apply(client, content, mode="add_only")
+    assert resp.status_code == 200, resp.text
+    assert len(await kit_states(client)) == 2
+
+
+async def test_a_planned_removal_hashes_stably_and_moves_with_its_kits(client):
+    """Two previews of one file agree, and a removal set that changes changes the
+    hash. `rows_deleted` learned this the hard way: two collections of the same
+    size are the same number and a different loss."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(3)])
+    item = order["items"][0]
+
+    content = archive(order_items=[line_row(order, item, quantity="2")])
+    first = await preview(client, content)
+    second = await preview(client, content)
+    assert first["plan_hash"] == second["plan_hash"], "a removal moved the hash on its own"
+
+    # Take the kit the plan was going to remove out of reach: the surviving plan
+    # removes a different kit, for the same count.
+    newest = item["kits"][-1]["id"]
+    assert (await client.patch(f"/kits/{newest}", json={"status": "building"})).status_code == 200
+    third = await preview(client, content)
+    assert third["derived"]["kits_removed"] == 1
+    assert third["plan_hash"] != first["plan_hash"], "which kit goes is part of the plan"
+
+
+# --- receipt: the transitions, and what each does to stock -----------------------
+#
+# REST and import differ here on purpose, so this axis asserts behaviour rather
+# than agreement. The variables are the transition (`unreceived -> received`,
+# `received -> unreceived`, and a correction between two non-null timestamps) and
+# whether the order holds a line that moves stock.
+
+
+@pytest.fixture
+async def catalog_order(client):
+    """A pending order with one consumable line — the shape whose receipt carries
+    accounting. Stock starts at zero and the line is for three."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    consumable = await make_consumable(client)
+    order = await make_order(client, retailer, [consumable_line(consumable["id"])])
+    return {"retailer": retailer, "consumable": consumable, "order": order}
+
+
+@pytest.fixture
+async def kit_order(client):
+    """The starter-sheet shape: kits only, nothing that moves stock."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    return {"retailer": retailer, "order": order}
+
+
+async def test_an_import_cannot_receive_an_order_that_would_have_moved_stock(client, catalog_order):
+    """Case 4's first hole. The transition is refused rather than represented: the
+    only thing that could tell "received" from "received, stock outstanding" is a
+    column, and `received_at is not None` is the proxy for "stock was applied" in
+    four separate stock mutators.
+
+    All three consequences are asserted, not just the 409 the issue documents —
+    they are what makes this worth refusing rather than tolerating.
+    """
+    order, consumable = catalog_order["order"], catalog_order["consumable"]
+    content = archive(
+        orders=[order_row(order, catalog_order["retailer"], received_at="2026-03-20T00:00:00Z")]
+    )
+
+    plan = await preview(client, content)
+    assert actions(plan, "orders") == ["error"], plan["tables"]
+    error = plan["tables"][0]["rows"][0]["error"]
+    assert error.startswith("received_at:")
+    assert "consumables.csv" in error, "the refusal has to name the fix, not just refuse"
+    assert (await apply(client, content)).status_code == 409
+
+    stored = (await client.get(f"/orders/{order['id']}")).json()
+    assert stored["received_at"] is None
+
+    # 1. the real receive still works, and applies the stock
+    assert (await client.post(f"/orders/{order['id']}/receive")).status_code == 200
+    assert await stock_of(client, consumable["id"]) == 3
+    # 2. an edit moves stock by the real difference, not from a phantom zero
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={"items": [rest_line(order["items"][0], quantity=5)]},
+    )
+    assert resp.status_code == 200, resp.text
+    assert await stock_of(client, consumable["id"]) == 5
+    # 3. and the order is still deletable
+    assert (await client.delete(f"/orders/{order['id']}")).status_code == 204
+    assert await stock_of(client, consumable["id"]) == 0
+
+
+async def test_an_import_cannot_un_receive_an_order_whose_stock_was_applied(client, catalog_order):
+    """Case 4's second and most severe hole: clearing `received_at` left the stock
+    the receive applied exactly where it was and re-armed `receive_order`, so a
+    second receive counted the same delivery twice. Silent, and only visible as a
+    number that is quietly wrong."""
+    order, consumable = catalog_order["order"], catalog_order["consumable"]
+    assert (await client.post(f"/orders/{order['id']}/receive")).status_code == 200
+    assert await stock_of(client, consumable["id"]) == 3
+
+    received = (await client.get(f"/orders/{order['id']}")).json()
+    content = archive(orders=[order_row(received, catalog_order["retailer"], received_at="")])
+
+    plan = await preview(client, content)
+    assert actions(plan, "orders") == ["error"], plan["tables"]
+    assert "add it a second time" in plan["tables"][0]["rows"][0]["error"]
+    assert (await apply(client, content)).status_code == 409
+
+    assert (await client.get(f"/orders/{order['id']}")).json()["received_at"] is not None
+    assert (await client.post(f"/orders/{order['id']}/receive")).status_code == 409
+    assert await stock_of(client, consumable["id"]) == 3
+
+
+async def test_a_correction_between_two_timestamps_is_not_a_transition(client, catalog_order):
+    """The third state on the axis, and the one a naive "is it non-null now" check
+    cannot tell from an arrival. Nothing about the accounting changes when a
+    received order's timestamp is corrected, so it stays importable — on a catalog
+    order, where both other transitions are refused."""
+    order, consumable = catalog_order["order"], catalog_order["consumable"]
+    assert (await client.post(f"/orders/{order['id']}/receive")).status_code == 200
+    received = (await client.get(f"/orders/{order['id']}")).json()
+
+    content = archive(
+        orders=[order_row(received, catalog_order["retailer"], received_at="2026-04-01T00:00:00Z")]
+    )
+    plan = await preview(client, content)
+    assert actions(plan, "orders") == ["update"], plan["tables"]
+    assert plan["blocking_errors"] == []
+    assert (await apply(client, content)).status_code == 200
+
+    stored = (await client.get(f"/orders/{order['id']}")).json()
+    assert stored["received_at"] != received["received_at"]
+    assert await stock_of(client, consumable["id"]) == 3, "corrected, not re-applied"
+
+
+@pytest.mark.parametrize("received_at", ["2026-03-20T00:00:00Z", ""], ids=["receive", "clear"])
+async def test_a_kit_only_order_still_moves_in_both_directions(client, kit_order, received_at):
+    """#79's reviewed behaviour, which the refusal must not regress. Nothing on
+    this order ever moved stock, so neither direction can leave stock unaccounted
+    for — and receipt arriving by import is the starter sheet's normal case, not
+    an anomaly."""
+    order = kit_order["order"]
+    if received_at == "":
+        assert (await client.post(f"/orders/{order['id']}/receive")).status_code == 200
+        order = (await client.get(f"/orders/{order['id']}")).json()
+
+    content = archive(orders=[order_row(order, kit_order["retailer"], received_at=received_at)])
+    plan = await preview(client, content)
+    assert plan["blocking_errors"] == [], plan
+    assert actions(plan, "orders") == ["update"], plan["tables"]
+
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+    stored = (await client.get(f"/orders/{order['id']}")).json()
+    assert (stored["received_at"] is not None) == bool(received_at)
+
+
+async def test_a_catalog_line_this_upload_adds_counts_against_the_transition(client, kit_order):
+    """The state axis the stored order cannot express. A kit-only order transitions
+    freely — until the same upload puts a consumable line on it, at which point the
+    order it becomes holds stock nobody applied. Reading only `row.target.items`
+    reports "kit-only" and lets it through."""
+    order = kit_order["order"]
+    consumable = await make_consumable(client)
+
+    content = archive(
+        orders=[order_row(order, kit_order["retailer"], received_at="2026-03-20T00:00:00Z")],
+        order_items=[
+            {
+                "order_id": order["id"],
+                "item_type": "consumable",
+                "catalog_ref_id": consumable["id"],
+                "quantity": "2",
+                "unit_price_minor": "500",
+                "currency_code": "JPY",
+            }
+        ],
+    )
+    plan = await preview(client, content)
+    assert actions(plan, "orders") == ["error"], plan["tables"]
+    assert (await apply(client, content)).status_code == 409
+    assert (await client.get(f"/orders/{order['id']}")).json()["received_at"] is None
+
+
+async def test_a_received_order_with_catalog_lines_still_restores_from_an_archive(client):
+    """The case the refusal must not catch, in both modes that create rather than
+    transition.
+
+    A create is not a transition: the archive carries the order, its lines *and*
+    the post-receipt `quantity_on_hand` in `consumables.csv`, and the importer
+    writes that number directly (rule 10). That is how `received_at ⟹ stock
+    accounted for` already survives a full restore, and refusing it would make
+    every archive of a received order unimportable.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    consumable = await make_consumable(client)
+    order = await make_order(client, retailer, [consumable_line(consumable["id"])], received=True)
+    assert await stock_of(client, consumable["id"]) == 3
+
+    exported = (await client.get("/export/archive")).content
+    for mode, extra in (("replace_all", {"confirm": "REPLACE"}), ("merge", {})):
+        plan = await preview(client, exported, mode=mode)
+        assert plan["blocking_errors"] == [], f"{mode}: {plan}"
+        resp = await apply(client, exported, mode=mode, **extra)
+        assert resp.status_code == 200, f"{mode}: {resp.text}"
+        assert await stock_of(client, consumable["id"]) == 3, mode
+        stored = (await client.get("/orders")).json()[0]
+        assert stored["received_at"] is not None, mode
+        assert order["order_number"] == stored["order_number"], mode
+
+
+# --- a catalog line has to point at something ------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("id_cell", "name_cell", "accepted"),
+    [
+        ("", "", False),  # neither: the line can never move stock, ever
+        ("11111111-1111-1111-1111-111111111111", "", False),  # a uuid nothing holds
+        ("", "Mr Surfacer 1200", True),  # named: created at 0 on hand, like rule 3's flow
+        ("real", "", True),  # the ordinary case
+        ("wrong-table", "", False),  # a real uuid, in the wrong catalog
+    ],
+    ids=["neither", "unknown uuid", "name only", "resolvable", "wrong catalog table"],
+)
+async def test_a_catalog_line_must_resolve_for_its_own_item_type(
+    client, id_cell, name_cell, accepted
+):
+    """`catalog_ref_id` is polymorphic across three tables, so no foreign key can
+    hold it and nothing downstream notices a line pointing nowhere — it can never
+    apply stock on receive nor have it reversed on delete. "Wrong catalog table" is
+    the value the other four cannot express: a uuid that resolves perfectly, just
+    not for this line's type."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    consumable = await make_consumable(client)
+    tool = (
+        await client.post(
+            "/tools", json={"name": "Nippers", "category": "cutting", "quantity_on_hand": 1}
+        )
+    ).json()
+
+    resolved = {"real": consumable["id"], "wrong-table": tool["id"]}.get(id_cell, id_cell)
+    content = archive(
+        order_items=[
+            {
+                "order_id": order["id"],
+                "item_type": "consumable",
+                "catalog_ref_id": resolved,
+                "catalog_name": name_cell,
+                "quantity": "2",
+                "unit_price_minor": "500",
+                "currency_code": "JPY",
+            }
+        ]
+    )
+    plan = await preview(client, content)
+    resp = await apply(client, content)
+
+    if accepted:
+        assert plan["blocking_errors"] == [], plan
+        assert resp.status_code == 200, resp.text
+        lines = (await client.get(f"/orders/{order['id']}")).json()["items"]
+        added = next(line for line in lines if line["item_type"] == "consumable")
+        assert added["catalog_ref_id"] is not None
+    else:
+        assert actions(plan, "order_items") == ["error"], plan["tables"]
+        assert "catalog_ref_id:" in plan["tables"][0]["rows"][0]["error"]
+        assert resp.status_code == 409
+        assert len((await client.get(f"/orders/{order['id']}")).json()["items"]) == 1
+
+
+async def test_an_update_that_says_nothing_about_the_reference_keeps_it(client):
+    """The action axis for the same check. A partial sheet correcting a price on a
+    catalog line legitimately omits `catalog_ref_id`, and the stored reference has
+    to survive that — asking the question of every row rather than every row that
+    *says* something would refuse the commonest partial import there is."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    consumable = await make_consumable(client)
+    order = await make_order(client, retailer, [consumable_line(consumable["id"])])
+    item = order["items"][0]
+
+    content = sheet(
+        "order_items",
+        ["id", "order_id", "item_type", "quantity", "unit_price_minor", "currency_code"],
+        [
+            {
+                "id": item["id"],
+                "order_id": order["id"],
+                "item_type": "consumable",
+                "quantity": "3",
+                "unit_price_minor": "650",
+                "currency_code": "JPY",
+            }
+        ],
+    )
+    plan = await preview(client, content, filename="order_items.csv")
+    assert plan["blocking_errors"] == [], plan
+    resp = await apply(client, content, filename="order_items.csv")
+    assert resp.status_code == 200, resp.text
+
+    stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert stored["catalog_ref_id"] == consumable["id"]
+    assert stored["unit_price_minor"] == 650
+
+
+async def test_a_blank_reference_cell_on_a_catalog_line_is_refused_not_nulled(client):
+    """The other half of that action axis: the column is there and empty, which is
+    what an export template and a hand-edited archive both look like. Blank means
+    null, and null on a catalog line is the dangling row this check exists for —
+    so it is a refusal, not a silent write."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    consumable = await make_consumable(client)
+    order = await make_order(client, retailer, [consumable_line(consumable["id"])])
+    item = order["items"][0]
+
+    content = archive(order_items=[line_row(order, item, catalog_ref_id="")])
+    plan = await preview(client, content)
+    assert actions(plan, "order_items") == ["error"], plan["tables"]
+    assert (await apply(client, content)).status_code == 409
+    stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert stored["catalog_ref_id"] == consumable["id"]
+
+
+async def test_a_kit_line_carrying_a_stray_catalog_reference_is_still_fine(client):
+    """Kit lines don't reference the catalog — `_resolve_ref` nulls the column for
+    them. The check has to skip that rather than read the null as unresolvable."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    consumable = await make_consumable(client)
+    order = await make_order(client, retailer, [kit_line(1)])
+    item = order["items"][0]
+
+    content = archive(order_items=[line_row(order, item, catalog_ref_id=consumable["id"])])
+    plan = await preview(client, content)
+    assert plan["blocking_errors"] == [], plan
+    assert (await apply(client, content)).status_code == 200
+    assert (await client.get(f"/orders/{order['id']}")).json()["items"][0]["catalog_ref_id"] is None
+
+
+# --- a status the sheet moves without saying when ---------------------------------
+
+
+KIT_HEADER = ["id", "name", "grade", "status", "status_updated_at"]
+
+
+def kit_sheet(kit_id, status, stamp=None, *, with_stamp_column=True) -> bytes:
+    header = KIT_HEADER if with_stamp_column else KIT_HEADER[:-1]
+    row = {"id": kit_id, "name": "Zaku II", "grade": "HG", "status": status}
+    if with_stamp_column:
+        row["status_updated_at"] = stamp or ""
+    return sheet("kits", header, [row])
+
+
+@pytest.fixture
+async def spawned_kit(client):
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    kit = (await client.get(f"/kits/{order['items'][0]['kits'][0]['id']}")).json()
+    assert kit["status"] == "ordered"
+    return kit
+
+
+@pytest.mark.parametrize(
+    ("status", "stamp", "with_column", "expected"),
+    [
+        # The case the issue names: a status move with no timestamp anywhere.
+        ("building", None, False, "generated"),
+        # The same move with the column present and empty — what the export
+        # template ships and a hand-edited archive is full of. `status_updated_at`
+        # is NOT NULL, so writing the blank through was an IntegrityError: a 500
+        # out of the apply, on the row that needed a generated stamp anyway.
+        ("building", None, True, "generated"),
+        # A sheet that says both. An explicit value is a fact the file is asserting
+        # and always wins — inventing one over the top is the mistake §6 keeps out
+        # of money.
+        ("building", "2026-02-01T00:00:00Z", True, "stated"),
+        # No status change, so nothing to stamp: the row is unchanged and the
+        # timestamp still says when the kit last actually moved.
+        ("ordered", None, False, "untouched"),
+    ],
+    ids=["absent column", "blank cell", "stated", "no status change"],
+)
+async def test_a_status_change_gets_the_timestamp_the_board_reads(
+    client, spawned_kit, status, stamp, with_column, expected
+):
+    """`update_kit` stamps `status_updated_at` on every status change because the
+    board's "most recently moved" ordering is read off it. The importer assigned
+    `status` directly and left the timestamp, so the board silently lied — and the
+    further back the kit's last real move was, the further from the truth."""
+    content = kit_sheet(spawned_kit["id"], status, stamp, with_stamp_column=with_column)
+    resp = await apply(client, content, filename="kits.csv")
+    assert resp.status_code == 200, resp.text
+
+    after = (await client.get(f"/kits/{spawned_kit['id']}")).json()
+    assert after["status"] == status
+    if expected == "generated":
+        assert after["status_updated_at"] != spawned_kit["status_updated_at"]
+    elif expected == "stated":
+        assert after["status_updated_at"].startswith("2026-02-01")
+    else:
+        assert after["status_updated_at"] == spawned_kit["status_updated_at"]
+
+
+@pytest.mark.parametrize("with_column", [False, True], ids=["absent column", "blank cell"])
+async def test_a_generated_status_stamp_does_not_move_the_plan_hash(
+    client, spawned_kit, with_column
+):
+    """The reason the stamp is deferred to apply rather than filled in at plan
+    time. `_plan_fingerprint` hashes every value in `row.present`, so a clock
+    reading in the plan is a different hash on every pass — preview and apply could
+    never agree, and every status-moving import would 409 on a preview it had just
+    been shown.
+
+    Both sheet shapes, because only one of them can see it. With the column absent
+    the fingerprint never reads `status_updated_at` at all, so a plan-time
+    `datetime.now(UTC)` written into `values` hashes as nothing and this test
+    passes against the broken build. The blank-cell shape has the column in
+    `present`, which is where the clock would actually land — and `present.discard`
+    is what takes it back out. Found by neutering: the absent-column case alone
+    stayed green with the deferral removed.
+    """
+    content = kit_sheet(spawned_kit["id"], "building", with_stamp_column=with_column)
+    first = await preview(client, content, filename="kits.csv")
+    second = await preview(client, content, filename="kits.csv")
+    assert first["plan_hash"] == second["plan_hash"], "a generated timestamp moved the hash"
+    assert "status_updated_at" in " ".join(first["tables"][0]["rows"][0]["messages"])
+
+    resp = await apply(client, content, filename="kits.csv", plan_hash=first["plan_hash"])
+    assert resp.status_code == 200, resp.text
+    after = (await client.get(f"/kits/{spawned_kit['id']}")).json()
+    assert after["status_updated_at"] != spawned_kit["status_updated_at"]
+
+
+async def test_an_arrival_and_a_status_row_do_not_both_stamp_one_kit(client):
+    """The two derivations that write this column meet on one kit: an order this
+    import receives, whose kit the same import also gives an explicit status.
+    `_advance_kits_for_newly_received_orders` already yields to an explicit status
+    cell, so the generated stamp has to come from the kits row alone — and the
+    explicit status is what lands, not `backlog`."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    kit = order["items"][0]["kits"][0]
+
+    content = archive(
+        {"kits": ["id", "name", "grade", "status"]},
+        orders=[order_row(order, retailer, received_at="2026-03-20T00:00:00Z")],
+        kits=[{"id": kit["id"], "name": "Zaku II", "grade": "HG", "status": "building"}],
+    )
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+
+    after = (await client.get(f"/kits/{kit['id']}")).json()
+    assert after["status"] == "building", "the sheet's status wins over the arrival default"
+    assert after["status_updated_at"] != kit["status_updated_at"]
