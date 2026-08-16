@@ -18,9 +18,12 @@ Template:
 
 ## 2026-08-17 — Claude Code (Opus 5) — #82 and #88 closed by PR #89
 
-**PR #89 is open at `3973ef5`, branch `fix/82-88-blank-and-dangling-cells`, NOT
-merged and NOT reviewed.** 491 backend tests, ruff clean, three CI jobs green. No
-migration. Branched from `main`, **independent of #86** — either can merge first.
+**PR #89 is open at `e5747b2`, branch `fix/82-88-blank-and-dangling-cells`, NOT
+merged.** 499 backend tests, ruff clean, three CI jobs green. No migration.
+Branched from `main`; the branches are independent, but see the merge note below.
+
+**One review round (Cursor/Grok 4.6), NO-GO, three findings plus one pre-existing
+sibling — all four real and reproduced at head before being fixed.** #90 filed.
 
 **`main` is at `e45a62e` plus this entry.** Two PRs open, neither reviewed: #86
 (#44, four review rounds) and #89 (this).
@@ -73,14 +76,64 @@ could not change an outcome (SQLAlchemy applies a column default even when the
 insert names the column as NULL), and a test asserting that *a* refusal happened
 rather than which rule made it.
 
+### The review, and what it found
+
+Round one, and the finding rate matched #86's first round almost exactly. All
+three were mine to own:
+
+1. **The documentation and the implementation disagreed about rung 6.** The ladder
+   says "*nullable* column, unresolvable reference"; the code keyed off `required`
+   in the spec. `orders.retailer_id` is the one column where those two predicates
+   come apart — optional in the sheet because it has `retailer_name`, NOT NULL in
+   the database — so both rules fired and contradicted each other. #82 told the
+   operator the row imported without a shop and to go and add one; #88 had already
+   quietly kept the stored shop. Now gated on nullability, as written.
+2. **A refused create kept the id it had minted.** `_classify` adds `new_id` to
+   `created_ids` before the create refusal runs, so a refused order stayed
+   resolvable, its lines planned as clean creates, and the fan-out promised kits
+   for an order that would never exist. Apply was safe; the preview was not. Same
+   class as #86's round-two finding 4, reached through reference resolution
+   instead of the fan-out. The refusal takes the id back now.
+3. **A kit line's `catalog_ref_id` was dropped with nothing said** — it never
+   reaches the dangling path, because there is no catalog table to fail to find it
+   in. Fixed rather than documented away: `docs/import-export.md` promises that a
+   discarded catalog reference is reported, and that was the more recent statement
+   of intent.
+
+**#90** is the sibling it flagged separately: an `order_items.csv` update that
+omits `item_type` while carrying a dead `catalog_ref_id` **writes the dead uuid**,
+at 200. The mirror image of #82 and worse — the reference is kept and points at
+nothing (#63's shape). #86 already carries the helper that fixes it
+(`effective_item_type`), so land that first rather than duplicating it.
+
+### MERGE NOTE: #86 and #89 both insert into `_classify`
+
+Not a conflict git will show you. Both add a call immediately after
+`_defer_filled_money_currency`, and both act on a blank `status_updated_at`:
+
+* **Order them defer-first.** #86's `_defer_generated_status_stamp` takes the
+  column out of `present` so the apply can stamp `now`; #89's keep-stored then
+  skips it. The other order previews both "left as it was" *and* "will be set to
+  the time of this import", and #86 stamps anyway — so the preview lies.
+* **`_COLUMN_DEFAULTS` conflicts textually.** #89 emptied the schema-default
+  entries that #86 still carries. #89's version is the one to keep: the entries it
+  removed are read from the model now, and a contract test enforces that.
+* The `elif dangling` branch #89 adds does not exist on #86 and should merge
+  cleanly.
+
+Identified by the #89 review, which read both trees; neither branch can test it
+until one of them lands.
+
 ### State
 
-- 21 tests in `tests/test_cell_semantics.py`; **8 mutants, all killed**
-  (`backend/mutation_test.py`, tracked on this branch too).
+- 29 tests in `tests/test_cell_semantics.py`; **11 mutants, all killed**
+  (`backend/mutation_test.py`, tracked on this branch too). The mode axis is
+  pinned separately — `_classify` never runs under `replace_all` and returns SKIP
+  before keep-stored under `add_only`, so "correct in merge" said nothing about
+  the other two.
 - `docs/import-export.md` updated with both rules in user-facing language.
-- **Not reviewed.** Given #86's record — four rounds, eleven findings, all real —
-  this wants a round before it merges, and the review budget resets Thursday
-  2026-08-20.
+- **One round done, none since the fixes.** #86 took four rounds to flatten and
+  this has had one, so treat the current green as round-one green.
 
 ---
 
