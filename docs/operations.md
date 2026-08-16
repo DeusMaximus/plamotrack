@@ -47,6 +47,11 @@ in the UI, or:
 curl -o plamotrack-archive.zip http://127.0.0.1:8080/api/export/archive
 ```
 
+Both are point-in-time: the archive is read from a single database snapshot, so
+taking one while the app is in use — an agent adding an order mid-download — gives
+you the collection as it stood when the export began reading, never a mix of
+before and after.
+
 Keep both. The dump is what you restore from on Sunday; the archive is what still
 opens in three years. See [import-export.md](import-export.md) for the format.
 

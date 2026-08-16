@@ -190,6 +190,21 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    seven review rounds on #79: a plan read outside the gate is stale by the time
    it is written, and the failure modes are 500s and silent data loss, not
    conflicts.
+7.2. **Export reads one snapshot** — `await begin_read_snapshot(session)` from
+   `services/read_snapshot.py`, taken by `_load_all` before its first statement.
+   `REPEATABLE READ READ ONLY`, so every table comes from one instant — the one
+   the transaction's *first SQL statement* fixes, not request entry. One statement
+   per table under the default `READ COMMITTED` is one snapshot per table, and a
+   write landing between two of them writes an archive whose files contradict each
+   other — a kit whose order line no CSV in the same zip contains (#48). This is
+   why reads still don't take the write gate: a snapshot is not a lock, so every
+   row-level writer runs alongside an export in both directions. That exemption is
+   row-level writes only — a `replace_all` import's `TRUNCATE` wants ACCESS
+   EXCLUSIVE and does queue behind an in-flight export's ACCESS SHARE, and the
+   reverse. Because it covers the whole transaction and Postgres then refuses
+   every write in it, put it only where the read *is* the unit of work. Never on
+   a helper a write path also calls — `plan_import` is
+   shared by preview and apply, and a snapshot there would break every import.
 8. **Public read paths (Milestone 8)** must be genuinely separate route handlers
    under `/public/*` — not filtered views (§5). Public ingress must not expose an
    unauthenticated admin or MCP route; route separation is enforced at both the app

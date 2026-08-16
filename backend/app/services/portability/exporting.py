@@ -39,6 +39,7 @@ from app.services.portability.spec import (
     TableSpec,
     render,
 )
+from app.services.read_snapshot import begin_read_snapshot
 
 #: Bumped when the CSV shape changes in a way an older importer couldn't read.
 EXPORT_VERSION = 1
@@ -82,7 +83,15 @@ def _write_csv(header: list[str], rows: list[dict[str, str]]) -> str:
 async def _load_all(session: AsyncSession) -> dict[str, list[Any]]:
     """One pass over every table. A personal collection is small enough that
     loading it whole is simpler and faster than per-row lookups while filling
-    the readable mirror columns."""
+    the readable mirror columns.
+
+    One statement per table means one `READ COMMITTED` snapshot per table, and a
+    write landing between two of them produces an archive that combines states
+    that never coexisted (#48). The snapshot is taken here rather than in the two
+    callers because this is the multi-statement read: everything downstream —
+    including `build_manifest`'s schema-version lookup — rides in the same
+    transaction, and no future caller of this function can forget it."""
+    await begin_read_snapshot(session)
     orders = (await session.scalars(select(Order).order_by(Order.order_date, Order.id))).all()
     order_items = (
         await session.scalars(
