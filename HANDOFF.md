@@ -16,99 +16,102 @@ Template:
 
 ---
 
-## 2026-08-16 — Claude Code (Opus 5) — #44 built: order invariants for the third writer
+## 2026-08-17 — Claude Code (Opus 5) — #44 built and reviewed three times (PR #86)
 
-**PR #86 is open at `cf42775`, branch `fix/44-import-order-invariants`, not merged.**
-515 backend tests (470 + 45), ruff clean, `npm run build` and `npm run lint` clean. No
-migration. `main` is at `8d21dac` plus this entry. **#87 and #88 filed** (the two
-siblings below). Expect a Codex review round — every PR this milestone has had one and
-two came back NO-GO.
+**PR #86 is open at `c2eeb1a`, branch `fix/44-import-order-invariants`, NOT merged
+and NOT approved.** 544 backend tests, ruff clean, frontend builds and lints, all
+three CI jobs green. No migration. `main` is at `8d11368` plus this entry. **#87
+and #88 filed** during the work.
 
-All five cases of #44 are closed, option B as decided. Each was measured on the
-unfixed code first and re-measured after.
+Supersedes the entry originally written here before the reviews; that one
+described a state three rounds out of date.
 
-- **`services/portability/invariants.py` is new** — three preview-time refusals, run
-  from `_Planner.build()` *before* `_plan_spawns` so a refused line contributes no
-  fan-out either. It imports `kit_progressed` / `IMMUTABLE_LINE_COLUMNS` from
-  `services/orders.py`; the shared thing is the predicates, never the mutation path.
-  Written up as an addition to architecture rule 1 and a new rule 2.1.
-- **Cases 1 + 3 (`item_type`, `order_id`).** Both were 200s that left the collection
-  disagreeing with the record — a kit line became a tool with two kits still attached,
-  and a reparent moved a line *and its kits* between orders (first order: 2 lines → 0).
-- **Case 2 (quantity only reconciled upward).** `_plan_spawns` now calls
-  `_plan_removals`; kits go newest-first, skipping progressed ones and any the same
-  upload names. `DerivedEffects.kits_removed` / `ImportResult.kits_removed` are new,
-  and the preview shows the count in red beside `rows_deleted` — no row in the table
-  names these kits, so that line is the only warning there is.
-- **Case 4 (receipt).** Refused in *both* directions on an order with catalog lines;
-  kit-only orders keep #79's behaviour, and a create is untouched (an archive restore
-  is a create, and carries `quantity_on_hand` with it). Measured before: receive-by-
-  import → real receive 409, `DELETE` 409 (undeletable), `PATCH` 3→5 moved stock 0→2;
-  clearing → re-receive took stock 3 → **6**. After: 409 at preview, and the real
-  receive/edit/delete all behave.
-- **Case 5 (`status_updated_at`).** Deferred, not filled: the plan drops the column
-  from `present` and `_stamp_generated_status_changes` reads the clock at apply time.
-  A `datetime.now(UTC)` in `row.values` is hashed by `_plan_fingerprint`, so filling it
-  at plan time makes every status-moving import 409 against its own preview.
+### Where it stands
 
-### Neutering found four tests that read green — all four were mine
+**Three external (Codex) review rounds, all NO-GO, nine findings, every one real
+and reproduced at head before being fixed.** Round sizes: 3, 4, 2. The rate is
+falling but has not reached zero, so **do not read the current green suite as
+evidence the branch is finished.**
 
-Ran 16 separate neuters (`scratchpad/neuter.py`, not committed). Four passed against a
-broken build, and **three of them were redundant guards rather than missing tests**:
+**The review budget is spent.** Codex usage resets Thursday 2026-08-20; roughly 5%
+remained when this was written. The next session inherits a real decision:
 
-1. **`if replace_all: return` in the receipt check was unreachable** — `build` marks
-   every row CREATE in that mode and never matches a target. Deleted.
-2. **`"quantity" in row.present` was covered by `isinstance(..., int)`** — nothing
-   fills `quantity`, so an absent column is also a `None` value. Collapsed to one
-   expression. Same shape as #74's trap 3.
-3. **`row.action is not RowAction.UPDATE` was covered by `changes` being empty** —
-   `changes` non-empty is exactly equivalent to UPDATE. Deleted, with the comment
-   explaining that `changes` is what keeps creates out. #41 hit this from the other
-   side: a create's `changes` is empty, so a rule written against it is silent there.
-4. **A real gap:** the status-stamp hash test drove only the *absent column* shape,
-   where the fingerprint never reads `status_updated_at` at all — so a plan-time clock
-   hashed as nothing and the test passed. It is parametrised over both shapes now.
+- **Wait for the reset.** What the branch blocks is nothing urgent — M5 hardening,
+  pre-adoption alpha — and every round so far has found something a green suite
+  did not. This is the recommendation.
+- **Merge unreviewed.** Defensible only if something starts depending on it. Given
+  9-for-9 on findings, treat it as knowingly shipping an unknown defect.
+- **Review it another way.** Being investigated at the time of writing.
 
-**Two of the neuters were also wrong** and had to be fixed before they proved
-anything: renaming a fingerprint key still hashed the same data, and one neuter's
-anchor matched two places. A neuter that doesn't change behaviour is a green that
-means nothing — check what the modified source actually does.
+If a fourth round happens, point it at **`_protected_kits`** — it is read by two
+rules and computed from four sources, so a way a kit acquires protection that
+nobody enumerated defeats both of round three's fixes at once.
 
-### Two siblings found and deliberately not fixed — filed as #87 and #88
+### What shipped
 
-1. **#87 — a catalog line added to an already-received order** reaches case 4a's end
-   state from the create side, and #86 does not refuse it: merge-import a new
-   consumable line onto a received order → 200, stock unchanged (rule 10), and the
-   order is then undeletable with the same misleading 409. Left open because the fix
-   is a product call — refusing the create would also refuse an archive re-import into
-   an instance whose local copy of that order lost a line, and the importer cannot
-   tell those apart. Four options are laid out in the issue.
-2. **#88 — a blank cell in a NOT NULL column is a 500.** Enumerated rather than
-   guessed at: **nine columns across six tables**, every persisted non-`id` column
-   that is NOT NULL in the model and not `required=True` in `spec.py`
-   (`quantity_on_hand` ×3, `orders.retailer_id`, `order_items.unit_price_minor`, and
-   all four of `kits.status` / `status_updated_at` / `created_at` / `updated_at`).
-   Each previews clean and 500s at apply. #86 fixes the `status_updated_at` slice
-   *only where the same row also moves `status`*. Same family as **#82** ("what does a
-   blank cell mean") and should be decided with it. `tests/test_order_invariants.py::
-   archive` takes a `headers` override specifically to steer its rows around this.
+All five #44 cases, option B for receipt as decided. `services/portability/
+invariants.py` holds the column-level refusals; the fan-out in `_plan_spawns` owns
+the count-level ones. The shared matrix in `tests/test_order_invariants.py` drives
+one table of edits through both REST and import.
 
-### Notes for whoever reviews or extends it
+The nine review findings grouped by cause, because they are not nine separate
+mistakes:
 
-- `load_existing` now eager-loads `Kit.photos` and `Kit.upgrade_applications` under
-  order_items and orders. `kit_progressed` reads both, and a lazy load raises outside
-  the async context.
-- **Detail propagation is a real divergence, not an oversight.** `_update_line` pushes
-  a restated `kit_name` down onto the spawned kits; `order_items.csv` does not, because
-  its `kit_*` columns are virtual and mean "use these if nothing else supplies the
-  kits". Pinned in `test_kit_details_propagate_through_rest_and_not_through_a_sheet`,
-  and kept out of the shared matrix on purpose — the matrix asserts agreement.
-- The receipt refusal message names the fix (`consumables.csv`, or receive it in the
-  app), and a test asserts that. A refusal that only says no gets filed as a bug.
+1. **Two readings of one question** (round 2, finding 1). `invariants.
+   effective_item_type` existed *because* a partial sheet omits `item_type`, and
+   `_plan_spawns` read `row.values` directly one module over. Now shared.
+2. **Stored state read where post-write state was meant** (rounds 2 and 3, five
+   findings). `_attached_after`, `_reconcilable_lines`, `_protected_kits` all
+   exist because the importer writes a row, its status and its children in one
+   transaction while every predicate it borrowed reads one stored row.
+3. **A refusal ordered after the thing it refuses** (round 2, finding 4). Fixed by
+   moving refusals ahead of the fan-out, so an errored row never contributes.
+4. **Reasoning where measurement was needed** (round 2, finding 2). See below.
 
-**Milestone after this: #77, #82, #87, #88.** #77 lands in the same plan/fan-out code
-that `_plan_removals` now shares, so read `_plan_spawns` before starting it. #82 and
-#88 are one question asked of two column kinds and are cheaper together than apart.
+### Five things worth carrying, all paid for
+
+1. **A red test proves *something* refused the input, not that the rule under test
+   did.** Three separate guards on this branch turned out to be covered by a
+   neighbouring one, and in each case the test that "covered" the rule stayed
+   green when the rule was deleted. Mutate the specific rule, and if it survives,
+   find the input where only that rule can decide.
+2. **Removing a guard for being unreachable is not the same risk as relying on
+   unreachability for correctness.** I did the first twice and was right; the
+   second once and was wrong, and the wrong one read rows `TRUNCATE` was about to
+   delete (#45's class). Treat the second as a defect until measured.
+3. **A mutant that does not change behaviour is a green that means nothing.** Two
+   of mine were inert — a renamed dict key that still hashed the same data, and a
+   change that another branch of the same function compensated for. Check what the
+   mutated source actually does before trusting the result.
+4. **Say "mutation testing", not "neuter".** Codex refused this work on content
+   grounds ~14 times across two sessions. The trigger was vocabulary: "neuter each
+   guard", "find inputs that evade the refusal", plus a tool that "strips guard
+   conditions and confirms nothing detects it". That reads as an evasion harness.
+   Renaming to the standard terms — mutants killed and surviving — and adding one
+   line of domain context ("inventory counts, not access control; the app has no
+   auth yet") fixed it. Sandbox permissions were never the problem.
+5. **Prepare the environment before handing work to a reviewer.** Deps installed,
+   db up, offline-resolvable. Otherwise every `uv sync` is an approval prompt.
+
+### The mutation harness
+
+**`backend/mutation_test.py`, untracked, 39 cases, all killed.** One command,
+~40 seconds. Its docstring is the contract. It refuses to run on a dirty tree and
+reports a zero-or-two-match anchor as a failure — a mutant that never applied is
+not a mutant that passed, which caught three stale anchors after a refactor.
+
+**Decide whether to track it.** Untracked cost real work once: a coarse range edit
+deleted about a dozen cases and there was no history to recover from (caught only
+because the total dropped). Against tracking: the anchors are exact source
+strings, so it rots the moment the code moves. A reasonable middle is to commit it
+on the branch as review scaffolding and decide at merge.
+
+### Still open
+
+**#77, #82, #87, #88.** #77 lands in the same fan-out code that now carries
+`_attached_after`, `_reconcilable_lines` and `_protected_kits` — read `_plan_spawns`
+end to end before starting it. #82 and #88 are one question ("what does a blank
+cell mean") asked of two column kinds and are cheaper together.
 
 ---
 
