@@ -642,6 +642,13 @@ class _Planner:
                 )
             elif spec.key == "order_items":
                 stmt = stmt.options(selectinload(OrderItem.kits).options(*kit_evidence))
+            elif spec.key == "kits":
+                # A kit `_attached_after` moves *onto* a line comes from here rather
+                # than from the line's own collection, and lands in the same removal
+                # candidacy question. Today `described` excludes it before
+                # `kit_progressed` is reached, so this is not load-bearing — it is
+                # here so that stops being a thing anyone has to know.
+                stmt = stmt.options(*kit_evidence)
             instances = list((await self.session.scalars(stmt)).all())
             self.existing[spec.key] = instances
             self.by_id[spec.key] = {instance.id: instance for instance in instances}
@@ -1392,6 +1399,58 @@ class _Planner:
         existing = self.by_id["orders"].get(order_id)
         return existing is not None and existing.received_at is not None
 
+    def _attached_after(
+        self, row: _Row, line_id: uuid.UUID, kit_rows: list[_Row], replace_all: bool
+    ) -> list[Kit]:
+        """The kits this line will hold once the upload lands — not the ones it holds
+        now.
+
+        `kits.order_item_id` is an ordinary REF column, so the same upload that
+        states a line's quantity can also move kits onto or off that line. Counting
+        `len(row.target.kits)` reads the database *before* those writes, and the
+        fan-out arithmetic on both sides of it is then answering about a state that
+        will not exist by the time it is applied. Measured on the first cut of this
+        branch: a `kits.csv` row attaching a loose kit to a two-kit line applied at
+        200 and left the line saying 2 with three kits on it, planning neither a
+        spawn nor a removal — case 2's own disagreement, reached through the kits
+        table instead of the order_items one, and invisible to a reconciliation that
+        counts stored rows.
+
+        So the count is taken over the post-write set: stored kits the upload does
+        not move away, plus stored kits it moves in from elsewhere. A row has to
+        carry `order_item_id` to move anything — one that never mentions the column
+        leaves the kit where it is, which is the ordinary partial-sheet case and the
+        reason this reads `present` rather than values alone.
+
+        Empty under `replace_all`: everything is truncated first, so no kit is
+        attached to anything until this upload's own creates land, and those are
+        `covered`.
+        """
+        if replace_all or row.target is None:
+            return []
+
+        # kit id -> (post-write parent line, the stored Kit)
+        reparented: dict[uuid.UUID, tuple[Any, Kit]] = {}
+        for kit_row in kit_rows:
+            if kit_row.action in (RowAction.ERROR, RowAction.SKIP):
+                continue
+            if kit_row.matched_id is None or kit_row.target is None:
+                continue
+            if "order_item_id" not in kit_row.present:
+                continue
+            reparented[kit_row.matched_id] = (kit_row.values.get("order_item_id"), kit_row.target)
+
+        on_line = {kit.id for kit in row.target.kits}
+        kept = [
+            kit for kit in row.target.kits if reparented.get(kit.id, (line_id, kit))[0] == line_id
+        ]
+        arriving = [
+            kit
+            for kit_id, (parent, kit) in reparented.items()
+            if parent == line_id and kit_id not in on_line
+        ]
+        return kept + arriving
+
     def _plan_spawns(self, replace_all: bool) -> None:
         """Hybrid dispatch: a kit line spawns only the kits nothing else provides,
         and gives up the kits its quantity no longer accounts for."""
@@ -1410,13 +1469,11 @@ class _Planner:
                 for kit in kit_rows
                 if kit.action is RowAction.CREATE and kit.values.get("order_item_id") == line_id
             )
-            existing = 0
-            if not replace_all and row.target is not None:
-                existing = len(row.target.kits)
+            attached = self._attached_after(row, line_id, kit_rows, replace_all)
             wanted = int(row.values.get("quantity") or 0)
-            missing = wanted - covered - existing
+            missing = wanted - covered - len(attached)
             if missing < 0:
-                self._plan_removals(row, surplus=-missing, kit_rows=kit_rows)
+                self._plan_removals(row, surplus=-missing, kit_rows=kit_rows, attached=attached)
                 continue
             if missing == 0:
                 continue
@@ -1450,7 +1507,9 @@ class _Planner:
             )
             row.messages.append(f"will create {missing} kit(s) from this line")
 
-    def _plan_removals(self, row: _Row, *, surplus: int, kit_rows: list[_Row]) -> None:
+    def _plan_removals(
+        self, row: _Row, *, surplus: int, kit_rows: list[_Row], attached: list[Kit]
+    ) -> None:
         """The other half of §3.9 reconciliation: a line whose quantity dropped
         gives up the kits it no longer accounts for (#44 case 2).
 
@@ -1482,6 +1541,10 @@ class _Planner:
           complete, rated, photographed, or carrying an applied upgrade, which is
           stock already spent that a cascade would leave unexplained.
 
+        `attached` is `_attached_after`'s post-write set, not `row.target.kits`: a
+        kit this same upload is moving off the line is not this line's to give up,
+        and one it is moving on is.
+
         Newest first among what's left, matching `_delete_line_kits`: the kits are
         interchangeable, and the one added last is the one least likely to be the
         one someone has been looking at.
@@ -1495,7 +1558,6 @@ class _Planner:
             for kit in kit_rows
             if kit.matched_id is not None and kit.action is not RowAction.ERROR
         }
-        attached = list(row.target.kits)
         candidates = [
             kit for kit in attached if kit.id not in described and not kit_progressed(kit)
         ]

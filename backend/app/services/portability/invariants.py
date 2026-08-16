@@ -283,6 +283,9 @@ def _receipt_message(arriving: bool, types: set[str]) -> str:
     return (
         f"received_at: clearing it would leave the stock this order's {listed} line(s) "
         f"already added to your on-hand counts exactly where it is, while making the order "
-        f"receivable again — the next receive would add it a second time. An import can't "
-        f"reverse a receipt (rule 10); correct the on-hand quantity in {files} instead"
+        f"receivable again — the next receive would add it a second time. Un-receiving an "
+        f"order isn't supported anywhere in plamotrack, by import or otherwise: if the "
+        f"receipt was a mistake, delete the order — that reverses the stock it applied — "
+        f"and enter it again as pending. To correct the count on its own and leave the "
+        f"order alone, state it in {files}"
     )

@@ -504,6 +504,139 @@ async def test_a_quantity_the_sheet_never_states_removes_nothing(
         assert len(await kit_states(client)) == 1
 
 
+@pytest.mark.parametrize(
+    ("direction", "quantity", "expect_spawned", "expect_removed", "kits_on_line"),
+    [
+        # A kit moved ONTO the line by kits.csv. Counting `row.target.kits` reads the
+        # database before that write, so the line planned neither a spawn nor a
+        # removal and landed saying 2 with three kits on it — measured at 200 on the
+        # first cut of this branch.
+        ("onto", "2", 0, 1, 2),
+        # ...and the same move with the quantity raised to take it: nothing to spawn,
+        # because the arriving kit is the third.
+        ("onto", "3", 0, 0, 3),
+        # A kit moved OFF the line. The line still says 2, so the shortfall is real
+        # and the fan-out owes it a kit — the count has to see the departure to know
+        # that.
+        ("off", "2", 1, 0, 2),
+        # ...and with the quantity dropped to match, neither side owes anything.
+        ("off", "1", 0, 0, 1),
+    ],
+    ids=["moved on", "moved on, quantity raised", "moved off", "moved off, quantity dropped"],
+)
+async def test_the_fan_out_counts_the_kits_the_line_will_hold_not_the_ones_it_holds(
+    client, direction, quantity, expect_spawned, expect_removed, kits_on_line
+):
+    """`kits.order_item_id` is an ordinary REF column, so one upload can state a
+    line's quantity *and* move kits onto or off that line. Both sides of the fan-out
+    arithmetic have to read the post-write set, or they answer about a state that
+    won't exist by the time they're applied.
+
+    Pre-existing — `_plan_spawns` always counted stored rows — but only visible once
+    downward reconciliation claimed a line and its kits were kept in agreement.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(2)])
+    item = order["items"][0]
+
+    if direction == "onto":
+        subject = (
+            await client.post("/kits", json={"name": "Gouf", "grade": "HG", "status": "backlog"})
+        ).json()
+        parent = item["id"]
+    else:
+        subject = item["kits"][0]
+        parent = ""
+
+    content = archive(
+        {"kits": ["id", "name", "grade", "order_item_id"]},
+        order_items=[line_row(order, item, quantity=quantity)],
+        kits=[
+            {
+                "id": subject["id"],
+                "name": subject["name"],
+                "grade": "HG",
+                "order_item_id": parent,
+            }
+        ],
+    )
+    plan = await preview(client, content)
+    assert plan["blocking_errors"] == [], plan
+    assert plan["derived"]["kits_spawned"] == expect_spawned, plan["derived"]
+    assert plan["derived"]["kits_removed"] == expect_removed, plan["derived"]
+
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+    stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert stored["quantity"] == int(quantity)
+    assert len(stored["kits"]) == kits_on_line, "the line and the collection have to agree"
+    assert len(stored["kits"]) == stored["quantity"]
+
+
+async def test_a_kits_sheet_that_never_mentions_order_item_id_moves_nothing(client):
+    """The column-absent state, on the *other* table.
+
+    `_attached_after` reads `order_item_id` from `present`, not from values: a
+    partial `kits.csv` fixing a build note has no such column, and
+    `values.get(...)` is then `None` — indistinguishable from a cell that says
+    "detach this kit". Treating the two alike makes every partial kits sheet look
+    like it is emptying its line, and the fan-out spawns replacements for kits that
+    never went anywhere.
+
+    Found by neutering: removing the `present` guard left the whole suite green,
+    because every other kits row in it carries the column.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(2)])
+    item = order["items"][0]
+    before = [k["id"] for k in item["kits"]]
+
+    content = archive(
+        {"kits": ["id", "name", "grade", "build_notes"]},
+        order_items=[line_row(order, item, quantity="2")],
+        kits=[
+            {"id": before[0], "name": "Zaku II", "grade": "HG", "build_notes": "waist is fiddly"}
+        ],
+    )
+    plan = await preview(client, content)
+    assert plan["blocking_errors"] == [], plan
+    assert plan["derived"]["kits_spawned"] == 0, plan["derived"]
+    assert plan["derived"]["kits_removed"] == 0, plan["derived"]
+
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+    stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert [k["id"] for k in stored["kits"]] == before, "nobody moved"
+    assert (await client.get(f"/kits/{before[0]}")).json()["build_notes"] == "waist is fiddly"
+
+
+async def test_a_kit_arriving_from_another_line_is_not_the_one_given_up(client):
+    """The two halves meeting: one upload moves a kit onto a line *and* reduces that
+    line below what it can then hold. The arriving kit is described by the upload, so
+    it is never a removal candidate — the surplus has to come from the kits already
+    there, and be reported when it can't."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(2)])
+    item = order["items"][0]
+    incumbents = [k["id"] for k in item["kits"]]
+    loose = (
+        await client.post("/kits", json={"name": "Gouf", "grade": "HG", "status": "backlog"})
+    ).json()
+
+    content = archive(
+        {"kits": ["id", "name", "grade", "order_item_id"]},
+        order_items=[line_row(order, item, quantity="2")],
+        kits=[{"id": loose["id"], "name": "Gouf", "grade": "HG", "order_item_id": item["id"]}],
+    )
+    plan = await preview(client, content)
+    assert plan["derived"]["kits_removed"] == 1, plan["derived"]
+    assert (await apply(client, content)).status_code == 200
+
+    surviving = {k["id"] for k in (await client.get("/kits")).json()}
+    assert loose["id"] in surviving, "the upload said this kit is on the line"
+    assert len(surviving & set(incumbents)) == 1, "one incumbent gave way, newest first"
+
+
 async def test_a_replace_all_import_reconciles_nothing_downward(client):
     """Every row is a create and every stored kit is truncated first, so `existing`
     is zero by construction — there is no surplus to find, and a removal planned
@@ -648,7 +781,14 @@ async def test_an_import_cannot_un_receive_an_order_whose_stock_was_applied(clie
 
     plan = await preview(client, content)
     assert actions(plan, "orders") == ["error"], plan["tables"]
-    assert "add it a second time" in plan["tables"][0]["rows"][0]["error"]
+    error = plan["tables"][0]["rows"][0]["error"]
+    assert "add it a second time" in error
+    # The remedy has to be one that exists. There is no un-receive anywhere —
+    # `OrderUpdate` has no `received_at` — so this refusal removes the only route
+    # there ever was, and a message offering only "correct the count in
+    # consumables.csv" would be answering a question the operator didn't ask.
+    assert "isn't supported anywhere" in error
+    assert "delete the order" in error
     assert (await apply(client, content)).status_code == 409
 
     assert (await client.get(f"/orders/{order['id']}")).json()["received_at"] is not None

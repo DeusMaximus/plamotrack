@@ -186,6 +186,9 @@ be moved into or out of "received" by an import. What you can do instead:
   `upgrades.csv`. That's where stock comes from, and it settles the whole question.
 - **Or leave `received_at` out of the sheet** and mark the order received in the
   app, which applies the stock properly.
+- If you marked an order received **by mistake**: un-receiving isn't supported
+  anywhere in plamotrack, by import or otherwise. Delete the order — that reverses
+  the stock it applied — and enter it again as pending.
 
 Everything else about receipt still imports:
 
@@ -205,6 +208,11 @@ Kits named in the same upload's `kits.csv` are kept too, and a sheet that both l
 two kits and says the line bought one is refused rather than silently resolved. The
 preview counts these deletions before you apply, the same way it counts a
 replace-everything import's.
+
+The count is of the kits the line will hold *after* the import, not before it. If the
+same upload's `kits.csv` also moves a kit onto or off that line via `order_item_id`,
+that move is counted first — so a line whose quantity you left alone still ends up
+with exactly that many kits.
 
 ---
 
