@@ -1126,6 +1126,45 @@ async def test_a_count_preserving_swap_cannot_strip_protected_provenance(
         )
 
 
+async def test_a_protected_kit_cannot_be_moved_even_when_both_counts_work_out(client):
+    """The provenance rule standing on its own.
+
+    The variant above moves a protected kit to a line whose quantity it then
+    breaks, so the *count* check refuses it and the provenance rule is never the
+    thing deciding — mutating the provenance rule to ignore moves left that test
+    green. Here both lines are restated so every count balances: the source gets a
+    replacement, the destination's quantity rises to take the arrival. Nothing is
+    numerically wrong anywhere, and the move must still be refused, because what
+    is being protected is the link and not the arithmetic.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    source = await make_order(client, retailer, [kit_line(1)], number="HLJ-1")
+    dest = await make_order(client, retailer, [kit_line(1, name="Gouf")], number="HLJ-2")
+    src_line, dst_line = source["items"][0], dest["items"][0]
+    kit = src_line["kits"][0]
+
+    assert (
+        await client.patch(f"/kits/{kit['id']}", json={"status": "building"})
+    ).status_code == 200
+    assert (await client.delete(f"/orders/{source['id']}")).status_code == 409
+
+    content = archive(
+        {"kits": ["id", "name", "grade", "order_item_id"]},
+        order_items=[
+            line_row(source, src_line, quantity="1"),
+            line_row(dest, dst_line, quantity="2", kit_name="Gouf"),
+        ],
+        kits=[{"id": kit["id"], "name": "Zaku II", "grade": "HG", "order_item_id": dst_line["id"]}],
+    )
+    plan = await preview(client, content)
+    assert actions(plan, "kits") == ["error"], plan["tables"]
+    assert plan["tables"][-1]["rows"][0]["error"].startswith("order_item_id:")
+    assert (await apply(client, content)).status_code == 409
+
+    assert (await client.get(f"/kits/{kit['id']}")).json()["order_item_id"] == src_line["id"]
+    assert (await client.delete(f"/orders/{source['id']}")).status_code == 409
+
+
 async def test_an_unprotected_kit_can_still_be_swapped(client):
     """The refusal is about progression, not about `order_item_id` — a kit nobody
     has touched still moves, so this doesn't become a blanket ban on the column."""
