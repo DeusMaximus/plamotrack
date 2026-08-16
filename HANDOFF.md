@@ -16,6 +16,71 @@ Template:
 
 ---
 
+## 2026-08-16 — Claude Code (Opus 5) — #48 closed: export reads one snapshot (rule 7.2)
+
+**`main` is at `de8e19b`.** 437 backend tests, ruff clean, all three CI jobs green.
+#81 merged and its branch deleted; `main` is the only branch on the remote. #48
+closed. Nothing in flight. No migration.
+
+- **`services/read_snapshot.py` is new** — `begin_read_snapshot(session)` sets
+  `REPEATABLE READ READ ONLY` on the transaction, and `_load_all` takes it before
+  its first statement. Written up as **architecture rule 7.2**. It is the read-side
+  counterpart to the write gate and deliberately *not* the gate: a snapshot is not
+  a lock, so row-level writers and exports never delay each other.
+- **What it covers:** one statement per table under `READ COMMITTED` is one
+  snapshot per table, so a write committing mid-export produced an archive whose
+  files contradicted each other. The database was never damaged; the artifact was,
+  and the artifact is what gets kept as a backup and re-imported.
+- **`READ ONLY` is the half with no behavioural test** and is there for the future:
+  nothing in an export writes today, and Postgres refusing writes for the whole
+  transaction is what makes an edit that adds one fail loudly.
+
+### Three things worth carrying
+
+1. **Never put the snapshot on a helper a write path also calls.** `plan_import` is
+   shared by `preview_import` and `apply_import`; a snapshot inside it would make
+   every apply fail with `ReadOnlySQLTransactionError`. Recorded in rule 7.2 and the
+   module docstring, because it is the obvious next place someone would put it.
+2. **`NullPool` hides a whole configuration from the suite.** conftest disables
+   pooling (loop-bound asyncpg connections), so nothing else in-tree can observe a
+   connection characteristic leaking back into the pool — which is what every real
+   deployment runs, and where a leak means the next request cannot write at all.
+   `test_the_snapshot_does_not_follow_the_connection_back_into_the_pool` builds its
+   own `pool_size=1` engine for exactly that. Any future per-connection setting owes
+   the same test.
+3. **Inline-awaiting a racer is right here and wrong upstairs.** The write-gate
+   repros must launch a task (awaiting inline deadlocks against the gate); an export
+   holds no gate and no row locks, so the racer completes immediately and inline
+   `await` is exactly deterministic. That is specific to row writes — a `TRUNCATE`
+   racer (a `replace_all` import) wants ACCESS EXCLUSIVE and would queue behind the
+   export's ACCESS SHARE. The section comment in `test_integrity.py` says so.
+
+### Review
+
+Codex reviewed #81 and returned GO with one non-blocking documentation correction,
+taken in `aef17ba` before merge: the "an export never queues behind a writer" claim
+was too broad — `replace_all`'s `TRUNCATE` does queue — and **the PR contradicted
+itself on it**, since the test comment already recorded the exception while the
+docstring two files away asserted the general case. Also: the snapshot is fixed by
+the transaction's *first SQL statement*, not by request entry.
+
+### Swept and deliberately not filed
+
+- **`preview_import`** reads every table unsnapshotted too. Not a defect: the apply
+  re-plans under the gate and the `plan_hash` recheck 409s on any difference, so a
+  torn preview fails safe rather than writing.
+- **MCP `search_catalog`** reads three tables per call, but its output is a
+  momentary view, not a persisted artifact — same reasoning as every list endpoint.
+
+### Next
+
+**#45 → #46 → #44**, one PR at a time, per the previous session's ordering (all
+three rewrite different regions of `importing.py`). #74 parallelises safely; #77
+does not. **#44's decision is still unmade** and still wants making before anyone
+starts it: a column, or refusing the transition only for orders with catalog lines.
+
+---
+
 ## 2026-08-15 — Claude Code (Sonnet 5) — #47 fixed; write gate (rule 7.1); M5 re-triaged
 
 **`main` is at `032e1df`.** 432 backend tests, ruff clean, all three CI jobs green.
