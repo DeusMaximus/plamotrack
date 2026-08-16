@@ -598,6 +598,11 @@ class _Planner:
         self.blocking: list[str] = list(upload.errors)
         self.catalog_names: dict[uuid.UUID, str] = {}
         self.claimed_lines: set[uuid.UUID] = set()
+        # Upload-local identity, which `by_id`/`by_natural` cannot supply: those are
+        # built once from the database and never learn what this upload is planning.
+        # Row number of the row that claimed each, so the second one can point at it.
+        self.claimed_targets: dict[str, dict[uuid.UUID, int]] = {key: {} for key in SPEC_BY_KEY}
+        self.claimed_natural: dict[str, dict[tuple, int]] = {key: {} for key in SPEC_BY_KEY}
 
     # -- loading ---------------------------------------------------------------
 
@@ -838,13 +843,25 @@ class _Planner:
             )
 
     def _line_fingerprint(
-        self, item_type: Any, ref_name: str, quantity: Any, unit_price: Any
+        self, item_type: Any, ref_name: str, quantity: Any, unit_price: Any, currency: Any
     ) -> tuple:
+        """What makes two order lines the same purchase.
+
+        `currency` is part of it because the price alone is not a number — it is a
+        number *in* something (§6, rule 4). Without it a stored ¥1000 line and an
+        incoming A$1000 line fingerprint identically, the incoming row matches, and
+        the apply writes `currency_code: AUD` over the yen line as an ordinary
+        field update. That is #12's relabelling reached from a different direction:
+        no arithmetic is wrong anywhere, the amount simply stops meaning what it
+        meant. Two prices in different currencies are two different purchases, and
+        the fingerprint has to say so before the diff is ever computed.
+        """
         return (
             str(item_type or ""),
             _norm_name(ref_name),
             int(quantity or 0),
             int(unit_price or 0),
+            (currency or "").strip().upper(),
         )
 
     def _existing_line_fingerprint(self, item: OrderItem) -> tuple:
@@ -853,7 +870,7 @@ class _Planner:
         else:
             ref_name = self.catalog_names.get(item.catalog_ref_id, "")
         return self._line_fingerprint(
-            item.item_type, ref_name, item.quantity, item.unit_price_minor
+            item.item_type, ref_name, item.quantity, item.unit_price_minor, item.currency_code
         )
 
     def _incoming_line_fingerprint(self, values: dict[str, Any]) -> tuple:
@@ -865,7 +882,11 @@ class _Planner:
                 values.get("catalog_ref_id"), ""
             )
         return self._line_fingerprint(
-            item_type, ref_name, values.get("quantity"), values.get("unit_price_minor")
+            item_type,
+            ref_name,
+            values.get("quantity"),
+            values.get("unit_price_minor"),
+            values.get("currency_code"),
         )
 
     def _match_order(self, row: _Row, incoming_lines: dict[uuid.UUID, list[dict]]) -> None:
@@ -927,6 +948,64 @@ class _Planner:
                 row.matched_id, row.matched_by, row.target = item.id, "order + line", item
                 return
 
+    def _claim_identity(self, spec: TableSpec, row: _Row) -> None:
+        """No two rows in one upload may name the same thing.
+
+        `by_id` and `by_natural` are built once, from the database, and never learn
+        what this upload is planning — so every duplicate-detection question about
+        the *file itself* went unasked. Two rows carrying the same explicit `id`
+        both reached `session.add` with one primary key and died as an
+        `IntegrityError`: a 500 out of the apply, after a preview that listed two
+        clean creates. Two rows naming the same new retailer were both planned as
+        creates, quietly producing the duplicate the whole select-or-create design
+        exists to prevent (rule 3).
+
+        Two questions, because one identity does not imply the other:
+
+        * **the target** — the row a plan writes, `matched_id` for an update and
+          `new_id` for a create. Catches the duplicate explicit id, whichever way
+          it resolved, and two rows matching one existing row.
+        * **the natural key**, but only for a row that supplied no `id`. Two new
+          retailers called "Gundam Base" get different random `new_id`s, so the
+          target check cannot see them. Restricting it to id-less rows is what
+          keeps a legitimate archive importable: nothing stops a collection holding
+          two retailers with the same name, an export writes both, and each of
+          those rows carries the id that says which is which.
+
+        Reported rather than merged. A file listing one thing twice is a mistake in
+        the file, and quietly folding the rows together is how an import surprises
+        someone — the preview names both row numbers instead.
+        """
+        if row.action in (RowAction.ERROR, RowAction.SKIP):
+            return
+
+        target = row.matched_id or row.new_id
+        if target is not None:
+            first = self.claimed_targets[spec.key].get(target)
+            if first is not None:
+                row.action = RowAction.ERROR
+                row.error = (
+                    f"row {first} of {spec.key}.csv already claims this row — "
+                    "two rows in one upload cannot describe the same record"
+                )
+                return
+            self.claimed_targets[spec.key][target] = row.row_number
+
+        if row.values.get("id") is not None or spec.natural_key is None:
+            return
+        key = spec.natural_key(row.values)
+        if key is None:
+            return
+        first = self.claimed_natural[spec.key].get(key)
+        if first is not None:
+            row.action = RowAction.ERROR
+            row.error = (
+                f"row {first} of {spec.key}.csv already describes this "
+                f"{key[0]} — give one of them an id if they are meant to be different"
+            )
+            return
+        self.claimed_natural[spec.key][key] = row.row_number
+
     # -- classification --------------------------------------------------------
 
     def _classify(self, spec: TableSpec, row: _Row) -> None:
@@ -971,10 +1050,21 @@ class _Planner:
 
         # Order matching needs the incoming lines, which live in a table processed
         # later — group them up front.
+        #
+        # `_apply_money_alternates` runs here too, and has to: it is what turns a
+        # sheet's major-unit `unit_price` into the `unit_price_minor` the
+        # fingerprint reads, and the *stored* side of that comparison is always in
+        # minor units. Parsing alone left a row that wrote only `unit_price` with
+        # `unit_price_minor` still None, fingerprinting as 0 against a stored 2450,
+        # so the "retailer + date + lines" fallback silently failed to match and
+        # the order was re-created rather than updated. The row built here is a
+        # throwaway used for its values — any error it raises is reported by the
+        # real pass below, which parses the same row again.
         incoming_lines: dict[uuid.UUID, list[dict]] = {}
+        line_spec = SPEC_BY_KEY["order_items"]
         for raw in self.upload.tables.get("order_items", []):
-            spec = SPEC_BY_KEY["order_items"]
-            parsed = self._parse_row(spec, raw)
+            parsed = self._parse_row(line_spec, raw)
+            self._apply_money_alternates(line_spec, parsed)
             order_id = parsed.values.get("order_id")
             if order_id is not None:
                 incoming_lines.setdefault(order_id, []).append(parsed.values)
@@ -1005,6 +1095,7 @@ class _Planner:
                 else:
                     self._classify(spec, row)
 
+                self._claim_identity(spec, row)
                 self._annotate(spec, row, replace_all)
                 planned.append(row)
 
