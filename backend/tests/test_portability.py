@@ -3343,3 +3343,213 @@ def test_the_packaging_version_matches_the_one_the_app_reports():
         (pathlib.Path(__file__).resolve().parents[1] / "pyproject.toml").read_text()
     )["project"]["version"]
     assert declared == app_version
+
+
+# --- replace_all resolves only against the upload (#45) ---------------------------
+#
+# A replace_all truncates every portable table and then writes the upload, so the
+# rows it is about to delete are not a world any reference may point into. The
+# planner was already mode-aware nearly everywhere — matching skipped, "you already
+# have one of these" suppressed — and `_resolve_ref` was the one step still asking
+# the live database, by uuid and by readable-mirror name.
+#
+# What that cost depends on whether the column has a foreign key.
+# `order_items.catalog_ref_id` is polymorphic across three catalog tables and so has
+# none: the apply committed a line holding a truncated row's uuid and nothing ever
+# complained. The other four fail at flush — a rollback rather than corruption, but
+# a 500 raised *after* the operator typed REPLACE against a preview that promised
+# the import was clean.
+#
+# The two axes below are both real and neither implies the other. Which dependency
+# is missing decides whether anything catches it; how the row *names* it decides
+# whether it can be satisfied at all, because a readable name is satisfiable by
+# creating what it names and a bare uuid is not.
+
+
+async def _seeded_archive_without(client, omit: str) -> tuple[bytes, dict]:
+    """A real exported archive with one table's CSV dropped, so every reference into
+    it is left naming a row that only exists in the live database."""
+    seeded = await seed_collection(client)
+    upgrade = (
+        await client.post(
+            "/upgrades",
+            json={"name": "Metal Thruster", "manufacturer": "Kotobukiya", "quantity_on_hand": 1},
+        )
+    ).json()
+    kit_id = (await client.get("/kits")).json()[0]["id"]
+    applied = await client.post(
+        f"/upgrades/{upgrade['id']}/apply", json={"kit_id": kit_id, "quantity": 1}
+    )
+    assert applied.status_code == 201, applied.text
+
+    tables = read_archive((await client.get("/export/archive")).content)
+    assert tables[omit], f"the seed produced no {omit} rows — this case tests nothing"
+    del tables[omit]
+    return make_archive(tables), seeded
+
+
+@pytest.mark.parametrize(
+    ("omit", "referrer", "column", "mirror"),
+    [
+        # One case per dependency class, and one per shape of consequence: the
+        # catalog line is the silent one, the other four are the 500s.
+        #
+        # `mirror` is not decoration. Two of these columns have a readable twin and
+        # an exported archive fills it in, so dropping the CSV alone leaves the row
+        # still able to say what it wants and the reference resolves by creating it
+        # — correct, and the subject of the next test, but not this one. Blanking
+        # the twin is what leaves a bare uuid, which is the state that used to be
+        # answered out of the database. The first draft of this matrix omitted it
+        # and those two cases went green on the fix for the wrong reason.
+        pytest.param(
+            "retailers", "orders", "retailer_id", "retailer_name", id="the retailer an order names"
+        ),
+        pytest.param(
+            "consumables",
+            "order_items",
+            "catalog_ref_id",
+            "catalog_name",
+            id="the catalog item a line buys",
+        ),
+        pytest.param("orders", "order_items", "order_id", None, id="the order a line belongs to"),
+        pytest.param("order_items", "kits", "order_item_id", None, id="the line that bought a kit"),
+        pytest.param(
+            "kits", "upgrade_applications", "kit_id", None, id="the kit an upgrade went onto"
+        ),
+    ],
+)
+async def test_replace_all_blocks_a_reference_the_upload_does_not_contain(
+    client, omit, referrer, column, mirror
+):
+    """#45. Every one of these previewed clean and applied: four wrote a dangling
+    foreign key and 500'd at flush, and the catalog line — polymorphic, so no FK —
+    committed a dead uuid in silence."""
+    archive, _ = await _seeded_archive_without(client, omit)
+    if mirror is not None:
+        tables = read_archive(archive)
+        for row in tables[referrer]:
+            row[mirror] = ""
+        archive = make_archive(tables)
+    before = await snapshot(client)
+
+    plan = await preview(client, archive, mode="replace_all")
+
+    assert plan["blocking_errors"], (
+        f"{referrer}.{column} named a {omit} row this upload deletes, and the preview "
+        "raised nothing"
+    )
+    assert "error" in actions(plan, referrer), actions(plan, referrer)
+    errored = [row for row in _rows_of(plan, referrer) if row["action"] == "error"]
+    assert all(column in row["error"] for row in errored), errored
+    assert all(omit in row["error"] for row in errored), errored
+
+    resp = await apply(client, archive, mode="replace_all", confirm="REPLACE")
+    assert resp.status_code == 409, resp.text
+    assert await snapshot(client) == before, "a blocked replace_all still destroyed the collection"
+
+
+def _rows_of(plan: dict, table: str) -> list[dict]:
+    for entry in plan["tables"]:
+        if entry["table"] == table:
+            return entry["rows"]
+    return []
+
+
+@pytest.mark.parametrize(
+    ("omit", "referrer", "column", "mirror", "name"),
+    [
+        pytest.param(
+            "retailers",
+            "orders",
+            "retailer_id",
+            "retailer_name",
+            "Hobby Link Japan",
+            id="an order naming its retailer",
+        ),
+        pytest.param(
+            "consumables",
+            "order_items",
+            "catalog_ref_id",
+            "catalog_name",
+            "Gundam Marker GM02",
+            id="a line naming its catalog item",
+        ),
+    ],
+)
+async def test_replace_all_still_creates_what_a_readable_name_asks_for(
+    client, omit, referrer, column, mirror, name
+):
+    """The neighbour of the matrix above, and the reason it varies the *shape* of
+    the reference rather than only which table is missing.
+
+    Blocking a dangling uuid must not block a readable name, because a name is
+    satisfiable: an archive that supplies `retailer_name` with no retailers.csv is
+    a documented onboarding path, and the right answer is to create the retailer —
+    which exists after the truncate — not to resolve to the one being deleted.
+    Drop the mode gate on the uuid branch and the test above still passes while
+    this one starts failing, and vice versa.
+    """
+    archive, _ = await _seeded_archive_without(client, omit)
+    tables = read_archive(archive)
+    for row in tables[referrer]:
+        if row[column]:
+            row[column] = ""  # the uuid is gone; only the readable name is left
+            assert row[mirror] == name, row
+
+    plan = await preview(client, make_archive(tables), mode="replace_all")
+    assert not plan["blocking_errors"], plan["blocking_errors"]
+
+    resp = await apply(client, make_archive(tables), mode="replace_all", confirm="REPLACE")
+    assert resp.status_code == 200, resp.text
+
+    # Created, not resolved to the row that was deleted — one row, and the referrer
+    # points at the one that now exists.
+    listed = (await client.get(f"/{omit}")).json()
+    assert [item["name"] for item in listed] == [name], listed
+    assert await _dangling_references(column) == []
+
+
+async def _dangling_references(column: str) -> list:
+    """Every value of a reference column that names no live row. Asked of the
+    database rather than the API, because the column this issue is really about —
+    `order_items.catalog_ref_id` — has no foreign key and so is exactly the one a
+    serialized response will happily render as a uuid nobody can follow."""
+    table = {"retailer_id": "orders", "catalog_ref_id": "order_items"}[column]
+    targets = {
+        "retailer_id": "SELECT id FROM retailers",
+        "catalog_ref_id": (
+            "SELECT id FROM tools UNION SELECT id FROM consumables UNION SELECT id FROM upgrades"
+        ),
+    }[column]
+    async with session_scope() as session:
+        rows = await session.scalars(
+            sa_text(
+                # Interpolated, not parameterised: every piece comes from the two
+                # literal maps above, and a table name can't be a bind parameter.
+                f"SELECT {column} FROM {table} "
+                f"WHERE {column} IS NOT NULL AND {column} NOT IN ({targets})"
+            )
+        )
+        return list(rows.all())
+
+
+async def test_merge_still_resolves_a_reference_to_a_row_it_is_keeping(client):
+    """The counter-case, and the one that keeps the fix from over-reaching.
+
+    In merge mode nothing is truncated, so a uuid found in the live database is a
+    perfectly good answer — the row is still there afterwards. Only replace_all may
+    not trust it. Without this, "resolve against the upload only" reads like a
+    general rule and the next reader applies it to both modes.
+    """
+    archive, seeded = await _seeded_archive_without(client, "retailers")
+    before = await snapshot(client)
+
+    plan = await preview(client, archive, mode="merge")
+    assert not plan["blocking_errors"], plan["blocking_errors"]
+
+    resp = await apply(client, archive, mode="merge")
+    assert resp.status_code == 200, resp.text
+    assert await snapshot(client) == before  # re-importing an archive is a no-op
+    assert [r["name"] for r in (await client.get("/retailers")).json()] == [
+        seeded["retailer"]["name"]
+    ]
