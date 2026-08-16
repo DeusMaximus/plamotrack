@@ -15,10 +15,19 @@ order line that no CSV in the same zip contains. Nothing in the database is
 damaged — the artifact is, and it is the artifact that outlives the request.
 
 `REPEATABLE READ` fixes that at the transaction level rather than per query: every
-statement in the transaction reads the same snapshot, taken at the *first* one.
-No lock is involved, so writers are never delayed by an export and an export is
-never delayed by a writer — it simply exports the collection as it stood when it
-started.
+statement in the transaction reads the same snapshot, and that snapshot is fixed
+by the *first SQL statement* the transaction runs — not by the arrival of the
+request, and not by this call, which only configures the `BEGIN`. So an export
+reports the collection as of its first read, and anything committed after that is
+simply not in it.
+
+No lock is taken to achieve that, and none is needed: a snapshot is not a lock, so
+ordinary DML writers — every insert, update and delete the UI, REST and MCP agents
+issue — run alongside an export in both directions, neither delaying the other.
+That is *not* a blanket claim, and the exception is real: a `replace_all` import
+runs `TRUNCATE`, which wants `ACCESS EXCLUSIVE` and so does queue behind the
+`ACCESS SHARE` an in-flight export holds on the same tables (and vice versa). Only
+row-level writes are exempt.
 
 `READ ONLY` is not decoration. It is the half that keeps this honest as the code
 changes: Postgres refuses any write inside the transaction, so a future edit that

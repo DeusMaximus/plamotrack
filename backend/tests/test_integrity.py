@@ -1086,9 +1086,9 @@ async def test_an_archive_never_mixes_states_from_either_side_of_a_write(
     client, retailer, monkeypatch, table_reads
 ):
     """#48. A whole order — order, line, and the kit it fans out into — commits in
-    the middle of an export. The archive must be the collection as it stood when
-    the export began: the order absent from every file, not present in the files
-    read after the commit and missing from the ones read before it."""
+    the middle of an export. The archive must be the collection as of the export's
+    first read: the order absent from every file, not present in the files read
+    after the commit and missing from the ones read before it."""
     raced: list[int] = []
 
     async def order_mid_export() -> None:
