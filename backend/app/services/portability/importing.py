@@ -683,57 +683,90 @@ class _Planner:
 
     # -- reference resolution --------------------------------------------------
 
-    def _resolve_ref(self, row: _Row, spec: TableSpec, column) -> None:
+    def _alt_for(self, spec: TableSpec, column) -> Any:
+        """The readable mirror column that stands in for this uuid, if the spec has
+        one — `retailer_name` for `retailer_id`, `catalog_name` for
+        `catalog_ref_id`."""
+        return next(
+            (c for c in spec.columns if c.role is ColumnRole.ALT_REF and c.mirrors == column.name),
+            None,
+        )
+
+    def _resolve_ref(
+        self, row: _Row, spec: TableSpec, column, replace_all: bool
+    ) -> tuple[str, uuid.UUID] | None:
         """Point a foreign key at the right local row: remap it, accept it if it's
         already local or arriving in this import, or fall back to the readable
-        mirror column."""
+        mirror column.
+
+        Returns the `(table, id)` it could not resolve, so the caller can say which
+        row is missing; `None` when the reference landed somewhere or the row never
+        supplied one.
+
+        **`replace_all` may not resolve against the live database (#45).** Every
+        portable table is truncated before this plan is written, so a uuid found in
+        `by_id`, or a name matched against `existing`, points at a row that will not
+        be there afterwards. `order_items.catalog_ref_id` is polymorphic across three
+        tables and therefore has no foreign key, so that one commits a line holding a
+        dead uuid and nothing complains; the columns that do have a foreign key fail
+        at flush instead — a rollback rather than corruption, but a 500 raised after
+        the operator confirmed a preview that promised otherwise. In this mode the
+        upload is the only world there is: `created_ids` and the planned rows.
+        """
         table = column.ref_table
         if table == "catalog":
             item_type = row.values.get("item_type")
             if item_type is None:
-                return
+                return None
             table = CATALOG_TABLE_BY_ITEM_TYPE.get(str(item_type))
             if table is None:  # kit lines don't reference the catalog
                 row.values[column.name] = None
-                return
+                return None
 
+        dangling: tuple[str, uuid.UUID] | None = None
         raw_id = row.values.get(column.name)
         if raw_id is not None:
             mapped = self.remap.get((table, raw_id))
             if mapped is not None:
                 row.values[column.name] = mapped
-                return
-            if raw_id in self.by_id[table] or raw_id in self.created_ids[table]:
-                return
+                return None
+            arriving = raw_id in self.created_ids[table]
+            if arriving or (not replace_all and raw_id in self.by_id[table]):
+                return None
             row.values[column.name] = None  # unknown uuid — try the readable mirror
+            dangling = (table, raw_id)
 
-        alt = next(
-            (c for c in spec.columns if c.role is ColumnRole.ALT_REF and c.mirrors == column.name),
-            None,
-        )
+        alt = self._alt_for(spec, column)
         if alt is None:
-            return
+            return dangling
         name = _norm_name(row.values.get(alt.name))
         if not name:
-            return
+            return dangling
 
         # Resolving through the readable mirror counts as the row supplying this
         # column, even though the uuid column itself was blank or absent.
         row.present.add(column.name)
 
-        match = next(
-            (instance for instance in self.existing[table] if _norm_name(instance.name) == name),
-            None,
-        )
-        if match is not None:
-            row.values[column.name] = match.id
-            return
+        if not replace_all:
+            match = next(
+                (item for item in self.existing[table] if _norm_name(item.name) == name),
+                None,
+            )
+            if match is not None:
+                row.values[column.name] = match.id
+                return None
         # Named but unknown: created on the fly, like the select-or-create flow does.
+        # This is also why a *name* needs no `replace_all` special case where a uuid
+        # does — the name is satisfiable by creating what it names, so an archive
+        # supplying `retailer_name` with no retailers.csv still works, and gets a
+        # retailer that exists after the truncate rather than a pointer to one that
+        # doesn't.
         pending = self._pending_by_name(table, name)
         if pending is not None:
             row.values[column.name] = pending
-            return
+            return None
         row.values[column.name] = self._create_stub(table, row.values.get(alt.name), row)
+        return None
 
     def _pending_by_name(self, table: str, name: str) -> uuid.UUID | None:
         for planned in self.rows.get(table, []):
@@ -952,7 +985,7 @@ class _Planner:
             for raw in raw_rows:
                 row = self._parse_row(spec, raw)
                 self._check_line_quantity(spec, row)
-                self._resolve_all_refs(spec, row)
+                self._resolve_all_refs(spec, row, replace_all)
                 self._apply_money_alternates(spec, row)
                 _clear_orphan_money_currency(spec, row)
 
@@ -998,19 +1031,38 @@ class _Planner:
             row.action = RowAction.ERROR
             row.error = str(exc)
 
-    def _resolve_all_refs(self, spec: TableSpec, row: _Row) -> None:
+    def _resolve_all_refs(self, spec: TableSpec, row: _Row, replace_all: bool) -> None:
         if row.action is RowAction.ERROR:
             return
         for column in spec.columns:
-            if column.role is ColumnRole.REF:
-                self._resolve_ref(row, spec, column)
-                if column.required and row.values.get(column.name) is None:
-                    row.action = RowAction.ERROR
-                    target = column.ref_table
-                    row.error = (
-                        f"{column.name}: no matching {target} found — "
-                        "add it to the import or fix the reference"
-                    )
+            if column.role is not ColumnRole.REF:
+                continue
+            dangling = self._resolve_ref(row, spec, column, replace_all)
+            if row.values.get(column.name) is not None:
+                continue
+            if replace_all and dangling is not None:
+                # Named a row this upload doesn't contain. Blocked rather than
+                # nulled even where the column is optional: the row said which
+                # order line bought this kit, and quietly dropping that on the
+                # floor loses provenance the operator never agreed to lose.
+                target, missing = dangling
+                fix = f"add that {target} row"
+                alt = self._alt_for(spec, column)
+                if alt is not None:
+                    fix += f", or name it in {alt.name} and one will be created"
+                row.action = RowAction.ERROR
+                row.error = (
+                    f"{column.name}: no {target} row with id {missing} in this upload — "
+                    f"a replace-all import deletes everything the upload doesn't "
+                    f"contain, so {fix}"
+                )
+            elif column.required:
+                row.action = RowAction.ERROR
+                target = column.ref_table
+                row.error = (
+                    f"{column.name}: no matching {target} found — "
+                    "add it to the import or fix the reference"
+                )
 
     def _apply_money_alternates(self, spec: TableSpec, row: _Row) -> None:
         """Major units fill in only where the canonical minor-unit column is absent
