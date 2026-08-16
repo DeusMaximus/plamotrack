@@ -22,7 +22,7 @@ import zipfile
 import pytest
 
 from app.services.portability import exporting, spec
-from tests.test_portability import actions, apply, preview
+from tests.test_portability import actions, apply, preview, read_archive
 
 pytestmark = pytest.mark.anyio
 
@@ -1046,6 +1046,196 @@ async def test_a_move_onto_a_reconciled_line_may_still_leave_a_shortfall_to_spaw
     assert stored["quantity"] == 3
     assert len(stored["kits"]) == 3
     assert loose["id"] in {k["id"] for k in stored["kits"]}
+
+
+@pytest.mark.parametrize(
+    ("progressed_before", "destination"),
+    [
+        # Already protected in the database, detached to nothing.
+        (True, "detach"),
+        # Protected by this same upload — the row that promotes it to `building` is
+        # the row that strips its provenance, so a check reading stored evidence
+        # alone sees an ordinary kit.
+        (False, "detach"),
+        # Moved to another line rather than cleared: the guard follows the kit and
+        # the original order becomes deletable just the same.
+        (True, "another line"),
+    ],
+    ids=["already protected", "protected by this upload", "moved to another line"],
+)
+async def test_a_count_preserving_swap_cannot_strip_protected_provenance(
+    client, progressed_before, destination
+):
+    """A swap satisfies the count check perfectly — one kit out, one in — while the
+    kit that leaves takes its purchase record with it (external review of #86,
+    round three).
+
+    That record is what `delete_order` reads to refuse, so an order holding a
+    `building` kit went from a 409 before the import to a **204** after it. The
+    count was never wrong; the thing being protected isn't the count.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    other = await make_order(client, retailer, [kit_line(1, name="Gouf")], number="HLJ-2")
+    item = order["items"][0]
+    kit = item["kits"][0]
+
+    if progressed_before:
+        assert (
+            await client.patch(f"/kits/{kit['id']}", json={"status": "building"})
+        ).status_code == 200
+        assert (await client.delete(f"/orders/{order['id']}")).status_code == 409, (
+            "the Orders page has to be refusing already, or this proves nothing"
+        )
+
+    parent = other["items"][0]["id"] if destination == "another line" else ""
+    content = sheet(
+        "kits",
+        ["id", "name", "grade", "status", "order_item_id"],
+        [
+            {
+                "id": kit["id"],
+                "name": "Zaku II",
+                "grade": "HG",
+                "status": "building",
+                "order_item_id": parent,
+            },
+            {
+                "id": "",
+                "name": "Replacement",
+                "grade": "HG",
+                "status": "ordered",
+                "order_item_id": item["id"],
+            },
+        ],
+    )
+    plan = await preview(client, content, filename="kits.csv")
+    assert plan["blocking_errors"], plan["tables"]
+    assert plan["tables"][0]["rows"][0]["error"].startswith("order_item_id:")
+    assert (await apply(client, content, filename="kits.csv")).status_code == 409
+
+    stored = (await client.get(f"/kits/{kit['id']}")).json()
+    assert stored["order_item_id"] == item["id"], "the link survived"
+    if progressed_before:
+        # Only meaningful where the kit was already protected: in the other
+        # variant the promotion to `building` was part of the refused upload, so
+        # the kit is still `ordered` and the order is legitimately deletable. What
+        # that variant proves is that the *upload's own* evidence counted.
+        assert (await client.delete(f"/orders/{order['id']}")).status_code == 409, (
+            "and the order is still protected by it"
+        )
+
+
+async def test_an_unprotected_kit_can_still_be_swapped(client):
+    """The refusal is about progression, not about `order_item_id` — a kit nobody
+    has touched still moves, so this doesn't become a blanket ban on the column."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    item = order["items"][0]
+    kit = item["kits"][0]
+
+    content = sheet(
+        "kits",
+        ["id", "name", "grade", "status", "order_item_id"],
+        [
+            {
+                "id": kit["id"],
+                "name": "Zaku II",
+                "grade": "HG",
+                "status": "ordered",
+                "order_item_id": "",
+            },
+            {
+                "id": "",
+                "name": "Replacement",
+                "grade": "HG",
+                "status": "ordered",
+                "order_item_id": item["id"],
+            },
+        ],
+    )
+    plan = await preview(client, content, filename="kits.csv")
+    assert plan["blocking_errors"] == [], plan
+    assert (await apply(client, content, filename="kits.csv")).status_code == 200
+
+    stored = (await client.get(f"/kits/{kit['id']}")).json()
+    assert stored["order_item_id"] is None
+    line = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert [k["name"] for k in line["kits"]] == ["Replacement"]
+
+
+@pytest.mark.parametrize("child", ["upgrade_applications", "kit_photos"])
+async def test_a_child_this_upload_creates_protects_its_kit_from_removal(client, child):
+    """Progression evidence the upload is *writing*, not evidence already stored
+    (external review of #86, round three).
+
+    `_plan_removals` picked the newest kit, and the same upload created an upgrade
+    application or a photo for exactly that kit: the child was written during the
+    table loop and the foreign-key cascade erased it with its kit moments later.
+    The result counted a create a later export could not find — and for an
+    application, that is consumed upgrade stock with nothing left to explain it.
+
+    The other kit is still safe, so the fix is to remove *that* one rather than to
+    refuse: the reduction the operator asked for still happens.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(2)])
+    item = order["items"][0]
+    oldest, newest = (k["id"] for k in item["kits"])
+
+    tables = {"order_items": [line_row(order, item, quantity="1")]}
+    if child == "upgrade_applications":
+        upgrade = (
+            await client.post(
+                "/upgrades", json={"name": "Thruster", "manufacturer": "K", "quantity_on_hand": 5}
+            )
+        ).json()
+        tables["upgrades"] = [
+            {"id": upgrade["id"], "name": "Thruster", "manufacturer": "K", "quantity_on_hand": "5"}
+        ]
+        tables["upgrade_applications"] = [
+            {"upgrade_id": upgrade["id"], "kit_id": newest, "quantity_used": "1"}
+        ]
+    else:
+        tables["kit_photos"] = [{"kit_id": newest, "file_path": "shots/a.jpg"}]
+
+    content = archive(**tables)
+    plan = await preview(client, content)
+    assert plan["blocking_errors"] == [], plan
+    assert plan["derived"]["kits_removed"] == 1, plan["derived"]
+    assert (await apply(client, content)).status_code == 200
+
+    survivors = {k["id"] for k in (await client.get("/kits")).json()}
+    assert newest in survivors, "the kit this upload gave a child to has to survive"
+    assert oldest not in survivors, "the safe kit is the one that goes"
+
+    if child == "upgrade_applications":
+        # kit_photos is exported empty on purpose until Milestone 7, so only the
+        # application can be checked end to end — and it is the half that matters,
+        # because it explains where upgrade stock went.
+        exported = read_archive((await client.get("/export/archive")).content)
+        assert len(exported["upgrade_applications"]) == 1, "created, then cascaded away"
+
+
+async def test_a_reduction_is_refused_when_every_candidate_gains_a_child(client):
+    """The other end of the same rule: with both kits protected by children this
+    upload creates, there is nothing safe to remove and the reduction is refused
+    rather than resolved by picking a victim anyway."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(2)])
+    item = order["items"][0]
+
+    content = archive(
+        order_items=[line_row(order, item, quantity="1")],
+        kit_photos=[
+            {"kit_id": k["id"], "file_path": f"shots/{i}.jpg"} for i, k in enumerate(item["kits"])
+        ],
+    )
+    plan = await preview(client, content)
+    assert actions(plan, "order_items") == ["error"], plan["tables"]
+    assert "can be removed safely" in plan["tables"][0]["rows"][0]["error"]
+    assert (await apply(client, content)).status_code == 409
+    assert len((await client.get("/kits")).json()) == 2
 
 
 async def test_a_kit_move_the_upload_does_reconcile_is_still_allowed(client):

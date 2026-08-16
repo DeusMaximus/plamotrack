@@ -59,6 +59,7 @@ from app.services.kits import default_scale_for_grade
 from app.services.numeric import is_lone_group, require_int4
 from app.services.orders import (
     ARRIVAL_ELIGIBLE,
+    PROGRESSED_STATUSES,
     kit_progressed,
     require_line_quantity,
     spawn_kits,
@@ -1501,6 +1502,93 @@ class _Planner:
                 lines.add(line_id)
         return lines
 
+    def _protected_kits(self) -> set[uuid.UUID]:
+        """Every kit that will carry progression evidence once this upload lands.
+
+        `kit_progressed` is the shared predicate (rule 1) and it reads a *stored*
+        row: status, rating, photos, applied upgrades. That is the whole truth for
+        the Orders page, which mutates one thing at a time. It is only part of the
+        truth for an import, which writes the kit, its status and its children in
+        one transaction — and both halves of that gap were reachable (external
+        review of #86, round three):
+
+        * a `kits.csv` row promoting a kit to `building` in the same upload that
+          strips its purchase provenance;
+        * an `upgrade_applications.csv` or `kit_photos.csv` row creating a child for
+          the very kit `_plan_removals` had already picked as its victim. The child
+          was created during the table loop and cascaded away with its kit
+          moments later, so the result counted a create that a later export could
+          not find — and for an application that is consumed stock with nothing
+          left to explain it.
+
+        The union of stored and planned evidence, never the difference. A sheet
+        that *lowers* a kit out of `building` does not thereby unprotect it: an
+        upload being able to talk itself out of a guard is the shape of every
+        bypass on this branch, and the cost of being conservative is a refusal the
+        operator can lift by editing one cell.
+        """
+        protected = {kit.id for kit in self.existing["kits"] if kit_progressed(kit)}
+
+        for row in self.rows.get("kits", []):
+            if row.action in (RowAction.ERROR, RowAction.SKIP):
+                continue
+            kit_id = row.matched_id or row.new_id
+            if kit_id is None:
+                continue
+            status = row.values.get("status") if "status" in row.present else None
+            if status is not None and KitStatus(status) in PROGRESSED_STATUSES:
+                protected.add(kit_id)
+            if "rating" in row.present and row.values.get("rating") is not None:
+                protected.add(kit_id)
+
+        for table in ("upgrade_applications", "kit_photos"):
+            for row in self.rows.get(table, []):
+                if row.action is not RowAction.CREATE:
+                    continue
+                kit_id = row.values.get("kit_id")
+                if kit_id is not None:
+                    protected.add(kit_id)
+        return protected
+
+    def _refuse_stripping_protected_provenance(
+        self, kit_rows: list[_Row], protected: set[uuid.UUID]
+    ) -> None:
+        """A protected kit keeps the order line that bought it.
+
+        The count check asks whether a line ends up holding the right number of
+        kits. A *swap* satisfies it perfectly — detach one kit, attach another, one
+        in and one out — while the kit that left takes its purchase record with it.
+        That record is what `delete_order` reads to refuse, so an order holding a
+        `building` kit went from a 409 before the import to a **204** after it
+        (external review of #86, round three).
+
+        Moving a protected kit to a different line is the same bypass wearing a
+        different hat — the guard follows the kit and the original order becomes
+        deletable — so the test is "the link changed", not "the link was cleared".
+
+        `KitUpdate` exposes no `order_item_id` at all, so neither REST nor MCP can
+        reach this; the importer was the only writer that could.
+        """
+        for row in kit_rows:
+            if row.action in (RowAction.ERROR, RowAction.SKIP):
+                continue
+            if row.matched_id is None or row.target is None:
+                continue
+            if "order_item_id" not in row.present:
+                continue
+            before = row.target.order_item_id
+            if before is None or row.values.get("order_item_id") == before:
+                continue
+            if row.matched_id not in protected:
+                continue
+            row.action = RowAction.ERROR
+            row.error = (
+                "order_item_id: this kit is building or complete, rated, photographed, or has "
+                "upgrades applied to it, so the order line that bought it is what stops that "
+                "order being deleted out from under it. An import can't take that link away — "
+                "leave order_item_id as it is"
+            )
+
     def _planned_line(self, line_id: uuid.UUID) -> _Row | None:
         """The order-items row this upload will write for `line_id`, if any.
 
@@ -1520,6 +1608,7 @@ class _Planner:
         and gives up the kits its quantity no longer accounts for."""
         kit_rows = self.rows.get("kits", [])
         reconciled = self._reconcilable_lines()
+        protected = self._protected_kits()
 
         # Refusals first, and the ordering is load-bearing. A kit move refused
         # below still contributed to the post-write set while the fan-out ran
@@ -1528,6 +1617,7 @@ class _Planner:
         # 409'd and removed nothing (external review of #86). Erroring the kits row
         # first takes it out of `_attached_after`, and the surplus it invented
         # stops existing rather than being cleaned up afterwards.
+        self._refuse_stripping_protected_provenance(kit_rows, protected)
         self._refuse_unreconciled_kit_moves(kit_rows, reconciled, replace_all)
 
         for row in self.rows.get("order_items", []):
@@ -1545,7 +1635,13 @@ class _Planner:
             wanted = self._stated_quantity(row) or 0
             missing = wanted - covered - len(attached)
             if missing < 0:
-                self._plan_removals(row, surplus=-missing, kit_rows=kit_rows, attached=attached)
+                self._plan_removals(
+                    row,
+                    surplus=-missing,
+                    kit_rows=kit_rows,
+                    attached=attached,
+                    protected=protected,
+                )
                 continue
             if missing == 0:
                 continue
@@ -1705,7 +1801,13 @@ class _Planner:
             row.error = message
 
     def _plan_removals(
-        self, row: _Row, *, surplus: int, kit_rows: list[_Row], attached: list[Kit]
+        self,
+        row: _Row,
+        *,
+        surplus: int,
+        kit_rows: list[_Row],
+        attached: list[Kit],
+        protected: set[uuid.UUID],
     ) -> None:
         """The other half of §3.9 reconciliation: a line whose quantity dropped
         gives up the kits it no longer accounts for (#44 case 2).
@@ -1756,7 +1858,7 @@ class _Planner:
             if kit.matched_id is not None and kit.action is not RowAction.ERROR
         }
         candidates = [
-            kit for kit in attached if kit.id not in described and not kit_progressed(kit)
+            kit for kit in attached if kit.id not in described and kit.id not in protected
         ]
         if len(candidates) < surplus:
             row.action = RowAction.ERROR
