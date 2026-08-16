@@ -345,6 +345,124 @@ async def test_a_new_row_takes_the_schema_default_it_leaves_blank(client):
         assert kit[column] is not None, column
 
 
+# --- the two rules meet on one column (external review of #89) -------------------
+
+
+async def test_a_dangling_reference_the_row_keeps_anyway_says_only_that(client, collection):
+    """`orders.retailer_id` is the column where #82 and #88 collide: optional in
+    the sheet, because it has `retailer_name`, and NOT NULL in the database.
+
+    Both rules fired and contradicted each other. #82 said the row "imports without
+    it" and told the operator to add a shop; #88 then quietly kept the stored one.
+    The first message was simply untrue — the link is not lost — and the
+    instruction was work nobody needed to do. Rung 6 is for columns that can hold
+    null, and only those.
+    """
+    order_id = collection["orders"]["id"]
+    stored_before = await stored_value("orders", order_id)
+    content = make_csv(
+        ["id", "order_date", "currency_code", "retailer_id"],
+        [
+            {
+                "id": order_id,
+                "order_date": "2026-03-14",
+                "currency_code": "JPY",
+                "retailer_id": MISSING,
+            }
+        ],
+    )
+    plan = await preview(client, content, filename="orders.csv")
+    messages = plan["tables"][0]["rows"][0]["messages"]
+    assert any("left as it was" in m for m in messages), messages
+    assert not any("imports without it" in m for m in messages), messages
+
+    assert (await apply(client, content, filename="orders.csv")).status_code == 200
+    after = await stored_value("orders", order_id)
+    assert after.retailer_id == stored_before.retailer_id
+
+
+async def test_a_refused_create_carries_no_message_about_what_it_dropped(client):
+    """The same collision on a create: the row is refused because nothing can fill
+    the column, so a message telling the operator it "imports without it" describes
+    an import that is not going to happen."""
+    content = make_csv(
+        ["order_date", "currency_code", "retailer_id"],
+        [{"order_date": "2026-03-14", "currency_code": "JPY", "retailer_id": MISSING}],
+    )
+    plan = await preview(client, content, filename="orders.csv")
+    row = plan["tables"][0]["rows"][0]
+    assert row["error"].startswith("retailer_id:")
+    assert row["messages"] == [], row["messages"]
+
+
+async def test_a_refused_create_takes_back_the_id_it_minted(client):
+    """`_classify` mints `new_id` into `created_ids` before the create refusal runs,
+    and every later table resolves references through that set — so a refused order
+    stayed resolvable, its lines planned as clean creates, and the fan-out promised
+    kits for an order that was never going to exist.
+
+    The apply was safe; the preview was not. That is #86's "refusal ordered after
+    the thing it refuses" arriving by another road, and the preview is binding
+    (#41). Driven through the starter sheet, which synthesises both rows from one
+    line and so cannot be talked out of the dependency.
+    """
+    content = make_csv(
+        ["kit_name", "grade", "retailer", "order_date", "order_number", "unit_price", "currency"],
+        [
+            {
+                "kit_name": "Gouf",
+                "grade": "HG",
+                "retailer": "Hobby Link Japan",
+                "order_date": "",
+                "order_number": "X",
+                "unit_price": "10",
+                "currency": "JPY",
+            }
+        ],
+    )
+    plan = await preview(client, content, filename="starter-sheet.csv")
+    assert actions(plan, "orders") == ["error"], plan["tables"]
+    assert actions(plan, "order_items") == ["error"], "a line cannot outlive its order"
+    assert plan["derived"]["kits_spawned"] == 0, plan["derived"]
+    assert (await apply(client, content, filename="starter-sheet.csv")).status_code == 409
+    assert (await client.get("/kits")).json() == []
+
+
+async def test_a_kit_line_says_so_when_it_ignores_a_catalog_reference(client, collection):
+    """A kit line's `catalog_ref_id` never reaches the dangling path — there is no
+    catalog table to fail to find it in, because kits are spawned fresh — so the
+    value was dropped with nothing said. Same principle as rung 6: the operator
+    filled the cell in."""
+    content = make_csv(
+        [
+            "order_id",
+            "item_type",
+            "catalog_ref_id",
+            "quantity",
+            "unit_price_minor",
+            "currency_code",
+            "kit_name",
+            "kit_grade",
+        ],
+        [
+            {
+                "order_id": collection["orders"]["id"],
+                "item_type": "kit",
+                "catalog_ref_id": MISSING,
+                "quantity": "1",
+                "unit_price_minor": "100",
+                "currency_code": "JPY",
+                "kit_name": "Gouf",
+                "kit_grade": "HG",
+            }
+        ],
+    )
+    plan = await preview(client, content, filename="order_items.csv")
+    messages = " ".join(plan["tables"][0]["rows"][0]["messages"])
+    assert "catalog_ref_id" in messages and MISSING in messages, messages
+    assert (await apply(client, content, filename="order_items.csv")).status_code == 200
+
+
 # --- the mode axis ---------------------------------------------------------------
 #
 # Everything above runs in merge. The three modes reach these rules by different

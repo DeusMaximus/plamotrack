@@ -728,7 +728,18 @@ class _Planner:
                 return None
             table = CATALOG_TABLE_BY_ITEM_TYPE.get(str(item_type))
             if table is None:  # kit lines don't reference the catalog
+                # Dropped, and said out loud for the same reason as any other
+                # discarded reference (#82): the operator filled the cell in. This
+                # one never reaches the `dangling` path below, because there is no
+                # catalog table to fail to find it in — kits are spawned fresh, so
+                # the column means nothing here whatever it holds.
+                discarded = row.values.get(column.name)
                 row.values[column.name] = None
+                if discarded is not None:
+                    row.messages.append(
+                        f"{column.name}: a kit line doesn't reference the catalog — its kits "
+                        f"are spawned fresh, so {discarded} was ignored"
+                    )
                 return None
 
         dangling: tuple[str, uuid.UUID] | None = None
@@ -1124,6 +1135,16 @@ class _Planner:
                 f"{column.name}: a new {spec.key} row needs this, and this one has no value "
                 "for it. Fill the column in"
             )
+            # Take the id back. `_classify` mints `new_id` into `created_ids` before
+            # this runs, and every later table resolves references through that set —
+            # so a refused order stayed resolvable, its lines planned as clean
+            # creates, and the fan-out promised kits for an order that was never
+            # going to exist. The apply was safe (the blocking error stops it) but
+            # the preview was not, which is #86's "refusal ordered after the thing it
+            # refuses" arriving here by another road (external review of #89).
+            if row.new_id is not None:
+                self.created_ids[spec.key].discard(row.new_id)
+                row.new_id = None
             return
 
     def _classify(self, spec: TableSpec, row: _Row) -> None:
@@ -1281,8 +1302,18 @@ class _Planner:
                     f"{column.name}: no matching {target} found — "
                     "add it to the import or fix the reference"
                 )
-            elif dangling is not None:
-                # Optional, and the id named nothing here or in the upload (#82).
+            elif dangling is not None and _column_is_nullable(spec, column.name):
+                # Optional, **and able to hold null** — the id named nothing here or
+                # in the upload, and dropping it is what will actually happen (#82).
+                #
+                # The nullability half is not decoration. `orders.retailer_id` is
+                # optional in the sheet (it has `retailer_name`) and NOT NULL in the
+                # database, so without it both rules fired and contradicted each
+                # other: this message said the row "imports without it" while
+                # `_keep_stored_where_unstatable` quietly kept the stored shop, or
+                # `_refuse_unfillable_creates` refused the row outright. Telling the
+                # operator a link was lost, and to go and add a shop, was simply
+                # untrue (external review of #89).
                 # Not blocked: "import just kits.csv into a fresh instance" is a
                 # documented onboarding path, and every row of that file names an
                 # order line the new instance has never had. But it is not silent
