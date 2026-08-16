@@ -16,9 +16,34 @@ from app.schemas.catalog import (
     UpgradeCreate,
     UpgradeUpdate,
 )
+from app.services.numeric import require_int4
 from app.services.write_gate import acquire_write_gate
 
 logger = logging.getLogger(__name__)
+
+
+def guard_stock_ceiling(name: str, quantity: int) -> int:
+    """`quantity`, or a 409 saying it won't fit in the column.
+
+    The third route into #74, and the one no request schema can close. Bounding the
+    input fields stops a caller *stating* a number int4 can't hold; it does nothing
+    about a legal number **derived** out of range — 2,000,000,000 on hand and a
+    receipt of 200,000,000 more are each perfectly valid on their own. Left
+    unchecked that lands as an `IntegrityError` at flush: a 500 naming a constraint,
+    after the rest of the transaction has already been written.
+
+    A conflict rather than invalid input, and deliberately the same class of error
+    as its opposite: "you cannot take 5 from 3 on hand" and "you cannot add 5 to a
+    number already at the ceiling" are both the stored state refusing the operation,
+    not the caller mistyping something. The floors stay written out at each call
+    site — their messages say what was being removed and suggest what to do about
+    it, and one merged message would say less at both.
+    """
+    try:
+        return require_int4(quantity, f"'{name}' would hold {quantity:,}")
+    except ValueError as exc:
+        raise ConflictError(str(exc)) from exc
+
 
 # The three fungible catalog tables an order line (or stock adjustment) can target.
 CATALOG_MODELS: dict[ItemType, type[Tool | Consumable | Upgrade]] = {
@@ -202,6 +227,16 @@ async def adjust_stock(
     session: AsyncSession, catalog_id: uuid.UUID, delta: int, reason: str | None = None
 ) -> StockAdjustmentResult:
     """Resolve a catalog id across the three fungible tables and adjust its stock."""
+    # `delta` arrives as a bare int from the MCP tool — there is no REST route and so
+    # no request schema to carry the bound (#74). The service is where both callers
+    # meet (rule 1), so it is where the bound belongs; a 3-billion delta is the
+    # caller mistyping, which is a 422, while a delta that *derives* out of range is
+    # the stored state refusing, below.
+    try:
+        require_int4(delta, f"delta '{delta:,}'")
+    except ValueError as exc:
+        raise InvalidInputError(str(exc)) from exc
+
     await acquire_write_gate(session)
     for item_type, model in CATALOG_MODELS.items():
         row = await lock_catalog_row(session, model, catalog_id)
@@ -213,6 +248,7 @@ async def adjust_stock(
                 f"cannot adjust {item_type} '{row.name}' by {delta}: "
                 f"only {row.quantity_on_hand} on hand"
             )
+        guard_stock_ceiling(row.name, new_quantity)
         row.quantity_on_hand = new_quantity
         await session.flush()
         await session.commit()

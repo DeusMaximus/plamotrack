@@ -28,7 +28,7 @@ from app.schemas.orders import (
     RetailerCreate,
     RetailerUpdate,
 )
-from app.services.catalog import CATALOG_MODELS, lock_catalog_row
+from app.services.catalog import CATALOG_MODELS, guard_stock_ceiling, lock_catalog_row
 from app.services.kits import default_scale_for_grade, has_applied_upgrades
 from app.services.write_gate import acquire_write_gate
 
@@ -310,7 +310,7 @@ async def _adjust_ref(
             f"cannot remove {-delta}× '{row.name}': only {row.quantity_on_hand} on hand "
             "(already consumed?) — adjust its stock first"
         )
-    row.quantity_on_hand = new_quantity
+    row.quantity_on_hand = guard_stock_ceiling(row.name, new_quantity)
     await session.flush()
 
 
@@ -466,7 +466,9 @@ async def _add_line(
                 raise NotFoundError(f"{line.item_type} {line.catalog_ref_id} not found")
         item.catalog_ref_id = row.id
         if received:
-            row.quantity_on_hand += line.quantity
+            row.quantity_on_hand = guard_stock_ceiling(
+                row.name, row.quantity_on_hand + line.quantity
+            )
         await session.flush()
     return item
 

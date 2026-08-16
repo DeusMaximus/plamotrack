@@ -11,6 +11,7 @@ from app.models.enums import (
     WouldOrderAgain,
 )
 from app.schemas.kits import KitRead
+from app.schemas.numeric import NonNegativeInt4, PositiveInt4
 from app.services.currency import CURRENCY_CODE_PATTERN as _CURRENCY_PATTERN
 
 
@@ -66,24 +67,23 @@ class NewCatalogItem(BaseModel):
     name: str = Field(min_length=1)
     category: str | None = None  # tools/consumables
     manufacturer: str | None = None  # upgrades
-    low_stock_threshold: int | None = Field(default=None, ge=0)
+    low_stock_threshold: NonNegativeInt4 | None = None
     # Tools only. Minor units, with no currency field of its own — the line already
     # states the currency this was bought in, and asking twice invites the two to
     # disagree. The service stamps the line's code onto the row it creates.
-    unit_cost_reference_minor: int | None = Field(default=None, ge=0)
+    unit_cost_reference_minor: NonNegativeInt4 | None = None
     condition_notes: str | None = None
 
 
 class OrderItemCreate(BaseModel):
     item_type: ItemType
-    quantity: int = Field(gt=0)
-    unit_price_minor: int = Field(ge=0)
+    quantity: PositiveInt4
+    unit_price_minor: NonNegativeInt4
     currency_code: str = Field(pattern=_CURRENCY_PATTERN)
     # Entry-time conversion snapshot (§6). Omit the code and the instance's
     # reference currency is stamped in; it is never re-read afterwards.
-    converted_price_minor: int | None = Field(
+    converted_price_minor: NonNegativeInt4 | None = Field(
         default=None,
-        ge=0,
         description=(
             "Entry-time conversion snapshot: what this line cost in the currency "
             "below, recorded once and never recomputed. On an update, omitting this "
@@ -141,7 +141,7 @@ class OrderCreate(BaseModel):
     delivery_service: str | None = None  # null = local pickup/purchase
     tracking_number: str | None = None
     tracking_url: str | None = None
-    shipping_cost_minor: int | None = Field(default=None, ge=0)
+    shipping_cost_minor: NonNegativeInt4 | None = None
     currency_code: str = Field(pattern=_CURRENCY_PATTERN)
     # True = already in hand (store purchase / arrived before entry): stock is
     # applied and spawned kits start at backlog instead of ordered.
@@ -171,7 +171,7 @@ class OrderUpdate(BaseModel):
     delivery_service: str | None = None
     tracking_number: str | None = None
     tracking_url: str | None = None
-    shipping_cost_minor: int | None = Field(default=None, ge=0)
+    shipping_cost_minor: NonNegativeInt4 | None = None
     currency_code: str | None = Field(default=None, pattern=_CURRENCY_PATTERN)
     # None = leave line items untouched; a list is the full replacement set.
     items: list[OrderItemUpsert] | None = Field(default=None, min_length=1)
