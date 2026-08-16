@@ -124,11 +124,18 @@ def _immutable_message(column: str, before: str, after: str) -> str:
 # --- a catalog line points at something (the third preview refusal) --------------
 
 
-def _effective_item_type(row: "_Row") -> Any:
+def effective_item_type(row: "_Row") -> Any:
     """What this row's line will be once written — the sheet's `item_type` where it
     states one, otherwise the stored line's. A partial sheet legitimately omits the
     column, and reading `values` alone would then treat every such row as typeless
-    and skip the check that matters most."""
+    and skip the check that matters most.
+
+    Public because `_plan_spawns` needs the same reading and did not have it: it
+    tested `row.values.get("item_type") is not ItemType.KIT` directly, so an update
+    omitting the column skipped the fan-out entirely and a reduced quantity left
+    every kit attached (external review of #86). One definition, because two
+    readings of "what type is this line" is how that happened — the correct one
+    already existed here when the wrong one was written one module over."""
     if "item_type" in row.present and row.values.get("item_type") is not None:
         return row.values["item_type"]
     return getattr(row.target, "item_type", None)
@@ -161,7 +168,7 @@ def _check_catalog_targets(
             continue
         if row.action is not RowAction.CREATE and "catalog_ref_id" not in row.present:
             continue
-        item_type = _effective_item_type(row)
+        item_type = effective_item_type(row)
         if item_type is None or item_type is ItemType.KIT:
             continue
         table = CATALOG_TABLE_BY_ITEM_TYPE.get(str(item_type))
@@ -199,7 +206,7 @@ def _catalog_types_on(row: "_Row", incoming: dict[uuid.UUID, list["_Row"]]) -> s
         if item.item_type is not ItemType.KIT:
             types.add(str(item.item_type))
     for line in incoming.get(row.matched_id, []):
-        item_type = _effective_item_type(line)
+        item_type = effective_item_type(line)
         if item_type is not None and item_type is not ItemType.KIT:
             types.add(str(item_type))
     return types

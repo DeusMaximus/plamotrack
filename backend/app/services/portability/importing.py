@@ -1400,7 +1400,7 @@ class _Planner:
         return existing is not None and existing.received_at is not None
 
     def _attached_after(
-        self, row: _Row, line_id: uuid.UUID, kit_rows: list[_Row], replace_all: bool
+        self, line_id: uuid.UUID, stored: list[Kit], kit_rows: list[_Row]
     ) -> list[Kit]:
         """The kits this line will hold once the upload lands — not the ones it holds
         now.
@@ -1422,13 +1422,19 @@ class _Planner:
         leaves the kit where it is, which is the ordinary partial-sheet case and the
         reason this reads `present` rather than values alone.
 
-        Empty under `replace_all`: everything is truncated first, so no kit is
-        attached to anything until this upload's own creates land, and those are
-        `covered`.
-        """
-        if replace_all or row.target is None:
-            return []
+        Takes `stored` rather than reading an order-item row, because a line the
+        upload *creates* has no stored kits and can still be moved onto: an
+        `order_items.csv` create plus a `kits.csv` update pointing an existing kit
+        at it supplies that line's kit, and `covered` cannot see it because
+        `covered` counts kit *creates*. Reading `row.target is None` as "nothing is
+        attached" spawned a second kit for a quantity-one line (external review of
+        #86). The `kept` half is genuinely empty there; the `arriving` half is not.
 
+        Empty under `replace_all` without saying so: everything is truncated first,
+        `stored` is `[]`, and every kits row is a create with no `matched_id`, so
+        both loops below produce nothing. An explicit mode guard here would be one
+        no mutation of it could ever kill.
+        """
         # kit id -> (post-write parent line, the stored Kit)
         reparented: dict[uuid.UUID, tuple[Any, Kit]] = {}
         for kit_row in kit_rows:
@@ -1440,10 +1446,8 @@ class _Planner:
                 continue
             reparented[kit_row.matched_id] = (kit_row.values.get("order_item_id"), kit_row.target)
 
-        on_line = {kit.id for kit in row.target.kits}
-        kept = [
-            kit for kit in row.target.kits if reparented.get(kit.id, (line_id, kit))[0] == line_id
-        ]
+        on_line = {kit.id for kit in stored}
+        kept = [kit for kit in stored if reparented.get(kit.id, (line_id, kit))[0] == line_id]
         arriving = [
             kit
             for kit_id, (parent, kit) in reparented.items()
@@ -1455,21 +1459,29 @@ class _Planner:
         """Hybrid dispatch: a kit line spawns only the kits nothing else provides,
         and gives up the kits its quantity no longer accounts for."""
         kit_rows = self.rows.get("kits", [])
+        reconciled: set[uuid.UUID] = set()
         for row in self.rows.get("order_items", []):
             if row.action in (RowAction.ERROR, RowAction.SKIP):
                 continue
-            if row.values.get("item_type") is not ItemType.KIT:
+            # The *effective* type, from the shared reading in `invariants`: an
+            # update may legitimately omit `item_type`, and testing `values` alone
+            # read every such row as typeless and skipped reconciliation entirely,
+            # so a partial sheet reducing a quantity left every kit attached
+            # (external review of #86).
+            if invariants.effective_item_type(row) is not ItemType.KIT:
                 continue
             line_id = row.matched_id or row.new_id
             if line_id is None:
                 continue
 
+            reconciled.add(line_id)
             covered = sum(
                 1
                 for kit in kit_rows
                 if kit.action is RowAction.CREATE and kit.values.get("order_item_id") == line_id
             )
-            attached = self._attached_after(row, line_id, kit_rows, replace_all)
+            stored = list(row.target.kits) if row.target is not None else []
+            attached = self._attached_after(line_id, stored, kit_rows)
             wanted = int(row.values.get("quantity") or 0)
             missing = wanted - covered - len(attached)
             if missing < 0:
@@ -1506,6 +1518,81 @@ class _Planner:
                 )
             )
             row.messages.append(f"will create {missing} kit(s) from this line")
+
+        self._refuse_unreconciled_kit_moves(kit_rows, reconciled)
+
+    def _refuse_unreconciled_kit_moves(
+        self, kit_rows: list[_Row], reconciled: set[uuid.UUID]
+    ) -> None:
+        """A kits-side write may not leave a line disagreeing with its own quantity.
+
+        The loop above visits the lines this upload *states a quantity for*. A
+        `kits.csv` row writing `order_item_id` changes what a line holds without
+        being one of those, so a line reached only from the kits side was never
+        reconciled at all — two shapes, both a clean preview and a 200 (external
+        review of #86):
+
+            add_only, line quantity 1: its own order_items row is SKIP, so the loop
+            above skips it, while a new kits.csv row attaches a second kit
+                -> quantity 1, two kits attached
+
+            merge, kits.csv only: an update blanks a spawned kit's order_item_id
+                -> quantity 1, no kits attached
+
+        **Refused rather than reconciled**, and the distinction is whose instruction
+        it is. The fan-out spawns and removes because *the line stated a quantity* —
+        that is what a quantity means. A kits row moving provenance says nothing
+        about how many kits the line bought, so conjuring a replacement kit or
+        deleting a real one on the strength of it would be inventing intent the file
+        never expressed. It would also make `add_only` delete, which is the one
+        thing that mode promises never to do. So the upload is told it contradicts
+        itself, and the operator settles it by saying both halves out loud.
+
+        A line the upload does restate is not checked here — the loop above already
+        reconciled it, with the same post-write set. And `replace_all` cannot reach
+        the stored lookup: every line is created by the upload and therefore
+        reconciled, and a kits row naming a line the upload lacks is already a
+        `_resolve_ref` error (#45).
+        """
+        touched: dict[uuid.UUID, list[_Row]] = {}
+        for kit_row in kit_rows:
+            if kit_row.action in (RowAction.ERROR, RowAction.SKIP):
+                continue
+            if "order_item_id" not in kit_row.present:
+                continue
+            # Both ends of the move: the line it lands on, and — for a row that
+            # matched a stored kit — the one it leaves. Either can be left holding
+            # the wrong number, and only one of them is named in the cell.
+            ends = {kit_row.values.get("order_item_id")}
+            if kit_row.target is not None:
+                ends.add(kit_row.target.order_item_id)
+            for line_id in ends:
+                if line_id is not None:
+                    touched.setdefault(line_id, []).append(kit_row)
+
+        for line_id, rows in touched.items():
+            if line_id in reconciled:
+                continue
+            item = self.by_id["order_items"].get(line_id)
+            if item is None or item.item_type is not ItemType.KIT:
+                continue
+            created = sum(
+                1
+                for kit in kit_rows
+                if kit.action is RowAction.CREATE and kit.values.get("order_item_id") == line_id
+            )
+            after = len(self._attached_after(line_id, list(item.kits), kit_rows)) + created
+            if after == item.quantity:
+                continue
+            for row in rows:
+                row.action = RowAction.ERROR
+                row.error = (
+                    f"order_item_id: this would leave order line {line_id} holding {after} "
+                    f"kit(s) while the line itself says it bought {item.quantity}. Nothing in "
+                    "this upload restates that line's quantity, so there is no way to tell "
+                    "which of the two you mean — add an order_items.csv row for it stating "
+                    "the quantity, or leave order_item_id as it is"
+                )
 
     def _plan_removals(
         self, row: _Row, *, surplus: int, kit_rows: list[_Row], attached: list[Kit]

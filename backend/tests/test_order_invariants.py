@@ -610,6 +610,154 @@ async def test_a_kits_sheet_that_never_mentions_order_item_id_moves_nothing(clie
     assert (await client.get(f"/kits/{before[0]}")).json()["build_notes"] == "waist is fiddly"
 
 
+async def test_a_partial_line_update_that_omits_item_type_still_reconciles(client):
+    """The axis the shared matrix never varies, because `line_row` always supplies
+    `item_type` (external review of #86).
+
+    `_plan_spawns` classified the line from `row.values` alone, so a partial sheet
+    stating only `id,order_id,quantity` read as typeless and skipped reconciliation
+    entirely — the line dropped to 1 and kept both kits. `invariants` already had
+    the correct reading for exactly this reason; the fan-out had a second, wrong
+    one written one module over.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(2)])
+    item = order["items"][0]
+
+    content = sheet(
+        "order_items",
+        ["id", "order_id", "quantity"],
+        [{"id": item["id"], "order_id": order["id"], "quantity": "1"}],
+    )
+    plan = await preview(client, content, filename="order_items.csv")
+    assert plan["derived"]["kits_removed"] == 1, plan["derived"]
+
+    resp = await apply(client, content, filename="order_items.csv")
+    assert resp.status_code == 200, resp.text
+    stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert stored["quantity"] == 1
+    assert len(stored["kits"]) == 1, "the line and the collection have to agree"
+
+
+async def test_an_existing_kit_moved_onto_a_line_this_upload_creates_supplies_it(client):
+    """The action axis of `_attached_after`: the line is a CREATE, so it has no
+    stored kits — but a `kits.csv` update can still point an existing kit at it, and
+    `covered` cannot see that because `covered` counts kit *creates*.
+
+    Reading "no target" as "nothing attached" spawned a second kit for a
+    quantity-one line (external review of #86). The `kept` half is genuinely empty
+    for a create; the `arriving` half is not.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    loose = (
+        await client.post("/kits", json={"name": "Gouf", "grade": "HG", "status": "backlog"})
+    ).json()
+    new_line = "3f0c9e11-2b44-4c8e-9d21-77aa10bb5c33"
+
+    content = archive(
+        {"kits": ["id", "name", "grade", "order_item_id"]},
+        order_items=[
+            {
+                "id": new_line,
+                "order_id": order["id"],
+                "item_type": "kit",
+                "quantity": "1",
+                "unit_price_minor": "2500",
+                "currency_code": "JPY",
+                "kit_name": "Gouf",
+                "kit_grade": "HG",
+            }
+        ],
+        kits=[{"id": loose["id"], "name": "Gouf", "grade": "HG", "order_item_id": new_line}],
+    )
+    plan = await preview(client, content)
+    assert plan["derived"]["kits_spawned"] == 0, "the upload supplies this line's kit"
+
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+    line = next(
+        i
+        for i in (await client.get(f"/orders/{order['id']}")).json()["items"]
+        if i["id"] == new_line
+    )
+    assert [k["id"] for k in line["kits"]] == [loose["id"]]
+
+
+@pytest.mark.parametrize(
+    ("mode", "shape"),
+    [
+        # add_only: the line's own row is SKIP, so the fan-out never visits it,
+        # while a new kits.csv row attaches a second kit to it.
+        ("add_only", "oversupply"),
+        # merge, kits.csv only: nothing states the line's quantity at all, and an
+        # update blanks its kit's order_item_id.
+        ("merge", "undersupply"),
+    ],
+    ids=["add_only oversupply", "kits-only undersupply"],
+)
+async def test_a_kit_move_the_upload_cannot_reconcile_is_refused(client, mode, shape):
+    """A line reached only from the kits side (external review of #86).
+
+    Refused rather than reconciled. The fan-out spawns and removes because *the
+    line stated a quantity*; a kits row moving provenance says nothing about how
+    many kits the line bought, so conjuring or deleting one on the strength of it
+    invents intent the file never expressed — and in `add_only` it would mean
+    deleting, which is the one thing that mode promises never to do.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    item = order["items"][0]
+
+    if shape == "oversupply":
+        content = archive(
+            {"kits": ["name", "grade", "order_item_id"]},
+            order_items=[line_row(order, item)],
+            kits=[{"name": "Extra", "grade": "HG", "order_item_id": item["id"]}],
+        )
+    else:
+        content = sheet(
+            "kits",
+            ["id", "name", "grade", "order_item_id"],
+            [{"id": item["kits"][0]["id"], "name": "Zaku II", "grade": "HG", "order_item_id": ""}],
+        )
+
+    kwargs = {"mode": mode} if shape == "oversupply" else {"mode": mode, "filename": "kits.csv"}
+    plan = await preview(client, content, **kwargs)
+    assert actions(plan, "kits") == ["error"], plan["tables"]
+    error = next(r for r in plan["tables"][-1]["rows"] if r["error"])["error"]
+    assert error.startswith("order_item_id:")
+    assert "add an order_items.csv row" in error, "the refusal has to name the fix"
+
+    resp = await apply(client, content, **kwargs)
+    assert resp.status_code == 409
+    stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert stored["quantity"] == 1
+    assert len(stored["kits"]) == 1, "nothing moved"
+
+
+async def test_a_kit_move_the_upload_does_reconcile_is_still_allowed(client):
+    """The other side of that refusal: state the line's quantity in the same upload
+    and the move lands, because now the file has said both halves out loud. This is
+    what keeps the refusal from being a blanket ban on `order_item_id`."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    item = order["items"][0]
+
+    content = archive(
+        {"kits": ["name", "grade", "order_item_id"]},
+        order_items=[line_row(order, item, quantity="2")],
+        kits=[{"name": "Extra", "grade": "HG", "order_item_id": item["id"]}],
+    )
+    plan = await preview(client, content)
+    assert plan["blocking_errors"] == [], plan
+    assert (await apply(client, content)).status_code == 200
+
+    stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert stored["quantity"] == 2
+    assert len(stored["kits"]) == 2
+
+
 async def test_a_kit_arriving_from_another_line_is_not_the_one_given_up(client):
     """The two halves meeting: one upload moves a kit onto a line *and* reduces that
     line below what it can then hold. The arriving kit is described by the upload, so
