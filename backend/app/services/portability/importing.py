@@ -1962,11 +1962,13 @@ def _build_instance(spec: TableSpec, row: _Row) -> Any:
         if column.name not in row.present:
             continue
         value = row.values.get(column.name)
-        if value is None and (
-            column.name in _COLUMN_DEFAULTS.get(spec.key, {})
-            or _column_has_own_default(spec, column.name)
-        ):
-            continue  # let the default apply rather than writing NULL
+        if value is None and column.name in _COLUMN_DEFAULTS.get(spec.key, {}):
+            # Only the format's own defaults need omitting here. A column the
+            # *schema* defaults looks after itself even when the insert names it
+            # as NULL, so a `_column_has_own_default` clause added alongside this
+            # one was removed as dead — no mutation of it changed an outcome, and
+            # `_refuse_unfillable_creates` is where that predicate earns its keep.
+            continue
         fields[column.name] = value
 
     for column_name, default in _COLUMN_DEFAULTS.get(spec.key, {}).items():

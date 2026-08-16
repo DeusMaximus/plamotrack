@@ -99,7 +99,6 @@ def test_every_column_the_database_requires_can_be_filled_from_somewhere():
     """
     unfillable = []
     for table_key, name in unstatable_columns():
-        table = spec.SPEC_BY_KEY[table_key]
         if has_own_default(table_key, name):
             continue
         if name in _COLUMN_DEFAULTS.get(table_key, {}):
@@ -389,6 +388,12 @@ async def test_a_dangling_reference_in_a_required_column_still_blocks(client, co
     )
     plan = await preview(client, content, filename="order_items.csv")
     assert actions(plan, "order_items") == ["error"], plan["tables"]
+    # The *message*, not just the verdict. `_refuse_unfillable_creates` would also
+    # refuse this row — order_id is NOT NULL and nothing fills it — so asserting
+    # only the action proves nothing about which rule decided, and the reference
+    # error is the one that can say what to do about it. Found by mutation testing.
+    error = plan["tables"][0]["rows"][0]["error"]
+    assert "no matching orders found" in error, error
     assert (await apply(client, content, filename="order_items.csv")).status_code == 409
 
 
