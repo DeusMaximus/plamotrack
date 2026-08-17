@@ -18,12 +18,15 @@ Template:
 
 ## 2026-08-17 — Claude Code (Opus 5) — #82 and #88 closed by PR #89
 
-**PR #89 is open at `e5747b2`, branch `fix/82-88-blank-and-dangling-cells`, NOT
+**PR #89 is open at `64977ce`, branch `fix/82-88-blank-and-dangling-cells`, NOT
 merged.** 499 backend tests, ruff clean, three CI jobs green. No migration.
 Branched from `main`; the branches are independent, but see the merge note below.
 
-**One review round (Cursor/Grok 4.6), NO-GO, three findings plus one pre-existing
-sibling — all four real and reproduced at head before being fixed.** #90 filed.
+**Two review rounds (Cursor/Grok 4.6): NO-GO then GO.** Round one found three
+plus a pre-existing sibling (#90 filed); round two returned GO with one P3 doc
+finding and two *untested* mutants — code correct, suite blind. All real, all
+fixed. **This is the most-reviewed state anything on this milestone has reached
+relative to its size.**
 
 **`main` is at `e45a62e` plus this entry.** Two PRs open, neither reviewed: #86
 (#44, four review rounds) and #89 (this).
@@ -106,6 +109,24 @@ at 200. The mirror image of #82 and worse — the reference is kept and points a
 nothing (#63's shape). #86 already carries the helper that fixes it
 (`effective_item_type`), so land that first rather than duplicating it.
 
+### Reviewer notes (which tool for what)
+
+**Cursor/Grok 4.6 is a viable second reviewer, with a size ceiling.** Two rounds on
+#89 (993 insertions): 15 and 19 minutes, ending at 63% and 68% of a 256K context.
+Each round needs its **own chat session** — a second review in the same session
+would run out mid-analysis, and a truncated review that still emits a verdict is
+the worst outcome available. That is survivable because the **PR thread is the
+session memory**: every round's findings and responses are on the PR, so a fresh
+session reads the record instead of carrying it.
+
+**#86 does not fit.** 4,442 insertions against #89's 993, and a 9.1K-token thread
+against 3.2K. Send it to Codex, which has absorbed it four times. Match the tool to
+the size of the work rather than forcing both through one queue.
+
+Both tools output to chat unless told otherwise — the prompt has to say "post it
+with `gh pr comment N --body-file <path>`", and `--body-file` rather than `--body`
+because a shell string mangles backticks and `$`.
+
 ### MERGE NOTE: #86 and #89 both insert into `_classify`
 
 Not a conflict git will show you. Both add a call immediately after
@@ -115,9 +136,11 @@ Not a conflict git will show you. Both add a call immediately after
   column out of `present` so the apply can stamp `now`; #89's keep-stored then
   skips it. The other order previews both "left as it was" *and* "will be set to
   the time of this import", and #86 stamps anyway — so the preview lies.
-* **`_COLUMN_DEFAULTS` conflicts textually.** #89 emptied the schema-default
-  entries that #86 still carries. #89's version is the one to keep: the entries it
-  removed are read from the model now, and a contract test enforces that.
+* **`_COLUMN_DEFAULTS` does *not* conflict** — an earlier note here said it would,
+  and `git merge-tree --write-tree` says otherwise: #86 never edited that region,
+  so the auto-merge takes #89's emptied dict. That is the version to keep anyway;
+  the entries it removed are read from the model now and a contract test enforces
+  it. Measured in #89's second review, not reasoned.
 * The `elif dangling` branch #89 adds does not exist on #86 and should merge
   cleanly.
 
@@ -126,14 +149,15 @@ until one of them lands.
 
 ### State
 
-- 29 tests in `tests/test_cell_semantics.py`; **11 mutants, all killed**
+- 30 tests in `tests/test_cell_semantics.py`; **13 mutants, all killed**
   (`backend/mutation_test.py`, tracked on this branch too). The mode axis is
   pinned separately — `_classify` never runs under `replace_all` and returns SKIP
   before keep-stored under `add_only`, so "correct in merge" said nothing about
   the other two.
 - `docs/import-export.md` updated with both rules in user-facing language.
-- **One round done, none since the fixes.** #86 took four rounds to flatten and
-  this has had one, so treat the current green as round-one green.
+- **Two rounds, second a GO**, with only a doc paragraph and two test assertions
+  changed since — no behaviour moved, so the GO stands on the code as reviewed.
+  This is mergeable on the evidence; #86 is not.
 
 ---
 
