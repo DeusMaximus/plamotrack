@@ -124,6 +124,20 @@ CASES = [
         "                if False:",
         "ignores_a_catalog_reference",
     ),
+    (
+        "5a. the kit branch reports a dangling result as well",
+        IMP,
+        "                return None\n\n        dangling: tuple[str, uuid.UUID] | None = None",
+        '                return ("catalog", discarded) if discarded else None\n\n        dangling: tuple[str, uuid.UUID] | None = None',
+        "ignores_a_catalog_reference",
+    ),
+    (
+        "5b. a blank cell is reported as a discarded reference",
+        IMP,
+        "                if discarded is not None:",
+        "                if True:",
+        "no_catalog_reference_says_nothing",
+    ),
 ]
 
 

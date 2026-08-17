@@ -458,8 +458,50 @@ async def test_a_kit_line_says_so_when_it_ignores_a_catalog_reference(client, co
         ],
     )
     plan = await preview(client, content, filename="order_items.csv")
-    messages = " ".join(plan["tables"][0]["rows"][0]["messages"])
-    assert "catalog_ref_id" in messages and MISSING in messages, messages
+    messages = plan["tables"][0]["rows"][0]["messages"]
+    joined = " ".join(messages)
+    assert "catalog_ref_id" in joined and MISSING in joined, messages
+    # And *only* that one. If `_resolve_ref`'s kit branch ever returned a dangling
+    # result instead of None, rung 6 would fire as well and the row would carry
+    # both "was ignored" and "imports without it. Add that catalog row" — which
+    # contradict, exactly the way #82 and #88 did on `orders.retailer_id`. Asking
+    # only that the column and the id appear *somewhere* is satisfied by both
+    # lines, so it could not see that happen (external review of #89, round two).
+    assert not any("imports without it" in m for m in messages), messages
+    assert (await apply(client, content, filename="order_items.csv")).status_code == 200
+
+
+async def test_a_kit_line_with_no_catalog_reference_says_nothing_about_one(client, collection):
+    """The blank cell beside the dead uuid. The message exists because the operator
+    filled something in; a row that left the column empty discarded nothing, and
+    telling it that `None was ignored` is noise about a cell it never wrote."""
+    content = make_csv(
+        [
+            "order_id",
+            "item_type",
+            "catalog_ref_id",
+            "quantity",
+            "unit_price_minor",
+            "currency_code",
+            "kit_name",
+            "kit_grade",
+        ],
+        [
+            {
+                "order_id": collection["orders"]["id"],
+                "item_type": "kit",
+                "catalog_ref_id": "",
+                "quantity": "1",
+                "unit_price_minor": "100",
+                "currency_code": "JPY",
+                "kit_name": "Gouf",
+                "kit_grade": "HG",
+            }
+        ],
+    )
+    plan = await preview(client, content, filename="order_items.csv")
+    messages = plan["tables"][0]["rows"][0]["messages"]
+    assert not any("catalog_ref_id" in m for m in messages), messages
     assert (await apply(client, content, filename="order_items.csv")).status_code == 200
 
 

@@ -1144,6 +1144,16 @@ class _Planner:
             # refuses" arriving here by another road (external review of #89).
             if row.new_id is not None:
                 self.created_ids[spec.key].discard(row.new_id)
+                # The `discard` is the load-bearing half; clearing `new_id` is
+                # measured dead for outcomes — `_claim_identity` returns on ERROR
+                # before it reads the field, and `_plan_fingerprint` handles a
+                # minted id either way (external review of #89, round two, which
+                # ran both mutants). Kept anyway, and this is the difference from
+                # the four conditions removed on #86 for being dead: those were
+                # *decisions* with a covering condition left in place, so removing
+                # them left nothing stale behind. This is *state* — an ERROR row
+                # holding a minted id nobody will create is a trap laid for the
+                # next person who reads `new_id` without checking `action`.
                 row.new_id = None
             return
 

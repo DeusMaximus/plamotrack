@@ -150,12 +150,17 @@ and counts do this) or the row is refused by name, rather than failing halfway
 through the import.
 
 **A reference to something that isn't here is reported, not quietly dropped.** If a
-row points at an order line, retailer or catalog item that exists neither in this
-instance nor anywhere in the file, the row still imports — that's what makes
-"import just `kits.csv` into a fresh instance" work, where every row names an order
-the new instance has never had — but the preview says which rows lost which link,
-so it's your call rather than a surprise. Where the column is one the row can't do
-without, it stays a hard error as before.
+row points at an order line or a catalog item that exists neither in this instance
+nor anywhere in the file, the row still imports — that's what makes "import just
+`kits.csv` into a fresh instance" work, where every row names an order the new
+instance has never had — but the preview says which rows lost which link, so it's
+your call rather than a surprise.
+
+A **retailer** behaves differently, because an order can't be without one. Point an
+existing order at a shop that isn't here and the order keeps the shop it already
+had; enter a *new* order that way and the row is refused. Either way nothing is
+lost quietly, but nothing is dropped either. The same goes for any other column the
+row can't do without.
 
 Money pairs bend the first half of that rule, because an amount with no currency
 isn't storable: leaving `converted_currency_code` on `order_items` — or
