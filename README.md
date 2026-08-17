@@ -142,7 +142,7 @@ three minutes. Nothing else — the images build from this repo.
 git clone https://github.com/DeusMaximus/plamotrack.git && cd plamotrack
 cp .env.example .env
 # open .env, replace change-me with a real password
-docker compose up -d --wait
+docker compose up -d --build --wait
 ```
 
 Open **http://localhost:8080**. That's an empty collection — head to
