@@ -586,8 +586,8 @@ services:
 
 Only `web` is published; the API and database stay on the Compose network, so an
 instance has one door and it binds to `127.0.0.1` — a convenient install is not
-accidentally an internet deployment. `docker compose up -d --wait` is the supported
-empty-instance path, and it exits non-zero if anything fails to come up.
+accidentally an internet deployment. `docker compose up -d --build --wait` is the
+supported empty-instance path, and it exits non-zero if anything fails to come up.
 
 Images build from source in-repo. Publishing to a registry belongs with the rest of
 release automation in M9; until then an install needs no registry, no tags, and no

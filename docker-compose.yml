@@ -1,5 +1,10 @@
-# The full local stack (design notes §8). `docker compose up -d --wait` builds
-# it, migrates the database, and leaves an instance on http://127.0.0.1:8080.
+# The full local stack (design notes §8). `docker compose up -d --build --wait`
+# builds it, migrates the database, and leaves an instance on
+# http://127.0.0.1:8080.
+#
+# `--build` is required, including on a first run. `api` and `migrate` share an
+# `image:` tag so they build once and run the same bits; naming a tag makes `up`
+# try to resolve `plamotrack-api:local` before building, and no registry has it.
 #
 # Only `web` is published. The API and the database stay on the compose network,
 # so an instance has exactly one door, bound to loopback by default. That makes

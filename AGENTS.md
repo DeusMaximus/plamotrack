@@ -114,10 +114,17 @@ To exercise the packaged stack instead (before touching Dockerfiles, `nginx.conf
 or anything about startup ordering):
 
 ```bash
-docker compose up -d --wait   # http://127.0.0.1:8080 — builds on first run
+docker compose up -d --build --wait   # http://127.0.0.1:8080 — see below re --build
 docker compose logs migrate   # migrations; Exited (0) is success
 docker compose down           # add -v ONLY to destroy the database
 ```
+
+**`--build` is not optional, including on a first run.** `api` and `migrate` share
+an `image:` tag so they build once and run identical bits; naming a tag makes `up`
+try to resolve `plamotrack-api:local` before building, and no registry has it. It
+also reuses a stale local image after you change the code, which is how a container
+once ran migrations it predated. Leaving it off has now cost two sessions and one
+README fix — the flag is load-bearing, not belt-and-braces.
 
 Backend is uv-managed — run everything from `backend/`:
 
