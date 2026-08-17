@@ -16,6 +16,83 @@ Template:
 
 ---
 
+## 2026-08-18 — Claude Code (Opus 5) — #91 split into #92–#95; docs-only, no code touched
+
+- **Done:** assessed #91 (dogfooding gaps in the MCP/UI write surface) and split it
+  into four issues, with a scoping comment on #91 answering its four open questions.
+  Two commits on `main`, both pushed: `5f249b3` widens the attribution rule to issue
+  bodies and exempts the docs; `5f973b7` documents `--build` everywhere the packaged
+  stack is started.
+- **State:** **no application code changed, no migrations, no tests run** — there was
+  nothing to run. `main` is at `5f973b7`. Working tree clean apart from this entry.
+- **Next:** #92 is the cheap one and is not blocked by anything. #94 needs the
+  columns-vs-history call before anyone writes code.
+
+### The split, and what each one actually costs
+
+- **#92 — MCP write parity.** Retailers, catalog items, kit `rating`/`build_notes`.
+  No schema change, no frontend, no new logic: `create_retailer`/`update_retailer`,
+  `update_catalog_item` and `update_kit` all already exist with full field sets and
+  are already on REST. This is a **rule-1 divergence**, not a missing feature —
+  the MCP wrappers were simply never written. ~half a day.
+- **#93 — backdatable `received_at`.** No migration; the column is already nullable
+  `timestamptz` and the CSV archive already round-trips it. Two lines in
+  `services/orders.py` stamp `now`. Note `receive_order` also stamps the kits it
+  advances, so a backdated receipt has to backdate those or the problem just moves
+  one table over.
+- **#94 — kit build start/completion dates.** The only one needing a migration.
+- **#95 — order shipped/dispatched milestone.** Filed so the split didn't drop it.
+
+### Recommended for #94, not yet decided — the owner's call
+
+**Two nullable columns (`build_started_at`, `build_completed_at`) over a
+`kit_status_events` history table.** A history table drags the whole rule-9 surface
+with it — natural key, re-import dedupe, `TABLE_SPECS` position, blank templates,
+backfill migration — to answer stage-duration questions nobody has asked. Two columns
+answer the two being asked and are the summary a history would materialise anyway, so
+it doesn't foreclose the history later. **The honest counter-argument:**
+`building` → `backlog` → `building` is a shelved-and-resumed build that two columns
+flatten, and only the history keeps it.
+
+Whoever builds it: the cost is the sweep, not the migration. Kit status is written
+from **three** places — `services/kits.py` `update_kit`, `services/orders.py`
+`receive_order`, `services/portability/importing.py` — and they need one shared
+derivation helper, with the importer explicitly **not** inventing timestamps (rule 10
+by analogy). Also `STARTER_SHEET_COLUMNS` is hand-curated, not generated from the
+table spec, so build dates have to be added there too or the one-file migration path
+silently drops them — which is exactly the path someone moving off a spreadsheet uses.
+
+### A doc defect that this log caused
+
+`docker compose up -d --wait` without `--build` fails on a **first run**: `api` and
+`migrate` name an `image:` tag alongside their build context, so `up` tries to
+resolve `plamotrack-api:local` and no registry has it.
+
+**This was already known — it is recorded at HANDOFF.md:616, from the #75/#76 release
+gate.** That finding stayed in this file and never reached the docs a stranger reads,
+so the broken command sat in README, AGENTS.md, the compose header, design notes §8
+and twice in operations.md until it failed again on a real first install. AGENTS.md
+was worse than silent: it asserted the command "builds on first run".
+
+**The sweep rule applies to prose.** Recording a workaround here is not the same as
+fixing the document that told someone to do the wrong thing. `5f973b7` fixed the four
+sites the owner's README commit (`2b93747`) left behind.
+
+Not verified first-hand this session — the packaged stack was never brought up. The
+`--build` claim rests on the owner's failed install plus the HANDOFF:616 entry, which
+agree. **Open question worth a look:** whether `--build` should be needed at all, or
+whether dropping the `image:` tag would let plain `up -d --wait` work as everyone
+keeps expecting. The tag is deliberate (both services run identical bits); nobody has
+checked whether removing it is safe. Not filed.
+
+### Operational note: `gh issue create` was unusable, `gh api` worked
+
+GitHub was half-down. The git protocol and REST v3 were fine; **GraphQL was 503**, and
+`gh issue create` / `gh issue view` go through GraphQL. Filing worked via
+`gh api repos/OWNER/REPO/issues -X POST -F body=@file -f 'labels[]=…'`. Worth knowing
+next time GitHub is flaky. A 503 on a POST can still have created the record — check
+before retrying; one of the four 503'd and had *not* been created.
+
 ## 2026-08-17 — Claude Code (Opus 5) — #82 and #88 closed, PR #89 MERGED
 
 **PR #89 is MERGED** — squashed to `15c8d36` on `main`, branch deleted. 499 backend
