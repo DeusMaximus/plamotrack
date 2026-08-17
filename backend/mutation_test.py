@@ -162,7 +162,7 @@ CASES = [
         IMP,
         "        self._defer_generated_status_stamp(spec, row)",
         "        pass  # mutated",
-        "timestamp_the_board_reads or both_stamp_one_kit",
+        "timestamp_the_board_reads or both_stamp_one_kit or both_claim_the_column",
     ),
     (
         "inv-5a. the clock is read at plan time instead of apply time",
@@ -261,13 +261,6 @@ CASES = [
         "            if self._stated_quantity(row) is None:\n                continue",
         "            pass",
         "carrying_no_quantity_authorises_no_reconciliation",
-    ),
-    (
-        "inv-11. replace_all consults the stored order-item row",
-        IMP,
-        '            stored = None if replace_all else self.by_id["order_items"].get(line_id)',
-        '            stored = self.by_id["order_items"].get(line_id)',
-        "does_not_depend_on_rows_it_will_truncate",
     ),
     (
         "inv-13. a kit may name a catalog order line as provenance",

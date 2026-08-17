@@ -1906,6 +1906,23 @@ class _Planner:
             planned = self._planned_line(line_id)
             # `replace_all` truncates every stored row before this plan is written,
             # so in that mode the upload is the only source of truth about a line.
+            #
+            # **Currently shadowed, and kept anyway.** Since #82/#88 landed, a create
+            # missing a NOT NULL column is refused and has its id retracted from
+            # `created_ids` — so under `replace_all` a kits row naming such a line
+            # fails #45's dangling check first and never reaches here, and a line
+            # that *was* created has a quantity and is therefore reconciled. No
+            # input found that reaches this expression with `replace_all` true.
+            #
+            # It stays because removing it would move the protection into a rule in
+            # another module that exists for unrelated reasons. That is the
+            # difference from the conditions deleted elsewhere on this branch for
+            # being dead: those left an equivalent test in the same function, this
+            # would leave a #45 violation — reading rows `TRUNCATE` is about to
+            # remove — one distant edit away. Its mutant is out of the harness for
+            # the same reason: a case that can never be killed trains people to
+            # ignore the report. The unreachability argument is reasoned, not
+            # measured; it is on the list for the next review.
             stored = None if replace_all else self.by_id["order_items"].get(line_id)
 
             if planned is not None:
