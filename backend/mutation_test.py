@@ -113,7 +113,7 @@ CASES = [
     (
         "4. a refused create keeps the id it minted",
         IMP,
-        "            if row.new_id is not None:\n                self.created_ids[spec.key].discard(row.new_id)\n                row.new_id = None",
+        "            if row.new_id is not None:\n                self.created_ids[spec.key].discard(row.new_id)",
         "            pass",
         "takes_back_the_id_it_minted",
     ),
