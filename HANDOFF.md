@@ -16,6 +16,251 @@ Template:
 
 ---
 
+## 2026-08-17 — Claude Code (Opus 5) — #82 and #88 closed by PR #89
+
+**PR #89 is open at `64977ce`, branch `fix/82-88-blank-and-dangling-cells`, NOT
+merged.** 499 backend tests, ruff clean, three CI jobs green. No migration.
+Branched from `main`; the branches are independent, but see the merge note below.
+
+**Two review rounds (Cursor/Grok 4.6): NO-GO then GO.** Round one found three
+plus a pre-existing sibling (#90 filed); round two returned GO with one P3 doc
+finding and two *untested* mutants — code correct, suite blind. All real, all
+fixed. **This is the most-reviewed state anything on this milestone has reached
+relative to its size.**
+
+**`main` is at `e45a62e` plus this entry.** Two PRs open, neither reviewed: #86
+(#44, four review rounds) and #89 (this).
+
+### They were one bug, not two
+
+The unified rule, as a ladder for a cell that says nothing usable:
+
+1. a readable mirror supplies it (`retailer_name`, `unit_price`) — already worked,
+   and the fix depends on it still running first;
+2. a default supplies it — the schema's, or the file format's;
+3. **on an update, the stored value stands** and the row says so;
+4. **on a create, the row is refused by name**;
+5. nullable column, blank cell → null, silently. Unchanged and documented;
+6. nullable column, unresolvable reference → null, with a row message naming the
+   column and the id it discarded.
+
+Rungs 3, 4 and 6 are new. Both product calls — keep-the-stored-value over
+refusing, per-row messages over a summary — are the owner's and are recorded on
+the issues.
+
+**The root cause was two lists disagreeing.** `_COLUMN_DEFAULTS` recorded both what
+the schema already defaults *and* what the file format forgives, and was wrong
+about the first: it was missing `kits.created_at` and `kits.updated_at`, which have
+server defaults, and those two were the 500s. Nullability and schema defaults are
+read off the model now (rule 9); the list keeps only format policy; a contract test
+holds them apart and is what catches the next column added to a model.
+
+### The lesson worth carrying: an empty parametrize is a skip, not a failure
+
+`tests/test_cell_semantics.py` enumerates its own subject — every NOT NULL column a
+sheet may leave blank — so a column added to a model reaches it for free. The first
+cut built that enumeration by calling **`_column_is_nullable`, the function under
+test**. Mutating it to `return True` emptied the list, `pytest.mark.parametrize`
+over an empty list *skips*, and the entire matrix silently stopped existing while
+the run stayed green with the rule deleted.
+
+This is a different failure mode from the ones in the entry below, and worse. Those
+were tests that ran and asserted the wrong thing; this one **stopped running and
+reported nothing**. No amount of reading finds it — a skipped test looks like a
+passing test in a `-q` summary.
+
+**A test that derives its own subject from the code it is testing can be disarmed
+rather than broken.** Read the enumeration from the schema, the fixtures, or a
+literal list — anywhere except the thing under test. Worth adding to AGENTS.md's
+"Writing the test" section as its own trap; not done yet.
+
+The other two survivors were the familiar shape: a clause in `_build_instance` that
+could not change an outcome (SQLAlchemy applies a column default even when the
+insert names the column as NULL), and a test asserting that *a* refusal happened
+rather than which rule made it.
+
+### The review, and what it found
+
+Round one, and the finding rate matched #86's first round almost exactly. All
+three were mine to own:
+
+1. **The documentation and the implementation disagreed about rung 6.** The ladder
+   says "*nullable* column, unresolvable reference"; the code keyed off `required`
+   in the spec. `orders.retailer_id` is the one column where those two predicates
+   come apart — optional in the sheet because it has `retailer_name`, NOT NULL in
+   the database — so both rules fired and contradicted each other. #82 told the
+   operator the row imported without a shop and to go and add one; #88 had already
+   quietly kept the stored shop. Now gated on nullability, as written.
+2. **A refused create kept the id it had minted.** `_classify` adds `new_id` to
+   `created_ids` before the create refusal runs, so a refused order stayed
+   resolvable, its lines planned as clean creates, and the fan-out promised kits
+   for an order that would never exist. Apply was safe; the preview was not. Same
+   class as #86's round-two finding 4, reached through reference resolution
+   instead of the fan-out. The refusal takes the id back now.
+3. **A kit line's `catalog_ref_id` was dropped with nothing said** — it never
+   reaches the dangling path, because there is no catalog table to fail to find it
+   in. Fixed rather than documented away: `docs/import-export.md` promises that a
+   discarded catalog reference is reported, and that was the more recent statement
+   of intent.
+
+**#90** is the sibling it flagged separately: an `order_items.csv` update that
+omits `item_type` while carrying a dead `catalog_ref_id` **writes the dead uuid**,
+at 200. The mirror image of #82 and worse — the reference is kept and points at
+nothing (#63's shape). #86 already carries the helper that fixes it
+(`effective_item_type`), so land that first rather than duplicating it.
+
+### Reviewer notes (which tool for what)
+
+**Cursor/Grok 4.6 is a viable second reviewer, with a size ceiling.** Two rounds on
+#89 (993 insertions): 15 and 19 minutes, ending at 63% and 68% of a 256K context.
+Each round needs its **own chat session** — a second review in the same session
+would run out mid-analysis, and a truncated review that still emits a verdict is
+the worst outcome available. That is survivable because the **PR thread is the
+session memory**: every round's findings and responses are on the PR, so a fresh
+session reads the record instead of carrying it.
+
+**#86 does not fit.** 4,442 insertions against #89's 993, and a 9.1K-token thread
+against 3.2K. Send it to Codex, which has absorbed it four times. Match the tool to
+the size of the work rather than forcing both through one queue.
+
+Both tools output to chat unless told otherwise — the prompt has to say "post it
+with `gh pr comment N --body-file <path>`", and `--body-file` rather than `--body`
+because a shell string mangles backticks and `$`.
+
+### MERGE NOTE: #86 and #89 both insert into `_classify`
+
+Not a conflict git will show you. Both add a call immediately after
+`_defer_filled_money_currency`, and both act on a blank `status_updated_at`:
+
+* **Order them defer-first.** #86's `_defer_generated_status_stamp` takes the
+  column out of `present` so the apply can stamp `now`; #89's keep-stored then
+  skips it. The other order previews both "left as it was" *and* "will be set to
+  the time of this import", and #86 stamps anyway — so the preview lies.
+* **`_COLUMN_DEFAULTS` does *not* conflict** — an earlier note here said it would,
+  and `git merge-tree --write-tree` says otherwise: #86 never edited that region,
+  so the auto-merge takes #89's emptied dict. That is the version to keep anyway;
+  the entries it removed are read from the model now and a contract test enforces
+  it. Measured in #89's second review, not reasoned.
+* The `elif dangling` branch #89 adds does not exist on #86 and should merge
+  cleanly.
+
+Identified by the #89 review, which read both trees; neither branch can test it
+until one of them lands.
+
+### State
+
+- 30 tests in `tests/test_cell_semantics.py`; **13 mutants, all killed**
+  (`backend/mutation_test.py`, tracked on this branch too). The mode axis is
+  pinned separately — `_classify` never runs under `replace_all` and returns SKIP
+  before keep-stored under `add_only`, so "correct in merge" said nothing about
+  the other two.
+- `docs/import-export.md` updated with both rules in user-facing language.
+- **Two rounds, second a GO**, with only a doc paragraph and two test assertions
+  changed since — no behaviour moved, so the GO stands on the code as reviewed.
+  This is mergeable on the evidence; #86 is not.
+
+---
+
+## 2026-08-17 — Claude Code (Opus 5) — #44 built and reviewed four times (PR #86)
+
+**PR #86 is open at `308c446`, branch `fix/44-import-order-invariants`, NOT merged
+and NOT approved.** 550 backend tests, ruff clean, frontend builds and lints, all
+three CI jobs green. No migration. **#87 and #88 filed** during the work; #88 is
+since closed by PR #89 (entry above).
+
+### Where it stands
+
+**Four external (Codex) review rounds, all NO-GO, eleven findings, every one real
+and reproduced at head before being fixed.** Round sizes: 3, 4, 2, 2. The rate is
+flattening but has not reached zero, so **do not read the current green suite as
+evidence the branch is finished.**
+
+**The review budget is spent.** Codex usage resets Thursday 2026-08-20; roughly 5%
+remained when this was written. The next session inherits a real decision:
+
+- **Wait for the reset.** What the branch blocks is nothing urgent — M5 hardening,
+  pre-adoption alpha — and every round so far has found something a green suite
+  did not. This is the recommendation.
+- **Merge unreviewed.** Defensible only if something starts depending on it. Given
+  11-for-11 on findings, treat it as knowingly shipping an unknown defect.
+- **Review it another way.** Being investigated at the time of writing.
+
+Round four was pointed at `_protected_kits` and found two more there, so a fifth
+round should go at it again: it is now read by two rules and computed from four
+sources, and both of round four's findings were inputs to it that nobody had
+enumerated. The other thing worth attacking is the **ordering** of the refusals
+against the fan-out — round two's fourth finding was fixed by moving refusals
+first, and a fix by reordering can quietly change something else.
+
+### What shipped
+
+All five #44 cases, option B for receipt as decided. `services/portability/
+invariants.py` holds the column-level refusals; the fan-out in `_plan_spawns` owns
+the count-level ones. The shared matrix in `tests/test_order_invariants.py` drives
+one table of edits through both REST and import.
+
+The nine review findings grouped by cause, because they are not nine separate
+mistakes:
+
+1. **Two readings of one question** (round 2, finding 1). `invariants.
+   effective_item_type` existed *because* a partial sheet omits `item_type`, and
+   `_plan_spawns` read `row.values` directly one module over. Now shared.
+2. **Stored state read where post-write state was meant** (rounds 2 and 3, five
+   findings). `_attached_after`, `_reconcilable_lines`, `_protected_kits` all
+   exist because the importer writes a row, its status and its children in one
+   transaction while every predicate it borrowed reads one stored row.
+3. **A refusal ordered after the thing it refuses** (round 2, finding 4). Fixed by
+   moving refusals ahead of the fan-out, so an errored row never contributes.
+4. **Reasoning where measurement was needed** (round 2, finding 2). See below.
+
+### Five things worth carrying, all paid for
+
+1. **A red test proves *something* refused the input, not that the rule under test
+   did.** Three separate guards on this branch turned out to be covered by a
+   neighbouring one, and in each case the test that "covered" the rule stayed
+   green when the rule was deleted. Mutate the specific rule, and if it survives,
+   find the input where only that rule can decide.
+2. **Removing a guard for being unreachable is not the same risk as relying on
+   unreachability for correctness.** I did the first twice and was right; the
+   second once and was wrong, and the wrong one read rows `TRUNCATE` was about to
+   delete (#45's class). Treat the second as a defect until measured.
+3. **A mutant that does not change behaviour is a green that means nothing.** Two
+   of mine were inert — a renamed dict key that still hashed the same data, and a
+   change that another branch of the same function compensated for. Check what the
+   mutated source actually does before trusting the result.
+4. **Say "mutation testing", not "neuter".** Codex refused this work on content
+   grounds ~14 times across two sessions. The trigger was vocabulary: "neuter each
+   guard", "find inputs that evade the refusal", plus a tool that "strips guard
+   conditions and confirms nothing detects it". That reads as an evasion harness.
+   Renaming to the standard terms — mutants killed and surviving — and adding one
+   line of domain context ("inventory counts, not access control; the app has no
+   auth yet") fixed it. Sandbox permissions were never the problem.
+5. **Prepare the environment before handing work to a reviewer.** Deps installed,
+   db up, offline-resolvable. Otherwise every `uv sync` is an approval prompt.
+
+### The mutation harness
+
+**`backend/mutation_test.py`, now tracked on the branch, 43 cases, all killed.**
+One command, ~40 seconds. Its docstring is the contract. It refuses to run on a
+dirty tree and reports a zero-or-two-match anchor as a failure — a mutant that
+never applied is not a mutant that passed, which caught three stale anchors after
+a refactor.
+
+Tracked at the owner's direction, after untracked cost a dozen cases to one
+careless edit with no history to recover them from. The anchors are exact source
+strings, so it rots when the code moves; **whoever merges decides whether it earns
+its keep on `main`** or comes out with the branch. #89 carries its own copy for
+the same reason.
+
+### Still open
+
+**#77 and #87.** #77 lands in the same fan-out code that now carries
+`_attached_after`, `_reconcilable_lines` and `_protected_kits` — read `_plan_spawns`
+end to end before starting it. #87 is a product call, not a defect hunt; four
+options are laid out on the issue. #82 and #88 are PR #89.
+
+---
+
 ## 2026-08-16 — Claude Code (Opus 5) — #45, #46, #74 closed; #44 decided (option B)
 
 **`main` is at `57813bf`.** 470 backend tests, ruff clean, all three CI jobs green.

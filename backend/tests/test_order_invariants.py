@@ -829,8 +829,16 @@ async def test_a_kit_moved_onto_a_new_line_that_states_no_quantity_is_refused(cl
         kits=[{"id": loose["id"], "name": "Gouf", "grade": "HG", "order_item_id": new_line}],
     )
     plan = await preview(client, content)
-    assert actions(plan, "kits") == ["error"], plan["tables"]
-    assert "no quantity column" in plan["tables"][-1]["rows"][0]["error"]
+    # Refused on the *line*, not on the kit that would have moved onto it. #82/#88
+    # landed a create rule that reaches this first: a new order line with no
+    # quantity has nothing to fall back on, so the column it needs is named
+    # directly rather than through the downstream consequence. Better diagnosis,
+    # same outcome — nothing moves. #44's own "nothing states the quantity" branch
+    # is still exercised by `test_a_line_row_carrying_no_quantity_authorises_no_
+    # reconciliation`, where the line is an update and the stored quantity applies.
+    lines_plan = next(t for t in plan["tables"] if t["table"] == "order_items")
+    assert [r["action"] for r in lines_plan["rows"]] == ["error"], plan["tables"]
+    assert lines_plan["rows"][0]["error"].startswith("quantity:")
     assert (await apply(client, content)).status_code == 409
     assert (await client.get(f"/kits/{loose['id']}")).json()["order_item_id"] is None
 
@@ -1933,6 +1941,61 @@ async def test_a_status_change_gets_the_timestamp_the_board_reads(
         assert after["status_updated_at"].startswith("2026-02-01")
     else:
         assert after["status_updated_at"] == spawned_kit["status_updated_at"]
+
+
+async def test_a_deferred_stamp_and_a_kept_blank_do_not_both_claim_the_column(client, spawned_kit):
+    """The one behaviour that exists only because two branches merged.
+
+    #44 defers a blank `status_updated_at` on a status-moving row so the apply can
+    stamp the clock. #82/#88 keeps a blank in any column the database refuses to
+    leave empty, and says "left as it was". `status_updated_at` is both: NOT NULL,
+    and the one column #44 deliberately blanks in `present`.
+
+    Run keep-stored first and the row previews **"left as it was"** while the apply
+    stamps `now` anyway — a preview that contradicts itself and then contradicts
+    the outcome. Deferring first takes the column out of `present`, so keep-stored
+    finds nothing to keep and says nothing.
+
+    Neither branch could test this: on #44 alone there is no keep-stored rule, and
+    on #82/#88 alone there is no deferral. It was predicted by an external review
+    that read both trees at once, and this is the pin.
+    """
+    content = kit_sheet(spawned_kit["id"], "building", with_stamp_column=True)
+    plan = await preview(client, content, filename="kits.csv")
+    messages = plan["tables"][0]["rows"][0]["messages"]
+
+    assert any("will be set to the time of this import" in m for m in messages), messages
+    assert not any("left as it was" in m for m in messages), (
+        "keep-stored ran first and claimed a column the deferral is about to write"
+    )
+    assert "status_updated_at" not in [c["field"] for c in plan["tables"][0]["rows"][0]["changes"]]
+
+    resp = await apply(client, content, filename="kits.csv")
+    assert resp.status_code == 200, resp.text
+    after = (await client.get(f"/kits/{spawned_kit['id']}")).json()
+    assert after["status"] == "building"
+    assert after["status_updated_at"] != spawned_kit["status_updated_at"], (
+        "the preview promised a new timestamp"
+    )
+
+
+async def test_a_blank_stamp_with_no_status_change_is_kept_not_generated(client, spawned_kit):
+    """The other half of the same crossing, and the reason both rules are needed.
+
+    No status change means #44's deferral does not fire, so #82/#88's keep-stored
+    is what stops the blank reaching a NOT NULL column — which it used to do as a
+    500. One column, two rules, and each covers what the other does not.
+    """
+    content = kit_sheet(spawned_kit["id"], "ordered", with_stamp_column=True)
+    plan = await preview(client, content, filename="kits.csv")
+    messages = plan["tables"][0]["rows"][0]["messages"]
+
+    assert any("left as it was" in m for m in messages), messages
+    assert not any("will be set to the time of this import" in m for m in messages), messages
+
+    assert (await apply(client, content, filename="kits.csv")).status_code == 200
+    after = (await client.get(f"/kits/{spawned_kit['id']}")).json()
+    assert after["status_updated_at"] == spawned_kit["status_updated_at"]
 
 
 @pytest.mark.parametrize("with_column", [False, True], ids=["absent column", "blank cell"])
