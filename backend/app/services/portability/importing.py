@@ -728,7 +728,18 @@ class _Planner:
                 return None
             table = CATALOG_TABLE_BY_ITEM_TYPE.get(str(item_type))
             if table is None:  # kit lines don't reference the catalog
+                # Dropped, and said out loud for the same reason as any other
+                # discarded reference (#82): the operator filled the cell in. This
+                # one never reaches the `dangling` path below, because there is no
+                # catalog table to fail to find it in — kits are spawned fresh, so
+                # the column means nothing here whatever it holds.
+                discarded = row.values.get(column.name)
                 row.values[column.name] = None
+                if discarded is not None:
+                    row.messages.append(
+                        f"{column.name}: a kit line doesn't reference the catalog — its kits "
+                        f"are spawned fresh, so {discarded} was ignored"
+                    )
                 return None
 
         dangling: tuple[str, uuid.UUID] | None = None
@@ -1052,6 +1063,100 @@ class _Planner:
 
     # -- classification --------------------------------------------------------
 
+    def _keep_stored_where_unstatable(self, spec: TableSpec, row: _Row) -> None:
+        """A blank cell never writes NULL into a column that cannot hold one (#88).
+
+        "A blank cell in a column you included means empty this field" is the
+        documented rule and archive fidelity needs it — but it was applied to every
+        column, including the ones the database refuses to leave empty. Nine of
+        them across six tables previewed clean and died at flush as an
+        `IntegrityError`: a bare 500 naming no row, after the operator was told the
+        import was fine (rule 6).
+
+        On an **update** the answer is the stored value. You cannot unset a
+        creation time or a retailer, so a blank in such a column is closer to an
+        omission than an instruction — and an omitted column is already left alone,
+        which is the same answer arriving by the same reasoning. The cell is
+        dropped from `present` so no change is planned for it, and the row says so
+        rather than pretending the edit landed.
+
+        Runs late in `_classify` on purpose: `_resolve_all_refs` and
+        `_apply_money_alternates` have both already had their turn, so a blank
+        `retailer_id` beside a filled `retailer_name`, or a blank
+        `unit_price_minor` beside a filled `unit_price`, has been settled from its
+        mirror and never reaches here. This is only for a value nothing else could
+        supply.
+
+        Creates are `_refuse_unfillable_creates`'s problem — there is no stored
+        value to keep, so the answer there is a row error rather than silence.
+        """
+        for column in spec.columns:
+            if column.name == "id" or not column.persisted or column.name not in row.present:
+                continue
+            if row.values.get(column.name) is not None:
+                continue
+            if _column_is_nullable(spec, column.name):
+                continue
+            row.present.discard(column.name)
+            row.messages.append(
+                f"{column.name}: left as it was — this column can't be emptied, and nothing "
+                "in this row supplies a new value"
+            )
+
+    def _refuse_unfillable_creates(self, spec: TableSpec, row: _Row) -> None:
+        """The create half of the same rule: nothing to fall back on, so say so.
+
+        A new row missing a value its column requires has no stored value to keep
+        and no default to take, so it can only be refused — but as a named row in
+        the preview rather than as the `IntegrityError` it used to be.
+
+        A column is fillable if the *schema* defaults it (`quantity_on_hand`,
+        `status`, every `*_at`) or the importer does (`_COLUMN_DEFAULTS`, which
+        carries the choices the schema has no opinion on, like a hand-written order
+        line being allowed to omit its price). Reading the schema as well as the
+        list is what closes this: `kits.created_at` and `kits.updated_at` have
+        server defaults and were absent from the list, which is precisely why those
+        two blanks were a 500 while the seven around them were not.
+        """
+        if row.action is not RowAction.CREATE:
+            return
+        supplied = _COLUMN_DEFAULTS.get(spec.key, {})
+        for column in spec.columns:
+            if column.name == "id" or not column.persisted:
+                continue
+            if row.values.get(column.name) is not None:
+                continue
+            if _column_is_nullable(spec, column.name) or column.name in supplied:
+                continue
+            if _column_has_own_default(spec, column.name):
+                continue
+            row.action = RowAction.ERROR
+            row.error = (
+                f"{column.name}: a new {spec.key} row needs this, and this one has no value "
+                "for it. Fill the column in"
+            )
+            # Take the id back. `_classify` mints `new_id` into `created_ids` before
+            # this runs, and every later table resolves references through that set —
+            # so a refused order stayed resolvable, its lines planned as clean
+            # creates, and the fan-out promised kits for an order that was never
+            # going to exist. The apply was safe (the blocking error stops it) but
+            # the preview was not, which is #86's "refusal ordered after the thing it
+            # refuses" arriving here by another road (external review of #89).
+            if row.new_id is not None:
+                self.created_ids[spec.key].discard(row.new_id)
+                # The `discard` is the load-bearing half; clearing `new_id` is
+                # measured dead for outcomes — `_claim_identity` returns on ERROR
+                # before it reads the field, and `_plan_fingerprint` handles a
+                # minted id either way (external review of #89, round two, which
+                # ran both mutants). Kept anyway, and this is the difference from
+                # the four conditions removed on #86 for being dead: those were
+                # *decisions* with a covering condition left in place, so removing
+                # them left nothing stale behind. This is *state* — an ERROR row
+                # holding a minted id nobody will create is a trap laid for the
+                # next person who reads `new_id` without checking `action`.
+                row.new_id = None
+            return
+
     def _classify(self, spec: TableSpec, row: _Row) -> None:
         if row.action is RowAction.ERROR:
             return
@@ -1070,6 +1175,7 @@ class _Planner:
             return
 
         _defer_filled_money_currency(spec, row)
+        self._keep_stored_where_unstatable(spec, row)
 
         changes = []
         for column in spec.columns:
@@ -1142,6 +1248,11 @@ class _Planner:
                 else:
                     self._classify(spec, row)
 
+                # Both modes: a create carries no stored value to fall back on, so
+                # a column the database requires and nothing supplies is refused
+                # here rather than at flush (#88).
+                self._refuse_unfillable_creates(spec, row)
+
                 self._claim_identity(spec, row)
                 self._annotate(spec, row, replace_all)
                 planned.append(row)
@@ -1200,6 +1311,29 @@ class _Planner:
                 row.error = (
                     f"{column.name}: no matching {target} found — "
                     "add it to the import or fix the reference"
+                )
+            elif dangling is not None and _column_is_nullable(spec, column.name):
+                # Optional, **and able to hold null** — the id named nothing here or
+                # in the upload, and dropping it is what will actually happen (#82).
+                #
+                # The nullability half is not decoration. `orders.retailer_id` is
+                # optional in the sheet (it has `retailer_name`) and NOT NULL in the
+                # database, so without it both rules fired and contradicted each
+                # other: this message said the row "imports without it" while
+                # `_keep_stored_where_unstatable` quietly kept the stored shop, or
+                # `_refuse_unfillable_creates` refused the row outright. Telling the
+                # operator a link was lost, and to go and add a shop, was simply
+                # untrue (external review of #89).
+                # Not blocked: "import just kits.csv into a fresh instance" is a
+                # documented onboarding path, and every row of that file names an
+                # order line the new instance has never had. But it is not silent
+                # either — the operator filled the cell in, and it is being
+                # discarded. Said per row rather than as a summary, because which
+                # rows lost their link is the part a count cannot give back.
+                target, missing = dangling
+                row.messages.append(
+                    f"{column.name}: no {target} here has id {missing}, so this row imports "
+                    f"without it. Add that {target} row, or fill it in afterwards"
                 )
 
     def _apply_money_alternates(self, spec: TableSpec, row: _Row) -> None:
@@ -1870,7 +2004,12 @@ def _build_instance(spec: TableSpec, row: _Row) -> Any:
             continue
         value = row.values.get(column.name)
         if value is None and column.name in _COLUMN_DEFAULTS.get(spec.key, {}):
-            continue  # let the model default apply rather than writing NULL
+            # Only the format's own defaults need omitting here. A column the
+            # *schema* defaults looks after itself even when the insert names it
+            # as NULL, so a `_column_has_own_default` clause added alongside this
+            # one was removed as dead — no mutation of it changed an outcome, and
+            # `_refuse_unfillable_creates` is where that predicate earns its keep.
+            continue
         fields[column.name] = value
 
     for column_name, default in _COLUMN_DEFAULTS.get(spec.key, {}).items():
@@ -1881,21 +2020,39 @@ def _build_instance(spec: TableSpec, row: _Row) -> Any:
     return spec.model(**fields)
 
 
+def _column_is_nullable(spec: TableSpec, name: str) -> bool:
+    """Whether the database will accept NULL here. Read off the model rather than
+    restated in the spec (rule 9) — a second list is a list that drifts, and this
+    one has already drifted once: `_COLUMN_DEFAULTS` was missing two columns the
+    schema defaults, and those two were the 500s (#88)."""
+    column = spec.model.__table__.columns.get(name)
+    return column is None or column.nullable
+
+
+def _column_has_own_default(spec: TableSpec, name: str) -> bool:
+    """Whether the column fills itself in when the insert leaves it out."""
+    column = spec.model.__table__.columns.get(name)
+    return column is not None and (column.default is not None or column.server_default is not None)
+
+
 #: Values a hand-written row is allowed to omit entirely.
+#:
+#: Importer policy, not schema fact — the omissions the *file format* forgives
+#: where the database has no opinion (a hand-written order line may leave its price
+#: out). Columns the schema already defaults do not belong here; they are read from
+#: the model by `_column_has_own_default`. The version of this list that tried to be
+#: both was missing `kits.created_at` and `kits.updated_at`, and those two were the
+#: 500s (#88). A contract test holds the two apart.
 _COLUMN_DEFAULTS: dict[str, dict[str, Any]] = {
-    "tools": {"quantity_on_hand": 0},
-    "consumables": {"quantity_on_hand": 0},
-    "upgrades": {"quantity_on_hand": 0},
-    "kits": {"status": "backlog", "status_updated_at": lambda: datetime.now(UTC)},
     "order_items": {
+        # No schema default: the database has no opinion about what a line cost,
+        # and this is the file format saying a hand-written row may omit it.
         "unit_price_minor": 0,
         # Both halves of the snapshot stay absent together — the paired CHECK
         # constraint rejects an amount with no currency, and vice versa.
         "converted_price_minor": None,
         "converted_currency_code": None,
     },
-    "upgrade_applications": {"applied_at": lambda: datetime.now(UTC)},
-    "kit_photos": {"created_at": lambda: datetime.now(UTC)},
 }
 
 

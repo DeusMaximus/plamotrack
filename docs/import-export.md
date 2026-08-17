@@ -141,6 +141,27 @@ quietly double your paint collection.
 restores nulls faithfully. (The starter sheet only ever emits columns it actually
 knows about, so importing a kit list won't wipe a retailer's rating.)
 
+That is about columns the app can leave empty. **A column it can't** — a kit's
+created date, an order's retailer, a stock count — reads a blank cell as nothing
+said rather than as an instruction, because there is no such thing as an order with
+no shop. On a row you're updating, the stored value stays and the preview says so.
+On a *new* row there's nothing to keep, so either the app fills it in for you (dates
+and counts do this) or the row is refused by name, rather than failing halfway
+through the import.
+
+**A reference to something that isn't here is reported, not quietly dropped.** If a
+row points at an order line or a catalog item that exists neither in this instance
+nor anywhere in the file, the row still imports — that's what makes "import just
+`kits.csv` into a fresh instance" work, where every row names an order the new
+instance has never had — but the preview says which rows lost which link, so it's
+your call rather than a surprise.
+
+A **retailer** behaves differently, because an order can't be without one. Point an
+existing order at a shop that isn't here and the order keeps the shop it already
+had; enter a *new* order that way and the row is refused. Either way nothing is
+lost quietly, but nothing is dropped either. The same goes for any other column the
+row can't do without.
+
 Money pairs bend the first half of that rule, because an amount with no currency
 isn't storable: leaving `converted_currency_code` on `order_items` — or
 `unit_cost_reference_currency` on `tools` — blank in a column you *did* include means
