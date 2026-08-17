@@ -164,9 +164,9 @@ until one of them lands.
 ## 2026-08-17 — Claude Code (Opus 5) — #44 built and reviewed four times (PR #86)
 
 **PR #86 is open at `a752958`, branch `fix/44-import-order-invariants`, NOT merged
-and NOT approved. `main` is merged into it.** 582 backend tests, ruff clean, frontend builds and lints, all
-three CI jobs green. No migration. **#87 and #88 filed** during the work; #88 is
-since closed by PR #89 (entry above).
+and NOT approved. `main` is merged into it.** 582 backend tests, ruff clean,
+frontend builds and lints, three CI jobs green. No migration. **#87 and #88 filed**
+during the work; #88 is closed by PR #89 (entry above), #87 is still open.
 
 ### Where it stands
 
