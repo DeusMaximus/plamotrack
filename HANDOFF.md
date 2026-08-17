@@ -16,10 +16,10 @@ Template:
 
 ---
 
-## 2026-08-17 — Claude Code (Opus 5) — #82 and #88 closed by PR #89
+## 2026-08-17 — Claude Code (Opus 5) — #82 and #88 closed, PR #89 MERGED
 
-**PR #89 is open at `64977ce`, branch `fix/82-88-blank-and-dangling-cells`, NOT
-merged.** 499 backend tests, ruff clean, three CI jobs green. No migration.
+**PR #89 is MERGED** — squashed to `15c8d36` on `main`, branch deleted. 499 backend
+tests at merge, ruff clean, three CI jobs green. No migration.
 Branched from `main`; the branches are independent, but see the merge note below.
 
 **Two review rounds (Cursor/Grok 4.6): NO-GO then GO.** Round one found three
@@ -127,7 +127,7 @@ Both tools output to chat unless told otherwise — the prompt has to say "post 
 with `gh pr comment N --body-file <path>`", and `--body-file` rather than `--body`
 because a shell string mangles backticks and `$`.
 
-### MERGE NOTE: #86 and #89 both insert into `_classify`
+### MERGE NOTE (done — carried out in #86 at `a752958`)
 
 Not a conflict git will show you. Both add a call immediately after
 `_defer_filled_money_currency`, and both act on a blank `status_updated_at`:
@@ -155,16 +155,16 @@ until one of them lands.
   before keep-stored under `add_only`, so "correct in merge" said nothing about
   the other two.
 - `docs/import-export.md` updated with both rules in user-facing language.
-- **Two rounds, second a GO**, with only a doc paragraph and two test assertions
-  changed since — no behaviour moved, so the GO stands on the code as reviewed.
-  This is mergeable on the evidence; #86 is not.
+- **Two rounds, second a GO.** Merged on that evidence.
+- **GitHub only auto-closed #82.** `Closes #82 and #88` binds the first reference
+  only; #88 was closed by hand afterwards. Write `Closes #82, closes #88`.
 
 ---
 
 ## 2026-08-17 — Claude Code (Opus 5) — #44 built and reviewed four times (PR #86)
 
-**PR #86 is open at `308c446`, branch `fix/44-import-order-invariants`, NOT merged
-and NOT approved.** 550 backend tests, ruff clean, frontend builds and lints, all
+**PR #86 is open at `a752958`, branch `fix/44-import-order-invariants`, NOT merged
+and NOT approved. `main` is merged into it.** 582 backend tests, ruff clean, frontend builds and lints, all
 three CI jobs green. No migration. **#87 and #88 filed** during the work; #88 is
 since closed by PR #89 (entry above).
 
@@ -213,7 +213,38 @@ mistakes:
    moving refusals ahead of the fan-out, so an errored row never contributes.
 4. **Reasoning where measurement was needed** (round 2, finding 2). See below.
 
-### Five things worth carrying, all paid for
+### The merge with #89, and a sixth lesson
+
+`main` is merged in as of `a752958`. The `_classify` conflict was one line
+each side; **defer-first** is the resolution, and
+`test_a_deferred_stamp_and_a_kept_blank_do_not_both_claim_the_column` pins it, with
+a counterpart for a row that changes no status. Neither branch could have written
+either test — each rule exists on only one side — and swapping the two calls fails
+that test and nothing else. `mutation_test.py` was an add/add conflict, unioned to
+56 cases with `inv-`/`cell-` label prefixes because both sets numbered from 1 and
+`-k` matches substrings.
+
+**A guard can be *shadowed* by a change in another module, and that is not the same
+as a guard that was always dead.** The merged harness surfaced `inv-11`: the
+`replace_all` guard in `_refuse_unreconciled_kit_moves` is no longer reachable,
+because #89's create-refusal retracts a bad line's id from `created_ids`, so a kits
+row naming it fails #45's dangling check before the count rule sees it.
+
+It was kept, and the reasoning matters more than the decision:
+
+* the four conditions deleted on this branch for being dead each left an
+  **equivalent test in the same function** — removing them risked nothing;
+* this one's protection would move into **another module's rule, written for
+  unrelated reasons**, and what it protects is #45: reading rows `TRUNCATE` is
+  about to delete. One distant edit from data corruption is the wrong place to
+  economise, and *relying on unreachability for correctness* is the mistake this
+  branch already paid for once (round two, finding 2).
+
+Its mutant came **out** of the harness: a case that can never be killed trains
+people to ignore the report. The unreachability argument is reasoned, not measured,
+and is flagged in the code comment for the next review.
+
+### Six things worth carrying, all paid for
 
 1. **A red test proves *something* refused the input, not that the rule under test
    did.** Three separate guards on this branch turned out to be covered by a
@@ -240,7 +271,8 @@ mistakes:
 
 ### The mutation harness
 
-**`backend/mutation_test.py`, now tracked on the branch, 43 cases, all killed.**
+**`backend/mutation_test.py`, tracked, 56 cases, all killed** (the union of this
+branch's and #89's, after the merge).
 One command, ~40 seconds. Its docstring is the contract. It refuses to run on a
 dirty tree and reports a zero-or-two-match anchor as a failure — a mutant that
 never applied is not a mutant that passed, which caught three stale anchors after
@@ -254,7 +286,11 @@ the same reason.
 
 ### Still open
 
-**#77 and #87.** #77 lands in the same fan-out code that now carries
+**#77, #87 and #90.** #90 is the sibling #89's review turned up — an
+`order_items.csv` update that omits `item_type` while carrying a dead
+`catalog_ref_id` **writes** the dead uuid. #86 already carries the helper that
+fixes it (`effective_item_type`), so it is cheapest right after this branch lands.
+#77 lands in the same fan-out code that now carries
 `_attached_after`, `_reconcilable_lines` and `_protected_kits` — read `_plan_spawns`
 end to end before starting it. #87 is a product call, not a defect hunt; four
 options are laid out on the issue. #82 and #88 are PR #89.
