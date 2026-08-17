@@ -38,10 +38,11 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
   settings or visibility — needs explicit confirmation each time. Approval for one
   doesn't carry to the next.
 - **Say which model wrote it.** Every agent here posts through the owner's GitHub
-  account, so an unsigned comment on a public repo reads as the owner speaking —
+  account, so unsigned prose on a public repo reads as the owner speaking —
   including its first-person claims about what was verified and its judgement calls
-  about severity. Any PR or issue comment an agent writes opens with a line naming
-  the model and what the comment is, and closes with a sign-off:
+  about severity. This project discloses AI authorship rather than leaving a reader
+  to guess. Any issue body, PR body, or comment on either that an agent writes opens
+  with a line naming the model and what it is, and closes with a sign-off:
 
   ```markdown
   **Claude (Anthropic) — response to the Codex review, at head `9d751ca`.**
@@ -53,7 +54,15 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
   after the fact. Commits are already covered by their `Co-Authored-By` trailer —
   this is the gap that leaves. It matters most on exactly the threads where it is
   easiest to forget: a review exchange, where a reader is weighing whose reasoning
-  to trust, and where two different models may be arguing with each other.
+  to trust, and where two different models may be arguing with each other. It
+  applies just as much to an issue an agent drafted for the owner to file, which
+  carries the same first-person verification claims with none of the exchange to
+  make their origin obvious.
+
+  **Not** the docs: `README.md`, `docs/*`, `AGENTS.md` and their kin carry no
+  attribution line. They're reference material read start to finish, not utterances
+  in a conversation, and a per-document sign-off would interrupt the reading for a
+  provenance question the repository already answers elsewhere.
 
 ## Layout
 
