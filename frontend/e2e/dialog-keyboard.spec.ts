@@ -22,17 +22,44 @@ const RETAILER = `E2E Keyboard ${suffix}`;
 test.describe.configure({ mode: "serial" });
 
 let retailerId: string;
+let orderId: string;
 
 test.beforeAll(async () => {
   const api = await request.newContext({ baseURL: API });
-  const created = await api.post("/retailers", { data: { name: RETAILER } });
-  expect(created.status(), await created.text()).toBe(201);
-  retailerId = ((await created.json()) as { id: string }).id;
+  const retailer = await api.post("/retailers", { data: { name: RETAILER } });
+  expect(retailer.status(), await retailer.text()).toBe(201);
+  retailerId = ((await retailer.json()) as { id: string }).id;
+
+  // The disclosure test needs an order of its own. An earlier version read
+  // whichever order happened to be on the page, which passed against a dev
+  // database with twenty of them and failed in CI, where the schema is empty —
+  // the one environment that actually matches a new install.
+  const order = await api.post("/orders", {
+    data: {
+      retailer_id: retailerId,
+      order_date: "2026-08-01",
+      currency_code: "AUD",
+      items: [
+        {
+          item_type: "kit",
+          quantity: 1,
+          unit_price_minor: 4500,
+          currency_code: "AUD",
+          kit: { name: `E2E Keyboard Kit ${suffix}`, grade: "HG" },
+        },
+      ],
+    },
+  });
+  expect(order.status(), await order.text()).toBe(201);
+  orderId = ((await order.json()) as { id: string }).id;
   await api.dispose();
 });
 
 test.afterAll(async () => {
   const api = await request.newContext({ baseURL: API });
+  // Order first: a retailer with order history refuses deletion (409), and
+  // deleting the order also removes the kit it spawned.
+  await api.delete(`/orders/${orderId}`);
   await api.delete(`/retailers/${retailerId}`);
   await api.dispose();
 });
@@ -113,7 +140,10 @@ test("the close button also returns focus to the opener", async ({ page }) => {
 test("order line items expand from the keyboard", async ({ page }) => {
   await page.goto("/orders");
 
-  const disclosure = page.getByRole("button", { name: /line items/ }).first();
+  // Scoped to this spec's own order, not `.first()` — on a populated instance
+  // that is whichever row happens to sort first.
+  const row = page.getByRole("row").filter({ hasText: RETAILER });
+  const disclosure = row.getByRole("button", { name: /line items/ });
   await expect(disclosure).toBeVisible();
   await expect(disclosure).toHaveAttribute("aria-expanded", "false");
 
