@@ -68,6 +68,28 @@ export function Modal({
   }, []);
 
   useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    // Focus can leave the dialog without any key being pressed: remove the node
+    // that has it and the browser drops focus to <body>, firing no blur and no
+    // focusout (measured in Chromium — an event listener cannot see this). The
+    // Tab handler recaptures on the *next* press, which leaves a keyboard user
+    // nowhere in between and a screen reader announcing the document.
+    //
+    // Reachable from the order form: `CatalogItemPicker` opens its result list
+    // on focus and closes it 150ms after the input blurs, and the results follow
+    // the input in DOM order — so tabbing off the input lands on a result button
+    // that then unmounts underneath. Filed separately as the picker's own defect;
+    // this is the dialog holding its end of the bargain regardless of why a node
+    // went away.
+    const observer = new MutationObserver(() => {
+      if (document.activeElement === document.body) dialog.focus();
+    });
+    observer.observe(dialog, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         onClose();

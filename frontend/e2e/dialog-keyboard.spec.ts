@@ -18,11 +18,13 @@ const API = "http://127.0.0.1:8000";
 
 const suffix = Date.now().toString(36);
 const RETAILER = `E2E Keyboard ${suffix}`;
+const CONSUMABLE = `E2E Keyboard Cement ${suffix}`;
 
 test.describe.configure({ mode: "serial" });
 
 let retailerId: string;
 let orderId: string;
+let consumableId: string;
 
 test.beforeAll(async () => {
   const api = await request.newContext({ baseURL: API });
@@ -52,6 +54,15 @@ test.beforeAll(async () => {
   });
   expect(order.status(), await order.text()).toBe(201);
   orderId = ((await order.json()) as { id: string }).id;
+
+  // Something for the catalog picker to find. Searching for whatever happens to
+  // be in the database is how the disclosure test first failed in CI, and the
+  // picker test needs a *result* to tab onto or it silently exercises nothing.
+  const consumable = await api.post("/consumables", {
+    data: { name: CONSUMABLE, category: "glue" },
+  });
+  expect(consumable.status(), await consumable.text()).toBe(201);
+  consumableId = ((await consumable.json()) as { id: string }).id;
   await api.dispose();
 });
 
@@ -61,6 +72,7 @@ test.afterAll(async () => {
   // deleting the order also removes the kit it spawned.
   await api.delete(`/orders/${orderId}`);
   await api.delete(`/retailers/${retailerId}`);
+  await api.delete(`/consumables/${consumableId}`);
   await api.dispose();
 });
 
@@ -88,8 +100,21 @@ test("a dialog takes focus, keeps it, and gives it back", async ({ page }) => {
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 
-  // Focus follows the dialog rather than being left on the trigger behind it.
-  expect(await inDialog(page), `focus was on ${await focusDescription(page)}`).toBe(true);
+  // The dialog *itself*, not merely something inside it. `inDialog` is satisfied
+  // by the Close button, so asserting only that would pass against initial focus
+  // landing on Close — which is the arrangement this deliberately avoids, since
+  // it announces "Close" as the first thing a screen-reader user hears about a
+  // form they just opened.
+  expect(
+    await page.evaluate(() => document.activeElement?.getAttribute("role")),
+    `focus was on ${await focusDescription(page)}`,
+  ).toBe("dialog");
+
+  // Shift+Tab from that starting point wraps to the end rather than reversing
+  // out of the dialog — the one direction a container-focused dialog can leak.
+  await page.keyboard.press("Shift+Tab");
+  expect(await inDialog(page), `Shift+Tab from the container left to ${await focusDescription(page)}`)
+    .toBe(true);
 
   // Tab all the way round. Every stop must still be inside the dialog: before
   // this fix, Tab left after the last control and walked the page underneath.
@@ -155,4 +180,64 @@ test("order line items expand from the keyboard", async ({ page }) => {
 
   await page.keyboard.press("Space");
   await expect(disclosure).toHaveAttribute("aria-expanded", "false");
+});
+
+
+test("the order dialog holds focus through dynamic rows and the catalog picker", async ({
+  page,
+}) => {
+  // The retailer dialog is ten static controls: its first and last focusable
+  // never change, so it cannot tell a live trap from one that snapshotted the
+  // list on open. The order form adds and removes line rows while it is open and
+  // contains a picker whose result list unmounts under the focus it just took.
+  await page.goto("/orders");
+  const trigger = page.getByRole("button", { name: "+ New order" });
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+
+  // Grow the form, so anything that cached the focusable list on open is now
+  // wrong about what is inside it.
+  await dialog.getByRole("button", { name: "+ Add line" }).click();
+  await dialog.getByRole("button", { name: "+ Add line" }).click();
+
+  // A consumable line, whose picker is the control that unmounts under focus.
+  // Identified by what it offers rather than by position: a kit line renders a
+  // *second* select (Ordered / Pre-ordered) after this one, so `.last()` picks
+  // the wrong control and fails with "did not find some options".
+  await dialog.locator('select:has(option[value="consumable"])').last().selectOption("consumable");
+  const search = dialog.getByPlaceholder(/Search consumables/).last();
+  await search.fill(CONSUMABLE);
+
+  // Wait for the results to actually render before tabbing. The search is
+  // debounced, so filling and immediately tabbing lands on the unit-price input
+  // instead and never reaches the control this test exists for — measured: the
+  // recapture mutant survived the whole suite until this wait was added.
+  const results = dialog.locator("div.absolute button");
+  await expect(results.first()).toBeVisible();
+
+  // Tab off the input. The results follow it in DOM order so focus lands on one,
+  // and the list then closes 150ms after the input's blur — pulling the focused
+  // node out from under it. Removing a focused node fires no blur and no
+  // focusout, so nothing event-driven sees this; focus simply becomes <body>.
+  await search.press("Tab");
+  expect(await inDialog(page), `focus left immediately, to ${await focusDescription(page)}`).toBe(
+    true,
+  );
+  await page.waitForTimeout(400);
+  expect(await inDialog(page), `focus escaped to ${await focusDescription(page)} when the picker closed`)
+    .toBe(true);
+
+  for (let i = 0; i < 40; i++) {
+    await page.keyboard.press("Tab");
+    expect(await inDialog(page), `Tab #${i + 1} escaped to ${await focusDescription(page)}`).toBe(
+      true,
+    );
+  }
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
 });

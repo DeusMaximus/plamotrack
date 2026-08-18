@@ -892,7 +892,12 @@ export function OrdersPage() {
                       <button
                         type="button"
                         aria-expanded={expanded.has(order.id)}
-                        aria-label={`${expanded.has(order.id) ? "Hide" : "Show"} line items for the ${formatDate(order.order_date)} order`}
+                        // Names the retailer as well as the date: two orders
+                        // placed on one day would otherwise share an accessible
+                        // name, and the date alone just restates the cell beside
+                        // it. The receive/delete confirmations already say the
+                        // retailer for the same reason.
+                        aria-label={`${expanded.has(order.id) ? "Hide" : "Show"} line items for the ${formatDate(order.order_date)} order from ${retailerName.get(order.retailer_id) ?? "an unknown retailer"}`}
                         // 24x24: WCAG 2.2 target-size minimum. The row click is
                         // an equivalent alternative and would technically exempt
                         // it, but leaning on that inside an accessibility fix is
