@@ -28,6 +28,44 @@ Template:
 - **Next:** #92 is the cheap one and is not blocked by anything. #94 is now decided
   (see below) and unblocked too — nothing in this batch is waiting on a call.
 
+### Milestones reorganised — 0.2.7 is now the workflow release
+
+Decided by the owner, 2026-08-18. **0.2.6 is "the importer is stable and usable",
+not "the importer is finished"** — the test is whether a bug corrupts data silently,
+not whether the feature is complete.
+
+- **0.2.6** — #44 (PR #86), #77, **+#87**, **+#90**. The last two were unmilestoned;
+  both are silent importer corruption (#90 writes an unresolved `catalog_ref_id` when
+  a partial sheet omits `item_type`; #87 leaves stock unaccounted when a merge-import
+  adds a catalog line to a received order), so both fail the usable test.
+- **0.2.7** — the workflow release: #92–#95, plus **#55** (same rule-1 divergence as
+  #92, opposite direction), **#49** (lives in `get_or_create_retailer`, next door to
+  #92's retailer tools), **#50** (see below) and **#51** (same dialogs #93/#94 add
+  fields to).
+- **0.2.8** — new milestone, everything else: #53, #61, #63, #67, #54.
+
+**#50 moved on severity, not theme.** It is filed low because a mis-ordered board
+move is visible and correctable. #94 makes a transition stamp a build date, the
+refetch corrects the column but does **not** un-stamp the date, and the stamp is
+write-once-when-null. Land #50 with #94.
+
+### #94's three implementation decisions, all recorded on the issue
+
+1. **No backfill.** `build_completed_at` is not derived from `status_updated_at` for
+   already-`complete` kits. A backfilled date is indistinguishable from an asserted
+   one, and for a kit that went `complete` → `building` → `complete` the guess is
+   wrong — the same shape as a fabricated conversion snapshot (rule 4). Nothing is
+   lost: `status_updated_at` still holds what it held, so the owner has the same
+   evidence and can decide what it means. **Consequence: the migration is purely
+   additive, so #94 does not depend on #54**, which is why #54 sits in 0.2.8.
+2. **Build dates stay out of `OrderKitDetails`.** A line edit echoes kit details back
+   and `_update_line` reads a difference as an intentional restatement (#67). Putting
+   build dates there would let a price typo correction revert a completion date set
+   from MCP. Excluding them keeps #67 exactly as wide as it is today — which is why
+   #67 is in 0.2.8 rather than travelling with #94.
+3. Editability through UI, REST **and** MCP is a first-class requirement, not a
+   backfill convenience. Stamp only when null, never clobber a user-set value.
+
 ### The split, and what each one actually costs
 
 - **#92 — MCP write parity.** Retailers, catalog items, kit `rating`/`build_notes`.
