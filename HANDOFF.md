@@ -158,31 +158,30 @@ Compose.** So the live explanations are that OrbStack's compose binary diverges 
 upstream, or that upstream tightened this between v5.1.2 and v5.4.0. Do not tell
 anyone to upgrade Compose; that is the direction that fails.
 
-**Still unverified: `pull_policy: build`.** It cannot be tested on this Mac, which
-never reproduces the bug. The probe that would settle it — build a throwaway
-`image:` + `build:` service whose tag exists in no registry, `up` it without the flag,
-then again with `pull_policy: build` — has to run **on the LXC**. Until someone does
-that, the fix is a guess and should not be filed as though it works.
+**The probe ran on the LXC and refuted the mechanism, not just the attribution.**
+Both cases succeeded there, exit 0. Case A — one service, `image:` + `build:`, image
+removed first, no `pull_policy` — printed `Image plamoprobe-nosuchimage:local Pulling`
+for 2.2s, failed the pull, and **fell back to building**. So on the very host where
+plamotrack fails, a named-but-missing image is *not* a hard failure, and
+`pull_policy: build` is not needed to make it build. Both of the fixes under
+discussion were aimed at a mechanism that host does not exhibit.
 
-**Two distinct failures, do not conflate them:**
+**What is left standing:** a fresh LXC did fail `docker compose up -d --wait` on
+*this repo* with a can't-find-the-images error, and `--build` fixed it. That
+observation is solid. Every explanation offered for it so far is not.
 
-1. **Stale image** — the image exists but predates the source. Universal, and the
-   one at HANDOFF:616 where a container ran migrations it predated.
-2. **Missing image on a clean host** — `up` tries to pull `plamotrack-api:local`,
-   no registry has it, and some Docker setups stop there instead of building from the
-   context. Others build it. This is the one that reached a public README: it works on
-   the maintainer's machine and fails on a stranger's, which is the whole reason it
-   went unnoticed.
+**Leading suspect, untested:** the probe had **one** build service. This file has
+three, and `api` and `migrate` **share the tag `plamotrack-api:local`** while `web`
+has its own. Two services claiming one image tag is the structural feature the probe
+had no equivalent of. `--wait` and the `service_completed_successfully` dependency are
+the other untested differences.
 
-`--build` is correct on every version and fixes both, so it stays as the documented
-command. The docs no longer assert the mechanism universally.
-
-**Candidate fix, NOT verified:** `pull_policy: build` on `api` and `migrate` should
-force the build and make a bare `up -d --wait` work everywhere. Valid syntax, and it
-runs on v5.1.2 — but v5.1.2 never exhibits the bug, so this has **not** been tested
-against a Compose version that does. Do not present it as a known fix. Dropping the
-`image:` tag is the other option and is worse: the tag is what makes `api` and
-`migrate` run identical bits.
+**The definitive test needs no probe at all**: on the LXC, `docker compose down`, then
+`docker image rm -f plamotrack-api:local plamotrack-web:local`, then
+`docker compose up -d --wait` with no `--build`. That is the real stack in the real
+failing state, with zero fidelity questions. `down` without `-v` keeps the volume, and
+the images rebuild, so the only cost is a couple of minutes of downtime on a live
+instance — the owner's call, not something to run unasked.
 
 **Sweep lesson:** the first pass missed a sixth site because the grep required the
 word `compose`, and the Layout block writes `` `up -d --wait` `` bare. Grep the

@@ -119,21 +119,31 @@ docker compose logs migrate   # migrations; Exited (0) is success
 docker compose down           # add -v ONLY to destroy the database
 ```
 
-**`--build` is not optional, including on a first run.** `api` and `migrate` share
-an `image:` tag so they build once and run identical bits — which also means a plain
-`up` will reuse a stale local image after you change the code, and has run migrations
-it predated. Separately, **on some Docker setups a first run fails outright**: the
-named image is missing, so `up` tries to pull `plamotrack-api:local` from a registry
-that has never had it and stops, instead of building from the context sitting right
-beside it. A clean LXC running the official Docker packages does this; a Mac running
-OrbStack builds it instead. Which difference is responsible — engine, Compose build,
-or Compose version — has **not** been isolated, so treat it as "depends on the host"
-rather than on any one of those. In particular it is **not** an out-of-date Compose:
-the host that fails is on the *newer* one of the two (v5.4.0 vs v5.1.2). Telling
-someone to upgrade will not fix it. What that means in practice: a first run without the
-flag can work on the maintainer's machine and fail on a stranger's, which is exactly
-how it reached a public README. `--build` is right on all of them. Leaving it off has now cost two sessions, one README fix and one failed
-install — the flag is load-bearing, not belt-and-braces.
+**`--build` is not optional, including on a first run.** Two reasons — one
+understood, one not.
+
+*Understood:* `api` and `migrate` share an `image:` tag so they build once and run
+identical bits, which also means a plain `up` will reuse a **stale** local image after
+you change the code. That is how a container once ran migrations it predated.
+
+*Not understood:* on a fresh LXC running the official Docker packages,
+`docker compose up -d --wait` failed outright, reporting it could not find the images
+in any registry; `--build` fixed it. A minimal probe on that same host — one service,
+same `image:` + `build:` pairing, no local image — does **not** reproduce it: Compose
+attempts the pull, fails, and builds anyway. So the cause is something about *this
+file* the probe didn't capture. The leading suspect is `api` and `migrate` sharing one
+tag, which the probe had no equivalent of. It has not been isolated.
+
+**Do not write a mechanism for this into the docs until someone has reproduced it.**
+Three different explanations have already been committed here and retracted, each
+plausible and each wrong: that the compose file always fails without the flag, that
+old Compose fails and new Compose builds (the failing host has the *newer* Compose),
+and that a named-but-missing image is a hard failure anywhere (it isn't, on that same
+host). State the observation, prescribe the flag, stop there.
+
+`--build` is correct on every setup and fixes both. Leaving it off has now cost two
+sessions, one README fix and one failed install — the flag is load-bearing, not
+belt-and-braces.
 
 Backend is uv-managed — run everything from `backend/`:
 

@@ -2,17 +2,14 @@
 # builds it, migrates the database, and leaves an instance on
 # http://127.0.0.1:8080.
 #
-# `--build` is not optional, and the reason has two halves. `api` and `migrate`
-# share an `image:` tag so they build once and run the same bits — which also means
-# a plain `up` will happily reuse a stale local image after the source changes, and
-# has run migrations it predated. Separately, on some Docker setups a
-# named-but-missing image is a hard failure: `up` tries to pull
-# `plamotrack-api:local` from a registry that has never had it, and stops, rather
-# than building from the context right there. A clean LXC on the official Docker
-# packages does this; a Mac running OrbStack builds it. Nobody has isolated whether
-# the engine, the Compose build or the Compose version is what differs, so assume
-# the host decides. `--build` is correct on all of them, which is why it is what the
-# docs say everywhere.
+# `--build` is not optional. `api` and `migrate` share an `image:` tag below so
+# they build once and run the same bits — which also means a plain `up` will reuse
+# a stale local image after the source changes, and has run migrations it predated.
+# A fresh LXC on the official Docker packages also failed a first `up` outright,
+# saying it could not find the images in any registry, and the flag fixed that too;
+# why that host refuses to build when a one-service probe on it builds fine is not
+# understood. See AGENTS.md before theorising — several explanations have been
+# written down and retracted.
 #
 # Only `web` is published. The API and the database stay on the compose network,
 # so an instance has exactly one door, bound to loopback by default. That makes
