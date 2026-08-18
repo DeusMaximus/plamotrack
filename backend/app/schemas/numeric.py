@@ -67,3 +67,12 @@ PositiveInt4 = Annotated[int, Field(gt=0, le=INT4_MAX), _NotBool]
 #: floor on stock is zero — but an adjustment is arithmetic on a stored value and
 #: has to be a number the column could have held in the first place.
 Int4 = Annotated[int, Field(ge=INT4_MIN, le=INT4_MAX), _NotBool]
+
+
+#: One to five stars. Not an int4 bound — the range is a product rule and the
+#: column could hold far more — but it lives here because this is where integers
+#: that a request can set are declared, and being declared anywhere else is
+#: exactly how it came to be the one write integer that took a boolean. `true`
+#: was a rating of 1 on kits and retailers through both doors, on fields whose
+#: own `ge=1` made `false` look correctly refused (#102 review, Cursor Grok 4.6).
+Rating = Annotated[int, Field(ge=1, le=5), _NotBool]

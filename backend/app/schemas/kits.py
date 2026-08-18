@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.enums import KitStatus
+from app.schemas.numeric import Rating
 
 
 class KitCreate(BaseModel):
@@ -25,7 +26,7 @@ class KitUpdate(BaseModel):
     scale: str | None = None
     kit_number: str | None = None
     status: KitStatus | None = None
-    rating: int | None = Field(default=None, ge=1, le=5)
+    rating: Rating | None = None
     build_notes: str | None = None
 
 
