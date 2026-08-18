@@ -158,4 +158,97 @@ describe("board status moves", () => {
     first.reject(new Error("refused"));
     await vi.waitFor(() => expect(sent).toEqual(["building", "complete"]));
   });
+
+  it("a failed move does not undo a later move of the same card", async () => {
+    // The P2 from the Cursor Grok 4.6 review of #101, which was live at head
+    // `b11770c` with all three tests green — because none of them read the cache
+    // after a rejection with a successor queued.
+    //
+    // `scope` pauses `mutationFn`, not `onMutate`, so the queued move has already
+    // applied its optimistic write when the one ahead of it fails. Restoring this
+    // move's snapshot then reverts the *later* move as well, and `onDragEnd` will
+    // not re-issue a PATCH for a column the card already appears to be in — so
+    // the user cannot drag it back to where they just put it.
+    const queryClient = clientWith([kit("k1", "backlog")]);
+    const sent: KitStatus[] = [];
+    const first = deferred<Kit>();
+    first.promise.catch(() => {});
+
+    vi.mocked(api.updateKit).mockImplementation((id, patch) => {
+      const status = patch.status!;
+      sent.push(status);
+      return sent.length === 1 ? first.promise : Promise.resolve(kit(id, status));
+    });
+
+    const observer = new MutationObserver(
+      queryClient,
+      kitStatusMutationOptions(queryClient, () => {}),
+    );
+    void observer.mutate({ id: "k1", status: "building" }).catch(() => {});
+    void observer.mutate({ id: "k1", status: "complete" }).catch(() => {});
+    await vi.waitFor(() => expect(statusOf(queryClient, "k1")).toBe("complete"));
+
+    first.reject(new Error("refused"));
+    await vi.waitFor(() => expect(sent).toEqual(["building", "complete"]));
+
+    // The later intent survives the earlier failure.
+    expect(statusOf(queryClient, "k1")).toBe("complete");
+  });
+
+  it("serialises moves of different cards too, and rolls each back independently", async () => {
+    // Every other test in this file drives one kit, so a per-kit scope — or one
+    // that only collides when `variables.id` matches — passes them all. The
+    // board-wide choice was a comment rather than something pinned.
+    const queryClient = clientWith([kit("k1", "backlog"), kit("k2", "backlog")]);
+    const sent: string[] = [];
+    const first = deferred<Kit>();
+    first.promise.catch(() => {});
+
+    vi.mocked(api.updateKit).mockImplementation((id, patch) => {
+      sent.push(`${id}:${patch.status}`);
+      return sent.length === 1 ? first.promise : Promise.resolve(kit(id, patch.status!));
+    });
+
+    const observer = new MutationObserver(
+      queryClient,
+      kitStatusMutationOptions(queryClient, () => {}),
+    );
+    void observer.mutate({ id: "k1", status: "building" }).catch(() => {});
+    void observer.mutate({ id: "k2", status: "building" }).catch(() => {});
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(sent).toEqual(["k1:building"]);
+
+    first.reject(new Error("refused"));
+    await vi.waitFor(() => expect(sent).toEqual(["k1:building", "k2:building"]));
+
+    // k1 reverts because its own move failed; k2 keeps the move that succeeded.
+    expect(statusOf(queryClient, "k1")).toBe("backlog");
+    expect(statusOf(queryClient, "k2")).toBe("building");
+  });
+
+  it("a rollback restores the timestamp the column order is read from", async () => {
+    // `status` alone is not the whole card. The board sorts each column by
+    // `status_updated_at` (most recently moved first), and the optimistic write
+    // stamps it with the client clock — so a rollback that restores the status
+    // and keeps the optimistic timestamp leaves the card in the right column in
+    // the wrong place, which no assertion on `status` can see.
+    const queryClient = clientWith([kit("k1", "backlog")]);
+    const stamped = queryClient.getQueryData<Kit[]>(["kits"])![0].status_updated_at;
+    const failing = deferred<Kit>();
+    failing.promise.catch(() => {});
+    vi.mocked(api.updateKit).mockImplementation(() => failing.promise);
+
+    const observer = new MutationObserver(
+      queryClient,
+      kitStatusMutationOptions(queryClient, () => {}),
+    );
+    void observer.mutate({ id: "k1", status: "building" }).catch(() => {});
+    await vi.waitFor(() => expect(statusOf(queryClient, "k1")).toBe("building"));
+    expect(queryClient.getQueryData<Kit[]>(["kits"])![0].status_updated_at).not.toBe(stamped);
+
+    failing.reject(new Error("refused"));
+    await vi.waitFor(() => expect(statusOf(queryClient, "k1")).toBe("backlog"));
+    expect(queryClient.getQueryData<Kit[]>(["kits"])![0].status_updated_at).toBe(stamped);
+  });
 });

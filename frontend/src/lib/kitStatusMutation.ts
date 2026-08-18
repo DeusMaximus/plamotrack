@@ -35,9 +35,14 @@ export function kitStatusMutationOptions(
     //
     // The scope is board-wide rather than per kit because the scope id is fixed
     // when the mutation is defined and one definition serves every card. Moves
-    // are human-paced, so a queue nobody can outrun costs nothing — and a
-    // board-wide queue means at most one optimistic write is ever in flight,
-    // which is what makes the rollback below sound rather than usually-right.
+    // are human-paced, so a queue nobody can outrun costs nothing.
+    //
+    // What the queue does NOT do is serialise `onMutate`. Only `mutationFn` is
+    // paused, so every queued move applies its optimistic write immediately —
+    // which is the point (a second drag needs a card to pick up), and which means
+    // several optimistic writes for one card can be outstanding at once. The
+    // rollback below has to cope with that on its own; an earlier draft of this
+    // comment claimed the queue made it safe, and it does not.
     scope: { id: "kit-status" },
     mutationFn: ({ id, status }) => api.updateKit(id, { status }),
     // Optimistic: the card lands in its new column immediately, even while an
@@ -53,14 +58,28 @@ export function kitStatusMutationOptions(
       );
       return moved && { status: moved.status, status_updated_at: moved.status_updated_at };
     },
-    onError: (err, { id }, previous) => {
-      // Restores this card only. Snapshotting the whole `kits` array and writing
-      // it back wholesale re-asserts every row it captured, so a rollback from
-      // one failed move also reverts any *other* card that changed in between —
-      // undoing something the user never touched.
+    onError: (err, { id, status }, previous) => {
+      // Restores this card only, and only if it is still showing *this* move.
+      //
+      // Two conditions, for two different defects. `kit.id === id` because
+      // snapshotting the whole `kits` array and writing it back wholesale
+      // re-asserts every row it captured, so a rollback from one failed move also
+      // reverts any other card that changed in between — undoing something the
+      // user never touched.
+      //
+      // `kit.status === status` because a later move of the *same* card may
+      // already have applied its own optimistic write while this one was queued.
+      // Rolling back then reverts a move the user made after this one and has
+      // every reason to think is still pending: the board shows the card snapping
+      // backwards, and `onDragEnd` will not re-issue a PATCH for a column the
+      // card already appears to be in, so dragging it there again does nothing.
+      // A refetch heals it — unless the refetch is failing too, which is the
+      // usual reason the move failed in the first place.
       if (previous) {
         queryClient.setQueryData<Kit[]>(["kits"], (current) =>
-          (current ?? []).map((kit) => (kit.id === id ? { ...kit, ...previous } : kit)),
+          (current ?? []).map((kit) =>
+            kit.id === id && kit.status === status ? { ...kit, ...previous } : kit,
+          ),
         );
       }
       onError(err instanceof ApiError ? err.message : "Move failed");
