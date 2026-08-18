@@ -17,6 +17,7 @@ import type {
   Retailer,
   RetailerCreate,
   RetailerUpdate,
+  StockAdjustment,
   Tool,
   ToolCreate,
   ToolUpdate,
@@ -141,6 +142,12 @@ export const api = {
 
   searchCatalog: (q: string) =>
     request<CatalogSearchResult[]>(`/catalog/search?q=${encodeURIComponent(q)}`),
+  /** Signed stock change, resolved across the three catalog tables server-side.
+   *
+   * Not a PATCH of `quantity_on_hand`: an absolute write has to read the number
+   * first, and three writer types can move it in between (#35). */
+  adjustStock: (id: string, delta: number, reason?: string) =>
+    request<StockAdjustment>(`/catalog/${id}/adjust`, post({ delta, reason })),
 
   listRetailers: () => request<Retailer[]>("/retailers"),
   createRetailer: (data: RetailerCreate) => request<Retailer>("/retailers", post(data)),

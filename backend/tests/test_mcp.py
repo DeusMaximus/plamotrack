@@ -9,11 +9,18 @@ EXPECTED_TOOLS = {
     "list_kits",
     "get_kit",
     "update_kit_status",
+    "update_kit",
     "search_catalog",
+    "list_retailers",
+    "create_retailer",
+    "update_retailer",
     "create_order",
     "list_orders",
     "mark_order_received",
     "adjust_stock",
+    "update_catalog_tool",
+    "update_catalog_consumable",
+    "update_catalog_upgrade",
     "apply_upgrade",
 }
 

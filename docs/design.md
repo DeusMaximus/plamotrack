@@ -352,6 +352,12 @@ Standard CRUD plus a few purpose-built endpoints.
 - `POST /orders/{id}/receive`, `DELETE /orders/{id}` — receive/undo per §3.9
 - `GET /catalog/search?q=` — powers the typeahead, searches across
   tools/consumables/upgrades
+- `POST /catalog/{id}/adjust` — body: signed `delta`, optional `reason` → resolves the
+  id across tools/consumables/upgrades and moves stock by that much. The delta form
+  exists because the absolute `quantity_on_hand` on the PATCH routes has to be read
+  before it can be written, and three writer types can move it in between; "one fewer"
+  is what a consumable running out actually is. 409 below zero or past the column
+  ceiling. Same service call as the MCP `adjust_stock` tool
 - `GET /export/archive`, `GET /export/{table}.csv`, `GET /export/templates`,
   `GET /export/starter-sheet.csv`, `POST /import/preview`, `POST /import/apply` — see §12
 - `GET /healthz`
@@ -535,9 +541,22 @@ is `/mcp/` on the API port (streamable HTTP).
 
 - `list_kits(status?, grade?)`
 - `get_kit(id)`
-- `update_kit_status(id, status)`
+- `update_kit_status(id, status)` — the status-only shortcut for `update_kit`, kept
+  because moving a card is the frequent case and removing a tool a client may already
+  call is a visible break
+- `update_kit(id, changes)` — name, grade, scale, kit_number, status, rating,
+  build_notes
 - `search_catalog(query)` — the same backing search as the UI typeahead, so an agent
   adding an order hits the same de-dup logic a human would
+- `list_retailers()`, `create_retailer(retailer)`, `update_retailer(id, changes)` —
+  rating, packing quality, shipping speed, would-order-again, notes (§3.7). A retailer
+  named on `create_order` is created holding nothing but a name; this is how the rest
+  of the report card gets filled in
+- `update_catalog_tool(id, changes)`, `update_catalog_consumable(id, changes)`,
+  `update_catalog_upgrade(id, changes)` — one per table rather than one tool
+  dispatching on `item_type`, because each then takes the REST route's own PATCH
+  schema unchanged instead of a hand-written union of all three that every new column
+  would have to be added to twice
 - `create_order(retailer, date, items[], order_number?, tracking?, received?)` — the
   items array drives the same fan-out/increment dispatch as the REST endpoint; retailer
   matched by name case-insensitively, created if new
@@ -549,6 +568,13 @@ is `/mcp/` on the API port (streamable HTTP).
 Status arguments are normalised for agents ("In Transit" → `in_transit`), including
 aliases for the retired `in_hand` vocabulary, because an agent's idea of the status
 names will always lag the schema.
+
+The edit tools take a **patch object** rather than one optional argument per field.
+An MCP tool is a function signature, so the flat spelling cannot distinguish "leave
+the notes alone" from "erase the notes" — both arrive as `None` — and a partial edit
+would silently clear everything it didn't mention. Taking the same `*Update` schema
+the REST PATCH takes keeps `model_fields_set` intact, so absent and null mean on this
+surface exactly what they mean on the other one.
 
 This is what makes "grab the latest order confirmation from my email and add those" work
 without an email-parsing feature existing anywhere in the app. It's one agent session
