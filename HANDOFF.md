@@ -146,9 +146,23 @@ reporting v5.1.2, server `OperatingSystem: OrbStack`). The LXC runs the official
 Docker packages. Engine, Compose build and Compose version all differ at once, so the
 probe isolates **nothing** about which one matters. Recorded as "depends on the host".
 
-**To actually settle it**, someone needs `docker compose version` and `docker info`
-from the failing LXC. Until then do not attribute the failure to a version number in
-any user-facing text.
+The two hosts, now measured:
+
+| Host | Compose | Engine | Bare `up -d --wait` |
+| --- | --- | --- | --- |
+| LXC, official Docker packages | **v5.4.0** | 29.7.2, Debian 13 (trixie) | **fails** |
+| Mac, OrbStack | v5.1.2 | 29.4.0, OrbStack | builds |
+
+**This kills the "newer Compose builds it" reading — the failing host is on the newer
+Compose.** So the live explanations are that OrbStack's compose binary diverges from
+upstream, or that upstream tightened this between v5.1.2 and v5.4.0. Do not tell
+anyone to upgrade Compose; that is the direction that fails.
+
+**Still unverified: `pull_policy: build`.** It cannot be tested on this Mac, which
+never reproduces the bug. The probe that would settle it — build a throwaway
+`image:` + `build:` service whose tag exists in no registry, `up` it without the flag,
+then again with `pull_policy: build` — has to run **on the LXC**. Until someone does
+that, the fix is a guess and should not be filed as though it works.
 
 **Two distinct failures, do not conflate them:**
 

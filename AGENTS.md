@@ -128,7 +128,9 @@ that has never had it and stops, instead of building from the context sitting ri
 beside it. A clean LXC running the official Docker packages does this; a Mac running
 OrbStack builds it instead. Which difference is responsible — engine, Compose build,
 or Compose version — has **not** been isolated, so treat it as "depends on the host"
-rather than on any one of those. What that means in practice: a first run without the
+rather than on any one of those. In particular it is **not** an out-of-date Compose:
+the host that fails is on the *newer* one of the two (v5.4.0 vs v5.1.2). Telling
+someone to upgrade will not fix it. What that means in practice: a first run without the
 flag can work on the maintainer's machine and fail on a stranger's, which is exactly
 how it reached a public README. `--build` is right on all of them. Leaving it off has now cost two sessions, one README fix and one failed
 install — the flag is load-bearing, not belt-and-braces.
