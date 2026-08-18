@@ -29,6 +29,44 @@ Template:
 - **Next:** #92 is the cheap one and is not blocked by anything. #94 is now decided
   (see below) and unblocked too — nothing in this batch is waiting on a call.
 
+### #96 (series) filed, #95 rewritten — from a read of the owner's other tracker
+
+The owner's existing 73-kit collection lives in another tool; its schema was read
+directly and compared against `kits`. Two real gaps, one non-gap, one dead end.
+
+- **#96 — kits record no series.** `series` existed nowhere in this repo. Filed into
+  0.2.7. **Single value, free text, like `grade` and `scale`** — the owner's tracker
+  models it as a multi-select, but the single two-valued row there is a data-entry
+  mistake, not a case to support, and a kit spanning two series gets a name covering
+  both. Flexibility is the *requirement*: in the other tool an option must be
+  predefined and its API can't add one, so an agent cannot record an unlisted series.
+  Free text plus a distinct-values typeahead (the `CatalogItemPicker` select-or-create
+  idiom) is the shape: writable by anyone, hard to near-miss by accident, no lookup
+  table. Free text also **keeps §9.1 open** — an enum would settle the
+  generic-vs-Gunpla taxonomy question by accident, since "series" is Gunpla-specific
+  in a way "grade" is not.
+- **#96 and #94 share a migration slot**, noted on both. Same table, same `spec.py`,
+  same hand-curated `STARTER_SHEET_COLUMNS`, same kit form.
+- **`grade` and `scale` already have the fragmentation exposure** `series` would
+  introduce: `default_scale_for_grade` normalises with `.strip().upper()` only for its
+  lookup and stores what was typed, and `list_kits(grade=…)` matches with `ilike`, so
+  `HG` and `High Grade` are two grades today. Recorded inside #96 rather than filed
+  separately because the same endpoint fixes all three — split it out if that stops
+  being true.
+- **#95 rewritten** as the order timeline. `shipped_at` is a nullable column **and a
+  transition**: `KitStatus.IN_TRANSIT` exists and `ARRIVAL_ELIGIBLE` reads out of it,
+  but **nothing in the codebase ever writes it** — a board drag is the only way in.
+  Marking an order shipped should advance its kits, which makes the pipeline
+  machine-driven end to end. Shipping applies **no stock**; `received_at` stays the
+  sole "stock was applied" proxy (rule 2.1).
+- **The pre-order distinction needs no schema at all.** It only matters while an order
+  is pending, so there is nothing to persist, and `OrderItemRead.kits` already carries
+  `KitRead.status` — the Orders page can tell a pending pre-order from a late order
+  from the payload it already renders. Presentation-only. Accepted limit: a
+  catalog-only order spawns no kits and so has no pre-order signal.
+- **`Wishlist` status: declined, not deferred.** The other tracker has the stage and
+  has never used it (0 of 73 rows), and the owner dropped it. Not filed, deliberately.
+
 ### Milestones reorganised — 0.2.7 is now the workflow release
 
 Decided by the owner, 2026-08-18. **0.2.6 is "the importer is stable and usable",
