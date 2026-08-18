@@ -19,7 +19,8 @@ Template:
 ## 2026-08-18 — Claude Code (Opus 5) — #91 split into #92–#95; docs-only, no code touched
 
 - **Done:** assessed #91 (dogfooding gaps in the MCP/UI write surface) and split it
-  into four issues, with a scoping comment on #91 answering its four open questions.
+  into four issues; **#91 is closed as split**, with a scoping comment answering its
+  four open questions and a closing note mapping every finding to its issue.
   Two commits on `main`, both pushed: `5f249b3` widens the attribution rule to issue
   bodies and exempts the docs; `5f973b7` documents `--build` everywhere the packaged
   stack is started.
