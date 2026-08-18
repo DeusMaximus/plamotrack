@@ -21,11 +21,12 @@ import type {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
-import { api, ApiError } from "../api/client";
+import { api } from "../api/client";
 import type { Kit, KitStatus } from "../api/types";
 import { StatusBadge } from "../components/StatusBadge";
 import { EmptyState, ErrorBanner } from "../components/ui";
 import { STATUS_LABELS } from "../lib/format";
+import { kitStatusMutationOptions } from "../lib/kitStatusMutation";
 
 // pointerWithin gives the most natural mouse-drag feel but only works for
 // pointer sensors — keyboard drags need the rect-intersection fallback.
@@ -204,26 +205,7 @@ export function BoardPage() {
     useSensor(KeyboardSensor, { coordinateGetter: columnKeyboardCoordinates }),
   );
 
-  const statusMutation = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: KitStatus }) =>
-      api.updateKit(id, { status }),
-    // Optimistic: the card lands in its new column immediately; rolled back on error.
-    onMutate: async ({ id, status }) => {
-      await queryClient.cancelQueries({ queryKey: ["kits"] });
-      const previous = queryClient.getQueryData<Kit[]>(["kits"]);
-      queryClient.setQueryData<Kit[]>(["kits"], (current) =>
-        (current ?? []).map((kit) =>
-          kit.id === id ? { ...kit, status, status_updated_at: new Date().toISOString() } : kit,
-        ),
-      );
-      return { previous };
-    },
-    onError: (err, _vars, context) => {
-      if (context?.previous) queryClient.setQueryData(["kits"], context.previous);
-      setActionError(err instanceof ApiError ? err.message : "Move failed");
-    },
-    onSettled: () => queryClient.invalidateQueries({ queryKey: ["kits"] }),
-  });
+  const statusMutation = useMutation(kitStatusMutationOptions(queryClient, setActionError));
 
   const byStatus = useMemo(() => {
     const groups = new Map<KitStatus, Kit[]>(
