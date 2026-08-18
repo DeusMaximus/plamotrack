@@ -16,6 +16,60 @@ Template:
 
 ---
 
+## 2026-08-18 — Claude Code (Opus 5) — #50 and the #100 review follow-ups merged
+
+- **Done:** three PRs merged to `main`, all squashed, all reviewed by Cursor Grok
+  4.6 before merge. **#100** (#92 + #55, the rule-1 write-surface sweep), **#101**
+  (#50, board move ordering), **#102** (the three P3s from #100's review). `main`
+  is at `2dba040`: 534 backend tests, 100 frontend unit tests, 11 e2e. Issues #92,
+  #55 and #50 are closed. **#97, #98, #99** were filed from the #100 sweep and are
+  **unmilestoned on purpose** — placing them is the owner's call.
+- **Decisions:**
+  - **Board move serialisation** is a TanStack `scope`, board-wide, in a new
+    `frontend/src/lib/kitStatusMutation.ts`. The policy left `BoardPage` so it
+    could be tested at all — see below. First options-factory module in this repo.
+  - **Boolean refusal lives on the `Annotated` aliases** in
+    `backend/app/schemas/numeric.py`, not on any route. A `BeforeValidator`
+    rejecting only `bool`, deliberately not `strict=True`, which would also refuse
+    `"5"`. **It must be ordered after `Field(...)`**: first, it wraps a bare `int`
+    and the constraints serialize as raw `ge`/`le`, so the bound silently
+    disappears from the published OpenAPI while still being enforced at runtime.
+    The int4 contract test caught that; the ordering now carries a comment.
+  - **`Rating` is an alias too**, in the same file, even though 1–5 is a product
+    rule rather than an int4 bound. Being declared anywhere else is exactly how it
+    became the one write integer that still took a boolean.
+  - **`data-testid="stock-count"`** is the first test id in the repo (#100).
+- **State:** no migrations anywhere in this batch. `fix/44-import-order-invariants`
+  (PR #86) is untouched — all three branches were chosen for not overlapping it.
+  A stray local branch `pr-102-review-ref` exists from Cursor's review; its content
+  is in `main` and it can be deleted.
+- **Next:** #86 is still the blocker for 0.2.6 — #44, #77, #87 and #90 all live
+  inside the files it rewrites. Remaining 0.2.7 work clear of it: **#51** (dialog
+  focus trap) and **#49** (retailer LIKE wildcards — read #86's importer
+  name-matching first, since #49's point is making all three normalisations agree).
+
+### Two things worth carrying forward, both learned the expensive way
+
+- **An e2e test could not tell the #50 fix from the #50 defect.** dnd-kit's
+  `DragOverlay` swallows a `pointerdown` that arrives before the previous drop
+  animation finishes, so the second drag never started — one request, in order,
+  which is exactly what correct serialisation looks like. It was also
+  observer-sensitive: a `console.log` in the drag handlers flipped it from failing
+  to passing, and it measured 1 pass in 5 in fresh processes. Deleted rather than
+  shipped, and the policy was extracted so the mutation could be driven directly.
+  **`--repeat-each` is not a way to measure flakiness here** — it reuses one module
+  load, so every repeat shares the fixture name and stacks duplicates. That cost a
+  round of wrong numbers before the real one.
+- **Both reviews found a partial sweep, in branches whose whole point was
+  sweeping.** #101's rollback justification was self-contradictory — `scope` pauses
+  `mutationFn`, not `onMutate`, so a failed move overwrote a later queued move's
+  optimistic state, and the branch's own test asserted the behaviour that
+  disproved the comment. #102 fixed three of the four integer families and missed
+  `rating`, which has its own bounds and so never appeared in the contract test.
+  Both suites were green over the defect. The axis that keeps going unvaried is not
+  values — it is *which of several equivalent places the fix actually reached*, so
+  mutate the places one at a time, not the fix as a whole.
+
 ## 2026-08-18 — Claude Code (Opus 5) — #92 + #55 as one rule-1 sweep; PR #100 open
 
 - **Done:** closed the write-surface divergence in both directions on
