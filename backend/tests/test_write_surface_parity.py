@@ -477,3 +477,83 @@ async def test_mcp_tool_edit_still_enforces_the_money_pair(client):
     )
     assert corrected["unit_cost_reference_minor"] == 13500
     assert corrected["unit_cost_reference_currency"] == "AUD"
+
+
+async def test_mcp_update_kit_refuses_an_unknown_field(client):
+    """`_KitPatch` subclasses `KitUpdate` to widen `status` alone, and inherits
+    `extra="forbid"` with everything else.
+
+    Worth its own case because the kit path is the one that subclasses and then
+    rebuilds the model from a dump, and nothing else in the suite sent it an
+    unknown key — the retailer matrix did, the kit one did not. Raised by the
+    Cursor Grok 4.6 review of #100.
+
+    One correction to how that review framed it: a bare `model_config =
+    ConfigDict()` on the subclass cannot cause the leak it describes, because
+    Pydantic *merges* `model_config` along the MRO rather than replacing it —
+    measured, and the mutant survives precisely because it changes nothing. What
+    does reach it is an explicit `ConfigDict(extra="ignore")`, which wins over the
+    parent, and that mutant this test kills. The distinction is worth keeping in
+    the file: a test written against the unreachable version would look identical
+    and prove less.
+    """
+    kit = (await client.post("/kits", json={"name": "MG Sazabi", "grade": "MG"})).json()
+
+    message = await _tool_error("update_kit", {"kit_id": kit["id"], "changes": {"ratings": 5}})
+    assert "ratings" in message
+
+    # A near-miss on a real field, which is what an agent actually sends.
+    typo = await _tool_error("update_kit", {"kit_id": kit["id"], "changes": {"build_note": "x"}})
+    assert "build_note" in typo
+
+    stored = (await client.get(f"/kits/{kit['id']}")).json()
+    assert stored["rating"] is None
+    assert stored["build_notes"] is None
+
+
+async def test_mcp_tool_edit_refuses_to_unpair_a_filled_money_pair(client):
+    """The `None` half of the §6 pair, which the neighbouring test never sends.
+
+    That test drives a *missing* half onto an empty row and a *present* half onto
+    a filled one. Neither can catch a check that skips `None`, which would leave
+    `unit_cost_reference_minor` cleared and its currency behind — the unpaired
+    state the CHECK constraint exists to make unrepresentable. Both directions of
+    the clear are driven here, because they are different operations: one is
+    illegal and one is routine. Raised by the Cursor Grok 4.6 review of #100.
+    """
+    tool = (
+        await client.post(
+            "/tools",
+            json={
+                "name": "Airbrush",
+                "category": "spray",
+                "unit_cost_reference_minor": 12000,
+                "unit_cost_reference_currency": "AUD",
+            },
+        )
+    ).json()
+
+    for half in ("unit_cost_reference_minor", "unit_cost_reference_currency"):
+        message = await _tool_error(
+            "update_catalog_tool", {"tool_id": tool["id"], "changes": {half: None}}
+        )
+        assert "must be set together" in message
+
+    unchanged = (await client.get("/tools")).json()[0]
+    assert unchanged["unit_cost_reference_minor"] == 12000
+    assert unchanged["unit_cost_reference_currency"] == "AUD"
+
+    # Clearing the pair together is the legal way to say "no recorded cost".
+    cleared = await _tool(
+        client,
+        "update_catalog_tool",
+        {
+            "tool_id": tool["id"],
+            "changes": {
+                "unit_cost_reference_minor": None,
+                "unit_cost_reference_currency": None,
+            },
+        },
+    )
+    assert cleared["unit_cost_reference_minor"] is None
+    assert cleared["unit_cost_reference_currency"] is None
