@@ -881,8 +881,30 @@ export function OrdersPage() {
                     className="cursor-pointer border-b border-zinc-100 last:border-0 hover:bg-zinc-50"
                     onClick={() => toggle(order.id)}
                   >
-                    <td className="px-3 py-2 text-zinc-400">
-                      {expanded.has(order.id) ? "▾" : "▸"}
+                    {/* Narrower padding than its neighbours: the 24x24 control
+                        is wider than the bare glyph it replaced, and the default
+                        px-3 pushed the table enough to wrap retailer names. */}
+                    <td className="px-1 py-2 text-zinc-400">
+                      {/* A real button, because the row's own click handler is
+                          unreachable from a keyboard — nothing focuses a <tr>.
+                          The row click stays as a convenience for the mouse, so
+                          this stops propagation or the two would cancel out. */}
+                      <button
+                        type="button"
+                        aria-expanded={expanded.has(order.id)}
+                        aria-label={`${expanded.has(order.id) ? "Hide" : "Show"} line items for the ${formatDate(order.order_date)} order`}
+                        // 24x24: WCAG 2.2 target-size minimum. The row click is
+                        // an equivalent alternative and would technically exempt
+                        // it, but leaning on that inside an accessibility fix is
+                        // not worth the four characters it saves.
+                        className="flex h-6 w-6 items-center justify-center rounded leading-none hover:bg-zinc-200 hover:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggle(order.id);
+                        }}
+                      >
+                        {expanded.has(order.id) ? "▾" : "▸"}
+                      </button>
                     </td>
                     <td className="px-3 py-2">{formatDate(order.order_date)}</td>
                     <td className="px-3 py-2 font-medium">
