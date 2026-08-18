@@ -134,12 +134,34 @@ was worse than silent: it asserted the command "builds on first run".
 fixing the document that told someone to do the wrong thing. `5f973b7` fixed the four
 sites the owner's README commit (`2b93747`) left behind.
 
-Not verified first-hand this session — the packaged stack was never brought up. The
-`--build` claim rests on the owner's failed install plus the HANDOFF:616 entry, which
-agree. **Open question worth a look:** whether `--build` should be needed at all, or
-whether dropping the `image:` tag would let plain `up -d --wait` work as everyone
-keeps expecting. The tag is deliberate (both services run identical bits); nobody has
-checked whether removing it is safe. Not filed.
+**Tested afterwards, and the first explanation was too strong.** An isolated probe
+(a throwaway `image:` + `build:` service whose tag exists in no registry) **built
+fine without `--build`** on this Mac — Docker 29.4.0, Compose v5.1.2. So the
+missing-image failure is **version-dependent**, not a property of the compose file.
+The owner's fresh LXC (Docker + git only) fails on it; this host does not.
+
+**Two distinct failures, do not conflate them:**
+
+1. **Stale image** — the image exists but predates the source. Universal, and the
+   one at HANDOFF:616 where a container ran migrations it predated.
+2. **Missing image on a clean host** — `up` tries to pull `plamotrack-api:local`,
+   no registry has it, and older Compose stops there instead of building from the
+   context. Newer Compose builds it. This is the one that reached a public README:
+   it works on the maintainer's machine and fails on a stranger's.
+
+`--build` is correct on every version and fixes both, so it stays as the documented
+command. The docs no longer assert the mechanism universally.
+
+**Candidate fix, NOT verified:** `pull_policy: build` on `api` and `migrate` should
+force the build and make a bare `up -d --wait` work everywhere. Valid syntax, and it
+runs on v5.1.2 — but v5.1.2 never exhibits the bug, so this has **not** been tested
+against a Compose version that does. Do not present it as a known fix. Dropping the
+`image:` tag is the other option and is worse: the tag is what makes `api` and
+`migrate` run identical bits.
+
+**Sweep lesson:** the first pass missed a sixth site because the grep required the
+word `compose`, and the Layout block writes `` `up -d --wait` `` bare. Grep the
+distinctive fragment, not the comfortable full phrase.
 
 ### Operational note: `gh issue create` was unusable, `gh api` worked
 

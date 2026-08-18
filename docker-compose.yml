@@ -2,9 +2,16 @@
 # builds it, migrates the database, and leaves an instance on
 # http://127.0.0.1:8080.
 #
-# `--build` is required, including on a first run. `api` and `migrate` share an
-# `image:` tag so they build once and run the same bits; naming a tag makes `up`
-# try to resolve `plamotrack-api:local` before building, and no registry has it.
+# `--build` is not optional, and the reason has two halves. `api` and `migrate`
+# share an `image:` tag so they build once and run the same bits — which also means
+# a plain `up` will happily reuse a stale local image after the source changes, and
+# has run migrations it predated. Separately, on some Docker Compose versions a
+# named-but-missing image is a hard failure: `up` tries to pull
+# `plamotrack-api:local` from a registry that has never had it, and stops, rather
+# than building from the context right there. Newer Compose builds it instead
+# (verified on v5.1.2), so whether a first run works without the flag depends on
+# the host. `--build` is correct on every version, which is why it is what the docs
+# say everywhere.
 #
 # Only `web` is published. The API and the database stay on the compose network,
 # so an instance has exactly one door, bound to loopback by default. That makes

@@ -68,7 +68,7 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
 
 ```
 docker-compose.yml      # the full stack: web (nginx) + api + migrate + db.
-                        #   `up -d --wait` installs without publishing Postgres
+                        #   `up -d --build --wait` installs without publishing Postgres
 docker-compose.dev.yml  # explicit dev overlay: publishes Postgres on loopback only
 .env                    # the only config file (gitignored); .env.example is the template
                         #   compose + API both read it; app/config.py assembles the DSN
@@ -120,11 +120,15 @@ docker compose down           # add -v ONLY to destroy the database
 ```
 
 **`--build` is not optional, including on a first run.** `api` and `migrate` share
-an `image:` tag so they build once and run identical bits; naming a tag makes `up`
-try to resolve `plamotrack-api:local` before building, and no registry has it. It
-also reuses a stale local image after you change the code, which is how a container
-once ran migrations it predated. Leaving it off has now cost two sessions and one
-README fix — the flag is load-bearing, not belt-and-braces.
+an `image:` tag so they build once and run identical bits — which also means a plain
+`up` will reuse a stale local image after you change the code, and has run migrations
+it predated. Separately, **on some Compose versions a first run fails outright**: the
+named image is missing, so `up` tries to pull `plamotrack-api:local` from a registry
+that has never had it and stops instead of building. Newer Compose builds it (checked
+on v5.1.2), so a first run without the flag may work on your machine and fail on a
+clean host — which is exactly how this reached a public README. `--build` is right on
+every version. Leaving it off has now cost two sessions, one README fix and one failed
+install — the flag is load-bearing, not belt-and-braces.
 
 Backend is uv-managed — run everything from `backend/`:
 
