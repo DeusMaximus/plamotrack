@@ -127,4 +127,35 @@ describe("board status moves", () => {
     expect(statusOf(queryClient, "k2")).toBe("complete");
     expect(messages).toEqual(["Move failed"]);
   });
+
+  it("a failed move releases the ones queued behind it", async () => {
+    // The risk serialisation introduces, and the one worth a standing test:
+    // a queue is only safe if every outcome drains it. If a refused move — a 409
+    // from a guard, a dropped connection — left its successors parked, one bad
+    // drag would wedge every later move on the board, and the optimistic UI would
+    // keep cheerfully showing moves that were never sent.
+    const queryClient = clientWith([kit("k1", "backlog")]);
+    const sent: KitStatus[] = [];
+    const first = deferred<Kit>();
+    first.promise.catch(() => {});
+
+    vi.mocked(api.updateKit).mockImplementation((id, patch) => {
+      const status = patch.status!;
+      sent.push(status);
+      return sent.length === 1 ? first.promise : Promise.resolve(kit(id, status));
+    });
+
+    const observer = new MutationObserver(
+      queryClient,
+      kitStatusMutationOptions(queryClient, () => {}),
+    );
+    void observer.mutate({ id: "k1", status: "building" }).catch(() => {});
+    void observer.mutate({ id: "k1", status: "complete" }).catch(() => {});
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(sent).toEqual(["building"]);
+
+    first.reject(new Error("refused"));
+    await vi.waitFor(() => expect(sent).toEqual(["building", "complete"]));
+  });
 });
