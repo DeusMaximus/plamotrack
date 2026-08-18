@@ -122,12 +122,15 @@ docker compose down           # add -v ONLY to destroy the database
 **`--build` is not optional, including on a first run.** `api` and `migrate` share
 an `image:` tag so they build once and run identical bits — which also means a plain
 `up` will reuse a stale local image after you change the code, and has run migrations
-it predated. Separately, **on some Compose versions a first run fails outright**: the
+it predated. Separately, **on some Docker setups a first run fails outright**: the
 named image is missing, so `up` tries to pull `plamotrack-api:local` from a registry
-that has never had it and stops instead of building. Newer Compose builds it (checked
-on v5.1.2), so a first run without the flag may work on your machine and fail on a
-clean host — which is exactly how this reached a public README. `--build` is right on
-every version. Leaving it off has now cost two sessions, one README fix and one failed
+that has never had it and stops, instead of building from the context sitting right
+beside it. A clean LXC running the official Docker packages does this; a Mac running
+OrbStack builds it instead. Which difference is responsible — engine, Compose build,
+or Compose version — has **not** been isolated, so treat it as "depends on the host"
+rather than on any one of those. What that means in practice: a first run without the
+flag can work on the maintainer's machine and fail on a stranger's, which is exactly
+how it reached a public README. `--build` is right on all of them. Leaving it off has now cost two sessions, one README fix and one failed
 install — the flag is load-bearing, not belt-and-braces.
 
 Backend is uv-managed — run everything from `backend/`:

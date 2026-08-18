@@ -134,20 +134,31 @@ was worse than silent: it asserted the command "builds on first run".
 fixing the document that told someone to do the wrong thing. `5f973b7` fixed the four
 sites the owner's README commit (`2b93747`) left behind.
 
-**Tested afterwards, and the first explanation was too strong.** An isolated probe
-(a throwaway `image:` + `build:` service whose tag exists in no registry) **built
-fine without `--build`** on this Mac — Docker 29.4.0, Compose v5.1.2. So the
-missing-image failure is **version-dependent**, not a property of the compose file.
-The owner's fresh LXC (Docker + git only) fails on it; this host does not.
+**Tested afterwards, and the first explanation was too strong — then the second
+one was too.** An isolated probe (a throwaway `image:` + `build:` service whose tag
+exists in no registry) **built fine without `--build`** on this Mac. So the failure
+is not a property of the compose file, and the docs no longer say it is.
+
+It was then written up as *version*-dependent, which the evidence does not support
+either: this Mac runs **OrbStack**, and its `docker compose` is OrbStack's own binary
+(`~/.docker/cli-plugins/docker-compose` → `OrbStack.app/.../xbin/docker-compose`,
+reporting v5.1.2, server `OperatingSystem: OrbStack`). The LXC runs the official
+Docker packages. Engine, Compose build and Compose version all differ at once, so the
+probe isolates **nothing** about which one matters. Recorded as "depends on the host".
+
+**To actually settle it**, someone needs `docker compose version` and `docker info`
+from the failing LXC. Until then do not attribute the failure to a version number in
+any user-facing text.
 
 **Two distinct failures, do not conflate them:**
 
 1. **Stale image** — the image exists but predates the source. Universal, and the
    one at HANDOFF:616 where a container ran migrations it predated.
 2. **Missing image on a clean host** — `up` tries to pull `plamotrack-api:local`,
-   no registry has it, and older Compose stops there instead of building from the
-   context. Newer Compose builds it. This is the one that reached a public README:
-   it works on the maintainer's machine and fails on a stranger's.
+   no registry has it, and some Docker setups stop there instead of building from the
+   context. Others build it. This is the one that reached a public README: it works on
+   the maintainer's machine and fails on a stranger's, which is the whole reason it
+   went unnoticed.
 
 `--build` is correct on every version and fixes both, so it stays as the documented
 command. The docs no longer assert the mechanism universally.

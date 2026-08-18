@@ -5,13 +5,14 @@
 # `--build` is not optional, and the reason has two halves. `api` and `migrate`
 # share an `image:` tag so they build once and run the same bits — which also means
 # a plain `up` will happily reuse a stale local image after the source changes, and
-# has run migrations it predated. Separately, on some Docker Compose versions a
+# has run migrations it predated. Separately, on some Docker setups a
 # named-but-missing image is a hard failure: `up` tries to pull
 # `plamotrack-api:local` from a registry that has never had it, and stops, rather
-# than building from the context right there. Newer Compose builds it instead
-# (verified on v5.1.2), so whether a first run works without the flag depends on
-# the host. `--build` is correct on every version, which is why it is what the docs
-# say everywhere.
+# than building from the context right there. A clean LXC on the official Docker
+# packages does this; a Mac running OrbStack builds it. Nobody has isolated whether
+# the engine, the Compose build or the Compose version is what differs, so assume
+# the host decides. `--build` is correct on all of them, which is why it is what the
+# docs say everywhere.
 #
 # Only `web` is published. The API and the database stay on the compose network,
 # so an instance has exactly one door, bound to loopback by default. That makes
