@@ -85,7 +85,22 @@ export function Modal({
     const observer = new MutationObserver(() => {
       if (document.activeElement === document.body) dialog.focus();
     });
-    observer.observe(dialog, { childList: true, subtree: true });
+    // Attributes as well as children, and this is not belt-and-braces: every
+    // dialog here disables its submit button while the request is in flight, and
+    // *disabling the focused element* drops focus to <body> exactly as removing
+    // it does — measured in Chromium, where a childList-only observer sees
+    // nothing. Tab to Submit and press Enter is the most ordinary keyboard path
+    // through this application, and it was the one still escaping.
+    //
+    // Filtered rather than `attributes: true`, because these three are what can
+    // make a focused element unfocusable; watching everything would wake this on
+    // every hover class change for nothing.
+    observer.observe(dialog, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["disabled", "hidden", "inert"],
+    });
     return () => observer.disconnect();
   }, []);
 

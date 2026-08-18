@@ -241,3 +241,60 @@ test("the order dialog holds focus through dynamic rows and the catalog picker",
   await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
 });
+
+
+test("submitting from the keyboard does not drop focus while the request is in flight", async ({
+  page,
+}) => {
+  // Every dialog in this app disables its submit button while submitting, and
+  // disabling the focused element drops focus to <body> just as removing it
+  // does — no blur, no focusout. Tab to Submit and press Enter is the most
+  // ordinary keyboard path there is, and it was the one still escaping.
+  //
+  // The request is stalled deliberately. Locally it completes in single-digit
+  // milliseconds, so the window where the button is disabled and the dialog is
+  // still open closes before any assertion can see it, and the test would pass
+  // against the defect for want of a chance to observe it.
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/retailers", async (route) => {
+    if (route.request().method() !== "POST") {
+      await route.continue();
+      return;
+    }
+    await held;
+    await route.continue();
+  });
+
+  await page.goto("/retailers");
+  const trigger = page.getByRole("button", { name: "+ Add retailer" });
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Name").fill(`${RETAILER} submit`);
+
+  // "Add" on a create, "Save" on an edit — this dialog is a create.
+  const submit = dialog.getByRole("button", { name: "Add", exact: true });
+  await submit.focus();
+  await page.keyboard.press("Enter");
+
+  // Mid-flight: the button has gone disabled under the focus it was holding.
+  await expect(submit).toBeDisabled();
+  expect(await inDialog(page), `focus escaped to ${await focusDescription(page)} while submitting`)
+    .toBe(true);
+
+  release();
+  await expect(dialog).toBeHidden();
+  await expect(trigger).toBeFocused();
+
+  // Clean up the retailer this test created.
+  const api = await request.newContext({ baseURL: API });
+  const rows = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
+  const created = rows.find((row) => row.name === `${RETAILER} submit`);
+  if (created) await api.delete(`/retailers/${created.id}`);
+  await api.dispose();
+});
