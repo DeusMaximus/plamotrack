@@ -4,7 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.enums import ItemType
-from app.schemas.numeric import NonNegativeInt4, PositiveInt4
+from app.schemas.numeric import Int4, NonNegativeInt4, PositiveInt4
 from app.services.currency import CURRENCY_CODE_PATTERN
 
 _COST_HELP = "Integer minor units — cents for AUD, whole yen for JPY, fils for KWD."
@@ -131,6 +131,26 @@ class CatalogSearchResult(BaseModel):
     category: str | None = None  # tools/consumables
     manufacturer: str | None = None  # upgrades
     quantity_on_hand: int
+
+
+class StockAdjustmentRequest(BaseModel):
+    """Body for `POST /catalog/{id}/adjust` (#55).
+
+    A signed delta rather than an absolute `quantity_on_hand`, which is the whole
+    point: "one fewer of these" is what running a consumable down actually is, and
+    the absolute PATCH on `/inventory/{type}/{id}` can only express it by first
+    reading a quantity that may already be stale.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    delta: Int4 = Field(
+        description="Signed change to apply. Negative consumes stock; 0 is a no-op."
+    )
+    reason: str | None = Field(
+        default=None,
+        description="Free text, echoed back and logged. Not persisted — there is no audit table.",
+    )
 
 
 class StockAdjustmentResult(BaseModel):

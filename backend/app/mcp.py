@@ -15,10 +15,26 @@ from app import __version__
 from app.config import get_settings
 from app.db import session_scope
 from app.exceptions import DomainError
+from app.models import ItemType
 from app.models.enums import KitStatus
+from app.schemas.catalog import (
+    ConsumableRead,
+    ConsumableUpdate,
+    ToolRead,
+    ToolUpdate,
+    UpgradeRead,
+    UpgradeUpdate,
+)
 from app.schemas.kits import KitRead, KitUpdate
 from app.schemas.numeric import Int4, NonNegativeInt4, PositiveInt4
-from app.schemas.orders import OrderCreate, OrderItemCreate, OrderRead
+from app.schemas.orders import (
+    OrderCreate,
+    OrderItemCreate,
+    OrderRead,
+    RetailerCreate,
+    RetailerRead,
+    RetailerUpdate,
+)
 from app.services import catalog as catalog_service
 from app.services import kits as kits_service
 from app.services import orders as orders_service
@@ -72,6 +88,19 @@ def _parse_uuid(value: str, what: str) -> uuid.UUID:
         raise ToolError(f"{what} {value!r} is not a valid UUID") from None
 
 
+class _KitPatch(KitUpdate):
+    """`KitUpdate` with the agent-tolerant status vocabulary the kit tools already
+    accept ("In Transit", "arrived") in place of the strict enum.
+
+    Subclassed rather than restated so a field added to `KitUpdate` — #94's build
+    dates, #96's series — reaches this tool without anyone remembering to edit a
+    second copy of the list. Only `status` is overridden; everything else is
+    inherited, including `extra="forbid"`.
+    """
+
+    status: str | None = None
+
+
 @mcp.tool
 async def list_kits(status: str | None = None, grade: str | None = None) -> list[dict]:
     """List kits in the collection, optionally filtered by pipeline status
@@ -105,6 +134,23 @@ async def update_kit_status(kit_id: str, status: str) -> dict:
 
 
 @mcp.tool
+async def update_kit(kit_id: str, changes: _KitPatch) -> dict:
+    """Edit a kit's details: name, grade, scale, kit_number, status, rating (1-5),
+    build_notes. Only the fields present in `changes` are touched, so this is safe
+    to call with a single field; sending an explicit null clears a nullable one
+    (build_notes: null erases the notes, and a rating can be taken back the same
+    way). Name, grade and status cannot be nulled — they are always set on a kit.
+    `update_kit_status` is the status-only shortcut for this tool."""
+    parsed_id = _parse_uuid(kit_id, "kit_id")
+    fields = changes.model_dump(exclude_unset=True)
+    if fields.get("status") is not None:
+        fields["status"] = _parse_status(fields["status"])
+    async with _tool_session() as session:
+        kit = await kits_service.update_kit(session, parsed_id, KitUpdate(**fields))
+        return KitRead.model_validate(kit).model_dump(mode="json")
+
+
+@mcp.tool
 async def search_catalog(query: str) -> list[dict]:
     """Search tools, consumables, and upgrades by name (same search the UI
     typeahead uses). ALWAYS call this before adding catalog items to an order —
@@ -112,6 +158,42 @@ async def search_catalog(query: str) -> list[dict]:
     async with _tool_session() as session:
         results = await catalog_service.search(session, query)
         return [r.model_dump(mode="json") for r in results]
+
+
+@mcp.tool
+async def list_retailers() -> list[dict]:
+    """List every shop on record, with rating, packing quality, shipping speed and
+    notes. Call this before create_retailer: nothing in the schema stops the same
+    shop being added twice, and create_order matches an existing one by name."""
+    async with _tool_session() as session:
+        retailers = await orders_service.list_retailers(session)
+        return [RetailerRead.model_validate(r).model_dump(mode="json") for r in retailers]
+
+
+@mcp.tool
+async def create_retailer(retailer: RetailerCreate) -> dict:
+    """Add a shop with its full detail. Only `name` is required — a retailer named
+    on create_order is created with nothing but a name, and update_retailer fills in
+    the rest afterwards. Check list_retailers first so an existing shop is reused."""
+    async with _tool_session() as session:
+        row = await orders_service.create_retailer(session, retailer)
+        return RetailerRead.model_validate(row).model_dump(mode="json")
+
+
+@mcp.tool
+async def update_retailer(retailer_id: str, changes: RetailerUpdate) -> dict:
+    """Rate or annotate a shop: rating (1-5), packing_quality, shipping_speed,
+    would_order_again, url, notes, name. Only the fields present in `changes` are
+    touched; an explicit null clears a nullable one (notes: null erases the notes).
+    Name cannot be nulled. Ids come from list_retailers.
+
+    This is how "the box arrived crushed" or "don't order from them again" gets
+    recorded — the fields exist on every retailer and were previously reachable
+    only from the browser."""
+    parsed = _parse_uuid(retailer_id, "retailer_id")
+    async with _tool_session() as session:
+        row = await orders_service.update_retailer(session, parsed, changes)
+        return RetailerRead.model_validate(row).model_dump(mode="json")
 
 
 @mcp.tool
@@ -194,6 +276,50 @@ async def adjust_stock(catalog_id: str, delta: Int4, reason: str | None = None) 
     async with _tool_session() as session:
         result = await catalog_service.adjust_stock(session, parsed, delta, reason)
         return result.model_dump(mode="json")
+
+
+@mcp.tool
+async def update_catalog_tool(tool_id: str, changes: ToolUpdate) -> dict:
+    """Edit a hobby tool (nippers, files, an airbrush): name, category,
+    quantity_on_hand, unit_cost_reference_minor + unit_cost_reference_currency,
+    condition_notes. Only the fields present in `changes` are touched; an explicit
+    null clears a nullable one. The two unit-cost fields are one pair — after the
+    edit the row must hold both or neither. Ids come from search_catalog.
+
+    To count stock up or down, prefer adjust_stock: it takes a signed delta, so it
+    cannot overwrite a quantity that changed between your read and your write."""
+    parsed = _parse_uuid(tool_id, "tool_id")
+    async with _tool_session() as session:
+        row = await catalog_service.update_catalog_item(session, ItemType.TOOL, parsed, changes)
+        return ToolRead.model_validate(row).model_dump(mode="json")
+
+
+@mcp.tool
+async def update_catalog_consumable(consumable_id: str, changes: ConsumableUpdate) -> dict:
+    """Edit a consumable (paint, cement, sanding sticks): name, category,
+    quantity_on_hand, low_stock_threshold. Only the fields present in `changes` are
+    touched; an explicit null clears a nullable one. Ids come from search_catalog.
+
+    To count stock up or down, prefer adjust_stock — see update_catalog_tool."""
+    parsed = _parse_uuid(consumable_id, "consumable_id")
+    async with _tool_session() as session:
+        row = await catalog_service.update_catalog_item(
+            session, ItemType.CONSUMABLE, parsed, changes
+        )
+        return ConsumableRead.model_validate(row).model_dump(mode="json")
+
+
+@mcp.tool
+async def update_catalog_upgrade(upgrade_id: str, changes: UpgradeUpdate) -> dict:
+    """Edit a third-party upgrade (decals, metal parts, resin conversions): name,
+    manufacturer, quantity_on_hand. Only the fields present in `changes` are
+    touched. Ids come from search_catalog.
+
+    To count stock up or down, prefer adjust_stock — see update_catalog_tool."""
+    parsed = _parse_uuid(upgrade_id, "upgrade_id")
+    async with _tool_session() as session:
+        row = await catalog_service.update_catalog_item(session, ItemType.UPGRADE, parsed, changes)
+        return UpgradeRead.model_validate(row).model_dump(mode="json")
 
 
 @mcp.tool

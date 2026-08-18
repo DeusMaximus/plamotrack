@@ -10,10 +10,13 @@ different places:
    door, because REST and MCP share the schemas but not the tests.
 2. **MCP tool signatures.** An MCP tool is a function signature, not a request
    model, so a bare `int` parameter carries no bound however well the REST side is
-   covered — `adjust_stock(delta)` has no REST route at all, and `apply_upgrade`
-   has one whose schema its MCP twin simply doesn't go through. The bound has to
-   be in the service both callers reach (rule 1), and is declared on the parameter
-   as well so the tool schema tells an agent the same thing.
+   covered — `apply_upgrade` has a REST route whose schema its MCP twin simply
+   doesn't go through, and `adjust_stock` had no REST route at all until #55. The
+   bound has to be in the service both callers reach (rule 1), and is declared on
+   the parameter as well so the tool schema tells an agent the same thing. A door
+   added later inherits the service guard for free and still needs its own bound:
+   that is why `StockAdjustmentRequest` carries `Int4` rather than leaning on the
+   service, and why both doors are driven below.
 3. **Derived values.** Two legal numbers whose sum is not. No schema can see this
    one, and testing input alone will never reach it — it needs a stored row near the
    ceiling and an operation that crosses it.
@@ -222,9 +225,10 @@ async def test_mcp_refuses_an_out_of_range_order_line(client):
     assert (await client.get("/orders")).json() == []
 
 
-async def test_an_out_of_range_delta_is_the_callers_mistake_not_a_conflict(client):
-    """Route 2. `adjust_stock` has no REST route, so no request schema carries this
-    bound — it lives in the service, which is where both callers would meet (rule 1).
+async def test_an_out_of_range_delta_is_the_callers_mistake_not_a_conflict(client, http_client):
+    """Route 2, now through both doors: `adjust_stock` gained a REST route in #55,
+    so the bound is carried by `StockAdjustmentRequest` as well as by the service
+    where both callers meet (rule 1).
 
     Asserted on the **error class**, at the service, because that is the only thing
     that distinguishes this route from the derived-sum guard below. Any delta past
@@ -241,16 +245,22 @@ async def test_an_out_of_range_delta_is_the_callers_mistake_not_a_conflict(clien
         with pytest.raises(InvalidInputError):
             await catalog_service.adjust_stock(session, tool_id, INT4_MAX + 1)
 
-    # And it is refused at the front door too, where every error is a ToolError.
+    # And it is refused at both front doors: a ToolError on one, a 422 on the other
+    # — the same judgement wearing each surface's clothes.
     async with Client(mcp) as mcp_client:
         with pytest.raises(ToolError):
             await mcp_client.call_tool(
                 "adjust_stock", {"catalog_id": tool["id"], "delta": INT4_MAX + 1}
             )
+
+    refused = await http_client.post(f"/catalog/{tool['id']}/adjust", json={"delta": INT4_MAX + 1})
+    assert refused.status_code == 422, f"{refused.status_code}: {refused.text[:200]}"
+    assert "delta" in refused.text
+
     assert (await client.get("/tools")).json()[0]["quantity_on_hand"] == 0
 
 
-async def test_stock_cannot_be_derived_past_the_ceiling(client):
+async def test_stock_cannot_be_derived_past_the_ceiling(client, http_client):
     """Route 3, and the shape no schema can reach: both numbers are legal, their sum
     is not. A conflict, the same class of error as its opposite — "you cannot take 5
     from 3 on hand" and "you cannot add 1 to a number at the ceiling" are both the
@@ -274,6 +284,12 @@ async def test_stock_cannot_be_derived_past_the_ceiling(client):
         with pytest.raises(ToolError) as raised:
             await mcp_client.call_tool("adjust_stock", {"catalog_id": tool["id"], "delta": 1})
     assert "out of range" in str(raised.value)
+
+    # The REST door reaches the same derived sum, and no schema can bound it there
+    # either — a legal delta onto a legal quantity. It has to arrive as a conflict.
+    overflowed = await http_client.post(f"/catalog/{tool['id']}/adjust", json={"delta": 1})
+    assert overflowed.status_code == 409, f"{overflowed.status_code}: {overflowed.text[:200]}"
+
     assert (await client.get("/tools")).json()[0]["quantity_on_hand"] == INT4_MAX
 
     # ... and the same stock still adjusts normally in the other direction.
