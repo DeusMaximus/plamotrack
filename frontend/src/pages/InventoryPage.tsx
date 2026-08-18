@@ -366,10 +366,14 @@ function StockStepper({
     onError(null);
     try {
       await api.adjustStock(item.id, delta);
-      await queryClient.invalidateQueries({ queryKey: [queryKey] });
     } catch (err) {
       onError(err instanceof ApiError ? err.message : "Stock adjustment failed");
     } finally {
+      // Refetch whether it succeeded or not. A refusal means the stored count is
+      // not the one this row is showing — that is *why* it was refused — so
+      // keeping the stale number leaves − armed against a quantity the server has
+      // already rejected, and the next click earns the same 409.
+      await queryClient.invalidateQueries({ queryKey: [queryKey] });
       setPending(false);
     }
   };

@@ -11,14 +11,14 @@ from app.models.enums import (
     WouldOrderAgain,
 )
 from app.schemas.kits import KitRead
-from app.schemas.numeric import NonNegativeInt4, PositiveInt4
+from app.schemas.numeric import NonNegativeInt4, PositiveInt4, Rating
 from app.services.currency import CURRENCY_CODE_PATTERN as _CURRENCY_PATTERN
 
 
 class RetailerCreate(BaseModel):
     name: str = Field(min_length=1)
     url: str | None = None
-    rating: int | None = Field(default=None, ge=1, le=5)
+    rating: Rating | None = None
     packing_quality: PackingQuality | None = None
     shipping_speed: ShippingSpeed | None = None
     would_order_again: WouldOrderAgain | None = None
@@ -30,7 +30,7 @@ class RetailerUpdate(BaseModel):
 
     name: str | None = Field(default=None, min_length=1)
     url: str | None = None
-    rating: int | None = Field(default=None, ge=1, le=5)
+    rating: Rating | None = None
     packing_quality: PackingQuality | None = None
     shipping_speed: ShippingSpeed | None = None
     would_order_again: WouldOrderAgain | None = None

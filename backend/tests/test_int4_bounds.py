@@ -225,6 +225,139 @@ async def test_mcp_refuses_an_out_of_range_order_line(client):
     assert (await client.get("/orders")).json() == []
 
 
+@pytest.mark.parametrize(
+    ("path", "payload", "field"),
+    [
+        pytest.param(
+            "/tools",
+            {"name": "Nippers", "category": "cutting"},
+            "quantity_on_hand",
+            id="tools.quantity_on_hand",
+        ),
+        pytest.param(
+            "/consumables",
+            {"name": "Panel liner", "category": "paint"},
+            "low_stock_threshold",
+            id="consumables.low_stock_threshold",
+        ),
+    ],
+)
+@pytest.mark.parametrize("sent", [True, False], ids=["true", "false"])
+async def test_a_boolean_is_not_a_number(http_client, path, payload, field, sent):
+    """`bool` subclasses `int`, so lax Pydantic reads JSON `true` as 1 and `false`
+    as 0 — on every integer field at once, which is why the refusal lives on the
+    `Annotated` aliases rather than on the field that happened to surface it.
+
+    Both values, because they fail differently: `true` is a plausible 1 that a
+    caller might never notice, while `false` is a 0 that reads as "no change" and
+    passes a `ge=0` bound cleanly. Found by the Cursor Grok 4.6 review of #100 on
+    the new adjust route; the route was not the bug, the alias was.
+    """
+    refused = await http_client.post(path, json={**payload, field: sent})
+    assert refused.status_code == 422, f"{refused.status_code}: {refused.text[:200]}"
+    assert field in refused.text
+
+
+@pytest.mark.parametrize("sent", [True, False], ids=["true", "false"])
+async def test_a_boolean_is_not_a_rating_either(http_client, client, sent):
+    """The remainder of the class, which the alias fix did not reach on its own.
+
+    `rating` is the only write integer that never used the int4 aliases — it
+    carries its own `Field(ge=1, le=5)`, so it always had a ceiling and the
+    contract test never had anything to say about it. `false` was refused by
+    `ge=1` and looked correct; `true` was a rating of one star, on kits and
+    retailers, through both doors. Found by the Cursor Grok 4.6 review of #102
+    after the aliases were already fixed — a fix attached to three of four places
+    is the shape this repo keeps repeating.
+    """
+    kit = (await client.post("/kits", json={"name": "MG Sazabi", "grade": "MG"})).json()
+
+    rated = await http_client.patch(f"/kits/{kit['id']}", json={"rating": sent})
+    assert rated.status_code == 422, f"{rated.status_code}: {rated.text[:200]}"
+    assert (await client.get(f"/kits/{kit['id']}")).json()["rating"] is None
+
+    created = await http_client.post("/retailers", json={"name": "Amiami", "rating": sent})
+    assert created.status_code == 422, f"{created.status_code}: {created.text[:200]}"
+    assert (await client.get("/retailers")).json() == []
+
+
+async def test_mcp_refuses_a_boolean_rating(client):
+    """And the agent door, where the same three fields are reachable through
+    `update_kit`, `create_retailer` and `update_retailer` (#92)."""
+    kit = (await client.post("/kits", json={"name": "RG Nu Gundam", "grade": "RG"})).json()
+    async with Client(mcp) as mcp_client:
+        with pytest.raises(ToolError):
+            await mcp_client.call_tool(
+                "update_kit", {"kit_id": kit["id"], "changes": {"rating": True}}
+            )
+        with pytest.raises(ToolError):
+            await mcp_client.call_tool(
+                "create_retailer", {"retailer": {"name": "X", "rating": True}}
+            )
+    assert (await client.get(f"/kits/{kit['id']}")).json()["rating"] is None
+    assert (await client.get("/retailers")).json() == []
+
+
+async def test_a_boolean_quantity_cannot_conjure_a_purchase(http_client, retailer):
+    """The case that makes the above more than tidiness. A line quantity of `true`
+    is a quantity of 1, and a kit line at quantity 1 spawns a kit — so a JSON
+    boolean writes a purchase record and a collection row that nobody entered.
+    """
+    resp = await http_client.post(
+        "/orders",
+        json={
+            "retailer_id": retailer["id"],
+            "order_date": "2026-08-18",
+            "currency_code": "AUD",
+            "items": [
+                {
+                    "item_type": "kit",
+                    "quantity": True,
+                    "unit_price_minor": 4500,
+                    "currency_code": "AUD",
+                    "kit": {"name": "HG Barbatos", "grade": "HG"},
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 422, f"{resp.status_code}: {resp.text[:200]}"
+    assert (await http_client.get("/orders")).json() == []
+    assert (await http_client.get("/kits")).json() == []
+
+
+@pytest.mark.parametrize("sent", [True, False], ids=["true", "false"])
+async def test_a_boolean_delta_is_refused_on_the_route_that_surfaced_it(http_client, client, sent):
+    """The exact #100 input, which the first cut of this suite did not drive.
+
+    The bool matrix covered `NonNegativeInt4` fields and the MCP tool; REST's
+    `Int4` — the route the finding came from — was only ever checked by hand.
+    `false` matters as much as `true` here: on a signed delta it is a legal 0, so
+    it passes the range bound and reads as a no-op rather than an error. A later
+    `delta: int` on `StockAdjustmentRequest` would reopen the original hole, and
+    without this the suite would stay green (Cursor Grok 4.6, review of #102).
+    """
+    tool = (
+        await client.post(
+            "/tools", json={"name": "Nippers", "category": "cutting", "quantity_on_hand": 3}
+        )
+    ).json()
+    refused = await http_client.post(f"/catalog/{tool['id']}/adjust", json={"delta": sent})
+    assert refused.status_code == 422, f"{refused.status_code}: {refused.text[:200]}"
+    assert "delta" in refused.text
+    assert (await client.get("/tools")).json()[0]["quantity_on_hand"] == 3
+
+
+async def test_mcp_refuses_a_boolean_delta(client):
+    """The other door. `adjust_stock` takes `Int4` on the tool signature, so the
+    same alias carries the refusal to agents — the surface most likely to compute
+    a value rather than type one."""
+    tool = (await client.post("/tools", json={"name": "Nippers", "category": "cutting"})).json()
+    async with Client(mcp) as mcp_client:
+        with pytest.raises(ToolError):
+            await mcp_client.call_tool("adjust_stock", {"catalog_id": tool["id"], "delta": True})
+    assert (await client.get("/tools")).json()[0]["quantity_on_hand"] == 0
+
+
 async def test_an_out_of_range_delta_is_the_callers_mistake_not_a_conflict(client, http_client):
     """Route 2, now through both doors: `adjust_stock` gained a REST route in #55,
     so the bound is carried by `StockAdjustmentRequest` as well as by the service
