@@ -25,8 +25,8 @@ Template:
   stack is started.
 - **State:** **no application code changed, no migrations, no tests run** — there was
   nothing to run. `main` is at `5f973b7`. Working tree clean apart from this entry.
-- **Next:** #92 is the cheap one and is not blocked by anything. #94 needs the
-  columns-vs-history call before anyone writes code.
+- **Next:** #92 is the cheap one and is not blocked by anything. #94 is now decided
+  (see below) and unblocked too — nothing in this batch is waiting on a call.
 
 ### The split, and what each one actually costs
 
@@ -43,16 +43,33 @@ Template:
 - **#94 — kit build start/completion dates.** The only one needing a migration.
 - **#95 — order shipped/dispatched milestone.** Filed so the split didn't drop it.
 
-### Recommended for #94, not yet decided — the owner's call
+### #94 is DECIDED — two columns, dates owned by the user
 
-**Two nullable columns (`build_started_at`, `build_completed_at`) over a
-`kit_status_events` history table.** A history table drags the whole rule-9 surface
+**Settled by the owner, 2026-08-18. Do not reopen this without new information.**
+Two nullable columns (`build_started_at`, `build_completed_at`) on `kits`, **not** a
+`kit_status_events` history table. A history table drags the whole rule-9 surface
 with it — natural key, re-import dedupe, `TABLE_SPECS` position, blank templates,
-backfill migration — to answer stage-duration questions nobody has asked. Two columns
-answer the two being asked and are the summary a history would materialise anyway, so
-it doesn't foreclose the history later. **The honest counter-argument:**
-`building` → `backlog` → `building` is a shelved-and-resumed build that two columns
-flatten, and only the history keeps it.
+backfill migration — to answer stage-duration questions nobody has asked, and it
+makes the two wanted dates something you reconstruct rather than something you set.
+
+**The dates belong to the user, not to the state machine.** A transition stamps a
+default; the stored value stays editable afterwards through the UI, REST *and* MCP.
+That editability is a first-class requirement, not a backfill convenience — it is how
+a collection migrated from another tool gets its real dates. A user-set date must
+never be clobbered by a later status change, which falls out of "stamp only when
+null".
+
+**Two consequences accepted going in, both recorded on #94:**
+
+1. Two columns measure **elapsed**, not **active**, time. A kit started in January,
+   shelved three months and finished in June reads as a five-month build. Per-interval
+   "hours at the bench" is the event table returning, and is out of scope. Do not
+   treat the five-month build as a bug.
+2. The shelved-build case has **no representation at all**. A paused/postponed status
+   was proposed and **declined** — a stalled build sitting in `building` indefinitely
+   is acceptable for a single-owner collection, and it ranks below the other gaps.
+   Deliberately **not filed**, so its absence from the issue list is a decision rather
+   than an oversight.
 
 Whoever builds it: the cost is the sweep, not the migration. Kit status is written
 from **three** places — `services/kits.py` `update_kit`, `services/orders.py`
