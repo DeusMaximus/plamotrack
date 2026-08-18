@@ -8,8 +8,11 @@
  *
  *  Driven through Playwright rather than a unit test because every assertion here
  *  is about real focus and real Tab order, which is the browser's own behaviour
- *  and not something a mock can stand in for. Unlike the drag ordering in #50,
- *  none of it is timing-dependent: a keypress either moves focus or it does not.
+ *  and not something a mock can stand in for. A keypress either moves focus or it
+ *  does not, so most of this needs no timing care at all — but two cases do have
+ *  a window, and both are pinned to an event rather than a duration: the picker's
+ *  own blur timer is waited out by the result list emptying, and the submit
+ *  button's disabled window is held open by stalling the request.
  */
 import { expect, request, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
@@ -226,7 +229,9 @@ test("the order dialog holds focus through dynamic rows and the catalog picker",
   expect(await inDialog(page), `focus left immediately, to ${await focusDescription(page)}`).toBe(
     true,
   );
-  await page.waitForTimeout(400);
+  // Wait for the list to actually go, rather than for a duration that happens to
+  // outlast the picker's 150ms blur timer. Same event, named.
+  await expect(results).toHaveCount(0);
   expect(await inDialog(page), `focus escaped to ${await focusDescription(page)} when the picker closed`)
     .toBe(true);
 
@@ -297,4 +302,52 @@ test("submitting from the keyboard does not drop focus while the request is in f
   const created = rows.find((row) => row.name === `${RETAILER} submit`);
   if (created) await api.delete(`/retailers/${created.id}`);
   await api.dispose();
+});
+
+
+test("a dialog mutating around you does not take your focus", async ({ page }) => {
+  // The other half of the recapture, and the half nothing asked about: the
+  // observer fires on *every* matching mutation and is stopped from acting only
+  // by `activeElement === document.body`. Delete that guard and focus jumps to
+  // the dialog whenever anything in it changes — a form you cannot type in.
+  // Every other assertion in this file is `inDialog`, which focus already inside
+  // the dialog satisfies, so an unguarded observer passed the whole suite.
+  //
+  // The assertions here are therefore on a *named control*, not on containment.
+  //
+  // The mutation used is the picker's result list rendering, because it is caused
+  // by the very input that holds focus and moves nothing by design. "+ Add line"
+  // is not usable for this: the form deliberately focuses the new row's first
+  // control, so focus moves for a good reason and the test would be measuring
+  // the app's own behaviour rather than the observer's.
+  await page.goto("/orders");
+  const trigger = page.getByRole("button", { name: "+ New order" });
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.locator('select:has(option[value="consumable"])').last().selectOption("consumable");
+
+  const search = dialog.getByPlaceholder(/Search consumables/).last();
+  const results = dialog.locator("div.absolute button");
+  await search.click();
+  await expect(search).toBeFocused();
+
+  // Type it a character at a time: each debounced query re-renders the list, so
+  // the childList mutations arrive repeatedly under a cursor that must not move.
+  for (const char of CONSUMABLE.slice(0, 18)) {
+    await page.keyboard.type(char);
+  }
+  await expect(results.first()).toBeVisible();
+  await expect(search).toBeFocused();
+  await expect(search).toHaveValue(CONSUMABLE.slice(0, 18));
+
+  // And typing still lands in the field after the list has rendered.
+  await page.keyboard.type("!");
+  await expect(search).toHaveValue(`${CONSUMABLE.slice(0, 18)}!`);
+  await expect(search).toBeFocused();
+
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
 });

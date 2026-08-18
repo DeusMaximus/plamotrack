@@ -92,14 +92,18 @@ export function Modal({
     // nothing. Tab to Submit and press Enter is the most ordinary keyboard path
     // through this application, and it was the one still escaping.
     //
-    // Filtered rather than `attributes: true`, because these three are what can
-    // make a focused element unfocusable; watching everything would wake this on
-    // every hover class change for nothing.
+    // Filtered rather than `attributes: true`, which would wake this on every
+    // hover class change for nothing. The filter is exactly the attributes that
+    // drop focus to <body>, which is measured rather than assumed: `disabled`
+    // and `hidden` do, and `inert` does not — an inert node keeps `activeElement`
+    // pointing at it, so the guard above is never satisfied and watching it woke
+    // the observer for a case it could not act on. (`display: none` is the same
+    // story and is also absent for the same reason.)
     observer.observe(dialog, {
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ["disabled", "hidden", "inert"],
+      attributeFilter: ["disabled", "hidden"],
     });
     return () => observer.disconnect();
   }, []);
