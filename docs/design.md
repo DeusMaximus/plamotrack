@@ -370,6 +370,18 @@ two rows with split stock — and once fragmented it takes manual merging to fix
 constraint matters more, not less, for people who haven't been maintaining the
 collection long enough to have a consistent naming habit.
 
+The typeahead is the experience; the service layer is the guarantee. Since #107
+every path that writes a retailer's or catalog item's name — `POST`, `PATCH`, the MCP
+tools, and `new_item` on an order line — refuses, with a 409 naming the existing row,
+a name that folds to one another row of the same table already holds (trimmed,
+case-insensitive: the importer's natural key, §12.4). A refusal rather than a silent
+merge, because a caller that asked to *create* and got back someone else's row could
+not tell the two apart. Names are stored trimmed; a whitespace-only name is invalid
+input. Near-misses ("Iron-Blooded Orphans" / "IBO") are not the same key and are not
+refused — that is what the search is still for. The schema carries no unique index
+yet: one would refuse to build on an instance that already holds a pair, so it waits
+for a repair story (#54). *(Added 20/08/2026, #107.)*
+
 ---
 
 ## 4. API Design (REST)
@@ -595,7 +607,9 @@ is `/mcp/` on the API port (streamable HTTP).
 - `list_retailers()`, `create_retailer(retailer)`, `update_retailer(id, changes)` —
   rating, packing quality, shipping speed, would-order-again, notes (§3.7). A retailer
   named on `create_order` is created holding nothing but a name; this is how the rest
-  of the report card gets filled in
+  of the report card gets filled in. `create_retailer` and a rename *refuse* a name an
+  existing shop already holds, where `create_order` *reuses* it — the same
+  case-insensitive key, two deliberate answers (§3.9, #107)
 - `update_catalog_tool(id, changes)`, `update_catalog_consumable(id, changes)`,
   `update_catalog_upgrade(id, changes)` — one per table rather than one tool
   dispatching on `item_type`, because each then takes the REST route's own PATCH
@@ -908,13 +922,15 @@ second copy of it.
 Rows without an id fall back to natural keys: case-insensitive name for retailers and
 the three catalog tables — equality after trimming and case-folding, never a pattern
 match; `get_or_create_retailer` applies the same rule (#49 — a `%` in a shop's name is
-a character, not a wildcard). The §3.9 typeahead is a different thing: a substring
-*find*, already escaped, that offers rows for the human to pick by id — it does not
-decide identity, and neither yet does `new_item` (#107); `(retailer, order_number)`
-for orders, falling back
+a character, not a wildcard), and since #107 so does every create and rename of a
+retailer or catalog item, which refuses a second row under a key that is already
+taken (`services/names.py`, one predicate). The §3.9 typeahead is a different thing:
+a substring *find*, already escaped, that offers rows for the human to pick by id —
+it does not decide identity; `(retailer, order_number)` for orders, falling back
 to `(retailer, order_date, line fingerprint)` when there's no number; line fingerprint
 within the parent for order lines. Ambiguous multi-matches become an error row asking
-for an explicit id rather than a guess.
+for an explicit id rather than a guess — a state that, after #107, only rows written
+before it or an archive that carries the pair itself can produce.
 
 **Kits are excluded from natural-key matching by design.** A kit row is one *physical*
 kit (§3.1), so duplicates are legitimate; matching on name would silently merge real

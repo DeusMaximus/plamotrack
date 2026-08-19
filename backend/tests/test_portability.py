@@ -19,6 +19,7 @@ from sqlalchemy import text as sa_text
 
 from app import __version__ as app_version
 from app.db import session_scope
+from app.models import Retailer
 from app.services import orders
 from app.services.portability import exporting, importing, spec, starter_sheet
 
@@ -1432,7 +1433,10 @@ async def _alt_money_sheet(client, table, major_col, currency_col, code, amount)
             [{"name": "Nippers", "category": "cutting", major_col: amount, currency_col: code}],
         ), "tools.csv"
 
-    retailer = (await client.post("/retailers", json={"name": f"Shop {code}"})).json()
+    # Uniquely named: a test calls this twice for one currency, and a second retailer
+    # under the same name is a 409 (#107).
+    shop = f"Shop {code} {uuid.uuid4().hex[:6]}"
+    retailer = (await client.post("/retailers", json={"name": shop})).json()
     if table == "orders":
         return make_csv(
             spec.ORDERS.header,
@@ -3840,13 +3844,16 @@ async def test_two_retailers_with_one_name_still_round_trip(client, mode):
     """The neighbour of the test above, and the reason the natural-key check is
     restricted to rows that supply no id.
 
-    Nothing stops a collection holding two retailers with the same name — there is
-    no unique constraint, and `POST /retailers` doesn't dedupe. An export writes
-    both, and both rows carry the id that says which is which. Apply the natural-key
-    check to those and the archive this instance just produced becomes un-importable.
+    A collection can hold two retailers with the same name: there is no unique
+    constraint, and until #107 `POST /retailers` didn't dedupe, so an instance may
+    still carry the pair. An export writes both, and both rows carry the id that says
+    which is which. Apply the natural-key check to those and the archive this
+    instance just produced becomes un-importable. Seeded through the session, not the
+    API — the API now refuses the second row, which is the other half of the point.
     """
-    for _ in range(2):
-        assert (await client.post("/retailers", json={"name": "Gundam Base"})).status_code == 201
+    async with session_scope() as session:
+        session.add_all([Retailer(name="Gundam Base"), Retailer(name="Gundam Base")])
+        await session.commit()
     archive = (await client.get("/export/archive")).content
 
     plan = await preview(client, archive, mode=mode)

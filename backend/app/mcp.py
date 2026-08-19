@@ -51,7 +51,10 @@ mcp = FastMCP(
         "backlog = physically in hand but not started); "
         "tools, consumables, and upgrades are quantity-tracked stock. "
         "Before adding catalog items to an order, ALWAYS search_catalog first and reuse "
-        "an existing item's id — free-text duplicates fragment the catalog."
+        "an existing item's id — free-text duplicates fragment the catalog. A new_item "
+        "or create_retailer whose name matches an existing row case-insensitively is "
+        "refused with a conflict naming that row; a near-miss ('Tamiya cement' vs "
+        "'Tamiya Extra Thin Cement') is not, which is why searching first still matters."
     ),
 )
 
@@ -163,8 +166,9 @@ async def search_catalog(query: str) -> list[dict]:
 @mcp.tool
 async def list_retailers() -> list[dict]:
     """List every shop on record, with rating, packing quality, shipping speed and
-    notes. Call this before create_retailer: nothing in the schema stops the same
-    shop being added twice, and create_order matches an existing one by name."""
+    notes. Call this before create_retailer to find the spelling and id a shop already
+    has: create_order matches an existing shop by name (case-insensitively, whitespace
+    trimmed), and create_retailer refuses a name that matches one."""
     async with _tool_session() as session:
         retailers = await orders_service.list_retailers(session)
         return [RetailerRead.model_validate(r).model_dump(mode="json") for r in retailers]
@@ -174,7 +178,9 @@ async def list_retailers() -> list[dict]:
 async def create_retailer(retailer: RetailerCreate) -> dict:
     """Add a shop with its full detail. Only `name` is required — a retailer named
     on create_order is created with nothing but a name, and update_retailer fills in
-    the rest afterwards. Check list_retailers first so an existing shop is reused."""
+    the rest afterwards. A name that matches an existing shop case-insensitively
+    (surrounding whitespace ignored) is refused with a conflict naming that shop and
+    its id — reuse it, or update_retailer if its spelling is what is wrong."""
     async with _tool_session() as session:
         row = await orders_service.create_retailer(session, retailer)
         return RetailerRead.model_validate(row).model_dump(mode="json")
@@ -185,7 +191,8 @@ async def update_retailer(retailer_id: str, changes: RetailerUpdate) -> dict:
     """Rate or annotate a shop: rating (1-5), packing_quality, shipping_speed,
     would_order_again, url, notes, name. Only the fields present in `changes` are
     touched; an explicit null clears a nullable one (notes: null erases the notes).
-    Name cannot be nulled. Ids come from list_retailers.
+    Name cannot be nulled, and cannot be changed to a name another shop already
+    holds (case-insensitively) — that is a conflict. Ids come from list_retailers.
 
     This is how "the box arrived crushed" or "don't order from them again" gets
     recorded — the fields exist on every retailer and were previously reachable
@@ -215,7 +222,9 @@ async def create_order(
     optional kit_number; status defaults to `ordered`, use `pre_ordered` for
     pre-orders) and spawns one collection row per quantity. A tool/consumable/
     upgrade line needs either `catalog_ref_id` (an id from search_catalog — always
-    search first) or `new_item` details. Catalog stock does NOT increase until the
+    search first) or `new_item` details; a `new_item` whose name matches an existing
+    row of that table case-insensitively is refused with a conflict naming the row,
+    and the whole order with it. Catalog stock does NOT increase until the
     order is received: pass received=true for store purchases already in hand, or
     call mark_order_received when a shipment arrives. Include the retailer's
     order_number from the confirmation email when available (support reference —
@@ -284,7 +293,8 @@ async def update_catalog_tool(tool_id: str, changes: ToolUpdate) -> dict:
     quantity_on_hand, unit_cost_reference_minor + unit_cost_reference_currency,
     condition_notes. Only the fields present in `changes` are touched; an explicit
     null clears a nullable one. The two unit-cost fields are one pair — after the
-    edit the row must hold both or neither. Ids come from search_catalog.
+    edit the row must hold both or neither. Ids come from search_catalog. A rename
+    onto a name another tool already holds (case-insensitively) is a conflict.
 
     To count stock up or down, prefer adjust_stock: it takes a signed delta, so it
     cannot overwrite a quantity that changed between your read and your write."""
@@ -299,6 +309,8 @@ async def update_catalog_consumable(consumable_id: str, changes: ConsumableUpdat
     """Edit a consumable (paint, cement, sanding sticks): name, category,
     quantity_on_hand, low_stock_threshold. Only the fields present in `changes` are
     touched; an explicit null clears a nullable one. Ids come from search_catalog.
+    A rename onto a name another consumable already holds (case-insensitively) is a
+    conflict.
 
     To count stock up or down, prefer adjust_stock — see update_catalog_tool."""
     parsed = _parse_uuid(consumable_id, "consumable_id")
@@ -313,7 +325,8 @@ async def update_catalog_consumable(consumable_id: str, changes: ConsumableUpdat
 async def update_catalog_upgrade(upgrade_id: str, changes: UpgradeUpdate) -> dict:
     """Edit a third-party upgrade (decals, metal parts, resin conversions): name,
     manufacturer, quantity_on_hand. Only the fields present in `changes` are
-    touched. Ids come from search_catalog.
+    touched. Ids come from search_catalog. A rename onto a name another upgrade
+    already holds (case-insensitively) is a conflict.
 
     To count stock up or down, prefer adjust_stock — see update_catalog_tool."""
     parsed = _parse_uuid(upgrade_id, "upgrade_id")

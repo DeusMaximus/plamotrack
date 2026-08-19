@@ -30,6 +30,7 @@ from app.schemas.orders import (
 )
 from app.services.catalog import CATALOG_MODELS, guard_stock_ceiling, lock_catalog_row
 from app.services.kits import default_scale_for_grade, has_applied_upgrades
+from app.services.names import clean_name, find_by_name, require_unique_name
 from app.services.write_gate import acquire_write_gate
 
 #: The most units one order line may hold.
@@ -131,7 +132,12 @@ ARRIVAL_ELIGIBLE = {KitStatus.PRE_ORDERED, KitStatus.ORDERED, KitStatus.IN_TRANS
 
 async def create_retailer(session: AsyncSession, data: RetailerCreate) -> Retailer:
     await acquire_write_gate(session)
-    retailer = Retailer(**data.model_dump())
+    fields = data.model_dump()
+    # Refused, not merged: a REST or MCP caller that named an existing shop gets a 409
+    # naming it, and decides. Merging silently would hand back a row the caller did
+    # not ask for and could not tell apart from a create (#107, rule 3).
+    fields["name"] = await require_unique_name(session, Retailer, data.name)
+    retailer = Retailer(**fields)
     session.add(retailer)
     await session.flush()
     await session.commit()
@@ -156,17 +162,14 @@ async def get_or_create_retailer(session: AsyncSession, name: str) -> Retailer:
     before the gated `create_order`, so without the gate here that read happens
     outside it."""
     await acquire_write_gate(session)
-    wanted = name.strip()
+    wanted = clean_name(name)
     # Equality after case-folding, not ILIKE: a pattern match reads `%` and `_` in
     # the *agent's* input as wildcards, so a shop named "%" attached its order to
     # whichever retailer sorted first, and read `\` as its escape, so a shop with a
-    # backslash in its name was never reused (#49). This is the rule the importer's
-    # `_norm_name` / `spec._name_key` apply. Both sides are folded by Postgres —
-    # `lower()` here and Python's `str.lower()` disagree on Turkish `İ`, and a
-    # predicate that folds one side each way misses the exact stored spelling.
-    retailer = await session.scalar(
-        select(Retailer).where(func.lower(Retailer.name) == func.lower(wanted)).limit(1)
-    )
+    # backslash in its name was never reused (#49). The predicate itself lives in
+    # `services/names.py` — the same one the create and rename paths refuse on
+    # (#107), so what this reuses and what they refuse can never disagree.
+    retailer = await find_by_name(session, Retailer, wanted)
     if retailer is None:
         retailer = Retailer(name=wanted)
         session.add(retailer)
@@ -184,6 +187,12 @@ async def update_retailer(
     fields = data.model_dump(exclude_unset=True)
     if fields.get("name") is None and "name" in fields:
         raise InvalidInputError("name cannot be null")
+    if fields.get("name") is not None:
+        # `exclude_id`: a row may keep or re-case its own name; only *another* row
+        # already holding it is a conflict (#107).
+        fields["name"] = await require_unique_name(
+            session, Retailer, fields["name"], exclude_id=retailer.id
+        )
     for key, value in fields.items():
         setattr(retailer, key, value)
     await session.flush()
@@ -212,19 +221,33 @@ async def delete_retailer(session: AsyncSession, retailer_id: uuid.UUID) -> None
 # --- dispatch helpers ----------------------------------------------------------
 
 
-def _build_catalog_row(
-    item_type: ItemType, new_item: NewCatalogItem, currency_code: str
+async def _build_catalog_row(
+    session: AsyncSession, item_type: ItemType, new_item: NewCatalogItem, currency_code: str
 ) -> Tool | Consumable | Upgrade:
+    """The catalog row a `new_item` line creates — or a 409 if one already answers to
+    that name.
+
+    `new_item` is the select-or-create flow's *create* half (§3.9); the select half
+    is `search_catalog`, and it is only a gate if the caller used it. An agent that
+    skipped it, or a human who typed past the typeahead, was making a second row with
+    the same name — which the importer then reads as an ambiguous natural key (#107).
+    The check is here rather than in the two callers so a line added at entry and a
+    line added on edit answer to one rule. Two `new_item` lines in one request naming
+    the same thing refuse as well: the first is flushed before the second is checked,
+    and the whole order rolls back with it (rule 2) — say it on one line with the
+    quantity, or pick the row the first line created.
+    """
     if item_type in (ItemType.TOOL, ItemType.CONSUMABLE):
         if not new_item.category:
             raise InvalidInputError(f"new {item_type} items require a category")
+    name = await require_unique_name(session, CATALOG_MODELS[item_type], new_item.name)
     if item_type is ItemType.TOOL:
         # The line's own currency, not the instance default: this row is being created
         # from a purchase that states what it was bought in, and that is the one place
         # a tool's cost ever arrives with its currency already known (§6).
         cost_minor = new_item.unit_cost_reference_minor
         return Tool(
-            name=new_item.name,
+            name=name,
             category=new_item.category,
             quantity_on_hand=0,
             unit_cost_reference_minor=cost_minor,
@@ -233,7 +256,7 @@ def _build_catalog_row(
         )
     if item_type is ItemType.CONSUMABLE:
         return Consumable(
-            name=new_item.name,
+            name=name,
             category=new_item.category,
             quantity_on_hand=0,
             low_stock_threshold=new_item.low_stock_threshold,
@@ -241,7 +264,7 @@ def _build_catalog_row(
     if not new_item.manufacturer:
         raise InvalidInputError("new upgrade items require a manufacturer")
     return Upgrade(
-        name=new_item.name,
+        name=name,
         manufacturer=new_item.manufacturer,
         quantity_on_hand=0,
     )
@@ -464,7 +487,9 @@ async def _add_line(
         await _spawn_from_details(session, item, line.kit, line.quantity, received)
     else:
         if line.new_item is not None:
-            row = _build_catalog_row(line.item_type, line.new_item, line.currency_code)
+            row = await _build_catalog_row(
+                session, line.item_type, line.new_item, line.currency_code
+            )
             session.add(row)
             await session.flush()
         else:
@@ -559,7 +584,9 @@ async def _update_line(
     else:
         old_ref = item.catalog_ref_id
         if line.new_item is not None:
-            new_row = _build_catalog_row(line.item_type, line.new_item, line.currency_code)
+            new_row = await _build_catalog_row(
+                session, line.item_type, line.new_item, line.currency_code
+            )
             session.add(new_row)
             await session.flush()
             new_ref = new_row.id
