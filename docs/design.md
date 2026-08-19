@@ -126,7 +126,7 @@ else's UI. This is the same app, owned outright.
 
 ## 3. Data Model
 
-Serialized (unique) and fungible (quantity-tracked) items are modelled as genuinely
+Serialised (unique) and fungible (quantity-tracked) items are modelled as genuinely
 separate tables rather than one polymorphic "item" table. They behave too differently to
 unify cleanly, and four honest tables are easier to reason about and query than one
 table with half its columns null.
@@ -149,6 +149,33 @@ rows.
 | build_notes | text | freeform |
 | order_item_id | uuid FK | provenance — which order line spawned this kit |
 | created_at / updated_at | timestamp | |
+| build_started_at | timestamp (nullable) | 🔨 **Planned (v0.2.7, #94)** — stamped on first entering `building`, only when null; user-editable |
+| build_completed_at | timestamp (nullable) | 🔨 **Planned (v0.2.7, #94)** — same rule on entering `complete` |
+| series | text (nullable) | 🔨 **Planned (v0.2.7, #96)** — free text like `grade`; one value; typeahead over existing values, no lookup table |
+
+**Build dates (#94, decided 18/08/2026):** two nullable columns, not a status-event
+table. An event table arrives with the whole §12.2 registry surface — natural key,
+re-import de-dup, a `TABLE_SPECS` position, blank templates, a backfill migration — to
+answer stage-duration questions nobody has asked, and it turns the two dates people
+actually want into something reconstructed rather than set. **The dates belong to the
+user, not to the state machine.** A transition stamps a default only when the column
+is null and never overwrites a value the user set; both stay editable through the UI,
+REST and MCP, because that is how a collection migrated from another tool gets its real
+dates. Accepted going in: the pair measures elapsed time, not time at the bench (a build
+shelved for three months reads as a long build — not a bug), and there is no
+paused/shelved status (declined, not deferred). The migration does not backfill from
+`status_updated_at` — a backfilled date is indistinguishable from an asserted one, and
+wrong for a kit that went complete → building → complete. The importer never invents
+these timestamps (rule 10 by analogy), and they stay out of the order line's `kit_*`
+mirror (§12.2) so a price correction on the line cannot revert a completion date set
+from MCP.
+
+**Series (#96):** free text, one value, the same shape as `grade` and `scale`. An enum
+would settle §9.1 by accident — "series" is Gunpla-specific in a way "grade" is not —
+and a lookup table means an agent cannot record a series nobody has listed yet, which
+is the failure the owner's previous tracker had. A distinct-values typeahead in the kit
+form, also surfaced to MCP, is what keeps `IBO` and `Iron-Blooded Orphans` from becoming
+two series by accident. Shares a migration with #94.
 
 ### 3.2 `kit_photos`
 
@@ -296,7 +323,7 @@ Gundam markers on hand while they were still in a warehouse in Osaka. Quantity m
   stock that's already been consumed, block destructive edits with a 409 rather than
   silently losing history
 - every order mutation loads the order row `FOR UPDATE`, so concurrent
-  receive/edit/delete calls serialize instead of double-applying stock — three writer
+  receive/edit/delete calls serialise instead of double-applying stock — three writer
   types (§2) makes this a real race, not a theoretical one
 
 **One lock order, application-wide.** Every writer that touches catalog stock takes
@@ -318,6 +345,22 @@ since moved, and both the row and the response look right. Optimistic version co
 were considered instead and rejected — three models, a mapper change and every catalog
 write path, to close a hole that locking plus a dirty-field PATCH already closes for a
 single-owner application. Worth revisiting only when that stops being true.
+
+**One gate for every writer, taken before the read it decides from.** Row locks
+serialise writers touching the *same* rows; they say nothing about a decision made from
+rows the write never names — and that is the shape of an import apply, which plans
+against the whole collection and then writes. Five consecutive review rounds on #79 each
+closed the interleaving the previous round had reported and left the next one open,
+until the fix moved one level up: every mutating service function takes a
+collection-wide advisory lock (`pg_advisory_xact_lock`, `services/write_gate.py`)
+*before* reading the state it will act on, and holds it to commit or rollback.
+Transaction-scoped, so there is nothing to release and no error path can strand it.
+Reads never take it — import preview, every list and detail path, and export stay
+concurrent — so the cost is that writers queue behind one another for the length of one
+transaction, which for a single-owner collection with three writer types is the right
+trade. The row locks and lock order above still apply inside the gate: they keep an
+agent and a browser honest about the same row; the gate keeps them honest about rows
+neither of them named. *(Added 15/08/2026, #80; rule 7.1 in `AGENTS.md`.)*
 
 **Duplicate-catalog prevention.** Order entry uses search-and-select-or-create (a
 typeahead against existing tools/consumables/upgrades) rather than a free-text name
@@ -762,6 +805,21 @@ Unchanged from the original plan:
 13. 🔨 **M9 — Open-source operations:** contribution guide, release automation,
     compatibility/support matrix, and deployment documentation polish
 
+**Between M5 and M5.1 — the hardening passes (in progress).** An external review of
+v0.2.3-alpha (11/08/2026) was triaged into a run of small GitHub milestones named
+`M5 hardening — v0.2.N-alpha`, each its own release, all inside M5 so the numbering
+above stands. Shipped: **v0.2.4** — a write changes only what it was asked to change;
+**v0.2.5** — the importer reads what it is given (apply bound to the previewed plan,
+numeric grammar, archive integrity, budgets). Open: **v0.2.6** — the importer is
+*stable and usable*, defined as "no bug corrupts data silently", not "the importer is
+finished" (#44, #77, #87, #90); **v0.2.7** — the workflow release: MCP write parity
+(#92 and #55 shipped, #97 open), board-move ordering and keyboard-operable dialogs
+(shipped), backdatable receipt (#93), build dates and series (§3.1; #94, #96), a
+shipped milestone on orders (#95), retailer matching (#49); **v0.2.8** — everything
+that is neither a corruption path nor coupled to the workflow work. M5.1 starts after
+them. The current milestone is the open one with the lowest number; the live issue
+list is on GitHub.
+
 ---
 
 ## 12. Import & Export ✅ (Milestone 4.5, 06/08/2026)
@@ -784,6 +842,16 @@ minor-unit money column a major-unit twin (`unit_price` beside `unit_price_minor
 canonical column always wins when both are present. This costs a few columns and buys a
 file that opens in any spreadsheet and makes sense — which is most of what "your data is
 yours" means in practice.
+
+An archive is read in **one transaction under `REPEATABLE READ READ ONLY`**
+(`services/read_snapshot.py`), so every CSV in it comes from the same instant. Under
+the default isolation each table is its own snapshot, and a write landing between two
+of them produced an archive whose files contradicted each other — a kit whose order
+line no CSV in the zip contained (#48). The database was never damaged; the artifact
+was, and the artifact is what gets kept as a backup and restored from. A snapshot is
+not a lock: row-level writes and an export never delay each other in either direction;
+only a `replace_all` import's `TRUNCATE` queues behind an in-flight export, and the
+reverse. *(Added 16/08/2026; rule 7.2 in `AGENTS.md`.)*
 
 ### 12.2 The spec registry
 
@@ -823,8 +891,11 @@ defaults are applied at write time and never reach a planned row at all. Hash ei
 directly and preview and apply can never agree on a sheet that supplies no ids.
 
 Nothing is cached server-side. The plan can't go stale, it survives a container restart,
-and the recheck closes the window between looking and committing. The frontend just
-holds the `File` and posts it twice.
+and the recheck closes the window between the *user's* look and the apply. It is not
+what makes the apply safe against a concurrent writer — apply re-plans and writes under
+the collection write gate (§3.9), so nothing can move between its own re-plan and its
+writes; the hash catches what changed while a human was reading the preview. The
+frontend just holds the `File` and posts it twice.
 
 ### 12.4 Not duplicating things
 
