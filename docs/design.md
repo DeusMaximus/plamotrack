@@ -907,9 +907,11 @@ second copy of it.
 
 Rows without an id fall back to natural keys: case-insensitive name for retailers and
 the three catalog tables — equality after trimming and case-folding, never a pattern
-match, which is the rule `get_or_create_retailer` and the §3.9 select-or-create flow
-use too (#49 made the first of those agree; a `%` in a shop's name is a character, not
-a wildcard); `(retailer, order_number)` for orders, falling back
+match; `get_or_create_retailer` applies the same rule (#49 — a `%` in a shop's name is
+a character, not a wildcard). The §3.9 typeahead is a different thing: a substring
+*find*, already escaped, that offers rows for the human to pick by id — it does not
+decide identity, and neither yet does `new_item` (#107); `(retailer, order_number)`
+for orders, falling back
 to `(retailer, order_date, line fingerprint)` when there's no number; line fingerprint
 within the parent for order lines. Ambiguous multi-matches become an error row asking
 for an explicit id rather than a guess.

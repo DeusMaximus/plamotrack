@@ -25,8 +25,12 @@ from app.services import orders
 # --- helpers ---------------------------------------------------------------
 
 
-async def _retailers(client) -> dict[str, dict]:
-    return {r["name"]: r for r in (await client.get("/retailers")).json()}
+async def _retailers(client) -> list[dict]:
+    return (await client.get("/retailers")).json()
+
+
+def _by_name(rows: list[dict], name: str) -> list[dict]:
+    return [r for r in rows if r["name"] == name]
 
 
 def _order_payload(retailer: str) -> dict:
@@ -66,6 +70,11 @@ def _order_payload(retailer: str) -> dict:
         # what still has to work: case-folding and surrounding whitespace
         ("Hobby Link Japan", "HOBBY LINK JAPAN", True),
         ("Hobby Link Japan", "  hobby link japan  ", True),
+        # both sides must be folded by the *same* runtime: Postgres lower("İ") is
+        # ASCII "i", Python "İ".lower() is "i" + a combining dot, so a predicate that
+        # folds the column in SQL and the input in Python misses the exact spelling
+        ("İstanbul Hobby", "İstanbul Hobby", True),
+        ("İstanbul Hobby", "istanbul hobby", True),
         # and what deliberately does not: internal whitespace is significant
         ("Hobby Link Japan", "Hobby  Link Japan", False),
     ],
@@ -83,10 +92,12 @@ async def test_get_or_create_retailer_matches_by_equality(client, existing, aske
     else:
         assert got_id != seeded["id"], f"{asked!r} was matched against {existing!r}"
         assert got_name == asked.strip()
-    # exactly the rows we expect, and the seeded one untouched either way
-    names = await _retailers(client)
-    assert names[existing]["id"] == seeded["id"]
-    assert len(names) == (1 if expect_reuse else 2)
+    # exactly the rows we expect, the seeded one untouched, and never a second row
+    # under the seeded name — counted from the list, not a dict keyed by name, which
+    # would collapse a same-name duplicate into one entry and hide it
+    rows = await _retailers(client)
+    assert [r["id"] for r in _by_name(rows, existing)] == [seeded["id"]]
+    assert len(rows) == (1 if expect_reuse else 2)
 
 
 # --- retailer: the MCP path the issue names ----------------------------------
@@ -101,9 +112,9 @@ async def test_mcp_create_order_with_a_wildcard_name_does_not_attach_to_another_
         order = (await mcp_client.call_tool("create_order", _order_payload("%"))).data
 
     assert order["retailer_id"] != decoy["id"]
-    names = await _retailers(client)
-    assert set(names) == {"Hobby Link Japan", "%"}
-    assert order["retailer_id"] == names["%"]["id"]
+    rows = await _retailers(client)
+    assert sorted(r["name"] for r in rows) == ["%", "Hobby Link Japan"]
+    assert order["retailer_id"] == _by_name(rows, "%")[0]["id"]
     decoy_orders = [
         o for o in (await client.get("/orders")).json() if o["retailer_id"] == decoy["id"]
     ]
@@ -122,8 +133,8 @@ async def test_two_agents_naming_the_same_new_shop_at_once_create_it_once(client
 
     first, second = await asyncio.gather(attempt(), attempt())
     assert first["retailer_id"] == second["retailer_id"]
-    names = await _retailers(client)
-    assert [n for n in names if n.startswith("Race Shop")] == [name]
+    rows = await _retailers(client)
+    assert [r["name"] for r in rows if r["name"].startswith("Race Shop")] == [name]
 
 
 # --- kits: the grade filter, REST and MCP ------------------------------------
@@ -133,14 +144,16 @@ async def test_two_agents_naming_the_same_new_shop_at_once_create_it_once(client
     ("grade_filter", "expected"),
     [
         ("M_", ["literal-underscore"]),  # not MG
-        ("M%", []),  # not MG / MSV
+        ("M%", []),  # not MG
         ("%", []),  # not everything
         ("mg", ["mg-kit"]),  # case-folding kept
         ("MG", ["mg-kit"]),
+        ("İ", ["turkish-i"]),  # same fold on both sides — see the retailer matrix
     ],
 )
 async def test_list_kits_grade_filter_is_not_a_pattern(client, grade_filter, expected):
-    for name, grade in [("mg-kit", "MG"), ("hg-kit", "HG"), ("literal-underscore", "M_")]:
+    seed = [("mg-kit", "MG"), ("hg-kit", "HG"), ("literal-underscore", "M_"), ("turkish-i", "İ")]
+    for name, grade in seed:
         assert (await client.post("/kits", json={"name": name, "grade": grade})).status_code == 201
 
     rest = (await client.get("/kits", params={"grade": grade_filter})).json()

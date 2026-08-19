@@ -50,8 +50,9 @@ async def list_kits(
         stmt = stmt.where(Kit.status == status)
     if grade is not None:
         # Case-insensitive equality, not ILIKE — `M_` is a grade filter, not a
-        # pattern that also matches MG (#49).
-        stmt = stmt.where(func.lower(Kit.grade) == grade.lower())
+        # pattern that also matches MG (#49). Both sides folded by Postgres, as in
+        # `get_or_create_retailer`, so the two folds cannot disagree.
+        stmt = stmt.where(func.lower(Kit.grade) == func.lower(grade))
     return list((await session.scalars(stmt)).all())
 
 

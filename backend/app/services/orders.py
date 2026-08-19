@@ -159,11 +159,13 @@ async def get_or_create_retailer(session: AsyncSession, name: str) -> Retailer:
     wanted = name.strip()
     # Equality after case-folding, not ILIKE: a pattern match reads `%` and `_` in
     # the *agent's* input as wildcards, so a shop named "%" attached its order to
-    # whichever retailer sorted first (#49). This is the same rule the importer's
-    # `_norm_name` / `spec._name_key` apply, so all three surfaces agree on what
-    # "the same retailer" means.
+    # whichever retailer sorted first, and read `\` as its escape, so a shop with a
+    # backslash in its name was never reused (#49). This is the rule the importer's
+    # `_norm_name` / `spec._name_key` apply. Both sides are folded by Postgres —
+    # `lower()` here and Python's `str.lower()` disagree on Turkish `İ`, and a
+    # predicate that folds one side each way misses the exact stored spelling.
     retailer = await session.scalar(
-        select(Retailer).where(func.lower(Retailer.name) == wanted.lower()).limit(1)
+        select(Retailer).where(func.lower(Retailer.name) == func.lower(wanted)).limit(1)
     )
     if retailer is None:
         retailer = Retailer(name=wanted)
