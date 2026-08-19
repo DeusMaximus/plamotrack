@@ -34,6 +34,14 @@ export function CatalogItemPicker({
     queryKey: ["catalog-search", debounced],
     queryFn: () => api.searchCatalog(debounced),
     enabled: open && debounced.length > 0,
+    // This picker is the de-dup gate for the whole catalog, so it must never
+    // answer "nothing matches — create it" from a cached result. The app-wide
+    // staleTime is 5 s; a search made in one order form and repeated in the
+    // next would otherwise be served stale, and the item created seconds ago
+    // would be offered for creation again (#49). Zero means every open and every
+    // query change re-asks the server — including for rows an MCP agent added
+    // that no invalidation in this client could know about.
+    staleTime: 0,
   });
 
   const matches = (results ?? []).filter((result) => result.item_type === itemType);

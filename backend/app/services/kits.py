@@ -1,7 +1,7 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -49,7 +49,10 @@ async def list_kits(
     if status is not None:
         stmt = stmt.where(Kit.status == status)
     if grade is not None:
-        stmt = stmt.where(Kit.grade.ilike(grade))
+        # Case-insensitive equality, not ILIKE — `M_` is a grade filter, not a
+        # pattern that also matches MG (#49). Both sides folded by Postgres, as in
+        # `get_or_create_retailer`, so the two folds cannot disagree.
+        stmt = stmt.where(func.lower(Kit.grade) == func.lower(grade))
     return list((await session.scalars(stmt)).all())
 
 
