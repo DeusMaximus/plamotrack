@@ -106,7 +106,7 @@ exactly, so all the internal links survive untouched.
 | **Kits** | **Never matched automatically** — see below |
 
 An ambiguous match — two stored retailers or two catalog rows that differ only in
-case or surrounding spaces — is reported as an error row asking for an explicit id.
+case or surrounding whitespace — is reported as an error row asking for an explicit id.
 The application itself no longer creates that pair: since 0.2.7, adding or renaming a
 retailer, tool, consumable or upgrade onto a name another row of the same table
 already holds is refused. If an instance still carries one from before, rename one of

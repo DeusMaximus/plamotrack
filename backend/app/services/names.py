@@ -19,15 +19,17 @@ name does with it:
   already folds to the same key. The caller passes its own id on a rename so a row
   may keep, or re-case, its own name.
 
-The comparison is `lower(btrim(name))` on both sides, **in Postgres**. Both sides
-in one runtime because Postgres `lower()` and Python `str.lower()` disagree on
-Turkish `İ`, and a predicate that folds one side each way misses the exact stored
-spelling (#49). `btrim` on the stored side because rows written before this module
-existed can carry surrounding spaces — the browser forms never trimmed and neither
-did the create routes — and the importer's `strip().lower()` reads `" HLJ "` and
-`HLJ` as one shop. It trims spaces only; the importer's Python `strip()` trims every
-Unicode whitespace, which is wider, and a legacy name padded with a tab is not a
-case this guards.
+The comparison is `lower(btrim(name, WHITESPACE))` on both sides, **in Postgres**.
+Both sides in one runtime because Postgres `lower()` and Python `str.lower()`
+disagree on Turkish `İ`, and a predicate that folds one side each way misses the
+exact stored spelling (#49). Trimmed on the stored side because rows written before
+this module existed can carry surrounding whitespace — the browser forms never
+trimmed and neither did the create routes — and the importer's `strip().lower()`
+reads `" HLJ "` and `HLJ` as one shop. The trim set is generated from this
+runtime's `str.isspace()`, i.e. exactly what `str.strip()` removes from the input
+here and in the importer, so a legacy name padded with a tab, a no-break space or
+an ideographic space is the same key on both sides (PR #109 review, P3-1 — plain
+`btrim` trims `0x20` only, and those four were each a second row).
 
 Equality, never a pattern — `%`, `_` and a backslash in a name are characters (#49).
 Per-table: a tool and a consumable may share a name; the importer matches "within
@@ -52,12 +54,21 @@ from app.models import Consumable, Retailer, Tool, Upgrade
 
 type NamedRow = Retailer | Tool | Consumable | Upgrade
 
-#: What the refusal calls the row — the API's own vocabulary, not the table name.
+#: Every character Python's `str.strip()` removes, generated from `str.isspace()` at
+#: import so it can never drift from `clean_name` or the importer's `_norm_name`.
+#: Handed to Postgres `btrim` as its trim set — `btrim(text, text)` is character-
+#: aware for `text`, so the multi-byte members (NBSP, U+3000) trim as one character
+#: each. Scanned over the Basic Multilingual Plane: every whitespace code point
+#: Unicode defines lives there. 29 characters on current Pythons.
+WHITESPACE = "".join(chr(code) for code in range(0x10000) if chr(code).isspace())
+
+#: What the refusal calls the row — the API's own vocabulary, article included, so
+#: the sentence reads the same for all four ("an upgrade", not "a upgrade").
 _NOUN: dict[type, str] = {
-    Retailer: "retailer",
-    Tool: "tool",
-    Consumable: "consumable",
-    Upgrade: "upgrade",
+    Retailer: "a retailer",
+    Tool: "a tool",
+    Consumable: "a consumable",
+    Upgrade: "an upgrade",
 }
 
 
@@ -70,8 +81,9 @@ def clean_name(name: str) -> str:
 
 
 def _same_key[R: NamedRow](model: type[R], name: str) -> Select[tuple[R]]:
-    # Both sides folded by Postgres; see the module docstring for why.
-    return select(model).where(func.lower(func.btrim(model.name)) == func.lower(name))
+    # Both sides folded by Postgres, the stored side trimmed with Python's own
+    # whitespace set; see the module docstring for why.
+    return select(model).where(func.lower(func.btrim(model.name, WHITESPACE)) == func.lower(name))
 
 
 async def find_by_name[R: NamedRow](session: AsyncSession, model: type[R], name: str) -> R | None:
@@ -105,7 +117,7 @@ async def require_unique_name[R: NamedRow](
     if existing is not None:
         noun = _NOUN[model]
         raise ConflictError(
-            f"a {noun} named '{existing.name}' already exists ({existing.id}) — names "
+            f"{noun} named '{existing.name}' already exists ({existing.id}) — names "
             f"are matched case-insensitively, so reuse it or choose a different name"
         )
     return cleaned

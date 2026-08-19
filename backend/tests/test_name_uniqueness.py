@@ -21,11 +21,13 @@ unfixed code; everything asserting 409/ToolError goes red there.
 """
 
 import asyncio
+import time
 import uuid
 
 import pytest
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
+from sqlalchemy import text
 
 from app.db import session_scope
 from app.exceptions import ConflictError, InvalidInputError
@@ -34,6 +36,7 @@ from app.models import Consumable, Retailer, Tool, Upgrade
 from app.schemas.catalog import ConsumableCreate, ToolCreate, UpgradeCreate
 from app.schemas.orders import RetailerCreate
 from app.services import catalog, orders
+from app.services.write_gate import acquire_write_gate
 
 # --- the four tables, as REST sees them ------------------------------------------
 
@@ -74,27 +77,29 @@ def _raw_fields(model) -> dict:
 
 # --- create: the value axis, every table ---------------------------------------
 
+#: (stored, asked, clashes). Ids are explicit because `pytest -k` is case-insensitive:
+#: the two re-cased directions are distinct mutants' detectors (fold the stored side
+#: only vs fold the input only) and have to be selectable apart.
 VALUE_CASES = [
-    # (stored, asked, clashes)
-    ("HLJ", "HLJ", True),  # exact
-    ("HLJ", "hlj", True),  # re-cased
-    ("hlj", "HLJ", True),  # re-cased the other way — both sides fold, not just the stored one
-    ("HLJ", "  hlj  ", True),  # padded input — stripped before comparing
-    ("İstanbul Hobby", "istanbul hobby", True),  # folded in Postgres on both sides (#49)
-    ("%", "%", True),  # a wildcard is a character, and a character equals itself
-    ("A", "_", False),  # `_` is not "any one character"
-    ("Hobby Link Japan", "Hobby  Link Japan", False),  # internal whitespace is significant
-    ("HLJ", "HLJ Japan", False),  # genuinely different
-    ("HLJ", "  HLJ Japan  ", False),  # different, and stored stripped
+    pytest.param("HLJ", "HLJ", True, id="exact"),
+    pytest.param("HLJ", "hlj", True, id="recased-stored-upper"),
+    # the other way — both sides fold, not just the stored one
+    pytest.param("hlj", "HLJ", True, id="recased-stored-lower"),
+    pytest.param("HLJ", "  hlj  ", True, id="padded-input"),  # stripped before comparing
+    # folded in Postgres on both sides (#49)
+    pytest.param("İstanbul Hobby", "istanbul hobby", True, id="turkish-dotted-i"),
+    # a wildcard is a character, and a character equals itself
+    pytest.param("%", "%", True, id="percent-is-itself"),
+    pytest.param("A", "_", False, id="underscore-is-not-any-char"),
+    # internal whitespace is significant
+    pytest.param("Hobby Link Japan", "Hobby  Link Japan", False, id="internal-space"),
+    pytest.param("HLJ", "HLJ Japan", False, id="different"),
+    pytest.param("HLJ", "  HLJ Japan  ", False, id="different-padded"),  # stored stripped
 ]
 
 
 @pytest.mark.parametrize(("path", "extra", "model"), TABLES)
-@pytest.mark.parametrize(
-    ("stored", "asked", "clashes"),
-    VALUE_CASES,
-    ids=lambda v: repr(v) if isinstance(v, str) else str(v),
-)
+@pytest.mark.parametrize(("stored", "asked", "clashes"), VALUE_CASES)
 async def test_create_refuses_a_name_another_row_already_holds(
     http_client, path, extra, model, stored, asked, clashes
 ):
@@ -124,20 +129,51 @@ async def test_create_with_no_existing_row_is_unchanged(client, path, extra, mod
     assert resp.json()["name"] == "HLJ"
 
 
+#: Padding a row written before the rule can carry. The importer's `strip()` removes
+#: all of these; a stored-side trim that removes fewer leaves the pair #107 closes
+#: (PR #109 review, P3-1: plain `btrim` is `0x20` only, and the other four each
+#: let a second row through).
+LEGACY_PADDING = [
+    pytest.param(" ", id="space"),
+    pytest.param("\t", id="tab"),
+    pytest.param("\n", id="newline"),
+    pytest.param("\u00a0", id="nbsp"),
+    pytest.param("\u3000", id="ideographic-space"),
+]
+
+
 @pytest.mark.parametrize(("path", "extra", "model"), TABLES)
-async def test_a_row_stored_with_surrounding_spaces_still_owns_its_name(
-    http_client, path, extra, model
+@pytest.mark.parametrize("pad", LEGACY_PADDING)
+async def test_a_row_stored_with_surrounding_whitespace_still_owns_its_name(
+    http_client, path, extra, model, pad
 ):
     """Rows written before the rule can carry padding (the browser forms never
-    trimmed). The importer reads `" HLJ "` and `hlj` as one key, so the refusal has
-    to as well — `btrim` on the stored side, not just `strip()` on the input."""
-    legacy_id = await _seed_raw(model, " HLJ ", **_raw_fields(model))
+    trimmed, and nothing stopped a paste bringing a no-break space along). The
+    importer reads `"\tHLJ"` and `hlj` as one key, so the refusal has to as well —
+    the stored side is trimmed with the same set Python's `strip()` uses, not
+    `btrim`'s default space."""
+    legacy_id = await _seed_raw(model, f"{pad}HLJ{pad}", **_raw_fields(model))
 
     resp = await _create(http_client, path, extra, "hlj")
 
     assert resp.status_code == 409, resp.text
     assert legacy_id in resp.json()["detail"]
-    assert await _names(http_client, path) == [" HLJ "]  # the legacy row is left as it is
+    assert await _names(http_client, path) == [f"{pad}HLJ{pad}"]  # the legacy row is left alone
+
+
+@pytest.mark.parametrize("pad", LEGACY_PADDING)
+async def test_get_or_create_retailer_reuses_a_legacy_padded_row(client, pad):
+    """The other consumer of the predicate: an agent naming `HLJ` on `create_order`
+    must land on the tab-padded legacy shop, not mint a second one — which is the
+    one thing that function exists to prevent (#49)."""
+    legacy_id = await _seed_raw(Retailer, f"{pad}HLJ{pad}")
+
+    async with session_scope() as session:
+        row = await orders.get_or_create_retailer(session, "HLJ")
+        assert str(row.id) == legacy_id
+        await session.commit()
+
+    assert await _names(client, "/retailers") == [f"{pad}HLJ{pad}"]
 
 
 async def test_the_same_name_in_different_tables_is_not_a_clash(client):
@@ -146,6 +182,32 @@ async def test_the_same_name_in_different_tables_is_not_a_clash(client):
     for path, extra, _ in (p.values for p in TABLES):
         resp = await _create(client, path, extra, "Nipper")
         assert resp.status_code == 201, (path, resp.text)
+
+
+@pytest.mark.parametrize(
+    ("path", "extra", "model", "opening"),
+    [
+        pytest.param("/retailers", {}, Retailer, "a retailer named", id="retailers"),
+        pytest.param("/tools", {"category": "cutting"}, Tool, "a tool named", id="tools"),
+        pytest.param(
+            "/consumables",
+            {"category": "paint"},
+            Consumable,
+            "a consumable named",
+            id="consumables",
+        ),
+        pytest.param(
+            "/upgrades", {"manufacturer": "Metal Build"}, Upgrade, "an upgrade named", id="upgrades"
+        ),
+    ],
+)
+async def test_the_refusal_reads_as_a_sentence(http_client, path, extra, model, opening):
+    """The message is what the browser banner and the agent both see. "an upgrade",
+    not "a upgrade" (PR #109 review, drive-by)."""
+    await _create(http_client, path, extra, "Nipper")
+    resp = await _create(http_client, path, extra, "nipper")
+    assert resp.status_code == 409
+    assert resp.json()["detail"].startswith(opening), resp.json()["detail"]
 
 
 # --- create: blank -----------------------------------------------------------------
@@ -531,16 +593,48 @@ async def test_mcp_catalog_rename_refuses_another_rows_name(client, tool_name, p
 # --- two writers at once --------------------------------------------------------------
 
 
+async def _writers_parked_on_the_gate() -> int:
+    """How many backends Postgres reports blocked on the advisory lock — asked from
+    a connection of its own, so it is the server's view, not the test's hope."""
+    async with session_scope() as probe:
+        return await probe.scalar(
+            text(
+                "SELECT count(*) FROM pg_stat_activity "
+                "WHERE datname = current_database() "
+                "AND wait_event_type = 'Lock' AND wait_event = 'advisory'"
+            )
+        )
+
+
 async def test_two_writers_naming_one_new_shop_at_once_produce_one_row_and_one_409(http_client):
     """The check is a read the insert depends on, so it runs under the write gate
     (rule 7.1). Two concurrent creates of the same new name serialise: one 201, one
-    409, one row — never two rows."""
+    409, one row — never two rows.
+
+    **Pinned, not raced.** A third transaction holds the gate; both POSTs are
+    launched and the test waits until Postgres reports *both* parked on the advisory
+    lock; only then is the gate released. Correct code parks *before* its SELECT, so
+    the second writer reads the first's committed row → `[201, 409]`. Code that
+    checks before it gates has both SELECTs done by the time they park → `[201,
+    201]` — every time, not six times out of six under `asyncio.gather` (PR #109
+    review, P3-2). The wait is on `pg_stat_activity`, never a sleep."""
     name = f"Race Shop {uuid.uuid4().hex[:6]}"
 
-    first, second = await asyncio.gather(
-        http_client.post("/retailers", json={"name": name}),
-        http_client.post("/retailers", json={"name": name.lower()}),
-    )
+    async with session_scope() as holder:
+        await acquire_write_gate(holder)
+        first_task = asyncio.create_task(http_client.post("/retailers", json={"name": name}))
+        second_task = asyncio.create_task(
+            http_client.post("/retailers", json={"name": name.lower()})
+        )
+        deadline = time.monotonic() + 10
+        while await _writers_parked_on_the_gate() < 2:
+            assert time.monotonic() < deadline, (
+                "both writers should be parked on the gate by now — "
+                "the test is not exercising the interleaving it claims to"
+            )
+            await asyncio.sleep(0.01)
+        # session_scope commits on exit; Postgres drops the advisory lock there.
+    first, second = await asyncio.gather(first_task, second_task)
 
     assert sorted([first.status_code, second.status_code]) == [201, 409]
     # one row under the key — spelled however the writer that won spelled it
