@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import type {
   Control,
   FieldErrors,
@@ -467,6 +467,11 @@ function OrderForm({
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [newRetailerName, setNewRetailerName] = useState<string | null>(null);
+  // Two guards on the inline create, for two different readers: the ref is what
+  // stops a second click that lands before React has re-rendered (#49 — a
+  // double-click made two shops); the state is what greys the button out.
+  const addingRetailer = useRef(false);
+  const [retailerPending, setRetailerPending] = useState(false);
   const { data: retailers } = useQuery({ queryKey: ["retailers"], queryFn: api.listRetailers });
 
   // Snapshotted once per open, deliberately: react-hook-form owns these values
@@ -505,14 +510,20 @@ function OrderForm({
   const { fields, append, remove } = useFieldArray({ control, name: "items" });
 
   const addRetailer = async () => {
-    if (!newRetailerName?.trim()) return;
+    const name = newRetailerName?.trim();
+    if (!name || addingRetailer.current) return;
+    addingRetailer.current = true;
+    setRetailerPending(true);
     try {
-      const created = await api.createRetailer({ name: newRetailerName.trim() });
+      const created = await api.createRetailer({ name });
       await queryClient.invalidateQueries({ queryKey: ["retailers"] });
       setValue("retailer_id", created.id);
       setNewRetailerName(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not add retailer");
+    } finally {
+      addingRetailer.current = false;
+      setRetailerPending(false);
     }
   };
 
@@ -602,7 +613,7 @@ function OrderForm({
                   onChange={(event) => setNewRetailerName(event.target.value)}
                   placeholder="New retailer name"
                 />
-                <Button type="button" onClick={addRetailer}>
+                <Button type="button" onClick={addRetailer} disabled={retailerPending}>
                   Add
                 </Button>
                 <Button type="button" variant="secondary" onClick={() => setNewRetailerName(null)}>

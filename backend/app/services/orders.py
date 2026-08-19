@@ -156,11 +156,17 @@ async def get_or_create_retailer(session: AsyncSession, name: str) -> Retailer:
     before the gated `create_order`, so without the gate here that read happens
     outside it."""
     await acquire_write_gate(session)
+    wanted = name.strip()
+    # Equality after case-folding, not ILIKE: a pattern match reads `%` and `_` in
+    # the *agent's* input as wildcards, so a shop named "%" attached its order to
+    # whichever retailer sorted first (#49). This is the same rule the importer's
+    # `_norm_name` / `spec._name_key` apply, so all three surfaces agree on what
+    # "the same retailer" means.
     retailer = await session.scalar(
-        select(Retailer).where(Retailer.name.ilike(name.strip())).limit(1)
+        select(Retailer).where(func.lower(Retailer.name) == wanted.lower()).limit(1)
     )
     if retailer is None:
-        retailer = Retailer(name=name.strip())
+        retailer = Retailer(name=wanted)
         session.add(retailer)
         await session.flush()
     return retailer

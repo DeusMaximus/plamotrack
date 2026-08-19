@@ -906,8 +906,10 @@ it — an archive lands in an instance that already knows a retailer without cre
 second copy of it.
 
 Rows without an id fall back to natural keys: case-insensitive name for retailers and
-the three catalog tables (the same rule `get_or_create_retailer` and the §3.9
-select-or-create flow already use); `(retailer, order_number)` for orders, falling back
+the three catalog tables — equality after trimming and case-folding, never a pattern
+match, which is the rule `get_or_create_retailer` and the §3.9 select-or-create flow
+use too (#49 made the first of those agree; a `%` in a shop's name is a character, not
+a wildcard); `(retailer, order_number)` for orders, falling back
 to `(retailer, order_date, line fingerprint)` when there's no number; line fingerprint
 within the parent for order lines. Ambiguous multi-matches become an error row asking
 for an explicit id rather than a guess.
