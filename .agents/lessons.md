@@ -361,6 +361,14 @@ account, so unsigned prose reads as the owner speaking — including first-perso
 verification claims and severity calls. Hence the rule in `AGENTS.md`.
 → 2026-08-15 (#75)
 
+### The author's counts were wrong twice in one PR body
+#109's body claimed 70 red on unfixed `main` (measured: 74 — four cases the author
+had filed as controls failed on the strip) and "17 mutants" over a table of 16; a
+regenerated mutant tuple in the same body was corrupted by a careless text replace.
+None of it changed the verdict, all of it was caught only because the reviewer
+re-ran rather than read. The brief now says "re-measure", and the PR-body numbers
+are written from the run's output, not from memory of it. → 2026-08-19 (#109)
+
 ---
 
 ## Architecture

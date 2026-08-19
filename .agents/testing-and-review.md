@@ -237,16 +237,30 @@ queue. Both external tools output to chat unless told otherwise.
 
 ### Briefing a reviewer
 
+**The brief is a template — `.agents/review-brief.md`.** Fill its `‹slots›`, save
+the result to the scratchpad for the owner to paste, don't write one from memory:
+the fixed sentences are the wording that has worked, and the file's last section is
+the checklist that produces the per-PR "where I'd push" bullets, which is where the
+findings come from. The template also names the PR-body sections it points at
+(What / Deliberate calls / Tests with the negative control and the mutant table),
+so write the PR body to that shape. The bullets below are why the fixed parts say
+what they say:
+
 - **Prepare the environment first:** deps installed (`uv sync`, `npm install`),
   db up, everything offline-resolvable. Otherwise every install is an approval
   prompt inside the review.
 - **Tell it where to post:** `gh pr comment N --body-file <path>` — `--body-file`,
   not `--body`, because a shell string mangles backticks and `$`.
-- **Point it at the test claim.** The PR body lists which tests fail against
-  unfixed `main` and why; that is the claim most worth checking. Name the two or
-  three things in the branch that are assumptions rather than proofs and invite it
-  to push there.
+- **Point it at the test claim, and tell it to re-measure.** The PR body lists
+  which tests fail against unfixed `main` and why; that is the claim most worth
+  checking, and the author's counts are the first thing to get wrong (#109's body
+  said 70 red over a measured 74, and "17 mutants" over a table of 16). Name the
+  two or three things in the branch that are assumptions rather than proofs and
+  invite it to push there.
 - **Vocabulary:** see the mutation-testing note above.
+- **One reviewer per round, a different model family from the author where you
+  can.** Cursor and Codex are the defaults; Claude is an option with the caveat
+  written into the template's footer.
 
 ### Responding to a review
 

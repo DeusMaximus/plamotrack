@@ -108,6 +108,7 @@ HANDOFF.md              # session hand-off log — the five most recent entries 
   handoff/YYYY-MM.md    #   archived HANDOFF.md entries, verbatim; grep it, don't read it
   lessons.md            #   case histories behind the rules — append-only, stable headings
   testing-and-review.md #   procedure: suites, harness, CI, release gate, reviewer routing
+  review-brief.md       #   fill-in template for briefing a reviewer; the PR-body shape it assumes
 ```
 
 ## Dev environment & commands

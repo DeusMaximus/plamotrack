@@ -13,3 +13,6 @@ humans working alongside them) need *between* sessions, kept out of the always-l
 - `testing-and-review.md` — procedure, edited in place: how to write a regression
   test here, the fixtures, the mutation harness, e2e hygiene, the release gate,
   which reviewer for what, and how to answer a review.
+- `review-brief.md` — the fill-in template for briefing an external reviewer
+  (Cursor / Codex / Claude), the PR-body shape it points at, and the checklist
+  that produces the per-PR "where I'd push" section. Edited in place.
