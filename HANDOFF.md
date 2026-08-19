@@ -41,12 +41,12 @@ Template:
 
 ---
 
-## 2026-08-20 — Claude Code (Fable 5) — #107 → PR #109: Cursor round 1 GO, both P3s taken; #110 filed
+## 2026-08-20 — Claude Code (Fable 5) — #107 closed: PR #109 merged as `c177ea6` after one Cursor round; #110 filed; review-brief template landed
 
-- **Done:** **#107** on `fix/107-name-uniqueness`, head **`d1d051d`**, pushed;
-  **PR #109 open**; CI all green at `486e14c` (the last code commit); `d1d051d`
-  is docstring-only (Backend + Frontend green, Integration caught in the runner
-  outage below). **Cursor round 1 (Grok 4.6) at `49c1a9f`: GO, two
+- **Done:** **#107 closed — PR #109 squash-merged as `c177ea6`**, branch deleted,
+  on the owner's call after one Cursor round (CI all green at `486e14c`, the last
+  code commit; the final docstring-only head was caught in the runner outage
+  below, and `main` has no protection). **Cursor round 1 (Grok 4.6) at `49c1a9f`: GO, two
   P3s, both taken at `486e14c`** — P3-1: plain `btrim` trims `0x20` only, so a
   legacy row padded with tab/NBSP/U+3000 was two keys here and one to the
   importer; the trim set is now `names.WHITESPACE`, generated from `str.isspace()`
@@ -94,9 +94,9 @@ Template:
   owes its Codex round** and gates #44/#77/#87/#90; #107 → 0.2.7; #104/#98/#99 →
   0.2.8. Worktrees `/private/tmp/plamotrack-pr100` and `-pr108-main` still stale,
   left alone; this session's `-107-main` removed.
-- **Next:** **#109 is mergeable on the reviewer's GO** once the owner says so
-  (`gh pr merge 109 --squash`, `Closes #107`); a round 2 is the owner's call, not
-  owed. Then 0.2.7's remaining items clear of #86: **#93**
+- **Next:** fold the 17 mutant tuples from #109's PR body into `mutation_test.py`
+  once #86's version of the harness lands (they are in a collapsed block there,
+  anchors verified at `d1d051d`). Then 0.2.7's remaining items clear of #86: **#93**
   (backdatable `received_at` — must backdate the kits it advances),
   **#94 + #96** (one migration, separate commits; importer needs no logic change
   because it must not invent timestamps), **#95** after #86 (its importer half
