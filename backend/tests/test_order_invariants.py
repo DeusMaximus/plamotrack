@@ -753,17 +753,29 @@ async def test_re_importing_an_archive_of_a_drifted_line_is_a_no_op(client, drif
         assert "this upload supplies 3 kit(s)" in error["error"], error
 
 
-async def test_a_kits_sheet_that_never_mentions_order_item_id_moves_nothing(client):
+@pytest.mark.parametrize(
+    ("quantity", "expect_spawned"),
+    [("2", 0), ("3", 1)],
+    ids=["line restated", "line quantity raised"],
+)
+async def test_a_kits_sheet_that_never_mentions_order_item_id_moves_nothing(
+    client, quantity, expect_spawned
+):
     """The column-absent state, on the *other* table.
 
-    `_attached_after` reads `order_item_id` from `present`, not from values: a
-    partial `kits.csv` fixing a build note has no such column, and
+    A partial `kits.csv` fixing a build note has no `order_item_id` column, and
     `values.get(...)` is then `None` — indistinguishable from a cell that says
-    "detach this kit". Treating the two alike makes every partial kits sheet look
-    like it is emptying its line, and the fan-out spawns replacements for kits that
-    never went anywhere.
+    "detach this kit". Two places read `present` rather than values so the two
+    are told apart, and each has its own line state here:
 
-    Found by mutation testing: removing the `present` guard left the whole suite green,
+    * **line restated** — the line authorises nothing, so the kit-move refusal is
+      what sees the row; reading it as a detach would refuse a build-note fix for
+      leaving the line short.
+    * **line quantity raised** — the line is reconciled, so `_attached_after` is
+      what sees the row; reading it as a detach spawns a replacement for a kit
+      that never went anywhere (two spawned here instead of one).
+
+    Found by mutation testing, twice: removing either guard left the suite green,
     because every other kits row in it carries the column.
     """
     retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
@@ -773,20 +785,21 @@ async def test_a_kits_sheet_that_never_mentions_order_item_id_moves_nothing(clie
 
     content = archive(
         {"kits": ["id", "name", "grade", "build_notes"]},
-        order_items=[line_row(order, item, quantity="2")],
+        order_items=[line_row(order, item, quantity=quantity)],
         kits=[
             {"id": before[0], "name": "Zaku II", "grade": "HG", "build_notes": "waist is fiddly"}
         ],
     )
     plan = await preview(client, content)
     assert plan["blocking_errors"] == [], plan
-    assert plan["derived"]["kits_spawned"] == 0, plan["derived"]
+    assert plan["derived"]["kits_spawned"] == expect_spawned, plan["derived"]
     assert plan["derived"]["kits_removed"] == 0, plan["derived"]
 
     resp = await apply(client, content)
     assert resp.status_code == 200, resp.text
     stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
-    assert [k["id"] for k in stored["kits"]] == before, "nobody moved"
+    assert [k["id"] for k in stored["kits"]][:2] == before, "nobody moved"
+    assert len(stored["kits"]) == int(quantity)
     assert (await client.get(f"/kits/{before[0]}")).json()["build_notes"] == "waist is fiddly"
 
 

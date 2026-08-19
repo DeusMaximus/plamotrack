@@ -525,6 +525,15 @@ CASES = [
         "            elif False:",
         "leaves_alone_authorises_no_reconciliation",
     ),
+    (
+        "inv-23b. the refusal reads a kits row with no order_item_id column as a detach",
+        IMP,
+        '            if "order_item_id" not in kit_row.present:\n'
+        "                continue\n"
+        '            after_line = kit_row.values.get("order_item_id")',
+        '            after_line = kit_row.values.get("order_item_id")',
+        "never_mentions_order_item_id",
+    ),
 ]
 
 
@@ -1120,9 +1129,14 @@ async def test_review_a_planned_photo_protects_its_kit_from_removal(client):
 
 
 async def test_review_rating_this_upload_writes_protects_provenance(client):
-    """Exercise planned rating without status, stored evidence, or a count refusal."""
+    """Exercise planned rating without status, stored evidence, or a count refusal.
+
+    The source line is restated, not written, so it authorises nothing; a
+    replacement kit created on it keeps its count at one so the move is not
+    refused for leaving it empty. Only the provenance rule can refuse this.
+    """
     from tests.test_order_invariants import archive, kit_line, line_row, make_order
-    from tests.test_portability import actions, apply, preview
+    from tests.test_portability import apply, preview
 
     retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
     source = await make_order(client, retailer, [kit_line(1)], number="RATING-SOURCE")
@@ -1146,19 +1160,29 @@ async def test_review_rating_this_upload_writes_protects_provenance(client):
                 "grade": moved["grade"],
                 "rating": "5",
                 "order_item_id": destination_line["id"],
-            }
+            },
+            {
+                "id": "",
+                "name": "Replacement",
+                "grade": "HG",
+                "rating": "",
+                "order_item_id": source_line["id"],
+            },
         ],
     )
     plan = await preview(client, content)
     response = await apply(client, content)
     stored = (await client.get(f"/kits/{moved['id']}")).json()
+    kits_plan = next(t for t in plan["tables"] if t["table"] == "kits")
+    moved_row = next(r for r in kits_plan["rows"] if r["matched_id"] == moved["id"])
     observed = (
-        actions(plan, "kits"),
+        moved_row["action"],
+        "building or complete, rated" in (moved_row["error"] or ""),
         response.status_code,
         stored["rating"],
         stored["order_item_id"],
     )
-    assert observed == (["error"], 409, None, source_line["id"]), observed
+    assert observed == ("error", True, 409, None, source_line["id"]), observed
 
 
 @pytest.mark.parametrize("child", ["upgrade_applications", "kit_photos"])
