@@ -136,8 +136,9 @@ container once ran migrations it predated. Separately, a fresh LXC on the offici
 Docker packages failed `up -d --wait` outright with no `--build`, and a minimal probe
 on that same host does *not* reproduce it; the cause is not isolated. **Do not write
 a mechanism for it into the docs until someone has reproduced it** — three plausible
-explanations have been committed and retracted (`.agents/lessons.md` → "The
-`--build` mystery"). State the observation, prescribe the flag, stop there.
+explanations have already been committed and retracted
+(`.agents/lessons.md` → "The `--build` mystery"). State the observation, prescribe
+the flag, stop there.
 
 Backend is uv-managed — run everything from `backend/`:
 

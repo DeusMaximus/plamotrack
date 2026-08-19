@@ -350,23 +350,24 @@ verification claims and severity calls. Hence the rule in `AGENTS.md`.
 
 ## Architecture
 
-### Why the write gate exists (rule 7.1)
-See "When rounds keep landing in one function" above. Row locks serialise writers
-touching the same row; they cannot protect a read-decide-write span whose decision
-depends on rows the plan never names, which is the shape `apply_import` has. A
-mutating service that skips the gate reopens the class: a plan read outside it is
-stale by the time it is written, and the failures are 500s and silent data loss, not
-conflicts. → 2026-08-15 (#79, #80)
+### Why the write gate exists
+Rule 7.1. See "When rounds keep landing in one function" above. Row locks serialise
+writers touching the same row; they cannot protect a read-decide-write span whose
+decision depends on rows the plan never names, which is the shape `apply_import`
+has. A mutating service that skips the gate reopens the class: a plan read outside
+it is stale by the time it is written, and the failures are 500s and silent data
+loss, not conflicts. → 2026-08-15 (#79, #80)
 
-### Why export reads one snapshot (rule 7.2), and where the snapshot must never go
-One statement per table under `READ COMMITTED` is one snapshot per table, and a
-write landing between two of them wrote an archive whose files contradicted each
-other — a kit whose order line no CSV in the same zip contained (#48). The database
-was never damaged; the artifact was, and the artifact is what gets kept as a backup.
-`plan_import` is shared by preview and apply, so a snapshot there would make every
-apply fail with `ReadOnlySQLTransactionError` — it is the obvious next place someone
-would put it. The snapshot is fixed by the transaction's *first SQL statement*, not
-request entry. → 2026-08-16 (#48)
+### Why export reads one snapshot
+Rule 7.2 — and where the snapshot must never go. One statement per table under `READ
+COMMITTED` is one snapshot per table, and a write landing between two of them wrote
+an archive whose files contradicted each other — a kit whose order line no CSV in
+the same zip contained (#48). The database was never damaged; the artifact was, and
+the artifact is what gets kept as a backup. `plan_import` is shared by preview and
+apply, so a snapshot there would make every apply fail with
+`ReadOnlySQLTransactionError` — it is the obvious next place someone would put it.
+The snapshot is fixed by the transaction's *first SQL statement*, not request entry.
+→ 2026-08-16 (#48)
 
 ### Deterministic lock ordering, not delta aggregation, fixes the deadlock
 #36 proposed aggregating per-target deltas in `update_order`; the fix was
@@ -387,18 +388,19 @@ FastAPI runs yield-dependency teardown (where the commit lived) *after* sending 
 response, so the UI's invalidate-and-refetch could read pre-commit state. Mutating
 services commit explicitly before returning. → 2026-08-06 (Milestone 3)
 
-### The `--build` mystery: three explanations committed and retracted
-A fresh LXC on the official Docker packages failed `docker compose up -d --wait`
-outright; `--build` fixed it. A minimal probe on that same host — one service, same
-`image:` + `build:` pairing, no local image — does *not* reproduce it: Compose
-attempts the pull, fails, and builds anyway. Committed and retracted so far: that
-the compose file always fails without the flag; that old Compose fails and new
-builds (the failing host has the *newer* Compose, v5.4.0 vs OrbStack's v5.1.2); that
-a named-but-missing image is a hard failure anywhere. Leading untested suspect: `api`
-and `migrate` sharing one image tag. The definitive test is on the LXC with the real
-stack (`down`, remove both images, `up` without `--build`) and costs a few minutes of
-downtime — the owner's call. State the observation, prescribe the flag, stop there.
-→ 2026-08-18 (#91 entry), 2026-08-15 (v0.2.5 release gate)
+### The `--build` mystery
+Three explanations committed and retracted. A fresh LXC on the official Docker
+packages failed `docker compose up -d --wait` outright; `--build` fixed it. A
+minimal probe on that same host — one service, same `image:` + `build:` pairing, no
+local image — does *not* reproduce it: Compose attempts the pull, fails, and builds
+anyway. Committed and retracted so far: that the compose file always fails without
+the flag; that old Compose fails and new builds (the failing host has the *newer*
+Compose, v5.4.0 vs OrbStack's v5.1.2); that a named-but-missing image is a hard
+failure anywhere. Leading untested suspect: `api` and `migrate` sharing one image
+tag. The definitive test is on the LXC with the real stack (`down`, remove both
+images, `up` without `--build`) and costs a few minutes of downtime — the owner's
+call. State the observation, prescribe the flag, stop there. → 2026-08-18 (#91
+entry), 2026-08-15 (v0.2.5 release gate)
 
 ---
 
