@@ -252,7 +252,7 @@ issue if yours needs something unusual.
 | `search_catalog` | Search tools/consumables/upgrades — the same search the UI typeahead uses, so agents hit the same de-duplication a human does |
 | `create_order` | Full order with lines; kits fan out, retailers are matched by name or created |
 | `list_orders` | Optionally pending-only — how an agent finds the order a shipping email belongs to |
-| `mark_order_received` | Applies stock, advances that order's kits to backlog |
+| `mark_order_received` | Applies stock, advances that order's kits to backlog — with an optional arrival date, for deliveries logged after the fact |
 | `adjust_stock` | Nudge a quantity, with a reason |
 | `apply_upgrade` | Record an upgrade part going onto a kit |
 

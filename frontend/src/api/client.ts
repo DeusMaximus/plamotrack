@@ -13,6 +13,7 @@ import type {
   Meta,
   Order,
   OrderCreate,
+  OrderReceive,
   OrderUpdate,
   Retailer,
   RetailerCreate,
@@ -160,7 +161,8 @@ export const api = {
   listOrders: () => request<Order[]>("/orders"),
   createOrder: (data: OrderCreate) => request<Order>("/orders", post(data)),
   updateOrder: (id: string, data: OrderUpdate) => request<Order>(`/orders/${id}`, patch(data)),
-  receiveOrder: (id: string) => request<Order>(`/orders/${id}/receive`, { method: "POST" }),
+  receiveOrder: (id: string, data?: OrderReceive) =>
+    request<Order>(`/orders/${id}/receive`, data ? post(data) : { method: "POST" }),
   deleteOrder: (id: string) => request<void>(`/orders/${id}`, { method: "DELETE" }),
 
   previewImport: (file: File, mode: ImportMode) => {

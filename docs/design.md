@@ -326,6 +326,36 @@ Gundam markers on hand while they were still in a warehouse in Osaka. Quantity m
   receive/edit/delete calls serialise instead of double-applying stock — three writer
   types (§2) makes this a real race, not a theoretical one
 
+**Backdatable receipts (#93, 20/08/2026).** Orders are normally logged after the box
+arrived — unpacking, or batch-entering a backlog of past purchases — so the arrival
+instant is supplied rather than always stamped "now":
+
+- entry takes an optional `received_at` (requires the `received` flag — a date on a
+  pending order is a contradiction, refused rather than ignored); the receive call
+  takes an optional one; both default to now
+- the kits a receipt lands in backlog are stamped with the same instant as the order,
+  including kits spawned later into an already-received order by a line edit; a kit
+  whose status the entry itself asserts (building, complete) keeps entry time — the
+  receipt is not when that status began
+- **correction:** `PATCH /orders/{id}` adjusts a `received_at` that is already set,
+  and 409s on a pending order — the pending → received transition stays in the receive
+  path, where the stock dispatch lives. Explicit null is refused: un-receiving is not
+  a supported operation. A correction follows exactly the kits whose stamp equals the
+  old receipt (their last transition *was* the receipt); a kit moved since keeps its
+  own date. MCP has no order-edit tool yet, so correction is REST/browser-only until
+  the update_order tool lands
+- **the future is refused, judged as a calendar date in the instant's own offset** —
+  not as an instant against the server clock, which would refuse an honest "today"
+  over clock skew. A receipt *earlier than `order_date`* is deliberately allowed:
+  `order_date` is a plain date with no offset, so the comparison isn't well-defined
+  across time zones (a same-day purchase entered in UTC+10 holds an instant that is
+  "yesterday" in UTC), and backfilled collections carry approximations
+- **interim time-zone decision, for M5.1 to revisit (#23, #27):** the instance has no
+  time zone, so REST/MCP accept a full ISO 8601 datetime *with offset* (naive is
+  refused), and the browser sends midnight local in its own offset for a picked date.
+  When instance-wide time zone settings arrive, this is the seam they replace —
+  a stated intent, not an accident
+
 **One lock order, application-wide.** Every writer that touches catalog stock takes
 its rows through a single locked-read helper, and takes them in one agreed sequence:
 **catalog rows first, in uuid order, then kits.** Order writes are the only place that
@@ -615,11 +645,13 @@ is `/mcp/` on the API port (streamable HTTP).
   dispatching on `item_type`, because each then takes the REST route's own PATCH
   schema unchanged instead of a hand-written union of all three that every new column
   would have to be added to twice
-- `create_order(retailer, date, items[], order_number?, tracking?, received?)` — the
-  items array drives the same fan-out/increment dispatch as the REST endpoint; retailer
-  matched by name case-insensitively, created if new
+- `create_order(retailer, date, items[], order_number?, tracking?, received?,
+  received_at?)` — the items array drives the same fan-out/increment dispatch as the
+  REST endpoint; retailer matched by name case-insensitively, created if new;
+  `received_at` backdates an arrival logged after the fact (§3.9)
 - `list_orders(pending_only?)` — find the order a shipping or arrival email belongs to
-- `mark_order_received(order_id)` — applies stock, advances pipeline kits to backlog (§3.9)
+- `mark_order_received(order_id, received_at?)` — applies stock, advances pipeline kits
+  to backlog, stamped with the (optionally backdated) arrival (§3.9)
 - `adjust_stock(catalog_id, delta, reason?)`
 - `apply_upgrade(upgrade_id, kit_id, quantity)`
 

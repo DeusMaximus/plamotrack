@@ -226,6 +226,9 @@ export interface OrderCreate {
   shipping_cost_minor?: number | null;
   currency_code: string;
   received?: boolean;
+  /** When the delivery actually arrived, for orders entered after the fact (#93).
+   *  Offset-aware ISO 8601; requires `received: true`; omitted = now. */
+  received_at?: string;
   items: OrderItemCreate[];
 }
 
@@ -243,7 +246,15 @@ export interface OrderUpdate {
   tracking_url?: string | null;
   shipping_cost_minor?: number | null;
   currency_code?: string;
+  /** Correction only: adjusts a receipt date already set (409 on a pending
+   *  order — receiving goes through `receiveOrder`). Cannot be nulled. */
+  received_at?: string;
   items?: OrderItemUpsert[];
+}
+
+/** Optional body for the receive call: omit entirely for "it arrived now". */
+export interface OrderReceive {
+  received_at?: string;
 }
 
 export interface ToolUpdate {
