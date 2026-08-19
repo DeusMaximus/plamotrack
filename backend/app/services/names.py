@@ -107,7 +107,11 @@ async def require_unique_name[R: NamedRow](
 
     Callers take the write gate **before** calling this — it is a check-then-insert,
     and the gate is what makes two writers naming the same new shop at once produce
-    one row and one 409 rather than two rows (rule 7.1).
+    one row and one 409 rather than two rows (rule 7.1). The lookup itself is a
+    plain read, never `FOR UPDATE`: `update_catalog_item` calls this while holding
+    a catalog row lock, and a locked lookup would be a second catalog lock taken
+    outside the uuid-ordered set the order dispatch uses (`_lock_catalog_targets`)
+    — a cycle. The gate serialises the writers; the read does not need to.
     """
     cleaned = clean_name(name)
     stmt = _same_key(model, cleaned)
