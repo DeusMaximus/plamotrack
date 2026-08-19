@@ -41,12 +41,12 @@ Template:
 
 ---
 
-## 2026-08-19 — Claude Code (Fable 5) — #106 merged; #49 fixed, PR #108 open; #107 filed
+## 2026-08-19 — Claude Code (Fable 5) — #106 and #108 merged (#49 closed); #107 filed → 0.2.7
 
 - **Done:** **#106 merged** (`eb3a430`) — design notes caught up on the write gate,
-  export snapshot, #94/#96 decisions and the hardening milestones. **#49 fixed on
-  `fix/49-retailer-name-matching`, PR #108 open at `4106390`, CI green, one
-  Cursor review round done: GO with two P3s, both taken** — fold *both* sides of
+  export snapshot, #94/#96 decisions and the hardening milestones. **#49 closed —
+  PR #108 squash-merged as `7a6e1e1`** after one Cursor review round (GO with two
+  P3s, both taken before merge) — fold *both* sides of
   the predicate in Postgres (`func.lower(col) == func.lower(input)`; the Python
   fold differs on Turkish `İ`, so the reviewed head missed an exact stored
   spelling — a regression against ILIKE), and §12.4 tightened so the typeahead
@@ -57,8 +57,9 @@ Template:
   backslash in its name could never be reused. Browser: ref-guard + pending state
   on the inline "+ retailer" (double-click posted twice); `CatalogItemPicker`
   search query `staleTime: 0` (a de-dup gate must never answer from cache).
-  `docs/design.md` §12.4 now states the natural key precisely. **#107 filed**
-  (unmilestoned): the create/rename paths that apply *no* name predicate —
+  `docs/design.md` §12.4 now states the natural key precisely. **#107 filed and
+  milestoned 0.2.7** (owner's call, on Cursor's suggestion): the create/rename
+  paths that apply *no* name predicate —
   `create_retailer`, `update_retailer`, `new_item`, REST catalog creates —
   can make the importer's natural key ambiguous; verified against the API first.
 - **Decisions:** equality, not an escaped pattern (the backslash case is why the
@@ -72,15 +73,14 @@ Template:
   migration. Negative controls: 11/19 backend red on unfixed `main`; five
   single-site mutants each killed by the tests aimed at that site; both e2e red
   on the unfixed UI, both timing-pinned (`page.route` hold; `page.clock`
-  frozen). Branches: `fix/49-retailer-name-matching` (PR #108) and
+  frozen). `main` is `7a6e1e1` plus this entry. The only branch is
   `fix/44-import-order-invariants` (PR #86, untouched, still the 0.2.6 blocker).
   A stale worktree `/private/tmp/plamotrack-pr100` exists on this Mac from an
   earlier session — not this one's, left alone. Live from before and still true:
   #86 gates #44/#77/#87/#90; #104 in 0.2.8; #97 → 0.2.7; #98/#99 → 0.2.8.
-- **Next:** merge **#108** — it has a GO; the review reply lists what changed at
-  `4106390`. Cursor suggested #107 belongs in **0.2.7**, not 0.2.8 (it is the rest
-  of rule 3 on the names #49 just defined) — the owner's call. Then 0.2.7's
-  remaining items clear of #86 are **#93** (backdatable `received_at` — note
+- **Next:** 0.2.7's remaining items clear of #86 are **#107** (the rest of rule 3
+  on the names #49 just defined — option 1 on the issue, service-layer 409, is the
+  recommendation), **#93** (backdatable `received_at` — note
   `receive_order` also stamps the kits it advances, so a backdated receipt has to
   backdate those), **#95**, and **#94 + #96** (share a migration; decisions are
   in §3.1). #86 still wants a fresh review round before anything in 0.2.6 moves.
