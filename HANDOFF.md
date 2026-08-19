@@ -67,12 +67,16 @@ Template:
   cutting those further is the owner's call, not done.
 - **State:** no application code changed, no tests run. `main` is `07f99e1` plus
   this entry — the **first rotation**, which moved the 2026-08-17 #82/#88 entry
-  to the top of `.agents/handoff/2026-08.md` — plus `50f7c41` (#105). The only
+  to the top of `.agents/handoff/2026-08.md` — plus `50f7c41` (#105). **PR #106
+  open** (`docs/design-catch-up`, docs only): `docs/design.md` catches up on the
+  write gate (§3.9), the export snapshot (§12.1/12.3), the #94/#96 decisions
+  (§3.1) and the hardening milestones (§11) — none of it touched by #49, but two
+  of them were owner decisions living only on issues and in the archive. The only
   other branch is `fix/44-import-order-invariants` (PR #86, untouched, still the
   0.2.6 blocker). Live from the previous entry and
   still true: #86 gates #44/#77/#87/#90; **#104** is filed into 0.2.8; #97 → 0.2.7,
   #98/#99 → 0.2.8; a stray local `pr-102-review-ref` branch was already gone.
-- **Next:** the previous entry's Next stands: **#49**
+- **Next:** merge **#106**, then the previous entry's Next stands: **#49**
   (retailer LIKE wildcards) is the remaining 0.2.7 item clear of #86 — read #86's
   importer name-matching first, since #49's point is making all three
   normalisations agree. From now on, an entry ends by rotating if it made six.
