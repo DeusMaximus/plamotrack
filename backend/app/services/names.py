@@ -33,10 +33,13 @@ Equality, never a pattern — `%`, `_` and a backslash in a name are characters 
 Per-table: a tool and a consumable may share a name; the importer matches "within
 that table" and so does this.
 
-**Not the importer.** `services/portability/importing.py` matches on the same key
-but resolves an in-upload clash its own way (`_pending_by_name`), and what it does
-with an archive that *itself* carries `HLJ` and `hlj` is its own question — filed
-against this issue, to be answered once #86 has landed in that file.
+**Not the importer.** `services/portability/importing.py` applies the same key its
+own way: an id-less row naming a stored row *updates* it, and two id-less rows in
+one upload naming the same thing are an error row. What it does not refuse is an
+archive carrying two *id-bearing* rows under one key — by design, so an instance that
+already holds such a pair can round-trip (§12.4). Whether a fresh id-bearing pair
+should be told apart from that is filed as the sibling, for once #86 has landed in
+that file.
 """
 
 import uuid
