@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-19 — Claude Code (Fable 5) — HANDOFF.md capped at five; `.agents/` created; PR #105 open
+## 2026-08-19 — Claude Code (Fable 5) — HANDOFF.md capped at five; `.agents/` created; #105 merged
 
 - **Done:** the hand-off log and `AGENTS.md` were costing ~45k tokens per session
   start (181 KB / 43 entries + 25 KB), a fifth of a 256K context before any code.
@@ -50,8 +50,8 @@ Template:
   byte-identical on both sides of the split). The header carries the rotation
   rule, a ~60-line entry cap, "the newest entry is self-sufficient about live
   state", and the grep recipe. `AGENTS.md` protocol/layout and `docs/design.md`'s
-  pointer updated. **Step 2 is PR #105** (`docs/agents-trim-and-lessons`, docs
-  only): `AGENTS.md` trimmed to rules with pointers (25.2 → 22.4 KB);
+  pointer updated. **Step 2 is PR #105, merged as `50f7c41`** after one Copilot
+  round (one pointer-text nit, fixed as a class of three): `AGENTS.md` trimmed to rules with pointers (25.2 → 22.4 KB);
   `.agents/lessons.md` (case histories harvested from `AGENTS.md` and all 43
   entries, append-only, stable headings); `.agents/testing-and-review.md`
   (procedure, edited in place: suites, regression checklist, concurrency
@@ -66,16 +66,13 @@ Template:
   copy can't drift. `AGENTS.md` still holds ~86 lines of architecture rules;
   cutting those further is the owner's call, not done.
 - **State:** no application code changed, no tests run. `main` is `07f99e1` plus
-  this entry, which is also the **first rotation** — the 2026-08-17 #82/#88 entry
-  moved to the top of `.agents/handoff/2026-08.md` in this commit. Branches:
-  `docs/agents-trim-and-lessons` (PR #105) and `fix/44-import-order-invariants`
-  (PR #86, untouched, still the 0.2.6 blocker). Live from the previous entry and
+  this entry — the **first rotation**, which moved the 2026-08-17 #82/#88 entry
+  to the top of `.agents/handoff/2026-08.md` — plus `50f7c41` (#105). The only
+  other branch is `fix/44-import-order-invariants` (PR #86, untouched, still the
+  0.2.6 blocker). Live from the previous entry and
   still true: #86 gates #44/#77/#87/#90; **#104** is filed into 0.2.8; #97 → 0.2.7,
   #98/#99 → 0.2.8; a stray local `pr-102-review-ref` branch was already gone.
-- **Next:** review and merge **#105** — read the `AGENTS.md` diff for any rule
-  whose meaning moved (none intended), spot-check `lessons.md` attributions
-  against the archive, and expect `testing-and-review.md` to need a stale line
-  overwritten now and then. After that the previous entry's Next stands: **#49**
+- **Next:** the previous entry's Next stands: **#49**
   (retailer LIKE wildcards) is the remaining 0.2.7 item clear of #86 — read #86's
   importer name-matching first, since #49's point is making all three
   normalisations agree. From now on, an entry ends by rotating if it made six.
