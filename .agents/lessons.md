@@ -203,6 +203,12 @@ required `category` left blank; a kit line short of `kit_name`), and the third w
 a matrix written as a unit test of `require_int4` that never entered the importer.
 Every detector now asserts the error names the column under test. → 2026-08-14 (#40, PR #73)
 
+The same check on #49 found a case that was green on both sides for a reason worth
+knowing: `_` in ILIKE matches exactly one character, so `_` against a sixteen-character
+decoy retailer creates a new row on the unfixed code too. The value was right and the
+seeded *state* made it inert; a one-character decoy is what turned it into a detector.
+→ 2026-08-19 (#49, PR #108)
+
 ### Sentinel collision
 `None` meant both "parse failed" and "the document was JSON null", so the one
 non-object manifest shape that needed the warning was the one that skipped it — a

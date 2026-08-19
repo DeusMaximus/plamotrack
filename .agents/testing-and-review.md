@@ -39,8 +39,24 @@ parked on `wait_event='advisory'` in `pg_stat_activity` is the tell.
 
 **Verify e2e against a database migrated from empty before trusting a green run.**
 CI starts empty; the dev database does not. A test that reads "whichever order is on
-the page" passes locally and has nothing to find in CI. Stand one up, point the API
-at it, check the tables are empty again afterwards.
+the page" passes locally and has nothing to find in CI. Playwright's `webServer`
+starts uvicorn itself when nothing is on :8000, and the app reads `DATABASE_URL`, so
+the whole thing is one script (run from the repo root, with the dev `db` up):
+
+```bash
+eval "$(grep -E '^POSTGRES_(USER|PASSWORD|PORT)=' .env | sed 's/^/export /')"
+DSN="postgresql+asyncpg://$POSTGRES_USER:$POSTGRES_PASSWORD@127.0.0.1:${POSTGRES_PORT:-5432}/plamotrack_e2e"
+psqlc() { docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T db psql -U "$POSTGRES_USER" -d "$1" -tAqc "$2"; }
+psqlc postgres "DROP DATABASE IF EXISTS plamotrack_e2e;"      # separate calls: DROP DATABASE
+psqlc postgres "CREATE DATABASE plamotrack_e2e OWNER $POSTGRES_USER;"   # can't share a transaction
+( cd backend  && DATABASE_URL="$DSN" uv run alembic upgrade head )
+( cd frontend && DATABASE_URL="$DSN" npx playwright test )
+psqlc plamotrack_e2e "select count(*) from kits union all select count(*) from orders union all select count(*) from retailers"   # all 0
+psqlc postgres "DROP DATABASE plamotrack_e2e;"
+```
+
+Every count must be zero afterwards — a spec that leaves rows behind is a spec that
+will collide with the next one.
 
 **Do not use `--repeat-each` to measure flakiness.** It reuses one module load, so
 every repeat shares the fixture name and stacks duplicates. Fresh processes only.
@@ -66,7 +82,13 @@ that produced each line.
    field owes a reason why it doesn't.** The neighbour is the cheapest place to
    notice.
 5. **If the rule is about rows diverging, seed more than one row.** If it is about
-   timing, pin the timing (`page.route`, a barrier, a task) rather than hoping.
+   timing, pin the timing rather than hoping. The pins that have worked in e2e:
+   `page.route` to *hold* a request until both clicks have landed (double-submit
+   guards); `page.clock.setFixedTime(new Date())` to freeze `Date.now()` so a
+   TanStack `staleTime` can never elapse (cache-staleness defects) — timers keep
+   running, so debounces still fire; `page.route` to *stall* a refetch so a stale
+   window is certain (#66). In pytest: a task for the racer and `pg_stat_activity`
+   for the wait, never `sleep`.
 6. **Assert the layer that spoke and the error class**, not a substring both layers
    happen to contain and not merely "a refusal happened". Where the point of the
    test is which status a bad input earns, use the **`http_client`** fixture
