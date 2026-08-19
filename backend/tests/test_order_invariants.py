@@ -20,7 +20,9 @@ import io
 import zipfile
 
 import pytest
+from sqlalchemy import text as sa_text
 
+from app.db import session_scope
 from app.services.portability import exporting, spec
 from tests.test_portability import actions, apply, preview, read_archive
 
@@ -429,9 +431,11 @@ async def test_a_reduced_line_will_not_remove_a_kit_the_same_upload_describes(cl
 
 async def test_a_line_cannot_be_over_supplied_by_the_uploads_own_kits(client):
     """The same contradiction reached from the create side: `kits.csv` brings more
-    new kits for the line than its quantity admits. `covered` alone exceeds
-    `wanted`, so there is no stored kit to give up and the shortfall is the only
-    thing that can report it."""
+    new kits for a stored line than its quantity admits. The line's row is here but
+    restates the quantity, so it authorises nothing and the new kits are refused as
+    moves the upload cannot reconcile — the message names the restated number, so
+    the operator's edit is one cell. (A line the upload *creates* with too many
+    kits is the fan-out's own over-supply error, three modes, further down.)"""
     retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
     order = await make_order(client, retailer, [kit_line(1)])
     item = order["items"][0]
@@ -444,9 +448,14 @@ async def test_a_line_cannot_be_over_supplied_by_the_uploads_own_kits(client):
         ],
     )
     plan = await preview(client, content)
-    assert actions(plan, "order_items") == ["error"], plan["tables"]
+    assert actions(plan, "order_items") == ["unchanged"], plan["tables"]
+    assert actions(plan, "kits") == ["error", "error"], plan["tables"]
+    kits_plan = next(t for t in plan["tables"] if t["table"] == "kits")
+    assert "leaves that quantity as it is" in kits_plan["rows"][0]["error"]
+    assert "holding 3 kit(s) while the line says it bought 1" in kits_plan["rows"][0]["error"]
     assert plan["blocking_errors"]
     assert (await apply(client, content)).status_code == 409
+    assert len(await kit_states(client)) == 1
 
 
 @pytest.mark.parametrize(
@@ -507,22 +516,29 @@ async def test_a_quantity_the_sheet_never_states_removes_nothing(
 @pytest.mark.parametrize(
     ("direction", "quantity", "expect_spawned", "expect_removed", "kits_on_line"),
     [
-        # A kit moved ONTO the line by kits.csv. Counting `row.target.kits` reads the
-        # database before that write, so the line planned neither a spawn nor a
-        # removal and landed saying 2 with three kits on it — measured at 200 on the
-        # first cut of this branch.
-        ("onto", "2", 0, 1, 2),
-        # ...and the same move with the quantity raised to take it: nothing to spawn,
-        # because the arriving kit is the third.
+        # A kit moved ONTO a two-kit line, quantity raised to take it: nothing to
+        # spawn, because the arriving kit is the third. Counting `row.target.kits`
+        # read the database before that write and spawned one anyway — measured on
+        # the first cut of this branch.
         ("onto", "3", 0, 0, 3),
-        # A kit moved OFF the line. The line still says 2, so the shortfall is real
-        # and the fan-out owes it a kit — the count has to see the departure to know
-        # that.
-        ("off", "2", 1, 0, 2),
-        # ...and with the quantity dropped to match, neither side owes anything.
+        # ...raised past it: the arrival is counted and one more is owed.
+        ("onto", "4", 1, 0, 4),
+        # ...dropped below it: the arrival is described by the upload and stays;
+        # both incumbents are the surplus.
+        ("onto", "1", 0, 2, 1),
+        # A kit moved OFF, quantity dropped to match: the count has to see the
+        # departure, or it plans a removal for a kit that is already leaving.
         ("off", "1", 0, 0, 1),
+        # ...and raised: the departure leaves one, three are owed, two are spawned.
+        ("off", "3", 2, 0, 3),
     ],
-    ids=["moved on", "moved on, quantity raised", "moved off", "moved off, quantity dropped"],
+    ids=[
+        "moved on, quantity raised to take it",
+        "moved on, quantity raised past it",
+        "moved on, quantity dropped below it",
+        "moved off, quantity dropped to match",
+        "moved off, quantity raised",
+    ],
 )
 async def test_the_fan_out_counts_the_kits_the_line_will_hold_not_the_ones_it_holds(
     client, direction, quantity, expect_spawned, expect_removed, kits_on_line
@@ -534,6 +550,12 @@ async def test_the_fan_out_counts_the_kits_the_line_will_hold_not_the_ones_it_ho
 
     Pre-existing — `_plan_spawns` always counted stored rows — but only visible once
     downward reconciliation claimed a line and its kits were kept in agreement.
+
+    Every row here *changes* the quantity (the stored line says 2). Two rows that
+    restated it unchanged used to sit in this matrix and reconcile — a delete and a
+    spawn on the strength of a number the upload didn't write; they now live in
+    `test_a_line_whose_quantity_this_upload_leaves_alone_authorises_no_reconciliation`
+    as refusals.
     """
     retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
     order = await make_order(client, retailer, [kit_line(2)])
@@ -611,6 +633,124 @@ async def test_one_mistyped_order_item_id_in_a_full_archive_cannot_spawn_a_dupli
     stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
     assert [k["id"] for k in stored["kits"]] == [kit["id"]], "still the one kit, still on its line"
     assert len(await kit_states(client)) == 1
+
+
+@pytest.mark.parametrize("direction", ["attach", "detach"], ids=["attach", "detach"])
+@pytest.mark.parametrize(
+    "line_row_state",
+    ["restated", "edited elsewhere"],
+    ids=["line restated", "line edited elsewhere"],
+)
+async def test_a_line_whose_quantity_this_upload_leaves_alone_authorises_no_reconciliation(
+    client, direction, line_row_state
+):
+    """Authority to spawn or delete comes from a quantity this upload *writes*, not
+    one it carries. Both shapes here carry the line's quantity — restated exactly,
+    or on an update that changes some other column — and neither authorises the
+    fan-out to make a kit move fit.
+
+    Why it matters: every full archive restates every line, so under the earlier
+    reading ("stated") an unchanged row was what turned a refused move into a
+    delete — `kits.csv` alone attaching a kit to a quantity-one line was a 409,
+    and the same move beside the archive's own `order_items.csv` deleted the
+    incumbent, announced, at 200. A restated line describes; it does not instruct.
+
+    The refusal names the restated quantity and says the row leaves it as it is,
+    because "add a row" — the message for an absent line — would send the
+    operator to add a row that is already there.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    item = order["items"][0]
+    incumbent = item["kits"][0]
+
+    if direction == "attach":
+        subject = (
+            await client.post("/kits", json={"name": "Gouf", "grade": "HG", "status": "backlog"})
+        ).json()
+        parent = item["id"]
+    else:
+        subject = incumbent
+        parent = ""
+
+    overrides = {} if line_row_state == "restated" else {"unit_price_minor": "9999"}
+    content = archive(
+        {"kits": ["id", "name", "grade", "order_item_id"]},
+        order_items=[line_row(order, item, **overrides)],
+        kits=[
+            {"id": subject["id"], "name": subject["name"], "grade": "HG", "order_item_id": parent}
+        ],
+    )
+    plan = await preview(client, content)
+    expected_line = "unchanged" if line_row_state == "restated" else "update"
+    assert actions(plan, "order_items") == [expected_line], plan["tables"]
+    assert actions(plan, "kits") == ["error"], plan["tables"]
+    kits_plan = next(t for t in plan["tables"] if t["table"] == "kits")
+    error = kits_plan["rows"][0]["error"]
+    holding = 2 if direction == "attach" else 0
+    assert f"holding {holding} kit(s) while the line says it bought 1" in error, error
+    assert "leaves that quantity as it is" in error, error
+    assert plan["derived"]["kits_spawned"] == 0, plan["derived"]
+    assert plan["derived"]["kits_removed"] == 0, plan["derived"]
+
+    assert (await apply(client, content)).status_code == 409
+    stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert [k["id"] for k in stored["kits"]] == [incumbent["id"]], "nobody moved, nobody went"
+    assert stored["unit_price_minor"] == item["unit_price_minor"], "the edit didn't land either"
+
+
+@pytest.mark.parametrize("drift", ["one kit short", "one kit over"], ids=["short", "over"])
+async def test_re_importing_an_archive_of_a_drifted_line_is_a_no_op(client, drift):
+    """Rule 10, literally: re-importing an archive is a no-op *whatever the
+    collection holds*. Importers before this branch could leave a kit line holding
+    a different number of kits than its quantity said (the fan-out only counted
+    upward). An archive taken from such an instance restates the line unchanged
+    and restates each kit where it already is — nothing written, nothing moved —
+    so a merge re-import must plan nothing: no spawn to "repair" the short line,
+    no refusal of the over-supplied one. Both were the earlier reading's answers.
+
+    The drift is made directly in the database, because no writer produces it any
+    more. `replace_all` is different and stays refused for the over-supplied
+    shape: every row is a create there, the upload is the only world, and it
+    contradicts itself — `docs/import-export.md` says why an operator can see it.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(2)])
+    item = order["items"][0]
+    async with session_scope() as session:
+        if drift == "one kit short":
+            await session.execute(
+                sa_text("DELETE FROM kits WHERE id = :id"), {"id": item["kits"][1]["id"]}
+            )
+        else:
+            await session.execute(
+                sa_text(
+                    "INSERT INTO kits (id, name, grade, status, status_updated_at, "
+                    "order_item_id, created_at, updated_at) VALUES (gen_random_uuid(), "
+                    "'Zaku II', 'HG', 'backlog', now(), :line, now(), now())"
+                ),
+                {"line": item["id"]},
+            )
+        await session.commit()
+    before = await kit_states(client)
+    assert len(before) == (1 if drift == "one kit short" else 3)
+
+    export = (await client.get("/export/archive")).content
+
+    plan = await preview(client, export)
+    assert plan["blocking_errors"] == [], plan
+    assert plan["derived"]["kits_spawned"] == 0, plan["derived"]
+    assert plan["derived"]["kits_removed"] == 0, plan["derived"]
+    resp = await apply(client, export)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["kits_spawned"] == 0 and resp.json()["kits_removed"] == 0
+    assert await kit_states(client) == before, "a re-imported archive changed the collection"
+
+    if drift == "one kit over":
+        restore = await preview(client, export, mode="replace_all")
+        assert actions(restore, "order_items") == ["error"], restore["tables"]
+        error = next(t for t in restore["tables"] if t["table"] == "order_items")["rows"][0]
+        assert "this upload supplies 3 kit(s)" in error["error"], error
 
 
 async def test_a_kits_sheet_that_never_mentions_order_item_id_moves_nothing(client):
@@ -1039,17 +1179,22 @@ async def test_a_refused_move_contributes_no_planned_removal(client):
     source = await make_order(client, retailer, [kit_line(1, name="First")], number="A")
     dest = await make_order(client, retailer, [kit_line(1, name="Second")], number="B")
     moving = source["items"][0]["kits"][0]["id"]
+    loose = (
+        await client.post("/kits", json={"name": "Gouf", "grade": "HG", "status": "backlog"})
+    ).json()
 
+    # The destination writes its quantity up to two, so it *is* reconciled, and two
+    # kits arrive: the loose one legitimately, the source's one leaving its line
+    # empty. Fan-out first would count three for two places and plan to delete the
+    # destination's own kit; refusal first takes the bad move out and the count is
+    # exactly right.
+    target = dest["items"][0]["id"]
     content = archive(
         {"kits": ["id", "name", "grade", "order_item_id"]},
-        order_items=[line_row(dest, dest["items"][0], quantity="1")],
+        order_items=[line_row(dest, dest["items"][0], quantity="2", kit_name="Second")],
         kits=[
-            {
-                "id": moving,
-                "name": "First",
-                "grade": "HG",
-                "order_item_id": dest["items"][0]["id"],
-            }
+            {"id": moving, "name": "First", "grade": "HG", "order_item_id": target},
+            {"id": loose["id"], "name": "Gouf", "grade": "HG", "order_item_id": target},
         ],
     )
     plan = await preview(client, content)
@@ -1057,7 +1202,7 @@ async def test_a_refused_move_contributes_no_planned_removal(client):
     assert plan["derived"]["kits_removed"] == 0, "a refused move deletes nothing"
 
     assert (await apply(client, content)).status_code == 409
-    assert len((await client.get("/kits")).json()) == 2
+    assert len((await client.get("/kits")).json()) == 3
 
 
 async def test_a_move_onto_a_reconciled_line_may_still_leave_a_shortfall_to_spawn(client):
@@ -1196,17 +1341,27 @@ async def test_a_protected_kit_cannot_be_moved_even_when_both_counts_work_out(cl
     ).status_code == 200
     assert (await client.delete(f"/orders/{source['id']}")).status_code == 409
 
+    # Both lines *write* their quantity, so both are reconciled by the fan-out and
+    # every count balances: the source goes to two and gets two new kits, the
+    # destination goes to two and takes the arrival. Without the provenance rule
+    # this upload is clean.
     content = archive(
         {"kits": ["id", "name", "grade", "order_item_id"]},
         order_items=[
-            line_row(source, src_line, quantity="1"),
+            line_row(source, src_line, quantity="2"),
             line_row(dest, dst_line, quantity="2", kit_name="Gouf"),
         ],
-        kits=[{"id": kit["id"], "name": "Zaku II", "grade": "HG", "order_item_id": dst_line["id"]}],
+        kits=[
+            {"id": kit["id"], "name": "Zaku II", "grade": "HG", "order_item_id": dst_line["id"]},
+            {"id": "", "name": "Zaku II", "grade": "HG", "order_item_id": src_line["id"]},
+            {"id": "", "name": "Zaku II", "grade": "HG", "order_item_id": src_line["id"]},
+        ],
     )
     plan = await preview(client, content)
-    assert actions(plan, "kits") == ["error"], plan["tables"]
-    assert plan["tables"][-1]["rows"][0]["error"].startswith("order_item_id:")
+    kits_plan = next(t for t in plan["tables"] if t["table"] == "kits")
+    moved_row = next(r for r in kits_plan["rows"] if r["matched_id"] == kit["id"])
+    assert moved_row["action"] == "error", plan["tables"]
+    assert "building or complete" in moved_row["error"], moved_row["error"]
     assert (await apply(client, content)).status_code == 409
 
     assert (await client.get(f"/kits/{kit['id']}")).json()["order_item_id"] == src_line["id"]
@@ -1513,25 +1668,27 @@ async def test_a_kit_arriving_from_another_line_is_not_the_one_given_up(client):
     it is never a removal candidate — the surplus has to come from the kits already
     there, and be reported when it can't."""
     retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
-    order = await make_order(client, retailer, [kit_line(2)])
+    order = await make_order(client, retailer, [kit_line(3)])
     item = order["items"][0]
     incumbents = [k["id"] for k in item["kits"]]
     loose = (
         await client.post("/kits", json={"name": "Gouf", "grade": "HG", "status": "backlog"})
     ).json()
 
+    # Three on the line, one arriving, quantity written down to two: four kits for
+    # two places, and the arrival is never a candidate.
     content = archive(
         {"kits": ["id", "name", "grade", "order_item_id"]},
         order_items=[line_row(order, item, quantity="2")],
         kits=[{"id": loose["id"], "name": "Gouf", "grade": "HG", "order_item_id": item["id"]}],
     )
     plan = await preview(client, content)
-    assert plan["derived"]["kits_removed"] == 1, plan["derived"]
+    assert plan["derived"]["kits_removed"] == 2, plan["derived"]
     assert (await apply(client, content)).status_code == 200
 
     surviving = {k["id"] for k in (await client.get("/kits")).json()}
     assert loose["id"] in surviving, "the upload said this kit is on the line"
-    assert len(surviving & set(incumbents)) == 1, "one incumbent gave way, newest first"
+    assert surviving & set(incumbents) == {incumbents[0]}, "two incumbents gave way, newest first"
 
 
 async def test_a_replace_all_import_reconciles_nothing_downward(client):

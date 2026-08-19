@@ -237,8 +237,8 @@ CASES = [
     (
         "inv-9a. only the line a kit moves TO is considered",
         IMP,
-        "            if kit_row.target is not None:\n                ends.add(kit_row.target.order_item_id)",
-        "            pass",
+        "            for line_id in (before_line, after_line):",
+        "            for line_id in (after_line,):",
         "cannot_reconcile_is_refused",
     ),
     (
@@ -256,11 +256,11 @@ CASES = [
         "cannot_reconcile_is_refused",
     ),
     (
-        "inv-12. a line naming no quantity still authorises reconciliation",
+        "inv-12. a line authorises reconciliation without writing its quantity",
         IMP,
-        "            if self._stated_quantity(row) is None:\n                continue",
+        "            if not self._writes_quantity(row):\n                continue",
         "            pass",
-        "carrying_no_quantity_authorises_no_reconciliation",
+        "carrying_no_quantity_authorises_no_reconciliation or leaves_alone_authorises_no_reconciliation or drifted_line_is_a_no_op",
     ),
     (
         "inv-13. a kit may name a catalog order line as provenance",
@@ -502,6 +502,28 @@ CASES = [
         "            row.messages = [message for message in row.messages if message != told]",
         "            pass",
         "may_not_clear_a_stored_link",
+    ),
+    # --- authority is a written quantity; the refusal reads only moves ------------
+    (
+        "inv-12a. a created line no longer authorises reconciliation",
+        IMP,
+        "        if row.action is RowAction.CREATE:\n            return True",
+        "        if row.action is RowAction.CREATE:\n            return False",
+        "moved_onto_a_line_this_upload_creates or creates_cannot_be_over_supplied_either",
+    ),
+    (
+        "inv-23. a kits row restating where its kit already is counts as a move",
+        IMP,
+        "            if after_line == before_line:\n                continue",
+        "            pass",
+        "drifted_line_is_a_no_op",
+    ),
+    (
+        "inv-23a. a restated line's mismatch borrows the absent-line message",
+        IMP,
+        "            elif after != quantity and planned is not None:",
+        "            elif False:",
+        "leaves_alone_authorises_no_reconciliation",
     ),
 ]
 

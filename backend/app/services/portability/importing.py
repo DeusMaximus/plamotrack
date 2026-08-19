@@ -1677,22 +1677,42 @@ class _Planner:
         stated = row.values.get("quantity") if "quantity" in row.present else None
         return stated if isinstance(stated, int) else None
 
+    @staticmethod
+    def _writes_quantity(row: _Row) -> bool:
+        """Whether this upload *writes* the line's quantity: a create, or an update
+        whose `quantity` is among its changes. A row that merely restates the
+        stored number — every line of a full archive — describes the line and
+        instructs nothing; a row with no `quantity` column has no change to carry
+        and is covered by the same test."""
+        if row.action is RowAction.CREATE:
+            return True
+        return any(change.field == "quantity" for change in row.changes)
+
     def _reconcilable_lines(self) -> set[uuid.UUID]:
         """The lines this upload *authorises* the fan-out to reconcile.
 
-        A line qualifies only if it will be written, is a kit line, and states a
-        quantity. The last of those is what "reconcile" means: the number of kits
-        a line holds is checked against the number it says it bought, so a row that
-        never says one authorises nothing.
+        A line qualifies only if it will be written, is a kit line, and **writes**
+        its quantity — a create, or an update that changes it. That is what
+        "reconcile" means here: the number of kits a line holds is brought to the
+        number this upload says it bought, by spawning or by deleting, so the
+        authority to do that has to come from a quantity the operator put in this
+        file. Two readings were tried and retired:
 
-        Was a set filled as a side effect of the fan-out loop, which conflated
-        *visited* with *reconciled*: a partial `order_items.csv` naming a line
-        without a `quantity` column marked it reconciled, the fan-out then did
-        nothing with it (`wanted` of 0 makes every branch a no-op), and
-        `_refuse_unreconciled_kit_moves` skipped it as already handled. A kits row
-        attaching or detaching alongside it applied at 200 and left the line
-        disagreeing with its own quantity in either direction (external review of
-        #86).
+        * *visited* — a set filled as a side effect of the fan-out loop, so a
+          partial `order_items.csv` naming a line without a `quantity` column was
+          "reconciled" and a kits row moving alongside it applied at 200 in either
+          direction (external review of #86);
+        * *stated* — any row carrying a quantity, changed or not. Every full
+          archive restates every line, so an unchanged row was what turned a
+          refused kit move into a delete: `kits.csv` alone moving a kit onto a
+          quantity-one line was a 409, and the same move beside the archive's own
+          unchanged `order_items.csv` deleted the incumbent (announced, at 200).
+          A restated line is a description, not an instruction, and rule 10 wants
+          a re-imported archive to be a no-op whatever the collection holds.
+
+        A kit move against a line this upload does not authorise is
+        `_refuse_unreconciled_kit_moves`'s to refuse — with the stated quantity
+        named, so the operator can say what the line should now hold.
         """
         lines: set[uuid.UUID] = set()
         for row in self.rows.get("order_items", []):
@@ -1703,7 +1723,7 @@ class _Planner:
             # read every such row as typeless and skipped reconciliation entirely.
             if invariants.effective_item_type(row) is not ItemType.KIT:
                 continue
-            if self._stated_quantity(row) is None:
+            if not self._writes_quantity(row):
                 continue
             line_id = row.matched_id or row.new_id
             if line_id is not None:
@@ -1905,7 +1925,7 @@ class _Planner:
     ) -> None:
         """A kits-side write may not leave a line disagreeing with its own quantity.
 
-        The loop above visits the lines this upload *states a quantity for*. A
+        The loop above visits the lines this upload *writes a quantity for*. A
         `kits.csv` row writing `order_item_id` changes what a line holds without
         being one of those, so a line reached only from the kits side was never
         reconciled at all — two shapes, both a clean preview and a 200 (external
@@ -1919,7 +1939,7 @@ class _Planner:
                 -> quantity 1, no kits attached
 
         **Refused rather than reconciled**, and the distinction is whose instruction
-        it is. The fan-out spawns and removes because *the line stated a quantity* —
+        it is. The fan-out spawns and removes because *the line wrote a quantity* —
         that is what a quantity means. A kits row moving provenance says nothing
         about how many kits the line bought, so conjuring a replacement kit or
         deleting a real one on the strength of it would be inventing intent the file
@@ -1927,8 +1947,11 @@ class _Planner:
         thing that mode promises never to do. So the upload is told it contradicts
         itself, and the operator settles it by saying both halves out loud.
 
-        A line the upload *does* authorise is not checked here — the fan-out
-        reconciles it, from the same post-write set.
+        A line the upload *does* authorise — writes its quantity, see
+        `_reconcilable_lines` — is not checked here; the fan-out reconciles it,
+        from the same post-write set. A line whose row is present but leaves the
+        quantity as it is falls to this check like an absent one, and the message
+        says so, because "restated" and "absent" call for different edits.
 
         **The stored row is consulted only in merge.** An earlier cut argued that
         `replace_all` could never reach it, because every line in that mode is
@@ -1956,13 +1979,18 @@ class _Planner:
                 continue
             if "order_item_id" not in kit_row.present:
                 continue
+            after_line = kit_row.values.get("order_item_id")
+            before_line = kit_row.target.order_item_id if kit_row.target is not None else None
+            # Only a *move*. A row restating the line its kit is already on — every
+            # kits row of a full archive — changes what no line holds, and reading
+            # it as a claim to check would refuse the re-import of an archive whose
+            # collection had drifted before this rule existed (rule 10: a no-op).
+            if after_line == before_line:
+                continue
             # Both ends of the move: the line it lands on, and — for a row that
             # matched a stored kit — the one it leaves. Either can be left holding
             # the wrong number, and only one of them is named in the cell.
-            ends = {kit_row.values.get("order_item_id")}
-            if kit_row.target is not None:
-                ends.add(kit_row.target.order_item_id)
-            for line_id in ends:
+            for line_id in (before_line, after_line):
                 if line_id is not None:
                     touched.setdefault(line_id, []).append(kit_row)
 
@@ -2025,6 +2053,19 @@ class _Planner:
                     "kit(s), and nothing in this upload says how many that line bought — its "
                     "order_items.csv row has no quantity column. State the quantity there, or "
                     "leave order_item_id as it is",
+                )
+            elif after != quantity and planned is not None:
+                # The line's row is here and leaves its quantity as it is — a
+                # restated archive line, or an edit to some other column. That
+                # row describes the line; it does not authorise deleting or
+                # spawning kits to make the move fit, so the operator says which.
+                self._error_rows(
+                    rows,
+                    f"order_item_id: this would leave order line {line_id} holding {after} "
+                    f"kit(s) while the line says it bought {quantity}, and its "
+                    "order_items.csv row leaves that quantity as it is — a line is reconciled "
+                    "only where this upload changes its quantity. Set the quantity there to "
+                    "what the line should hold, or leave order_item_id as it is",
                 )
             elif after != quantity:
                 self._error_rows(

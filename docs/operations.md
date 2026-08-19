@@ -96,6 +96,29 @@ docker compose logs migrate
 **Back up before upgrading.** Migrations run forward automatically; rolling one
 back is a manual `alembic downgrade` and some are deliberately lossy about it.
 
+### If you imported CSVs before 0.2.6
+
+Importers before 0.2.6 could leave a kit order line holding a different number of
+kits than its quantity said. Nothing in the app minds, but an archive exported from
+such a collection is refused when you try to restore it with *replace everything*
+("this line says quantity N, but this upload supplies M kit(s)"). Check once, before
+your next export:
+
+```bash
+docker compose exec -T db sh -c 'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+SELECT oi.id, oi.quantity, count(k.id) AS kits
+FROM order_items oi LEFT JOIN kits k ON k.order_item_id = oi.id
+WHERE oi.item_type = 'kit'
+GROUP BY oi.id, oi.quantity
+HAVING count(k.id) <> oi.quantity;
+SQL
+```
+
+No rows means nothing to do. For each row it lists, open that order in the app and
+save the line — the order editor reconciles the count against the kits actually
+there (it spawns the missing one, or leaves an extra one where it is once you set
+the quantity to match). Then export again.
+
 ## Configuration
 
 Everything lives in `.env` at the repo root — one file, read by both Compose and

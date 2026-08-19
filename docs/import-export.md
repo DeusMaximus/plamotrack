@@ -234,15 +234,23 @@ replace-everything import's.
 
 The count is of the kits the line will hold *after* the import, not before it. If the
 same upload's `kits.csv` also moves a kit onto or off that line via `order_item_id`,
-that move is counted first — so a line whose quantity you left alone still ends up
-with exactly that many kits.
+that move is counted first.
 
-Your own export can carry that contradiction. Importers before 0.2.6 let a line end
-up holding more kits than its quantity said, and an archive taken from such an
-instance is refused on re-import or restore with *"this line says quantity N, but this
-upload supplies M kit(s)"*. Nothing is lost: raise the quantity in `order_items.csv`
-to match the kits that are really there, or take the extra kit rows out, and import
-again.
+**Only a quantity you change authorises any of this.** A line whose `order_items.csv`
+row restates its quantity unchanged — every line of a full archive does — describes
+the line; it doesn't instruct the import to delete or spawn kits to make a move fit.
+So moving a kit onto or off such a line is refused until you also say what the line
+now holds: change its quantity in the same upload and the move lands, with the count
+reconciled to the number you wrote. Re-importing an archive therefore never changes
+your collection, whatever it holds.
+
+Your own export can still contradict itself. Importers before 0.2.6 let a line end
+up holding more kits than its quantity said, and a *replace everything* restore of an
+archive taken from such an instance is refused with *"this line says quantity N, but
+this upload supplies M kit(s)"* — every row is a create there, and the file is the
+only world. Nothing is lost: `docs/operations.md` has the query that finds those
+lines and the one-click fix in the app; or raise the quantity in `order_items.csv`
+to match the kits that are really there, and import again.
 
 ---
 
