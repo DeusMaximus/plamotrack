@@ -9,7 +9,7 @@ humans working alongside them) need *between* sessions, kept out of the always-l
   its header carries the rotation rule and the grep recipe. Never read one whole.
 - `lessons.md` — the case histories behind the rules in `AGENTS.md`: what a defect
   cost, what a test missed and why. Append-only, stable headings, linked from the
-  rules. *(Arrives in the follow-up PR that trims `AGENTS.md`.)*
+  rules.
 - `testing-and-review.md` — procedure, edited in place: how to write a regression
   test here, the fixtures, the mutation harness, e2e hygiene, the release gate,
-  which reviewer for what, and how to answer a review. *(Same PR.)*
+  which reviewer for what, and how to answer a review.
