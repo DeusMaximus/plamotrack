@@ -126,7 +126,7 @@ else's UI. This is the same app, owned outright.
 
 ## 3. Data Model
 
-Serialized (unique) and fungible (quantity-tracked) items are modelled as genuinely
+Serialised (unique) and fungible (quantity-tracked) items are modelled as genuinely
 separate tables rather than one polymorphic "item" table. They behave too differently to
 unify cleanly, and four honest tables are easier to reason about and query than one
 table with half its columns null.
@@ -323,7 +323,7 @@ Gundam markers on hand while they were still in a warehouse in Osaka. Quantity m
   stock that's already been consumed, block destructive edits with a 409 rather than
   silently losing history
 - every order mutation loads the order row `FOR UPDATE`, so concurrent
-  receive/edit/delete calls serialize instead of double-applying stock — three writer
+  receive/edit/delete calls serialise instead of double-applying stock — three writer
   types (§2) makes this a real race, not a theoretical one
 
 **One lock order, application-wide.** Every writer that touches catalog stock takes
