@@ -1383,11 +1383,31 @@ async def test_review_a_new_line_refuses_more_uploaded_kits_than_its_quantity(cl
     assert observed == (True, 0, 409, None), observed
 
 
+#: Every file a case's `-k` expression may name. A literal list, not a glob: the
+#: point is that a case whose expression matches nothing here is *reported*, and a
+#: glob would quietly widen the search instead. Extend it when a case's tests
+#: live somewhere new. It has been wrong once already — this branch's set named
+#: `test_order_invariants.py`, `main`'s named `test_cell_semantics.py`, and the
+#: merge kept one list under the union of both case sets, so every `cell-`
+#: mutant selected zero tests and pytest's exit 5 read as a kill.
+TEST_FILES = [
+    "tests/test_order_invariants.py",
+    "tests/test_cell_semantics.py",
+    "tests/test_portability.py",
+]
+
+#: pytest's exit status when collection found tests but `-k` deselected them all.
+#: Non-zero, and not a failure — a harness that reads "anything but 0" as a kill
+#: reports a mutant nothing ran against as killed. Same trap as an empty
+#: parametrize being a skip (`.agents/lessons.md`), one layer further out.
+NO_TESTS_SELECTED = 5
+
+
 def run(expr: str) -> tuple[int, str]:
     if expr.startswith("review_"):
         targets = ["-p", "tests.conftest", "mutation_test.py"]
     else:
-        targets = ["tests/test_order_invariants.py", "tests/test_portability.py"]
+        targets = list(TEST_FILES)
     proc = subprocess.run(
         [
             "uv",
@@ -1446,6 +1466,15 @@ def main() -> int:
             code, summary = run(expr)
         finally:
             shutil.copy(backup, path)
+        if code == NO_TESTS_SELECTED:
+            # Nothing ran, so nothing was killed. Reported like a stale anchor:
+            # a case whose `-k` names no test in TEST_FILES is a harness bug,
+            # not evidence about the code.
+            print(
+                f"NONE  {label}\n        -> -k {expr!r} selected no test in {', '.join(TEST_FILES)}"
+            )
+            failures.append(label)
+            continue
         verdict = "RED  " if code != 0 else "GREEN"
         print(f"{verdict} {label}\n        -> {summary}")
         if code == 0:
