@@ -41,6 +41,52 @@ Template:
 
 ---
 
+## 2026-08-20 — Claude Code (Fable 5) — #93 implemented: PR #111 open at `1ae9c4d`
+
+- **Done:** **#93 (backdatable `received_at`) implemented on
+  `feat/93-backdatable-received-at`, PR #111 open at `1ae9c4d`.** Entry takes an
+  optional `received_at` (schema-refused without `received=true`); the receive
+  route takes an optional `OrderReceive` body (absent / `{}` / explicit null =
+  now, unchanged); `PATCH /orders/{id}` corrects an **already-set** date only —
+  409 on a pending order (the transition stays in `receive_order` under its
+  lock), explicit null refused. Kits a receipt lands in backlog are stamped with
+  the order's instant — at receive, at received-at-entry create, and when a line
+  edit spawns into an already-received order (previously server-now). A
+  correction restamps exactly the kits whose stamp equals the old receipt; kits
+  moved since keep their own. MCP `create_order` + `mark_order_received` gained
+  `received_at` (offset required, friendly ToolErrors). Browser: receive is now
+  a dated dialog (today = no body, server stamps the moment), the create
+  checkbox reveals an inline date, edit of a received order gets "Received on"
+  sent only when dirty. Helpers `isoToLocalDateInput`/`localMidnightISO` in
+  `lib/format.ts` write the browser's offset out, never folded to Z. Docs:
+  design §3.9 "Backdatable receipts" block, §7 signatures, README tool row.
+  No migration; importer deliberately untouched (rule 10, #86's file).
+- **Decisions (all flagged on the PR):** the future is refused as a calendar
+  date judged in the instant's **own offset** (service 422) — an instant-vs-
+  server-clock compare refuses an honest "today" over skew; a receipt earlier
+  than `order_date` is deliberately allowed (plain date vs timestamptz is not
+  comparable across unknown time zones); naive datetimes refused everywhere;
+  the interim no-instance-tz decision is recorded in §3.9 for M5.1 (#23/#27).
+  Kits asserted building/complete at entry keep entry-time stamps.
+- **State:** backend **712** (684 + 28 in `tests/test_receipt_dates.py`), vitest
+  109 (+9 `dates.test.ts`), e2e 20 (+`receive-backdate.spec.ts`), e2e verified
+  against a DB migrated from empty, all tables zero after. Negative control:
+  **22 red / 6 green on unfixed `main`**, the 6 being compatibility controls
+  (named in the PR body). No mutants added — `mutation_test.py` is mid-rewrite
+  on #86; #93's cases join the fold-in queue with #109's 17 tuples. GitHub
+  runners recovered from the 2026-08-19 outage (#111's CI ran normally). Live
+  and still true: **#86 at `dfa7f29` owes its Codex round** and gates
+  #44/#77/#87/#90; #104/#98/#99 → 0.2.8; #110 unmilestoned. Stale worktrees
+  `/private/tmp/plamotrack-pr100` and `-pr108-main` remain, not this session's,
+  left alone.
+- **Next:** land #111 — small change whose worst failure is a false refusal, so
+  the owner decides between a Cursor round and riding the release gate (#40
+  criterion). Then 0.2.7 clear of #86: **#94 + #96** (one branch, one migration,
+  separate commits; both touch `spec.py` AND the hand-curated
+  `STARTER_SHEET_COLUMNS`), **#95** after #86 (its importer half mirrors #86's
+  arriving-receipt question), **#97** last — its order-edit tool should carry
+  `received_at` so MCP gains the correction path #111 leaves REST/browser-only.
+
 ## 2026-08-20 — Claude Code (Fable 5) — #107 closed: PR #109 merged as `c177ea6` after one Cursor round; #110 filed; review-brief template landed
 
 - **Done:** **#107 closed — PR #109 squash-merged as `c177ea6`**, branch deleted,
@@ -229,70 +275,3 @@ Template:
   (retailer LIKE wildcards) is the remaining 0.2.7 item clear of #86 — read #86's
   importer name-matching first, since #49's point is making all three
   normalisations agree. From now on, an entry ends by rotating if it made six.
-
-## 2026-08-19 — Claude Code (Opus 5) — #51 merged; backlog triaged; #104 filed
-
-- **Done:** **#51 merged** (PR #103, squashed as `278f395`) — dialogs and the
-  order disclosure are keyboard-operable. `main` carries 534 backend tests, 100
-  frontend unit tests and 17 e2e. All three untriaged issues from the previous
-  session were milestoned: **#97 → 0.2.7** (after #93/#95, which add fields its
-  tool would otherwise be widened for), **#98 and #99 → 0.2.8**, with a note on
-  #98 that #99 folds into it. **#104 filed** into 0.2.8, found while fixing #51.
-- **Decisions:**
-  - **The focus trap is hand-written in `Modal.tsx`,** not Radix or Headless UI.
-    That was #51's own argument and it held: the whole thing is a selector list
-    and about thirty lines. Revisit only as a deliberate dependency decision.
-  - **The dialog is portalled to `<body>`.** `inert` goes on `#root`, and a
-    dialog rendered inside the subtree it inerts would disable itself. All seven
-    `Modal` call sites put the form *inside* the modal, so nothing moved out of a
-    form.
-  - **Initial focus lands on the dialog, not its first control** — the close
-    button is first in DOM order, and focusing it announces "Close" as the first
-    thing a screen-reader user hears about a form they just opened.
-  - **A `MutationObserver` recaptures focus**, guarded on
-    `activeElement === document.body`, watching `childList` plus
-    `attributeFilter: ["disabled", "hidden"]`. Every entry there is measured, not
-    reasoned: removing *or disabling* the focused node drops focus to `<body>`
-    and fires no `blur` and no `focusout`, so nothing event-driven sees it;
-    `inert` and `display: none` leave `activeElement` on the node and so can
-    never satisfy the guard. `hidden` is in the filter and is **not** covered by
-    a test — nothing in the app sets it on a focused node. Declared, not implied.
-  - **Milestone triage used the milestones own criteria**, not feel: 0.2.8 is
-    defined as items neither corruption paths nor coupled to the workflow work,
-    which is what put #97 in 0.2.7 and the rest in 0.2.8.
-- **State:** no migrations in any of this. `fix/44-import-order-invariants`
-  (PR #86) remains the only other branch and is untouched — every branch this
-  session was picked for not overlapping it.
-- **Next:** #86 still gates all of 0.2.6 (#44, #77, #87, #90 all live in the
-  files it rewrites). The remaining 0.2.7 item clear of it is **#49** (retailer
-  LIKE wildcards) — read #86's importer name-matching first, since the point of
-  #49 is making all three normalisations agree.
-
-### The reviews are finding things the tests do not — five for five
-
-Three review rounds on #103 alone, and every finding was real. Two changed the
-code rather than the tests, and neither would have been caught by anything here:
-
-- **A focus trap that lets focus reach `<body>` is not trapping.** Tabbing off
-  the picker input lands on a result button that then unmounts underneath — an
-  ordinary keyboard path, not a contrivance. Filed as **#104**, because the
-  picker's own defect is that a keyboard cannot select a result at all.
-- **The suite passed against an observer with no guard**, i.e. one that steals
-  focus on every mutation and makes the forms untypeable. Every assertion was
-  `inDialog`, and focus already inside the dialog satisfies that. The lesson
-  generalises past this file: **an assertion about containment cannot see a
-  mechanism that moves things within the container.** Assert the named control.
-
-Two of the three test-writing mistakes this session were mine and were the same
-mistake — a green run that came from the environment rather than the code:
-
-- The disclosure test read whichever order was on the page. Fine against a dev
-  database with twenty; nothing to find in CI, which starts empty. **Verify e2e
-  against a database migrated from empty** — stand one up, point the API at it,
-  and check the tables are empty again afterwards. It has now caught two of these.
-- `--repeat-each` is not a way to measure flakiness: it reuses one module load,
-  so every repeat shares the fixture name and stacks duplicates.
-
-And one about the harness: `mutation_test.py`-style scripting **races Vite's
-recompile** on frontend files. A mutant reported as surviving needs a manual
-re-run before it is believed. The backend equivalent has no such race.
