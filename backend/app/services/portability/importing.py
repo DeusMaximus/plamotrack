@@ -1190,11 +1190,15 @@ class _Planner:
             told = _dangling_optional_message(column_name, table, missing)
             row.messages = [message for message in row.messages if message != told]
             row.action = RowAction.ERROR
+            # "Leave the column out" rather than "leave the cell blank": omitting a
+            # column always means "leave it as it is", while a blank means detach
+            # for `order_item_id` and is itself refused for `catalog_ref_id`
+            # (`_check_catalog_targets`), so only the first is a remedy for both.
             row.error = (
                 f"{column_name}: no {table} here has id {missing}, and this row currently "
                 f"points at {table} {column.get(row.target)} — an id that names nothing "
-                "can't be what clears that link. Fix the id, or leave the cell blank if "
-                "clearing it is what you mean"
+                "can't be what clears that link. Fix the id, or leave the column out of "
+                "this sheet to keep the link as it is"
             )
             return True
         return False

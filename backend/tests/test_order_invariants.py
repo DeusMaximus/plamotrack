@@ -1909,6 +1909,31 @@ async def test_an_update_that_says_nothing_about_the_reference_keeps_it(client):
     assert stored["unit_price_minor"] == 650
 
 
+async def test_a_mistyped_reference_on_a_stored_catalog_line_keeps_the_stored_one(client):
+    """The third value in this neighbourhood: not omitted, not blank, but an id that
+    resolves to nothing, on a line that already points somewhere. #82 would null it
+    and say the row imports without it; `_check_catalog_targets` would then refuse
+    the null. `_refuse_unresolved_overwrite` now speaks first, and says the more
+    useful thing — which id was mistyped and what the line points at now — with a
+    remedy that is true for this column (omit it), not the kits one (blank it)."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    consumable = await make_consumable(client)
+    order = await make_order(client, retailer, [consumable_line(consumable["id"])])
+    line = order["items"][0]
+
+    dead = "00000000-0000-0000-0000-00000000dead"
+    content = archive(order_items=[line_row(order, line, catalog_ref_id=dead)])
+    plan = await preview(client, content)
+    assert actions(plan, "order_items") == ["error"], plan["tables"]
+    error = plan["tables"][0]["rows"][0]["error"]
+    assert error.startswith("catalog_ref_id:"), error
+    assert dead in error and consumable["id"] in error, error
+    assert "leave the column out" in error, error
+    assert (await apply(client, content)).status_code == 409
+    stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert stored["catalog_ref_id"] == consumable["id"]
+
+
 async def test_a_blank_reference_cell_on_a_catalog_line_is_refused_not_nulled(client):
     """The other half of that action axis: the column is there and empty, which is
     what an export template and a hand-edited archive both look like. Blank means
