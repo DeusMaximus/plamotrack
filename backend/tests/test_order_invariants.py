@@ -754,12 +754,12 @@ async def test_re_importing_an_archive_of_a_drifted_line_is_a_no_op(client, drif
 
 
 @pytest.mark.parametrize(
-    ("quantity", "expect_spawned"),
-    [("2", 0), ("3", 1)],
-    ids=["line restated", "line quantity raised"],
+    ("quantity", "drifted", "expect_spawned", "kits_after"),
+    [("2", False, 0, 2), ("3", False, 1, 3), ("2", True, 0, 1)],
+    ids=["line restated", "line quantity raised", "line restated, collection drifted"],
 )
 async def test_a_kits_sheet_that_never_mentions_order_item_id_moves_nothing(
-    client, quantity, expect_spawned
+    client, quantity, drifted, expect_spawned, kits_after
 ):
     """The column-absent state, on the *other* table.
 
@@ -768,20 +768,29 @@ async def test_a_kits_sheet_that_never_mentions_order_item_id_moves_nothing(
     "detach this kit". Two places read `present` rather than values so the two
     are told apart, and each has its own line state here:
 
-    * **line restated** — the line authorises nothing, so the kit-move refusal is
-      what sees the row; reading it as a detach would refuse a build-note fix for
-      leaving the line short.
     * **line quantity raised** — the line is reconciled, so `_attached_after` is
       what sees the row; reading it as a detach spawns a replacement for a kit
       that never went anywhere (two spawned here instead of one).
+    * **line restated** — the line authorises nothing, so the kit-move refusal is
+      what sees the row. On a healthy line its guard is shadowed by
+      `_attached_after`'s (the count comes out right either way); on a line whose
+      collection had drifted before this rule existed, reading the row as a move
+      refuses a build-note fix for "leaving the line short" — so the drifted
+      state is the one that pins it.
 
-    Found by mutation testing, twice: removing either guard left the suite green,
-    because every other kits row in it carries the column.
+    Found by mutation testing, three times: removing either guard left the suite
+    green, because every other kits row in it carries the column, and the
+    refusal's guard stayed green on a healthy line for the reason above.
     """
     retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
     order = await make_order(client, retailer, [kit_line(2)])
     item = order["items"][0]
     before = [k["id"] for k in item["kits"]]
+    if drifted:
+        async with session_scope() as session:
+            await session.execute(sa_text("DELETE FROM kits WHERE id = :id"), {"id": before[1]})
+            await session.commit()
+        before = before[:1]
 
     content = archive(
         {"kits": ["id", "name", "grade", "build_notes"]},
@@ -798,8 +807,8 @@ async def test_a_kits_sheet_that_never_mentions_order_item_id_moves_nothing(
     resp = await apply(client, content)
     assert resp.status_code == 200, resp.text
     stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
-    assert [k["id"] for k in stored["kits"]][:2] == before, "nobody moved"
-    assert len(stored["kits"]) == int(quantity)
+    assert [k["id"] for k in stored["kits"]][: len(before)] == before, "nobody moved"
+    assert len(stored["kits"]) == kits_after
     assert (await client.get(f"/kits/{before[0]}")).json()["build_notes"] == "waist is fiddly"
 
 
