@@ -44,10 +44,9 @@ Template:
 ## 2026-08-20 — Claude Code (Fable 5) — #107 → PR #109: Cursor round 1 GO, both P3s taken; #110 filed
 
 - **Done:** **#107** on `fix/107-name-uniqueness`, head **`d1d051d`**, pushed;
-  **PR #109 open**; CI all green at `486e14c` (the last code commit), and at
-  `d1d051d` (docstring-only) Backend + Frontend green with Integration stuck
-  twice in `playwright install --with-deps` on the runner — re-kick, don't
-  debug. **Cursor round 1 (Grok 4.6) at `49c1a9f`: GO, two
+  **PR #109 open**; CI all green at `486e14c` (the last code commit); `d1d051d`
+  is docstring-only (Backend + Frontend green, Integration caught in the runner
+  outage below). **Cursor round 1 (Grok 4.6) at `49c1a9f`: GO, two
   P3s, both taken at `486e14c`** — P3-1: plain `btrim` trims `0x20` only, so a
   legacy row padded with tab/NBSP/U+3000 was two keys here and one to the
   importer; the trim set is now `names.WHITESPACE`, generated from `str.isspace()`
@@ -85,10 +84,13 @@ Template:
   is mid-rewrite on #86; the 17 tuples are in the PR body (collapsed block) for
   folding in once #86 lands. Two existing helpers that created one name twice now
   suffix it; `test_two_retailers_with_one_name_still_round_trip` seeds through the
-  session. **Untracked in the working tree, on purpose: `.agents/review-brief.md`**
-  — a draft reviewer-briefing template the owner is iterating on with me; not
-  committed, not for anyone else to commit or delete. Live and still true: **#86
-  at `dfa7f29`
+  session. **`.agents/review-brief.md` landed on `main` (`d2180ef`)** — the
+  fill-in template for briefing Cursor / Codex / Claude, pointed at from
+  `testing-and-review.md` → "Briefing a reviewer"; use it for the next round
+  instead of writing a brief from memory. CI: GitHub's runners have been hanging in
+  `playwright install --with-deps` since ~15:12 UTC on every job, including
+  docs-only commits — external; jobs self-cancel at the 25-minute timeout; re-kick,
+  don't debug. Live and still true: **#86 at `dfa7f29`
   owes its Codex round** and gates #44/#77/#87/#90; #107 → 0.2.7; #104/#98/#99 →
   0.2.8. Worktrees `/private/tmp/plamotrack-pr100` and `-pr108-main` still stale,
   left alone; this session's `-107-main` removed.
