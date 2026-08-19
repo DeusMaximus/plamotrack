@@ -280,13 +280,22 @@ def _receipt_message(arriving: bool, types: set[str]) -> str:
     files = _catalog_files(types)
     listed = ", ".join(sorted(types))
     if arriving:
+        # One remedy, not two. An earlier wording offered "state the on-hand
+        # quantity in consumables.csv" as an alternative, and it is not one: this
+        # check never reads the catalog files, so an upload that states the count
+        # *and* flips received_at is refused again with the same message. Measured
+        # (pre-round on #86) — the operator following it lands back here. A count
+        # stated on its own is the *clearing* message's remedy, where the order is
+        # left alone; here the order is being flipped, and only the app can do
+        # that with the stock accounted for.
         return (
             f"received_at: marking this order received would leave the stock its {listed} "
             f"line(s) bought unaccounted for — an import never changes what you have on hand "
-            f"(rule 10), and afterwards the app can't apply it either, because the order "
-            f"already reads as received. State the on-hand quantity in {files}, or take "
-            f"received_at out of this sheet and receive the order in the app, which does "
-            f"apply it"
+            f"(rule 10), and the app couldn't apply it afterwards either, because the order "
+            f"would already read as received. Take received_at out of this sheet and receive "
+            f"the order in the app, which applies the stock. A count stated in {files} "
+            f"doesn't stand in for that: it corrects a number, and this receipt is still "
+            f"refused"
         )
     return (
         f"received_at: clearing it would leave the stock this order's {listed} line(s) "

@@ -1643,8 +1643,31 @@ async def test_an_import_cannot_receive_an_order_that_would_have_moved_stock(cli
     assert actions(plan, "orders") == ["error"], plan["tables"]
     error = plan["tables"][0]["rows"][0]["error"]
     assert error.startswith("received_at:")
-    assert "consumables.csv" in error, "the refusal has to name the fix, not just refuse"
+    # The refusal has to name a fix that works. It once offered "state the on-hand
+    # quantity in consumables.csv" as one, and that is not a fix for *this*
+    # refusal — the check never reads the catalog files, so an upload that states
+    # the count and flips received_at is refused again with the same message
+    # (driven below). The remedy that exists is the app's receive.
+    assert "receive the order in the app" in error, error
+    assert "consumables.csv" in error and "doesn't stand in" in error, error
     assert (await apply(client, content)).status_code == 409
+
+    # Following the retired remedy to the letter — count stated in the same
+    # upload — must still be refused, or the message above is lying the other way.
+    with_count = archive(
+        orders=[order_row(order, catalog_order["retailer"], received_at="2026-03-20T00:00:00Z")],
+        consumables=[
+            {
+                "id": consumable["id"],
+                "name": consumable["name"],
+                "category": "paint",
+                "quantity_on_hand": "3",
+            }
+        ],
+    )
+    assert actions(await preview(client, with_count), "orders") == ["error"]
+    assert (await apply(client, with_count)).status_code == 409
+    assert await stock_of(client, consumable["id"]) == 0, "nothing landed, the count included"
 
     stored = (await client.get(f"/orders/{order['id']}")).json()
     assert stored["received_at"] is None

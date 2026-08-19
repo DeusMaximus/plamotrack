@@ -203,10 +203,12 @@ already added stays where it is, and the next receive adds it a second time.
 So on an order that holds a tool, consumable or upgrade line, `received_at` may not
 be moved into or out of "received" by an import. What you can do instead:
 
-- **State the on-hand quantity** in `tools.csv` / `consumables.csv` /
-  `upgrades.csv`. That's where stock comes from, and it settles the whole question.
-- **Or leave `received_at` out of the sheet** and mark the order received in the
-  app, which applies the stock properly.
+- **To mark a pending order received:** leave `received_at` out of the sheet and
+  receive the order in the app, which applies the stock. Stating the on-hand
+  quantity in `tools.csv` / `consumables.csv` / `upgrades.csv` does *not* stand in
+  for that — it corrects a number, and the receipt in the sheet is still refused.
+- **To correct a count on its own,** on an order you are not flipping: state it in
+  `tools.csv` / `consumables.csv` / `upgrades.csv`. That's where stock comes from.
 - If you marked an order received **by mistake**: un-receiving isn't supported
   anywhere in plamotrack, by import or otherwise. Delete the order — that reverses
   the stock it applied — and enter it again as pending.
