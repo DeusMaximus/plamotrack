@@ -30,7 +30,8 @@ Section and feature markers used throughout:
 | 💭 **Open** | Still genuinely undecided |
 
 The roadmap and current milestone live in §11. `HANDOFF.md` in the repo root carries
-the session-by-session build log.
+the recent session-by-session build log; older entries are archived under
+`.agents/handoff/`.
 
 ---
 

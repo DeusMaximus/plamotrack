@@ -13,9 +13,14 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
 ## Session protocol (multi-agent hand-off)
 
 - **Session start:** read `HANDOFF.md` (newest entry first) for current state,
-  in-flight work, and known breakage.
-- **Session end:** append an entry to `HANDOFF.md` using its template. Keep it short
-  and factual — the next agent may be a different model with zero shared context.
+  in-flight work, and known breakage. It holds only the five most recent entries;
+  the rest are archived under `.agents/handoff/` — grep that, don't read it (the
+  recipe is in `HANDOFF.md`'s header).
+- **Session end:** append an entry to `HANDOFF.md` using its template — ≤ ~60
+  lines, state not lessons — then **rotate**: if the file now holds more than five
+  entries, move the oldest to the top of `.agents/handoff/YYYY-MM.md`, verbatim,
+  in the same commit. The header there spells out the rules; the next agent may be
+  a different model with zero shared context and a small context window.
 - **Design notes:** `docs/design.md` — tracked, public, and **not** a spec. It records
   product intent and the reasoning behind architectural decisions; `§n` references in
   code comments and docs point at its sections. Where it and the code disagree, the
@@ -30,8 +35,9 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
   and outside contributors can open PRs against it. Direct-to-main was a
   private-and-solo convenience and is retired.
 - Exception: session bookkeeping and process docs that exist to be read *between*
-  sessions — `HANDOFF.md` entries, `AGENTS.md` notes — commit on `main`. Branching
-  a hand-off entry just delays the next agent from seeing it.
+  sessions — `HANDOFF.md` entries and their rotation into `.agents/handoff/`,
+  `AGENTS.md` notes — commit on `main`. Branching a hand-off entry just delays the
+  next agent from seeing it.
 - **Commit or push only when the user asks.** Don't take a green test run as
   permission.
 - Anything outward-facing — pushing a tag, cutting a release, changing repo
@@ -98,6 +104,9 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
 docs/design.md          # product intent + architectural decision record (§n targets)
 docs/import-export.md   # user-facing CSV format + matching reference
 docs/operations.md      # backup / restore / upgrade for the container stack
+HANDOFF.md              # session hand-off log — the five most recent entries only
+.agents/                # process material for agents, NOT user docs (README inside)
+  handoff/YYYY-MM.md    #   archived HANDOFF.md entries, verbatim; grep it, don't read it
 ```
 
 ## Dev environment & commands
