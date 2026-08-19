@@ -41,47 +41,49 @@ Template:
 
 ---
 
-## 2026-08-19 — Claude Code (Fable 5) — #86 pre-round: `main` merged in, harness false-kill fixed, one defect closed
+## 2026-08-19 — Claude Code (Fable 5) — #86 pre-round: `main` merged in, harness false-kill fixed, two defects closed, authority rule changed
 
 - **Done:** owner asked for a same-family pre-round on **#86** to make the next
-  Codex round cheaper (not to replace it). Branch head is now **`e8cd2b3`**, pushed,
-  comment posted at that head. (1) `main` merged forward (`aefaecc`, 31 commits,
-  clean). (2) **The mutation harness reported 13 mutants killed that never ran**
-  (`fd8d195`): pytest exits 5 when `-k` deselects everything, the harness read any
-  non-zero as RED, and the merge of `main` at `5c0963b` had unioned the case sets
-  while keeping this branch's two target files — every `cell-` case selected zero
-  tests. `TEST_FILES` is now all three files; exit 5 reports `NONE` and counts as a
-  survivor. Re-run 56/56, then 59/59 with the new cases. (3) **One product defect**
-  (`43b947c`, `e8cd2b3`): a mistyped `order_item_id` on one kit in a pristine full
-  archive → 200, kit detached (#82's dangling-optional-ref rule nulls it) and a
-  replacement spawned (the line's restated quantity authorised it). Same cell in
-  `kits.csv` alone was already 409. `_refuse_unresolved_overwrite` in `_classify`:
-  an unresolvable optional REF may not clear a stored non-null link; #82's test had
-  driven only the create. Also speaks first for a mistyped `catalog_ref_id` on a
-  stored catalog line. (4) The arriving-receipt message offered "state the on-hand
-  quantity in consumables.csv" as a remedy; the check never reads catalog files, so
-  it isn't one (`7c0dc55`: message, doc bullets, test). (5) Docs note on why an
-  operator's own archive can hit the over-supply refusal (`0e21381`).
-- **Decisions:** mine, flagged as such on the PR — **not** changed: an *unchanged*
-  line row (every full archive has one) authorises the fan-out to delete an
-  incumbent / spawn a replacement on a kit move, while the same move with the row
-  absent is refused. Documented and tested as intended; raised as design question A
-  with the one-condition alternative (authority = the upload *writes* the quantity).
-  Design question B: a pre-#44 drifted instance's archive is refused on restore in
-  both modes; SQL to find drift is in the comment — worth a 0.2.6 release-note line
-  and a run on the LXC before upgrading. Structural read: the rules share one
-  post-write view; the CREATE-count sum is written twice (P3).
-- **State:** 641 backend, ruff clean, 59/59 mutants, frontend build/lint/vitest
-  clean; e2e not run locally (CI). No migration. `main` is `2772cb1` plus this
-  entry. `_refuse_unresolved_overwrite` is **new code with no independent eye** —
-  named as the place to push in the comment. Codex budget resets Thursday evening
-  (owner); the round is still owed at `e8cd2b3`. Two stale worktrees exist on this
-  Mac (`/private/tmp/plamotrack-pr100`, `/private/tmp/plamotrack-pr108-main`), not
-  this session's, left alone. Live and still true: #86 gates #44/#77/#87/#90; #107
-  → 0.2.7; #104/#98/#99 → 0.2.8.
-- **Next:** Codex round on #86 at `e8cd2b3` — brief it with the comment's "where to
-  push next" and question A. Then the previous entry's 0.2.7 list stands: #107,
-  #93, #95, #94 + #96.
+  Codex round cheaper (not to replace it). Branch head is **`dfa7f29`**, pushed;
+  two comments posted (at `e8cd2b3`, then `dfa7f29`). (1) `main` merged forward
+  (`aefaecc`, clean). (2) **The mutation harness reported 13 mutants killed that
+  never ran** (`fd8d195`): pytest exits 5 when `-k` deselects everything, read as
+  RED; the merge at `5c0963b` had unioned the case sets under this branch's two
+  target files. `TEST_FILES` is all three files; exit 5 reports `NONE`, counts as
+  surviving. (3) **Defect:** a mistyped `order_item_id` on one kit in a pristine
+  archive → 200, kit detached (#82 nulls a dangling optional ref) and a
+  replacement spawned. `_refuse_unresolved_overwrite` in `_classify` (`43b947c`,
+  `e8cd2b3`): an unresolvable optional REF may not clear a stored non-null link;
+  also speaks first for a mistyped `catalog_ref_id` on a stored catalog line.
+  (4) The arriving-receipt message offered a remedy the check never reads
+  (`7c0dc55`). (5) **Owner's call, design question A taken (`5b1ccdd`):** a line
+  is reconciled only where the upload *writes* its quantity (`_writes_quantity`:
+  create, or `quantity` in `changes`), and the kit-move refusal reads only rows
+  that *move* a kit. A restated archive line no longer authorises a delete or a
+  spawn; a drifted archive merge re-imports as a no-op. Reverses round one's
+  "any stated quantity" — flagged as such on the PR. Two tests re-driven where the
+  change had shadowed their mutants (`2c7c082`, `5b19290`; the refusal's `present`
+  guard is live only on a drifted line). (6) Docs: import-export states the rule;
+  **operations.md "If you imported CSVs before 0.2.6"** — the drift query and the
+  in-app fix (the order editor reconciles against the actual kit count); design
+  §12.5 records the rule.
+- **Decisions:** B (drift) → docs only, no migration/script: two fixes only a human
+  can pick, and the app already reconciles on save; owner will start the dogfood
+  instance fresh anyway. `test_review_rating_this_upload_writes_protects_provenance`
+  (Codex's embedded reproducer) edited to add a replacement kit — the only review
+  test touched, said on the PR.
+- **State:** 651 backend, ruff clean, **63/63 mutants**, frontend untouched since
+  `e8cd2b3` (build/lint/vitest clean there); e2e via CI. No migration. `main` is
+  `2772cb1` plus this entry (amended in place, same session). Codex budget resets
+  Thursday evening (owner); the round is owed at `dfa7f29`, and both
+  `_refuse_unresolved_overwrite` and `_writes_quantity` are new code with no
+  independent eye — the "where to push next" sections name the seams. Two stale
+  worktrees on this Mac (`/private/tmp/plamotrack-pr100`,
+  `/private/tmp/plamotrack-pr108-main`), not this session's, left alone. Live and
+  still true: #86 gates #44/#77/#87/#90; #107 → 0.2.7; #104/#98/#99 → 0.2.8.
+- **Next:** Codex round on #86 at `dfa7f29` — brief it with both comments' "where
+  to push next" and say A is a reversal it should judge. Then the 0.2.7 list
+  stands: #107, #93, #95, #94 + #96.
 
 ## 2026-08-19 — Claude Code (Fable 5) — #106 and #108 merged (#49 closed); #107 filed → 0.2.7
 
