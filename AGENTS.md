@@ -21,6 +21,13 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
   entries, move the oldest to the top of `.agents/handoff/YYYY-MM.md`, verbatim,
   in the same commit. The header there spells out the rules; the next agent may be
   a different model with zero shared context and a small context window.
+- **`.agents/testing-and-review.md`** is the procedure — suites, harnesses, the
+  release gate, which reviewer for what, how to answer a review. Read it before
+  writing a regression test for a filed defect, before opening a PR for review,
+  when responding to a review, and before cutting a release. Not on every turn.
+- **`.agents/lessons.md`** is why the rules below say what they say — the case
+  histories, append-only, stable headings. Read a section when a rule looks like
+  over-engineering, or before arguing one down in a review.
 - **Design notes:** `docs/design.md` — tracked, public, and **not** a spec. It records
   product intent and the reasoning behind architectural decisions; `§n` references in
   code comments and docs point at its sections. Where it and the code disagree, the
@@ -45,9 +52,8 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
   doesn't carry to the next.
 - **Say which model wrote it.** Every agent here posts through the owner's GitHub
   account, so unsigned prose on a public repo reads as the owner speaking —
-  including its first-person claims about what was verified and its judgement calls
-  about severity. This project discloses AI authorship rather than leaving a reader
-  to guess. Any issue body, PR body, or comment on either that an agent writes opens
+  including its first-person claims about what was verified and its severity
+  calls. Any issue body, PR body, or comment on either that an agent writes opens
   with a line naming the model and what it is, and closes with a sign-off:
 
   ```markdown
@@ -56,19 +62,12 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
   — **Claude Opus 5 (Anthropic)**, via Claude Code
   ```
 
-  Codex's review of #75 did this; the reply to it did not, and had to be corrected
-  after the fact. Commits are already covered by their `Co-Authored-By` trailer —
-  this is the gap that leaves. It matters most on exactly the threads where it is
-  easiest to forget: a review exchange, where a reader is weighing whose reasoning
-  to trust, and where two different models may be arguing with each other. It
-  applies just as much to an issue an agent drafted for the owner to file, which
-  carries the same first-person verification claims with none of the exchange to
-  make their origin obvious.
-
-  **Not** the docs: `README.md`, `docs/*`, `AGENTS.md` and their kin carry no
-  attribution line. They're reference material read start to finish, not utterances
-  in a conversation, and a per-document sign-off would interrupt the reading for a
-  provenance question the repository already answers elsewhere.
+  It matters most where it is easiest to forget — a review exchange, where two
+  models may be arguing and a reader is weighing whose reasoning to trust — and it
+  applies to an issue drafted for the owner to file. **Not** the docs: `README.md`,
+  `docs/*`, `AGENTS.md`, `.agents/*` and their kin carry no attribution line;
+  they are reference material, not utterances in a conversation.
+  (`.agents/lessons.md` → "The one about attribution".)
 
 ## Layout
 
@@ -107,6 +106,8 @@ docs/operations.md      # backup / restore / upgrade for the container stack
 HANDOFF.md              # session hand-off log — the five most recent entries only
 .agents/                # process material for agents, NOT user docs (README inside)
   handoff/YYYY-MM.md    #   archived HANDOFF.md entries, verbatim; grep it, don't read it
+  lessons.md            #   case histories behind the rules — append-only, stable headings
+  testing-and-review.md #   procedure: suites, harness, CI, release gate, reviewer routing
 ```
 
 ## Dev environment & commands
@@ -128,31 +129,16 @@ docker compose logs migrate   # migrations; Exited (0) is success
 docker compose down           # add -v ONLY to destroy the database
 ```
 
-**`--build` is not optional, including on a first run.** Two reasons — one
-understood, one not.
-
-*Understood:* `api` and `migrate` share an `image:` tag so they build once and run
-identical bits, which also means a plain `up` will reuse a **stale** local image after
-you change the code. That is how a container once ran migrations it predated.
-
-*Not understood:* on a fresh LXC running the official Docker packages,
-`docker compose up -d --wait` failed outright, reporting it could not find the images
-in any registry; `--build` fixed it. A minimal probe on that same host — one service,
-same `image:` + `build:` pairing, no local image — does **not** reproduce it: Compose
-attempts the pull, fails, and builds anyway. So the cause is something about *this
-file* the probe didn't capture. The leading suspect is `api` and `migrate` sharing one
-tag, which the probe had no equivalent of. It has not been isolated.
-
-**Do not write a mechanism for this into the docs until someone has reproduced it.**
-Three different explanations have already been committed here and retracted, each
-plausible and each wrong: that the compose file always fails without the flag, that
-old Compose fails and new Compose builds (the failing host has the *newer* Compose),
-and that a named-but-missing image is a hard failure anywhere (it isn't, on that same
-host). State the observation, prescribe the flag, stop there.
-
-`--build` is correct on every setup and fixes both. Leaving it off has now cost two
-sessions, one README fix and one failed install — the flag is load-bearing, not
-belt-and-braces.
+**`--build` is not optional, including on a first run.** `api` and `migrate` share
+an `image:` tag so they build once and run identical bits, which also means a plain
+`up` reuses a **stale** local image after you change the code — that is how a
+container once ran migrations it predated. Separately, a fresh LXC on the official
+Docker packages failed `up -d --wait` outright with no `--build`, and a minimal probe
+on that same host does *not* reproduce it; the cause is not isolated. **Do not write
+a mechanism for it into the docs until someone has reproduced it** — three plausible
+explanations have already been committed and retracted
+(`.agents/lessons.md` → "The `--build` mystery"). State the observation, prescribe
+the flag, stop there.
 
 Backend is uv-managed — run everything from `backend/`:
 
@@ -227,28 +213,24 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    read-decide-write span whose decision depends on rows the plan never names,
    which is the shape `apply_import` has (and why it gates before `plan_import`,
    not after). The gate is collection-wide and transaction-scoped: it releases on
-   commit or rollback, so there is nothing to release by hand and no way for an
-   error path to strand it. Reads never take it — import preview and every
-   list/detail path stay unlocked and concurrent. A new mutating service function
-   that skips it reopens a defect class this repo has already paid for across
-   seven review rounds on #79: a plan read outside the gate is stale by the time
-   it is written, and the failure modes are 500s and silent data loss, not
-   conflicts.
+   commit or rollback, so there is nothing to release by hand. Reads never take
+   it — import preview and every list/detail path stay unlocked and concurrent.
+   A new mutating service that skips it reopens a class this repo paid seven
+   review rounds for on #79; the failure modes are 500s and silent data loss, not
+   conflicts (`.agents/lessons.md` → "Why the write gate exists").
 7.2. **Export reads one snapshot** — `await begin_read_snapshot(session)` from
    `services/read_snapshot.py`, taken by `_load_all` before its first statement.
-   `REPEATABLE READ READ ONLY`, so every table comes from one instant — the one
-   the transaction's *first SQL statement* fixes, not request entry. One statement
-   per table under the default `READ COMMITTED` is one snapshot per table, and a
-   write landing between two of them writes an archive whose files contradict each
-   other — a kit whose order line no CSV in the same zip contains (#48). This is
-   why reads still don't take the write gate: a snapshot is not a lock, so every
-   row-level writer runs alongside an export in both directions. That exemption is
-   row-level writes only — a `replace_all` import's `TRUNCATE` wants ACCESS
-   EXCLUSIVE and does queue behind an in-flight export's ACCESS SHARE, and the
-   reverse. Because it covers the whole transaction and Postgres then refuses
-   every write in it, put it only where the read *is* the unit of work. Never on
-   a helper a write path also calls — `plan_import` is
-   shared by preview and apply, and a snapshot there would break every import.
+   `REPEATABLE READ READ ONLY`, fixed by the transaction's *first SQL statement*,
+   so every table comes from one instant; under the default `READ COMMITTED` a
+   write landing between two table reads produced an archive whose files
+   contradicted each other (#48). A snapshot is not a lock, so row-level writers
+   and exports never delay each other and reads still don't take the write gate;
+   only a `replace_all` import's `TRUNCATE` (ACCESS EXCLUSIVE) queues behind an
+   export, and the reverse. Because it covers the whole transaction and Postgres
+   then refuses every write in it, put it only where the read *is* the unit of
+   work. **Never on a helper a write path also calls** — `plan_import` is shared
+   by preview and apply, and a snapshot there would break every import
+   (`.agents/lessons.md` → "Why export reads one snapshot").
 8. **Public read paths (Milestone 8)** must be genuinely separate route handlers
    under `/public/*` — not filtered views (§5). Public ingress must not expose an
    unauthenticated admin or MCP route; route separation is enforced at both the app
@@ -275,15 +257,10 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
 
 The rules above define defect *classes*, not just defects. A violation found in one
 code path is evidence about every other path under the same rule — so before fixing
-the instance in hand, enumerate the rest of the class.
-
-The cost of not doing this is on the record. #3 (an order-line edit discarding its
-conversion snapshot) was one rule-4 money defect. Fixing it exposed #12 (a CSV import
-relabelling that same snapshot), which exposed #6 (minor units read off the runtime
-instead of ISO 4217), which exposed #19 (`tools.unit_cost_reference` — a scaled
-decimal with no currency column at all). Four branches, four reviews and two releases,
-for four instances of one rule applied unevenly, all of which one pass over the paths
-touching money would have found at the start.
+the instance in hand, enumerate the rest of the class. The cost of not doing this is
+on the record: #3 → #12 → #6 → #19 was four branches, four reviews and two releases
+for four instances of one money rule applied unevenly (`.agents/lessons.md` →
+"Sweeping the class").
 
 - **Name the rule** the defect violates — a numbered rule above, or a `§n`. If it
   violates none, it's a one-off: fix it and move on.
@@ -291,7 +268,9 @@ touching money would have found at the start.
   REST, MCP, CSV import, CSV export, the browser, and the schema itself. They diverge
   independently — a corrected service function does not mean the importer agrees.
   `services/portability/spec.py`, `frontend/src/lib/format.ts` and the models are
-  where the last four hid.
+  where the last four hid. This repo has three writers plus an importer; a sweep
+  that answers for one of them is not a sweep. It applies to prose too — grep the
+  docs for the distinctive fragment, not the comfortable full phrase.
 - **File the siblings even if you won't fix them now.** An unfiled sibling is
   indistinguishable from a bug nobody has noticed. Milestone or don't, but file.
 - **Fix the class in one branch** where the instances share a root cause, and say so
@@ -299,78 +278,44 @@ touching money would have found at the start.
   — separate branches are right, but the issues should already exist.
 - **Cross-layer behaviour gets a shared fixture, not one test suite per side.**
   `frontend/src/lib/__fixtures__/money-cases.json` is read by both `format.test.ts`
-  and `backend/tests/test_currency.py`. Two hand-maintained lists drift, and a drifted
-  pair reads green on both sides with a wrong number in the database. Add cross-layer
-  cases there. This is also the check on the fix itself: the #6 rewrite silently broke
-  exponent input (`1e2` stored as `0`) in a file that then had no tests.
+  and `backend/tests/test_currency.py`. Two hand-maintained lists drift, and a
+  drifted pair reads green on both sides with a wrong number in the database.
 
 ## Writing the test: sweep the values, not just the paths
 
-The sweep above finds code paths that drifted apart. It does nothing about a test that
-walks the right path carrying the wrong values — and that is now the more expensive
-mistake on this repo's record.
+The sweep above finds code paths that drifted apart. It does nothing about a test
+that walks the right path carrying the wrong values — and that is the more
+expensive mistake on this repo's record: several regression suites were written for
+a known defect, reviewed, **run against the unfixed code, and still missed
+something**, each in a different way. The cases are in `.agents/lessons.md` ("The
+value axis", "The state axis", "Green for the wrong reason"); the procedure and
+checklist are in `.agents/testing-and-review.md`. The rules they produced:
 
-Four regression suites have now been written for a known defect, reviewed, run against
-the unfixed code, and still missed something. Each failed differently:
-
-- **#65** seeded a **quantity-one** kit line. The defect was one line's kits being
-  flattened onto each other, which a single kit cannot express. The test drove the
-  exact code path and proved nothing.
-- **#66**'s warm-cache detector was **timing-dependent**. It passed against the broken
-  code because on localhost the refetch beat the assertion; only stalling the request
-  with `page.route` made the stale window certain.
-- **#69** compared a field where both sides already held the same non-null value, so the
-  derivation that caused the defect was a no-op. The comparison was exercised only where
-  it could not be wrong.
-- **#41** swept its field's values properly — absent column, blank cell, sheet-supplied
-  id, conjured stub — and ran every one of them through a **create**. The leak it existed
-  to prevent puts a minted uuid in a row's `changes` list, and `changes` is empty on a
-  create, so it could not appear in any test in the suite. It was latent in the *previous*
-  fingerprint too and the rewrite inherited it unseen; an external review found it. No
-  additional *value* would have helped — the axis never varied was the row's **action**.
-- **#42** had a seven-case matrix over `manifest.json`'s `tables` block — absent, a string,
-  a non-object entry, a missing count, a non-numeric count, a null name, a boolean count —
-  and every case wrote it inside a JSON **object**. The importer's first act is
-  `data.get("tables")`, so a manifest of `[]` was an `AttributeError` 500 no case in the
-  matrix could reach. The axis was the container, not the thing inside it. Its sibling test
-  drove one member-decompression failure (a bad CRC) and so missed the other two the same
-  `except` clause was meant to cover. Both found by external review.
-- **#43** knew the axis and applied it to one matrix and not its neighbour. The starter
-  sheet reads `quantity` down two branches, chosen by whether the row names a retailer.
-  The *ceiling* matrix varied that cell; the *invalid-value* matrix sitting immediately
-  above it in the same file drove `0`, `-2`, `1.5` and `many` with the cell blank only.
-  So the ceiling was fixed in both branches while the floor was fixed in one, and
-  `quantity: 0` on a retailer-backed row planned as a clean create and 500'd at flush.
-  Values and state were both already in the suite, on adjacent tests, and neither
-  crossed. External review again.
-
-**When one matrix in a file varies a state axis, every matrix over the same field owes
-you a reason why it doesn't.** The neighbour is the cheapest place to notice.
-
-So when a fix turns on **comparing or branching on a field**, enumerate what that field
-can legitimately hold before writing the assertions: null, empty, whitespace, the derived
-or default value, and something that genuinely differs. Drive at least the null and the
-default. If the rule is about rows diverging, seed more than one row. If the rule is
-about timing, pin the timing rather than hoping.
-
-**Values are one axis. The state the row is in is another, and it decides whether the
-field is even present to be wrong.** `changes` is empty on a create; `matched_id` is null
-until something matches; a spawn descriptor exists only for a kit line short of kits; a
-`replace_all` has a deletion set and a merge has none. Twenty values inside one action
-say nothing about the actions never entered. So where a fix touches a structure whose
-*shape* is decided by a classification — an action, a mode, a status — drive at least two
-of them, and prefer the one that makes the structure non-empty.
-
-**Running the test against the unfixed code is necessary and not sufficient.** All four
-above were, and passed. A red test proves it detects the case you thought of; it says
-nothing about the case you didn't, and nothing at all about the states you never put the
-row into. #41's suite was red exactly where it looked and blind everywhere else.
-
-**A test that asserts a status has to be able to see one.** The default `client` fixture
-re-raises unhandled application exceptions into the test, so a route that 500s fails the
-assertion as an *error* naming some internal exception — red, but silent on what the status
-should have been. Use the `http_client` fixture, which returns the 500 as a response,
-wherever the point of the test is which status a bad input earns (rule 6).
+- **Enumerate what the field can hold** before writing assertions: null, empty,
+  whitespace, the derived or default value, and something that genuinely differs.
+  Drive at least the null and the default.
+- **Values are one axis; the state the row is in is another**, and it decides
+  whether the field is even present to be wrong (`changes` is empty on a create;
+  `matched_id` is null until something matches; a `replace_all` has a deletion set
+  and a merge has none). Where a fix touches a structure whose shape is decided by
+  a classification — an action, a mode, a status — drive at least two of them, and
+  prefer the one that makes the structure non-empty.
+- **When one matrix in a file varies a state axis, every matrix over the same field
+  owes you a reason why it doesn't.** The neighbour is the cheapest place to notice.
+- **If the rule is about rows diverging, seed more than one row.** If it is about
+  timing, pin the timing rather than hoping.
+- **A red test proves *something* refused the input, not that the rule under test
+  did.** Assert the layer that spoke and the error class; assert the named control,
+  not containment; never derive the test's subject from the code under test (an
+  empty parametrize is a skip, not a failure).
+- **Running the test against the unfixed code is necessary and not sufficient.** It
+  proves the test detects the case you thought of, nothing about the case you
+  didn't. Then mutate the fix **one place at a time** — the axis that keeps going
+  unvaried is *which of several equivalent places the fix actually reached*.
+- **A test that asserts a status has to be able to see one.** The default `client`
+  fixture re-raises unhandled exceptions into the test; use `http_client`, which
+  returns the 500 as a response, wherever the point is which status a bad input
+  earns (rule 6).
 
 ## Roadmap (design notes §11)
 
