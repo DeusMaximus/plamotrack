@@ -105,6 +105,13 @@ exactly, so all the internal links survive untouched.
 | Upgrade applications | Upgrade + kit + date applied |
 | **Kits** | **Never matched automatically** — see below |
 
+An ambiguous match — two stored retailers or two catalog rows that differ only in
+case or surrounding spaces — is reported as an error row asking for an explicit id.
+The application itself no longer creates that pair: since 0.2.7, adding or renaming a
+retailer, tool, consumable or upgrade onto a name another row of the same table
+already holds is refused. If an instance still carries one from before, rename one of
+the two in the app and import again.
+
 **Kits are deliberately excluded.** A kit row is one *physical* kit, so two of the
 same product are legitimately two rows. Matching them by name would silently merge
 purchases you actually made. Instead, importing a kit that looks like one you own
