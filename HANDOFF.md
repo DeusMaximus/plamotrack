@@ -45,7 +45,12 @@ Template:
 
 - **Done:** **#106 merged** (`eb3a430`) — design notes caught up on the write gate,
   export snapshot, #94/#96 decisions and the hardening milestones. **#49 fixed on
-  `fix/49-retailer-name-matching`, PR #108 open, CI pending at write time.**
+  `fix/49-retailer-name-matching`, PR #108 open at `4106390`, CI green, one
+  Cursor review round done: GO with two P3s, both taken** — fold *both* sides of
+  the predicate in Postgres (`func.lower(col) == func.lower(input)`; the Python
+  fold differs on Turkish `İ`, so the reviewed head missed an exact stored
+  spelling — a regression against ILIKE), and §12.4 tightened so the typeahead
+  is not read as the natural-key check. Reply posted at that head.
   `get_or_create_retailer` and `list_kits(grade=)` compare `lower()` for equality
   instead of ILIKE — the importer's `_norm_name` rule, so all three surfaces
   agree. Found on the way: ILIKE read `\` as its escape, so a shop with a
@@ -60,7 +65,7 @@ Template:
   shape matters). `staleTime: 0` over per-page invalidation — closes the class,
   including rows an MCP agent adds out of band; noted in the PR for the owner to
   disagree with. #107 not folded in: different root cause, changes status codes.
-- **State:** backend 553 (534 + 19 new in `tests/test_name_matching.py`), ruff
+- **State:** backend 556 (534 + 22 new in `tests/test_name_matching.py`), ruff
   clean; e2e 19 (17 + 2 in `e2e/catalog-dedup.spec.ts`), vitest green, build +
   oxlint clean. **e2e verified against a database migrated from empty; every
   table empty afterwards** — recipe now in `.agents/testing-and-review.md`. No
@@ -72,8 +77,9 @@ Template:
   A stale worktree `/private/tmp/plamotrack-pr100` exists on this Mac from an
   earlier session — not this one's, left alone. Live from before and still true:
   #86 gates #44/#77/#87/#90; #104 in 0.2.8; #97 → 0.2.7; #98/#99 → 0.2.8.
-- **Next:** review and merge **#108** (the PR body says what to check: the `A\B`
-  finding, `staleTime: 0` vs invalidation, where #107 goes). Then 0.2.7's
+- **Next:** merge **#108** — it has a GO; the review reply lists what changed at
+  `4106390`. Cursor suggested #107 belongs in **0.2.7**, not 0.2.8 (it is the rest
+  of rule 3 on the names #49 just defined) — the owner's call. Then 0.2.7's
   remaining items clear of #86 are **#93** (backdatable `received_at` — note
   `receive_order` also stamps the kits it advances, so a backdated receipt has to
   backdate those), **#95**, and **#94 + #96** (share a migration; decisions are

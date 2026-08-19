@@ -417,6 +417,13 @@ And a later `git stash pop` collided with it. Both recovered, but the stash/chec
 dance used to run tests against old code is what caused it. Commit first, then swap
 files — or use a worktree, which is what every session since has done. → 2026-08-14
 
+Done again on #49's review round: the round's *test-file* edits were uncommitted while
+single-site mutants were applied to the service files and restored with
+`git checkout -- <path>` — a fallback branch of the restore step named the test file
+too, and it reverted to the committed version. Recovered from the edit script.
+The rule is not "don't use checkout"; it is **commit the round before mutating
+anything**, so every restore has a known-good target. → 2026-08-19 (#49, PR #108)
+
 ### Two pytest sessions at once deadlock on `TRUNCATE`
 A background run overlapping a foreground one reported 19 phantom failures; under
 the write gate a hung run parked on `advisory` is the tell. One at a time.
