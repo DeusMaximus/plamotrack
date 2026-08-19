@@ -237,6 +237,13 @@ same upload's `kits.csv` also moves a kit onto or off that line via `order_item_
 that move is counted first — so a line whose quantity you left alone still ends up
 with exactly that many kits.
 
+Your own export can carry that contradiction. Importers before 0.2.6 let a line end
+up holding more kits than its quantity said, and an archive taken from such an
+instance is refused on re-import or restore with *"this line says quantity N, but this
+upload supplies M kit(s)"*. Nothing is lost: raise the quantity in `order_items.csv`
+to match the kits that are really there, or take the extra kit rows out, and import
+again.
+
 ---
 
 ## Editing the CSVs by hand
