@@ -41,6 +41,47 @@ Template:
 
 ---
 
+## 2026-08-20 — Claude Code (Fable 5) — #107 → PR #109 open; #110 filed (importer sibling)
+
+- **Done:** **#107** on `fix/107-name-uniqueness`, head **`49c1a9f`**, pushed;
+  **PR #109 open** against `main` (owner authorised push + PR after seeing the
+  branch). **#110 filed** — the importer sibling, unmilestoned, owner's call.
+  `services/names.py` is the predicate written once —
+  `lower(btrim(name))` on both sides in Postgres, per #49 — plus `clean_name`
+  (stored trimmed; whitespace-only → 422) and `require_unique_name` (409 naming the
+  row and its id; own id excluded on a rename). Six sites, all after the write gate:
+  `create_retailer`, `update_retailer`, the three catalog creates (one insert now),
+  `update_catalog_item`, and `_build_catalog_row` (async) for `new_item` at entry
+  and on edit. `get_or_create_retailer` reads through the same `find_by_name`, so
+  `create_order` reuses exactly what `create_retailer` refuses. MCP docstrings and
+  instructions updated; design §3.9/§7/§12.4 and import-export.md too. Browser
+  untouched (forms already render `detail`). No migration.
+- **Decisions:** refuse not merge (issue option 1); trim on store and refuse blank
+  (not in the issue's text, follows from defining the key — said on the PR); two
+  `new_item` lines naming one thing in one request 409 and roll the order back
+  (declared, tested); the 409 carries the uuid (for agents; droppable). Importer
+  **deliberately untouched** (#86's file) — probed, not assumed: an id-less
+  in-upload pair is already an error row, an id-less match is an update; only a
+  fresh *id-bearing* pair still lands, by design for round-trips → #110.
+- **State:** backend **659** (556 + 103 in `tests/test_name_uniqueness.py`), ruff
+  clean, frontend untouched. Negative control in a worktree: **70 red / 29 green on
+  unfixed `main`**, the 29 being the controls. **17 single-site mutants killed**, the
+  gate-order one 6/6 — run through a scratch copy of the harness because
+  `mutation_test.py` is mid-rewrite on #86; the 17 tuples are in the PR body
+  (collapsed block) for folding in once #86 lands. Two existing helpers that
+  created one name twice now suffix it; `test_two_retailers_with_one_name_still_round_trip`
+  seeds through the session. No review requested yet — Cursor-sized (~810
+  insertions). Live and still true: **#86 at `dfa7f29`
+  owes its Codex round** and gates #44/#77/#87/#90; #107 → 0.2.7; #104/#98/#99 →
+  0.2.8. Worktrees `/private/tmp/plamotrack-pr100` and `-pr108-main` still stale,
+  left alone; this session's `-107-main` removed.
+- **Next:** a Cursor round on **#109**; brief it with the PR body's "deliberate
+  calls" and the test claim. Then 0.2.7's remaining items clear of #86: **#93**
+  (backdatable `received_at` — must backdate the kits it advances),
+  **#94 + #96** (one migration, separate commits; importer needs no logic change
+  because it must not invent timestamps), **#95** after #86 (its importer half
+  mirrors #86's arriving-receipt question), **#97** last.
+
 ## 2026-08-19 — Claude Code (Fable 5) — #86 pre-round: `main` merged in, harness false-kill fixed, two defects closed, authority rule changed
 
 - **Done:** owner asked for a same-family pre-round on **#86** to make the next
@@ -235,57 +276,3 @@ mistake — a green run that came from the environment rather than the code:
 And one about the harness: `mutation_test.py`-style scripting **races Vite's
 recompile** on frontend files. A mutant reported as surviving needs a manual
 re-run before it is believed. The backend equivalent has no such race.
-
-## 2026-08-18 — Claude Code (Opus 5) — #50 and the #100 review follow-ups merged
-
-- **Done:** three PRs merged to `main`, all squashed, all reviewed by Cursor Grok
-  4.6 before merge. **#100** (#92 + #55, the rule-1 write-surface sweep), **#101**
-  (#50, board move ordering), **#102** (the three P3s from #100's review). `main`
-  is at `2dba040`: 534 backend tests, 100 frontend unit tests, 11 e2e. Issues #92,
-  #55 and #50 are closed. **#97, #98, #99** were filed from the #100 sweep and are
-  **unmilestoned on purpose** — placing them is the owner's call.
-- **Decisions:**
-  - **Board move serialisation** is a TanStack `scope`, board-wide, in a new
-    `frontend/src/lib/kitStatusMutation.ts`. The policy left `BoardPage` so it
-    could be tested at all — see below. First options-factory module in this repo.
-  - **Boolean refusal lives on the `Annotated` aliases** in
-    `backend/app/schemas/numeric.py`, not on any route. A `BeforeValidator`
-    rejecting only `bool`, deliberately not `strict=True`, which would also refuse
-    `"5"`. **It must be ordered after `Field(...)`**: first, it wraps a bare `int`
-    and the constraints serialize as raw `ge`/`le`, so the bound silently
-    disappears from the published OpenAPI while still being enforced at runtime.
-    The int4 contract test caught that; the ordering now carries a comment.
-  - **`Rating` is an alias too**, in the same file, even though 1–5 is a product
-    rule rather than an int4 bound. Being declared anywhere else is exactly how it
-    became the one write integer that still took a boolean.
-  - **`data-testid="stock-count"`** is the first test id in the repo (#100).
-- **State:** no migrations anywhere in this batch. `fix/44-import-order-invariants`
-  (PR #86) is untouched — all three branches were chosen for not overlapping it.
-  A stray local branch `pr-102-review-ref` exists from Cursor's review; its content
-  is in `main` and it can be deleted.
-- **Next:** #86 is still the blocker for 0.2.6 — #44, #77, #87 and #90 all live
-  inside the files it rewrites. Remaining 0.2.7 work clear of it: **#51** (dialog
-  focus trap) and **#49** (retailer LIKE wildcards — read #86's importer
-  name-matching first, since #49's point is making all three normalisations agree).
-
-### Two things worth carrying forward, both learned the expensive way
-
-- **An e2e test could not tell the #50 fix from the #50 defect.** dnd-kit's
-  `DragOverlay` swallows a `pointerdown` that arrives before the previous drop
-  animation finishes, so the second drag never started — one request, in order,
-  which is exactly what correct serialisation looks like. It was also
-  observer-sensitive: a `console.log` in the drag handlers flipped it from failing
-  to passing, and it measured 1 pass in 5 in fresh processes. Deleted rather than
-  shipped, and the policy was extracted so the mutation could be driven directly.
-  **`--repeat-each` is not a way to measure flakiness here** — it reuses one module
-  load, so every repeat shares the fixture name and stacks duplicates. That cost a
-  round of wrong numbers before the real one.
-- **Both reviews found a partial sweep, in branches whose whole point was
-  sweeping.** #101's rollback justification was self-contradictory — `scope` pauses
-  `mutationFn`, not `onMutate`, so a failed move overwrote a later queued move's
-  optimistic state, and the branch's own test asserted the behaviour that
-  disproved the comment. #102 fixed three of the four integer families and missed
-  `rating`, which has its own bounds and so never appeared in the contract test.
-  Both suites were green over the defect. The axis that keeps going unvaried is not
-  values — it is *which of several equivalent places the fix actually reached*, so
-  mutate the places one at a time, not the fix as a whole.
