@@ -1,5 +1,15 @@
-# The full local stack (design notes §8). `docker compose up -d --wait` builds
-# it, migrates the database, and leaves an instance on http://127.0.0.1:8080.
+# The full local stack (design notes §8). `docker compose up -d --build --wait`
+# builds it, migrates the database, and leaves an instance on
+# http://127.0.0.1:8080.
+#
+# `--build` is not optional. `api` and `migrate` share an `image:` tag below so
+# they build once and run the same bits — which also means a plain `up` will reuse
+# a stale local image after the source changes, and has run migrations it predated.
+# A fresh LXC on the official Docker packages also failed a first `up` outright,
+# saying it could not find the images in any registry, and the flag fixed that too;
+# why that host refuses to build when a one-service probe on it builds fine is not
+# understood. See AGENTS.md before theorising — several explanations have been
+# written down and retracted.
 #
 # Only `web` is published. The API and the database stay on the compose network,
 # so an instance has exactly one door, bound to loopback by default. That makes

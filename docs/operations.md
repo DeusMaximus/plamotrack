@@ -9,7 +9,7 @@ Backing up, restoring, and upgrading the bundled Docker Compose stack.
 
 ## What's running
 
-`docker compose up -d --wait` gives you four things:
+`docker compose up -d --build --wait` gives you four things:
 
 | Service | What it is | Published? |
 | --- | --- | --- |
@@ -66,7 +66,7 @@ docker compose up -d db --wait
 docker compose exec -T db sh -c \
   'exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' \
   < plamotrack-2026-08-10.dump
-docker compose up -d --wait
+docker compose up -d --build --wait
 ```
 
 > `docker compose down -v` deletes the `db-data` volume, which **is** your

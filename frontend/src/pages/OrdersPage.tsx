@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useRef, useState } from "react";
 import type {
   Control,
   FieldErrors,
@@ -467,6 +467,11 @@ function OrderForm({
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [newRetailerName, setNewRetailerName] = useState<string | null>(null);
+  // Two guards on the inline create, for two different readers: the ref is what
+  // stops a second click that lands before React has re-rendered (#49 — a
+  // double-click made two shops); the state is what greys the button out.
+  const addingRetailer = useRef(false);
+  const [retailerPending, setRetailerPending] = useState(false);
   const { data: retailers } = useQuery({ queryKey: ["retailers"], queryFn: api.listRetailers });
 
   // Snapshotted once per open, deliberately: react-hook-form owns these values
@@ -505,14 +510,20 @@ function OrderForm({
   const { fields, append, remove } = useFieldArray({ control, name: "items" });
 
   const addRetailer = async () => {
-    if (!newRetailerName?.trim()) return;
+    const name = newRetailerName?.trim();
+    if (!name || addingRetailer.current) return;
+    addingRetailer.current = true;
+    setRetailerPending(true);
     try {
-      const created = await api.createRetailer({ name: newRetailerName.trim() });
+      const created = await api.createRetailer({ name });
       await queryClient.invalidateQueries({ queryKey: ["retailers"] });
       setValue("retailer_id", created.id);
       setNewRetailerName(null);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not add retailer");
+    } finally {
+      addingRetailer.current = false;
+      setRetailerPending(false);
     }
   };
 
@@ -602,7 +613,7 @@ function OrderForm({
                   onChange={(event) => setNewRetailerName(event.target.value)}
                   placeholder="New retailer name"
                 />
-                <Button type="button" onClick={addRetailer}>
+                <Button type="button" onClick={addRetailer} disabled={retailerPending}>
                   Add
                 </Button>
                 <Button type="button" variant="secondary" onClick={() => setNewRetailerName(null)}>
@@ -881,8 +892,35 @@ export function OrdersPage() {
                     className="cursor-pointer border-b border-zinc-100 last:border-0 hover:bg-zinc-50"
                     onClick={() => toggle(order.id)}
                   >
-                    <td className="px-3 py-2 text-zinc-400">
-                      {expanded.has(order.id) ? "▾" : "▸"}
+                    {/* Narrower padding than its neighbours: the 24x24 control
+                        is wider than the bare glyph it replaced, and the default
+                        px-3 pushed the table enough to wrap retailer names. */}
+                    <td className="px-1 py-2 text-zinc-400">
+                      {/* A real button, because the row's own click handler is
+                          unreachable from a keyboard — nothing focuses a <tr>.
+                          The row click stays as a convenience for the mouse, so
+                          this stops propagation or the two would cancel out. */}
+                      <button
+                        type="button"
+                        aria-expanded={expanded.has(order.id)}
+                        // Names the retailer as well as the date: two orders
+                        // placed on one day would otherwise share an accessible
+                        // name, and the date alone just restates the cell beside
+                        // it. The receive/delete confirmations already say the
+                        // retailer for the same reason.
+                        aria-label={`${expanded.has(order.id) ? "Hide" : "Show"} line items for the ${formatDate(order.order_date)} order from ${retailerName.get(order.retailer_id) ?? "an unknown retailer"}`}
+                        // 24x24: WCAG 2.2 target-size minimum. The row click is
+                        // an equivalent alternative and would technically exempt
+                        // it, but leaning on that inside an accessibility fix is
+                        // not worth the four characters it saves.
+                        className="flex h-6 w-6 items-center justify-center rounded leading-none hover:bg-zinc-200 hover:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          toggle(order.id);
+                        }}
+                      >
+                        {expanded.has(order.id) ? "▾" : "▸"}
+                      </button>
                     </td>
                     <td className="px-3 py-2">{formatDate(order.order_date)}</td>
                     <td className="px-3 py-2 font-medium">

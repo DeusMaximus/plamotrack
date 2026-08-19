@@ -337,6 +337,71 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
   );
 }
 
+/** −1 / +1 on a stock row (#55).
+ *
+ * A signed delta, not a PATCH of `quantity_on_hand`: an absolute write has to read
+ * the number before it can state one, and three writer types can move it in
+ * between (rule 7) — which is the mechanism behind #35. "One fewer of these" is
+ * what a consumable running out actually is, and this says so on the wire.
+ *
+ * Disabled while in flight rather than merely debounced: two clicks are two
+ * intents, and the server would apply both. Disabling at zero is cosmetic — the
+ * service refuses a negative result either way — but it puts the refusal where the
+ * user can see it coming instead of in an error banner.
+ */
+function StockStepper({
+  item,
+  queryKey,
+  onError,
+}: {
+  item: InventoryItem;
+  queryKey: Tab;
+  onError: (message: string | null) => void;
+}) {
+  const queryClient = useQueryClient();
+  const [pending, setPending] = useState(false);
+
+  const adjust = async (delta: number) => {
+    setPending(true);
+    onError(null);
+    try {
+      await api.adjustStock(item.id, delta);
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message : "Stock adjustment failed");
+    } finally {
+      // Refetch whether it succeeded or not. A refusal means the stored count is
+      // not the one this row is showing — that is *why* it was refused — so
+      // keeping the stale number leaves − armed against a quantity the server has
+      // already rejected, and the next click earns the same 409.
+      await queryClient.invalidateQueries({ queryKey: [queryKey] });
+      setPending(false);
+    }
+  };
+
+  return (
+    <span className="inline-flex items-center gap-1">
+      <Button
+        variant="secondary"
+        className="px-2 py-0.5 leading-none"
+        aria-label={`Remove one ${item.name}`}
+        disabled={pending || item.quantity_on_hand === 0}
+        onClick={() => void adjust(-1)}
+      >
+        −
+      </Button>
+      <Button
+        variant="secondary"
+        className="px-2 py-0.5 leading-none"
+        aria-label={`Add one ${item.name}`}
+        disabled={pending}
+        onClick={() => void adjust(1)}
+      >
+        +
+      </Button>
+    </span>
+  );
+}
+
 export function InventoryPage() {
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("tools");
@@ -425,7 +490,12 @@ export function InventoryPage() {
                   <tr key={tool.id} className="border-b border-zinc-100 last:border-0">
                     <td className="px-3 py-2 font-medium">{tool.name}</td>
                     <td className="px-3 py-2">{tool.category}</td>
-                    <td className="px-3 py-2">{tool.quantity_on_hand}</td>
+                    <td className="px-3 py-2">
+                      <span className="mr-2 tabular-nums" data-testid="stock-count">
+                        {tool.quantity_on_hand}
+                      </span>
+                      <StockStepper item={tool} queryKey="tools" onError={setActionError} />
+                    </td>
                     <td className="px-3 py-2">
                       {tool.unit_cost_reference_minor === null ||
                       tool.unit_cost_reference_currency === null
@@ -482,9 +552,13 @@ export function InventoryPage() {
                       <td className="px-3 py-2 font-medium">{item.name}</td>
                       <td className="px-3 py-2">{item.category}</td>
                       <td className="px-3 py-2">
-                        <span className={low ? "font-semibold text-red-600" : ""}>
+                        <span
+                          className={`mr-2 tabular-nums ${low ? "font-semibold text-red-600" : ""}`}
+                          data-testid="stock-count"
+                        >
                           {item.quantity_on_hand}
                         </span>
+                        <StockStepper item={item} queryKey="consumables" onError={setActionError} />
                         {low && (
                           <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
                             restock
@@ -531,7 +605,12 @@ export function InventoryPage() {
                   <tr key={upgrade.id} className="border-b border-zinc-100 last:border-0">
                     <td className="px-3 py-2 font-medium">{upgrade.name}</td>
                     <td className="px-3 py-2">{upgrade.manufacturer}</td>
-                    <td className="px-3 py-2">{upgrade.quantity_on_hand}</td>
+                    <td className="px-3 py-2">
+                      <span className="mr-2 tabular-nums" data-testid="stock-count">
+                        {upgrade.quantity_on_hand}
+                      </span>
+                      <StockStepper item={upgrade} queryKey="upgrades" onError={setActionError} />
+                    </td>
                     <td className="px-3 py-2 text-right">
                       <div className="flex justify-end gap-1">
                         <Button

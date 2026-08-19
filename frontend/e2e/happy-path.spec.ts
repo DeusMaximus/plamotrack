@@ -51,7 +51,10 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   await page.getByRole("button", { name: "Consumables" }).click();
   const markerRow = page.getByRole("row").filter({ hasText: MARKER });
   await expect(markerRow).toBeVisible();
-  await expect(markerRow.getByRole("cell").nth(2)).toHaveText("0");
+  // The count, not the cell: the "on hand" cell also holds the −/+ stepper (#55),
+  // so the cell's own text is "0−+". `toHaveText` on the number is still exact,
+  // which `toContainText` on the cell would not be — "10" contains "0".
+  await expect(markerRow.getByTestId("stock-count")).toHaveText("0");
 
   // Receive (confirm dialog auto-accepted)
   await page.goto("/orders");
@@ -61,7 +64,7 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   // Stock applied…
   await page.goto("/inventory");
   await page.getByRole("button", { name: "Consumables" }).click();
-  await expect(markerRow.getByRole("cell").nth(2)).toHaveText("3");
+  await expect(markerRow.getByTestId("stock-count")).toHaveText("3");
 
   // …and the kit advanced to Backlog (in hand, unbuilt)
   await page.goto("/kits");

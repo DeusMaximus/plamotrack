@@ -227,11 +227,12 @@ async def adjust_stock(
     session: AsyncSession, catalog_id: uuid.UUID, delta: int, reason: str | None = None
 ) -> StockAdjustmentResult:
     """Resolve a catalog id across the three fungible tables and adjust its stock."""
-    # `delta` arrives as a bare int from the MCP tool — there is no REST route and so
-    # no request schema to carry the bound (#74). The service is where both callers
-    # meet (rule 1), so it is where the bound belongs; a 3-billion delta is the
-    # caller mistyping, which is a 422, while a delta that *derives* out of range is
-    # the stored state refusing, below.
+    # Both callers now bound `delta` at their own edge — `Int4` on the MCP tool
+    # argument and on `StockAdjustmentRequest` (#55) — but the check stays here
+    # because the service is where they meet (rule 1), and a bound enforced only at
+    # two edges is a bound the next caller can skip. A 3-billion delta is the caller
+    # mistyping, which is a 422, while a delta that *derives* out of range is the
+    # stored state refusing, below (#74).
     try:
         require_int4(delta, f"delta '{delta:,}'")
     except ValueError as exc:

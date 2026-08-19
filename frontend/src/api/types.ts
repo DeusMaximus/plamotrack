@@ -112,6 +112,18 @@ export interface CatalogSearchResult {
   quantity_on_hand: number;
 }
 
+/** Result of a signed stock adjustment — `POST /catalog/{id}/adjust` (#55).
+ *
+ * `item_type` comes back because the caller doesn't state it: the service resolves
+ * the id across tools, consumables and upgrades the same way the search does. */
+export interface StockAdjustment {
+  item_type: CatalogItemType;
+  id: string;
+  name: string;
+  quantity_on_hand: number;
+  reason: string | null;
+}
+
 export const PACKING_QUALITIES = ["excellent", "good", "average", "below_average", "poor"] as const;
 export type PackingQuality = (typeof PACKING_QUALITIES)[number];
 
