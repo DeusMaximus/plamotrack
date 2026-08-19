@@ -933,6 +933,12 @@ be misleading.
   matched line)`. An archive round-trips with zero spawns; a bare orders sheet builds the
   collection. Same diff arithmetic as `_update_line` — and, since #44, in both
   directions: a surplus gives kits up, under `_update_line`'s own progression guard.
+  The arithmetic runs only for a line whose quantity the upload *writes* (a create,
+  or an update that changes it): a restated line — every line of a full archive —
+  describes and never instructs, so a kit move against one is refused until the
+  quantity is changed alongside it, and a re-imported archive is a no-op whatever
+  the collection holds. (An earlier reading, "any stated quantity", let an
+  unchanged archive row turn a refused move into a delete.)
 
 ### 12.5a The importer is the third writer (#44, 16/08/2026)
 
