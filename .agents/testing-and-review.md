@@ -165,6 +165,11 @@ uv run python mutation_test.py -k 2b                   # cases whose label conta
   never applied is not a mutant that was killed. Anchors are exact source strings
   and rot when the code moves; a refactor that touches an anchored line owes a
   harness run.
+- **A `-k` expression that selects no test is a failure too** (`NONE`, on #86's
+  harness from `fd8d195`). pytest exits 5 there, and "any non-zero exit is a kill"
+  read it as RED: after a merge united two case sets under one target-file list, 13
+  cases ran nothing and reported killed. The harness names its target files in a
+  literal `TEST_FILES` list; a case whose tests live in a new file extends the list.
 - **A surviving mutant is the finding**, and means one of two things: the condition
   is dead (something else already decides the outcome), or it is live and untested.
   Decide which before acting; do not delete a guard for being unreachable if what

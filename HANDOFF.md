@@ -41,6 +41,48 @@ Template:
 
 ---
 
+## 2026-08-19 — Claude Code (Fable 5) — #86 pre-round: `main` merged in, harness false-kill fixed, one defect closed
+
+- **Done:** owner asked for a same-family pre-round on **#86** to make the next
+  Codex round cheaper (not to replace it). Branch head is now **`e8cd2b3`**, pushed,
+  comment posted at that head. (1) `main` merged forward (`aefaecc`, 31 commits,
+  clean). (2) **The mutation harness reported 13 mutants killed that never ran**
+  (`fd8d195`): pytest exits 5 when `-k` deselects everything, the harness read any
+  non-zero as RED, and the merge of `main` at `5c0963b` had unioned the case sets
+  while keeping this branch's two target files — every `cell-` case selected zero
+  tests. `TEST_FILES` is now all three files; exit 5 reports `NONE` and counts as a
+  survivor. Re-run 56/56, then 59/59 with the new cases. (3) **One product defect**
+  (`43b947c`, `e8cd2b3`): a mistyped `order_item_id` on one kit in a pristine full
+  archive → 200, kit detached (#82's dangling-optional-ref rule nulls it) and a
+  replacement spawned (the line's restated quantity authorised it). Same cell in
+  `kits.csv` alone was already 409. `_refuse_unresolved_overwrite` in `_classify`:
+  an unresolvable optional REF may not clear a stored non-null link; #82's test had
+  driven only the create. Also speaks first for a mistyped `catalog_ref_id` on a
+  stored catalog line. (4) The arriving-receipt message offered "state the on-hand
+  quantity in consumables.csv" as a remedy; the check never reads catalog files, so
+  it isn't one (`7c0dc55`: message, doc bullets, test). (5) Docs note on why an
+  operator's own archive can hit the over-supply refusal (`0e21381`).
+- **Decisions:** mine, flagged as such on the PR — **not** changed: an *unchanged*
+  line row (every full archive has one) authorises the fan-out to delete an
+  incumbent / spawn a replacement on a kit move, while the same move with the row
+  absent is refused. Documented and tested as intended; raised as design question A
+  with the one-condition alternative (authority = the upload *writes* the quantity).
+  Design question B: a pre-#44 drifted instance's archive is refused on restore in
+  both modes; SQL to find drift is in the comment — worth a 0.2.6 release-note line
+  and a run on the LXC before upgrading. Structural read: the rules share one
+  post-write view; the CREATE-count sum is written twice (P3).
+- **State:** 641 backend, ruff clean, 59/59 mutants, frontend build/lint/vitest
+  clean; e2e not run locally (CI). No migration. `main` is `2772cb1` plus this
+  entry. `_refuse_unresolved_overwrite` is **new code with no independent eye** —
+  named as the place to push in the comment. Codex budget resets Thursday evening
+  (owner); the round is still owed at `e8cd2b3`. Two stale worktrees exist on this
+  Mac (`/private/tmp/plamotrack-pr100`, `/private/tmp/plamotrack-pr108-main`), not
+  this session's, left alone. Live and still true: #86 gates #44/#77/#87/#90; #107
+  → 0.2.7; #104/#98/#99 → 0.2.8.
+- **Next:** Codex round on #86 at `e8cd2b3` — brief it with the comment's "where to
+  push next" and question A. Then the previous entry's 0.2.7 list stands: #107,
+  #93, #95, #94 + #96.
+
 ## 2026-08-19 — Claude Code (Fable 5) — #106 and #108 merged (#49 closed); #107 filed → 0.2.7
 
 - **Done:** **#106 merged** (`eb3a430`) — design notes caught up on the write gate,
@@ -245,54 +287,3 @@ re-run before it is believed. The backend equivalent has no such race.
   Both suites were green over the defect. The axis that keeps going unvaried is not
   values — it is *which of several equivalent places the fix actually reached*, so
   mutate the places one at a time, not the fix as a whole.
-
-## 2026-08-18 — Claude Code (Opus 5) — #92 + #55 as one rule-1 sweep; PR #100 open
-
-- **Done:** closed the write-surface divergence in both directions on
-  `feat/92-55-write-surface-parity` (`9f4a269`, pushed). **PR #100 is open against
-  `main`, CI green on all three jobs.** MCP gains `update_kit`, `list_retailers`,
-  `create_retailer`, `update_retailer` and one catalog editor per table; REST gains
-  `POST /catalog/{id}/adjust` plus a −/+ stepper on the inventory rows. 521 backend
-  tests, 11 e2e, no migration. Filed the rest of the class as **#97** (`update_order`,
-  `get_order`), **#98** (`create_kit`, the three catalog creates, `list_catalog`) and
-  **#99** (`create_order`'s docstring names a `meta` resource that was never built).
-  All three are **unmilestoned on purpose** — placing them is the owner's call.
-- **Decisions:**
-  - **Three catalog-edit tools, not one dispatching on `item_type`** — a deviation
-    from what #92 proposed. `adjust_stock`, the analogy the issue reached for, takes
-    no `item_type` at all, and REST's own shape here is three PATCH routes. One tool
-    needs a patch model spanning all three tables' columns: a hand-maintained union
-    #94 and #96 would each have to be added to twice. It also removes an edge —
-    `ItemType.KIT` is a valid enum value naming no catalog table, so a dispatcher
-    would `KeyError` into a 500. Named `update_catalog_*`, since "tool" is already
-    taken inside an MCP client.
-  - **`update_kit_status` kept, not renamed.** Removing a tool a client may have
-    wired is a visible break; it is the documented status-only shortcut now, pinned
-    by a test to the same service call so the two cannot drift into two
-    implementations.
-  - **Edit tools take a patch object, not one optional argument per field.** An MCP
-    tool is a function signature, so the flat spelling cannot tell "leave the notes
-    alone" from "erase the notes" — both arrive as `None`. Taking the REST route's
-    own `*Update` schema keeps `model_fields_set`, so absent and null mean the same
-    on both surfaces. `_KitPatch` subclasses `KitUpdate` and overrides only `status`,
-    so #94's and #96's columns reach the tool with no second edit.
-  - **The adjust route lives on `/catalog`,** not `/inventory/{type}/{id}` — the
-    service resolves the id across the three tables itself, as the search does.
-  - **First `data-testid` in the repo** (`stock-count`). The stepper made the "on
-    hand" cell read `"0−+"`, breaking `happy-path.spec.ts`. `toContainText` on the
-    cell is not a substitute: `"10"` contains `"0"`. Flagged in the PR for review.
-- **State:** `main` untouched by the feature work — everything is on the branch and
-  in PR #100. Seven mutants (naive-kwargs on each of the three patch paths,
-  always-restamp, wrong `ItemType`, negated delta, dropped reason) were run **by
-  hand** and all killed; they are deliberately **not** in `mutation_test.py`, which
-  PR #86 rewrites. Worth adding there once #86 lands. `test_int4_bounds.py` no longer
-  claims `adjust_stock` has no REST route and drives both doors.
-- **Next:** #86 is still the blocker for 0.2.6 — all four of its remaining issues
-  (#44, #77, #87, #90) live inside the files that PR rewrites, so nothing there is
-  startable first. This branch was picked for touching **none** of #86's files, so
-  the two should merge in either order. Remaining 0.2.7 work with no #86 overlap:
-  #50 (board move ordering — worth landing before #94, which makes a lost update
-  worse), #51 (dialog focus trap), #49 (retailer LIKE wildcards, but read #86's
-  importer name-matching first — #49's point is making all three normalisations
-  agree).
-

@@ -295,6 +295,15 @@ class — reading rows `TRUNCATE` is about to delete. Kept, with its mutant take
 of the harness because a case that can never be killed trains people to ignore the
 report. → 2026-08-17 (#86)
 
+### An empty `-k` selection is exit 5, and exit 5 is not a failure
+The harness ran each mutant with `-k <expr>` and read any non-zero exit as a kill.
+When #86 merged `main`, the two case sets were united but the target-file list was
+not: every `cell-` case's tests lived in a file the branch's list did not name, so
+`-k` selected nothing, pytest exited 5, and 13 mutants were reported killed having
+run no test at all — `cell-5. -> 292 deselected in 0.04s`, RED. Same trap as the
+empty parametrize, one layer out: whatever runs the tests has to know the difference
+between "red" and "nothing ran". → 2026-08-19 (#86 pre-round)
+
 ### A guard can be shadowed by a change in another module
 Not the same as a guard that was always dead. The merged harness is what surfaced
 it; neither branch could see it alone. → 2026-08-17 (#86, "a sixth lesson")
