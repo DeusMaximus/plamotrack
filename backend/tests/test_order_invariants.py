@@ -573,6 +573,46 @@ async def test_the_fan_out_counts_the_kits_the_line_will_hold_not_the_ones_it_ho
     assert len(stored["kits"]) == stored["quantity"]
 
 
+async def test_one_mistyped_order_item_id_in_a_full_archive_cannot_spawn_a_duplicate(client):
+    """Two decided behaviours meeting: #82 nulls an optional reference it can't
+    resolve (the row "imports without it"), and this branch spawns for a line
+    whose restated quantity its kits no longer cover. Compose them on a pristine
+    archive with one wrong cell — a spawned kit's `order_item_id` mistyped — and
+    the kit was detached from the line that bought it *and* a replacement spawned
+    in its place, at 200, with only informational messages to show for it. The
+    same cell in `kits.csv` alone was already a 409, because that line's quantity
+    was never restated: the archive's own unchanged `order_items.csv` was what
+    turned a refusal into a duplicate.
+
+    Now refused at the cell (`_refuse_unresolved_overwrite`): an id that names
+    nothing may not clear a link the stored row has. Asserted on the message that
+    rule writes, because the count rule (#44) can refuse a detach too and a bare
+    409 would not say which one spoke.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    item = order["items"][0]
+    kit = item["kits"][0]
+
+    tables = read_archive((await client.get("/export/archive")).content)
+    for row in tables["kits"]:
+        if row["id"] == kit["id"]:
+            row["order_item_id"] = "00000000-0000-0000-0000-00000000dead"
+    content = archive(**tables)
+
+    plan = await preview(client, content)
+    assert actions(plan, "kits") == ["error"], plan["tables"]
+    kits_plan = next(t for t in plan["tables"] if t["table"] == "kits")
+    assert "can't be what clears that link" in kits_plan["rows"][0]["error"]
+    assert plan["derived"]["kits_spawned"] == 0, plan["derived"]
+    assert plan["derived"]["kits_removed"] == 0, plan["derived"]
+    assert (await apply(client, content)).status_code == 409
+
+    stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
+    assert [k["id"] for k in stored["kits"]] == [kit["id"]], "still the one kit, still on its line"
+    assert len(await kit_states(client)) == 1
+
+
 async def test_a_kits_sheet_that_never_mentions_order_item_id_moves_nothing(client):
     """The column-absent state, on the *other* table.
 

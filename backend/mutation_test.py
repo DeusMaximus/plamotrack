@@ -481,6 +481,28 @@ CASES = [
         "        self._keep_stored_where_unstatable(spec, row)\n        self._defer_generated_status_stamp(spec, row)",
         "both_claim_the_column",
     ),
+    # --- #82 x #44: an unreadable id may not clear a stored link -------------------
+    (
+        "inv-22. an id that names nothing may clear a stored link again",
+        IMP,
+        "            if column is None or column.get(row.target) is None:\n                continue",
+        "            if True:\n                continue",
+        "may_not_clear_a_stored_link or mistyped_order_item_id",
+    ),
+    (
+        "inv-22a. the refusal fires with nothing stored to lose",
+        IMP,
+        "            if column is None or column.get(row.target) is None:\n                continue",
+        "            if column is None:\n                continue",
+        "may_not_clear_a_stored_link",
+    ),
+    (
+        "inv-22b. the withdrawn 'imports without it' line stays in the preview",
+        IMP,
+        "            row.messages = [message for message in row.messages if message != told]",
+        "            pass",
+        "may_not_clear_a_stored_link",
+    ),
 ]
 
 

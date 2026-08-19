@@ -556,6 +556,13 @@ class _Row:
     #: hash as themselves; minted ones are fresh on every run, so
     #: `_plan_fingerprint` replaces them with a positional token.
     synthetic_id: bool = False
+    #: Optional REF columns whose cell named an id that resolved to nothing —
+    #: `column -> (table, the id it named)`. `_resolve_all_refs` nulls the value
+    #: (#82: the row imports without the link) and records it here, because on an
+    #: update the null it left behind is indistinguishable from a blank cell, and
+    #: the two are different instructions once there is a stored link to lose
+    #: (`_refuse_unresolved_overwrite`).
+    unresolved: dict[str, tuple[str, uuid.UUID]] = field(default_factory=dict)
 
 
 @dataclass
@@ -596,6 +603,16 @@ def _instance_dict(spec: TableSpec, instance: Any) -> dict[str, Any]:
 
 def _norm_name(value: Any) -> str:
     return str(value or "").strip().lower()
+
+
+def _dangling_optional_message(column: str, table: str, missing: uuid.UUID) -> str:
+    """#82's wording for an optional reference that named nothing, in one place so
+    `_refuse_unresolved_overwrite` can withdraw it precisely when it turns out to
+    be untrue for the row."""
+    return (
+        f"{column}: no {table} here has id {missing}, so this row imports "
+        f"without it. Add that {table} row, or fill it in afterwards"
+    )
 
 
 class _Planner:
@@ -1137,6 +1154,51 @@ class _Planner:
                 "in this row supplies a new value"
             )
 
+    def _refuse_unresolved_overwrite(self, spec: TableSpec, row: _Row) -> bool:
+        """An id that names nothing may not clear a link the stored row has.
+
+        `_resolve_all_refs` nulls an optional reference it cannot resolve and says
+        so (#82) — right for the case that rule was written for, a `kits.csv`
+        arriving in a fresh instance whose lines were never here, where the null
+        changes nothing. On an **update** the same null overwrites a stored value:
+        a kit that *is* on an order line, whose row carries a mistyped or foreign
+        `order_item_id`, was quietly detached from the line that bought it, and
+        the fan-out (#44) then read the departure as a shortfall and spawned a
+        replacement — a duplicate kit and a lost purchase link, at 200, from one
+        wrong cell in an otherwise pristine archive. The same cell in `kits.csv`
+        alone was already a 409, because that line's quantity was never restated.
+
+        Refused rather than kept, and the reason is the one `_resolve_all_refs`
+        already gives for `replace_all`: the row said which line bought this kit,
+        and dropping that on the floor loses provenance the operator never agreed
+        to lose. A blank cell is the instruction to detach; an id the importer
+        cannot read is not the same instruction wearing a different value. #82's
+        test drove only the create, so this state was never varied.
+
+        Runs inside `_classify`, after matching and before the change diff, and
+        only ever fires against a stored non-null value: a create has no link to
+        lose and keeps #82's behaviour exactly.
+        """
+        for column_name, (table, missing) in row.unresolved.items():
+            if column_name not in row.present:
+                continue
+            column = spec.column(column_name)
+            if column is None or column.get(row.target) is None:
+                continue
+            # The "imports without it" line was true when it was written and is
+            # not any more; the error below is what the operator should read.
+            told = _dangling_optional_message(column_name, table, missing)
+            row.messages = [message for message in row.messages if message != told]
+            row.action = RowAction.ERROR
+            row.error = (
+                f"{column_name}: no {table} here has id {missing}, and this row currently "
+                f"points at {table} {column.get(row.target)} — an id that names nothing "
+                "can't be what clears that link. Fix the id, or leave the cell blank if "
+                "clearing it is what you mean"
+            )
+            return True
+        return False
+
     def _refuse_unfillable_creates(self, spec: TableSpec, row: _Row) -> None:
         """The create half of the same rule: nothing to fall back on, so say so.
 
@@ -1219,6 +1281,8 @@ class _Planner:
         # its own; it was found by reading both trees at once during #89's review.
         self._defer_generated_status_stamp(spec, row)
         self._keep_stored_where_unstatable(spec, row)
+        if self._refuse_unresolved_overwrite(spec, row):
+            return
 
         changes = []
         for column in spec.columns:
@@ -1425,10 +1489,8 @@ class _Planner:
                 # discarded. Said per row rather than as a summary, because which
                 # rows lost their link is the part a count cannot give back.
                 target, missing = dangling
-                row.messages.append(
-                    f"{column.name}: no {target} here has id {missing}, so this row imports "
-                    f"without it. Add that {target} row, or fill it in afterwards"
-                )
+                row.unresolved[column.name] = dangling
+                row.messages.append(_dangling_optional_message(column.name, target, missing))
 
     def _apply_money_alternates(self, spec: TableSpec, row: _Row) -> None:
         """Major units fill in only where the canonical minor-unit column is absent

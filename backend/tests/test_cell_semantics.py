@@ -22,7 +22,7 @@ from sqlalchemy import inspect
 from app.services.portability import spec
 from app.services.portability.importing import _COLUMN_DEFAULTS
 from app.services.portability.spec import ColumnRole
-from tests.test_order_invariants import archive
+from tests.test_order_invariants import archive, kit_line, line_row, make_order
 from tests.test_portability import actions, apply, make_csv, preview
 
 pytestmark = pytest.mark.anyio
@@ -608,6 +608,66 @@ async def test_a_dangling_optional_reference_is_reported_not_silently_dropped(cl
     assert (await apply(client, content, filename="kits.csv")).status_code == 200
     gouf = next(k for k in (await client.get("/kits")).json() if k["name"] == "Gouf")
     assert gouf["order_item_id"] is None
+
+
+@pytest.mark.parametrize("stored_link", ["on a line", "loose"], ids=["on a line", "loose"])
+async def test_a_dangling_optional_reference_may_not_clear_a_stored_link(client, stored_link):
+    """The state axis of the test above, which drove only a create. On an update the
+    null #82 leaves behind overwrites a stored value — and for `order_item_id`
+    that value is which line bought the kit. An id the importer cannot read is not
+    the instruction a blank cell is: the blank says "detach", the id says "attach
+    to *this*", and when *this* names nothing the row is refused rather than read
+    as the other thing.
+
+    Two stored states, because the rule is about what is there to lose: a loose
+    kit carrying the same unreadable id has no link, and #82's answer — imports
+    without it, says so — is unchanged for it.
+
+    The line's own row rides along restated so that nothing *else* refuses the
+    detach: without it, the count rule (#44) would 409 the same upload for
+    leaving the line short, and this test would be green for the wrong reason.
+    """
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    item = order["items"][0]
+    if stored_link == "on a line":
+        kit = item["kits"][0]
+    else:
+        kit = (
+            await client.post("/kits", json={"name": "Gouf", "grade": "HG", "status": "backlog"})
+        ).json()
+    before = (await client.get(f"/kits/{kit['id']}")).json()["order_item_id"]
+
+    content = archive(
+        {"kits": ["id", "name", "grade", "order_item_id"]},
+        order_items=[line_row(order, item)],
+        kits=[{"id": kit["id"], "name": kit["name"], "grade": "HG", "order_item_id": MISSING}],
+    )
+    plan = await preview(client, content)
+    kits_plan = next(t for t in plan["tables"] if t["table"] == "kits")
+    row = kits_plan["rows"][0]
+
+    if stored_link == "on a line":
+        assert row["action"] == "error", plan["tables"]
+        # The named control, not "a refusal happened": this error is the one that
+        # says an unreadable id can't clear a link, and it names both ids.
+        assert "can't be what clears that link" in row["error"], row["error"]
+        assert MISSING in row["error"] and item["id"] in row["error"], row["error"]
+        # #82's "imports without it" was written before the row was refused and
+        # is withdrawn — a preview must not say a row lands and then refuse it.
+        assert not any("imports without it" in m for m in row["messages"]), row["messages"]
+        assert plan["derived"]["kits_spawned"] == 0, plan["derived"]
+        assert (await apply(client, content)).status_code == 409
+    else:
+        # No link to lose, so nulling the cell changes nothing: the row is
+        # `unchanged`, and #82's message is the whole story.
+        assert row["action"] == "unchanged", plan["tables"]
+        assert any("imports without it" in m for m in row["messages"]), row["messages"]
+        assert row["error"] is None
+        assert (await apply(client, content)).status_code == 200
+
+    after = (await client.get(f"/kits/{kit['id']}")).json()["order_item_id"]
+    assert after == before, "the stored link is exactly what it was, in both states"
 
 
 async def test_a_dangling_reference_in_a_required_column_still_blocks(client, collection):
