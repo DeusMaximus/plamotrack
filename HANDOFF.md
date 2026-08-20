@@ -41,6 +41,42 @@ Template:
 
 ---
 
+## 2026-08-20 — Claude Code (Fable 5) — #97 implemented: PR #115 open at `b7318c4`, Cursor round pending; 0.2.7 now gated only by #86
+
+- **Done:** **#97 (MCP order read + correction) implemented on
+  `feat/97-mcp-order-edit`; PR #115 open at `b7318c4`** (one commit, ~430
+  insertions, no migration, no frontend). `get_order` and `update_order` tools
+  in `mcp.py`, thin over the existing services; `changes` reuses `OrderUpdate`
+  verbatim so #93's `received_at` correction works now and #95's fields flow in
+  later (the `_KitPatch` precedent). **The issue's design question, decided:**
+  items keeps REST's full-replacement semantics, but `update_order` (service)
+  gained keyword `allow_line_removal` (default True — REST unchanged); the MCP
+  tool passes `remove_missing_lines` (default False), so an items list that
+  omits stored lines is refused *naming each line*, under the order's
+  FOR UPDATE lock — a wrapper-side read-then-check would race a concurrent
+  line addition. Explicit quantity decreases need no flag (a stated number is
+  not silent). Docs: design §7 + README tool rows.
+- **Decisions (on the PR as "Deliberate calls"):** per-surface defaults over one
+  mechanism; omission-only gate; the refusal names the MCP flag from the
+  service layer (only MCP can trigger it today); `InvalidInputError` not
+  Conflict (payload completeness, not state); order deletion stays off MCP.
+- **State:** backend **755** (742 + 13 in `tests/test_mcp_order_edit.py` — the
+  §3.9 diff branches, both halves of the §6 snapshot contract through FastMCP's
+  nested fields_set, both 409 guards *with* the flag, receipt correction,
+  get_order axes), ruff clean, frontend untouched. Negative control: **13 red /
+  0 green on unfixed `main`** (tools don't exist — expected shape for a
+  new-capability suite; stated in the PR body). Both fix sites one-site-mutated
+  and killed by the omission test; tuples in the PR body for the #86 fold-in
+  queue (now #109's 17 + #111's 6 + #113's 8 + #115's 2). **Cursor brief in
+  this session's scratchpad (`cursor-brief-115.md`), handed to the owner —
+  round not yet run.** CI in progress at hand-off time. Live and still true:
+  **#86 at `dfa7f29` owes its Codex round** and gates #44/#77/#87/#90, #95,
+  #110, #112; #114 is M5.1-shaped; #104/#98/#99/#53/#54/#61/#63/#67 → 0.2.8,
+  all clear of #86.
+- **Next:** the Cursor round on #115, then answer it (reproduce at `b7318c4`
+  first). Once #115 lands, **0.2.7 is #95-or-defer + the #86 gate** — nothing
+  else in the milestone can move without #86. The 0.2.8 list is open ground.
+
 ## 2026-08-20 — Claude Code (Fable 5) — #94 + #96 closed: PR #113 merged as `93ec9cc` after one Cursor round; #112 + #114 filed
 
 - **Done:** **#94 + #96 closed — PR #113 squash-merged as `93ec9cc`**, branch
@@ -267,47 +303,3 @@ Template:
 - **Next:** Codex round on #86 at `dfa7f29` — brief it with both comments' "where
   to push next" and say A is a reversal it should judge. Then the 0.2.7 list
   stands: #107, #93, #95, #94 + #96.
-
-## 2026-08-19 — Claude Code (Fable 5) — #106 and #108 merged (#49 closed); #107 filed → 0.2.7
-
-- **Done:** **#106 merged** (`eb3a430`) — design notes caught up on the write gate,
-  export snapshot, #94/#96 decisions and the hardening milestones. **#49 closed —
-  PR #108 squash-merged as `7a6e1e1`** after one Cursor review round (GO with two
-  P3s, both taken before merge) — fold *both* sides of
-  the predicate in Postgres (`func.lower(col) == func.lower(input)`; the Python
-  fold differs on Turkish `İ`, so the reviewed head missed an exact stored
-  spelling — a regression against ILIKE), and §12.4 tightened so the typeahead
-  is not read as the natural-key check. Reply posted at that head.
-  `get_or_create_retailer` and `list_kits(grade=)` compare `lower()` for equality
-  instead of ILIKE — the importer's `_norm_name` rule, so all three surfaces
-  agree. Found on the way: ILIKE read `\` as its escape, so a shop with a
-  backslash in its name could never be reused. Browser: ref-guard + pending state
-  on the inline "+ retailer" (double-click posted twice); `CatalogItemPicker`
-  search query `staleTime: 0` (a de-dup gate must never answer from cache).
-  `docs/design.md` §12.4 now states the natural key precisely. **#107 filed and
-  milestoned 0.2.7** (owner's call, on Cursor's suggestion): the create/rename
-  paths that apply *no* name predicate —
-  `create_retailer`, `update_retailer`, `new_item`, REST catalog creates —
-  can make the importer's natural key ambiguous; verified against the API first.
-- **Decisions:** equality, not an escaped pattern (the backslash case is why the
-  shape matters). `staleTime: 0` over per-page invalidation — closes the class,
-  including rows an MCP agent adds out of band; noted in the PR for the owner to
-  disagree with. #107 not folded in: different root cause, changes status codes.
-- **State:** backend 556 (534 + 22 new in `tests/test_name_matching.py`), ruff
-  clean; e2e 19 (17 + 2 in `e2e/catalog-dedup.spec.ts`), vitest green, build +
-  oxlint clean. **e2e verified against a database migrated from empty; every
-  table empty afterwards** — recipe now in `.agents/testing-and-review.md`. No
-  migration. Negative controls: 11/19 backend red on unfixed `main`; five
-  single-site mutants each killed by the tests aimed at that site; both e2e red
-  on the unfixed UI, both timing-pinned (`page.route` hold; `page.clock`
-  frozen). `main` is `7a6e1e1` plus this entry. The only branch is
-  `fix/44-import-order-invariants` (PR #86, untouched, still the 0.2.6 blocker).
-  A stale worktree `/private/tmp/plamotrack-pr100` exists on this Mac from an
-  earlier session — not this one's, left alone. Live from before and still true:
-  #86 gates #44/#77/#87/#90; #104 in 0.2.8; #97 → 0.2.7; #98/#99 → 0.2.8.
-- **Next:** 0.2.7's remaining items clear of #86 are **#107** (the rest of rule 3
-  on the names #49 just defined — option 1 on the issue, service-layer 409, is the
-  recommendation), **#93** (backdatable `received_at` — note
-  `receive_order` also stamps the kits it advances, so a backdated receipt has to
-  backdate those), **#95**, and **#94 + #96** (share a migration; decisions are
-  in §3.1). #86 still wants a fresh review round before anything in 0.2.6 moves.
