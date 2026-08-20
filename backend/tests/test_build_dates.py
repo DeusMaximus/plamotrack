@@ -144,6 +144,37 @@ async def test_a_naive_build_date_is_refused_by_the_schema(http_client):
     assert isinstance(resp.json()["detail"], list)  # pydantic AwareDatetime spoke
 
 
+async def test_reentering_complete_keeps_the_original_completion(client):
+    # The mirror of the re-entry rule on the other field (Cursor round 1 on
+    # PR #113): complete -> building (reopened for repairs) -> complete keeps
+    # the first completion; the stored value is editable when latest is wanted.
+    kit = await make_kit(client)
+    first = await move(client, kit["id"], "complete")
+    await move(client, kit["id"], "building")
+    second = await move(client, kit["id"], "complete")
+    assert second["build_completed_at"] == first["build_completed_at"]
+
+
+async def test_mcp_naive_build_date_is_a_tool_error(client):
+    # REST pins the schema-layer refusal above; this pins the same rule through
+    # the MCP tool, where _KitPatch inherits AwareDatetime from KitUpdate.
+    import pytest as _pytest
+    from fastmcp import Client
+    from fastmcp.exceptions import ToolError
+
+    from app.mcp import mcp
+
+    kit = await make_kit(client)
+    async with Client(mcp) as mcp_client:
+        with _pytest.raises(ToolError, match="timezone"):
+            await mcp_client.call_tool(
+                "update_kit",
+                {"kit_id": kit["id"], "changes": {"build_started_at": "2026-02-08T10:00:00"}},
+            )
+    fresh = (await client.get(f"/kits/{kit['id']}")).json()
+    assert fresh["build_started_at"] is None  # refused, not coerced to UTC
+
+
 # --- receive_order: the other live status writer ----------------------------------
 
 

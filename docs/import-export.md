@@ -63,8 +63,8 @@ You write kits; plamotrack works out the retailers, orders, and order lines.
 
 > **Known limitation ([#112](https://github.com/DeusMaximus/plamotrack/issues/112)):**
 > on a row that **names a retailer**, only the kit's identity travels (name, grade,
-> scale, kit number, status). `rating`, `build_notes` and the build dates currently
-> survive only on rows *without* a retailer — put those kits on retailer-less rows,
+> scale, kit number, status). `rating`, `build_notes`, `series` and the build dates
+> currently survive only on rows *without* a retailer — put those kits on retailer-less rows,
 > or fill the fields in afterwards.
 
 ### 2. The template pack — one file per table

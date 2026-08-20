@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import Kit, KitStatus
 from app.schemas.kits import KitCreate, KitUpdate
+from app.services.names import WHITESPACE
 from app.services.write_gate import acquire_write_gate
 
 # Derived default scale per grade, overridable per kit (§3.1). SD kits are non-scale.
@@ -65,9 +66,24 @@ def stamp_build_date(
         setattr(kit, field, now)
 
 
+def _normalize_series(value: str | None) -> str | None:
+    """Stored trimmed; blank or whitespace-only means no series (#113 review, P3-1).
+
+    The importer's `parse_text` already collapses a blank cell to null, so the live
+    writers have to say the same thing — otherwise the distinct-values surface
+    offers an empty typeahead option, the opposite of what it exists for. Python's
+    `str.strip()` is the same whitespace set `names.WHITESPACE` mirrors in Postgres.
+    """
+    if value is None:
+        return None
+    return value.strip() or None
+
+
 async def create_kit(session: AsyncSession, data: KitCreate) -> Kit:
     await acquire_write_gate(session)
-    kit = Kit(**data.model_dump())
+    fields = data.model_dump()
+    fields["series"] = _normalize_series(fields["series"])
+    kit = Kit(**fields)
     if kit.scale is None:
         kit.scale = default_scale_for_grade(kit.grade)
     session.add(kit)
@@ -105,9 +121,13 @@ async def list_kit_series(session: AsyncSession) -> list[str]:
     the spelling the collection actually uses on top; ties break alphabetically
     (case-insensitively) so the order is stable.
     """
+    # The write paths store blank as null (#113 review, P3-1); the btrim guard
+    # additionally hides any blank that predates that rule or arrives through a
+    # future writer that forgets it — trimmed with the same whitespace set the
+    # name predicates use, not plain btrim's 0x20 (#109's lesson).
     stmt = (
         select(Kit.series)
-        .where(Kit.series.is_not(None))
+        .where(Kit.series.is_not(None), func.btrim(Kit.series, WHITESPACE) != "")
         .group_by(Kit.series)
         .order_by(func.count().desc(), func.lower(Kit.series))
     )
@@ -128,6 +148,8 @@ async def update_kit(session: AsyncSession, kit_id: uuid.UUID, data: KitUpdate) 
     for non_nullable in ("name", "grade", "status"):
         if non_nullable in fields and fields[non_nullable] is None:
             raise InvalidInputError(f"{non_nullable} cannot be null")
+    if "series" in fields:
+        fields["series"] = _normalize_series(fields["series"])
     entered: KitStatus | None = None
     if "status" in fields and fields["status"] != kit.status:
         entered = fields["status"]

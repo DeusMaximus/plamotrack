@@ -106,5 +106,35 @@ async def test_starter_sheet_standalone_row_carries_series(client):
     assert kit["series"] == "Mobile Suit Gundam"
 
 
+async def test_blank_and_whitespace_series_are_stored_as_null(client):
+    # P3-1 (Cursor round 1 on PR #113): the importer's parse_text collapses a
+    # blank cell to null. The live writers have to agree, or the distinct-values
+    # surface offers an empty option — the opposite of what it exists for.
+    empty = await make_kit(client, "Empty", series="")
+    assert empty["series"] is None
+    spaces = await make_kit(client, "Spaces", series="   ")
+    assert spaces["series"] is None
+    padded = await make_kit(client, "Padded", series="  Gundam Wing  ")
+    assert padded["series"] == "Gundam Wing"
+
+    patched = await client.patch(f"/kits/{padded['id']}", json={"series": "   "})
+    assert patched.status_code == 200
+    assert patched.json()["series"] is None
+    assert (await client.get("/kits/series")).json() == []
+
+
+async def test_distinct_values_hide_a_legacy_blank_row(client):
+    # A blank written before the normalization existed (or by a future writer
+    # that forgets it) must not surface as an empty typeahead option.
+    from app.db import get_sessionmaker
+    from app.models import Kit
+
+    async with get_sessionmaker()() as session:
+        session.add(Kit(name="Legacy", grade="HG", series="   "))
+        await session.commit()
+    await make_kit(client, "Real", series="Gundam Wing")
+    assert (await client.get("/kits/series")).json() == ["Gundam Wing"]
+
+
 def test_kits_spec_declares_series():
     assert "series" in [c.name for c in spec.KITS.columns]
