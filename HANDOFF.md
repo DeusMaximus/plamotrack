@@ -41,11 +41,12 @@ Template:
 
 ---
 
-## 2026-08-20 — Claude Code (Fable 5) — #97: PR #115 through Cursor round 1 (GO), P3 taken at `cb62ab5`; awaiting merge call
+## 2026-08-20 — Claude Code (Fable 5) — #97 closed: PR #115 merged as `7991a08` after one Cursor round; 0.2.7 now gated only by #86
 
-- **Done:** **#97 (MCP order read + correction) implemented on
-  `feat/97-mcp-order-edit`; PR #115 open at `b7318c4`** (one commit, ~430
-  insertions, no migration, no frontend). `get_order` and `update_order` tools
+- **Done:** **#97 closed — PR #115 squash-merged as `7991a08`**, branch
+  deleted, on the owner's call after one Cursor round; no second round (the
+  response was one docs sentence — the #109/#111/#113 precedent). (~430
+  insertions, no migration, no frontend.) `get_order` and `update_order` tools
   in `mcp.py`, thin over the existing services; `changes` reuses `OrderUpdate`
   verbatim so #93's `received_at` correction works now and #95's fields flow in
   later (the `_KitPatch` precedent). **The issue's design question, decided:**
@@ -78,9 +79,7 @@ Template:
   **#86 at `dfa7f29` owes its Codex round** and gates #44/#77/#87/#90, #95,
   #110, #112; #114 is M5.1-shaped; #104/#98/#99/#53/#54/#61/#63/#67 → 0.2.8,
   all clear of #86.
-- **Next:** the owner's merge call on #115 — GO, the P3 taken with the
-  reviewer's own remedy, nothing owed (the #109/#111/#113 precedent argues no
-  second round for a docs-sentence response). Once #115 lands, **0.2.7 is #95-or-defer + the #86 gate** — nothing
+- **Next:** with #115 merged, **0.2.7 is #95-or-defer + the #86 gate** — nothing
   else in the milestone can move without #86. The 0.2.8 list is open ground.
 
 ## 2026-08-20 — Claude Code (Fable 5) — #94 + #96 closed: PR #113 merged as `93ec9cc` after one Cursor round; #112 + #114 filed
