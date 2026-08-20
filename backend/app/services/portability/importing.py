@@ -57,8 +57,14 @@ from app.schemas.portability import (
 from app.services.currency import is_known_currency, major_to_minor, minor_fraction_digits
 from app.services.kits import default_scale_for_grade
 from app.services.numeric import is_lone_group, require_int4
-from app.services.orders import ARRIVAL_ELIGIBLE, require_line_quantity, spawn_kits
-from app.services.portability import starter_sheet
+from app.services.orders import (
+    ARRIVAL_ELIGIBLE,
+    PROGRESSED_STATUSES,
+    kit_progressed,
+    require_line_quantity,
+    spawn_kits,
+)
+from app.services.portability import invariants, starter_sheet
 from app.services.portability.exporting import (
     ARCHIVE_FORMAT,
     EXPORT_VERSION,
@@ -550,6 +556,13 @@ class _Row:
     #: hash as themselves; minted ones are fresh on every run, so
     #: `_plan_fingerprint` replaces them with a positional token.
     synthetic_id: bool = False
+    #: Optional REF columns whose cell named an id that resolved to nothing —
+    #: `column -> (table, the id it named)`. `_resolve_all_refs` nulls the value
+    #: (#82: the row imports without the link) and records it here, because on an
+    #: update the null it left behind is indistinguishable from a blank cell, and
+    #: the two are different instructions once there is a stored link to lose
+    #: (`_refuse_unresolved_overwrite`).
+    unresolved: dict[str, tuple[str, uuid.UUID]] = field(default_factory=dict)
 
 
 @dataclass
@@ -564,6 +577,18 @@ class _Spawn:
     status: str
     row_number: int
     received: bool
+    #: The order's post-write receipt instant, resolved at plan time
+    #: (`_order_receipt`) and hash-bound like every other value a spawn writes.
+    received_at: datetime | None
+
+
+@dataclass
+class _Removal:
+    """A stored kit a line's reduced quantity no longer accounts for (#44 case 2)."""
+
+    kit_id: uuid.UUID
+    order_item_id: uuid.UUID
+    row_number: int
 
 
 @dataclass
@@ -571,6 +596,7 @@ class ExecutionPlan:
     mode: ImportMode
     rows: dict[str, list[_Row]]
     spawns: list[_Spawn]
+    removals: list[_Removal]
     plan: ImportPlan
 
 
@@ -580,6 +606,16 @@ def _instance_dict(spec: TableSpec, instance: Any) -> dict[str, Any]:
 
 def _norm_name(value: Any) -> str:
     return str(value or "").strip().lower()
+
+
+def _dangling_optional_message(column: str, table: str, missing: uuid.UUID) -> str:
+    """#82's wording for an optional reference that named nothing, in one place so
+    `_refuse_unresolved_overwrite` can withdraw it precisely when it turns out to
+    be untrue for the row."""
+    return (
+        f"{column}: no {table} here has id {missing}, so this row imports "
+        f"without it. Add that {table} row, or fill it in afterwards"
+    )
 
 
 class _Planner:
@@ -594,6 +630,7 @@ class _Planner:
         self.created_ids: dict[str, set[uuid.UUID]] = {key: set() for key in SPEC_BY_KEY}
         self.rows: dict[str, list[_Row]] = {}
         self.spawns: list[_Spawn] = []
+        self.removals: list[_Removal] = []
         self.warnings: list[str] = list(upload.warnings)
         self.blocking: list[str] = list(upload.errors)
         self.catalog_names: dict[uuid.UUID, str] = {}
@@ -612,10 +649,27 @@ class _Planner:
     async def load_existing(self) -> None:
         for spec in TABLE_SPECS:
             stmt = select(spec.model)
+            # `kit_progressed` reads photos and upgrade_applications, and the
+            # downward reconciliation in `_plan_spawns` asks it about every kit on
+            # a shrinking line. Lazy-loading either raises outside the async
+            # context, so both come along with the kits themselves.
+            kit_evidence = (
+                selectinload(Kit.photos),
+                selectinload(Kit.upgrade_applications),
+            )
             if spec.key == "orders":
-                stmt = stmt.options(selectinload(Order.items).selectinload(OrderItem.kits))
+                stmt = stmt.options(
+                    selectinload(Order.items).selectinload(OrderItem.kits).options(*kit_evidence)
+                )
             elif spec.key == "order_items":
-                stmt = stmt.options(selectinload(OrderItem.kits))
+                stmt = stmt.options(selectinload(OrderItem.kits).options(*kit_evidence))
+            elif spec.key == "kits":
+                # A kit `_attached_after` moves *onto* a line comes from here rather
+                # than from the line's own collection, and lands in the same removal
+                # candidacy question. Today `described` excludes it before
+                # `kit_progressed` is reached, so this is not load-bearing — it is
+                # here so that stops being a thing anyone has to know.
+                stmt = stmt.options(*kit_evidence)
             instances = list((await self.session.scalars(stmt)).all())
             self.existing[spec.key] = instances
             self.by_id[spec.key] = {instance.id: instance for instance in instances}
@@ -1103,6 +1157,55 @@ class _Planner:
                 "in this row supplies a new value"
             )
 
+    def _refuse_unresolved_overwrite(self, spec: TableSpec, row: _Row) -> bool:
+        """An id that names nothing may not clear a link the stored row has.
+
+        `_resolve_all_refs` nulls an optional reference it cannot resolve and says
+        so (#82) — right for the case that rule was written for, a `kits.csv`
+        arriving in a fresh instance whose lines were never here, where the null
+        changes nothing. On an **update** the same null overwrites a stored value:
+        a kit that *is* on an order line, whose row carries a mistyped or foreign
+        `order_item_id`, was quietly detached from the line that bought it, and
+        the fan-out (#44) then read the departure as a shortfall and spawned a
+        replacement — a duplicate kit and a lost purchase link, at 200, from one
+        wrong cell in an otherwise pristine archive. The same cell in `kits.csv`
+        alone was already a 409, because that line's quantity was never restated.
+
+        Refused rather than kept, and the reason is the one `_resolve_all_refs`
+        already gives for `replace_all`: the row said which line bought this kit,
+        and dropping that on the floor loses provenance the operator never agreed
+        to lose. A blank cell is the instruction to detach; an id the importer
+        cannot read is not the same instruction wearing a different value. #82's
+        test drove only the create, so this state was never varied.
+
+        Runs inside `_classify`, after matching and before the change diff, and
+        only ever fires against a stored non-null value: a create has no link to
+        lose and keeps #82's behaviour exactly.
+        """
+        for column_name, (table, missing) in row.unresolved.items():
+            if column_name not in row.present:
+                continue
+            column = spec.column(column_name)
+            if column is None or column.get(row.target) is None:
+                continue
+            # The "imports without it" line was true when it was written and is
+            # not any more; the error below is what the operator should read.
+            told = _dangling_optional_message(column_name, table, missing)
+            row.messages = [message for message in row.messages if message != told]
+            row.action = RowAction.ERROR
+            # "Leave the column out" rather than "leave the cell blank": omitting a
+            # column always means "leave it as it is", while a blank means detach
+            # for `order_item_id` and is itself refused for `catalog_ref_id`
+            # (`_check_catalog_targets`), so only the first is a remedy for both.
+            row.error = (
+                f"{column_name}: no {table} here has id {missing}, and this row currently "
+                f"points at {table} {column.get(row.target)} — an id that names nothing "
+                "can't be what clears that link. Fix the id, or leave the column out of "
+                "this sheet to keep the link as it is"
+            )
+            return True
+        return False
+
     def _refuse_unfillable_creates(self, spec: TableSpec, row: _Row) -> None:
         """The create half of the same rule: nothing to fall back on, so say so.
 
@@ -1175,7 +1278,18 @@ class _Planner:
             return
 
         _defer_filled_money_currency(spec, row)
+        # Order matters, and only one of the two is honest. `_defer_generated_status
+        # _stamp` takes `status_updated_at` out of `present` when the row moves a
+        # kit's status without saying when, so the apply can stamp the clock;
+        # `_keep_stored_where_unstatable` then finds nothing to keep and says
+        # nothing. The other order has keep-stored claim the column was "left as it
+        # was" *and* the deferral stamp it anyway — a preview that contradicts
+        # itself and then contradicts the outcome. Neither branch could see this on
+        # its own; it was found by reading both trees at once during #89's review.
+        self._defer_generated_status_stamp(spec, row)
         self._keep_stored_where_unstatable(spec, row)
+        if self._refuse_unresolved_overwrite(spec, row):
+            return
 
         changes = []
         for column in spec.columns:
@@ -1191,6 +1305,49 @@ class _Planner:
                 )
         row.changes = changes
         row.action = RowAction.UPDATE if changes else RowAction.UNCHANGED
+
+    def _defer_generated_status_stamp(self, spec: TableSpec, row: _Row) -> None:
+        """A kit whose status this sheet moves, without the sheet saying when (#44
+        case 5).
+
+        `update_kit` stamps `status_updated_at` on every status change, because the
+        board's "most recently moved" ordering is read off it. The importer assigns
+        `status` directly, so a merge that moved a kit from `ordered` to `building`
+        left the timestamp reading whenever it last moved for real — the board
+        silently lied about it, and the further back the original move was, the
+        further from the truth.
+
+        Deferred rather than filled in here: the value is `datetime.now(UTC)`, and
+        `_plan_fingerprint` hashes every value in `row.present`. A clock reading in
+        the plan is a different hash on every pass, so preview and apply could
+        never agree and every status-moving import would 409. What the plan carries
+        instead is the *absence* — the column is dropped from `present`, which is
+        the instruction `_stamp_generated_status_changes` reads at write time. The
+        drop is deterministic from the sheet and the stored row, so the hash is
+        stable, and it still moves the moment the stored status changes underneath
+        a preview, which is exactly when it should.
+
+        Dropping it also settles a blank cell, which the export template ships and
+        a hand-edited archive is full of. `status_updated_at` is NOT NULL, so
+        writing the blank through was an IntegrityError — a 500 out of the apply,
+        on the same row that needed a generated timestamp anyway.
+
+        An explicit timestamp always wins. A sheet that states both a status and a
+        time is describing a move it knows about, and inventing one over the top of
+        that is the same "config never overwrites a record" mistake `§6` keeps out
+        of money.
+        """
+        if spec.key != "kits" or row.target is None or "status" not in row.present:
+            return
+        if render(row.values.get("status")) == render(row.target.status):
+            return
+        if row.values.get("status_updated_at") is not None:
+            return
+        row.present.discard("status_updated_at")
+        row.messages.append(
+            "status_updated_at will be set to the time of this import — this row moves "
+            "the status without saying when it moved"
+        )
 
     # -- the main pass ---------------------------------------------------------
 
@@ -1257,6 +1414,14 @@ class _Planner:
                 self._annotate(spec, row, replace_all)
                 planned.append(row)
 
+        # Before the fan-out, not after: a line this refuses must not also
+        # contribute a spawn or a removal to the plan the operator is shown (#44).
+        invariants.check(
+            self.rows,
+            by_id=self.by_id,
+            created_ids=self.created_ids,
+            replace_all=replace_all,
+        )
         self._plan_spawns(replace_all)
         return self._finish()
 
@@ -1331,10 +1496,8 @@ class _Planner:
                 # discarded. Said per row rather than as a summary, because which
                 # rows lost their link is the part a count cannot give back.
                 target, missing = dangling
-                row.messages.append(
-                    f"{column.name}: no {target} here has id {missing}, so this row imports "
-                    f"without it. Add that {target} row, or fill it in afterwards"
-                )
+                row.unresolved[column.name] = dangling
+                row.messages.append(_dangling_optional_message(column.name, target, missing))
 
     def _apply_money_alternates(self, spec: TableSpec, row: _Row) -> None:
         """Major units fill in only where the canonical minor-unit column is absent
@@ -1424,13 +1587,20 @@ class _Planner:
                     "importing adds another, since two of the same kit are two kits"
                 )
 
-    def _order_received(self, order_id: uuid.UUID) -> bool:
-        """Whether the order a kit line belongs to has arrived, so a spawned kit
-        lands in the right status instead of always `_initial_kit_status`'s default
-        of "still on the way" (#47). Checks this import's own orders rows first —
-        covering both a freshly created order and an existing one this import
-        updates — and falls back to the persisted row for an order the upload
-        doesn't touch at all.
+    def _order_receipt(self, order_id: uuid.UUID) -> datetime | None:
+        """The post-write receipt instant of the order a kit line belongs to —
+        null when it will be pending — so a spawned kit lands in the right status
+        instead of always `_initial_kit_status`'s default of "still on the way"
+        (#47), and carries the right `status_updated_at` (#93). Checks this
+        import's own orders rows first — covering both a freshly created order
+        and an existing one this import updates — and falls back to the persisted
+        row for an order the upload doesn't touch at all.
+
+        Resolved at *plan* time and carried on `_Spawn`, so the instant a spawn
+        will stamp is part of the plan the fingerprint binds: a receipt
+        correction landing between preview and apply changes the re-plan's hash
+        and the stale apply 409s, instead of stamping a value the operator never
+        saw (Codex round five, P3).
         """
         for row in self.rows.get("orders", []):
             candidate = row.new_id if row.action is RowAction.CREATE else row.matched_id
@@ -1441,23 +1611,273 @@ class _Planner:
             # its uploaded `received_at` cell describes nothing that will land.
             writes = row.action in (RowAction.CREATE, RowAction.UPDATE)
             if writes and "received_at" in row.present:
-                return row.values.get("received_at") is not None
+                return row.values.get("received_at")
             if row.target is not None:
-                return row.target.received_at is not None
-            return False
+                return row.target.received_at
+            return None
         existing = self.by_id["orders"].get(order_id)
-        return existing is not None and existing.received_at is not None
+        return existing.received_at if existing is not None else None
 
-    def _plan_spawns(self, replace_all: bool) -> None:
-        """Hybrid dispatch: a kit line spawns only the kits nothing else provides."""
-        kit_rows = self.rows.get("kits", [])
+    def _attached_after(
+        self, line_id: uuid.UUID, stored: list[Kit], kit_rows: list[_Row]
+    ) -> list[Kit]:
+        """The kits this line will hold once the upload lands — not the ones it holds
+        now.
+
+        `kits.order_item_id` is an ordinary REF column, so the same upload that
+        states a line's quantity can also move kits onto or off that line. Counting
+        `len(row.target.kits)` reads the database *before* those writes, and the
+        fan-out arithmetic on both sides of it is then answering about a state that
+        will not exist by the time it is applied. Measured on the first cut of this
+        branch: a `kits.csv` row attaching a loose kit to a two-kit line applied at
+        200 and left the line saying 2 with three kits on it, planning neither a
+        spawn nor a removal — case 2's own disagreement, reached through the kits
+        table instead of the order_items one, and invisible to a reconciliation that
+        counts stored rows.
+
+        So the count is taken over the post-write set: stored kits the upload does
+        not move away, plus stored kits it moves in from elsewhere. A row has to
+        carry `order_item_id` to move anything — one that never mentions the column
+        leaves the kit where it is, which is the ordinary partial-sheet case and the
+        reason this reads `present` rather than values alone.
+
+        Takes `stored` rather than reading an order-item row, because a line the
+        upload *creates* has no stored kits and can still be moved onto: an
+        `order_items.csv` create plus a `kits.csv` update pointing an existing kit
+        at it supplies that line's kit, and `covered` cannot see it because
+        `covered` counts kit *creates*. Reading `row.target is None` as "nothing is
+        attached" spawned a second kit for a quantity-one line (external review of
+        #86). The `kept` half is genuinely empty there; the `arriving` half is not.
+
+        Empty under `replace_all` without saying so: everything is truncated first,
+        `stored` is `[]`, and every kits row is a create with no `matched_id`, so
+        both loops below produce nothing. An explicit mode guard here would be one
+        no mutation of it could ever kill.
+        """
+        # kit id -> (post-write parent line, the stored Kit)
+        reparented: dict[uuid.UUID, tuple[Any, Kit]] = {}
+        for kit_row in kit_rows:
+            if kit_row.action in (RowAction.ERROR, RowAction.SKIP):
+                continue
+            if kit_row.matched_id is None or kit_row.target is None:
+                continue
+            if "order_item_id" not in kit_row.present:
+                continue
+            reparented[kit_row.matched_id] = (kit_row.values.get("order_item_id"), kit_row.target)
+
+        on_line = {kit.id for kit in stored}
+        kept = [kit for kit in stored if reparented.get(kit.id, (line_id, kit))[0] == line_id]
+        arriving = [
+            kit
+            for kit_id, (parent, kit) in reparented.items()
+            if parent == line_id and kit_id not in on_line
+        ]
+        return kept + arriving
+
+    @staticmethod
+    def _stated_quantity(row: _Row) -> int | None:
+        """The quantity this row *says*, or None where it says nothing.
+
+        A sheet may name a line and leave `quantity` out — `required` only bites on
+        a blank cell in a column the file carries, not on an absent column. That is
+        the difference between an instruction and a silence, and reading
+        `values.get("quantity") or 0` collapses the two: zero asks for nothing
+        counting upward and for everything counting downward.
+        """
+        stated = row.values.get("quantity") if "quantity" in row.present else None
+        return stated if isinstance(stated, int) else None
+
+    @staticmethod
+    def _writes_quantity(row: _Row) -> bool:
+        """Whether this upload *writes* the line's quantity: a create, or an update
+        whose `quantity` is among its changes. A row that merely restates the
+        stored number — every line of a full archive — describes the line and
+        instructs nothing; a row with no `quantity` column has no change to carry
+        and is covered by the same test."""
+        if row.action is RowAction.CREATE:
+            return True
+        return any(change.field == "quantity" for change in row.changes)
+
+    def _reconcilable_lines(self) -> set[uuid.UUID]:
+        """The lines this upload *authorises* the fan-out to reconcile.
+
+        A line qualifies only if it will be written, is a kit line, and **writes**
+        its quantity — a create, or an update that changes it. That is what
+        "reconcile" means here: the number of kits a line holds is brought to the
+        number this upload says it bought, by spawning or by deleting, so the
+        authority to do that has to come from a quantity the operator put in this
+        file. Two readings were tried and retired:
+
+        * *visited* — a set filled as a side effect of the fan-out loop, so a
+          partial `order_items.csv` naming a line without a `quantity` column was
+          "reconciled" and a kits row moving alongside it applied at 200 in either
+          direction (external review of #86);
+        * *stated* — any row carrying a quantity, changed or not. Every full
+          archive restates every line, so an unchanged row was what turned a
+          refused kit move into a delete: `kits.csv` alone moving a kit onto a
+          quantity-one line was a 409, and the same move beside the archive's own
+          unchanged `order_items.csv` deleted the incumbent (announced, at 200).
+          A restated line is a description, not an instruction, and rule 10 wants
+          a re-imported archive to be a no-op whatever the collection holds.
+
+        A kit move against a line this upload does not authorise is
+        `_refuse_unreconciled_kit_moves`'s to refuse — with the stated quantity
+        named, so the operator can say what the line should now hold.
+        """
+        lines: set[uuid.UUID] = set()
         for row in self.rows.get("order_items", []):
             if row.action in (RowAction.ERROR, RowAction.SKIP):
                 continue
-            if row.values.get("item_type") is not ItemType.KIT:
+            # The *effective* type, from the shared reading in `invariants`: an
+            # update may legitimately omit `item_type`, and testing `values` alone
+            # read every such row as typeless and skipped reconciliation entirely.
+            if invariants.effective_item_type(row) is not ItemType.KIT:
+                continue
+            if not self._writes_quantity(row):
                 continue
             line_id = row.matched_id or row.new_id
-            if line_id is None:
+            if line_id is not None:
+                lines.add(line_id)
+        return lines
+
+    def _protected_kits(self) -> set[uuid.UUID]:
+        """Every kit that will carry progression evidence once this upload lands.
+
+        `kit_progressed` is the shared predicate (rule 1) and it reads a *stored*
+        row: status, rating, photos, applied upgrades. That is the whole truth for
+        the Orders page, which mutates one thing at a time. It is only part of the
+        truth for an import, which writes the kit, its status and its children in
+        one transaction — and both halves of that gap were reachable (external
+        review of #86, round three):
+
+        * a `kits.csv` row promoting a kit to `building` in the same upload that
+          strips its purchase provenance;
+        * an `upgrade_applications.csv` or `kit_photos.csv` row creating a child for
+          the very kit `_plan_removals` had already picked as its victim. The child
+          was created during the table loop and cascaded away with its kit
+          moments later, so the result counted a create that a later export could
+          not find — and for an application that is consumed stock with nothing
+          left to explain it.
+
+        The union of stored and planned evidence, never the difference. A sheet
+        that *lowers* a kit out of `building` does not thereby unprotect it: an
+        upload being able to talk itself out of a guard is the shape of every
+        bypass on this branch, and the cost of being conservative is a refusal the
+        operator can lift by editing one cell.
+        """
+        protected = {kit.id for kit in self.existing["kits"] if kit_progressed(kit)}
+
+        for row in self.rows.get("kits", []):
+            if row.action in (RowAction.ERROR, RowAction.SKIP):
+                continue
+            kit_id = row.matched_id or row.new_id
+            if kit_id is None:
+                continue
+            status = row.values.get("status") if "status" in row.present else None
+            if status is not None and KitStatus(status) in PROGRESSED_STATUSES:
+                protected.add(kit_id)
+            if "rating" in row.present and row.values.get("rating") is not None:
+                protected.add(kit_id)
+
+        # Every child row that will be written, at the kit it will be written
+        # *to* — not only the creates. `upgrade_applications.kit_id` and
+        # `kit_photos.kit_id` are ordinary REF columns, so an update can carry an
+        # existing child from one kit to another, and the kit it arrives at gains
+        # exactly the evidence a create would have given it. Reading `CREATE` alone
+        # let the arrival be chosen as a removal victim: the child moved onto it
+        # and was cascaded away with it, leaving an upgrade's stock spent with no
+        # application left to explain it (external review of #86, round four).
+        #
+        # The kit a child *leaves* stays protected by the stored evidence above.
+        # That is conservative and deliberate — see the union rule in the paragraph
+        # before this one.
+        for table in ("upgrade_applications", "kit_photos"):
+            for row in self.rows.get(table, []):
+                if row.action in (RowAction.ERROR, RowAction.SKIP):
+                    continue
+                # Only what the row *states*. A child row that doesn't restate
+                # `kit_id` leaves the child where it is, and that kit already
+                # carries it as stored evidence in the first line of this
+                # function — a fallback to `row.target.kit_id` sat here and was
+                # removed as dead: no mutation of it could change an outcome.
+                kit_id = row.values.get("kit_id") if "kit_id" in row.present else None
+                if kit_id is not None:
+                    protected.add(kit_id)
+        return protected
+
+    def _refuse_stripping_protected_provenance(
+        self, kit_rows: list[_Row], protected: set[uuid.UUID]
+    ) -> None:
+        """A protected kit keeps the order line that bought it.
+
+        The count check asks whether a line ends up holding the right number of
+        kits. A *swap* satisfies it perfectly — detach one kit, attach another, one
+        in and one out — while the kit that left takes its purchase record with it.
+        That record is what `delete_order` reads to refuse, so an order holding a
+        `building` kit went from a 409 before the import to a **204** after it
+        (external review of #86, round three).
+
+        Moving a protected kit to a different line is the same bypass wearing a
+        different hat — the guard follows the kit and the original order becomes
+        deletable — so the test is "the link changed", not "the link was cleared".
+
+        `KitUpdate` exposes no `order_item_id` at all, so neither REST nor MCP can
+        reach this; the importer was the only writer that could.
+        """
+        for row in kit_rows:
+            if row.action in (RowAction.ERROR, RowAction.SKIP):
+                continue
+            if row.matched_id is None or row.target is None:
+                continue
+            if "order_item_id" not in row.present:
+                continue
+            before = row.target.order_item_id
+            if before is None or row.values.get("order_item_id") == before:
+                continue
+            if row.matched_id not in protected:
+                continue
+            row.action = RowAction.ERROR
+            row.error = (
+                "order_item_id: this kit is building or complete, rated, photographed, or has "
+                "upgrades applied to it, so the order line that bought it is what stops that "
+                "order being deleted out from under it. An import can't take that link away — "
+                "leave order_item_id as it is"
+            )
+
+    def _planned_line(self, line_id: uuid.UUID) -> _Row | None:
+        """The order-items row this upload will write for `line_id`, if any.
+
+        `SKIP` deliberately doesn't count: `add_only` leaves the stored line exactly
+        as it is, so the stored row — not the uploaded one — is what describes it
+        afterwards.
+        """
+        for row in self.rows.get("order_items", []):
+            if row.action in (RowAction.ERROR, RowAction.SKIP):
+                continue
+            if (row.matched_id or row.new_id) == line_id:
+                return row
+        return None
+
+    def _plan_spawns(self, replace_all: bool) -> None:
+        """Hybrid dispatch: a kit line spawns only the kits nothing else provides,
+        and gives up the kits its quantity no longer accounts for."""
+        kit_rows = self.rows.get("kits", [])
+        reconciled = self._reconcilable_lines()
+        protected = self._protected_kits()
+
+        # Refusals first, and the ordering is load-bearing. A kit move refused
+        # below still contributed to the post-write set while the fan-out ran
+        # ahead of it, so a removal derived from a move that will never happen
+        # stayed in the plan: the preview promised `kits_removed: 1` and the apply
+        # 409'd and removed nothing (external review of #86). Erroring the kits row
+        # first takes it out of `_attached_after`, and the surplus it invented
+        # stops existing rather than being cleaned up afterwards.
+        self._refuse_stripping_protected_provenance(kit_rows, protected)
+        self._refuse_unreconciled_kit_moves(kit_rows, reconciled, replace_all)
+
+        for row in self.rows.get("order_items", []):
+            line_id = row.matched_id or row.new_id
+            if line_id is None or line_id not in reconciled:
                 continue
 
             covered = sum(
@@ -1465,12 +1885,20 @@ class _Planner:
                 for kit in kit_rows
                 if kit.action is RowAction.CREATE and kit.values.get("order_item_id") == line_id
             )
-            existing = 0
-            if not replace_all and row.target is not None:
-                existing = len(row.target.kits)
-            wanted = int(row.values.get("quantity") or 0)
-            missing = wanted - covered - existing
-            if missing <= 0:
+            stored = list(row.target.kits) if row.target is not None else []
+            attached = self._attached_after(line_id, stored, kit_rows)
+            wanted = self._stated_quantity(row) or 0
+            missing = wanted - covered - len(attached)
+            if missing < 0:
+                self._plan_removals(
+                    row,
+                    surplus=-missing,
+                    kit_rows=kit_rows,
+                    attached=attached,
+                    protected=protected,
+                )
+                continue
+            if missing == 0:
                 continue
 
             name = row.values.get("kit_name")
@@ -1486,6 +1914,7 @@ class _Planner:
             # order_id is a required REF, already validated by `_resolve_all_refs` —
             # a row that reached here without one would already be RowAction.ERROR.
             order_id = row.values["order_id"]
+            receipt = self._order_receipt(order_id)
             self.spawns.append(
                 _Spawn(
                     order_item_id=line_id,
@@ -1497,10 +1926,266 @@ class _Planner:
                     kit_number=row.values.get("kit_number"),
                     status=str(status) if status else "",
                     row_number=row.row_number,
-                    received=self._order_received(order_id),
+                    received=receipt is not None,
+                    received_at=receipt,
                 )
             )
             row.messages.append(f"will create {missing} kit(s) from this line")
+
+    def _refuse_unreconciled_kit_moves(
+        self, kit_rows: list[_Row], reconciled: set[uuid.UUID], replace_all: bool
+    ) -> None:
+        """A kits-side write may not leave a line disagreeing with its own quantity.
+
+        The loop above visits the lines this upload *writes a quantity for*. A
+        `kits.csv` row writing `order_item_id` changes what a line holds without
+        being one of those, so a line reached only from the kits side was never
+        reconciled at all — two shapes, both a clean preview and a 200 (external
+        review of #86):
+
+            add_only, line quantity 1: its own order_items row is SKIP, so the loop
+            above skips it, while a new kits.csv row attaches a second kit
+                -> quantity 1, two kits attached
+
+            merge, kits.csv only: an update blanks a spawned kit's order_item_id
+                -> quantity 1, no kits attached
+
+        **Refused rather than reconciled**, and the distinction is whose instruction
+        it is. The fan-out spawns and removes because *the line wrote a quantity* —
+        that is what a quantity means. A kits row moving provenance says nothing
+        about how many kits the line bought, so conjuring a replacement kit or
+        deleting a real one on the strength of it would be inventing intent the file
+        never expressed. It would also make `add_only` delete, which is the one
+        thing that mode promises never to do. So the upload is told it contradicts
+        itself, and the operator settles it by saying both halves out loud.
+
+        A line the upload *does* authorise — writes its quantity, see
+        `_reconcilable_lines` — is not checked here; the fan-out reconciles it,
+        from the same post-write set. A line whose row is present but leaves the
+        quantity as it is falls to this check like an absent one, and the message
+        says so, because "restated" and "absent" call for different edits.
+
+        **The stored row is consulted only in merge.** An earlier cut argued that
+        `replace_all` could never reach it, because every line in that mode is
+        created by the upload and therefore reconciled. That was wrong, and wrong
+        in the direction that corrupts: a *non-kit* line leaves the fan-out before
+        it is ever marked reconciled, so an upload reusing a stored kit line's uuid
+        for a tool line looked the line up in `by_id` — rows `TRUNCATE` is about to
+        remove — and read their kits. The same upload previewed as two errors with
+        the stored order present and cleanly without it (#45's rule, external
+        review of #86). Under `replace_all` the upload is the only world there is,
+        and a kits row naming a line it doesn't contain is already a `_resolve_ref`
+        error.
+
+        **A kit's provenance has to be a kit line.** A non-kit line is refused here
+        rather than skipped: `kits.order_item_id` records which order line bought
+        the kit, and a paint line never bought one. §3.9 gives catalog lines a
+        different dispatch entirely, REST and MCP expose no way to write the column
+        at all, and skipping the case left the importer the only writer in the
+        application that could attach a kit to a consumable (external review of
+        #86).
+        """
+        touched: dict[uuid.UUID, list[_Row]] = {}
+        for kit_row in kit_rows:
+            if kit_row.action in (RowAction.ERROR, RowAction.SKIP):
+                continue
+            if "order_item_id" not in kit_row.present:
+                continue
+            after_line = kit_row.values.get("order_item_id")
+            before_line = kit_row.target.order_item_id if kit_row.target is not None else None
+            # Only a *move*. A row restating the line its kit is already on — every
+            # kits row of a full archive — changes what no line holds, and reading
+            # it as a claim to check would refuse the re-import of an archive whose
+            # collection had drifted before this rule existed (rule 10: a no-op).
+            if after_line == before_line:
+                continue
+            # Both ends of the move: the line it lands on, and — for a row that
+            # matched a stored kit — the one it leaves. Either can be left holding
+            # the wrong number, and only one of them is named in the cell.
+            for line_id in (before_line, after_line):
+                if line_id is not None:
+                    touched.setdefault(line_id, []).append(kit_row)
+
+        for line_id, rows in touched.items():
+            if line_id in reconciled:
+                continue
+            planned = self._planned_line(line_id)
+            # `replace_all` truncates every stored row before this plan is written,
+            # so in that mode the upload is the only source of truth about a line.
+            #
+            # **Currently shadowed, and kept anyway.** Since #82/#88 landed, a create
+            # missing a NOT NULL column is refused and has its id retracted from
+            # `created_ids` — so under `replace_all` a kits row naming such a line
+            # fails #45's dangling check first and never reaches here, and a line
+            # that *was* created has a quantity and is therefore reconciled. No
+            # input found that reaches this expression with `replace_all` true.
+            #
+            # It stays because removing it would move the protection into a rule in
+            # another module that exists for unrelated reasons. That is the
+            # difference from the conditions deleted elsewhere on this branch for
+            # being dead: those left an equivalent test in the same function, this
+            # would leave a #45 violation — reading rows `TRUNCATE` is about to
+            # remove — one distant edit away. Its mutant is out of the harness for
+            # the same reason: a case that can never be killed trains people to
+            # ignore the report. The unreachability argument is reasoned, not
+            # measured; it is on the list for the next review.
+            stored = None if replace_all else self.by_id["order_items"].get(line_id)
+
+            if planned is not None:
+                item_type = invariants.effective_item_type(planned)
+            elif stored is not None:
+                item_type = stored.item_type
+            else:
+                continue
+
+            if item_type is not ItemType.KIT:
+                self._error_rows(
+                    rows,
+                    f"order_item_id: order line {line_id} is a {item_type} line, and a kit's "
+                    "order_item_id records which line bought it — a catalog line buys stock, "
+                    "not kits. Point these kits at a kit line, or leave the column blank",
+                )
+                continue
+
+            quantity = self._stated_quantity(planned) if planned is not None else None
+            if quantity is None and stored is not None:
+                quantity = stored.quantity
+            stored_kits = list(stored.kits) if stored is not None else []
+            created = sum(
+                1
+                for kit in kit_rows
+                if kit.action is RowAction.CREATE and kit.values.get("order_item_id") == line_id
+            )
+            after = len(self._attached_after(line_id, stored_kits, kit_rows)) + created
+
+            if quantity is None:
+                self._error_rows(
+                    rows,
+                    f"order_item_id: this would leave order line {line_id} holding {after} "
+                    "kit(s), and nothing in this upload says how many that line bought — its "
+                    "order_items.csv row has no quantity column. State the quantity there, or "
+                    "leave order_item_id as it is",
+                )
+            elif after != quantity and planned is not None:
+                # The line's row is here and leaves its quantity as it is — a
+                # restated archive line, or an edit to some other column. That
+                # row describes the line; it does not authorise deleting or
+                # spawning kits to make the move fit, so the operator says which.
+                self._error_rows(
+                    rows,
+                    f"order_item_id: this would leave order line {line_id} holding {after} "
+                    f"kit(s) while the line says it bought {quantity}, and its "
+                    "order_items.csv row leaves that quantity as it is — a line is reconciled "
+                    "only where this upload changes its quantity. Set the quantity there to "
+                    "what the line should hold, or leave order_item_id as it is",
+                )
+            elif after != quantity:
+                self._error_rows(
+                    rows,
+                    f"order_item_id: this would leave order line {line_id} holding {after} "
+                    f"kit(s) while the line says it bought {quantity}. Nothing in this upload "
+                    "restates that line's quantity, so there is no way to tell which of the "
+                    "two you mean — add an order_items.csv row for it stating the quantity, "
+                    "or leave order_item_id as it is",
+                )
+
+    @staticmethod
+    def _error_rows(rows: list[_Row], message: str) -> None:
+        for row in rows:
+            row.action = RowAction.ERROR
+            row.error = message
+
+    def _plan_removals(
+        self,
+        row: _Row,
+        *,
+        surplus: int,
+        kit_rows: list[_Row],
+        attached: list[Kit],
+        protected: set[uuid.UUID],
+    ) -> None:
+        """The other half of §3.9 reconciliation: a line whose quantity dropped
+        gives up the kits it no longer accounts for (#44 case 2).
+
+        `_plan_spawns` only ever counted upward and returned early on a surplus, so
+        reducing a kit line's quantity through `order_items.csv` left every spawned
+        kit in place — the line said 1 and the collection held 2, permanently, with
+        nothing anywhere recording the disagreement. `_update_line` has always
+        removed them, so this is the importer catching up to the writer beside it
+        rather than new behaviour.
+
+        Three things are never a candidate, and the order they are excluded in is
+        the order they matter in:
+
+        * **A quantity the sheet never stated.** `quantity` is required, but only
+          when the column is *there* — a partial sheet may leave it out entirely,
+          and `values.get("quantity") or 0` reads that absence as zero. Counting
+          upward, zero asks for nothing; counting downward it asks for everything,
+          so a sheet correcting a tracking number would delete the order's kits.
+          Asked once, as `present` *and* a value: `present` alone is not load-
+          bearing today (nothing fills `quantity`, so an absent column is also a
+          `None` value) and a second guard whose outcome the first already decides
+          is a guard no test can find missing — #74 paid for that lesson.
+        * **A kit this upload describes.** An upload asserting a kit exists and a
+          quantity implying it doesn't is contradicting itself, and picking a
+          winner silently is how an import surprises someone. Excluded from the
+          candidates, so the shortfall below reports it.
+        * **A kit that has progressed.** Same predicate as the Orders page, from
+          `services/orders.py` rather than a second copy of the list — building or
+          complete, rated, photographed, or carrying an applied upgrade, which is
+          stock already spent that a cascade would leave unexplained.
+
+        `attached` is `_attached_after`'s post-write set, not `row.target.kits`: a
+        kit this same upload is moving off the line is not this line's to give up,
+        and one it is moving on is.
+
+        Newest first among what's left, matching `_delete_line_kits`: the kits are
+        interchangeable, and the one added last is the one least likely to be the
+        one someone has been looking at.
+        """
+        stated = self._stated_quantity(row)
+        if not isinstance(stated, int):
+            return
+
+        described = {
+            kit.matched_id
+            for kit in kit_rows
+            if kit.matched_id is not None and kit.action is not RowAction.ERROR
+        }
+        candidates = [
+            kit for kit in attached if kit.id not in described and kit.id not in protected
+        ]
+        if len(candidates) < surplus:
+            if not attached:
+                # Nothing stored to give up: the surplus is entirely kits this
+                # upload itself supplies, which is the file contradicting itself
+                # rather than the collection disagreeing with it. Reachable on a
+                # line the upload *creates*, where an earlier `row.target is None`
+                # guard returned before saying anything at all and the line landed
+                # holding more kits than it claimed, in every mode (external review
+                # of #86, round four).
+                row.action = RowAction.ERROR
+                row.error = (
+                    f"this line says quantity {stated}, but this upload supplies "
+                    f"{surplus + stated} kit(s) for it in kits.csv. Take out the extra kit "
+                    "rows, or raise the quantity to match them"
+                )
+                return
+            row.action = RowAction.ERROR
+            row.error = (
+                f"this line says quantity {stated}, which is {surplus} fewer "
+                f"than the {len(attached)} kit(s) attached to it, but only {len(candidates)} "
+                "can be removed safely — the rest are building/complete, rated, have photos, "
+                "have upgrades applied, or are described by this upload. Move or edit those "
+                "kits first, or leave the quantity as it was"
+            )
+            return
+
+        for kit in list(reversed(candidates))[:surplus]:
+            self.removals.append(
+                _Removal(kit_id=kit.id, order_item_id=row.target.id, row_number=row.row_number)
+            )
+        row.messages.append(f"will remove {surplus} kit(s) from this line")
 
     def _finish(self) -> ExecutionPlan:
         table_plans: list[TablePlan] = []
@@ -1556,6 +2241,7 @@ class _Planner:
         )
         derived = DerivedEffects(
             kits_spawned=sum(spawn.count for spawn in self.spawns),
+            kits_removed=len(self.removals),
             stock_changes=0,
             stock_note=(
                 "Stock levels come from the tools/consumables/upgrades files. "
@@ -1566,7 +2252,12 @@ class _Planner:
 
         plan = ImportPlan(
             plan_hash=_plan_fingerprint(
-                self.mode, self.upload.source, self.rows, self.spawns, deleted_ids
+                self.mode,
+                self.upload.source,
+                self.rows,
+                self.spawns,
+                self.removals,
+                deleted_ids,
             ),
             mode=self.mode,
             source=self.upload.source,
@@ -1576,7 +2267,13 @@ class _Planner:
             warnings=self.warnings,
             blocking_errors=self.blocking,
         )
-        return ExecutionPlan(mode=self.mode, rows=self.rows, spawns=self.spawns, plan=plan)
+        return ExecutionPlan(
+            mode=self.mode,
+            rows=self.rows,
+            spawns=self.spawns,
+            removals=self.removals,
+            plan=plan,
+        )
 
 
 def _plan_fingerprint(
@@ -1584,6 +2281,7 @@ def _plan_fingerprint(
     source: str,
     rows: dict[str, list[_Row]],
     spawns: list[_Spawn],
+    removals: list[_Removal],
     deleted_ids: dict[str, list[str]],
 ) -> str:
     """Fingerprints what would be written, not the file it came from.
@@ -1684,9 +2382,18 @@ def _plan_fingerprint(
                 spawn.status,
                 spawn.row_number,
                 spawn.received,
+                canon(spawn.received_at),
             ]
             for spawn in spawns
         ],
+        # Which kits go, not how many. Two collections of the same size are the
+        # same number and a different loss — the same reason `deletes` above
+        # carries ids rather than counts. Every one of these is a stored uuid, so
+        # none of them needs `canon`.
+        "removals": sorted(
+            [str(removal.kit_id), str(removal.order_item_id), str(removal.row_number)]
+            for removal in removals
+        ),
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -1768,13 +2475,17 @@ def _advance_kits_for_newly_received_orders(execution: ExecutionPlan) -> None:
     is `render()`'s output for the old value — `""` for `None`, and non-empty for
     an already-set timestamp — so it's the one place that still distinguishes a
     genuine arrival from a same-state correction (review of #79/#47).
+
+    The stamp is the order's applied `received_at`, not the clock: a kit a
+    receipt lands in backlog carries the receipt instant — backdated included —
+    on every writer (#93), and `receive_order()` is what this mirrors. The
+    post-write value is exactly what the upload stated, so nothing is invented.
     """
     explicit_status_ids = {
         row.matched_id
         for row in execution.rows.get("kits", [])
         if row.matched_id is not None and "status" in row.present
     }
-    now = datetime.now(UTC)
     for row in execution.rows.get("orders", []):
         if row.action is not RowAction.UPDATE or row.target is None:
             continue
@@ -1794,7 +2505,37 @@ def _advance_kits_for_newly_received_orders(execution: ExecutionPlan) -> None:
                     continue
                 if kit.status in ARRIVAL_ELIGIBLE:
                     kit.status = KitStatus.BACKLOG
-                    kit.status_updated_at = now
+                    kit.status_updated_at = row.target.received_at
+
+
+def _stamp_generated_status_changes(execution: ExecutionPlan) -> None:
+    """Give every kit this apply moved a `status_updated_at` of now (#44 case 5).
+
+    The decision was made at plan time by `_defer_generated_status_stamp`, which
+    dropped the column from `present` precisely so the clock stays out of the plan
+    hash; this is where the clock is finally read. `"status_updated_at" not in
+    present` therefore covers both shapes it has to — a sheet that never carried
+    the column, and one that carried it blank — while a sheet that stated a time
+    keeps it in `present` and is left exactly as written.
+
+    Runs after the write loop for the same reason
+    `_advance_kits_for_newly_received_orders` does: `row.target` is the mapped
+    instance the loop just wrote through, so setting the attribute here marks it
+    dirty again and the flush before commit carries it.
+
+    Deliberately not merged into that function. This is the general
+    `kits.csv` status move; that one is the receipt derivation, keyed off an order
+    row, and it already skips any kit this upload gives an explicit status — so a
+    kit reachable by both is stamped here, once.
+    """
+    now = datetime.now(UTC)
+    for row in execution.rows.get("kits", []):
+        if row.action is not RowAction.UPDATE or row.target is None:
+            continue
+        if "status_updated_at" in row.present:
+            continue
+        if any(change.field == "status" for change in row.changes):
+            row.target.status_updated_at = now
 
 
 async def apply_import(
@@ -1858,13 +2599,31 @@ async def apply_import(
                 skipped += 1
         await session.flush()
 
+    _stamp_generated_status_changes(execution)
     _advance_kits_for_newly_received_orders(execution)
+
+    removed = 0
+    for removal in execution.removals:
+        kit = await session.get(Kit, removal.kit_id)
+        if kit is None:
+            continue
+        await session.delete(kit)
+        removed += 1
+    await session.flush()
 
     spawned = 0
     for spawn in execution.spawns:
         item = await session.get(OrderItem, spawn.order_item_id)
         if item is None:
             continue
+        # The receipt instant is the plan's post-write resolution
+        # (`_order_receipt`), hash-bound with the rest of the spawn descriptor:
+        # a kit landing in backlog carries the order's `received_at` — backdated
+        # included — the same instant REST and MCP stamp (#93), and a correction
+        # landing between preview and apply changes the re-plan's fingerprint,
+        # so the stale hash 409s before this line runs. `spawn_kits` itself
+        # keeps the stamp off any kit spawned with an explicitly asserted later
+        # status.
         await spawn_kits(
             session,
             item,
@@ -1875,6 +2634,7 @@ async def apply_import(
             status=spawn.status or None,
             count=spawn.count,
             received=spawn.received,
+            received_at=spawn.received_at,
         )
         spawned += spawn.count
 
@@ -1887,6 +2647,7 @@ async def apply_import(
         updated=updated,
         skipped=skipped,
         kits_spawned=spawned,
+        kits_removed=removed,
         rows_deleted=plan.derived.rows_deleted,
         warnings=plan.warnings,
     )

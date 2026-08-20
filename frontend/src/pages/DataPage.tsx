@@ -308,6 +308,7 @@ export function DataPage() {
             <p className="mt-0.5">
               {result.created} created · {result.updated} updated · {result.skipped} skipped
               {result.kits_spawned > 0 && ` · ${result.kits_spawned} kits created from order lines`}
+              {result.kits_removed > 0 && ` · ${result.kits_removed} kits removed from order lines`}
             </p>
           </div>
         )}

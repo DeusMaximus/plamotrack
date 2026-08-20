@@ -339,15 +339,18 @@ instant is supplied rather than always stamped "now":
   pending order is a contradiction, refused rather than ignored); the receive call
   takes an optional one; both default to now
 - the kits a receipt lands in backlog are stamped with the same instant as the order,
-  including kits spawned later into an already-received order by a line edit; a kit
-  whose status the entry itself asserts (building, complete) keeps entry time — the
-  receipt is not when that status began
+  including kits spawned later into an already-received order by a line edit — or by
+  an import (§12.5: both of the importer's arrival sites borrow the same instant); a
+  kit whose status the entry itself asserts (building, complete) keeps entry time —
+  the receipt is not when that status began
 - **correction:** `PATCH /orders/{id}` adjusts a `received_at` that is already set,
   and 409s on a pending order — the pending → received transition stays in the receive
   path, where the stock dispatch lives. Explicit null is refused: un-receiving is not
   a supported operation. A correction follows exactly the kits whose stamp equals the
   old receipt (their last transition *was* the receipt); a kit moved since keeps its
-  own date. The MCP `update_order` tool carries the same correction (#97)
+  own date. The MCP `update_order` tool carries the same correction (#97). A
+  correction arriving by CSV moves only the order — the importer never rewrites kit
+  rows the upload doesn't name (#116)
 - **the future is refused, judged as a calendar date in the instant's own offset** —
   not as an instant against the server clock, which would refuse an honest "today"
   over clock skew. A receipt *earlier than `order_date`* is deliberately allowed:
@@ -1003,7 +1006,57 @@ be misleading.
 - **Kits are hybrid-dispatched.** An order line spawns kits only for the shortfall
   nothing else supplies: `quantity − (kits.csv rows for this line) − (kits already on a
   matched line)`. An archive round-trips with zero spawns; a bare orders sheet builds the
-  collection. Same diff arithmetic as `_update_line`.
+  collection. Same diff arithmetic as `_update_line` — and, since #44, in both
+  directions: a surplus gives kits up, under `_update_line`'s own progression guard.
+  The arithmetic runs only for a line whose quantity the upload *writes* (a create,
+  or an update that changes it): a restated line — every line of a full archive —
+  describes and never instructs, so a kit move against one is refused until the
+  quantity is changed alongside it, and a re-imported archive is a no-op whatever
+  the collection holds. (An earlier reading, "any stated quantity", let an
+  unchanged archive row turn a refused move into a delete.)
+
+### 12.5a The importer is the third writer (#44, 16/08/2026)
+
+`apply_import` writes model rows by direct `setattr`, so for a while every column was
+freely mutable and an import could do things REST and MCP refuse. Rule 1 says the
+writers share a service layer; it was written when there were two of them.
+
+The fix is **not** to route import through `services/orders.py` — `receive_order`
+applies stock, which the invariant above forbids, and `_update_line` fights the hybrid
+dispatch. What is shared is the *predicates*: `kit_progressed`, `PROGRESSED_STATUSES`
+and `IMMUTABLE_LINE_COLUMNS` live in `services/orders.py`, and
+`services/portability/invariants.py` reads them to refuse a plan at preview time. One
+parametrised matrix drives both writers over the same edits and asserts they agree.
+
+**Receipt is the one place the ambiguity was deleted rather than represented.**
+`received_at is not None` is the proxy for "stock was applied" in four separate stock
+mutators. An import that flipped the flag without restating stock created a state none
+of them could read: the real receive 409'd, a delete became impossible, and an edit
+moved stock by the wrong amount — while clearing the flag re-armed the increment and
+double-counted a delivery. Telling "received" from "received, stock outstanding" apart
+needs a column, and that column has no correct backfill, no answer in the CSV (rule 9),
+and four call sites to teach. So an import may not move `received_at` into or out of
+null on an order holding a catalog line. Kit-only orders move freely in both
+directions (that is the starter-sheet path), and a *create* is untouched — a full
+archive carries the received order and its post-receipt `quantity_on_hand` together,
+which is how the invariant survives a restore today.
+
+The two arrivals an import *does* perform borrow the order's receipt instant, exactly
+as the live writers stamp it (#93): a kit-only receive-by-import stamps the kits it
+advances with the value the sheet states, and a kit the apply spawns into a received
+order carries the same instant — resolved at plan time (`_order_receipt`, the
+post-write value), carried on the spawn descriptor and bound by the plan hash, so a
+receipt this same upload sets is honoured, backdated included, and a correction
+landing between preview and apply stales the hash instead of stamping a value the
+operator never saw. The value is stated, not invented, and neither site fires on a
+re-import. Corrections deliberately do not cascade a restamp the way REST's do
+(#116). And the instant has to be *possible*: a `received_at` an upload writes —
+arrival or correction — onto a future calendar date is refused at preview with the
+same own-offset judgment every other writer applies (`receipt_is_future`, #93).
+The refusal reads the change, not the cell: a stored legacy future value restates
+as a no-op, and a create is a restore (the create rule above, applied to the date),
+so an archive carrying one stays importable — stated policy, with the accepted cost
+that a hand-written CSV can still create a future order.
 
 A blank cell in an *included* column means null; a column omitted from the file entirely
 is left alone. That's needed for archive fidelity, but it makes partial sheets dangerous

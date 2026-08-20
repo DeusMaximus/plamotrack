@@ -126,9 +126,29 @@ PROGRESSED_STATUSES = {KitStatus.BUILDING, KitStatus.COMPLETE}
 # Statuses that a delivery arrival naturally advances to backlog (in hand, unbuilt).
 ARRIVAL_ELIGIBLE = {KitStatus.PRE_ORDERED, KitStatus.ORDERED, KitStatus.IN_TRANSIT}
 
+#: Columns of a stored order line no edit may change, whichever writer it arrives
+#: through (#44).
+#:
+#: Both are settled at entry and mean something the line cannot restate later:
+#:
+#: * ``item_type`` picks the §3.9 dispatch. A kit line has fanned out into `kits`
+#:   rows; a catalog line has (or will have) moved `quantity_on_hand`. Changing it
+#:   leaves the old side effect in place with nothing left pointing at it.
+#: * ``order_id`` is purchase provenance. Moving a line — and the kits it spawned —
+#:   between orders silently rewrites what was bought where, and can move it across
+#:   a receipt boundary with no stock or lifecycle effect at all.
+#:
+#: REST enforces the two by different mechanisms, which is why nothing named them
+#: together before: `_update_line` refuses an `item_type` change outright, and
+#: `order_id` is unreachable there because an id that isn't already on the order is
+#: rejected by `update_order` as not belonging to it. The CSV importer writes every
+#: column directly and needs them as one set — `services/portability/invariants.py`
+#: reads this tuple.
+IMMUTABLE_LINE_COLUMNS: tuple[str, ...] = ("item_type", "order_id")
 
-def _refuse_future_receipt(received_at: datetime) -> None:
-    """A receipt date that has not happened yet is a typo, not a plan (#93).
+
+def receipt_is_future(received_at: datetime) -> bool:
+    """Whether a receipt date has not happened yet — a typo, not a plan (#93).
 
     Judged as a calendar date in the datetime's *own* offset, not as an instant
     against the server clock. The caller asserts "it arrived on this date, in my
@@ -138,14 +158,22 @@ def _refuse_future_receipt(received_at: datetime) -> None:
     a refusal. The instance has no time zone of its own until M5.1; the supplied
     offset is the only local calendar available.
 
-    Deliberately NOT refused here: a receipt earlier than the order's own
+    Deliberately NOT judged here: a receipt earlier than the order's own
     `order_date`. `order_date` is a plain date with no offset, so the comparison
     is not well-defined across time zones — a same-day store purchase entered in
     UTC+10 can hold a receipt instant that is "yesterday" in UTC — and backfilled
     collections carry approximate dates. Odd is allowed; impossible is not.
+
+    The predicate is separate from the refusal so the CSV importer can apply the
+    same calendar judgment as a preview-time row error (rule 1) — every writer
+    refuses the same set of values, in one place.
     """
     today_in_own_offset = datetime.now(received_at.tzinfo).date()
-    if received_at.date() > today_in_own_offset:
+    return received_at.date() > today_in_own_offset
+
+
+def _refuse_future_receipt(received_at: datetime) -> None:
+    if receipt_is_future(received_at):
         raise InvalidInputError(
             f"received_at {received_at.isoformat()} is in the future — "
             "an arrival can be backdated, not predicted"
@@ -467,7 +495,7 @@ async def _line_kits(session: AsyncSession, item_id: uuid.UUID) -> list[Kit]:
     return list((await session.scalars(stmt)).all())
 
 
-def _kit_progressed(kit: Kit) -> bool:
+def kit_progressed(kit: Kit) -> bool:
     """Visible evidence that this kit is more than a row an order created.
 
     Applied upgrades count for a different reason than the rest: status, rating and
@@ -475,6 +503,15 @@ def _kit_progressed(kit: Kit) -> bool:
     spent. Deleting the kit cascades the application away and leaves that stock
     unexplained, so the same predicate covers line reduction, line removal and
     order deletion in one place.
+
+    Public because the CSV importer's downward reconciliation asks the same
+    question of the same kits (#44). Sharing the predicate is the point — sharing
+    the *mutation path* is what rule 10 forbids — so a kit the Orders page won't
+    delete is a kit `order_items.csv` can't delete either, by construction rather
+    than by two lists agreeing.
+
+    Requires `photos` and `upgrade_applications` to be eager-loaded; a lazy load
+    here raises outside the async context.
     """
     return (
         kit.status in PROGRESSED_STATUSES
@@ -487,7 +524,7 @@ def _kit_progressed(kit: Kit) -> bool:
 async def _delete_line_kits(session: AsyncSession, item: OrderItem, count: int | None) -> None:
     """Delete `count` spawned kits (None = all). Progressed kits are protected."""
     kits = await _line_kits(session, item.id)
-    safe = [kit for kit in kits if not _kit_progressed(kit)]
+    safe = [kit for kit in kits if not kit_progressed(kit)]
     needed = len(kits) if count is None else count
     if len(safe) < needed:
         raise ConflictError(

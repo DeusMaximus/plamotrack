@@ -196,6 +196,14 @@ export function ImportPreview({ plan }: { plan: ImportPlan }) {
             created from order lines that don't bring their own.
           </p>
         )}
+        {/* Red, alongside the deletion count: no row in the table below names these
+            kits, so this line is the only warning the operator gets. */}
+        {plan.derived.kits_removed > 0 && (
+          <p className="mt-1 font-medium text-red-700">
+            {plan.derived.kits_removed} kit{plan.derived.kits_removed === 1 ? "" : "s"} will be
+            deleted, from order lines whose quantity went down.
+          </p>
+        )}
         <p className="mt-1 text-xs text-zinc-500">{plan.derived.stock_note}</p>
       </div>
 

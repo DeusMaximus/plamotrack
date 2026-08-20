@@ -186,6 +186,99 @@ already recorded in, rather than being relabelled with yours.
 
 ---
 
+## What an import can't do to an order
+
+An order is a purchase record, and some of it is fact rather than a field. A sheet
+that would change one of these is refused in the preview, naming the row and the
+column, before anything is written.
+
+**A line can't change what it is or which order it's on.** `item_type` and
+`order_id` are settled when the line is entered. A kit line has already become
+kits; a tool line has already moved (or will move) your on-hand count, and the two
+can't swap without stranding whichever side effect already happened. Moving a line
+between orders would take its kits with it and quietly rewrite what was bought
+where. To correct either, leave the line alone and enter a new one. The Orders page
+refuses both for the same reasons.
+
+**A tool, consumable or upgrade line has to point at something.** Fill in
+`catalog_ref_id`, or name the item in `catalog_name` and it's created for you at 0
+on hand. A line pointing at nothing can never move stock in either direction, so
+it's refused rather than stored.
+
+**A received order can't become pending, and a pending order with a catalog line
+can't be marked received.** This is the one that surprises people, so:
+
+Importing never changes `quantity_on_hand` (the rule above). Marking a pending
+order received through `orders.csv` would therefore leave the paint and tools it
+bought uncounted, *and* leave the order reading as received — so the app would then
+refuse to receive it, and the stock would never be applied at all. Clearing
+`received_at` on an order that genuinely arrived is the mirror image: the stock it
+already added stays where it is, and the next receive adds it a second time.
+
+So on an order that holds a tool, consumable or upgrade line, `received_at` may not
+be moved into or out of "received" by an import. What you can do instead:
+
+- **To mark a pending order received:** leave `received_at` out of the sheet and
+  receive the order in the app, which applies the stock. Stating the on-hand
+  quantity in `tools.csv` / `consumables.csv` / `upgrades.csv` does *not* stand in
+  for that — it corrects a number, and the receipt in the sheet is still refused.
+- **To correct a count on its own,** on an order you are not flipping: state it in
+  `tools.csv` / `consumables.csv` / `upgrades.csv`. That's where stock comes from.
+- If you marked an order received **by mistake**: un-receiving isn't supported
+  anywhere in plamotrack, by import or otherwise. Delete the order — that reverses
+  the stock it applied — and enter it again as pending.
+
+Everything else about receipt still imports:
+
+- an order that holds only kit lines moves in both directions — that's the ordinary
+  starter-sheet case, where a kit you already own arrives already received. The kits
+  the receipt advances to backlog are stamped with the arrival instant the sheet
+  states, the same as receiving in the app;
+- a **new** order imports with its receipt intact, in any mode. A full archive
+  carries the received order *and* the post-receipt `quantity_on_hand` together, so
+  restoring one is never ambiguous;
+- correcting a received order's date to a different date is fine — it changes when,
+  not whether. It moves the order's own date only: unlike a correction in the app, a
+  CSV correction never re-dates the kits that arrived with the box.
+
+One more rule, on any order: **a receipt date in the future is refused** — an
+arrival can be backdated, not predicted, and the app refuses the same value
+everywhere else. This applies where the sheet *changes* `received_at` (marking an
+order received, or correcting its date); a row restating a value the order already
+holds is left alone, and a **new** order imports whatever its sheet says — a
+restore records the past, even when the past held something odd.
+
+**Reducing a kit line's quantity removes kits.** A line that says 1 where the
+collection holds 3 is a disagreement, so the import gives up the extra kits — newest
+first, and never one you've started: a kit that's building or complete, rated,
+photographed, or carrying an applied upgrade is kept and the row is refused instead.
+Kits named in the same upload's `kits.csv` are kept too, and a sheet that both lists
+two kits and says the line bought one is refused rather than silently resolved. The
+preview counts these deletions before you apply, the same way it counts a
+replace-everything import's.
+
+The count is of the kits the line will hold *after* the import, not before it. If the
+same upload's `kits.csv` also moves a kit onto or off that line via `order_item_id`,
+that move is counted first.
+
+**Only a quantity you change authorises any of this.** A line whose `order_items.csv`
+row restates its quantity unchanged — every line of a full archive does — describes
+the line; it doesn't instruct the import to delete or spawn kits to make a move fit.
+So moving a kit onto or off such a line is refused until you also say what the line
+now holds: change its quantity in the same upload and the move lands, with the count
+reconciled to the number you wrote. Re-importing an archive therefore never changes
+your collection, whatever it holds.
+
+Your own export can still contradict itself. Importers before 0.2.6 let a line end
+up holding more kits than its quantity said, and a *replace everything* restore of an
+archive taken from such an instance is refused with *"this line says quantity N, but
+this upload supplies M kit(s)"* — every row is a create there, and the file is the
+only world. Nothing is lost: `docs/operations.md` has the query that finds those
+lines and the one-click fix in the app; or raise the quantity in `order_items.csv`
+to match the kits that are really there, and import again.
+
+---
+
 ## Editing the CSVs by hand
 
 Two conveniences make the files readable, and both follow the same rule — **the

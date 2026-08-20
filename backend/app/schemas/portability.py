@@ -50,6 +50,10 @@ class DerivedEffects(BaseModel):
     """Side effects beyond the rows themselves — the §3.9 dispatch, spelled out."""
 
     kits_spawned: int = 0
+    #: Kits a reduced order-line quantity gives up (#44). Destructive and derived,
+    #: so it is stated in the preview next to `rows_deleted` rather than discovered
+    #: afterwards — nothing in the row list mentions these kits.
+    kits_removed: int = 0
     stock_changes: int = 0
     stock_note: str = ""
     rows_deleted: dict[str, int] = Field(default_factory=dict)
@@ -84,5 +88,6 @@ class ImportResult(BaseModel):
     updated: int
     skipped: int
     kits_spawned: int
+    kits_removed: int = 0
     rows_deleted: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
