@@ -41,6 +41,51 @@ Template:
 
 ---
 
+## 2026-08-20 — Claude Code (Fable 5) — #94 + #96 implemented: PR #113 open at `523deed`, Cursor round pending; #112 filed
+
+- **Done:** **#94 (build dates) + #96 (series) implemented on
+  `feat/94-96-kit-build-dates-and-series`; PR #113 open at `523deed`, CI green.**
+  Five separable commits: one additive hand-checked migration (three nullable
+  `kits` columns, **no backfill** per #94's decision); #94 — `stamp_build_date`
+  in `services/kits.py`, called by both live status writers (`update_kit`,
+  `receive_order`'s advance), stamps only-when-null and never against an
+  explicit value in the same request; importer and creation never derive
+  (rule 10 by analogy; cell states keep absent=keep / blank=clear /
+  populated=overwrite over a stored date); #96 — free-text `series`,
+  `GET /kits/series` + MCP `list_kit_series` (most-frequent-first) feeding the
+  kit form's datalist (`staleTime: 0`, the #49/#108 rule), `series=` filter on
+  service/REST/MCP with the #49 fold; spec.py + starter sheet + docs updated.
+  On owner feedback the Kits table now shows **Started/Completed** columns
+  (elapsed days inline) and dropped the `status_updated_at` "Since" column;
+  kit-side arrival date **considered and deferred** (recorded in design §3.1 —
+  derivable only via the spawning order; lives on the order side for now).
+  **#112 filed**: the starter sheet's retailer-bearing rows silently drop every
+  kit-only field (`rating`, `build_notes`, now the three new ones) — proven via
+  `expand()`; fix leans on the hybrid dispatch #86 is re-deciding, so sequenced
+  after #86; disclosed in import-export.md meanwhile.
+- **Decisions (on the PR as "Deliberate calls"):** stamp-only-when-null incl.
+  re-completion; creation never derives; **no cross-field validation** (user
+  owns the values; a service check would diverge from the importer); the
+  browser series *filter* is client-side while the form typeahead uses the
+  endpoint; `/kits/series` declared before `/{kit_id}` (route test pins it).
+- **State:** backend **738** (713 + 17 `test_build_dates.py` + 8
+  `test_series.py`), vitest 109, e2e 20 against a DB migrated from empty, all
+  zero after; ruff/oxlint/builds clean. Negative control: **24 red / 1 green
+  of 25 on unfixed `main`** — the green is a degenerate-but-honest schema-shape
+  control, explained in the PR body. **Worktree trap, learned:** `plamotrack_test`
+  migrated to a branch head makes `main`'s conftest downgrade explode — drop the
+  DB first; the Cursor brief warns about it. No mutants in the harness (#86's
+  file); five hand-mutant tuples with once-matching anchors are in the brief,
+  queued for the fold-in with #109's and #111's. **Cursor brief for #113 is in
+  this session's scratchpad** (`cursor-brief-113.md`), handed to the owner —
+  round not yet run. Live and still true: **#86 at `dfa7f29` owes its Codex
+  round** and gates #44/#77/#87/#90; #104/#98/#99 → 0.2.8; #110 and #112
+  unmilestoned. Dev servers may be running on :8000/:5173 (this branch).
+- **Next:** the Cursor round on #113, then answer it (reproduce at `523deed`
+  first). After merge, 0.2.7 has **#95** (needs #86 — its importer half mirrors
+  the arriving-receipt question) and **#97** last (its MCP order-edit tool
+  should carry #111's `received_at` correction). Then 0.2.7's gate is #86 itself.
+
 ## 2026-08-20 — Claude Code (Fable 5) — #93 closed: PR #111 merged as `322afe9` after one Cursor round
 
 - **Done:** **#93 closed — PR #111 squash-merged as `322afe9`**, branch deleted,
@@ -249,43 +294,3 @@ Template:
   `receive_order` also stamps the kits it advances, so a backdated receipt has to
   backdate those), **#95**, and **#94 + #96** (share a migration; decisions are
   in §3.1). #86 still wants a fresh review round before anything in 0.2.6 moves.
-
-## 2026-08-19 — Claude Code (Fable 5) — HANDOFF.md capped at five; `.agents/` created; #105 merged
-
-- **Done:** the hand-off log and `AGENTS.md` were costing ~45k tokens per session
-  start (181 KB / 43 entries + 25 KB), a fifth of a 256K context before any code.
-  **Step 1 on `main` (`07f99e1`):** `HANDOFF.md` keeps the five most recent
-  entries; the other 38 moved verbatim to `.agents/handoff/2026-08.md` (verified
-  byte-identical on both sides of the split). The header carries the rotation
-  rule, a ~60-line entry cap, "the newest entry is self-sufficient about live
-  state", and the grep recipe. `AGENTS.md` protocol/layout and `docs/design.md`'s
-  pointer updated. **Step 2 is PR #105, merged as `50f7c41`** after one Copilot
-  round (one pointer-text nit, fixed as a class of three): `AGENTS.md` trimmed to rules with pointers (25.2 → 22.4 KB);
-  `.agents/lessons.md` (case histories harvested from `AGENTS.md` and all 43
-  entries, append-only, stable headings); `.agents/testing-and-review.md`
-  (procedure, edited in place: suites, regression checklist, concurrency
-  patterns, mutation harness, CI, reviewer routing, answering a review, release
-  gate). `.agents/README.md` describes the directory.
-- **Decisions (owner's, 2026-08-19):** `.agents/` not `docs/` — `docs/` is
-  user-facing; five entries; lessons live beside the archive; a *separate*
-  procedure doc because procedure is overwritten and lessons are appended, and
-  one file would refill the way `HANDOFF.md` did. Mine: no harness-specific
-  rule-loading (`.cursor/rules`, Claude `@import`, nested `AGENTS.md`) — plain
-  links plus "read X before Y" work identically in all three harnesses and one
-  copy can't drift. `AGENTS.md` still holds ~86 lines of architecture rules;
-  cutting those further is the owner's call, not done.
-- **State:** no application code changed, no tests run. `main` is `07f99e1` plus
-  this entry — the **first rotation**, which moved the 2026-08-17 #82/#88 entry
-  to the top of `.agents/handoff/2026-08.md` — plus `50f7c41` (#105). **PR #106
-  open** (`docs/design-catch-up`, docs only): `docs/design.md` catches up on the
-  write gate (§3.9), the export snapshot (§12.1/12.3), the #94/#96 decisions
-  (§3.1) and the hardening milestones (§11) — none of it touched by #49, but two
-  of them were owner decisions living only on issues and in the archive. The only
-  other branch is `fix/44-import-order-invariants` (PR #86, untouched, still the
-  0.2.6 blocker). Live from the previous entry and
-  still true: #86 gates #44/#77/#87/#90; **#104** is filed into 0.2.8; #97 → 0.2.7,
-  #98/#99 → 0.2.8; a stray local `pr-102-review-ref` branch was already gone.
-- **Next:** merge **#106**, then the previous entry's Next stands: **#49**
-  (retailer LIKE wildcards) is the remaining 0.2.7 item clear of #86 — read #86's
-  importer name-matching first, since #49's point is making all three
-  normalisations agree. From now on, an entry ends by rotating if it made six.
