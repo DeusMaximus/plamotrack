@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-20 — Claude Code (Fable 5) — #86 synced with `main`, stamping decision taken; #116 filed; Codex round 5 NO-GO answered at `5846c44`
+## 2026-08-20 — Claude Code (Fable 5) — #86 MERGED as `386ebda` after Codex rounds 5+6; #44 closed; #116 filed; the 0.2.7 gate is released
 
 - **Done:** owner asked to continue #86. (1) **`main` merged into the branch**
   (`cb6e952` — merge, not rebase, so the thread's SHA anchors survive): #109 +
@@ -87,21 +87,25 @@ Template:
   (3 red-first at `5cbc31d` on the review's own assertions / 3 controls);
   mutants `stamp-3`/`fut-1`/`fut-2` new, `stamp-1` re-anchored. The queued
   `rcpt-` fold-in tuples anchor lines the predicate refactor moved — re-check at
-  fold-in. **Awaiting round 6** (merging on a NO-GO discards the review).
-  Trap re-confirmed the hard way: two
+  fold-in. **Round 6: GO, clean** — Codex replayed both failure modes
+  independently at `5846c44`, accepted create-as-restore as a stated product
+  decision, and declared clear-to-merge; **#86 squash-merged as `386ebda`,
+  branch deleted, #44 closed**, on the owner's call. Six review rounds total on
+  this PR; all thread SHAs survive because the branch was always merged forward,
+  never rebased. Trap re-confirmed the hard way: two
   concurrent pytest sessions against `plamotrack_test` truncate each other into
   phantom failures — one session at a time is already the written rule. Stale
   worktrees `/private/tmp/plamotrack-pr100` and `-pr108-main` remain, not this
-  session's, left alone. Live and still true: **0.2.7 = #95-or-defer + the #86
-  gate**; #86 gates #44/#77/#87/#90, #95, #110, #112; the mutant fold-in queue
-  (#109's 17 + #111's 6 + #113's 8 + #115's 2) waits for #86 to land; 0.2.8 is
-  open ground (#104/#98/#99/#53/#54/#61/#63/#67); #114 is M5.1-shaped; #116
-  unmilestoned, sequenced after #86.
-- **Next:** Codex round 6 at `5846c44` — the PR thread carries the reply; a
-  fresh session replays it (the round-5 brief's shape still applies, at the new
-  head). After #86 merges: fold the queued mutant tuples into
-  `mutation_test.py` (re-checking the moved `rcpt-` anchors), then #95-or-defer
-  closes 0.2.7, and #110/#112 unblock.
+  session's, left alone. Live and still true: **the #86 gate is released** —
+  #95, #110, #112, #77, #87 and #90 are unblocked; **0.2.7 is now #95-or-defer,
+  owner's call**; 0.2.8 is open ground (#104/#98/#99/#53/#54/#61/#63/#67); #114
+  is M5.1-shaped; #116 unmilestoned.
+- **Next:** the mutant fold-in queue is actionable now that #86's harness is on
+  `main`: 33 tuples from the PR bodies of #109 (17), #111 (6), #113 (8) and
+  #115 (2) fold into `mutation_test.py` — anchors verified once at their source,
+  but the `rcpt-` set anchors lines the `receipt_is_future` refactor moved, so
+  expect the harness to report those and re-anchor them. Then #95-or-defer
+  decides 0.2.7; #110/#112 are ready when milestoned.
 
 ## 2026-08-20 — Claude Code (Fable 5) — #97 closed: PR #115 merged as `7991a08` after one Cursor round; 0.2.7 now gated only by #86
 
