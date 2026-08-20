@@ -41,6 +41,33 @@ Template:
 
 ---
 
+## 2026-08-21 — Claude Code (Sonnet 5) — #120 filed: the 0.2.7 "one more item" is named
+
+- **Done:** UI walkthrough with the owner over the Kits and Orders pages (no
+  code changed this session). Three gaps surfaced and filed as **#120**,
+  milestoned to v0.2.7-alpha: (1) Kits table shows status as both a badge and a
+  redundant inline `<select>` — the dropdown bypasses Edit and should go,
+  status changes only through Edit going forward; (2) Orders — Ship/Receive
+  already backdate correctly (#95/#111) but live in separate modals from
+  Edit's date-correction fields, should fold into one Edit-order dialog; the
+  row space Ship/Receive buttons free up becomes `SHIPPED`/`RECEIVED` columns
+  mirroring Kits' Started/Completed elapsed-day pattern; the per-line
+  `kit_status` (ordered/pre_ordered) picker on order line items is a confusing
+  per-line rendering of what's really an order-wide flag (a retailer splitting
+  a shipment becomes two plamotrack orders, per the owner's stated workflow) —
+  promote to one flag set at order creation, applied to every line, drop the
+  per-line picker. (3) Board cards (Build and Orders kanban) don't open the
+  same Edit dialog their list-page rows do — filed but **explicitly deferred
+  by the owner** to a future UI redesign, not 0.2.7 scope.
+- **Decisions:** #120 items 1+2 are 0.2.7 scope; item 3 is deferred and
+  deliberately *not* milestoned to 0.2.7 (the issue body says so — don't pull
+  it into this milestone without asking).
+- **State:** no code changes, no migration, no tests touched. Dev servers were
+  already running on :8000/:5173 from the prior session; left as-is.
+- **Next:** implement #120 (items 1+2) — this is the "one more item" the prior
+  entry said the owner was adding to 0.2.7. Once it lands, run the release gate
+  (`.agents/testing-and-review.md`) and 0.2.7 is ready to cut.
+
 ## 2026-08-21 — Claude Code (Fable 5) — #117 merged as `7396e5d`, #118 merged as `53009c0` (#95 closed) after two Codex rounds; 0.2.7 held open for one more item
 
 - **Done:** (1) **The fold-in queue, folded — PR #117** (branch
@@ -293,63 +320,3 @@ Template:
   arriving-receipt question), **#97** last — its order-edit tool should carry
   `received_at` so MCP gains the correction path #111 leaves REST/browser-only.
 
-## 2026-08-20 — Claude Code (Fable 5) — #107 closed: PR #109 merged as `c177ea6` after one Cursor round; #110 filed; review-brief template landed
-
-- **Done:** **#107 closed — PR #109 squash-merged as `c177ea6`**, branch deleted,
-  on the owner's call after one Cursor round (CI all green at `486e14c`, the last
-  code commit; the final docstring-only head was caught in the runner outage
-  below, and `main` has no protection). **Cursor round 1 (Grok 4.6) at `49c1a9f`: GO, two
-  P3s, both taken at `486e14c`** — P3-1: plain `btrim` trims `0x20` only, so a
-  legacy row padded with tab/NBSP/U+3000 was two keys here and one to the
-  importer; the trim set is now `names.WHITESPACE`, generated from `str.isspace()`
-  at import (exactly `str.strip()`'s set), handed to `btrim(text, text)`. P3-2: the
-  race test is pinned (holder takes the gate, both POSTs launched, wait on
-  `pg_stat_activity` for both parked, release) — o5 killed deterministically.
-  Drive-bys owned: I had miscounted the negative control (74 not 70 red) and the
-  mutant table (16 rows under "17"; n1b makes it 17), and a regenerated tuple in
-  the PR body was corrupted; all corrected, every anchor now checked to match once.
-  "an upgrade" not "a upgrade". Reply posted at `d1d051d`; Turkish-`İ` addendum
-  (importer key ≠ Postgres key, the reverse direction) commented on **#110**.
-  **#110 filed** — the importer sibling, unmilestoned, owner's call.
-  `services/names.py` is the predicate written once —
-  `lower(btrim(name, WHITESPACE))` on both sides in Postgres, per #49 — plus
-  `clean_name` (stored trimmed; whitespace-only → 422) and `require_unique_name`
-  (409 naming the row and its id; own id excluded on a rename). Six sites, all
-  after the write gate:
-  `create_retailer`, `update_retailer`, the three catalog creates (one insert now),
-  `update_catalog_item`, and `_build_catalog_row` (async) for `new_item` at entry
-  and on edit. `get_or_create_retailer` reads through the same `find_by_name`, so
-  `create_order` reuses exactly what `create_retailer` refuses. MCP docstrings and
-  instructions updated; design §3.9/§7/§12.4 and import-export.md too. Browser
-  untouched (forms already render `detail`). No migration.
-- **Decisions:** refuse not merge (issue option 1); trim on store and refuse blank
-  (not in the issue's text, follows from defining the key — said on the PR); two
-  `new_item` lines naming one thing in one request 409 and roll the order back
-  (declared, tested); the 409 carries the uuid (for agents; droppable). Importer
-  **deliberately untouched** (#86's file) — probed, not assumed: an id-less
-  in-upload pair is already an error row, an id-less match is an update; only a
-  fresh *id-bearing* pair still lands, by design for round-trips → #110.
-- **State:** backend **684** (556 + 128 in `tests/test_name_uniqueness.py`), ruff
-  clean, frontend untouched. Negative control in a worktree: **99 red / 29 green on
-  unfixed `main`**, the 29 being the controls. **17 single-site mutants killed**
-  (n1b new) — run through a scratch copy of the harness because `mutation_test.py`
-  is mid-rewrite on #86; the 17 tuples are in the PR body (collapsed block) for
-  folding in once #86 lands. Two existing helpers that created one name twice now
-  suffix it; `test_two_retailers_with_one_name_still_round_trip` seeds through the
-  session. **`.agents/review-brief.md` landed on `main` (`d2180ef`)** — the
-  fill-in template for briefing Cursor / Codex / Claude, pointed at from
-  `testing-and-review.md` → "Briefing a reviewer"; use it for the next round
-  instead of writing a brief from memory. CI: GitHub's runners have been hanging in
-  `playwright install --with-deps` since ~15:12 UTC on every job, including
-  docs-only commits — external; jobs self-cancel at the 25-minute timeout; re-kick,
-  don't debug. Live and still true: **#86 at `dfa7f29`
-  owes its Codex round** and gates #44/#77/#87/#90; #107 → 0.2.7; #104/#98/#99 →
-  0.2.8. Worktrees `/private/tmp/plamotrack-pr100` and `-pr108-main` still stale,
-  left alone; this session's `-107-main` removed.
-- **Next:** fold the 17 mutant tuples from #109's PR body into `mutation_test.py`
-  once #86's version of the harness lands (they are in a collapsed block there,
-  anchors verified at `d1d051d`). Then 0.2.7's remaining items clear of #86: **#93**
-  (backdatable `received_at` — must backdate the kits it advances),
-  **#94 + #96** (one migration, separate commits; importer needs no logic change
-  because it must not invent timestamps), **#95** after #86 (its importer half
-  mirrors #86's arriving-receipt question), **#97** last.
