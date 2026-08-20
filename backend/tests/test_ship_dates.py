@@ -293,6 +293,39 @@ async def test_patch_ship_correction_into_the_future_is_refused(http_client, ret
     )
 
 
+async def test_a_ship_correction_never_takes_a_receipt_stamped_at_the_same_instant(
+    client, retailer
+):
+    """Round one's P2. A ship and a receive can legitimately share an instant —
+    two date inputs on the same calendar day both serialise as one local
+    midnight — and the receipt owns the backlog kit. The ship correction
+    therefore follows only kits still in_transit whose stamp equals the old
+    shipment (the UI's own promise); reusing the receipt helper's
+    stamp-equality-alone rule let a shipped_at correction rewrite receipt
+    history."""
+    order = await make_order(client, retailer, [kit_line(quantity=1)])
+    same = "2026-05-02T00:00:00+10:00"
+    assert (
+        await client.post(f"/orders/{order['id']}/ship", json={"shipped_at": same})
+    ).status_code == 200
+    assert (
+        await client.post(f"/orders/{order['id']}/receive", json={"received_at": same})
+    ).status_code == 200
+    (kit,) = await order_kits(client, order)
+    before = (await client.get(f"/kits/{kit['id']}")).json()
+    assert before["status"] == "backlog"
+    assert instant(before["status_updated_at"]) == instant(same)
+
+    corrected = "2026-05-03T00:00:00+10:00"
+    resp = await client.patch(f"/orders/{order['id']}", json={"shipped_at": corrected})
+    assert resp.status_code == 200, resp.text
+    after = (await client.get(f"/kits/{kit['id']}")).json()
+    assert after["status"] == "backlog"
+    assert instant(after["status_updated_at"]) == instant(same), (
+        "the backlog kit's stamp is the receipt's, not the corrected shipment's"
+    )
+
+
 async def test_a_line_added_to_a_shipped_order_spawns_in_transit_kits(client, retailer):
     """The spawn path reads the order's ship state on an edit, exactly as it
     reads the receipt one stage later."""

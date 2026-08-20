@@ -624,6 +624,58 @@ CASES = [
         "    pass",
         "create_shipped_lands_kits_in_transit or line_added_to_a_shipped_order",
     ),
+    # --- round one, P3-3: the sites ship-4's whole-validator neuter and the ----------
+    # --- original seven left unmutated, one tuple per site; ship-8 is the P2 fix -----
+    (
+        "ship-4a. clearing a ship date imports again",
+        INV,
+        "        if change.before and not change.after:",
+        "        if False:",
+        "unship_by_import",
+    ),
+    (
+        "ship-4b. a future ship date imports again",
+        INV,
+        "        if value is not None and change.after and receipt_is_future(value):",
+        "        if False:",
+        "future_ship_date_by_import",
+    ),
+    (
+        "ship-8. the ship correction takes any kit with the old stamp",
+        ORD,
+        "only_status=KitStatus.IN_TRANSIT",
+        "only_status=None",
+        "never_takes_a_receipt",
+    ),
+    (
+        "ship-9. the transition's future guard is off",
+        ORD,
+        "    if shipped_at is not None:\n        _refuse_future_ship(shipped_at)",
+        "    pass",
+        "ship_with_a_future_date",
+    ),
+    (
+        "ship-10. the correction's future guard is off",
+        ORD,
+        "        _refuse_future_ship(new_ship)",
+        "        pass",
+        "patch_ship_correction_into_the_future",
+    ),
+    (
+        "ship-11. entry never lands a spawn in transit",
+        ORD,
+        "    if shipped and requested in SHIP_ELIGIBLE:\n        return KitStatus.IN_TRANSIT",
+        "    pass",
+        "create_shipped_lands_kits_in_transit",
+    ),
+    (
+        "ship-12. the import advance stamps without moving the status",
+        IMP,
+        "                    kit.status = KitStatus.IN_TRANSIT\n"
+        "                    kit.status_updated_at = row.target.shipped_at",
+        "                    kit.status_updated_at = row.target.shipped_at",
+        "ship_by_import_advances",
+    ),
 ]
 
 

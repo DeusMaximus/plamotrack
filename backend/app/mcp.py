@@ -366,7 +366,10 @@ async def update_order(
     snapshot — never restate that pair from guesswork; an explicit null clears
     it. `received_at` (offset-aware ISO 8601) corrects a receipt date already
     set and moves the kits that receipt delivered; on a pending order it is a
-    conflict — use mark_order_received to record an arrival."""
+    conflict — use mark_order_received to record an arrival. `shipped_at` is
+    the same correction-only shape: it re-dates kits still in_transit from that
+    shipment, 409s on a never-shipped order (use mark_order_shipped), and
+    cannot be nulled — un-shipping is not supported."""
     parsed = _parse_uuid(order_id, "order_id")
     async with _tool_session() as session:
         order = await orders_service.update_order(

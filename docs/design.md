@@ -681,9 +681,10 @@ is `/mcp/` on the API port (streamable HTTP).
   schema unchanged instead of a hand-written union of all three that every new column
   would have to be added to twice
 - `create_order(retailer, date, items[], order_number?, tracking?, received?,
-  received_at?)` — the items array drives the same fan-out/increment dispatch as the
-  REST endpoint; retailer matched by name case-insensitively, created if new;
-  `received_at` backdates an arrival logged after the fact (§3.9)
+  received_at?, shipped_at?)` — the items array drives the same fan-out/increment
+  dispatch as the REST endpoint; retailer matched by name case-insensitively,
+  created if new; `received_at` backdates an arrival logged after the fact (§3.9);
+  `shipped_at` (#95) needs no flag and lands spawned kits in_transit
 - `list_orders(pending_only?)` — find the order a shipping or arrival email belongs to
 - `get_order(id)` — one order in full, line ids and spawned kits included; the read an
   edit starts from (#97)

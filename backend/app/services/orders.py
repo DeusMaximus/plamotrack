@@ -873,10 +873,13 @@ async def update_order(
             )
         _refuse_future_ship(new_ship)
         if new_ship != order.shipped_at:
-            # `_restamp_receipt_kits` follows stamp equality, which is exactly the
-            # signature an in_transit advance left behind, so the ship correction
-            # reuses it unchanged.
-            await _restamp_receipt_kits(session, order, order.shipped_at, new_ship)
+            # Stamp equality alone is NOT enough here: a receipt recorded at the
+            # same instant (one shared local midnight) stamps backlog kits with a
+            # value equal to the old shipment, and those belong to the receipt.
+            # Only a kit still in_transit is the shipment's to re-date.
+            await _restamp_receipt_kits(
+                session, order, order.shipped_at, new_ship, only_status=KitStatus.IN_TRANSIT
+            )
             order.shipped_at = new_ship
     for key, value in header.items():
         setattr(order, key, value)
@@ -920,7 +923,12 @@ async def update_order(
 
 
 async def _restamp_receipt_kits(
-    session: AsyncSession, order: Order, old: datetime, new: datetime
+    session: AsyncSession,
+    order: Order,
+    old: datetime,
+    new: datetime,
+    *,
+    only_status: KitStatus | None = None,
 ) -> None:
     """A corrected receipt date follows the kits whose stamp *was* the receipt (#93).
 
@@ -928,13 +936,22 @@ async def _restamp_receipt_kits(
     order, so equality against the old value identifies exactly the kits whose
     last transition was that receipt — a kit dragged onward (or back) since then
     carries the drag's own time and is left alone. Status is deliberately not part
-    of the match: the timestamp is the receipt's signature, and a status check
-    would either restate the same fact or wrongly exclude a kit the entry itself
-    stamped."""
+    of the RECEIPT match: the timestamp is the receipt's signature, and a status
+    check would either restate the same fact or wrongly exclude a kit the entry
+    itself stamped.
+
+    `only_status` is the SHIP correction's narrower ownership rule (#95, review
+    round one P2): a ship and a receive can legitimately share an instant — two
+    date inputs on one calendar day both serialise as the same local midnight —
+    and the receipt owns the backlog kit, so the ship correction follows only
+    kits still in_transit whose stamp equals the old shipment. The receipt call
+    keeps stamp-equality alone; do not tighten it, that contract is #93's."""
     for item in order.items:
         if item.item_type is not ItemType.KIT:
             continue
         for kit in await _line_kits(session, item.id):
+            if only_status is not None and kit.status is not only_status:
+                continue
             if kit.status_updated_at == old:
                 kit.status_updated_at = new
 
