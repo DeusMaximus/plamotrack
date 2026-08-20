@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-21 — Claude Code (Fable 5) — mutant fold-in open as PR #117; #95 implemented, open as PR #118; both await their review round
+## 2026-08-21 — Claude Code (Fable 5) — #117 merged as `7396e5d`, #118 merged as `53009c0` (#95 closed) after two Codex rounds; 0.2.7 held open for one more item
 
 - **Done:** (1) **The fold-in queue, folded — PR #117** (branch
   `test/fold-queued-mutants`, `985e6d7`; no app or test code — only
@@ -85,19 +85,25 @@ Template:
   review's "do not"); P3-3's six unmutated sites + the fix site now have
   tuples (branch harness **82/82**, suite **897**); P3-4 docs fixed; **P3-2
   filed as #119** (derived advances not plan-bound — BOTH ship and receipt
-  siblings, the receipt one pre-existing since #86). #118's harness still runs
-  the old kill contract until the #117 merge-forward. **The two branches
-  append to the same harness CASES tail — whichever merges second resolves a
-  mechanical append-append conflict: keep both blocks, keep one duplicate
-  `ORD` constant.** Dev servers running on :8000/:5173; dev DB disposable.
-  Live: **0.2.7 = #95 (PR #118)**; #110/#112 and #77/#87/#90 unblocked; #114
-  M5.1-shaped; #116 + #119 unmilestoned; 0.2.8 open
-  (#104/#98/#99/#53/#54/#61/#63/#67).
-- **Next:** round two — Codex replays #117 at `34f9e52` and #118 at `5b98142`
-  (the round-one comments are the record). On GO: merge #117 first, then merge
-  `main` forward into #118 (CASES-tail conflict, harness re-run under the new
-  contract — the reply on #118 promises exactly that), then #118 lands and
-  0.2.7 is releasable.
+  siblings, the receipt one pre-existing since #86). **Round two: both GO,
+  clean** — Codex independently replayed the stale-DB and cell-4 controls on
+  #117 and the P2 regression + status-precedence corners on #118, declined the
+  JUnit alternative as unnecessary, and re-affirmed #119's scoping. **Merged in
+  the declared order, on the owner's call: #117 squash-merged as `7396e5d`;
+  `main` merged forward into #118 (the CASES-tail conflict resolved as
+  declared — both blocks, one `ORD`, TEST_FILES union), combined harness
+  **111/111 under the new kill contract** + suite **897** + CI green at
+  `4f98b69`; #118 squash-merged as `53009c0`, #95 closed, both branches
+  deleted.** Dev servers running on :8000/:5173; dev DB disposable. Live:
+  **0.2.7 is deliberately NOT closed — the owner is adding one more item to
+  the milestone** (unnamed at hand-off time; do not read "last item merged" as
+  "cut the release"). #110/#112 and #77/#87/#90 unblocked; #114 M5.1-shaped;
+  #116 + #119 unmilestoned; 0.2.8 open (#104/#98/#99/#53/#54/#61/#63/#67).
+- **Next:** wait for the owner's new 0.2.7 item; implement it; only then the
+  release gate (`.agents/testing-and-review.md`) for 0.2.7. The harness on
+  `main` is now 111 cases / ~13 min, baseline-inclusive — the runtime line in
+  testing-and-review.md says 97 cases / ~11 min and can be refreshed in
+  passing next time that file is edited.
 
 ## 2026-08-20 — Claude Code (Fable 5) — #86 MERGED as `386ebda` after Codex rounds 5+6; #44 closed; #116 filed; the 0.2.7 gate is released
 
