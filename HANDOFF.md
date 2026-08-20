@@ -41,10 +41,19 @@ Template:
 
 ---
 
-## 2026-08-20 — Claude Code (Fable 5) — #94 + #96 implemented: PR #113 open at `523deed`, Cursor round pending; #112 filed
+## 2026-08-20 — Claude Code (Fable 5) — #94 + #96: PR #113 through Cursor round 1 (GO), P2+P3 taken at `8928f3e`; #112 + #114 filed
 
 - **Done:** **#94 (build dates) + #96 (series) implemented on
-  `feat/94-96-kit-build-dates-and-series`; PR #113 open at `523deed`, CI green.**
+  `feat/94-96-kit-build-dates-and-series`; PR #113 open, head `8928f3e` after one
+  Cursor round (Grok 4.6) at `523deed`: GO, P2-1 + P3-1, both taken.** P2-1: the
+  #112 caveat omitted `series` from its own dropped-field list — one docs
+  sentence. P3-1: blank/whitespace series stored and served by /kits/series —
+  `_normalize_series` on both write paths (blank → null, values trimmed,
+  matching parse_text) plus a `names.WHITESPACE` btrim guard on the distinct
+  values; two tests red-first at `523deed`, three fix sites one-site-mutated.
+  Also took the review's two pins (re-completion mirror; MCP naive build date)
+  and filed **#114** (naive CSV dates read as midnight UTC — the class behind
+  the starter sheet's date columns; M5.1-shaped). Reply posted at `8928f3e`.**
   Five separable commits: one additive hand-checked migration (three nullable
   `kits` columns, **no backfill** per #94's decision); #94 — `stamp_build_date`
   in `services/kits.py`, called by both live status writers (`update_kit`,
@@ -68,21 +77,22 @@ Template:
   owns the values; a service check would diverge from the importer); the
   browser series *filter* is client-side while the form typeahead uses the
   endpoint; `/kits/series` declared before `/{kit_id}` (route test pins it).
-- **State:** backend **738** (713 + 17 `test_build_dates.py` + 8
+- **State:** backend **742** (713 + 19 `test_build_dates.py` + 10
   `test_series.py`), vitest 109, e2e 20 against a DB migrated from empty, all
   zero after; ruff/oxlint/builds clean. Negative control: **24 red / 1 green
-  of 25 on unfixed `main`** — the green is a degenerate-but-honest schema-shape
-  control, explained in the PR body. **Worktree trap, learned:** `plamotrack_test`
+  of 25 on unfixed `main`** (re-measured by the reviewer); round 1's four
+  additions split 2 red (P3-1) / 2 green (pins) against `523deed`, stated in
+  the PR body. **Worktree trap, learned:** `plamotrack_test`
   migrated to a branch head makes `main`'s conftest downgrade explode — drop the
   DB first; the Cursor brief warns about it. No mutants in the harness (#86's
   file); five hand-mutant tuples with once-matching anchors are in the brief,
   queued for the fold-in with #109's and #111's. **Cursor brief for #113 is in
   this session's scratchpad** (`cursor-brief-113.md`), handed to the owner —
-  round not yet run. Live and still true: **#86 at `dfa7f29` owes its Codex
-  round** and gates #44/#77/#87/#90; #104/#98/#99 → 0.2.8; #110 and #112
+  round complete — GO, answered. Live and still true: **#86 at `dfa7f29` owes its Codex
+  round** and gates #44/#77/#87/#90; #104/#98/#99 → 0.2.8; #110, #112 and #114
   unmilestoned. Dev servers may be running on :8000/:5173 (this branch).
-- **Next:** the Cursor round on #113, then answer it (reproduce at `523deed`
-  first). After merge, 0.2.7 has **#95** (needs #86 — its importer half mirrors
+- **Next:** the owner's merge call on #113 — GO, both findings taken, nothing
+  owed. After merge, 0.2.7 has **#95** (needs #86 — its importer half mirrors
   the arriving-receipt question) and **#97** last (its MCP order-edit tool
   should carry #111's `received_at` correction). Then 0.2.7's gate is #86 itself.
 
