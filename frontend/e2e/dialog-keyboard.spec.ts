@@ -207,9 +207,9 @@ test("the order dialog holds focus through dynamic rows and the catalog picker",
   await dialog.getByRole("button", { name: "+ Add line" }).click();
 
   // A consumable line, whose picker is the control that unmounts under focus.
-  // Identified by what it offers rather than by position: a kit line renders a
-  // *second* select (Ordered / Pre-ordered) after this one, so `.last()` picks
-  // the wrong control and fails with "did not find some options".
+  // Identified by what it offers rather than by position — resilient to a line
+  // growing other selects, which it has had before (the per-line status picker,
+  // removed by #120).
   await dialog.locator('select:has(option[value="consumable"])').last().selectOption("consumable");
   const search = dialog.getByPlaceholder(/Search consumables/).last();
   await search.fill(CONSUMABLE);
