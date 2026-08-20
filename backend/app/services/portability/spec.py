@@ -659,6 +659,16 @@ KITS = TableSpec(
             help="pre_ordered / ordered / in_transit / backlog / building / complete",
         ),
         col("status_updated_at", parse_datetime),
+        col(
+            "build_started_at",
+            parse_datetime,
+            help="When the build began (#94). Blank = not recorded — never invented.",
+        ),
+        col(
+            "build_completed_at",
+            parse_datetime,
+            help="When it was declared finished. Blank = not recorded — never invented.",
+        ),
         col("rating", parse_int, help="1-5, set on completion."),
         col("build_notes", parse_text),
         col(

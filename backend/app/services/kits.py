@@ -29,6 +29,42 @@ def default_scale_for_grade(grade: str) -> str | None:
     return GRADE_DEFAULT_SCALE.get(grade.strip().upper())
 
 
+#: Which build date entering a status stamps (#94). One map, consulted by every
+#: *live* status writer — `update_kit` (the direct edit and the board drag) and
+#: `receive_order`'s pipeline advance — so the derivation cannot drift between
+#: them. The CSV importer deliberately does NOT derive: an imported kit whose
+#: sheet says `complete` with no completion date stays null rather than acquiring
+#: the import's own clock (rule 10 by analogy — import never invents timestamps),
+#: and a re-imported archive stays a no-op.
+_BUILD_STAMPS: dict[KitStatus, str] = {
+    KitStatus.BUILDING: "build_started_at",
+    KitStatus.COMPLETE: "build_completed_at",
+}
+
+
+def stamp_build_date(
+    kit: Kit,
+    entered: KitStatus,
+    now: datetime,
+    *,
+    supplied: frozenset[str] = frozenset(),
+) -> None:
+    """Entering `building` stamps `build_started_at`; entering `complete` stamps
+    `build_completed_at` — each **only when null** (#94).
+
+    Only-when-null is what makes the dates the user's: a value someone set — by
+    backfill, by correction, or by an earlier pass through the status — is never
+    overwritten by a later drag, and `building` → `backlog` → `building` keeps the
+    original start. `supplied` names the fields the same request set explicitly
+    (including to null); the derivation never fights an explicit value.
+    """
+    field = _BUILD_STAMPS.get(entered)
+    if field is None or field in supplied:
+        return
+    if getattr(kit, field) is None:
+        setattr(kit, field, now)
+
+
 async def create_kit(session: AsyncSession, data: KitCreate) -> Kit:
     await acquire_write_gate(session)
     kit = Kit(**data.model_dump())
@@ -70,10 +106,16 @@ async def update_kit(session: AsyncSession, kit_id: uuid.UUID, data: KitUpdate) 
     for non_nullable in ("name", "grade", "status"):
         if non_nullable in fields and fields[non_nullable] is None:
             raise InvalidInputError(f"{non_nullable} cannot be null")
+    entered: KitStatus | None = None
     if "status" in fields and fields["status"] != kit.status:
+        entered = fields["status"]
         kit.status_updated_at = datetime.now(UTC)
     for key, value in fields.items():
         setattr(kit, key, value)
+    if entered is not None:
+        # After the explicit fields land, so the stamp sees what the request said
+        # and yields to it. Same instant as status_updated_at — one clock, not two.
+        stamp_build_date(kit, entered, kit.status_updated_at, supplied=frozenset(fields))
     await session.flush()
     # updated_at is generated server-side on UPDATE; refresh so serialization
     # after commit doesn't trigger a lazy load outside the async context.

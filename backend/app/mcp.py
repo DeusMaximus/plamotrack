@@ -148,7 +148,10 @@ async def get_kit(kit_id: str) -> dict:
 async def update_kit_status(kit_id: str, status: str) -> dict:
     """Move a kit to a new pipeline status (equivalent to dragging its Kanban
     card). Valid statuses: pre_ordered, ordered, in_transit, backlog (= in
-    hand, not started), building, complete."""
+    hand, not started), building, complete. Entering building/complete stamps
+    build_started_at/build_completed_at with now — only when that date is still
+    null, so a real date already recorded is never overwritten; use update_kit
+    to backfill or correct the dates themselves."""
     parsed_id = _parse_uuid(kit_id, "kit_id")
     parsed_status = _parse_status(status)
     async with _tool_session() as session:
@@ -159,10 +162,14 @@ async def update_kit_status(kit_id: str, status: str) -> dict:
 @mcp.tool
 async def update_kit(kit_id: str, changes: _KitPatch) -> dict:
     """Edit a kit's details: name, grade, scale, kit_number, status, rating (1-5),
-    build_notes. Only the fields present in `changes` are touched, so this is safe
-    to call with a single field; sending an explicit null clears a nullable one
-    (build_notes: null erases the notes, and a rating can be taken back the same
-    way). Name, grade and status cannot be nulled — they are always set on a kit.
+    build_notes, build_started_at, build_completed_at. Only the fields present in
+    `changes` are touched, so this is safe to call with a single field; sending an
+    explicit null clears a nullable one (build_notes: null erases the notes, and a
+    rating can be taken back the same way). Name, grade and status cannot be
+    nulled — they are always set on a kit. The build dates are offset-aware ISO
+    8601 (e.g. "2026-02-08T00:00:00+10:00") and belong to the user: a status
+    transition stamps one only when it is null, so supply a value here to backfill
+    the real date and it will never be overwritten by a later move.
     `update_kit_status` is the status-only shortcut for this tool."""
     parsed_id = _parse_uuid(kit_id, "kit_id")
     fields = changes.model_dump(exclude_unset=True)

@@ -9,7 +9,7 @@ import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
-import { formatDate, STATUS_LABELS } from "../lib/format";
+import { formatDate, isoToLocalDateInput, localMidnightISO, STATUS_LABELS } from "../lib/format";
 
 const COMMON_GRADES = ["HG", "RG", "EG", "SD", "MG", "MGEX", "RE/100", "FM", "PG"];
 
@@ -20,6 +20,10 @@ interface KitFormValues {
   kit_number: string;
   status: KitStatus;
   rating: string;
+  /** yyyy-mm-dd, "" = none. Sent only when dirty: a date input can't restate the
+   *  stored *instant* losslessly, so an untouched field must not round-trip (#94). */
+  build_started: string;
+  build_completed: string;
   build_notes: string;
 }
 
@@ -31,8 +35,30 @@ function toFormValues(kit?: Kit): KitFormValues {
     kit_number: kit?.kit_number ?? "",
     status: kit?.status ?? "backlog",
     rating: kit?.rating?.toString() ?? "",
+    build_started: kit?.build_started_at ? isoToLocalDateInput(kit.build_started_at) : "",
+    build_completed: kit?.build_completed_at ? isoToLocalDateInput(kit.build_completed_at) : "",
     build_notes: kit?.build_notes ?? "",
   };
+}
+
+/** The build, as one cell: a finished pair reads as elapsed days (deliberately
+ *  elapsed, not time-at-the-bench — a shelved build reads long, and that is the
+ *  documented shape of the two-column decision on #94). */
+function buildCell(kit: Kit): { text: string; title?: string } {
+  const started = kit.build_started_at;
+  const completed = kit.build_completed_at;
+  if (started && completed) {
+    const days = Math.round(
+      (new Date(completed).getTime() - new Date(started).getTime()) / 86_400_000,
+    );
+    return {
+      text: days <= 0 ? "same day" : `${days} d`,
+      title: `${formatDate(started)} → ${formatDate(completed)}`,
+    };
+  }
+  if (started) return { text: `since ${formatDate(started)}` };
+  if (completed) return { text: formatDate(completed), title: "Completed" };
+  return { text: "—" };
 }
 
 function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
@@ -41,7 +67,7 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
   const {
     register,
     handleSubmit,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<KitFormValues>({ defaultValues: toFormValues(kit) });
 
   const onSubmit = handleSubmit(async (values) => {
@@ -55,6 +81,18 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
     };
     if (kit) {
       payload.rating = values.rating === "" ? null : Number(values.rating);
+    }
+    // Only when touched (see KitFormValues). A typed date goes out as midnight
+    // local in the browser's own offset; an emptied field clears the stored one.
+    if (dirtyFields.build_started) {
+      payload.build_started_at = values.build_started
+        ? localMidnightISO(values.build_started)
+        : null;
+    }
+    if (dirtyFields.build_completed) {
+      payload.build_completed_at = values.build_completed
+        ? localMidnightISO(values.build_completed)
+        : null;
     }
     try {
       if (kit) {
@@ -125,6 +163,18 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
             </Field>
           )}
         </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Build started">
+            <Input type="date" {...register("build_started")} />
+          </Field>
+          <Field label="Build completed">
+            <Input type="date" {...register("build_completed")} />
+          </Field>
+        </div>
+        <p className="-mt-2 text-xs text-zinc-500">
+          Moving a kit to Building or Complete fills the matching date automatically —
+          only if it's still empty, so anything you set here is never overwritten.
+        </p>
         <Field label="Build notes">
           <Textarea {...register("build_notes")} placeholder="Nub cleanup, panel lining…" />
         </Field>
@@ -234,6 +284,7 @@ export function KitsPage() {
                 <th className="px-3 py-2">Scale</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Rating</th>
+                <th className="px-3 py-2">Build</th>
                 <th className="px-3 py-2">Since</th>
                 <th className="px-3 py-2" />
               </tr>
@@ -271,6 +322,9 @@ export function KitsPage() {
                   </td>
                   <td className="px-3 py-2">
                     {kit.rating ? "★".repeat(kit.rating) + "☆".repeat(5 - kit.rating) : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-zinc-500" title={buildCell(kit).title}>
+                    {buildCell(kit).text}
                   </td>
                   <td className="px-3 py-2 text-zinc-500" title="In this status since">
                     {formatDate(kit.status_updated_at)}

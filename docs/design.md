@@ -149,8 +149,8 @@ rows.
 | build_notes | text | freeform |
 | order_item_id | uuid FK | provenance — which order line spawned this kit |
 | created_at / updated_at | timestamp | |
-| build_started_at | timestamp (nullable) | 🔨 **Planned (v0.2.7, #94)** — stamped on first entering `building`, only when null; user-editable |
-| build_completed_at | timestamp (nullable) | 🔨 **Planned (v0.2.7, #94)** — same rule on entering `complete` |
+| build_started_at | timestamp (nullable) | stamped on first entering `building`, only when null; user-editable (#94) |
+| build_completed_at | timestamp (nullable) | same rule on entering `complete` (#94) |
 | series | text (nullable) | 🔨 **Planned (v0.2.7, #96)** — free text like `grade`; one value; typeahead over existing values, no lookup table |
 
 **Build dates (#94, decided 18/08/2026):** two nullable columns, not a status-event

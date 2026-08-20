@@ -32,6 +32,8 @@ function kit(id: string, status: KitStatus): Kit {
     status,
     status_updated_at: "2026-08-01T00:00:00Z",
     rating: null,
+    build_started_at: null,
+    build_completed_at: null,
     build_notes: null,
     order_item_id: null,
     created_at: "2026-08-01T00:00:00Z",

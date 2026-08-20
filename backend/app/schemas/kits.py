@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.models.enums import KitStatus
 from app.schemas.numeric import Rating
@@ -13,6 +13,13 @@ class KitCreate(BaseModel):
     scale: str | None = None  # derived from grade when omitted (§3.1)
     kit_number: str | None = None
     status: KitStatus = KitStatus.BACKLOG
+    # Backfill fields (#94): the dates belong to the user and are settable at
+    # creation — a kit migrated from another tool arrives with its real dates.
+    # Creation never derives them from `status`; only a live transition stamps a
+    # default, so a kit *created* already-complete stays null unless told
+    # (the same no-invention rule the importer follows).
+    build_started_at: AwareDatetime | None = None
+    build_completed_at: AwareDatetime | None = None
     build_notes: str | None = None
 
 
@@ -27,6 +34,11 @@ class KitUpdate(BaseModel):
     kit_number: str | None = None
     status: KitStatus | None = None
     rating: Rating | None = None
+    # Offset-aware ISO 8601; explicit null clears. A status transition in the same
+    # PATCH never overwrites a value (or null) supplied here — the derivation
+    # stamps only a field the request did not mention and that is null (#94).
+    build_started_at: AwareDatetime | None = None
+    build_completed_at: AwareDatetime | None = None
     build_notes: str | None = None
 
 
@@ -41,6 +53,8 @@ class KitRead(BaseModel):
     status: KitStatus
     status_updated_at: datetime
     rating: int | None
+    build_started_at: datetime | None
+    build_completed_at: datetime | None
     build_notes: str | None
     order_item_id: uuid.UUID | None
     created_at: datetime

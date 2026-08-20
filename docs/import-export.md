@@ -51,6 +51,7 @@ Download `starter-sheet.csv`, fill it in, import it.
 | `kit_number`, `build_notes` | Optional. |
 | `status` | `pre_ordered` / `ordered` / `in_transit` / `backlog` / `building` / `complete`. Blank = backlog. |
 | `rating` | 1–5, if you've finished it. |
+| `build_started`, `build_completed` | `YYYY-MM-DD` — when you started / finished the build. Blank = not recorded; the importer never invents one. |
 | `quantity` | How many of this kit. Blank = 1, at most 1,000 per row. You get that many kits in your collection either way — whether the row names a retailer or not — so a bigger haul goes on more than one row. |
 | `retailer` | Where you bought it. **Blank = no order recorded**, just a kit in the collection. |
 | `order_date`, `order_number` | The purchase. Rows sharing a retailer + date + number collapse into **one order**. |
@@ -58,6 +59,12 @@ Download `starter-sheet.csv`, fill it in, import it.
 | `received` | `yes`/`no`. Blank = yes. Received-on defaults to the order date, not today. When several rows collapse into one order you only need to say it once — but if two rows of the same order say *different* things, that's an error rather than a guess. Re-importing with `no` un-marks an order you'd previously imported as received. |
 
 You write kits; plamotrack works out the retailers, orders, and order lines.
+
+> **Known limitation ([#112](https://github.com/DeusMaximus/plamotrack/issues/112)):**
+> on a row that **names a retailer**, only the kit's identity travels (name, grade,
+> scale, kit number, status). `rating`, `build_notes` and the build dates currently
+> survive only on rows *without* a retailer — put those kits on retailer-less rows,
+> or fill the fields in afterwards.
 
 ### 2. The template pack — one file per table
 
