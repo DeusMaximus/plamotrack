@@ -349,7 +349,12 @@ instant is supplied rather than always stamped "now":
   over clock skew. A receipt *earlier than `order_date`* is deliberately allowed:
   `order_date` is a plain date with no offset, so the comparison isn't well-defined
   across time zones (a same-day purchase entered in UTC+10 holds an instant that is
-  "yesterday" in UTC), and backfilled collections carry approximations
+  "yesterday" in UTC), and backfilled collections carry approximations. Accepted
+  cost (found in #111's review): an honest "today" in a behind offset can be a
+  stored future *instant* — up to ~36 h ahead — and the Board's columns order by
+  `status_updated_at` descending, so such a kit sits at the top of Backlog until
+  the wall clock catches up. Harmless for a single-owner collection; recorded so
+  the cost sits next to the rule
 - **interim time-zone decision, for M5.1 to revisit (#23, #27):** the instance has no
   time zone, so REST/MCP accept a full ISO 8601 datetime *with offset* (naive is
   refused), and the browser sends midnight local in its own offset for a picked date.

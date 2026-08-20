@@ -222,6 +222,39 @@ async def test_receipt_late_today_in_a_behind_offset_is_not_future(client, retai
     assert instant(resp.json()["received_at"]) == stamp
 
 
+class _PinnedDatetime(datetime):
+    """`datetime` with `now` frozen to one instant, for the ahead-offset case below.
+
+    20:00Z is already 10:00 on the *next* calendar day in UTC+14, so the pinned
+    instant makes "today in an ahead offset, while UTC is still on yesterday's
+    date" true at any wall-clock hour instead of fourteen out of twenty-four."""
+
+    PINNED = datetime(2026, 8, 20, 20, 0, 0, tzinfo=UTC)
+
+    @classmethod
+    def now(cls, tz=None):  # noqa: ANN001 - signature mirrors datetime.now
+        if tz is None:
+            return cls.PINNED.replace(tzinfo=None)
+        return cls.PINNED.astimezone(tz)
+
+
+async def test_receipt_today_in_an_ahead_offset_is_judged_by_its_own_calendar(
+    client, retailer, monkeypatch
+):
+    # P3-1 (Cursor round 1 on PR #111): the UTC-12 test above cannot distinguish
+    # `now(received_at.tzinfo)` from `now(UTC)` — a behind offset's calendar date
+    # is never ahead of UTC's, at any hour. The discriminating case is the mirror:
+    # an honest "today" in UTC+14 whose date UTC has not reached yet. Real clocks
+    # only produce that for part of each day, so the clock is pinned rather than
+    # hoped at (rule: pin the timing).
+    monkeypatch.setattr("app.services.orders.datetime", _PinnedDatetime)
+    stamp = "2026-08-21T00:30:00+14:00"  # today in +14; UTC's date is still the 20th
+    order = await make_order(client, retailer, [kit_line(quantity=1)])
+    resp = await client.post(f"/orders/{order['id']}/receive", json={"received_at": stamp})
+    assert resp.status_code == 200, resp.text
+    assert instant(resp.json()["received_at"]) == instant(stamp)
+
+
 async def test_receive_backdated_still_skips_progressed_kits(client, retailer):
     order = await make_order(client, retailer, [kit_line(quantity=2)])
     first, second = await order_kits(client, order)
