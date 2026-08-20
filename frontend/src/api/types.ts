@@ -196,6 +196,8 @@ export interface Order {
   tracking_url: string | null;
   shipping_cost_minor: number | null;
   currency_code: string;
+  /** Null = not marked shipped. Never carries stock semantics (#95). */
+  shipped_at: string | null;
   received_at: string | null;
   items: OrderItem[];
 }
@@ -243,6 +245,9 @@ export interface OrderCreate {
   /** When the delivery actually arrived, for orders entered after the fact (#93).
    *  Offset-aware ISO 8601; requires `received: true`; omitted = now. */
   received_at?: string;
+  /** When the retailer shipped it (#95). Needs no flag — a non-null instant is
+   *  the assertion. On its own it lands spawned kits in_transit. */
+  shipped_at?: string;
   items: OrderItemCreate[];
 }
 
@@ -263,12 +268,20 @@ export interface OrderUpdate {
   /** Correction only: adjusts a receipt date already set (409 on a pending
    *  order — receiving goes through `receiveOrder`). Cannot be nulled. */
   received_at?: string;
+  /** Correction only, the same shape (#95): 409 on a never-shipped order —
+   *  shipping goes through `shipOrder`. Cannot be nulled. */
+  shipped_at?: string;
   items?: OrderItemUpsert[];
 }
 
 /** Optional body for the receive call: omit entirely for "it arrived now". */
 export interface OrderReceive {
   received_at?: string;
+}
+
+/** Optional body for the ship call: omit entirely for "it shipped now". */
+export interface OrderShip {
+  shipped_at?: string;
 }
 
 export interface ToolUpdate {

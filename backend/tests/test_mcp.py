@@ -20,6 +20,7 @@ EXPECTED_TOOLS = {
     "get_order",
     "update_order",
     "mark_order_received",
+    "mark_order_shipped",
     "adjust_stock",
     "update_catalog_tool",
     "update_catalog_consumable",

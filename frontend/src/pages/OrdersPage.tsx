@@ -72,6 +72,9 @@ interface OrderFormValues {
    *  of a received order it corrects the stored receipt — sent only when dirty,
    *  because a date-only field can't restate the stored *instant* losslessly. */
   received_date: string;
+  /** The ship date (#95), edit-only and the same dirty-only correction shape —
+   *  shipping itself goes through the Ship dialog, not this form. */
+  shipped_date: string;
   items: LineValues[];
 }
 
@@ -118,6 +121,7 @@ function orderToFormValues(order: Order, catalogName: Map<string, string>): Orde
     tracking_url: order.tracking_url ?? "",
     received: order.received_at !== null,
     received_date: order.received_at === null ? "" : isoToLocalDateInput(order.received_at),
+    shipped_date: order.shipped_at === null ? "" : isoToLocalDateInput(order.shipped_at),
     items: order.items.map((item) => {
       // Read off the order being edited, not a cached kit list. The line can only
       // show one set of kit fields, so it shows the first spawned kit's — the
@@ -498,6 +502,7 @@ function OrderForm({
         tracking_url: "",
         received: false,
         received_date: todayISO(),
+        shipped_date: "",
         items: [emptyLine(referenceCurrency)],
       };
     }
@@ -570,6 +575,9 @@ function OrderForm({
     // to midnight. Sent as local midnight in the browser's own offset (#93).
     if (order?.received_at && dirtyFields.received_date && values.received_date) {
       payload.received_at = localMidnightISO(values.received_date);
+    }
+    if (order?.shipped_at && dirtyFields.shipped_date && values.shipped_date) {
+      payload.shipped_at = localMidnightISO(values.shipped_date);
     }
     try {
       if (order) {
@@ -737,6 +745,17 @@ function OrderForm({
             </p>
           </div>
         )}
+        {order?.shipped_at && (
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="Shipped on">
+              <Input type="date" max={todayISO()} {...register("shipped_date")} />
+            </Field>
+            <p className="col-span-2 self-end pb-2 text-xs text-zinc-500">
+              Correcting this re-dates kits still marked In Transit by that shipment; kits
+              moved since keep their own dates.
+            </p>
+          </div>
+        )}
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
@@ -855,8 +874,9 @@ export function OrdersPage() {
 
   // Receiving asks for the arrival date (#93), so it gets a real dialog rather
   // than window.confirm — a store purchase logged tonight arrived today, but a
-  // box unpacked from last week didn't.
+  // box unpacked from last week didn't. Shipping mirrors it (#95).
   const [receiving, setReceiving] = useState<Order | null>(null);
+  const [shipping, setShipping] = useState<Order | null>(null);
 
   const remove = async (order: Order) => {
     const label = retailerName.get(order.retailer_id) ?? "this order";
@@ -969,6 +989,23 @@ export function OrdersPage() {
                         >
                           Received
                         </span>
+                      ) : order.shipped_at ? (
+                        <span
+                          className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700"
+                          title={`Shipped ${formatDate(order.shipped_at)}`}
+                        >
+                          Shipped
+                        </span>
+                      ) : isPreOrder(order) ? (
+                        // Derived, not stored (#95): a pending order whose kits are
+                        // all pre_ordered is the pre-order; once it ships nobody
+                        // cares, so there is nothing to persist.
+                        <span
+                          className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700"
+                          title="All kits on this order are pre-ordered — not due yet"
+                        >
+                          Pre-order
+                        </span>
                       ) : (
                         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
                           Pending
@@ -997,6 +1034,11 @@ export function OrdersPage() {
                     </td>
                     <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
                       <div className="flex justify-end gap-1">
+                        {!order.received_at && !order.shipped_at && (
+                          <Button variant="secondary" onClick={() => setShipping(order)}>
+                            Ship
+                          </Button>
+                        )}
                         {!order.received_at && (
                           <Button variant="primary" onClick={() => setReceiving(order)}>
                             Receive
@@ -1072,8 +1114,25 @@ export function OrdersPage() {
           onReceived={invalidateAll}
         />
       )}
+      {shipping && (
+        <ShipOrderModal
+          order={shipping}
+          retailerLabel={retailerName.get(shipping.retailer_id) ?? "this retailer"}
+          onClose={() => setShipping(null)}
+          onShipped={invalidateAll}
+        />
+      )}
     </div>
   );
+}
+
+/** A pending order whose kits are all still pre_ordered is the pre-order (#95).
+ *  Derived from the kits already in the payload — nothing is persisted, because
+ *  the distinction stops mattering the moment the order ships. Catalog-only
+ *  orders carry no signal and read as ordinary pending, by decision. */
+function isPreOrder(order: Order): boolean {
+  const statuses = order.items.flatMap((item) => item.kits.map((kit) => kit.status));
+  return statuses.length > 0 && statuses.every((status) => status === "pre_ordered");
 }
 
 function ReceiveOrderModal({
@@ -1135,6 +1194,73 @@ function ReceiveOrderModal({
           </Button>
           <Button type="button" onClick={submit} disabled={busy}>
             Receive
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function ShipOrderModal({
+  order,
+  retailerLabel,
+  onClose,
+  onShipped,
+}: {
+  order: Order;
+  retailerLabel: string;
+  onClose: () => void;
+  onShipped: () => Promise<unknown>;
+}) {
+  const [date, setDate] = useState(todayISO());
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      // Today = "it shipped now": no body, so the server stamps the actual
+      // moment. A backdate is midnight local, in the browser's own offset (#93).
+      await api.shipOrder(
+        order.id,
+        date && date !== todayISO() ? { shipped_at: localMidnightISO(date) } : undefined,
+      );
+      await onShipped();
+      onClose();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Ship failed");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Mark shipped" onClose={onClose}>
+      <div className="space-y-4">
+        <ErrorBanner message={error} />
+        <p className="text-sm text-zinc-700">
+          Mark the {formatDate(order.order_date)} order from {retailerLabel} as shipped? Kits
+          still waiting on the retailer move to In Transit. Stock is not touched — that
+          happens when the order is received.
+        </p>
+        <Field label="Shipped on">
+          <Input
+            type="date"
+            max={todayISO()}
+            value={date}
+            onChange={(event) => setDate(event.target.value)}
+          />
+        </Field>
+        <p className="text-xs text-zinc-500">
+          Defaults to today — pick the date from the shipping notification when logging one
+          after the fact.
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={submit} disabled={busy}>
+            Ship
           </Button>
         </div>
       </div>
