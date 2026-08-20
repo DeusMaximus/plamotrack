@@ -74,11 +74,17 @@ Template:
   MCP's `update_kit_status` shortcut stays. **Review skipped, owner's call** —
   frontend-only consolidation, no shared mechanism (#40 criterion); Copilot
   auto-review stays disabled until 1 September, Cursor offered and declined.
+  **M6.5 — UI redesign created (owner's call, same session):** standalone
+  milestone, after M6/6.1 and before M7/M8, so the gallery and showcase are
+  built in the new look once; direction still under exploration, deliberately
+  undecided. Roadmaps updated in AGENTS.md + design §11 (which also got its
+  stale hardening paragraph refreshed: #97/#120 shipped, the no-v0.2.6-tag
+  cadence written in). #122 milestoned to M6.5.
 - **State (amended in place after the merge):** **PR #121 squash-merged as
   `f3c5d1a`, branch deleted, #120 closed** on the owner's call, CI green at
   `a8c4406` (the merged head). No migration. **#122 filed** — #120's deferred
   item 3 (board cards → Edit dialog) spun out so it isn't lost in the closed
-  issue; unmilestoned on purpose, don't milestone it without asking. **The
+  issue; milestoned to **M6.5 — UI redesign** on the owner's call. **The
   0.2.7 milestone is now empty — do NOT run the release gate** (cadence above:
   one v0.2.7-alpha release only when 0.2.6 is also done). Dev servers running
   on :8000/:5173, now serving merged `main`. Stale worktrees

@@ -360,6 +360,9 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
    OAuth-compatible MCP, tested TLS/VPS deployment path
 6.1. MCP modernisation: dual-era current + `2026-07-28` compatibility with
      conformance and client coverage
+6.5. UI redesign: move off the stock Tailwind look — direction still being
+     explored, deliberately undecided; before M7/M8 so the gallery and showcase
+     are built in the new look once (#122 rides here)
 7. Photo upload + gallery ← decide storage backend default first (§9.2)
 8. Public read-only routes + showcase page ← only after admin/MCP paths are protected
 9. Open-source operations: contribution guide, release automation, support matrix,

@@ -896,11 +896,16 @@ Unchanged from the original plan:
    path. This is the gate for deliberately exposing an instance
 10. 🔨 **M6.1 — MCP modernisation:** dual-era compatibility for the existing protocol
     generation and `2026-07-28`, with conformance and real-client coverage
-11. 🔨 **M7 — Photos:** local-volume upload + gallery, archive integration, and the
+11. 🔨 **M6.5 — UI redesign:** move off the stock Tailwind look; direction still
+    under exploration, deliberately undecided (21/08/2026). Sequenced after M5.1 so
+    the Settings surface isn't styled twice, and before M7/M8 so the gallery and
+    the showcase are built in the new look once. Board interaction gaps deferred
+    from the #120 consolidation (#122) land here
+12. 🔨 **M7 — Photos:** local-volume upload + gallery, archive integration, and the
     §9.2 storage decision closed before implementation
-12. 🔨 **M8 — Public showcase:** genuinely separate anonymous read routes and a
+13. 🔨 **M8 — Public showcase:** genuinely separate anonymous read routes and a
     shareable frontend, built only after the admin and MCP surfaces are protected
-13. 🔨 **M9 — Open-source operations:** contribution guide, release automation,
+14. 🔨 **M9 — Open-source operations:** contribution guide, release automation,
     compatibility/support matrix, and deployment documentation polish
 
 **Between M5 and M5.1 — the hardening passes (in progress).** An external review of
@@ -910,13 +915,15 @@ above stands. Shipped: **v0.2.4** — a write changes only what it was asked to 
 **v0.2.5** — the importer reads what it is given (apply bound to the previewed plan,
 numeric grammar, archive integrity, budgets). Open: **v0.2.6** — the importer is
 *stable and usable*, defined as "no bug corrupts data silently", not "the importer is
-finished" (#44, #77, #87, #90); **v0.2.7** — the workflow release: MCP write parity
-(#92 and #55 shipped, #97 open), board-move ordering and keyboard-operable dialogs
-(shipped), backdatable receipt (#93), build dates and series (§3.1; #94, #96), a
-shipped milestone on orders (#95), retailer matching (#49); **v0.2.8** — everything
-that is neither a corruption path nor coupled to the workflow work. M5.1 starts after
-them. The current milestone is the open one with the lowest number; the live issue
-list is on GitHub.
+finished" (#77, #87, #90, #112, #119 open; #44 shipped); **v0.2.7** — the workflow
+release (MCP write parity, board-move ordering, keyboard-operable dialogs,
+backdatable receipt and ship dates, build dates and series, retailer matching, the
+#120 status-editing consolidation) — is code-complete but deliberately untagged: it
+ships as the single **v0.2.7-alpha** release once v0.2.6's remainder lands, and
+there will be no v0.2.6 tag (owner's call, 21/08/2026 — most of the 0.2.7 work
+merged first, so a separate v0.2.6 release would be fiction); **v0.2.8** —
+everything that is neither a corruption path nor coupled to the workflow work. M5.1
+starts after them. The live issue list is on GitHub.
 
 ---
 
