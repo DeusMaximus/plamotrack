@@ -347,8 +347,7 @@ instant is supplied rather than always stamped "now":
   path, where the stock dispatch lives. Explicit null is refused: un-receiving is not
   a supported operation. A correction follows exactly the kits whose stamp equals the
   old receipt (their last transition *was* the receipt); a kit moved since keeps its
-  own date. MCP has no order-edit tool yet, so correction is REST/browser-only until
-  the update_order tool lands
+  own date. The MCP `update_order` tool carries the same correction (#97)
 - **the future is refused, judged as a calendar date in the instant's own offset** —
   not as an instant against the server clock, which would refuse an honest "today"
   over clock skew. A receipt *earlier than `order_date`* is deliberately allowed:
@@ -664,6 +663,17 @@ is `/mcp/` on the API port (streamable HTTP).
   REST endpoint; retailer matched by name case-insensitively, created if new;
   `received_at` backdates an arrival logged after the fact (§3.9)
 - `list_orders(pending_only?)` — find the order a shipping or arrival email belongs to
+- `get_order(id)` — one order in full, line ids and spawned kits included; the read an
+  edit starts from (#97)
+- `update_order(id, changes, remove_missing_lines?)` — header corrections and/or the
+  line set, over the same service as `PATCH /orders/{id}` (rule 2 dispatch re-runs,
+  same 409 guards, #93's `received_at` correction included). `changes.items` keeps
+  REST's full-replacement semantics, but an items list that *omits* stored lines is
+  refused — naming them — unless `remove_missing_lines` is passed: an agent
+  reconstructing an order from a listing is the writer most likely to send a partial
+  set, and an omitted line silently deletes purchase records. The gate lives in the
+  service under the order's `FOR UPDATE` lock, not in the wrapper, so it cannot race
+  a concurrent line addition (#97)
 - `mark_order_received(order_id, received_at?)` — applies stock, advances pipeline kits
   to backlog, stamped with the (optionally backdated) arrival (§3.9)
 - `adjust_stock(catalog_id, delta, reason?)`

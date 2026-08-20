@@ -717,7 +717,24 @@ async def _get_order_for_write(session: AsyncSession, order_id: uuid.UUID) -> Or
     return order
 
 
-async def update_order(session: AsyncSession, order_id: uuid.UUID, data: OrderUpdate) -> Order:
+async def update_order(
+    session: AsyncSession,
+    order_id: uuid.UUID,
+    data: OrderUpdate,
+    *,
+    allow_line_removal: bool = True,
+) -> Order:
+    """Edit header fields and/or replace the line-item set (§3.9, rule 2).
+
+    `data.items` is a FULL replacement set — deliberate REST semantics — so a
+    stored line the payload does not restate is deleted, its kits removed and
+    its applied stock reversed. `allow_line_removal=False` turns that omission
+    into a refusal that names the lines (#97): the check runs here, under the
+    order's FOR UPDATE lock, so it cannot race a concurrent line addition the
+    way a read-then-write in a caller would. REST keeps the default; the MCP
+    tool passes False unless the agent explicitly opts in, because an agent
+    reconstructing an order from a listing is the writer most likely to send a
+    partial set and least able to notice the silent deletions."""
     await acquire_write_gate(session)
     for line in data.items or ():
         require_line_quantity(line.quantity)
@@ -760,6 +777,19 @@ async def update_order(session: AsyncSession, order_id: uuid.UUID, data: OrderUp
 
     if data.items is not None:
         existing = {item.id: item for item in order.items}
+        if not allow_line_removal:
+            payload_ids = {line.id for line in data.items if line.id is not None}
+            omitted = [item for item in order.items if item.id not in payload_ids]
+            if omitted:
+                labels = "; ".join(
+                    f"{item.id} ({item.item_type.value} × {item.quantity})" for item in omitted
+                )
+                raise InvalidInputError(
+                    f"the items list omits {len(omitted)} stored line(s): {labels} — an "
+                    "omitted line is deleted (its kits removed, applied stock reversed). "
+                    "Restate every line you are not changing, or pass "
+                    "remove_missing_lines=true to delete the omitted ones"
+                )
         seen: set[uuid.UUID] = set()
         for line in data.items:
             if line.id is not None:

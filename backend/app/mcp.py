@@ -31,6 +31,7 @@ from app.schemas.orders import (
     OrderCreate,
     OrderItemCreate,
     OrderRead,
+    OrderUpdate,
     RetailerCreate,
     RetailerRead,
     RetailerUpdate,
@@ -320,6 +321,51 @@ async def list_orders(pending_only: bool = False) -> list[dict]:
         if pending_only:
             orders = [order for order in orders if order.received_at is None]
         return [OrderRead.model_validate(order).model_dump(mode="json") for order in orders]
+
+
+@mcp.tool
+async def get_order(order_id: str) -> dict:
+    """Read one order in full: header fields, received state, and every line with
+    its id, prices, the §6 conversion snapshot, and the kits it spawned. ALWAYS
+    read the order with this before editing it with update_order — line edits are
+    keyed by the line ids this returns, and the full line set you must restate
+    comes from here. Ids come from list_orders."""
+    parsed = _parse_uuid(order_id, "order_id")
+    async with _tool_session() as session:
+        order = await orders_service.get_order(session, parsed)
+        return OrderRead.model_validate(order).model_dump(mode="json")
+
+
+@mcp.tool
+async def update_order(
+    order_id: str, changes: OrderUpdate, remove_missing_lines: bool = False
+) -> dict:
+    """Correct an order after entry: header fields (order_date, order_number,
+    tracking, shipping_cost_minor, currency_code, retailer_id) and/or the line
+    set. Read the order with get_order first. Only the fields present in
+    `changes` are touched.
+
+    `changes.items`, when present, is the FULL replacement set: a line with an
+    `id` (from get_order) updates that line, a line without one is added — and a
+    stored line you leave out is DELETED, its kits removed and its applied stock
+    reversed. To guard against that, an items list that omits stored lines is
+    refused (naming them) unless you pass remove_missing_lines=true; restate
+    every line you are not changing. Line edits re-run the dispatch: kit details
+    propagate to spawned kits, quantity changes spawn or remove kits, and stock
+    follows on received orders. Kits that are building/complete, rated, or have
+    photos, and stock already consumed, block destructive edits with a conflict.
+    A line's item_type cannot change. Omit converted_price_minor /
+    converted_currency_code to keep a line's stored entry-time conversion
+    snapshot — never restate that pair from guesswork; an explicit null clears
+    it. `received_at` (offset-aware ISO 8601) corrects a receipt date already
+    set and moves the kits that receipt delivered; on a pending order it is a
+    conflict — use mark_order_received to record an arrival."""
+    parsed = _parse_uuid(order_id, "order_id")
+    async with _tool_session() as session:
+        order = await orders_service.update_order(
+            session, parsed, changes, allow_line_removal=remove_missing_lines
+        )
+        return OrderRead.model_validate(order).model_dump(mode="json")
 
 
 @mcp.tool
