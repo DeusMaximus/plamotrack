@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-20 — Claude Code (Fable 5) — #97 implemented: PR #115 open at `b7318c4`, Cursor round pending; 0.2.7 now gated only by #86
+## 2026-08-20 — Claude Code (Fable 5) — #97: PR #115 through Cursor round 1 (GO), P3 taken at `cb62ab5`; awaiting merge call
 
 - **Done:** **#97 (MCP order read + correction) implemented on
   `feat/97-mcp-order-edit`; PR #115 open at `b7318c4`** (one commit, ~430
@@ -67,14 +67,20 @@ Template:
   0 green on unfixed `main`** (tools don't exist — expected shape for a
   new-capability suite; stated in the PR body). Both fix sites one-site-mutated
   and killed by the omission test; tuples in the PR body for the #86 fold-in
-  queue (now #109's 17 + #111's 6 + #113's 8 + #115's 2). **Cursor brief in
-  this session's scratchpad (`cursor-brief-115.md`), handed to the owner —
-  round not yet run.** CI in progress at hand-off time. Live and still true:
+  queue (now #109's 17 + #111's 6 + #113's 8 + #115's 2). **Cursor round 1
+  (Grok 4.6) at `b7318c4`: GO, one P3, taken at `cb62ab5`** — design §3.9 still
+  said MCP has no order-edit tool, the sentence this branch made false;
+  one-line pointer per the review's remedy, prose sweep done (the only other
+  hit is a verbatim-by-rule HANDOFF archive entry). Reply posted at `cb62ab5`;
+  two author slips in the PR body owned and corrected (a 12-vs-13 count, an
+  overclaimed negative-control shape). CI green at `b7318c4`; docs-only
+  `cb62ab5` run pending at amend time. Live and still true:
   **#86 at `dfa7f29` owes its Codex round** and gates #44/#77/#87/#90, #95,
   #110, #112; #114 is M5.1-shaped; #104/#98/#99/#53/#54/#61/#63/#67 → 0.2.8,
   all clear of #86.
-- **Next:** the Cursor round on #115, then answer it (reproduce at `b7318c4`
-  first). Once #115 lands, **0.2.7 is #95-or-defer + the #86 gate** — nothing
+- **Next:** the owner's merge call on #115 — GO, the P3 taken with the
+  reviewer's own remedy, nothing owed (the #109/#111/#113 precedent argues no
+  second round for a docs-sentence response). Once #115 lands, **0.2.7 is #95-or-defer + the #86 gate** — nothing
   else in the milestone can move without #86. The 0.2.8 list is open ground.
 
 ## 2026-08-20 — Claude Code (Fable 5) — #94 + #96 closed: PR #113 merged as `93ec9cc` after one Cursor round; #112 + #114 filed
