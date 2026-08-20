@@ -149,9 +149,9 @@ rows.
 | build_notes | text | freeform |
 | order_item_id | uuid FK | provenance — which order line spawned this kit |
 | created_at / updated_at | timestamp | |
-| build_started_at | timestamp (nullable) | 🔨 **Planned (v0.2.7, #94)** — stamped on first entering `building`, only when null; user-editable |
-| build_completed_at | timestamp (nullable) | 🔨 **Planned (v0.2.7, #94)** — same rule on entering `complete` |
-| series | text (nullable) | 🔨 **Planned (v0.2.7, #96)** — free text like `grade`; one value; typeahead over existing values, no lookup table |
+| build_started_at | timestamp (nullable) | stamped on first entering `building`, only when null; user-editable (#94) |
+| build_completed_at | timestamp (nullable) | same rule on entering `complete` (#94) |
+| series | text (nullable) | free text like `grade`; one value; typeahead over existing values, no lookup table (#96) |
 
 **Build dates (#94, decided 18/08/2026):** two nullable columns, not a status-event
 table. An event table arrives with the whole §12.2 registry surface — natural key,
@@ -168,7 +168,12 @@ paused/shelved status (declined, not deferred). The migration does not backfill 
 wrong for a kit that went complete → building → complete. The importer never invents
 these timestamps (rule 10 by analogy), and they stay out of the order line's `kit_*`
 mirror (§12.2) so a price correction on the line cannot revert a completion date set
-from MCP.
+from MCP. **Considered and deferred (owner, 20/08/2026): an arrival date on the kit.**
+A kit does not store one — it is derivable only through the spawning order
+(`order_item_id` → `orders.received_at`), and a hand-added kit has none. Showing it
+on the kits list would mean a read-side join and a new API field; for now arrival
+lives on the order side (#93 made it backdatable there), and the kit-side display is
+deliberately postponed rather than missed.
 
 **Series (#96):** free text, one value, the same shape as `grade` and `scale`. An enum
 would settle §9.1 by accident — "series" is Gunpla-specific in a way "grade" is not —
@@ -326,6 +331,40 @@ Gundam markers on hand while they were still in a warehouse in Osaka. Quantity m
   receive/edit/delete calls serialise instead of double-applying stock — three writer
   types (§2) makes this a real race, not a theoretical one
 
+**Backdatable receipts (#93, 20/08/2026).** Orders are normally logged after the box
+arrived — unpacking, or batch-entering a backlog of past purchases — so the arrival
+instant is supplied rather than always stamped "now":
+
+- entry takes an optional `received_at` (requires the `received` flag — a date on a
+  pending order is a contradiction, refused rather than ignored); the receive call
+  takes an optional one; both default to now
+- the kits a receipt lands in backlog are stamped with the same instant as the order,
+  including kits spawned later into an already-received order by a line edit; a kit
+  whose status the entry itself asserts (building, complete) keeps entry time — the
+  receipt is not when that status began
+- **correction:** `PATCH /orders/{id}` adjusts a `received_at` that is already set,
+  and 409s on a pending order — the pending → received transition stays in the receive
+  path, where the stock dispatch lives. Explicit null is refused: un-receiving is not
+  a supported operation. A correction follows exactly the kits whose stamp equals the
+  old receipt (their last transition *was* the receipt); a kit moved since keeps its
+  own date. The MCP `update_order` tool carries the same correction (#97)
+- **the future is refused, judged as a calendar date in the instant's own offset** —
+  not as an instant against the server clock, which would refuse an honest "today"
+  over clock skew. A receipt *earlier than `order_date`* is deliberately allowed:
+  `order_date` is a plain date with no offset, so the comparison isn't well-defined
+  across time zones (a same-day purchase entered in UTC+10 holds an instant that is
+  "yesterday" in UTC), and backfilled collections carry approximations. Accepted
+  cost (found in #111's review): an honest "today" in a behind offset can be a
+  stored future *instant* — up to ~36 h ahead — and the Board's columns order by
+  `status_updated_at` descending, so such a kit sits at the top of Backlog until
+  the wall clock catches up. Harmless for a single-owner collection; recorded so
+  the cost sits next to the rule
+- **interim time-zone decision, for M5.1 to revisit (#23, #27):** the instance has no
+  time zone, so REST/MCP accept a full ISO 8601 datetime *with offset* (naive is
+  refused), and the browser sends midnight local in its own offset for a picked date.
+  When instance-wide time zone settings arrive, this is the seam they replace —
+  a stated intent, not an accident
+
 **One lock order, application-wide.** Every writer that touches catalog stock takes
 its rows through a single locked-read helper, and takes them in one agreed sequence:
 **catalog rows first, in uuid order, then kits.** Order writes are the only place that
@@ -369,6 +408,18 @@ fragments the catalog within weeks — "GM02 Gundam Marker" and "Gundam Marker G
 two rows with split stock — and once fragmented it takes manual merging to fix. The
 constraint matters more, not less, for people who haven't been maintaining the
 collection long enough to have a consistent naming habit.
+
+The typeahead is the experience; the service layer is the guarantee. Since #107
+every path that writes a retailer's or catalog item's name — `POST`, `PATCH`, the MCP
+tools, and `new_item` on an order line — refuses, with a 409 naming the existing row,
+a name that folds to one another row of the same table already holds (trimmed,
+case-insensitive: the importer's natural key, §12.4). A refusal rather than a silent
+merge, because a caller that asked to *create* and got back someone else's row could
+not tell the two apart. Names are stored trimmed; a whitespace-only name is invalid
+input. Near-misses ("Iron-Blooded Orphans" / "IBO") are not the same key and are not
+refused — that is what the search is still for. The schema carries no unique index
+yet: one would refuse to build on an instance that already holds a pair, so it waits
+for a repair story (#54). *(Added 20/08/2026, #107.)*
 
 ---
 
@@ -583,29 +634,48 @@ pile of embedded copy.
 Exposed via FastMCP alongside the REST API, sharing the same service layer. The endpoint
 is `/mcp/` on the API port (streamable HTTP).
 
-- `list_kits(status?, grade?)`
+- `list_kits(status?, grade?, series?)`
+- `list_kit_series()` — the series spellings in use, most frequent first; the
+  select-or-create device for a free-text column (#96) — agents check it before
+  writing a spelling nobody uses
 - `get_kit(id)`
 - `update_kit_status(id, status)` — the status-only shortcut for `update_kit`, kept
   because moving a card is the frequent case and removing a tool a client may already
   call is a visible break
-- `update_kit(id, changes)` — name, grade, scale, kit_number, status, rating,
-  build_notes
+- `update_kit(id, changes)` — name, grade, scale, kit_number, series, status, rating,
+  build_notes, and the two build dates (#94: a transition stamps one only when null,
+  so a value set here is never overwritten by a later move)
 - `search_catalog(query)` — the same backing search as the UI typeahead, so an agent
   adding an order hits the same de-dup logic a human would
 - `list_retailers()`, `create_retailer(retailer)`, `update_retailer(id, changes)` —
   rating, packing quality, shipping speed, would-order-again, notes (§3.7). A retailer
   named on `create_order` is created holding nothing but a name; this is how the rest
-  of the report card gets filled in
+  of the report card gets filled in. `create_retailer` and a rename *refuse* a name an
+  existing shop already holds, where `create_order` *reuses* it — the same
+  case-insensitive key, two deliberate answers (§3.9, #107)
 - `update_catalog_tool(id, changes)`, `update_catalog_consumable(id, changes)`,
   `update_catalog_upgrade(id, changes)` — one per table rather than one tool
   dispatching on `item_type`, because each then takes the REST route's own PATCH
   schema unchanged instead of a hand-written union of all three that every new column
   would have to be added to twice
-- `create_order(retailer, date, items[], order_number?, tracking?, received?)` — the
-  items array drives the same fan-out/increment dispatch as the REST endpoint; retailer
-  matched by name case-insensitively, created if new
+- `create_order(retailer, date, items[], order_number?, tracking?, received?,
+  received_at?)` — the items array drives the same fan-out/increment dispatch as the
+  REST endpoint; retailer matched by name case-insensitively, created if new;
+  `received_at` backdates an arrival logged after the fact (§3.9)
 - `list_orders(pending_only?)` — find the order a shipping or arrival email belongs to
-- `mark_order_received(order_id)` — applies stock, advances pipeline kits to backlog (§3.9)
+- `get_order(id)` — one order in full, line ids and spawned kits included; the read an
+  edit starts from (#97)
+- `update_order(id, changes, remove_missing_lines?)` — header corrections and/or the
+  line set, over the same service as `PATCH /orders/{id}` (rule 2 dispatch re-runs,
+  same 409 guards, #93's `received_at` correction included). `changes.items` keeps
+  REST's full-replacement semantics, but an items list that *omits* stored lines is
+  refused — naming them — unless `remove_missing_lines` is passed: an agent
+  reconstructing an order from a listing is the writer most likely to send a partial
+  set, and an omitted line silently deletes purchase records. The gate lives in the
+  service under the order's `FOR UPDATE` lock, not in the wrapper, so it cannot race
+  a concurrent line addition (#97)
+- `mark_order_received(order_id, received_at?)` — applies stock, advances pipeline kits
+  to backlog, stamped with the (optionally backdated) arrival (§3.9)
 - `adjust_stock(catalog_id, delta, reason?)`
 - `apply_upgrade(upgrade_id, kit_id, quantity)`
 
@@ -908,13 +978,15 @@ second copy of it.
 Rows without an id fall back to natural keys: case-insensitive name for retailers and
 the three catalog tables — equality after trimming and case-folding, never a pattern
 match; `get_or_create_retailer` applies the same rule (#49 — a `%` in a shop's name is
-a character, not a wildcard). The §3.9 typeahead is a different thing: a substring
-*find*, already escaped, that offers rows for the human to pick by id — it does not
-decide identity, and neither yet does `new_item` (#107); `(retailer, order_number)`
-for orders, falling back
+a character, not a wildcard), and since #107 so does every create and rename of a
+retailer or catalog item, which refuses a second row under a key that is already
+taken (`services/names.py`, one predicate). The §3.9 typeahead is a different thing:
+a substring *find*, already escaped, that offers rows for the human to pick by id —
+it does not decide identity; `(retailer, order_number)` for orders, falling back
 to `(retailer, order_date, line fingerprint)` when there's no number; line fingerprint
 within the parent for order lines. Ambiguous multi-matches become an error row asking
-for an explicit id rather than a guess.
+for an explicit id rather than a guess — a state that, after #107, only rows written
+before it or an archive that carries the pair itself can produce.
 
 **Kits are excluded from natural-key matching by design.** A kit row is one *physical*
 kit (§3.1), so duplicates are legitimate; matching on name would silently merge real

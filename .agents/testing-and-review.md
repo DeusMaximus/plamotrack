@@ -165,6 +165,11 @@ uv run python mutation_test.py -k 2b                   # cases whose label conta
   never applied is not a mutant that was killed. Anchors are exact source strings
   and rot when the code moves; a refactor that touches an anchored line owes a
   harness run.
+- **A `-k` expression that selects no test is a failure too** (`NONE`, on #86's
+  harness from `fd8d195`). pytest exits 5 there, and "any non-zero exit is a kill"
+  read it as RED: after a merge united two case sets under one target-file list, 13
+  cases ran nothing and reported killed. The harness names its target files in a
+  literal `TEST_FILES` list; a case whose tests live in a new file extends the list.
 - **A surviving mutant is the finding**, and means one of two things: the condition
   is dead (something else already decides the outcome), or it is live and untested.
   Decide which before acting; do not delete a guard for being unreachable if what
@@ -232,16 +237,30 @@ queue. Both external tools output to chat unless told otherwise.
 
 ### Briefing a reviewer
 
+**The brief is a template — `.agents/review-brief.md`.** Fill its `‹slots›`, save
+the result to the scratchpad for the owner to paste, don't write one from memory:
+the fixed sentences are the wording that has worked, and the file's last section is
+the checklist that produces the per-PR "where I'd push" bullets, which is where the
+findings come from. The template also names the PR-body sections it points at
+(What / Deliberate calls / Tests with the negative control and the mutant table),
+so write the PR body to that shape. The bullets below are why the fixed parts say
+what they say:
+
 - **Prepare the environment first:** deps installed (`uv sync`, `npm install`),
   db up, everything offline-resolvable. Otherwise every install is an approval
   prompt inside the review.
 - **Tell it where to post:** `gh pr comment N --body-file <path>` — `--body-file`,
   not `--body`, because a shell string mangles backticks and `$`.
-- **Point it at the test claim.** The PR body lists which tests fail against
-  unfixed `main` and why; that is the claim most worth checking. Name the two or
-  three things in the branch that are assumptions rather than proofs and invite it
-  to push there.
+- **Point it at the test claim, and tell it to re-measure.** The PR body lists
+  which tests fail against unfixed `main` and why; that is the claim most worth
+  checking, and the author's counts are the first thing to get wrong (#109's body
+  said 70 red over a measured 74, and "17 mutants" over a table of 16). Name the
+  two or three things in the branch that are assumptions rather than proofs and
+  invite it to push there.
 - **Vocabulary:** see the mutation-testing note above.
+- **One reviewer per round, a different model family from the author where you
+  can.** Cursor and Codex are the defaults; Claude is an option with the caveat
+  written into the template's footer.
 
 ### Responding to a review
 

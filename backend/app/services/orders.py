@@ -29,7 +29,8 @@ from app.schemas.orders import (
     RetailerUpdate,
 )
 from app.services.catalog import CATALOG_MODELS, guard_stock_ceiling, lock_catalog_row
-from app.services.kits import default_scale_for_grade, has_applied_upgrades
+from app.services.kits import default_scale_for_grade, has_applied_upgrades, stamp_build_date
+from app.services.names import clean_name, find_by_name, require_unique_name
 from app.services.write_gate import acquire_write_gate
 
 #: The most units one order line may hold.
@@ -146,12 +147,42 @@ ARRIVAL_ELIGIBLE = {KitStatus.PRE_ORDERED, KitStatus.ORDERED, KitStatus.IN_TRANS
 IMMUTABLE_LINE_COLUMNS: tuple[str, ...] = ("item_type", "order_id")
 
 
+def _refuse_future_receipt(received_at: datetime) -> None:
+    """A receipt date that has not happened yet is a typo, not a plan (#93).
+
+    Judged as a calendar date in the datetime's *own* offset, not as an instant
+    against the server clock. The caller asserts "it arrived on this date, in my
+    time zone" — comparing instants would refuse an honest "today" over nothing
+    more than clock skew between the browser (or an MCP agent's machine) and the
+    server, while a whole calendar day of slack never turns a real backdate into
+    a refusal. The instance has no time zone of its own until M5.1; the supplied
+    offset is the only local calendar available.
+
+    Deliberately NOT refused here: a receipt earlier than the order's own
+    `order_date`. `order_date` is a plain date with no offset, so the comparison
+    is not well-defined across time zones — a same-day store purchase entered in
+    UTC+10 can hold a receipt instant that is "yesterday" in UTC — and backfilled
+    collections carry approximate dates. Odd is allowed; impossible is not.
+    """
+    today_in_own_offset = datetime.now(received_at.tzinfo).date()
+    if received_at.date() > today_in_own_offset:
+        raise InvalidInputError(
+            f"received_at {received_at.isoformat()} is in the future — "
+            "an arrival can be backdated, not predicted"
+        )
+
+
 # --- retailers -----------------------------------------------------------------
 
 
 async def create_retailer(session: AsyncSession, data: RetailerCreate) -> Retailer:
     await acquire_write_gate(session)
-    retailer = Retailer(**data.model_dump())
+    fields = data.model_dump()
+    # Refused, not merged: a REST or MCP caller that named an existing shop gets a 409
+    # naming it, and decides. Merging silently would hand back a row the caller did
+    # not ask for and could not tell apart from a create (#107, rule 3).
+    fields["name"] = await require_unique_name(session, Retailer, data.name)
+    retailer = Retailer(**fields)
     session.add(retailer)
     await session.flush()
     await session.commit()
@@ -176,17 +207,14 @@ async def get_or_create_retailer(session: AsyncSession, name: str) -> Retailer:
     before the gated `create_order`, so without the gate here that read happens
     outside it."""
     await acquire_write_gate(session)
-    wanted = name.strip()
+    wanted = clean_name(name)
     # Equality after case-folding, not ILIKE: a pattern match reads `%` and `_` in
     # the *agent's* input as wildcards, so a shop named "%" attached its order to
     # whichever retailer sorted first, and read `\` as its escape, so a shop with a
-    # backslash in its name was never reused (#49). This is the rule the importer's
-    # `_norm_name` / `spec._name_key` apply. Both sides are folded by Postgres —
-    # `lower()` here and Python's `str.lower()` disagree on Turkish `İ`, and a
-    # predicate that folds one side each way misses the exact stored spelling.
-    retailer = await session.scalar(
-        select(Retailer).where(func.lower(Retailer.name) == func.lower(wanted)).limit(1)
-    )
+    # backslash in its name was never reused (#49). The predicate itself lives in
+    # `services/names.py` — the same one the create and rename paths refuse on
+    # (#107), so what this reuses and what they refuse can never disagree.
+    retailer = await find_by_name(session, Retailer, wanted)
     if retailer is None:
         retailer = Retailer(name=wanted)
         session.add(retailer)
@@ -204,6 +232,12 @@ async def update_retailer(
     fields = data.model_dump(exclude_unset=True)
     if fields.get("name") is None and "name" in fields:
         raise InvalidInputError("name cannot be null")
+    if fields.get("name") is not None:
+        # `exclude_id`: a row may keep or re-case its own name; only *another* row
+        # already holding it is a conflict (#107).
+        fields["name"] = await require_unique_name(
+            session, Retailer, fields["name"], exclude_id=retailer.id
+        )
     for key, value in fields.items():
         setattr(retailer, key, value)
     await session.flush()
@@ -232,19 +266,33 @@ async def delete_retailer(session: AsyncSession, retailer_id: uuid.UUID) -> None
 # --- dispatch helpers ----------------------------------------------------------
 
 
-def _build_catalog_row(
-    item_type: ItemType, new_item: NewCatalogItem, currency_code: str
+async def _build_catalog_row(
+    session: AsyncSession, item_type: ItemType, new_item: NewCatalogItem, currency_code: str
 ) -> Tool | Consumable | Upgrade:
+    """The catalog row a `new_item` line creates — or a 409 if one already answers to
+    that name.
+
+    `new_item` is the select-or-create flow's *create* half (§3.9); the select half
+    is `search_catalog`, and it is only a gate if the caller used it. An agent that
+    skipped it, or a human who typed past the typeahead, was making a second row with
+    the same name — which the importer then reads as an ambiguous natural key (#107).
+    The check is here rather than in the two callers so a line added at entry and a
+    line added on edit answer to one rule. Two `new_item` lines in one request naming
+    the same thing refuse as well: the first is flushed before the second is checked,
+    and the whole order rolls back with it (rule 2) — say it on one line with the
+    quantity, or pick the row the first line created.
+    """
     if item_type in (ItemType.TOOL, ItemType.CONSUMABLE):
         if not new_item.category:
             raise InvalidInputError(f"new {item_type} items require a category")
+    name = await require_unique_name(session, CATALOG_MODELS[item_type], new_item.name)
     if item_type is ItemType.TOOL:
         # The line's own currency, not the instance default: this row is being created
         # from a purchase that states what it was bought in, and that is the one place
         # a tool's cost ever arrives with its currency already known (§6).
         cost_minor = new_item.unit_cost_reference_minor
         return Tool(
-            name=new_item.name,
+            name=name,
             category=new_item.category,
             quantity_on_hand=0,
             unit_cost_reference_minor=cost_minor,
@@ -253,7 +301,7 @@ def _build_catalog_row(
         )
     if item_type is ItemType.CONSUMABLE:
         return Consumable(
-            name=new_item.name,
+            name=name,
             category=new_item.category,
             quantity_on_hand=0,
             low_stock_threshold=new_item.low_stock_threshold,
@@ -261,7 +309,7 @@ def _build_catalog_row(
     if not new_item.manufacturer:
         raise InvalidInputError("new upgrade items require a manufacturer")
     return Upgrade(
-        name=new_item.name,
+        name=name,
         manufacturer=new_item.manufacturer,
         quantity_on_hand=0,
     )
@@ -359,6 +407,7 @@ async def spawn_kits(
     status: KitStatus | str | None = None,
     count: int = 1,
     received: bool = False,
+    received_at: datetime | None = None,
 ) -> None:
     """The §3.9 fan-out: one physical `kits` row per unit on a kit-type order line.
 
@@ -375,17 +424,25 @@ async def spawn_kits(
     requested = KitStatus(status) if status else KitStatus.ORDERED
     final_status = _initial_kit_status(requested, received)
     resolved_scale = scale if scale is not None else default_scale_for_grade(grade)
+    # A kit landing in backlog on a received order entered the collection when the
+    # box did, so it carries the order's receipt time — which may be backdated
+    # (#93) — instead of the entry time the server default would stamp. A kit
+    # spawned with an explicitly asserted later status (building, complete) keeps
+    # the default: the receipt is not when that status began, and "when you told
+    # me" is the honest fallback.
+    stamp = received_at if final_status is KitStatus.BACKLOG else None
     for _ in range(count):
-        session.add(
-            Kit(
-                name=name,
-                grade=grade,
-                scale=resolved_scale,
-                kit_number=kit_number,
-                status=final_status,
-                order_item_id=item.id,
-            )
+        kit = Kit(
+            name=name,
+            grade=grade,
+            scale=resolved_scale,
+            kit_number=kit_number,
+            status=final_status,
+            order_item_id=item.id,
         )
+        if stamp is not None:
+            kit.status_updated_at = stamp
+        session.add(kit)
     await session.flush()
 
 
@@ -395,6 +452,7 @@ async def _spawn_from_details(
     details: OrderKitDetails,
     count: int,
     received: bool,
+    received_at: datetime | None = None,
 ) -> None:
     await spawn_kits(
         session,
@@ -406,6 +464,7 @@ async def _spawn_from_details(
         status=details.status,
         count=count,
         received=received,
+        received_at=received_at,
     )
 
 
@@ -472,10 +531,18 @@ async def _delete_line_kits(session: AsyncSession, item: OrderItem, count: int |
 
 
 async def _add_line(
-    session: AsyncSession, order: Order, line: OrderItemCreate, received: bool
+    session: AsyncSession,
+    order: Order,
+    line: OrderItemCreate,
+    received: bool,
+    received_at: datetime | None = None,
 ) -> OrderItem:
     """The §3.9 dispatch: kit lines FAN OUT into kits rows immediately; catalog
-    lines INCREMENT stock — but only once the order is received."""
+    lines INCREMENT stock — but only once the order is received.
+
+    `received_at` is the receipt instant kits landing in backlog are stamped with
+    (#93) — the order's stored receipt for an edit, the entry-supplied or fresh
+    one for a create. None when the order is pending."""
     converted_minor, converted_code = _converted_snapshot(line)
     item = OrderItem(
         order_id=order.id,
@@ -490,10 +557,12 @@ async def _add_line(
     await session.flush()
 
     if line.item_type is ItemType.KIT:
-        await _spawn_from_details(session, item, line.kit, line.quantity, received)
+        await _spawn_from_details(session, item, line.kit, line.quantity, received, received_at)
     else:
         if line.new_item is not None:
-            row = _build_catalog_row(line.item_type, line.new_item, line.currency_code)
+            row = await _build_catalog_row(
+                session, line.item_type, line.new_item, line.currency_code
+            )
             session.add(row)
             await session.flush()
         else:
@@ -525,7 +594,11 @@ async def _remove_line(session: AsyncSession, item: OrderItem, received: bool) -
 
 
 async def _update_line(
-    session: AsyncSession, item: OrderItem, line: OrderItemCreate, received: bool
+    session: AsyncSession,
+    item: OrderItem,
+    line: OrderItemCreate,
+    received: bool,
+    received_at: datetime | None = None,
 ) -> None:
     if line.item_type != item.item_type:
         raise InvalidInputError(
@@ -582,13 +655,15 @@ async def _update_line(
         # defense in depth should the two ever drift.
         delta = line.quantity - len(line_kits)
         if delta > 0:
-            await _spawn_from_details(session, item, details, delta, received)
+            await _spawn_from_details(session, item, details, delta, received, received_at)
         elif delta < 0:
             await _delete_line_kits(session, item, count=-delta)
     else:
         old_ref = item.catalog_ref_id
         if line.new_item is not None:
-            new_row = _build_catalog_row(line.item_type, line.new_item, line.currency_code)
+            new_row = await _build_catalog_row(
+                session, line.item_type, line.new_item, line.currency_code
+            )
             session.add(new_row)
             await session.flush()
             new_ref = new_row.id
@@ -636,15 +711,20 @@ async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
     if retailer is None:
         raise NotFoundError(f"retailer {data.retailer_id} not found")
 
-    order = Order(**data.model_dump(exclude={"items", "received"}))
+    order = Order(**data.model_dump(exclude={"items", "received", "received_at"}))
+    received_at: datetime | None = None
     if data.received:
-        order.received_at = datetime.now(UTC)
+        # The schema guarantees received_at only arrives alongside received=true.
+        if data.received_at is not None:
+            _refuse_future_receipt(data.received_at)
+        received_at = data.received_at or datetime.now(UTC)
+        order.received_at = received_at
     session.add(order)
     await session.flush()
 
     await _lock_catalog_targets(session, lines=data.items)
     for line in data.items:
-        await _add_line(session, order, line, received=data.received)
+        await _add_line(session, order, line, received=data.received, received_at=received_at)
 
     result = await get_order(session, order.id)
     await session.commit()
@@ -666,7 +746,24 @@ async def _get_order_for_write(session: AsyncSession, order_id: uuid.UUID) -> Or
     return order
 
 
-async def update_order(session: AsyncSession, order_id: uuid.UUID, data: OrderUpdate) -> Order:
+async def update_order(
+    session: AsyncSession,
+    order_id: uuid.UUID,
+    data: OrderUpdate,
+    *,
+    allow_line_removal: bool = True,
+) -> Order:
+    """Edit header fields and/or replace the line-item set (§3.9, rule 2).
+
+    `data.items` is a FULL replacement set — deliberate REST semantics — so a
+    stored line the payload does not restate is deleted, its kits removed and
+    its applied stock reversed. `allow_line_removal=False` turns that omission
+    into a refusal that names the lines (#97): the check runs here, under the
+    order's FOR UPDATE lock, so it cannot race a concurrent line addition the
+    way a read-then-write in a caller would. REST keeps the default; the MCP
+    tool passes False unless the agent explicitly opts in, because an agent
+    reconstructing an order from a listing is the writer most likely to send a
+    partial set and least able to notice the silent deletions."""
     await acquire_write_gate(session)
     for line in data.items or ():
         require_line_quantity(line.quantity)
@@ -684,11 +781,44 @@ async def update_order(session: AsyncSession, order_id: uuid.UUID, data: OrderUp
     for non_nullable in ("order_date", "currency_code"):
         if non_nullable in header and header[non_nullable] is None:
             raise InvalidInputError(f"{non_nullable} cannot be null")
+    if "received_at" in header:
+        # Correction only (#93): a receipt date can be adjusted once it exists.
+        # The pending → received transition stays in receive_order, where the
+        # stock dispatch lives — letting PATCH perform it would put that dispatch
+        # in two places.
+        new_receipt = header.pop("received_at")
+        if new_receipt is None:
+            raise InvalidInputError(
+                "received_at cannot be cleared — un-receiving an order is not "
+                "supported; delete and re-enter the order instead"
+            )
+        if order.received_at is None:
+            raise ConflictError(
+                "order is not received yet — record the arrival through the "
+                "receive endpoint; an edit only corrects a date already set"
+            )
+        _refuse_future_receipt(new_receipt)
+        if new_receipt != order.received_at:
+            await _restamp_receipt_kits(session, order, order.received_at, new_receipt)
+            order.received_at = new_receipt
     for key, value in header.items():
         setattr(order, key, value)
 
     if data.items is not None:
         existing = {item.id: item for item in order.items}
+        if not allow_line_removal:
+            payload_ids = {line.id for line in data.items if line.id is not None}
+            omitted = [item for item in order.items if item.id not in payload_ids]
+            if omitted:
+                labels = "; ".join(
+                    f"{item.id} ({item.item_type.value} × {item.quantity})" for item in omitted
+                )
+                raise InvalidInputError(
+                    f"the items list omits {len(omitted)} stored line(s): {labels} — an "
+                    "omitted line is deleted (its kits removed, applied stock reversed). "
+                    "Restate every line you are not changing, or pass "
+                    "remove_missing_lines=true to delete the omitted ones"
+                )
         seen: set[uuid.UUID] = set()
         for line in data.items:
             if line.id is not None:
@@ -697,9 +827,9 @@ async def update_order(session: AsyncSession, order_id: uuid.UUID, data: OrderUp
                 if line.id in seen:
                     raise InvalidInputError(f"order item {line.id} appears twice")
                 seen.add(line.id)
-                await _update_line(session, existing[line.id], line, received)
+                await _update_line(session, existing[line.id], line, received, order.received_at)
             else:
-                await _add_line(session, order, line, received)
+                await _add_line(session, order, line, received, order.received_at)
         for item_id, item in existing.items():
             if item_id not in seen:
                 await _remove_line(session, item, received)
@@ -710,16 +840,44 @@ async def update_order(session: AsyncSession, order_id: uuid.UUID, data: OrderUp
     return result
 
 
-async def receive_order(session: AsyncSession, order_id: uuid.UUID) -> Order:
+async def _restamp_receipt_kits(
+    session: AsyncSession, order: Order, old: datetime, new: datetime
+) -> None:
+    """A corrected receipt date follows the kits whose stamp *was* the receipt (#93).
+
+    Receiving stamps the kits it advances with the same instant it writes to the
+    order, so equality against the old value identifies exactly the kits whose
+    last transition was that receipt — a kit dragged onward (or back) since then
+    carries the drag's own time and is left alone. Status is deliberately not part
+    of the match: the timestamp is the receipt's signature, and a status check
+    would either restate the same fact or wrongly exclude a kit the entry itself
+    stamped."""
+    for item in order.items:
+        if item.item_type is not ItemType.KIT:
+            continue
+        for kit in await _line_kits(session, item.id):
+            if kit.status_updated_at == old:
+                kit.status_updated_at = new
+
+
+async def receive_order(
+    session: AsyncSession, order_id: uuid.UUID, received_at: datetime | None = None
+) -> Order:
     """Mark an order arrived: apply catalog stock increments and advance kits
-    still in the ordering pipeline to backlog (in hand, unbuilt)."""
+    still in the ordering pipeline to backlog (in hand, unbuilt).
+
+    `received_at` backdates the arrival for orders received before they were
+    logged (#93); omitted, the arrival is now. The kits this advances are stamped
+    with the same instant either way."""
     await acquire_write_gate(session)
     order = await _get_order_for_write(session, order_id)
     if order.received_at is not None:
         raise ConflictError("order is already marked received")
     await _lock_catalog_targets(session, items=order.items)
 
-    now = datetime.now(UTC)
+    if received_at is not None:
+        _refuse_future_receipt(received_at)
+    now = received_at or datetime.now(UTC)
     order.received_at = now
     for item in order.items:
         if item.item_type is ItemType.KIT:
@@ -727,6 +885,10 @@ async def receive_order(session: AsyncSession, order_id: uuid.UUID) -> Order:
                 if kit.status in ARRIVAL_ELIGIBLE:
                     kit.status = KitStatus.BACKLOG
                     kit.status_updated_at = now
+                    # A no-op for backlog today, but every live status writer goes
+                    # through the one derivation (#94) so an advance that one day
+                    # lands elsewhere cannot silently skip the build stamps.
+                    stamp_build_date(kit, KitStatus.BACKLOG, now)
         elif item.catalog_ref_id is not None:
             await _adjust_ref(session, item.item_type, item.catalog_ref_id, item.quantity)
 

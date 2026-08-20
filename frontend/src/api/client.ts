@@ -13,6 +13,7 @@ import type {
   Meta,
   Order,
   OrderCreate,
+  OrderReceive,
   OrderUpdate,
   Retailer,
   RetailerCreate,
@@ -119,6 +120,8 @@ export const api = {
     return request<Kit[]>(`/kits${qs}`);
   },
   createKit: (data: KitCreate) => request<Kit>("/kits", post(data)),
+  /** Distinct series values in use, most frequent first — the typeahead feed. */
+  listKitSeries: () => request<string[]>("/kits/series"),
   updateKit: (id: string, data: KitUpdate) =>
     request<Kit>(`/kits/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteKit: (id: string) => request<void>(`/kits/${id}`, { method: "DELETE" }),
@@ -160,7 +163,8 @@ export const api = {
   listOrders: () => request<Order[]>("/orders"),
   createOrder: (data: OrderCreate) => request<Order>("/orders", post(data)),
   updateOrder: (id: string, data: OrderUpdate) => request<Order>(`/orders/${id}`, patch(data)),
-  receiveOrder: (id: string) => request<Order>(`/orders/${id}/receive`, { method: "POST" }),
+  receiveOrder: (id: string, data?: OrderReceive) =>
+    request<Order>(`/orders/${id}/receive`, data ? post(data) : { method: "POST" }),
   deleteOrder: (id: string) => request<void>(`/orders/${id}`, { method: "DELETE" }),
 
   previewImport: (file: File, mode: ImportMode) => {

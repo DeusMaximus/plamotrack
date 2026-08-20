@@ -16,6 +16,7 @@ from app.schemas.catalog import (
     UpgradeCreate,
     UpgradeUpdate,
 )
+from app.services.names import require_unique_name
 from app.services.numeric import require_int4
 from app.services.write_gate import acquire_write_gate
 
@@ -112,31 +113,38 @@ async def search(
     return results
 
 
-async def create_tool(session: AsyncSession, data: ToolCreate) -> Tool:
+async def _create_catalog_row(
+    session: AsyncSession,
+    model: type[Tool | Consumable | Upgrade],
+    data: ToolCreate | ConsumableCreate | UpgradeCreate,
+) -> Tool | Consumable | Upgrade:
+    """The one insert behind the three creates, so the name rule is applied once.
+
+    Gate first, then the name check, then the insert: the check is a read the insert
+    depends on, and only the gate makes two callers naming the same new item at once
+    produce one row and one 409 (rule 7.1). Refused rather than merged — see
+    `create_retailer` (#107).
+    """
     await acquire_write_gate(session)
-    tool = Tool(**data.model_dump())
-    session.add(tool)
+    fields = data.model_dump()
+    fields["name"] = await require_unique_name(session, model, data.name)
+    row = model(**fields)
+    session.add(row)
     await session.flush()
     await session.commit()
-    return tool
+    return row
+
+
+async def create_tool(session: AsyncSession, data: ToolCreate) -> Tool:
+    return await _create_catalog_row(session, Tool, data)
 
 
 async def create_consumable(session: AsyncSession, data: ConsumableCreate) -> Consumable:
-    await acquire_write_gate(session)
-    consumable = Consumable(**data.model_dump())
-    session.add(consumable)
-    await session.flush()
-    await session.commit()
-    return consumable
+    return await _create_catalog_row(session, Consumable, data)
 
 
 async def create_upgrade(session: AsyncSession, data: UpgradeCreate) -> Upgrade:
-    await acquire_write_gate(session)
-    upgrade = Upgrade(**data.model_dump())
-    session.add(upgrade)
-    await session.flush()
-    await session.commit()
-    return upgrade
+    return await _create_catalog_row(session, Upgrade, data)
 
 
 async def list_catalog(
@@ -167,6 +175,13 @@ async def update_catalog_item(
     for key, value in fields.items():
         if value is None and key in _NON_NULLABLE:
             raise InvalidInputError(f"{key} cannot be null")
+    if fields.get("name") is not None:
+        # A rename onto a name another row of this table holds is a 409; the row's
+        # own id is excluded so it may keep or re-case its name (#107).
+        fields["name"] = await require_unique_name(
+            session, model, fields["name"], exclude_id=item_id
+        )
+    for key, value in fields.items():
         setattr(row, key, value)
     # After applying, not before: a PATCH carrying one half of the pair is fine when
     # the row already holds the other, so only the merged result can be judged (§6).

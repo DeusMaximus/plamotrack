@@ -9,7 +9,7 @@ import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
-import { formatDate, STATUS_LABELS } from "../lib/format";
+import { formatDate, isoToLocalDateInput, localMidnightISO, STATUS_LABELS } from "../lib/format";
 
 const COMMON_GRADES = ["HG", "RG", "EG", "SD", "MG", "MGEX", "RE/100", "FM", "PG"];
 
@@ -18,8 +18,13 @@ interface KitFormValues {
   grade: string;
   scale: string;
   kit_number: string;
+  series: string;
   status: KitStatus;
   rating: string;
+  /** yyyy-mm-dd, "" = none. Sent only when dirty: a date input can't restate the
+   *  stored *instant* losslessly, so an untouched field must not round-trip (#94). */
+  build_started: string;
+  build_completed: string;
   build_notes: string;
 }
 
@@ -29,10 +34,27 @@ function toFormValues(kit?: Kit): KitFormValues {
     grade: kit?.grade ?? "",
     scale: kit?.scale ?? "",
     kit_number: kit?.kit_number ?? "",
+    series: kit?.series ?? "",
     status: kit?.status ?? "backlog",
     rating: kit?.rating?.toString() ?? "",
+    build_started: kit?.build_started_at ? isoToLocalDateInput(kit.build_started_at) : "",
+    build_completed: kit?.build_completed_at ? isoToLocalDateInput(kit.build_completed_at) : "",
     build_notes: kit?.build_notes ?? "",
   };
+}
+
+/** The completion cell: the date, and when a start exists too, the elapsed days
+ *  beside it (deliberately elapsed, not time-at-the-bench — a shelved build reads
+ *  long, and that is the documented shape of the two-column decision on #94). */
+function completedCell(kit: Kit): string {
+  if (!kit.build_completed_at) return "—";
+  const date = formatDate(kit.build_completed_at);
+  if (!kit.build_started_at) return date;
+  const days = Math.round(
+    (new Date(kit.build_completed_at).getTime() - new Date(kit.build_started_at).getTime()) /
+      86_400_000,
+  );
+  return days <= 0 ? `${date} · same day` : `${date} · ${days} d`;
 }
 
 function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
@@ -41,8 +63,17 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
   const {
     register,
     handleSubmit,
-    formState: { errors, isSubmitting },
+    formState: { errors, isSubmitting, dirtyFields },
   } = useForm<KitFormValues>({ defaultValues: toFormValues(kit) });
+
+  // The de-dup device for a free-text column: what already exists, most frequent
+  // first. staleTime 0 for the same reason as the catalog picker (#49/#108) — a
+  // gate that answers from cache offers "new" for something that now exists.
+  const { data: seriesValues } = useQuery({
+    queryKey: ["kit-series"],
+    queryFn: api.listKitSeries,
+    staleTime: 0,
+  });
 
   const onSubmit = handleSubmit(async (values) => {
     const payload: KitCreate & KitUpdate = {
@@ -50,11 +81,24 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
       grade: values.grade,
       scale: values.scale || null,
       kit_number: values.kit_number || null,
+      series: values.series || null,
       status: values.status,
       build_notes: values.build_notes || null,
     };
     if (kit) {
       payload.rating = values.rating === "" ? null : Number(values.rating);
+    }
+    // Only when touched (see KitFormValues). A typed date goes out as midnight
+    // local in the browser's own offset; an emptied field clears the stored one.
+    if (dirtyFields.build_started) {
+      payload.build_started_at = values.build_started
+        ? localMidnightISO(values.build_started)
+        : null;
+    }
+    if (dirtyFields.build_completed) {
+      payload.build_completed_at = values.build_completed
+        ? localMidnightISO(values.build_completed)
+        : null;
     }
     try {
       if (kit) {
@@ -99,6 +143,14 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
             <Input {...register("kit_number")} placeholder="HGUC 210" />
           </Field>
         </div>
+        <Field label="Series">
+          <Input {...register("series")} list="kit-series" placeholder="Iron-Blooded Orphans" />
+          <datalist id="kit-series">
+            {seriesValues?.map((value) => (
+              <option key={value} value={value} />
+            ))}
+          </datalist>
+        </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Status">
             <Select {...register("status")}>
@@ -125,6 +177,18 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
             </Field>
           )}
         </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="Build started">
+            <Input type="date" {...register("build_started")} />
+          </Field>
+          <Field label="Build completed">
+            <Input type="date" {...register("build_completed")} />
+          </Field>
+        </div>
+        <p className="-mt-2 text-xs text-zinc-500">
+          Moving a kit to Building or Complete fills the matching date automatically —
+          only if it's still empty, so anything you set here is never overwritten.
+        </p>
         <Field label="Build notes">
           <Textarea {...register("build_notes")} placeholder="Nub cleanup, panel lining…" />
         </Field>
@@ -144,6 +208,7 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
 export function KitsPage() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<KitStatus | "">("");
+  const [seriesFilter, setSeriesFilter] = useState("");
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState<{ mode: "add" } | { mode: "edit"; kit: Kit } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -168,9 +233,18 @@ export function KitsPage() {
     onError: (err) => setActionError(err instanceof ApiError ? err.message : "Delete failed"),
   });
 
+  // Distinct series among the loaded kits, for the filter dropdown. Alphabetical:
+  // a filter is scanned by eye, unlike the form's typeahead, which ranks by use.
+  const seriesOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const kit of kits ?? []) if (kit.series) values.add(kit.series);
+    return [...values].sort((a, b) => a.localeCompare(b));
+  }, [kits]);
+
   const visible = useMemo(() => {
     let rows = kits ?? [];
     if (statusFilter) rows = rows.filter((kit) => kit.status === statusFilter);
+    if (seriesFilter) rows = rows.filter((kit) => kit.series === seriesFilter);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       rows = rows.filter(
@@ -179,7 +253,7 @@ export function KitsPage() {
       );
     }
     return rows;
-  }, [kits, statusFilter, search]);
+  }, [kits, statusFilter, seriesFilter, search]);
 
   return (
     <div className="space-y-4">
@@ -210,6 +284,21 @@ export function KitsPage() {
             </option>
           ))}
         </Select>
+        {seriesOptions.length > 0 && (
+          <Select
+            aria-label="Filter by series"
+            value={seriesFilter}
+            onChange={(event) => setSeriesFilter(event.target.value)}
+            className="max-w-52"
+          >
+            <option value="">All series</option>
+            {seriesOptions.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </Select>
+        )}
       </div>
 
       <ErrorBanner message={actionError} />
@@ -234,7 +323,8 @@ export function KitsPage() {
                 <th className="px-3 py-2">Scale</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Rating</th>
-                <th className="px-3 py-2">Since</th>
+                <th className="px-3 py-2">Started</th>
+                <th className="px-3 py-2">Completed</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -243,7 +333,11 @@ export function KitsPage() {
                 <tr key={kit.id} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50">
                   <td className="px-3 py-2">
                     <div className="font-medium">{kit.name}</div>
-                    {kit.kit_number && <div className="text-xs text-zinc-400">{kit.kit_number}</div>}
+                    {(kit.kit_number || kit.series) && (
+                      <div className="text-xs text-zinc-400">
+                        {[kit.kit_number, kit.series].filter(Boolean).join(" · ")}
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-2">{kit.grade}</td>
                   <td className="px-3 py-2">{kit.scale ?? "—"}</td>
@@ -272,8 +366,11 @@ export function KitsPage() {
                   <td className="px-3 py-2">
                     {kit.rating ? "★".repeat(kit.rating) + "☆".repeat(5 - kit.rating) : "—"}
                   </td>
-                  <td className="px-3 py-2 text-zinc-500" title="In this status since">
-                    {formatDate(kit.status_updated_at)}
+                  <td className="px-3 py-2 text-zinc-500" title="Build started">
+                    {kit.build_started_at ? formatDate(kit.build_started_at) : "—"}
+                  </td>
+                  <td className="px-3 py-2 text-zinc-500" title="Build completed · elapsed days">
+                    {completedCell(kit)}
                   </td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex justify-end gap-1">

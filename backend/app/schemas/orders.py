@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from app.models.enums import (
     ItemType,
@@ -146,7 +146,22 @@ class OrderCreate(BaseModel):
     # True = already in hand (store purchase / arrived before entry): stock is
     # applied and spawned kits start at backlog instead of ordered.
     received: bool = False
+    # When the delivery actually arrived, for orders entered after the fact (#93).
+    # Offset-aware ISO 8601 — the caller supplies its own offset until the
+    # instance grows a time zone (M5.1). Omitted = now. Supplying it asserts the
+    # order was received, so it requires `received=true` — a date on a pending
+    # order is a contradiction, refused rather than silently ignored.
+    received_at: AwareDatetime | None = None
     items: list[OrderItemCreate] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _received_at_implies_received(self) -> "OrderCreate":
+        if self.received_at is not None and not self.received:
+            raise ValueError(
+                "received_at asserts the order arrived — pass received=true with it, "
+                "or omit the date"
+            )
+        return self
 
 
 class OrderItemUpsert(OrderItemCreate):
@@ -173,8 +188,22 @@ class OrderUpdate(BaseModel):
     tracking_url: str | None = None
     shipping_cost_minor: NonNegativeInt4 | None = None
     currency_code: str | None = Field(default=None, pattern=_CURRENCY_PATTERN)
+    # Correction only (#93): adjusts a receipt date that is already set. On an
+    # order not yet received it 409s — the pending → received transition stays in
+    # receive_order, where the stock dispatch lives, and never here. Explicit null
+    # is refused: un-receiving an order is not a supported operation.
+    received_at: AwareDatetime | None = None
     # None = leave line items untouched; a list is the full replacement set.
     items: list[OrderItemUpsert] | None = Field(default=None, min_length=1)
+
+
+class OrderReceive(BaseModel):
+    """Optional body for POST /orders/{id}/receive (#93). No body, an empty
+    object and an explicit null all mean the same thing: the order arrived now."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    received_at: AwareDatetime | None = None
 
 
 class OrderItemRead(BaseModel):

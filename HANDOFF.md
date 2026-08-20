@@ -41,258 +41,270 @@ Template:
 
 ---
 
-## 2026-08-19 — Claude Code (Fable 5) — #106 and #108 merged (#49 closed); #107 filed → 0.2.7
+## 2026-08-20 — Claude Code (Fable 5) — #97 closed: PR #115 merged as `7991a08` after one Cursor round; 0.2.7 now gated only by #86
 
-- **Done:** **#106 merged** (`eb3a430`) — design notes caught up on the write gate,
-  export snapshot, #94/#96 decisions and the hardening milestones. **#49 closed —
-  PR #108 squash-merged as `7a6e1e1`** after one Cursor review round (GO with two
-  P3s, both taken before merge) — fold *both* sides of
-  the predicate in Postgres (`func.lower(col) == func.lower(input)`; the Python
-  fold differs on Turkish `İ`, so the reviewed head missed an exact stored
-  spelling — a regression against ILIKE), and §12.4 tightened so the typeahead
-  is not read as the natural-key check. Reply posted at that head.
-  `get_or_create_retailer` and `list_kits(grade=)` compare `lower()` for equality
-  instead of ILIKE — the importer's `_norm_name` rule, so all three surfaces
-  agree. Found on the way: ILIKE read `\` as its escape, so a shop with a
-  backslash in its name could never be reused. Browser: ref-guard + pending state
-  on the inline "+ retailer" (double-click posted twice); `CatalogItemPicker`
-  search query `staleTime: 0` (a de-dup gate must never answer from cache).
-  `docs/design.md` §12.4 now states the natural key precisely. **#107 filed and
-  milestoned 0.2.7** (owner's call, on Cursor's suggestion): the create/rename
-  paths that apply *no* name predicate —
-  `create_retailer`, `update_retailer`, `new_item`, REST catalog creates —
-  can make the importer's natural key ambiguous; verified against the API first.
-- **Decisions:** equality, not an escaped pattern (the backslash case is why the
-  shape matters). `staleTime: 0` over per-page invalidation — closes the class,
-  including rows an MCP agent adds out of band; noted in the PR for the owner to
-  disagree with. #107 not folded in: different root cause, changes status codes.
-- **State:** backend 556 (534 + 22 new in `tests/test_name_matching.py`), ruff
-  clean; e2e 19 (17 + 2 in `e2e/catalog-dedup.spec.ts`), vitest green, build +
-  oxlint clean. **e2e verified against a database migrated from empty; every
-  table empty afterwards** — recipe now in `.agents/testing-and-review.md`. No
-  migration. Negative controls: 11/19 backend red on unfixed `main`; five
-  single-site mutants each killed by the tests aimed at that site; both e2e red
-  on the unfixed UI, both timing-pinned (`page.route` hold; `page.clock`
-  frozen). `main` is `7a6e1e1` plus this entry. The only branch is
-  `fix/44-import-order-invariants` (PR #86, untouched, still the 0.2.6 blocker).
-  A stale worktree `/private/tmp/plamotrack-pr100` exists on this Mac from an
-  earlier session — not this one's, left alone. Live from before and still true:
-  #86 gates #44/#77/#87/#90; #104 in 0.2.8; #97 → 0.2.7; #98/#99 → 0.2.8.
-- **Next:** 0.2.7's remaining items clear of #86 are **#107** (the rest of rule 3
-  on the names #49 just defined — option 1 on the issue, service-layer 409, is the
-  recommendation), **#93** (backdatable `received_at` — note
-  `receive_order` also stamps the kits it advances, so a backdated receipt has to
-  backdate those), **#95**, and **#94 + #96** (share a migration; decisions are
-  in §3.1). #86 still wants a fresh review round before anything in 0.2.6 moves.
+- **Done:** **#97 closed — PR #115 squash-merged as `7991a08`**, branch
+  deleted, on the owner's call after one Cursor round; no second round (the
+  response was one docs sentence — the #109/#111/#113 precedent). (~430
+  insertions, no migration, no frontend.) `get_order` and `update_order` tools
+  in `mcp.py`, thin over the existing services; `changes` reuses `OrderUpdate`
+  verbatim so #93's `received_at` correction works now and #95's fields flow in
+  later (the `_KitPatch` precedent). **The issue's design question, decided:**
+  items keeps REST's full-replacement semantics, but `update_order` (service)
+  gained keyword `allow_line_removal` (default True — REST unchanged); the MCP
+  tool passes `remove_missing_lines` (default False), so an items list that
+  omits stored lines is refused *naming each line*, under the order's
+  FOR UPDATE lock — a wrapper-side read-then-check would race a concurrent
+  line addition. Explicit quantity decreases need no flag (a stated number is
+  not silent). Docs: design §7 + README tool rows.
+- **Decisions (on the PR as "Deliberate calls"):** per-surface defaults over one
+  mechanism; omission-only gate; the refusal names the MCP flag from the
+  service layer (only MCP can trigger it today); `InvalidInputError` not
+  Conflict (payload completeness, not state); order deletion stays off MCP.
+- **State:** backend **755** (742 + 13 in `tests/test_mcp_order_edit.py` — the
+  §3.9 diff branches, both halves of the §6 snapshot contract through FastMCP's
+  nested fields_set, both 409 guards *with* the flag, receipt correction,
+  get_order axes), ruff clean, frontend untouched. Negative control: **13 red /
+  0 green on unfixed `main`** (tools don't exist — expected shape for a
+  new-capability suite; stated in the PR body). Both fix sites one-site-mutated
+  and killed by the omission test; tuples in the PR body for the #86 fold-in
+  queue (now #109's 17 + #111's 6 + #113's 8 + #115's 2). **Cursor round 1
+  (Grok 4.6) at `b7318c4`: GO, one P3, taken at `cb62ab5`** — design §3.9 still
+  said MCP has no order-edit tool, the sentence this branch made false;
+  one-line pointer per the review's remedy, prose sweep done (the only other
+  hit is a verbatim-by-rule HANDOFF archive entry). Reply posted at `cb62ab5`;
+  two author slips in the PR body owned and corrected (a 12-vs-13 count, an
+  overclaimed negative-control shape). CI green at `b7318c4`; docs-only
+  `cb62ab5` run pending at amend time. Live and still true:
+  **#86 at `dfa7f29` owes its Codex round** and gates #44/#77/#87/#90, #95,
+  #110, #112; #114 is M5.1-shaped; #104/#98/#99/#53/#54/#61/#63/#67 → 0.2.8,
+  all clear of #86.
+- **Next:** with #115 merged, **0.2.7 is #95-or-defer + the #86 gate** — nothing
+  else in the milestone can move without #86. The 0.2.8 list is open ground.
 
-## 2026-08-19 — Claude Code (Fable 5) — HANDOFF.md capped at five; `.agents/` created; #105 merged
+## 2026-08-20 — Claude Code (Fable 5) — #94 + #96 closed: PR #113 merged as `93ec9cc` after one Cursor round; #112 + #114 filed
 
-- **Done:** the hand-off log and `AGENTS.md` were costing ~45k tokens per session
-  start (181 KB / 43 entries + 25 KB), a fifth of a 256K context before any code.
-  **Step 1 on `main` (`07f99e1`):** `HANDOFF.md` keeps the five most recent
-  entries; the other 38 moved verbatim to `.agents/handoff/2026-08.md` (verified
-  byte-identical on both sides of the split). The header carries the rotation
-  rule, a ~60-line entry cap, "the newest entry is self-sufficient about live
-  state", and the grep recipe. `AGENTS.md` protocol/layout and `docs/design.md`'s
-  pointer updated. **Step 2 is PR #105, merged as `50f7c41`** after one Copilot
-  round (one pointer-text nit, fixed as a class of three): `AGENTS.md` trimmed to rules with pointers (25.2 → 22.4 KB);
-  `.agents/lessons.md` (case histories harvested from `AGENTS.md` and all 43
-  entries, append-only, stable headings); `.agents/testing-and-review.md`
-  (procedure, edited in place: suites, regression checklist, concurrency
-  patterns, mutation harness, CI, reviewer routing, answering a review, release
-  gate). `.agents/README.md` describes the directory.
-- **Decisions (owner's, 2026-08-19):** `.agents/` not `docs/` — `docs/` is
-  user-facing; five entries; lessons live beside the archive; a *separate*
-  procedure doc because procedure is overwritten and lessons are appended, and
-  one file would refill the way `HANDOFF.md` did. Mine: no harness-specific
-  rule-loading (`.cursor/rules`, Claude `@import`, nested `AGENTS.md`) — plain
-  links plus "read X before Y" work identically in all three harnesses and one
-  copy can't drift. `AGENTS.md` still holds ~86 lines of architecture rules;
-  cutting those further is the owner's call, not done.
-- **State:** no application code changed, no tests run. `main` is `07f99e1` plus
-  this entry — the **first rotation**, which moved the 2026-08-17 #82/#88 entry
-  to the top of `.agents/handoff/2026-08.md` — plus `50f7c41` (#105). **PR #106
-  open** (`docs/design-catch-up`, docs only): `docs/design.md` catches up on the
-  write gate (§3.9), the export snapshot (§12.1/12.3), the #94/#96 decisions
-  (§3.1) and the hardening milestones (§11) — none of it touched by #49, but two
-  of them were owner decisions living only on issues and in the archive. The only
-  other branch is `fix/44-import-order-invariants` (PR #86, untouched, still the
-  0.2.6 blocker). Live from the previous entry and
-  still true: #86 gates #44/#77/#87/#90; **#104** is filed into 0.2.8; #97 → 0.2.7,
-  #98/#99 → 0.2.8; a stray local `pr-102-review-ref` branch was already gone.
-- **Next:** merge **#106**, then the previous entry's Next stands: **#49**
-  (retailer LIKE wildcards) is the remaining 0.2.7 item clear of #86 — read #86's
-  importer name-matching first, since #49's point is making all three
-  normalisations agree. From now on, an entry ends by rotating if it made six.
+- **Done:** **#94 + #96 closed — PR #113 squash-merged as `93ec9cc`**, branch
+  deleted, on the owner's call after one Cursor round (Grok 4.6) at `523deed`:
+  GO, P2-1 + P3-1, both taken at `8928f3e`; CI green at every head. No second
+  round: both remedies were the reviewer's own prescription, verified red-first
+  and one-site-mutated (the #109/#111 precedent). P2-1: the
+  #112 caveat omitted `series` from its own dropped-field list — one docs
+  sentence. P3-1: blank/whitespace series stored and served by /kits/series —
+  `_normalize_series` on both write paths (blank → null, values trimmed,
+  matching parse_text) plus a `names.WHITESPACE` btrim guard on the distinct
+  values; two tests red-first at `523deed`, three fix sites one-site-mutated.
+  Also took the review's two pins (re-completion mirror; MCP naive build date)
+  and filed **#114** (naive CSV dates read as midnight UTC — the class behind
+  the starter sheet's date columns; M5.1-shaped). Reply posted at `8928f3e`.**
+  Five separable commits: one additive hand-checked migration (three nullable
+  `kits` columns, **no backfill** per #94's decision); #94 — `stamp_build_date`
+  in `services/kits.py`, called by both live status writers (`update_kit`,
+  `receive_order`'s advance), stamps only-when-null and never against an
+  explicit value in the same request; importer and creation never derive
+  (rule 10 by analogy; cell states keep absent=keep / blank=clear /
+  populated=overwrite over a stored date); #96 — free-text `series`,
+  `GET /kits/series` + MCP `list_kit_series` (most-frequent-first) feeding the
+  kit form's datalist (`staleTime: 0`, the #49/#108 rule), `series=` filter on
+  service/REST/MCP with the #49 fold; spec.py + starter sheet + docs updated.
+  On owner feedback the Kits table now shows **Started/Completed** columns
+  (elapsed days inline) and dropped the `status_updated_at` "Since" column;
+  kit-side arrival date **considered and deferred** (recorded in design §3.1 —
+  derivable only via the spawning order; lives on the order side for now).
+  **#112 filed**: the starter sheet's retailer-bearing rows silently drop every
+  kit-only field (`rating`, `build_notes`, now the three new ones) — proven via
+  `expand()`; fix leans on the hybrid dispatch #86 is re-deciding, so sequenced
+  after #86; disclosed in import-export.md meanwhile.
+- **Decisions (on the PR as "Deliberate calls"):** stamp-only-when-null incl.
+  re-completion; creation never derives; **no cross-field validation** (user
+  owns the values; a service check would diverge from the importer); the
+  browser series *filter* is client-side while the form typeahead uses the
+  endpoint; `/kits/series` declared before `/{kit_id}` (route test pins it).
+- **State:** backend **742** (713 + 19 `test_build_dates.py` + 10
+  `test_series.py`), vitest 109, e2e 20 against a DB migrated from empty, all
+  zero after; ruff/oxlint/builds clean. Negative control: **24 red / 1 green
+  of 25 on unfixed `main`** (re-measured by the reviewer); round 1's four
+  additions split 2 red (P3-1) / 2 green (pins) against `523deed`, stated in
+  the PR body. **Worktree trap, learned:** `plamotrack_test`
+  migrated to a branch head makes `main`'s conftest downgrade explode — drop the
+  DB first; the Cursor brief warns about it. No mutants in the harness (#86's
+  file); five hand-mutant tuples with once-matching anchors are in the brief,
+  queued for the fold-in with #109's and #111's. **Cursor brief for #113 is in
+  this session's scratchpad** (`cursor-brief-113.md`), handed to the owner —
+  round complete — GO, answered. Live and still true: **#86 at `dfa7f29` owes its Codex
+  round** and gates #44/#77/#87/#90; #104/#98/#99 → 0.2.8; #110, #112 and #114
+  unmilestoned. Dev servers may be running on :8000/:5173 (this branch).
+- **Next:** clear of #86, 0.2.7 has only **#97** left (MCP `update_order` /
+  `get_order` — reuse `OrderUpdate` so #111's `received_at` correction and any
+  later fields flow in like `_KitPatch` does for kits; the line-set-replacement
+  foot-gun is the design question on the issue). **#95 needs #86** (its importer
+  half mirrors the arriving-receipt question), so 0.2.7's release gate is #86
+  itself unless the owner defers #95. Clear-of-#86 beyond the milestone: the
+  whole 0.2.8 list (#104 keyboard picker, #98, #99, #53, #54, #61, #63, #67);
+  #114 is M5.1-shaped. Waiting on #86: #95, #110, #112, and the mutant fold-ins
+  (#109's 17, #111's 6, #113's 8).
 
-## 2026-08-19 — Claude Code (Opus 5) — #51 merged; backlog triaged; #104 filed
+## 2026-08-20 — Claude Code (Fable 5) — #93 closed: PR #111 merged as `322afe9` after one Cursor round
 
-- **Done:** **#51 merged** (PR #103, squashed as `278f395`) — dialogs and the
-  order disclosure are keyboard-operable. `main` carries 534 backend tests, 100
-  frontend unit tests and 17 e2e. All three untriaged issues from the previous
-  session were milestoned: **#97 → 0.2.7** (after #93/#95, which add fields its
-  tool would otherwise be widened for), **#98 and #99 → 0.2.8**, with a note on
-  #98 that #99 folds into it. **#104 filed** into 0.2.8, found while fixing #51.
-- **Decisions:**
-  - **The focus trap is hand-written in `Modal.tsx`,** not Radix or Headless UI.
-    That was #51's own argument and it held: the whole thing is a selector list
-    and about thirty lines. Revisit only as a deliberate dependency decision.
-  - **The dialog is portalled to `<body>`.** `inert` goes on `#root`, and a
-    dialog rendered inside the subtree it inerts would disable itself. All seven
-    `Modal` call sites put the form *inside* the modal, so nothing moved out of a
-    form.
-  - **Initial focus lands on the dialog, not its first control** — the close
-    button is first in DOM order, and focusing it announces "Close" as the first
-    thing a screen-reader user hears about a form they just opened.
-  - **A `MutationObserver` recaptures focus**, guarded on
-    `activeElement === document.body`, watching `childList` plus
-    `attributeFilter: ["disabled", "hidden"]`. Every entry there is measured, not
-    reasoned: removing *or disabling* the focused node drops focus to `<body>`
-    and fires no `blur` and no `focusout`, so nothing event-driven sees it;
-    `inert` and `display: none` leave `activeElement` on the node and so can
-    never satisfy the guard. `hidden` is in the filter and is **not** covered by
-    a test — nothing in the app sets it on a focused node. Declared, not implied.
-  - **Milestone triage used the milestones own criteria**, not feel: 0.2.8 is
-    defined as items neither corruption paths nor coupled to the workflow work,
-    which is what put #97 in 0.2.7 and the rest in 0.2.8.
-- **State:** no migrations in any of this. `fix/44-import-order-invariants`
-  (PR #86) remains the only other branch and is untouched — every branch this
-  session was picked for not overlapping it.
-- **Next:** #86 still gates all of 0.2.6 (#44, #77, #87, #90 all live in the
-  files it rewrites). The remaining 0.2.7 item clear of it is **#49** (retailer
-  LIKE wildcards) — read #86's importer name-matching first, since the point of
-  #49 is making all three normalisations agree.
+- **Done:** **#93 closed — PR #111 squash-merged as `322afe9`**, branch deleted,
+  on the owner's call after one Cursor round (Grok 4.6) at `1ae9c4d`: GO, one P3,
+  taken at `a78ce76`; CI green at both heads. P3-1: the UTC-12 test could
+  not kill the `now(tzinfo)` → `now(UTC)` mutant at any hour (a behind offset's
+  calendar date is never ahead of UTC's — the brief's "last second" claim was
+  wrong, owned on the thread). Fix: a pinned-clock test (monkeypatched
+  `app.services.orders.datetime`, frozen 2026-08-20T20:00Z) driving an honest
+  "today in UTC+14 while UTC is on yesterday's date"; written red against the
+  live mutant (`422 == 200`), green on restored production code; production
+  check unchanged. Reply posted at `a78ce76`; PR body corrected (a negative-
+  control red was mislabelled — it reds on the kit≠order microsecond stamp gap)
+  and now carries the 5 `rcpt-` mutant tuples in a collapsed block for the #86
+  fold-in. Design §3.9 gained the reviewer's Board-ordering cost sentence
+  (an accepted behind-offset "today" can sit atop Backlog ~36 h). The
+  REST/import stamp divergence the review confirmed was commented onto PR #86
+  — importer-spawned kits on a received order still stamp now, by design;
+  whether they should borrow `orders.received_at` is #86's decision. Entry takes an
+  optional `received_at` (schema-refused without `received=true`); the receive
+  route takes an optional `OrderReceive` body (absent / `{}` / explicit null =
+  now, unchanged); `PATCH /orders/{id}` corrects an **already-set** date only —
+  409 on a pending order (the transition stays in `receive_order` under its
+  lock), explicit null refused. Kits a receipt lands in backlog are stamped with
+  the order's instant — at receive, at received-at-entry create, and when a line
+  edit spawns into an already-received order (previously server-now). A
+  correction restamps exactly the kits whose stamp equals the old receipt; kits
+  moved since keep their own. MCP `create_order` + `mark_order_received` gained
+  `received_at` (offset required, friendly ToolErrors). Browser: receive is now
+  a dated dialog (today = no body, server stamps the moment), the create
+  checkbox reveals an inline date, edit of a received order gets "Received on"
+  sent only when dirty. Helpers `isoToLocalDateInput`/`localMidnightISO` in
+  `lib/format.ts` write the browser's offset out, never folded to Z. Docs:
+  design §3.9 "Backdatable receipts" block, §7 signatures, README tool row.
+  No migration; importer deliberately untouched (rule 10, #86's file).
+- **Decisions (all flagged on the PR):** the future is refused as a calendar
+  date judged in the instant's **own offset** (service 422) — an instant-vs-
+  server-clock compare refuses an honest "today" over skew; a receipt earlier
+  than `order_date` is deliberately allowed (plain date vs timestamptz is not
+  comparable across unknown time zones); naive datetimes refused everywhere;
+  the interim no-instance-tz decision is recorded in §3.9 for M5.1 (#23/#27).
+  Kits asserted building/complete at entry keep entry-time stamps.
+- **State:** backend **713** (684 + 29 in `tests/test_receipt_dates.py`), vitest
+  109 (+9 `dates.test.ts`), e2e 20 (+`receive-backdate.spec.ts`), e2e verified
+  against a DB migrated from empty, all tables zero after. Negative control:
+  **23 red / 6 green on unfixed `main`** (re-measured at `a78ce76`), the 6 being
+  compatibility controls (named in the PR body). Mutants: 5 hand-run tuples in
+  the PR body (`rcpt-` prefixed, anchors verified to match once) — they join
+  the fold-in queue with #109's 17 once #86's harness lands. GitHub
+  runners recovered from the 2026-08-19 outage; every #111 run green. Live
+  and still true: **#86 at `dfa7f29` owes its Codex round** and gates
+  #44/#77/#87/#90; #104/#98/#99 → 0.2.8; #110 unmilestoned. Stale worktrees
+  `/private/tmp/plamotrack-pr100` and `-pr108-main` remain, not this session's,
+  left alone.
+- **Next:** 0.2.7's remaining items clear of #86: **#94 + #96** (one branch, one migration,
+  separate commits; both touch `spec.py` AND the hand-curated
+  `STARTER_SHEET_COLUMNS`), **#95** after #86 (its importer half mirrors #86's
+  arriving-receipt question), **#97** last — its order-edit tool should carry
+  `received_at` so MCP gains the correction path #111 leaves REST/browser-only.
 
-### The reviews are finding things the tests do not — five for five
+## 2026-08-20 — Claude Code (Fable 5) — #107 closed: PR #109 merged as `c177ea6` after one Cursor round; #110 filed; review-brief template landed
 
-Three review rounds on #103 alone, and every finding was real. Two changed the
-code rather than the tests, and neither would have been caught by anything here:
+- **Done:** **#107 closed — PR #109 squash-merged as `c177ea6`**, branch deleted,
+  on the owner's call after one Cursor round (CI all green at `486e14c`, the last
+  code commit; the final docstring-only head was caught in the runner outage
+  below, and `main` has no protection). **Cursor round 1 (Grok 4.6) at `49c1a9f`: GO, two
+  P3s, both taken at `486e14c`** — P3-1: plain `btrim` trims `0x20` only, so a
+  legacy row padded with tab/NBSP/U+3000 was two keys here and one to the
+  importer; the trim set is now `names.WHITESPACE`, generated from `str.isspace()`
+  at import (exactly `str.strip()`'s set), handed to `btrim(text, text)`. P3-2: the
+  race test is pinned (holder takes the gate, both POSTs launched, wait on
+  `pg_stat_activity` for both parked, release) — o5 killed deterministically.
+  Drive-bys owned: I had miscounted the negative control (74 not 70 red) and the
+  mutant table (16 rows under "17"; n1b makes it 17), and a regenerated tuple in
+  the PR body was corrupted; all corrected, every anchor now checked to match once.
+  "an upgrade" not "a upgrade". Reply posted at `d1d051d`; Turkish-`İ` addendum
+  (importer key ≠ Postgres key, the reverse direction) commented on **#110**.
+  **#110 filed** — the importer sibling, unmilestoned, owner's call.
+  `services/names.py` is the predicate written once —
+  `lower(btrim(name, WHITESPACE))` on both sides in Postgres, per #49 — plus
+  `clean_name` (stored trimmed; whitespace-only → 422) and `require_unique_name`
+  (409 naming the row and its id; own id excluded on a rename). Six sites, all
+  after the write gate:
+  `create_retailer`, `update_retailer`, the three catalog creates (one insert now),
+  `update_catalog_item`, and `_build_catalog_row` (async) for `new_item` at entry
+  and on edit. `get_or_create_retailer` reads through the same `find_by_name`, so
+  `create_order` reuses exactly what `create_retailer` refuses. MCP docstrings and
+  instructions updated; design §3.9/§7/§12.4 and import-export.md too. Browser
+  untouched (forms already render `detail`). No migration.
+- **Decisions:** refuse not merge (issue option 1); trim on store and refuse blank
+  (not in the issue's text, follows from defining the key — said on the PR); two
+  `new_item` lines naming one thing in one request 409 and roll the order back
+  (declared, tested); the 409 carries the uuid (for agents; droppable). Importer
+  **deliberately untouched** (#86's file) — probed, not assumed: an id-less
+  in-upload pair is already an error row, an id-less match is an update; only a
+  fresh *id-bearing* pair still lands, by design for round-trips → #110.
+- **State:** backend **684** (556 + 128 in `tests/test_name_uniqueness.py`), ruff
+  clean, frontend untouched. Negative control in a worktree: **99 red / 29 green on
+  unfixed `main`**, the 29 being the controls. **17 single-site mutants killed**
+  (n1b new) — run through a scratch copy of the harness because `mutation_test.py`
+  is mid-rewrite on #86; the 17 tuples are in the PR body (collapsed block) for
+  folding in once #86 lands. Two existing helpers that created one name twice now
+  suffix it; `test_two_retailers_with_one_name_still_round_trip` seeds through the
+  session. **`.agents/review-brief.md` landed on `main` (`d2180ef`)** — the
+  fill-in template for briefing Cursor / Codex / Claude, pointed at from
+  `testing-and-review.md` → "Briefing a reviewer"; use it for the next round
+  instead of writing a brief from memory. CI: GitHub's runners have been hanging in
+  `playwright install --with-deps` since ~15:12 UTC on every job, including
+  docs-only commits — external; jobs self-cancel at the 25-minute timeout; re-kick,
+  don't debug. Live and still true: **#86 at `dfa7f29`
+  owes its Codex round** and gates #44/#77/#87/#90; #107 → 0.2.7; #104/#98/#99 →
+  0.2.8. Worktrees `/private/tmp/plamotrack-pr100` and `-pr108-main` still stale,
+  left alone; this session's `-107-main` removed.
+- **Next:** fold the 17 mutant tuples from #109's PR body into `mutation_test.py`
+  once #86's version of the harness lands (they are in a collapsed block there,
+  anchors verified at `d1d051d`). Then 0.2.7's remaining items clear of #86: **#93**
+  (backdatable `received_at` — must backdate the kits it advances),
+  **#94 + #96** (one migration, separate commits; importer needs no logic change
+  because it must not invent timestamps), **#95** after #86 (its importer half
+  mirrors #86's arriving-receipt question), **#97** last.
 
-- **A focus trap that lets focus reach `<body>` is not trapping.** Tabbing off
-  the picker input lands on a result button that then unmounts underneath — an
-  ordinary keyboard path, not a contrivance. Filed as **#104**, because the
-  picker's own defect is that a keyboard cannot select a result at all.
-- **The suite passed against an observer with no guard**, i.e. one that steals
-  focus on every mutation and makes the forms untypeable. Every assertion was
-  `inDialog`, and focus already inside the dialog satisfies that. The lesson
-  generalises past this file: **an assertion about containment cannot see a
-  mechanism that moves things within the container.** Assert the named control.
+## 2026-08-19 — Claude Code (Fable 5) — #86 pre-round: `main` merged in, harness false-kill fixed, two defects closed, authority rule changed
 
-Two of the three test-writing mistakes this session were mine and were the same
-mistake — a green run that came from the environment rather than the code:
-
-- The disclosure test read whichever order was on the page. Fine against a dev
-  database with twenty; nothing to find in CI, which starts empty. **Verify e2e
-  against a database migrated from empty** — stand one up, point the API at it,
-  and check the tables are empty again afterwards. It has now caught two of these.
-- `--repeat-each` is not a way to measure flakiness: it reuses one module load,
-  so every repeat shares the fixture name and stacks duplicates.
-
-And one about the harness: `mutation_test.py`-style scripting **races Vite's
-recompile** on frontend files. A mutant reported as surviving needs a manual
-re-run before it is believed. The backend equivalent has no such race.
-
-## 2026-08-18 — Claude Code (Opus 5) — #50 and the #100 review follow-ups merged
-
-- **Done:** three PRs merged to `main`, all squashed, all reviewed by Cursor Grok
-  4.6 before merge. **#100** (#92 + #55, the rule-1 write-surface sweep), **#101**
-  (#50, board move ordering), **#102** (the three P3s from #100's review). `main`
-  is at `2dba040`: 534 backend tests, 100 frontend unit tests, 11 e2e. Issues #92,
-  #55 and #50 are closed. **#97, #98, #99** were filed from the #100 sweep and are
-  **unmilestoned on purpose** — placing them is the owner's call.
-- **Decisions:**
-  - **Board move serialisation** is a TanStack `scope`, board-wide, in a new
-    `frontend/src/lib/kitStatusMutation.ts`. The policy left `BoardPage` so it
-    could be tested at all — see below. First options-factory module in this repo.
-  - **Boolean refusal lives on the `Annotated` aliases** in
-    `backend/app/schemas/numeric.py`, not on any route. A `BeforeValidator`
-    rejecting only `bool`, deliberately not `strict=True`, which would also refuse
-    `"5"`. **It must be ordered after `Field(...)`**: first, it wraps a bare `int`
-    and the constraints serialize as raw `ge`/`le`, so the bound silently
-    disappears from the published OpenAPI while still being enforced at runtime.
-    The int4 contract test caught that; the ordering now carries a comment.
-  - **`Rating` is an alias too**, in the same file, even though 1–5 is a product
-    rule rather than an int4 bound. Being declared anywhere else is exactly how it
-    became the one write integer that still took a boolean.
-  - **`data-testid="stock-count"`** is the first test id in the repo (#100).
-- **State:** no migrations anywhere in this batch. `fix/44-import-order-invariants`
-  (PR #86) is untouched — all three branches were chosen for not overlapping it.
-  A stray local branch `pr-102-review-ref` exists from Cursor's review; its content
-  is in `main` and it can be deleted.
-- **Next:** #86 is still the blocker for 0.2.6 — #44, #77, #87 and #90 all live
-  inside the files it rewrites. Remaining 0.2.7 work clear of it: **#51** (dialog
-  focus trap) and **#49** (retailer LIKE wildcards — read #86's importer
-  name-matching first, since #49's point is making all three normalisations agree).
-
-### Two things worth carrying forward, both learned the expensive way
-
-- **An e2e test could not tell the #50 fix from the #50 defect.** dnd-kit's
-  `DragOverlay` swallows a `pointerdown` that arrives before the previous drop
-  animation finishes, so the second drag never started — one request, in order,
-  which is exactly what correct serialisation looks like. It was also
-  observer-sensitive: a `console.log` in the drag handlers flipped it from failing
-  to passing, and it measured 1 pass in 5 in fresh processes. Deleted rather than
-  shipped, and the policy was extracted so the mutation could be driven directly.
-  **`--repeat-each` is not a way to measure flakiness here** — it reuses one module
-  load, so every repeat shares the fixture name and stacks duplicates. That cost a
-  round of wrong numbers before the real one.
-- **Both reviews found a partial sweep, in branches whose whole point was
-  sweeping.** #101's rollback justification was self-contradictory — `scope` pauses
-  `mutationFn`, not `onMutate`, so a failed move overwrote a later queued move's
-  optimistic state, and the branch's own test asserted the behaviour that
-  disproved the comment. #102 fixed three of the four integer families and missed
-  `rating`, which has its own bounds and so never appeared in the contract test.
-  Both suites were green over the defect. The axis that keeps going unvaried is not
-  values — it is *which of several equivalent places the fix actually reached*, so
-  mutate the places one at a time, not the fix as a whole.
-
-## 2026-08-18 — Claude Code (Opus 5) — #92 + #55 as one rule-1 sweep; PR #100 open
-
-- **Done:** closed the write-surface divergence in both directions on
-  `feat/92-55-write-surface-parity` (`9f4a269`, pushed). **PR #100 is open against
-  `main`, CI green on all three jobs.** MCP gains `update_kit`, `list_retailers`,
-  `create_retailer`, `update_retailer` and one catalog editor per table; REST gains
-  `POST /catalog/{id}/adjust` plus a −/+ stepper on the inventory rows. 521 backend
-  tests, 11 e2e, no migration. Filed the rest of the class as **#97** (`update_order`,
-  `get_order`), **#98** (`create_kit`, the three catalog creates, `list_catalog`) and
-  **#99** (`create_order`'s docstring names a `meta` resource that was never built).
-  All three are **unmilestoned on purpose** — placing them is the owner's call.
-- **Decisions:**
-  - **Three catalog-edit tools, not one dispatching on `item_type`** — a deviation
-    from what #92 proposed. `adjust_stock`, the analogy the issue reached for, takes
-    no `item_type` at all, and REST's own shape here is three PATCH routes. One tool
-    needs a patch model spanning all three tables' columns: a hand-maintained union
-    #94 and #96 would each have to be added to twice. It also removes an edge —
-    `ItemType.KIT` is a valid enum value naming no catalog table, so a dispatcher
-    would `KeyError` into a 500. Named `update_catalog_*`, since "tool" is already
-    taken inside an MCP client.
-  - **`update_kit_status` kept, not renamed.** Removing a tool a client may have
-    wired is a visible break; it is the documented status-only shortcut now, pinned
-    by a test to the same service call so the two cannot drift into two
-    implementations.
-  - **Edit tools take a patch object, not one optional argument per field.** An MCP
-    tool is a function signature, so the flat spelling cannot tell "leave the notes
-    alone" from "erase the notes" — both arrive as `None`. Taking the REST route's
-    own `*Update` schema keeps `model_fields_set`, so absent and null mean the same
-    on both surfaces. `_KitPatch` subclasses `KitUpdate` and overrides only `status`,
-    so #94's and #96's columns reach the tool with no second edit.
-  - **The adjust route lives on `/catalog`,** not `/inventory/{type}/{id}` — the
-    service resolves the id across the three tables itself, as the search does.
-  - **First `data-testid` in the repo** (`stock-count`). The stepper made the "on
-    hand" cell read `"0−+"`, breaking `happy-path.spec.ts`. `toContainText` on the
-    cell is not a substitute: `"10"` contains `"0"`. Flagged in the PR for review.
-- **State:** `main` untouched by the feature work — everything is on the branch and
-  in PR #100. Seven mutants (naive-kwargs on each of the three patch paths,
-  always-restamp, wrong `ItemType`, negated delta, dropped reason) were run **by
-  hand** and all killed; they are deliberately **not** in `mutation_test.py`, which
-  PR #86 rewrites. Worth adding there once #86 lands. `test_int4_bounds.py` no longer
-  claims `adjust_stock` has no REST route and drives both doors.
-- **Next:** #86 is still the blocker for 0.2.6 — all four of its remaining issues
-  (#44, #77, #87, #90) live inside the files that PR rewrites, so nothing there is
-  startable first. This branch was picked for touching **none** of #86's files, so
-  the two should merge in either order. Remaining 0.2.7 work with no #86 overlap:
-  #50 (board move ordering — worth landing before #94, which makes a lost update
-  worse), #51 (dialog focus trap), #49 (retailer LIKE wildcards, but read #86's
-  importer name-matching first — #49's point is making all three normalisations
-  agree).
-
+- **Done:** owner asked for a same-family pre-round on **#86** to make the next
+  Codex round cheaper (not to replace it). Branch head is **`dfa7f29`**, pushed;
+  two comments posted (at `e8cd2b3`, then `dfa7f29`). (1) `main` merged forward
+  (`aefaecc`, clean). (2) **The mutation harness reported 13 mutants killed that
+  never ran** (`fd8d195`): pytest exits 5 when `-k` deselects everything, read as
+  RED; the merge at `5c0963b` had unioned the case sets under this branch's two
+  target files. `TEST_FILES` is all three files; exit 5 reports `NONE`, counts as
+  surviving. (3) **Defect:** a mistyped `order_item_id` on one kit in a pristine
+  archive → 200, kit detached (#82 nulls a dangling optional ref) and a
+  replacement spawned. `_refuse_unresolved_overwrite` in `_classify` (`43b947c`,
+  `e8cd2b3`): an unresolvable optional REF may not clear a stored non-null link;
+  also speaks first for a mistyped `catalog_ref_id` on a stored catalog line.
+  (4) The arriving-receipt message offered a remedy the check never reads
+  (`7c0dc55`). (5) **Owner's call, design question A taken (`5b1ccdd`):** a line
+  is reconciled only where the upload *writes* its quantity (`_writes_quantity`:
+  create, or `quantity` in `changes`), and the kit-move refusal reads only rows
+  that *move* a kit. A restated archive line no longer authorises a delete or a
+  spawn; a drifted archive merge re-imports as a no-op. Reverses round one's
+  "any stated quantity" — flagged as such on the PR. Two tests re-driven where the
+  change had shadowed their mutants (`2c7c082`, `5b19290`; the refusal's `present`
+  guard is live only on a drifted line). (6) Docs: import-export states the rule;
+  **operations.md "If you imported CSVs before 0.2.6"** — the drift query and the
+  in-app fix (the order editor reconciles against the actual kit count); design
+  §12.5 records the rule.
+- **Decisions:** B (drift) → docs only, no migration/script: two fixes only a human
+  can pick, and the app already reconciles on save; owner will start the dogfood
+  instance fresh anyway. `test_review_rating_this_upload_writes_protects_provenance`
+  (Codex's embedded reproducer) edited to add a replacement kit — the only review
+  test touched, said on the PR.
+- **State:** 651 backend, ruff clean, **63/63 mutants**, frontend untouched since
+  `e8cd2b3` (build/lint/vitest clean there); e2e via CI. No migration. `main` is
+  `2772cb1` plus this entry (amended in place, same session). Codex budget resets
+  Thursday evening (owner); the round is owed at `dfa7f29`, and both
+  `_refuse_unresolved_overwrite` and `_writes_quantity` are new code with no
+  independent eye — the "where to push next" sections name the seams. Two stale
+  worktrees on this Mac (`/private/tmp/plamotrack-pr100`,
+  `/private/tmp/plamotrack-pr108-main`), not this session's, left alone. Live and
+  still true: #86 gates #44/#77/#87/#90; #107 → 0.2.7; #104/#98/#99 → 0.2.8.
+- **Next:** Codex round on #86 at `dfa7f29` — brief it with both comments' "where
+  to push next" and say A is a reversal it should judge. Then the 0.2.7 list
+  stands: #107, #93, #95, #94 + #96.

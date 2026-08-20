@@ -7,6 +7,7 @@ from app.services import orders
 
 EXPECTED_TOOLS = {
     "list_kits",
+    "list_kit_series",
     "get_kit",
     "update_kit_status",
     "update_kit",
@@ -16,6 +17,8 @@ EXPECTED_TOOLS = {
     "update_retailer",
     "create_order",
     "list_orders",
+    "get_order",
+    "update_order",
     "mark_order_received",
     "adjust_stock",
     "update_catalog_tool",

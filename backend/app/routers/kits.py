@@ -15,8 +15,17 @@ async def list_kits(
     session: SessionDep,
     status: KitStatus | None = None,
     grade: str | None = None,
+    series: str | None = None,
 ):
-    return await kits_service.list_kits(session, status=status, grade=grade)
+    return await kits_service.list_kits(session, status=status, grade=grade, series=series)
+
+
+# Declared before /{kit_id} so the literal segment wins over the uuid parameter.
+@router.get("/series", response_model=list[str])
+async def list_kit_series(session: SessionDep):
+    """Distinct series values in use, most frequent first — feeds the kit form's
+    typeahead so free text stays de-duplicated in practice (#96, §3.9 spirit)."""
+    return await kits_service.list_kit_series(session)
 
 
 @router.post("", response_model=KitRead, status_code=201)

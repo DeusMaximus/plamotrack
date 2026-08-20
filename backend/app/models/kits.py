@@ -17,6 +17,10 @@ class Kit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     grade: Mapped[str]
     scale: Mapped[str | None]
     kit_number: Mapped[str | None]
+    # Which series the subject is from ("Iron-Blooded Orphans"). Free text like
+    # grade/scale — user-extensible, no registry (#96); a distinct-values endpoint
+    # feeds the typeahead so near-miss spellings stay rare rather than impossible.
+    series: Mapped[str | None]
     status: Mapped[KitStatus] = mapped_column(
         text_enum(KitStatus, "kit_status"), default=KitStatus.BACKLOG, index=True
     )
@@ -24,6 +28,15 @@ class Kit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         DateTime(timezone=True), server_default=func.now()
     )
     rating: Mapped[int | None]
+    # When the build started / was declared finished (#94). Nullable, owned by the
+    # user: a transition to building/complete stamps one only when it is null, and
+    # both stay editable afterwards — the app records when you told it, and you
+    # correct it to when it actually happened. Deliberately two columns, not a
+    # status-event table, so they measure elapsed time, not active time (§3.1).
+    # Never backfilled by migration: a guessed date is indistinguishable from an
+    # asserted one. The importer never invents them either (rule 10 analogy).
+    build_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    build_completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     build_notes: Mapped[str | None] = mapped_column(Text)
     # Provenance: which order line spawned this kit. Nullable — Backlog kits and
     # direct additions exist before/without any order.

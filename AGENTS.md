@@ -41,10 +41,13 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
   went public at Milestone 4.5 (2026-08-06); `main` is now what strangers clone,
   and outside contributors can open PRs against it. Direct-to-main was a
   private-and-solo convenience and is retired.
-- Exception: session bookkeeping and process docs that exist to be read *between*
-  sessions — `HANDOFF.md` entries and their rotation into `.agents/handoff/`,
-  `AGENTS.md` notes — commit on `main`. Branching a hand-off entry just delays the
-  next agent from seeing it.
+- Exception: session bookkeeping and documentation commit on `main` when they are
+  small — `HANDOFF.md` entries and their rotation into `.agents/handoff/`,
+  `AGENTS.md` notes, a new `.agents/` template or lesson, a pointer. Branching a
+  hand-off entry just delays the next agent from seeing it. The test is size and
+  moving parts, not file type: #105 — the rewrite of `AGENTS.md` plus the creation
+  of `.agents/` — went through a PR because it was a lot of moving parts, and a
+  docs change of that shape should again (owner's call, 2026-08-19).
 - **Commit or push only when the user asks.** Don't take a green test run as
   permission.
 - Anything outward-facing — pushing a tag, cutting a release, changing repo
@@ -108,6 +111,7 @@ HANDOFF.md              # session hand-off log — the five most recent entries 
   handoff/YYYY-MM.md    #   archived HANDOFF.md entries, verbatim; grep it, don't read it
   lessons.md            #   case histories behind the rules — append-only, stable headings
   testing-and-review.md #   procedure: suites, harness, CI, release gate, reviewer routing
+  review-brief.md       #   fill-in template for briefing a reviewer; the PR-body shape it assumes
 ```
 
 ## Dev environment & commands

@@ -114,3 +114,35 @@ export function todayISO(): string {
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
   return now.toISOString().slice(0, 10);
 }
+
+/** The date part of a stored timestamp, on the viewer's own calendar — the same
+ *  calendar `todayISO` reads, so a receipt stamped "now" renders as today. */
+export function isoToLocalDateInput(iso: string): string {
+  const value = new Date(iso);
+  value.setMinutes(value.getMinutes() - value.getTimezoneOffset());
+  return value.toISOString().slice(0, 10);
+}
+
+/** The browser's UTC offset in minutes at local midnight of `date` (yyyy-mm-dd) —
+ *  at that date, not today, so a backdate across a DST boundary keeps the offset
+ *  that was actually in force. */
+function offsetAtLocalMidnight(date: string): number {
+  const [year, month, day] = date.split("-").map(Number);
+  return -new Date(year, month - 1, day).getTimezoneOffset();
+}
+
+/** A picked calendar date as an offset-aware instant: midnight local time with
+ *  the browser's own offset written out, never converted to Z (#93). The server
+ *  judges "is this future?" as a calendar date in the instant's *own* offset, so
+ *  the offset carries the user's meaning — "it arrived on this date, here" —
+ *  and folding it into UTC would shift the asserted date for half the world. */
+export function localMidnightISO(
+  date: string,
+  offsetMinutes: number = offsetAtLocalMidnight(date),
+): string {
+  const sign = offsetMinutes < 0 ? "-" : "+";
+  const magnitude = Math.abs(offsetMinutes);
+  const hours = String(Math.floor(magnitude / 60)).padStart(2, "0");
+  const minutes = String(magnitude % 60).padStart(2, "0");
+  return `${date}T00:00:00${sign}${hours}:${minutes}`;
+}

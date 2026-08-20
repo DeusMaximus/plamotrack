@@ -1,5 +1,7 @@
 """Receive / edit / delete semantics for orders (§3.9 amendments)."""
 
+import uuid
+
 
 def kit_line(quantity: int = 2, name: str = "RX-79[G] Gundam Ground Type") -> dict:
     return {
@@ -618,11 +620,18 @@ async def test_item_type_change_rejected(client, retailer):
 
 async def apply_an_upgrade(client, kit_id: str, quantity: int = 1) -> dict:
     """Spend one upgrade on a kit. That record is what explains where the stock
-    went, so from here the kit cannot be deleted by any route."""
+    went, so from here the kit cannot be deleted by any route.
+
+    A fresh upgrade per call, uniquely named: a catalog name is refused once another
+    row holds it (#107), and one test applies this to two kits."""
     upgrade = (
         await client.post(
             "/upgrades",
-            json={"name": "Metal thrusters", "manufacturer": "Metal Build", "quantity_on_hand": 3},
+            json={
+                "name": f"Metal thrusters {uuid.uuid4().hex[:6]}",
+                "manufacturer": "Metal Build",
+                "quantity_on_hand": 3,
+            },
         )
     ).json()
     resp = await client.post(

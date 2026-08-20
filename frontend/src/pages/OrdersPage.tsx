@@ -25,6 +25,8 @@ import {
   currencyOptions,
   formatDate,
   formatMoney,
+  isoToLocalDateInput,
+  localMidnightISO,
   majorToMinor,
   minorToMajor,
   stepFor,
@@ -66,6 +68,10 @@ interface OrderFormValues {
   tracking_number: string;
   tracking_url: string;
   received: boolean;
+  /** The arrival date (#93). On a create it rides the `received` flag; on an edit
+   *  of a received order it corrects the stored receipt — sent only when dirty,
+   *  because a date-only field can't restate the stored *instant* losslessly. */
+  received_date: string;
   items: LineValues[];
 }
 
@@ -111,6 +117,7 @@ function orderToFormValues(order: Order, catalogName: Map<string, string>): Orde
     tracking_number: order.tracking_number ?? "",
     tracking_url: order.tracking_url ?? "",
     received: order.received_at !== null,
+    received_date: order.received_at === null ? "" : isoToLocalDateInput(order.received_at),
     items: order.items.map((item) => {
       // Read off the order being edited, not a cached kit list. The line can only
       // show one set of kit fields, so it shows the first spawned kit's — the
@@ -490,6 +497,7 @@ function OrderForm({
         tracking_number: "",
         tracking_url: "",
         received: false,
+        received_date: todayISO(),
         items: [emptyLine(referenceCurrency)],
       };
     }
@@ -556,6 +564,13 @@ function OrderForm({
         ? values.items.map((line) => toOrderItem(line, referenceCurrency))
         : undefined,
     };
+    // Correction only, and only when actually touched: a date field can't restate
+    // the stored receipt *instant* losslessly, so an edit that never opened it
+    // must not send it back — round-tripping would flatten a real arrival time
+    // to midnight. Sent as local midnight in the browser's own offset (#93).
+    if (order?.received_at && dirtyFields.received_date && values.received_date) {
+      payload.received_at = localMidnightISO(values.received_date);
+    }
     try {
       if (order) {
         await api.updateOrder(order.id, payload);
@@ -570,6 +585,12 @@ function OrderForm({
           tracking_number: payload.tracking_number,
           tracking_url: payload.tracking_url,
           received: values.received,
+          // Today = "it arrived now": omit the date so the server stamps the
+          // actual moment rather than midnight. A backdate is sent explicitly.
+          received_at:
+            values.received && values.received_date && values.received_date !== todayISO()
+              ? localMidnightISO(values.received_date)
+              : undefined,
           items: payload.items ?? [],
         });
       }
@@ -683,10 +704,38 @@ function OrderForm({
         </div>
 
         {!order && (
-          <label className="flex items-center gap-2 text-sm text-zinc-700">
-            <input type="checkbox" {...register("received")} className="h-4 w-4 accent-indigo-600" />
-            Already in hand (store purchase / delivery arrived) — stock counts immediately
-          </label>
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
+              <input
+                type="checkbox"
+                {...register("received")}
+                className="h-4 w-4 accent-indigo-600"
+              />
+              Already in hand (store purchase / delivery arrived) — stock counts immediately
+            </label>
+            {watch("received") && (
+              <label className="flex items-center gap-2 text-sm text-zinc-700">
+                on
+                <Input
+                  type="date"
+                  max={todayISO()}
+                  {...register("received_date")}
+                  className="w-auto"
+                />
+              </label>
+            )}
+          </div>
+        )}
+        {order?.received_at && (
+          <div className="grid grid-cols-3 gap-3">
+            <Field label="Received on">
+              <Input type="date" max={todayISO()} {...register("received_date")} />
+            </Field>
+            <p className="col-span-2 self-end pb-2 text-xs text-zinc-500">
+              Correcting this re-dates the kits this delivery brought in — unless they have
+              been moved since, in which case they keep their own dates.
+            </p>
+          </div>
         )}
 
         <div className="space-y-2">
@@ -804,25 +853,10 @@ export function OrdersPage() {
       ),
     );
 
-  const receive = async (order: Order) => {
-    const label = retailerName.get(order.retailer_id) ?? "this retailer";
-    if (
-      !window.confirm(
-        `Mark the ${formatDate(order.order_date)} order from ${label} as received?\n\n` +
-          "Catalog stock will be applied and kits still in the ordering pipeline " +
-          "move to Backlog.",
-      )
-    ) {
-      return;
-    }
-    setActionError(null);
-    try {
-      await api.receiveOrder(order.id);
-      await invalidateAll();
-    } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : "Receive failed");
-    }
-  };
+  // Receiving asks for the arrival date (#93), so it gets a real dialog rather
+  // than window.confirm — a store purchase logged tonight arrived today, but a
+  // box unpacked from last week didn't.
+  const [receiving, setReceiving] = useState<Order | null>(null);
 
   const remove = async (order: Order) => {
     const label = retailerName.get(order.retailer_id) ?? "this order";
@@ -964,7 +998,7 @@ export function OrdersPage() {
                     <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
                       <div className="flex justify-end gap-1">
                         {!order.received_at && (
-                          <Button variant="primary" onClick={() => receive(order)}>
+                          <Button variant="primary" onClick={() => setReceiving(order)}>
                             Receive
                           </Button>
                         )}
@@ -1030,6 +1064,80 @@ export function OrdersPage() {
           onClose={() => setModal(null)}
         />
       )}
+      {receiving && (
+        <ReceiveOrderModal
+          order={receiving}
+          retailerLabel={retailerName.get(receiving.retailer_id) ?? "this retailer"}
+          onClose={() => setReceiving(null)}
+          onReceived={invalidateAll}
+        />
+      )}
     </div>
+  );
+}
+
+function ReceiveOrderModal({
+  order,
+  retailerLabel,
+  onClose,
+  onReceived,
+}: {
+  order: Order;
+  retailerLabel: string;
+  onClose: () => void;
+  onReceived: () => Promise<unknown>;
+}) {
+  const [date, setDate] = useState(todayISO());
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      // Today = "it arrived now": no body, so the server stamps the actual
+      // moment. A backdate is midnight local, in the browser's own offset (#93).
+      await api.receiveOrder(
+        order.id,
+        date && date !== todayISO() ? { received_at: localMidnightISO(date) } : undefined,
+      );
+      await onReceived();
+      onClose();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Receive failed");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Modal title="Receive order" onClose={onClose}>
+      <div className="space-y-4">
+        <ErrorBanner message={error} />
+        <p className="text-sm text-zinc-700">
+          Mark the {formatDate(order.order_date)} order from {retailerLabel} as received?
+          Catalog stock will be applied and kits still in the ordering pipeline move to
+          Backlog.
+        </p>
+        <Field label="Received on">
+          <Input
+            type="date"
+            max={todayISO()}
+            value={date}
+            onChange={(event) => setDate(event.target.value)}
+          />
+        </Field>
+        <p className="text-xs text-zinc-500">
+          Defaults to today — pick the actual delivery date when logging one after the fact.
+        </p>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={submit} disabled={busy}>
+            Receive
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }

@@ -246,13 +246,16 @@ issue if yours needs something unusual.
 
 | Tool | What it does |
 |---|---|
-| `list_kits` | Filter by status or grade |
+| `list_kits` | Filter by status, grade or series |
+| `list_kit_series` | Series names already in use — check before writing a new spelling |
 | `get_kit` | One kit, in full |
 | `update_kit_status` | Move a kit along the pipeline |
 | `search_catalog` | Search tools/consumables/upgrades — the same search the UI typeahead uses, so agents hit the same de-duplication a human does |
 | `create_order` | Full order with lines; kits fan out, retailers are matched by name or created |
 | `list_orders` | Optionally pending-only — how an agent finds the order a shipping email belongs to |
-| `mark_order_received` | Applies stock, advances that order's kits to backlog |
+| `get_order` | One order in full — the read an edit starts from |
+| `update_order` | Correct an order: header fields and/or the line set; refuses to silently drop lines you didn't restate |
+| `mark_order_received` | Applies stock, advances that order's kits to backlog — with an optional arrival date, for deliveries logged after the fact |
 | `adjust_stock` | Nudge a quantity, with a reason |
 | `apply_upgrade` | Record an upgrade part going onto a kit |
 

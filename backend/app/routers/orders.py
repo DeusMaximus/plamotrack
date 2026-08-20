@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter
 
 from app.db import SessionDep
-from app.schemas.orders import OrderCreate, OrderRead, OrderUpdate
+from app.schemas.orders import OrderCreate, OrderRead, OrderReceive, OrderUpdate
 from app.services import orders as orders_service
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -34,10 +34,14 @@ async def update_order(order_id: uuid.UUID, data: OrderUpdate, session: SessionD
 
 
 @router.post("/{order_id}/receive", response_model=OrderRead)
-async def receive_order(order_id: uuid.UUID, session: SessionDep):
+async def receive_order(order_id: uuid.UUID, session: SessionDep, data: OrderReceive | None = None):
     """Mark the order arrived: applies catalog stock increments and moves kits
-    still in the ordering pipeline to backlog (in hand, unbuilt)."""
-    return await orders_service.receive_order(session, order_id)
+    still in the ordering pipeline to backlog (in hand, unbuilt). The optional
+    body backdates the arrival (`received_at`, offset-aware ISO 8601); no body
+    means it arrived now."""
+    return await orders_service.receive_order(
+        session, order_id, received_at=data.received_at if data else None
+    )
 
 
 @router.delete("/{order_id}", status_code=204)

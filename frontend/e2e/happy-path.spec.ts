@@ -56,9 +56,12 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   // which `toContainText` on the cell would not be — "10" contains "0".
   await expect(markerRow.getByTestId("stock-count")).toHaveText("0");
 
-  // Receive (confirm dialog auto-accepted)
+  // Receive — a dialog now (#93): the date defaults to today, so confirming
+  // without touching it is the old one-click flow.
   await page.goto("/orders");
   await orderRow.getByRole("button", { name: "Receive" }).click();
+  const receiveDialog = page.getByRole("dialog", { name: "Receive order" });
+  await receiveDialog.getByRole("button", { name: "Receive" }).click();
   await expect(orderRow.getByText("Received")).toBeVisible();
 
   // Stock applied…
