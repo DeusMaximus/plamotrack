@@ -41,10 +41,25 @@ Template:
 
 ---
 
-## 2026-08-20 — Claude Code (Fable 5) — #93 implemented: PR #111 open at `1ae9c4d`
+## 2026-08-20 — Claude Code (Fable 5) — #93: PR #111 through Cursor round 1 (GO), P3-1 taken at `a78ce76`; awaiting merge call
 
 - **Done:** **#93 (backdatable `received_at`) implemented on
-  `feat/93-backdatable-received-at`, PR #111 open at `1ae9c4d`.** Entry takes an
+  `feat/93-backdatable-received-at`; PR #111 open, head `a78ce76` after one Cursor
+  round (Grok 4.6) at `1ae9c4d`: GO, one P3, taken.** P3-1: the UTC-12 test could
+  not kill the `now(tzinfo)` → `now(UTC)` mutant at any hour (a behind offset's
+  calendar date is never ahead of UTC's — the brief's "last second" claim was
+  wrong, owned on the thread). Fix: a pinned-clock test (monkeypatched
+  `app.services.orders.datetime`, frozen 2026-08-20T20:00Z) driving an honest
+  "today in UTC+14 while UTC is on yesterday's date"; written red against the
+  live mutant (`422 == 200`), green on restored production code; production
+  check unchanged. Reply posted at `a78ce76`; PR body corrected (a negative-
+  control red was mislabelled — it reds on the kit≠order microsecond stamp gap)
+  and now carries the 5 `rcpt-` mutant tuples in a collapsed block for the #86
+  fold-in. Design §3.9 gained the reviewer's Board-ordering cost sentence
+  (an accepted behind-offset "today" can sit atop Backlog ~36 h). The
+  REST/import stamp divergence the review confirmed was commented onto PR #86
+  — importer-spawned kits on a received order still stamp now, by design;
+  whether they should borrow `orders.received_at` is #86's decision. Entry takes an
   optional `received_at` (schema-refused without `received=true`); the receive
   route takes an optional `OrderReceive` body (absent / `{}` / explicit null =
   now, unchanged); `PATCH /orders/{id}` corrects an **already-set** date only —
@@ -68,20 +83,21 @@ Template:
   comparable across unknown time zones); naive datetimes refused everywhere;
   the interim no-instance-tz decision is recorded in §3.9 for M5.1 (#23/#27).
   Kits asserted building/complete at entry keep entry-time stamps.
-- **State:** backend **712** (684 + 28 in `tests/test_receipt_dates.py`), vitest
+- **State:** backend **713** (684 + 29 in `tests/test_receipt_dates.py`), vitest
   109 (+9 `dates.test.ts`), e2e 20 (+`receive-backdate.spec.ts`), e2e verified
   against a DB migrated from empty, all tables zero after. Negative control:
-  **22 red / 6 green on unfixed `main`**, the 6 being compatibility controls
-  (named in the PR body). No mutants added — `mutation_test.py` is mid-rewrite
-  on #86; #93's cases join the fold-in queue with #109's 17 tuples. GitHub
-  runners recovered from the 2026-08-19 outage (#111's CI ran normally). Live
+  **23 red / 6 green on unfixed `main`** (re-measured at `a78ce76`), the 6 being
+  compatibility controls (named in the PR body). Mutants: 5 hand-run tuples in
+  the PR body (`rcpt-` prefixed, anchors verified to match once) — they join
+  the fold-in queue with #109's 17 once #86's harness lands. CI green at
+  `1ae9c4d`; the `a78ce76` run was in progress at hand-off amend time. GitHub
+  runners recovered from the 2026-08-19 outage. Live
   and still true: **#86 at `dfa7f29` owes its Codex round** and gates
   #44/#77/#87/#90; #104/#98/#99 → 0.2.8; #110 unmilestoned. Stale worktrees
   `/private/tmp/plamotrack-pr100` and `-pr108-main` remain, not this session's,
   left alone.
-- **Next:** land #111 — small change whose worst failure is a false refusal, so
-  the owner decides between a Cursor round and riding the release gate (#40
-  criterion). Then 0.2.7 clear of #86: **#94 + #96** (one branch, one migration,
+- **Next:** the owner's merge call on #111 — round 1 was a GO and P3-1 is taken,
+  so nothing is owed. Then 0.2.7 clear of #86: **#94 + #96** (one branch, one migration,
   separate commits; both touch `spec.py` AND the hand-curated
   `STARTER_SHEET_COLUMNS`), **#95** after #86 (its importer half mirrors #86's
   arriving-receipt question), **#97** last — its order-edit tool should carry
