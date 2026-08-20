@@ -41,11 +41,13 @@ Template:
 
 ---
 
-## 2026-08-20 — Claude Code (Fable 5) — #94 + #96: PR #113 through Cursor round 1 (GO), P2+P3 taken at `8928f3e`; #112 + #114 filed
+## 2026-08-20 — Claude Code (Fable 5) — #94 + #96 closed: PR #113 merged as `93ec9cc` after one Cursor round; #112 + #114 filed
 
-- **Done:** **#94 (build dates) + #96 (series) implemented on
-  `feat/94-96-kit-build-dates-and-series`; PR #113 open, head `8928f3e` after one
-  Cursor round (Grok 4.6) at `523deed`: GO, P2-1 + P3-1, both taken.** P2-1: the
+- **Done:** **#94 + #96 closed — PR #113 squash-merged as `93ec9cc`**, branch
+  deleted, on the owner's call after one Cursor round (Grok 4.6) at `523deed`:
+  GO, P2-1 + P3-1, both taken at `8928f3e`; CI green at every head. No second
+  round: both remedies were the reviewer's own prescription, verified red-first
+  and one-site-mutated (the #109/#111 precedent). P2-1: the
   #112 caveat omitted `series` from its own dropped-field list — one docs
   sentence. P3-1: blank/whitespace series stored and served by /kits/series —
   `_normalize_series` on both write paths (blank → null, values trimmed,
@@ -91,10 +93,15 @@ Template:
   round complete — GO, answered. Live and still true: **#86 at `dfa7f29` owes its Codex
   round** and gates #44/#77/#87/#90; #104/#98/#99 → 0.2.8; #110, #112 and #114
   unmilestoned. Dev servers may be running on :8000/:5173 (this branch).
-- **Next:** the owner's merge call on #113 — GO, both findings taken, nothing
-  owed. After merge, 0.2.7 has **#95** (needs #86 — its importer half mirrors
-  the arriving-receipt question) and **#97** last (its MCP order-edit tool
-  should carry #111's `received_at` correction). Then 0.2.7's gate is #86 itself.
+- **Next:** clear of #86, 0.2.7 has only **#97** left (MCP `update_order` /
+  `get_order` — reuse `OrderUpdate` so #111's `received_at` correction and any
+  later fields flow in like `_KitPatch` does for kits; the line-set-replacement
+  foot-gun is the design question on the issue). **#95 needs #86** (its importer
+  half mirrors the arriving-receipt question), so 0.2.7's release gate is #86
+  itself unless the owner defers #95. Clear-of-#86 beyond the milestone: the
+  whole 0.2.8 list (#104 keyboard picker, #98, #99, #53, #54, #61, #63, #67);
+  #114 is M5.1-shaped. Waiting on #86: #95, #110, #112, and the mutant fold-ins
+  (#109's 17, #111's 6, #113's 8).
 
 ## 2026-08-20 — Claude Code (Fable 5) — #93 closed: PR #111 merged as `322afe9` after one Cursor round
 
