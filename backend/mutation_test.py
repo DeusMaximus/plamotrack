@@ -61,6 +61,7 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parent
 INV = ROOT / "app/services/portability/invariants.py"
 IMP = ROOT / "app/services/portability/importing.py"
+ORD = ROOT / "app/services/orders.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -571,6 +572,57 @@ CASES = [
         '        value = row.values.get("received_at")',
         '        value = row.values.get("received_at")',
         "restores_a_future or restated_is_still",
+    ),
+    # --- #95: shipped_at, one mutant per fix site ------------------------------------
+    (
+        "ship-1. the ship advance re-stamps kits already in transit",
+        ORD,
+        "                if kit.status in SHIP_ELIGIBLE:",
+        "                if kit.status in ARRIVAL_ELIGIBLE:",
+        "ship_moves_pipeline_kits",
+    ),
+    (
+        "ship-2. the ship advance forgets the stamp",
+        ORD,
+        "                    kit.status = KitStatus.IN_TRANSIT\n"
+        "                    kit.status_updated_at = now",
+        "                    kit.status = KitStatus.IN_TRANSIT",
+        "ship_moves_pipeline_kits or ship_without_a_date",
+    ),
+    (
+        "ship-3. a future entry-time shipment is accepted",
+        ORD,
+        "        _refuse_future_ship(data.shipped_at)",
+        "        pass",
+        "create_with_future_shipped_at",
+    ),
+    (
+        "ship-4. the import-side ship rules are off",
+        INV,
+        "    _check_ship_dates(rows)",
+        "    pass  # neutered",
+        "unship_by_import or future_ship_date_by_import",
+    ),
+    (
+        "ship-5. the import ship advance reads the clock",
+        IMP,
+        "                    kit.status_updated_at = row.target.shipped_at",
+        "                    kit.status_updated_at = datetime.now(UTC)",
+        "ship_by_import_advances",
+    ),
+    (
+        "ship-6. the spawn's ship instant falls out of the plan fingerprint",
+        IMP,
+        "                canon(spawn.received_at),\n                canon(spawn.shipped_at),",
+        "                canon(spawn.received_at),",
+        "ship_correction_between_preview_and_apply",
+    ),
+    (
+        "ship-7. a spawn never borrows the ship instant",
+        ORD,
+        "    if final_status is KitStatus.IN_TRANSIT:\n        stamp = shipped_at",
+        "    pass",
+        "create_shipped_lands_kits_in_transit or line_added_to_a_shipped_order",
     ),
 ]
 
@@ -1500,6 +1552,7 @@ TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
     "tests/test_portability.py",
+    "tests/test_ship_dates.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.

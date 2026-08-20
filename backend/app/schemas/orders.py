@@ -152,6 +152,12 @@ class OrderCreate(BaseModel):
     # order was received, so it requires `received=true` — a date on a pending
     # order is a contradiction, refused rather than silently ignored.
     received_at: AwareDatetime | None = None
+    # When the retailer shipped it, for orders entered after the fact (#95).
+    # Unlike received_at it needs no flag: a non-null instant *is* the assertion,
+    # there being no separate "shipped" boolean anywhere. On its own it lands
+    # spawned kits in_transit; alongside received=true it is a timeline record
+    # only (the kits are already past that stage).
+    shipped_at: AwareDatetime | None = None
     items: list[OrderItemCreate] = Field(min_length=1)
 
     @model_validator(mode="after")
@@ -193,6 +199,10 @@ class OrderUpdate(BaseModel):
     # receive_order, where the stock dispatch lives, and never here. Explicit null
     # is refused: un-receiving an order is not a supported operation.
     received_at: AwareDatetime | None = None
+    # Correction only, the same shape (#95): adjusts a ship date that is already
+    # set; 409 on a never-shipped order (the transition stays in
+    # mark_order_shipped); explicit null refused — un-shipping is not supported.
+    shipped_at: AwareDatetime | None = None
     # None = leave line items untouched; a list is the full replacement set.
     items: list[OrderItemUpsert] | None = Field(default=None, min_length=1)
 
@@ -204,6 +214,15 @@ class OrderReceive(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     received_at: AwareDatetime | None = None
+
+
+class OrderShip(BaseModel):
+    """Optional body for POST /orders/{id}/ship (#95), OrderReceive's mirror:
+    no body, an empty object and an explicit null all mean "it shipped now"."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    shipped_at: AwareDatetime | None = None
 
 
 class OrderItemRead(BaseModel):
@@ -238,5 +257,6 @@ class OrderRead(BaseModel):
     tracking_url: str | None
     shipping_cost_minor: int | None
     currency_code: str
+    shipped_at: datetime | None
     received_at: datetime | None
     items: list[OrderItemRead]

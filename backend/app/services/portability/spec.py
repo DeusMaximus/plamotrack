@@ -539,6 +539,11 @@ ORDERS = TableSpec(
         ),
         col("currency_code", parse_currency, required=True),
         col(
+            "shipped_at",
+            parse_datetime,
+            help="Blank = not marked shipped. Set = left the retailer; never moves stock (#95).",
+        ),
+        col(
             "received_at",
             parse_datetime,
             help="Blank = still pending. Set = arrived; stock is stated, never re-derived.",
