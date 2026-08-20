@@ -3,10 +3,15 @@
 
 Standard mutation testing, in the mutmut / cosmic-ray sense, written by hand
 because the mutants worth trying here are semantic rather than syntactic. Each
-case introduces one deliberate fault into a validation rule, runs the tests that
-should detect it, and restores the file. A mutant the suite **kills** (tests go
-red) is a rule the tests genuinely cover; a mutant that **survives** (tests stay
-green) is the finding.
+case first runs its selection UNMUTATED and requires it to pass (a broken
+environment — a test DB migrated past this tree's alembic head — otherwise
+reads as a wall of kills), then introduces one deliberate fault, runs the tests
+that should detect it, and restores the file. A **kill** is a test FAILURE:
+pytest exit 1, "failed" in the summary, no errors — a mutant that stops the
+file importing "fails" every test without any assertion running, which proves
+a syntax accident, not coverage (both rules from the #117 review, P3-1). A
+mutant that **survives** (tests stay green) is the finding; SICK, NONE and
+ERROR verdicts are harness findings, not kills.
 
 Tracked with the branch, on purpose. It is not part of the shipped application and
 nothing imports it — but it is the only thing on #44 that has ever found a guard
@@ -61,7 +66,12 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parent
 INV = ROOT / "app/services/portability/invariants.py"
 IMP = ROOT / "app/services/portability/importing.py"
+NAMES = ROOT / "app/services/names.py"
 ORD = ROOT / "app/services/orders.py"
+CAT = ROOT / "app/services/catalog.py"
+KITS = ROOT / "app/services/kits.py"
+MCP = ROOT / "app/mcp.py"
+SPEC = ROOT / "app/services/portability/spec.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -448,10 +458,16 @@ CASES = [
         "the_row_keeps_anyway_says_only_that or refused_create_carries_no_message",
     ),
     (
+        # Re-anchored (#117 review, P3-1): the old two-line anchor's `pass`
+        # replacement stranded the block's tail at deeper indentation, so the
+        # mutant never compiled and every run "killed" it with an
+        # IndentationError instead of the named assertion. The discard is the
+        # load-bearing half (the comment at the site says why), so mutating it
+        # alone is the same semantic mutant, compiling.
         "cell-4. a refused create keeps the id it minted",
         IMP,
-        "            if row.new_id is not None:\n                self.created_ids[spec.key].discard(row.new_id)",
-        "            pass",
+        "                self.created_ids[spec.key].discard(row.new_id)",
+        "                pass  # mutated",
         "takes_back_the_id_it_minted",
     ),
     (
@@ -675,6 +691,236 @@ CASES = [
         "                    kit.status_updated_at = row.target.shipped_at",
         "                    kit.status_updated_at = row.target.shipped_at",
         "ship_by_import_advances",
+    ),
+    # --- #107 / PR #109: name uniqueness (tuples from the PR body's collapsed -------
+    # --- block, anchors verified once at d1d051d; folded in after #86 landed) -------
+    (
+        "n1. stored side not trimmed",
+        NAMES,
+        "func.lower(func.btrim(model.name, WHITESPACE)) == func.lower(name)",
+        "func.lower(model.name) == func.lower(name)",
+        "surrounding_whitespace and space",
+    ),
+    (
+        "n1b. stored side trimmed of spaces only (btrim's default)",
+        NAMES,
+        "func.lower(func.btrim(model.name, WHITESPACE)) == func.lower(name)",
+        'func.lower(func.btrim(model.name, " ")) == func.lower(name)',
+        "(surrounding_whitespace or legacy_padded) and (tab or nbsp or newline or ideographic)",
+    ),
+    (
+        "n2. input side not folded",
+        NAMES,
+        "func.lower(func.btrim(model.name, WHITESPACE)) == func.lower(name)",
+        "func.lower(func.btrim(model.name, WHITESPACE)) == name",
+        "create_refuses_a_name and recased-stored-lower",
+    ),
+    (
+        "n3. stored side not folded",
+        NAMES,
+        "func.lower(func.btrim(model.name, WHITESPACE)) == func.lower(name)",
+        "func.btrim(model.name, WHITESPACE) == func.lower(name)",
+        "create_refuses_a_name and recased-stored-upper",
+    ),
+    (
+        "n4. own id not excluded on rename",
+        NAMES,
+        "    if exclude_id is not None:\n        stmt = stmt.where(model.id != exclude_id)",
+        "    pass",
+        "rename_to_a_free_name_or_its_own",
+    ),
+    (
+        "n5. blank not refused",
+        NAMES,
+        '    if not cleaned:\n        raise InvalidInputError("name cannot be blank")',
+        "    pass",
+        "whitespace_only or rename_to_blank or blank_retailer",
+    ),
+    (
+        "n6a. clean_name stops stripping",
+        NAMES,
+        '        raise InvalidInputError("name cannot be blank")\n    return cleaned\n',
+        '        raise InvalidInputError("name cannot be blank")\n    return name\n',
+        "different-padded or Gundam_Base or creates_it_stripped or padded-input",
+    ),
+    (
+        "n6b. require_unique_name hands back the raw name",
+        NAMES,
+        "        )\n    return cleaned\n",
+        "        )\n    return name\n",
+        "different-padded or Gundam_Base or creates_it_stripped",
+    ),
+    (
+        "n7. the refusal itself",
+        NAMES,
+        "    if existing is not None:\n        noun = _NOUN[model]",
+        "    if False:\n        noun = _NOUN[model]",
+        "refuses or one_row_and_one_409 or conflict_not_an_integrity",
+    ),
+    (
+        "o1. create_retailer skips the check",
+        ORD,
+        '    fields["name"] = await require_unique_name(session, Retailer, data.name)',
+        '    fields["name"] = data.name.strip()',
+        "retailers and (create_refuses_a_name or stored_with_surrounding) or mcp_create_retailer "
+        "or one_row_and_one_409 or conflict_not_an_integrity",
+    ),
+    (
+        "o2. update_retailer skips the check",
+        ORD,
+        '    if fields.get("name") is not None:\n'
+        "        # `exclude_id`: a row may keep or re-case its own name; only *another* row\n"
+        "        # already holding it is a conflict (#107).\n"
+        '        fields["name"] = await require_unique_name(\n'
+        '            session, Retailer, fields["name"], exclude_id=retailer.id\n'
+        "        )",
+        "    pass",
+        "rename_onto_another and retailers or mcp_update_retailer",
+    ),
+    (
+        "o3. new_item skips the check",
+        ORD,
+        "    name = await require_unique_name(session, CATALOG_MODELS[item_type], new_item.name)",
+        "    name = new_item.name",
+        "new_item",
+    ),
+    (
+        "o4. get_or_create_retailer stops cleaning",
+        ORD,
+        "    wanted = clean_name(name)",
+        "    wanted = name.strip()",
+        "blank_retailer_name",
+    ),
+    (
+        "o5. create_retailer checks before it takes the gate",
+        ORD,
+        "    await acquire_write_gate(session)\n"
+        "    fields = data.model_dump()\n"
+        "    # Refused, not merged: a REST or MCP caller that named an existing shop gets a 409\n"
+        "    # naming it, and decides. Merging silently would hand back a row the caller did\n"
+        "    # not ask for and could not tell apart from a create (#107, rule 3).\n"
+        '    fields["name"] = await require_unique_name(session, Retailer, data.name)',
+        "    fields = data.model_dump()\n"
+        '    fields["name"] = await require_unique_name(session, Retailer, data.name)\n'
+        "    await acquire_write_gate(session)",
+        "one_row_and_one_409",
+    ),
+    (
+        "c1. catalog create skips the check",
+        CAT,
+        '    fields["name"] = await require_unique_name(session, model, data.name)',
+        '    fields["name"] = data.name.strip()',
+        "(tools or consumables or upgrades) and (create_refuses_a_name or stored_with_surrounding)",
+    ),
+    (
+        "c2. catalog rename skips the check",
+        CAT,
+        '    if fields.get("name") is not None:\n'
+        "        # A rename onto a name another row of this table holds is a 409; the row's\n"
+        "        # own id is excluded so it may keep or re-case its name (#107).\n"
+        '        fields["name"] = await require_unique_name(\n'
+        '            session, model, fields["name"], exclude_id=item_id\n'
+        "        )",
+        "    pass",
+        "rename_onto_another and (tools or consumables or upgrades) or mcp_catalog_rename",
+    ),
+    (
+        "c3. catalog rename excludes nothing",
+        CAT,
+        '            session, model, fields["name"], exclude_id=item_id',
+        '            session, model, fields["name"], exclude_id=None',
+        "rename_to_a_free_name_or_its_own and (tools or consumables or upgrades)",
+    ),
+    # --- #93 / PR #111: backdatable receipts (tuples from the PR body, verified ------
+    # --- at a78ce76). rcpt-1 is re-anchored: #86's receipt_is_future refactor --------
+    # --- turned the predicate's `if` into a `return`, same comparison. ---------------
+    (
+        "rcpt-1. today is refused along with the future",
+        ORD,
+        "    return received_at.date() > today_in_own_offset",
+        "    return received_at.date() >= today_in_own_offset",
+        "receipt_late_today_in_a_behind_offset",
+    ),
+    (
+        "rcpt-2. the calendar is read in server time, not the instant's offset",
+        ORD,
+        "datetime.now(received_at.tzinfo)",
+        "datetime.now(UTC)",
+        "receipt_today_in_an_ahead_offset",
+    ),
+    (
+        "rcpt-3. every spawned kit borrows the receipt, asserted statuses included",
+        ORD,
+        "    stamp = received_at if final_status is KitStatus.BACKLOG else None",
+        "    stamp = received_at",
+        "create_received_kit_asserted_building_keeps_the_entry_stamp",
+    ),
+    (
+        "rcpt-4. a correction restamps every kit, moved ones included",
+        ORD,
+        "            if kit.status_updated_at == old:",
+        "            if True:",
+        "patch_corrects_the_receipt_and_restamps_only_untouched_kits",
+    ),
+    (
+        "rcpt-5. a correction lands on a pending order",
+        ORD,
+        "        if order.received_at is None:",
+        "        if False:",
+        "patch_received_at_on_a_pending_order_is_a_conflict",
+    ),
+    # --- #94 + #96 / PR #113: build dates + series (tuples from the round-1 ----------
+    # --- Cursor review, anchors verified once at 523deed) ----------------------------
+    (
+        "bd-1. the stamp overwrites a date someone set",
+        KITS,
+        "    if getattr(kit, field) is None:",
+        "    if True:",
+        "reentering_building_keeps_the_original_start or user_set_date_survives",
+    ),
+    (
+        "bd-2. an explicitly supplied field is fought",
+        KITS,
+        "    if field is None or field in supplied:",
+        "    if field is None:",
+        "explicit_null_in_the_transitioning_patch",
+    ),
+    (
+        "ser-1. frequency ordering dropped",
+        KITS,
+        "        .order_by(func.count().desc(), func.lower(Kit.series))",
+        "        .order_by(func.count(), func.lower(Kit.series))",
+        "distinct_values_come_most_frequent_first",
+    ),
+    (
+        "ser-2. the series filter stops folding case",
+        KITS,
+        "        stmt = stmt.where(func.lower(Kit.series) == func.lower(series))",
+        "        stmt = stmt.where(Kit.series == series)",
+        "series_filter_is_case_insensitive_equality",
+    ),
+    (
+        "ser-3. the series column vanishes from the spec",
+        SPEC,
+        '        col("series", parse_text, help="e.g. Iron-Blooded Orphans. Free text (#96)."),\n',
+        "",
+        "csv_round_trip_preserves_series or kits_spec_declares_series",
+    ),
+    # --- #97 / PR #115: MCP order edit (tuples from the PR body, verified at ---------
+    # --- b7318c4) --------------------------------------------------------------------
+    (
+        "moe-1. the service omission gate hardwired off",
+        ORD,
+        "        if not allow_line_removal:",
+        "        if False:",
+        "test_omitting_a_stored_line_is_refused_by_default",
+    ),
+    (
+        "moe-2. the MCP wrapper always allows line removal",
+        MCP,
+        "allow_line_removal=remove_missing_lines",
+        "allow_line_removal=True",
+        "test_omitting_a_stored_line_is_refused_by_default",
     ),
 ]
 
@@ -1604,6 +1850,16 @@ TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
     "tests/test_portability.py",
+    # The fold-in of the #109/#111/#113/#115 queues widened the case set to the
+    # suites those branches wrote; each file below is named by at least one
+    # case's `-k` expression, and the exit-5 NONE rule is what notices if one of
+    # these ever stops being.
+    "tests/test_name_uniqueness.py",
+    "tests/test_name_matching.py",
+    "tests/test_receipt_dates.py",
+    "tests/test_build_dates.py",
+    "tests/test_series.py",
+    "tests/test_mcp_order_edit.py",
     "tests/test_ship_dates.py",
 ]
 
@@ -1670,6 +1926,23 @@ def main() -> int:
             print(f"SKIP  {label}: anchor matched {original.count(old)} times")
             failures.append(label)
             continue
+        # The unmutated selection has to PASS before the mutant means anything
+        # (#117 review, P3-1): a broken environment — a test DB migrated past
+        # this tree's alembic head, a stale fixture — fails every selection
+        # before the named assertion runs, and "any non-zero exit is a kill"
+        # counted exactly that as 63 kills once. This also subsumes the NONE
+        # check: exit 5 on a clean tree means the expression selects nothing.
+        base_code, base_summary = run(expr)
+        if base_code == NO_TESTS_SELECTED:
+            print(
+                f"NONE  {label}\n        -> -k {expr!r} selected no test in {', '.join(TEST_FILES)}"
+            )
+            failures.append(label)
+            continue
+        if base_code != 0:
+            print(f"SICK  {label}\n        -> unmutated selection did not pass: {base_summary}")
+            failures.append(label)
+            continue
         backup = tempfile.mktemp()
         shutil.copy(path, backup)
         try:
@@ -1677,24 +1950,28 @@ def main() -> int:
             code, summary = run(expr)
         finally:
             shutil.copy(backup, path)
-        if code == NO_TESTS_SELECTED:
-            # Nothing ran, so nothing was killed. Reported like a stale anchor:
-            # a case whose `-k` names no test in TEST_FILES is a harness bug,
-            # not evidence about the code.
-            print(
-                f"NONE  {label}\n        -> -k {expr!r} selected no test in {', '.join(TEST_FILES)}"
-            )
+        if code == 0:
+            print(f"GREEN {label}\n        -> {summary}")
             failures.append(label)
             continue
-        verdict = "RED  " if code != 0 else "GREEN"
-        print(f"{verdict} {label}\n        -> {summary}")
-        if code == 0:
+        # A kill is a test FAILURE on the named assertion — pytest exit 1 with a
+        # summary saying "failed" and no errors. A mutant that stops the file
+        # importing, or breaks collection, produces errors, not failures, and an
+        # error proves the mutant is a syntax accident rather than a semantic
+        # fault the suite caught (#117 review, P3-1: cell-4 was "killed" by an
+        # IndentationError for its whole life).
+        killed = code == 1 and "failed" in summary and "error" not in summary
+        if killed:
+            print(f"RED   {label}\n        -> {summary}")
+        else:
+            print(f"ERROR {label}\n        -> exit {code}: {summary}")
             failures.append(label)
     if not tree_is_clean():
         print("\nWARNING: the tree is dirty after the run — a restore failed. `git diff`.")
         return 2
     if failures:
-        print("\nSURVIVING MUTANTS (the finding):", *failures, sep="\n  - ")
+        print("\nFAILURES (surviving, sick, none, or error — each one a finding):")
+        print(*(f"  - {label}" for label in failures), sep="\n")
         return 1
     print(f"\nall {len(selected)} mutants were killed")
     return 0

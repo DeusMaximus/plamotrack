@@ -41,6 +41,64 @@ Template:
 
 ---
 
+## 2026-08-21 — Claude Code (Fable 5) — mutant fold-in open as PR #117; #95 implemented, open as PR #118; both await their review round
+
+- **Done:** (1) **The fold-in queue, folded — PR #117** (branch
+  `test/fold-queued-mutants`, `985e6d7`; no app or test code — only
+  `mutation_test.py` and the procedure doc). The true queue was **29, not the 33
+  earlier entries said** (two count slips: #111 carries 5 tuples, and #113's
+  five live in its round-1 Cursor review while its body names only 3
+  candidates) — harness 68 → **97 over eight files**, TEST_FILES +6 suites,
+  `rcpt-1` re-anchored across #86's `receipt_is_future` refactor, every anchor
+  verified once against `386ebda`, full run **97/97 killed**. (2) **#95
+  implemented on the five agreed leans — PR #118** (branch `feat/95-shipped-at`,
+  `c8d4c75`): `shipped_at` + the ship transition on every writer, one additive
+  migration; the advance stamps the ship instant (the #93 rule one stage
+  earlier, `stamp_build_date` wired per #94); the importer ships **freely on
+  every order** (no stock basis to refuse, unlike the receipt), un-shipping
+  refused everywhere, **no cross-field validation** (#113's rule, the issue's
+  open constraint settled that way), the spawn's ship instant resolved at plan
+  time and hash-bound (round five's P3 lesson applied before a reviewer had
+  to); browser Ship dialog, Shipped badge, and the **derived** pre-order badge
+  (nothing persisted). 32 tests (**31 red / 1 explained green** against `main`
+  in a worktree, test DB dropped first), `ship-1..7` mutants one per fix site,
+  branch harness **75/75**, backend **896**, e2e **20**, and the browser loop
+  driven by hand — a backdated ship stored local-midnight in the browser's own
+  offset, both kits advanced on the same instant.
+- **Decisions (all in #118's "Deliberate calls"):** the five leans as agreed,
+  plus the browser Ship button on pending-unshipped rows only (backfill on a
+  received order stays REST/MCP), asserted-in_transit kits borrowing the ship
+  stamp (the asserted-backlog parallel), and ship-after-receive legal while
+  receive never backfills.
+- **State: Codex round one is answered on both PRs.** **#117: GO, two P3s,
+  both taken at `34f9e52`**, reply posted — the harness now runs each selection
+  unmutated first and requires a pass (`SICK` otherwise; it caught the
+  stale-test-DB scenario live), a kill is exit 1 + "failed" + no "error"
+  (`ERROR` otherwise), `cell-4` re-anchored as a compiling mutant (its old
+  replacement never compiled — an IndentationError stood in for the assertion
+  for its whole life), and the runtime claim remeasured: **665s ≈ 11 min at 97
+  cases** (was a 30-40 min extrapolation slip, owned). **#118: NO-GO, P2 +
+  three P3s, answered at `5b98142`**, reply posted — P2 fixed red-first
+  (`_restamp_receipt_kits` gains `only_status`; ship correction passes
+  IN_TRANSIT because a ship and a receive can share a local-midnight instant
+  and the receipt owns the backlog kit; receipt contract untouched per the
+  review's "do not"); P3-3's six unmutated sites + the fix site now have
+  tuples (branch harness **82/82**, suite **897**); P3-4 docs fixed; **P3-2
+  filed as #119** (derived advances not plan-bound — BOTH ship and receipt
+  siblings, the receipt one pre-existing since #86). #118's harness still runs
+  the old kill contract until the #117 merge-forward. **The two branches
+  append to the same harness CASES tail — whichever merges second resolves a
+  mechanical append-append conflict: keep both blocks, keep one duplicate
+  `ORD` constant.** Dev servers running on :8000/:5173; dev DB disposable.
+  Live: **0.2.7 = #95 (PR #118)**; #110/#112 and #77/#87/#90 unblocked; #114
+  M5.1-shaped; #116 + #119 unmilestoned; 0.2.8 open
+  (#104/#98/#99/#53/#54/#61/#63/#67).
+- **Next:** round two — Codex replays #117 at `34f9e52` and #118 at `5b98142`
+  (the round-one comments are the record). On GO: merge #117 first, then merge
+  `main` forward into #118 (CASES-tail conflict, harness re-run under the new
+  contract — the reply on #118 promises exactly that), then #118 lands and
+  0.2.7 is releasable.
+
 ## 2026-08-20 — Claude Code (Fable 5) — #86 MERGED as `386ebda` after Codex rounds 5+6; #44 closed; #116 filed; the 0.2.7 gate is released
 
 - **Done:** owner asked to continue #86. (1) **`main` merged into the branch**
@@ -106,47 +164,6 @@ Template:
   but the `rcpt-` set anchors lines the `receipt_is_future` refactor moved, so
   expect the harness to report those and re-anchor them. Then #95-or-defer
   decides 0.2.7; #110/#112 are ready when milestoned.
-
-## 2026-08-20 — Claude Code (Fable 5) — #97 closed: PR #115 merged as `7991a08` after one Cursor round; 0.2.7 now gated only by #86
-
-- **Done:** **#97 closed — PR #115 squash-merged as `7991a08`**, branch
-  deleted, on the owner's call after one Cursor round; no second round (the
-  response was one docs sentence — the #109/#111/#113 precedent). (~430
-  insertions, no migration, no frontend.) `get_order` and `update_order` tools
-  in `mcp.py`, thin over the existing services; `changes` reuses `OrderUpdate`
-  verbatim so #93's `received_at` correction works now and #95's fields flow in
-  later (the `_KitPatch` precedent). **The issue's design question, decided:**
-  items keeps REST's full-replacement semantics, but `update_order` (service)
-  gained keyword `allow_line_removal` (default True — REST unchanged); the MCP
-  tool passes `remove_missing_lines` (default False), so an items list that
-  omits stored lines is refused *naming each line*, under the order's
-  FOR UPDATE lock — a wrapper-side read-then-check would race a concurrent
-  line addition. Explicit quantity decreases need no flag (a stated number is
-  not silent). Docs: design §7 + README tool rows.
-- **Decisions (on the PR as "Deliberate calls"):** per-surface defaults over one
-  mechanism; omission-only gate; the refusal names the MCP flag from the
-  service layer (only MCP can trigger it today); `InvalidInputError` not
-  Conflict (payload completeness, not state); order deletion stays off MCP.
-- **State:** backend **755** (742 + 13 in `tests/test_mcp_order_edit.py` — the
-  §3.9 diff branches, both halves of the §6 snapshot contract through FastMCP's
-  nested fields_set, both 409 guards *with* the flag, receipt correction,
-  get_order axes), ruff clean, frontend untouched. Negative control: **13 red /
-  0 green on unfixed `main`** (tools don't exist — expected shape for a
-  new-capability suite; stated in the PR body). Both fix sites one-site-mutated
-  and killed by the omission test; tuples in the PR body for the #86 fold-in
-  queue (now #109's 17 + #111's 6 + #113's 8 + #115's 2). **Cursor round 1
-  (Grok 4.6) at `b7318c4`: GO, one P3, taken at `cb62ab5`** — design §3.9 still
-  said MCP has no order-edit tool, the sentence this branch made false;
-  one-line pointer per the review's remedy, prose sweep done (the only other
-  hit is a verbatim-by-rule HANDOFF archive entry). Reply posted at `cb62ab5`;
-  two author slips in the PR body owned and corrected (a 12-vs-13 count, an
-  overclaimed negative-control shape). CI green at `b7318c4`; docs-only
-  `cb62ab5` run pending at amend time. Live and still true:
-  **#86 at `dfa7f29` owes its Codex round** and gates #44/#77/#87/#90, #95,
-  #110, #112; #114 is M5.1-shaped; #104/#98/#99/#53/#54/#61/#63/#67 → 0.2.8,
-  all clear of #86.
-- **Next:** with #115 merged, **0.2.7 is #95-or-defer + the #86 gate** — nothing
-  else in the milestone can move without #86. The 0.2.8 list is open ground.
 
 ## 2026-08-20 — Claude Code (Fable 5) — #94 + #96 closed: PR #113 merged as `93ec9cc` after one Cursor round; #112 + #114 filed
 
