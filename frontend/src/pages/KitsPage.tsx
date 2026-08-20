@@ -43,24 +43,18 @@ function toFormValues(kit?: Kit): KitFormValues {
   };
 }
 
-/** The build, as one cell: a finished pair reads as elapsed days (deliberately
- *  elapsed, not time-at-the-bench — a shelved build reads long, and that is the
- *  documented shape of the two-column decision on #94). */
-function buildCell(kit: Kit): { text: string; title?: string } {
-  const started = kit.build_started_at;
-  const completed = kit.build_completed_at;
-  if (started && completed) {
-    const days = Math.round(
-      (new Date(completed).getTime() - new Date(started).getTime()) / 86_400_000,
-    );
-    return {
-      text: days <= 0 ? "same day" : `${days} d`,
-      title: `${formatDate(started)} → ${formatDate(completed)}`,
-    };
-  }
-  if (started) return { text: `since ${formatDate(started)}` };
-  if (completed) return { text: formatDate(completed), title: "Completed" };
-  return { text: "—" };
+/** The completion cell: the date, and when a start exists too, the elapsed days
+ *  beside it (deliberately elapsed, not time-at-the-bench — a shelved build reads
+ *  long, and that is the documented shape of the two-column decision on #94). */
+function completedCell(kit: Kit): string {
+  if (!kit.build_completed_at) return "—";
+  const date = formatDate(kit.build_completed_at);
+  if (!kit.build_started_at) return date;
+  const days = Math.round(
+    (new Date(kit.build_completed_at).getTime() - new Date(kit.build_started_at).getTime()) /
+      86_400_000,
+  );
+  return days <= 0 ? `${date} · same day` : `${date} · ${days} d`;
 }
 
 function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
@@ -329,8 +323,8 @@ export function KitsPage() {
                 <th className="px-3 py-2">Scale</th>
                 <th className="px-3 py-2">Status</th>
                 <th className="px-3 py-2">Rating</th>
-                <th className="px-3 py-2">Build</th>
-                <th className="px-3 py-2">Since</th>
+                <th className="px-3 py-2">Started</th>
+                <th className="px-3 py-2">Completed</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -372,11 +366,11 @@ export function KitsPage() {
                   <td className="px-3 py-2">
                     {kit.rating ? "★".repeat(kit.rating) + "☆".repeat(5 - kit.rating) : "—"}
                   </td>
-                  <td className="px-3 py-2 text-zinc-500" title={buildCell(kit).title}>
-                    {buildCell(kit).text}
+                  <td className="px-3 py-2 text-zinc-500" title="Build started">
+                    {kit.build_started_at ? formatDate(kit.build_started_at) : "—"}
                   </td>
-                  <td className="px-3 py-2 text-zinc-500" title="In this status since">
-                    {formatDate(kit.status_updated_at)}
+                  <td className="px-3 py-2 text-zinc-500" title="Build completed · elapsed days">
+                    {completedCell(kit)}
                   </td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex justify-end gap-1">
