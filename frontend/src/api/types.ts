@@ -20,6 +20,8 @@ export interface Kit {
   grade: string;
   scale: string | null;
   kit_number: string | null;
+  /** Free text like grade (#96); suggestions come from /kits/series. */
+  series: string | null;
   status: KitStatus;
   status_updated_at: string;
   rating: number | null;
@@ -38,6 +40,7 @@ export interface KitCreate {
   grade: string;
   scale?: string | null;
   kit_number?: string | null;
+  series?: string | null;
   status?: KitStatus;
   build_started_at?: string | null;
   build_completed_at?: string | null;
@@ -49,6 +52,7 @@ export interface KitUpdate {
   grade?: string;
   scale?: string | null;
   kit_number?: string | null;
+  series?: string | null;
   status?: KitStatus;
   rating?: number | null;
   /** Offset-aware ISO 8601; send only when the user touched the field — a date

@@ -29,6 +29,7 @@ function kit(id: string, status: KitStatus): Kit {
     grade: "HG",
     scale: "1/144",
     kit_number: null,
+    series: null,
     status,
     status_updated_at: "2026-08-01T00:00:00Z",
     rating: null,

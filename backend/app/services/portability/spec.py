@@ -653,6 +653,7 @@ KITS = TableSpec(
         col("grade", parse_text, required=True, help="HG / RG / MG / PG / SD / ..."),
         col("scale", parse_text, help="Blank = derived from the grade."),
         col("kit_number", parse_text),
+        col("series", parse_text, help="e.g. Iron-Blooded Orphans. Free text (#96)."),
         col(
             "status",
             _KIT_STATUS_PARSER,

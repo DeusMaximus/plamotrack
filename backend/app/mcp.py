@@ -125,14 +125,30 @@ class _KitPatch(KitUpdate):
 
 
 @mcp.tool
-async def list_kits(status: str | None = None, grade: str | None = None) -> list[dict]:
+async def list_kits(
+    status: str | None = None, grade: str | None = None, series: str | None = None
+) -> list[dict]:
     """List kits in the collection, optionally filtered by pipeline status
     (pre_ordered, ordered, in_transit, backlog, building, complete — backlog
-    means in hand but not started) and/or grade (HG, RG, MG, PG, SD, ...)."""
+    means in hand but not started), grade (HG, RG, MG, PG, SD, ...) and/or
+    series (exact name, case-insensitively — get the spellings in use from
+    list_kit_series)."""
     parsed_status = _parse_status(status) if status else None
     async with _tool_session() as session:
-        kits = await kits_service.list_kits(session, status=parsed_status, grade=grade)
+        kits = await kits_service.list_kits(
+            session, status=parsed_status, grade=grade, series=series
+        )
         return [KitRead.model_validate(k).model_dump(mode="json") for k in kits]
+
+
+@mcp.tool
+async def list_kit_series() -> list[str]:
+    """The series names already in use on kits, most frequent first. ALWAYS check
+    this before writing a series onto a kit and reuse an existing spelling when
+    one matches — series is free text, so "IBO" and "Iron-Blooded Orphans" would
+    otherwise fragment into two filter entries for one series."""
+    async with _tool_session() as session:
+        return await kits_service.list_kit_series(session)
 
 
 @mcp.tool
@@ -161,9 +177,11 @@ async def update_kit_status(kit_id: str, status: str) -> dict:
 
 @mcp.tool
 async def update_kit(kit_id: str, changes: _KitPatch) -> dict:
-    """Edit a kit's details: name, grade, scale, kit_number, status, rating (1-5),
-    build_notes, build_started_at, build_completed_at. Only the fields present in
-    `changes` are touched, so this is safe to call with a single field; sending an
+    """Edit a kit's details: name, grade, scale, kit_number, series, status,
+    rating (1-5), build_notes, build_started_at, build_completed_at. Before
+    setting a series, check list_kit_series and reuse an existing spelling. Only
+    the fields present in `changes` are touched, so this is safe to call with a
+    single field; sending an
     explicit null clears a nullable one (build_notes: null erases the notes, and a
     rating can be taken back the same way). Name, grade and status cannot be
     nulled — they are always set on a kit. The build dates are offset-aware ISO

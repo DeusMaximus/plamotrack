@@ -80,6 +80,7 @@ async def list_kits(
     session: AsyncSession,
     status: KitStatus | None = None,
     grade: str | None = None,
+    series: str | None = None,
 ) -> list[Kit]:
     stmt = select(Kit).order_by(Kit.created_at, Kit.id)
     if status is not None:
@@ -89,6 +90,27 @@ async def list_kits(
         # pattern that also matches MG (#49). Both sides folded by Postgres, as in
         # `get_or_create_retailer`, so the two folds cannot disagree.
         stmt = stmt.where(func.lower(Kit.grade) == func.lower(grade))
+    if series is not None:
+        # Same predicate shape as grade, for the same #49 reasons.
+        stmt = stmt.where(func.lower(Kit.series) == func.lower(series))
+    return list((await session.scalars(stmt)).all())
+
+
+async def list_kit_series(session: AsyncSession) -> list[str]:
+    """The series values in use, most frequent first (#96).
+
+    This is the select-or-create device for a free-text column: the kit form's
+    typeahead and the MCP tool both read it, so 'IBO' and 'Iron-Blooded Orphans'
+    become two entries by choice rather than by accident. Frequency order puts
+    the spelling the collection actually uses on top; ties break alphabetically
+    (case-insensitively) so the order is stable.
+    """
+    stmt = (
+        select(Kit.series)
+        .where(Kit.series.is_not(None))
+        .group_by(Kit.series)
+        .order_by(func.count().desc(), func.lower(Kit.series))
+    )
     return list((await session.scalars(stmt)).all())
 
 

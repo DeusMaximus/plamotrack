@@ -49,6 +49,7 @@ Download `starter-sheet.csv`, fill it in, import it.
 | `kit_name`, `grade` | Required. |
 | `scale` | Blank derives it from the grade (HG → 1/144, MG → 1/100, PG → 1/60). |
 | `kit_number`, `build_notes` | Optional. |
+| `series` | e.g. `Iron-Blooded Orphans`. Free text — match your own earlier spelling. |
 | `status` | `pre_ordered` / `ordered` / `in_transit` / `backlog` / `building` / `complete`. Blank = backlog. |
 | `rating` | 1–5, if you've finished it. |
 | `build_started`, `build_completed` | `YYYY-MM-DD` — when you started / finished the build. Blank = not recorded; the importer never invents one. |

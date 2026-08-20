@@ -151,7 +151,7 @@ rows.
 | created_at / updated_at | timestamp | |
 | build_started_at | timestamp (nullable) | stamped on first entering `building`, only when null; user-editable (#94) |
 | build_completed_at | timestamp (nullable) | same rule on entering `complete` (#94) |
-| series | text (nullable) | 🔨 **Planned (v0.2.7, #96)** — free text like `grade`; one value; typeahead over existing values, no lookup table |
+| series | text (nullable) | free text like `grade`; one value; typeahead over existing values, no lookup table (#96) |
 
 **Build dates (#94, decided 18/08/2026):** two nullable columns, not a status-event
 table. An event table arrives with the whole §12.2 registry surface — natural key,
@@ -630,13 +630,17 @@ pile of embedded copy.
 Exposed via FastMCP alongside the REST API, sharing the same service layer. The endpoint
 is `/mcp/` on the API port (streamable HTTP).
 
-- `list_kits(status?, grade?)`
+- `list_kits(status?, grade?, series?)`
+- `list_kit_series()` — the series spellings in use, most frequent first; the
+  select-or-create device for a free-text column (#96) — agents check it before
+  writing a spelling nobody uses
 - `get_kit(id)`
 - `update_kit_status(id, status)` — the status-only shortcut for `update_kit`, kept
   because moving a card is the frequent case and removing a tool a client may already
   call is a visible break
-- `update_kit(id, changes)` — name, grade, scale, kit_number, status, rating,
-  build_notes
+- `update_kit(id, changes)` — name, grade, scale, kit_number, series, status, rating,
+  build_notes, and the two build dates (#94: a transition stamps one only when null,
+  so a value set here is never overwritten by a later move)
 - `search_catalog(query)` — the same backing search as the UI typeahead, so an agent
   adding an order hits the same de-dup logic a human would
 - `list_retailers()`, `create_retailer(retailer)`, `update_retailer(id, changes)` —

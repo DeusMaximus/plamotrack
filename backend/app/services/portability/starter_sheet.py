@@ -49,6 +49,7 @@ STARTER_SHEET_COLUMNS: tuple[ColumnSpec, ...] = (
     col("grade", parse_text, required=True, help="HG / RG / MG / PG / SD / ..."),
     col("scale", parse_text, help="Blank = derived from the grade (HG -> 1/144)."),
     col("kit_number", parse_text, help="Manufacturer product code."),
+    col("series", parse_text, help="e.g. Iron-Blooded Orphans. Free text."),
     col(
         "status",
         _KIT_STATUS,
@@ -100,6 +101,7 @@ _STARTER_SHEET_EXAMPLES: list[dict[str, str]] = [
     {
         "kit_name": "RX-79(G) Ground Type",
         "grade": "HG",
+        "series": "",
         "scale": "",
         "kit_number": "HGUC 210",
         "status": "backlog",
@@ -118,6 +120,7 @@ _STARTER_SHEET_EXAMPLES: list[dict[str, str]] = [
     {
         "kit_name": "MSN-04 Sazabi Ver.Ka",
         "grade": "MG",
+        "series": "",
         "scale": "",
         "kit_number": "",
         "status": "building",
@@ -136,6 +139,7 @@ _STARTER_SHEET_EXAMPLES: list[dict[str, str]] = [
     {
         "kit_name": "RX-78-2 Gundam Ver.3.0",
         "grade": "MG",
+        "series": "Mobile Suit Gundam",
         "scale": "",
         "kit_number": "",
         "status": "complete",
@@ -313,6 +317,7 @@ def expand(
                         grade=row.get("grade", ""),
                         scale=row.get("scale", ""),
                         kit_number=row.get("kit_number", ""),
+                        series=row.get("series", ""),
                         status=status or KitStatus.BACKLOG.value,
                         build_started_at=row.get("build_started", ""),
                         build_completed_at=row.get("build_completed", ""),

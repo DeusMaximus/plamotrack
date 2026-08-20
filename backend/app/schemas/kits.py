@@ -12,6 +12,9 @@ class KitCreate(BaseModel):
     grade: str = Field(min_length=1)
     scale: str | None = None  # derived from grade when omitted (§3.1)
     kit_number: str | None = None
+    # Free text like grade/scale (#96) — no registry, so an agent can record a
+    # series nobody has listed yet; the distinct-values endpoint is the de-dup aid.
+    series: str | None = None
     status: KitStatus = KitStatus.BACKLOG
     # Backfill fields (#94): the dates belong to the user and are settable at
     # creation — a kit migrated from another tool arrives with its real dates.
@@ -32,6 +35,7 @@ class KitUpdate(BaseModel):
     grade: str | None = Field(default=None, min_length=1)
     scale: str | None = None
     kit_number: str | None = None
+    series: str | None = None
     status: KitStatus | None = None
     rating: Rating | None = None
     # Offset-aware ISO 8601; explicit null clears. A status transition in the same
@@ -50,6 +54,7 @@ class KitRead(BaseModel):
     grade: str
     scale: str | None
     kit_number: str | None
+    series: str | None
     status: KitStatus
     status_updated_at: datetime
     rating: int | None

@@ -18,6 +18,7 @@ interface KitFormValues {
   grade: string;
   scale: string;
   kit_number: string;
+  series: string;
   status: KitStatus;
   rating: string;
   /** yyyy-mm-dd, "" = none. Sent only when dirty: a date input can't restate the
@@ -33,6 +34,7 @@ function toFormValues(kit?: Kit): KitFormValues {
     grade: kit?.grade ?? "",
     scale: kit?.scale ?? "",
     kit_number: kit?.kit_number ?? "",
+    series: kit?.series ?? "",
     status: kit?.status ?? "backlog",
     rating: kit?.rating?.toString() ?? "",
     build_started: kit?.build_started_at ? isoToLocalDateInput(kit.build_started_at) : "",
@@ -70,12 +72,22 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
     formState: { errors, isSubmitting, dirtyFields },
   } = useForm<KitFormValues>({ defaultValues: toFormValues(kit) });
 
+  // The de-dup device for a free-text column: what already exists, most frequent
+  // first. staleTime 0 for the same reason as the catalog picker (#49/#108) — a
+  // gate that answers from cache offers "new" for something that now exists.
+  const { data: seriesValues } = useQuery({
+    queryKey: ["kit-series"],
+    queryFn: api.listKitSeries,
+    staleTime: 0,
+  });
+
   const onSubmit = handleSubmit(async (values) => {
     const payload: KitCreate & KitUpdate = {
       name: values.name,
       grade: values.grade,
       scale: values.scale || null,
       kit_number: values.kit_number || null,
+      series: values.series || null,
       status: values.status,
       build_notes: values.build_notes || null,
     };
@@ -137,6 +149,14 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
             <Input {...register("kit_number")} placeholder="HGUC 210" />
           </Field>
         </div>
+        <Field label="Series">
+          <Input {...register("series")} list="kit-series" placeholder="Iron-Blooded Orphans" />
+          <datalist id="kit-series">
+            {seriesValues?.map((value) => (
+              <option key={value} value={value} />
+            ))}
+          </datalist>
+        </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Status">
             <Select {...register("status")}>
@@ -194,6 +214,7 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
 export function KitsPage() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<KitStatus | "">("");
+  const [seriesFilter, setSeriesFilter] = useState("");
   const [search, setSearch] = useState("");
   const [modal, setModal] = useState<{ mode: "add" } | { mode: "edit"; kit: Kit } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -218,9 +239,18 @@ export function KitsPage() {
     onError: (err) => setActionError(err instanceof ApiError ? err.message : "Delete failed"),
   });
 
+  // Distinct series among the loaded kits, for the filter dropdown. Alphabetical:
+  // a filter is scanned by eye, unlike the form's typeahead, which ranks by use.
+  const seriesOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const kit of kits ?? []) if (kit.series) values.add(kit.series);
+    return [...values].sort((a, b) => a.localeCompare(b));
+  }, [kits]);
+
   const visible = useMemo(() => {
     let rows = kits ?? [];
     if (statusFilter) rows = rows.filter((kit) => kit.status === statusFilter);
+    if (seriesFilter) rows = rows.filter((kit) => kit.series === seriesFilter);
     if (search.trim()) {
       const q = search.trim().toLowerCase();
       rows = rows.filter(
@@ -229,7 +259,7 @@ export function KitsPage() {
       );
     }
     return rows;
-  }, [kits, statusFilter, search]);
+  }, [kits, statusFilter, seriesFilter, search]);
 
   return (
     <div className="space-y-4">
@@ -260,6 +290,21 @@ export function KitsPage() {
             </option>
           ))}
         </Select>
+        {seriesOptions.length > 0 && (
+          <Select
+            aria-label="Filter by series"
+            value={seriesFilter}
+            onChange={(event) => setSeriesFilter(event.target.value)}
+            className="max-w-52"
+          >
+            <option value="">All series</option>
+            {seriesOptions.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </Select>
+        )}
       </div>
 
       <ErrorBanner message={actionError} />
@@ -294,7 +339,11 @@ export function KitsPage() {
                 <tr key={kit.id} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50">
                   <td className="px-3 py-2">
                     <div className="font-medium">{kit.name}</div>
-                    {kit.kit_number && <div className="text-xs text-zinc-400">{kit.kit_number}</div>}
+                    {(kit.kit_number || kit.series) && (
+                      <div className="text-xs text-zinc-400">
+                        {[kit.kit_number, kit.series].filter(Boolean).join(" · ")}
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-2">{kit.grade}</td>
                   <td className="px-3 py-2">{kit.scale ?? "—"}</td>

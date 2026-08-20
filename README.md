@@ -246,7 +246,8 @@ issue if yours needs something unusual.
 
 | Tool | What it does |
 |---|---|
-| `list_kits` | Filter by status or grade |
+| `list_kits` | Filter by status, grade or series |
+| `list_kit_series` | Series names already in use — check before writing a new spelling |
 | `get_kit` | One kit, in full |
 | `update_kit_status` | Move a kit along the pipeline |
 | `search_catalog` | Search tools/consumables/upgrades — the same search the UI typeahead uses, so agents hit the same de-duplication a human does |
