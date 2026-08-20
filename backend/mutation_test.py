@@ -3,10 +3,15 @@
 
 Standard mutation testing, in the mutmut / cosmic-ray sense, written by hand
 because the mutants worth trying here are semantic rather than syntactic. Each
-case introduces one deliberate fault into a validation rule, runs the tests that
-should detect it, and restores the file. A mutant the suite **kills** (tests go
-red) is a rule the tests genuinely cover; a mutant that **survives** (tests stay
-green) is the finding.
+case first runs its selection UNMUTATED and requires it to pass (a broken
+environment — a test DB migrated past this tree's alembic head — otherwise
+reads as a wall of kills), then introduces one deliberate fault, runs the tests
+that should detect it, and restores the file. A **kill** is a test FAILURE:
+pytest exit 1, "failed" in the summary, no errors — a mutant that stops the
+file importing "fails" every test without any assertion running, which proves
+a syntax accident, not coverage (both rules from the #117 review, P3-1). A
+mutant that **survives** (tests stay green) is the finding; SICK, NONE and
+ERROR verdicts are harness findings, not kills.
 
 Tracked with the branch, on purpose. It is not part of the shipped application and
 nothing imports it — but it is the only thing on #44 that has ever found a guard
@@ -453,10 +458,16 @@ CASES = [
         "the_row_keeps_anyway_says_only_that or refused_create_carries_no_message",
     ),
     (
+        # Re-anchored (#117 review, P3-1): the old two-line anchor's `pass`
+        # replacement stranded the block's tail at deeper indentation, so the
+        # mutant never compiled and every run "killed" it with an
+        # IndentationError instead of the named assertion. The discard is the
+        # load-bearing half (the comment at the site says why), so mutating it
+        # alone is the same semantic mutant, compiling.
         "cell-4. a refused create keeps the id it minted",
         IMP,
-        "            if row.new_id is not None:\n                self.created_ids[spec.key].discard(row.new_id)",
-        "            pass",
+        "                self.created_ids[spec.key].discard(row.new_id)",
+        "                pass  # mutated",
         "takes_back_the_id_it_minted",
     ),
     (
@@ -1811,6 +1822,23 @@ def main() -> int:
             print(f"SKIP  {label}: anchor matched {original.count(old)} times")
             failures.append(label)
             continue
+        # The unmutated selection has to PASS before the mutant means anything
+        # (#117 review, P3-1): a broken environment — a test DB migrated past
+        # this tree's alembic head, a stale fixture — fails every selection
+        # before the named assertion runs, and "any non-zero exit is a kill"
+        # counted exactly that as 63 kills once. This also subsumes the NONE
+        # check: exit 5 on a clean tree means the expression selects nothing.
+        base_code, base_summary = run(expr)
+        if base_code == NO_TESTS_SELECTED:
+            print(
+                f"NONE  {label}\n        -> -k {expr!r} selected no test in {', '.join(TEST_FILES)}"
+            )
+            failures.append(label)
+            continue
+        if base_code != 0:
+            print(f"SICK  {label}\n        -> unmutated selection did not pass: {base_summary}")
+            failures.append(label)
+            continue
         backup = tempfile.mktemp()
         shutil.copy(path, backup)
         try:
@@ -1818,24 +1846,28 @@ def main() -> int:
             code, summary = run(expr)
         finally:
             shutil.copy(backup, path)
-        if code == NO_TESTS_SELECTED:
-            # Nothing ran, so nothing was killed. Reported like a stale anchor:
-            # a case whose `-k` names no test in TEST_FILES is a harness bug,
-            # not evidence about the code.
-            print(
-                f"NONE  {label}\n        -> -k {expr!r} selected no test in {', '.join(TEST_FILES)}"
-            )
+        if code == 0:
+            print(f"GREEN {label}\n        -> {summary}")
             failures.append(label)
             continue
-        verdict = "RED  " if code != 0 else "GREEN"
-        print(f"{verdict} {label}\n        -> {summary}")
-        if code == 0:
+        # A kill is a test FAILURE on the named assertion — pytest exit 1 with a
+        # summary saying "failed" and no errors. A mutant that stops the file
+        # importing, or breaks collection, produces errors, not failures, and an
+        # error proves the mutant is a syntax accident rather than a semantic
+        # fault the suite caught (#117 review, P3-1: cell-4 was "killed" by an
+        # IndentationError for its whole life).
+        killed = code == 1 and "failed" in summary and "error" not in summary
+        if killed:
+            print(f"RED   {label}\n        -> {summary}")
+        else:
+            print(f"ERROR {label}\n        -> exit {code}: {summary}")
             failures.append(label)
     if not tree_is_clean():
         print("\nWARNING: the tree is dirty after the run — a restore failed. `git diff`.")
         return 2
     if failures:
-        print("\nSURVIVING MUTANTS (the finding):", *failures, sep="\n  - ")
+        print("\nFAILURES (surviving, sick, none, or error — each one a finding):")
+        print(*(f"  - {label}" for label in failures), sep="\n")
         return 1
     print(f"\nall {len(selected)} mutants were killed")
     return 0

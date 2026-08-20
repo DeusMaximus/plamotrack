@@ -156,7 +156,10 @@ named tests, restores from a backup in a `finally`, and reports killed vs
 surviving.
 
 ```bash
-cd backend && uv run python mutation_test.py          # every case — ~30-40 min at 97 cases
+cd backend && uv run python mutation_test.py          # every case — ~11 min at 97 cases on
+                                                      # the primary dev Mac (measured, #117;
+                                                      # hardware-dependent — each case runs
+                                                      # its selection twice: baseline + mutant)
 uv run python mutation_test.py -k rcpt-                # cases whose label contains "rcpt-"
 ```
 
