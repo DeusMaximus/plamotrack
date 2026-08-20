@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-21 — Claude Code (Fable 5) — #120 implemented: PR #121 open, CI green; release cadence decided (no v0.2.6 tag)
+## 2026-08-21 — Claude Code (Fable 5) — #120 closed: PR #121 merged as `f3c5d1a`, review skipped; #122 filed; release cadence decided (no v0.2.6 tag)
 
 - **Done:** **#120 items 1+2 — PR #121** (branch `feat/120-status-editing`, head
   `a8c4406`, CI green all three jobs). Browser-only; no service, schema, REST,
@@ -71,17 +71,21 @@ Template:
   Deliberate calls on the PR: ship-backfill on a received order is now
   browser-reachable (#118 kept it REST/MCP-only over button real estate, the
   service is explicitly legal); in-hand clears + disables pre-order at create;
-  MCP's `update_kit_status` shortcut stays. **Review call: recommended no
-  external review** — frontend-only consolidation, no shared mechanism (#40
-  criterion); the owner had not yet confirmed at hand-off time.
-- **State:** PR #121 open, unmerged; CI green at `a8c4406`; no migration. Dev
-  servers running on :8000/:5173 (serving this branch). Note: the previous
-  session's hand-off commit `1c37dfb` was never pushed — it goes up with this
-  one. Stale worktrees `/private/tmp/plamotrack-pr100` and `-pr108-main`
-  remain, not this session's.
-- **Next:** owner decides review-or-merge on #121 (#120 closes on merge). Then
-  the 0.2.6 list, reprioritized by dogfooding — the owner plans to dogfood off
-  `main` once #120 lands, and **#112 goes before any real-collection import**
+  MCP's `update_kit_status` shortcut stays. **Review skipped, owner's call** —
+  frontend-only consolidation, no shared mechanism (#40 criterion); Copilot
+  auto-review stays disabled until 1 September, Cursor offered and declined.
+- **State (amended in place after the merge):** **PR #121 squash-merged as
+  `f3c5d1a`, branch deleted, #120 closed** on the owner's call, CI green at
+  `a8c4406` (the merged head). No migration. **#122 filed** — #120's deferred
+  item 3 (board cards → Edit dialog) spun out so it isn't lost in the closed
+  issue; unmilestoned on purpose, don't milestone it without asking. **The
+  0.2.7 milestone is now empty — do NOT run the release gate** (cadence above:
+  one v0.2.7-alpha release only when 0.2.6 is also done). Dev servers running
+  on :8000/:5173, now serving merged `main`. Stale worktrees
+  `/private/tmp/plamotrack-pr100` and `-pr108-main` remain, not this session's.
+- **Next:** the 0.2.6 list (#77, #87, #90, #112, #119), reprioritized by
+  dogfooding — the owner intends to start dogfooding off `main` (real instance
+  is the Proxmox LXC), and **#112 goes before any real-collection import**
   (the starter sheet drops kit-only fields on retailer-bearing rows). Gate +
   v0.2.7-alpha tag only when both milestones are empty.
 
