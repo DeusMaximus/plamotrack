@@ -156,8 +156,11 @@ named tests, restores from a backup in a `finally`, and reports killed vs
 surviving.
 
 ```bash
-cd backend && uv run python mutation_test.py          # every case, ~40 s
-uv run python mutation_test.py -k 2b                   # cases whose label contains "2b"
+cd backend && uv run python mutation_test.py          # every case — ~11 min at 97 cases on
+                                                      # the primary dev Mac (measured, #117;
+                                                      # hardware-dependent — each case runs
+                                                      # its selection twice: baseline + mutant)
+uv run python mutation_test.py -k rcpt-                # cases whose label contains "rcpt-"
 ```
 
 - **Refuses a dirty tree**, so an interrupted run is obvious in `git status`.
@@ -179,10 +182,13 @@ uv run python mutation_test.py -k 2b                   # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 13 cases, all in `importing.py`** (the #82/#88
-  cell-semantics rules). PR #86 carries a larger union with `inv-`/`cell-` label
-  prefixes; whoever merges decides what stays. Labels are prefixed because `-k`
-  matches substrings and two sets numbered from 1 collide.
+- **On `main` at the time of writing: 97 cases over eight files** — #86's
+  `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
+  #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`) and #115 (`moe-`).
+  A branch that runs mutants ahead of the harness (a scratch copy, a hand run)
+  queues its tuples in the PR body for folding in after merge — anchors get
+  re-checked at fold-in, since the code may have moved under them. Labels are
+  prefixed because `-k` matches substrings and two sets numbered from 1 collide.
 - **Frontend equivalent races Vite's recompile.** A frontend mutant reported as
   surviving needs a manual re-run before it is believed. Nothing tracked yet.
 - **When briefing an external model to do this work, say "mutation testing".**
