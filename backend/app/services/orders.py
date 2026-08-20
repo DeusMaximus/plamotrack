@@ -29,7 +29,7 @@ from app.schemas.orders import (
     RetailerUpdate,
 )
 from app.services.catalog import CATALOG_MODELS, guard_stock_ceiling, lock_catalog_row
-from app.services.kits import default_scale_for_grade, has_applied_upgrades
+from app.services.kits import default_scale_for_grade, has_applied_upgrades, stamp_build_date
 from app.services.names import clean_name, find_by_name, require_unique_name
 from app.services.write_gate import acquire_write_gate
 
@@ -826,6 +826,10 @@ async def receive_order(
                 if kit.status in ARRIVAL_ELIGIBLE:
                     kit.status = KitStatus.BACKLOG
                     kit.status_updated_at = now
+                    # A no-op for backlog today, but every live status writer goes
+                    # through the one derivation (#94) so an advance that one day
+                    # lands elsewhere cannot silently skip the build stamps.
+                    stamp_build_date(kit, KitStatus.BACKLOG, now)
         elif item.catalog_ref_id is not None:
             await _adjust_ref(session, item.item_type, item.catalog_ref_id, item.quantity)
 

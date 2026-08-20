@@ -120,6 +120,8 @@ export const api = {
     return request<Kit[]>(`/kits${qs}`);
   },
   createKit: (data: KitCreate) => request<Kit>("/kits", post(data)),
+  /** Distinct series values in use, most frequent first — the typeahead feed. */
+  listKitSeries: () => request<string[]>("/kits/series"),
   updateKit: (id: string, data: KitUpdate) =>
     request<Kit>(`/kits/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteKit: (id: string) => request<void>(`/kits/${id}`, { method: "DELETE" }),

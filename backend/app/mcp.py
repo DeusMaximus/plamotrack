@@ -125,14 +125,30 @@ class _KitPatch(KitUpdate):
 
 
 @mcp.tool
-async def list_kits(status: str | None = None, grade: str | None = None) -> list[dict]:
+async def list_kits(
+    status: str | None = None, grade: str | None = None, series: str | None = None
+) -> list[dict]:
     """List kits in the collection, optionally filtered by pipeline status
     (pre_ordered, ordered, in_transit, backlog, building, complete — backlog
-    means in hand but not started) and/or grade (HG, RG, MG, PG, SD, ...)."""
+    means in hand but not started), grade (HG, RG, MG, PG, SD, ...) and/or
+    series (exact name, case-insensitively — get the spellings in use from
+    list_kit_series)."""
     parsed_status = _parse_status(status) if status else None
     async with _tool_session() as session:
-        kits = await kits_service.list_kits(session, status=parsed_status, grade=grade)
+        kits = await kits_service.list_kits(
+            session, status=parsed_status, grade=grade, series=series
+        )
         return [KitRead.model_validate(k).model_dump(mode="json") for k in kits]
+
+
+@mcp.tool
+async def list_kit_series() -> list[str]:
+    """The series names already in use on kits, most frequent first. ALWAYS check
+    this before writing a series onto a kit and reuse an existing spelling when
+    one matches — series is free text, so "IBO" and "Iron-Blooded Orphans" would
+    otherwise fragment into two filter entries for one series."""
+    async with _tool_session() as session:
+        return await kits_service.list_kit_series(session)
 
 
 @mcp.tool
@@ -148,7 +164,10 @@ async def get_kit(kit_id: str) -> dict:
 async def update_kit_status(kit_id: str, status: str) -> dict:
     """Move a kit to a new pipeline status (equivalent to dragging its Kanban
     card). Valid statuses: pre_ordered, ordered, in_transit, backlog (= in
-    hand, not started), building, complete."""
+    hand, not started), building, complete. Entering building/complete stamps
+    build_started_at/build_completed_at with now — only when that date is still
+    null, so a real date already recorded is never overwritten; use update_kit
+    to backfill or correct the dates themselves."""
     parsed_id = _parse_uuid(kit_id, "kit_id")
     parsed_status = _parse_status(status)
     async with _tool_session() as session:
@@ -158,11 +177,17 @@ async def update_kit_status(kit_id: str, status: str) -> dict:
 
 @mcp.tool
 async def update_kit(kit_id: str, changes: _KitPatch) -> dict:
-    """Edit a kit's details: name, grade, scale, kit_number, status, rating (1-5),
-    build_notes. Only the fields present in `changes` are touched, so this is safe
-    to call with a single field; sending an explicit null clears a nullable one
-    (build_notes: null erases the notes, and a rating can be taken back the same
-    way). Name, grade and status cannot be nulled — they are always set on a kit.
+    """Edit a kit's details: name, grade, scale, kit_number, series, status,
+    rating (1-5), build_notes, build_started_at, build_completed_at. Before
+    setting a series, check list_kit_series and reuse an existing spelling. Only
+    the fields present in `changes` are touched, so this is safe to call with a
+    single field; sending an
+    explicit null clears a nullable one (build_notes: null erases the notes, and a
+    rating can be taken back the same way). Name, grade and status cannot be
+    nulled — they are always set on a kit. The build dates are offset-aware ISO
+    8601 (e.g. "2026-02-08T00:00:00+10:00") and belong to the user: a status
+    transition stamps one only when it is null, so supply a value here to backfill
+    the real date and it will never be overwritten by a later move.
     `update_kit_status` is the status-only shortcut for this tool."""
     parsed_id = _parse_uuid(kit_id, "kit_id")
     fields = changes.model_dump(exclude_unset=True)

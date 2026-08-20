@@ -20,9 +20,15 @@ export interface Kit {
   grade: string;
   scale: string | null;
   kit_number: string | null;
+  /** Free text like grade (#96); suggestions come from /kits/series. */
+  series: string | null;
   status: KitStatus;
   status_updated_at: string;
   rating: number | null;
+  /** Owned by the user (#94): a transition to building/complete stamps one only
+   *  when it is null; both stay editable and are never overwritten by a drag. */
+  build_started_at: string | null;
+  build_completed_at: string | null;
   build_notes: string | null;
   order_item_id: string | null;
   created_at: string;
@@ -34,7 +40,10 @@ export interface KitCreate {
   grade: string;
   scale?: string | null;
   kit_number?: string | null;
+  series?: string | null;
   status?: KitStatus;
+  build_started_at?: string | null;
+  build_completed_at?: string | null;
   build_notes?: string | null;
 }
 
@@ -43,8 +52,13 @@ export interface KitUpdate {
   grade?: string;
   scale?: string | null;
   kit_number?: string | null;
+  series?: string | null;
   status?: KitStatus;
   rating?: number | null;
+  /** Offset-aware ISO 8601; send only when the user touched the field — a date
+   *  input cannot restate the stored instant losslessly (#93's lesson). */
+  build_started_at?: string | null;
+  build_completed_at?: string | null;
   build_notes?: string | null;
 }
 

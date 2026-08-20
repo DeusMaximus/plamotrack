@@ -653,12 +653,23 @@ KITS = TableSpec(
         col("grade", parse_text, required=True, help="HG / RG / MG / PG / SD / ..."),
         col("scale", parse_text, help="Blank = derived from the grade."),
         col("kit_number", parse_text),
+        col("series", parse_text, help="e.g. Iron-Blooded Orphans. Free text (#96)."),
         col(
             "status",
             _KIT_STATUS_PARSER,
             help="pre_ordered / ordered / in_transit / backlog / building / complete",
         ),
         col("status_updated_at", parse_datetime),
+        col(
+            "build_started_at",
+            parse_datetime,
+            help="When the build began (#94). Blank = not recorded — never invented.",
+        ),
+        col(
+            "build_completed_at",
+            parse_datetime,
+            help="When it was declared finished. Blank = not recorded — never invented.",
+        ),
         col("rating", parse_int, help="1-5, set on completion."),
         col("build_notes", parse_text),
         col(

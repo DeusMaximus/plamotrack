@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import Kit, KitStatus
 from app.schemas.kits import KitCreate, KitUpdate
+from app.services.names import WHITESPACE
 from app.services.write_gate import acquire_write_gate
 
 # Derived default scale per grade, overridable per kit (§3.1). SD kits are non-scale.
@@ -29,9 +30,60 @@ def default_scale_for_grade(grade: str) -> str | None:
     return GRADE_DEFAULT_SCALE.get(grade.strip().upper())
 
 
+#: Which build date entering a status stamps (#94). One map, consulted by every
+#: *live* status writer — `update_kit` (the direct edit and the board drag) and
+#: `receive_order`'s pipeline advance — so the derivation cannot drift between
+#: them. The CSV importer deliberately does NOT derive: an imported kit whose
+#: sheet says `complete` with no completion date stays null rather than acquiring
+#: the import's own clock (rule 10 by analogy — import never invents timestamps),
+#: and a re-imported archive stays a no-op.
+_BUILD_STAMPS: dict[KitStatus, str] = {
+    KitStatus.BUILDING: "build_started_at",
+    KitStatus.COMPLETE: "build_completed_at",
+}
+
+
+def stamp_build_date(
+    kit: Kit,
+    entered: KitStatus,
+    now: datetime,
+    *,
+    supplied: frozenset[str] = frozenset(),
+) -> None:
+    """Entering `building` stamps `build_started_at`; entering `complete` stamps
+    `build_completed_at` — each **only when null** (#94).
+
+    Only-when-null is what makes the dates the user's: a value someone set — by
+    backfill, by correction, or by an earlier pass through the status — is never
+    overwritten by a later drag, and `building` → `backlog` → `building` keeps the
+    original start. `supplied` names the fields the same request set explicitly
+    (including to null); the derivation never fights an explicit value.
+    """
+    field = _BUILD_STAMPS.get(entered)
+    if field is None or field in supplied:
+        return
+    if getattr(kit, field) is None:
+        setattr(kit, field, now)
+
+
+def _normalize_series(value: str | None) -> str | None:
+    """Stored trimmed; blank or whitespace-only means no series (#113 review, P3-1).
+
+    The importer's `parse_text` already collapses a blank cell to null, so the live
+    writers have to say the same thing — otherwise the distinct-values surface
+    offers an empty typeahead option, the opposite of what it exists for. Python's
+    `str.strip()` is the same whitespace set `names.WHITESPACE` mirrors in Postgres.
+    """
+    if value is None:
+        return None
+    return value.strip() or None
+
+
 async def create_kit(session: AsyncSession, data: KitCreate) -> Kit:
     await acquire_write_gate(session)
-    kit = Kit(**data.model_dump())
+    fields = data.model_dump()
+    fields["series"] = _normalize_series(fields["series"])
+    kit = Kit(**fields)
     if kit.scale is None:
         kit.scale = default_scale_for_grade(kit.grade)
     session.add(kit)
@@ -44,6 +96,7 @@ async def list_kits(
     session: AsyncSession,
     status: KitStatus | None = None,
     grade: str | None = None,
+    series: str | None = None,
 ) -> list[Kit]:
     stmt = select(Kit).order_by(Kit.created_at, Kit.id)
     if status is not None:
@@ -53,6 +106,31 @@ async def list_kits(
         # pattern that also matches MG (#49). Both sides folded by Postgres, as in
         # `get_or_create_retailer`, so the two folds cannot disagree.
         stmt = stmt.where(func.lower(Kit.grade) == func.lower(grade))
+    if series is not None:
+        # Same predicate shape as grade, for the same #49 reasons.
+        stmt = stmt.where(func.lower(Kit.series) == func.lower(series))
+    return list((await session.scalars(stmt)).all())
+
+
+async def list_kit_series(session: AsyncSession) -> list[str]:
+    """The series values in use, most frequent first (#96).
+
+    This is the select-or-create device for a free-text column: the kit form's
+    typeahead and the MCP tool both read it, so 'IBO' and 'Iron-Blooded Orphans'
+    become two entries by choice rather than by accident. Frequency order puts
+    the spelling the collection actually uses on top; ties break alphabetically
+    (case-insensitively) so the order is stable.
+    """
+    # The write paths store blank as null (#113 review, P3-1); the btrim guard
+    # additionally hides any blank that predates that rule or arrives through a
+    # future writer that forgets it — trimmed with the same whitespace set the
+    # name predicates use, not plain btrim's 0x20 (#109's lesson).
+    stmt = (
+        select(Kit.series)
+        .where(Kit.series.is_not(None), func.btrim(Kit.series, WHITESPACE) != "")
+        .group_by(Kit.series)
+        .order_by(func.count().desc(), func.lower(Kit.series))
+    )
     return list((await session.scalars(stmt)).all())
 
 
@@ -70,10 +148,18 @@ async def update_kit(session: AsyncSession, kit_id: uuid.UUID, data: KitUpdate) 
     for non_nullable in ("name", "grade", "status"):
         if non_nullable in fields and fields[non_nullable] is None:
             raise InvalidInputError(f"{non_nullable} cannot be null")
+    if "series" in fields:
+        fields["series"] = _normalize_series(fields["series"])
+    entered: KitStatus | None = None
     if "status" in fields and fields["status"] != kit.status:
+        entered = fields["status"]
         kit.status_updated_at = datetime.now(UTC)
     for key, value in fields.items():
         setattr(kit, key, value)
+    if entered is not None:
+        # After the explicit fields land, so the stamp sees what the request said
+        # and yields to it. Same instant as status_updated_at — one clock, not two.
+        stamp_build_date(kit, entered, kit.status_updated_at, supplied=frozenset(fields))
     await session.flush()
     # updated_at is generated server-side on UPDATE; refresh so serialization
     # after commit doesn't trigger a lazy load outside the async context.
