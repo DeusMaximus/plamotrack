@@ -168,7 +168,12 @@ paused/shelved status (declined, not deferred). The migration does not backfill 
 wrong for a kit that went complete → building → complete. The importer never invents
 these timestamps (rule 10 by analogy), and they stay out of the order line's `kit_*`
 mirror (§12.2) so a price correction on the line cannot revert a completion date set
-from MCP.
+from MCP. **Considered and deferred (owner, 20/08/2026): an arrival date on the kit.**
+A kit does not store one — it is derivable only through the spawning order
+(`order_item_id` → `orders.received_at`), and a hand-added kit has none. Showing it
+on the kits list would mean a read-side join and a new API field; for now arrival
+lives on the order side (#93 made it backdatable there), and the kit-side display is
+deliberately postponed rather than missed.
 
 **Series (#96):** free text, one value, the same shape as `grade` and `scale`. An enum
 would settle §9.1 by accident — "series" is Gunpla-specific in a way "grade" is not —
