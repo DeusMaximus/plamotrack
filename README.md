@@ -256,6 +256,7 @@ issue if yours needs something unusual.
 | `get_order` | One order in full — the read an edit starts from |
 | `update_order` | Correct an order: header fields and/or the line set; refuses to silently drop lines you didn't restate |
 | `mark_order_received` | Applies stock, advances that order's kits to backlog — with an optional arrival date, for deliveries logged after the fact |
+| `mark_order_shipped` | Moves that order's waiting kits to in-transit — with an optional ship date, for shipping notifications logged after the fact; never touches stock |
 | `adjust_stock` | Nudge a quantity, with a reason |
 | `apply_upgrade` | Record an upgrade part going onto a kit |
 

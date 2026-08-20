@@ -70,6 +70,7 @@ def check(
     _check_catalog_targets(rows, by_id=by_id, created_ids=created_ids, replace_all=replace_all)
     _check_receipt_transitions(rows)
     _check_future_receipts(rows)
+    _check_ship_dates(rows)
 
 
 def _writes(row: "_Row") -> bool:
@@ -312,6 +313,45 @@ def _check_future_receipts(rows: dict[str, list["_Row"]]) -> None:
                 f"received_at: {value.isoformat()} is in the future — an arrival can be "
                 f"backdated, not predicted (the same refusal the app gives). State the day "
                 f"the order actually arrived, or take received_at out of this sheet"
+            )
+
+
+def _check_ship_dates(rows: dict[str, list["_Row"]]) -> None:
+    """`shipped_at` under the same two rules its live writers apply (#95):
+    un-shipping is not supported anywhere, and a shipment cannot be in the
+    future.
+
+    Shipping applies no stock, so — unlike the receipt — the null → non-null
+    direction is free on every order, catalog lines included; the kits it
+    advances are `_advance_kits_for_newly_shipped_orders`'s job at apply time.
+    Clearing mirrors REST's refusal (rule 1): there is no un-ship transition
+    anywhere, so a sheet may not be the way around. The future rule reads the
+    change, not the cell, exactly as `_check_future_receipts` above — a stored
+    legacy value restates as a no-op, and a create is a restore (§12.5's create
+    rule, applied to the date).
+    """
+    for row in rows.get("orders", []):
+        if row.action is RowAction.ERROR:
+            continue
+        change = _change(row, "shipped_at")
+        if change is None:
+            continue
+        if change.before and not change.after:
+            row.action = RowAction.ERROR
+            row.error = (
+                "shipped_at: clearing it would un-ship the order, and un-shipping isn't "
+                "supported anywhere in plamotrack, by import or otherwise. To correct the "
+                "date, state the actual one; to leave it alone, take shipped_at out of "
+                "this sheet"
+            )
+            continue
+        value = row.values.get("shipped_at")
+        if value is not None and change.after and receipt_is_future(value):
+            row.action = RowAction.ERROR
+            row.error = (
+                f"shipped_at: {value.isoformat()} is in the future — a shipment can be "
+                f"backdated, not predicted (the same refusal the app gives). State the day "
+                f"it actually shipped, or take shipped_at out of this sheet"
             )
 
 

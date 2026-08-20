@@ -14,6 +14,7 @@ import type {
   Order,
   OrderCreate,
   OrderReceive,
+  OrderShip,
   OrderUpdate,
   Retailer,
   RetailerCreate,
@@ -165,6 +166,8 @@ export const api = {
   updateOrder: (id: string, data: OrderUpdate) => request<Order>(`/orders/${id}`, patch(data)),
   receiveOrder: (id: string, data?: OrderReceive) =>
     request<Order>(`/orders/${id}/receive`, data ? post(data) : { method: "POST" }),
+  shipOrder: (id: string, data?: OrderShip) =>
+    request<Order>(`/orders/${id}/ship`, data ? post(data) : { method: "POST" }),
   deleteOrder: (id: string) => request<void>(`/orders/${id}`, { method: "DELETE" }),
 
   previewImport: (file: File, mode: ImportMode) => {

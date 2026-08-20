@@ -60,6 +60,7 @@ from app.services.numeric import is_lone_group, require_int4
 from app.services.orders import (
     ARRIVAL_ELIGIBLE,
     PROGRESSED_STATUSES,
+    SHIP_ELIGIBLE,
     kit_progressed,
     require_line_quantity,
     spawn_kits,
@@ -580,6 +581,9 @@ class _Spawn:
     #: The order's post-write receipt instant, resolved at plan time
     #: (`_order_receipt`) and hash-bound like every other value a spawn writes.
     received_at: datetime | None
+    #: The same one stage earlier (#95): the post-write ship instant, so a kit
+    #: landing in_transit carries it. Hash-bound for the same reason.
+    shipped_at: datetime | None
 
 
 @dataclass
@@ -1587,20 +1591,21 @@ class _Planner:
                     "importing adds another, since two of the same kit are two kits"
                 )
 
-    def _order_receipt(self, order_id: uuid.UUID) -> datetime | None:
-        """The post-write receipt instant of the order a kit line belongs to —
-        null when it will be pending — so a spawned kit lands in the right status
-        instead of always `_initial_kit_status`'s default of "still on the way"
-        (#47), and carries the right `status_updated_at` (#93). Checks this
-        import's own orders rows first — covering both a freshly created order
-        and an existing one this import updates — and falls back to the persisted
-        row for an order the upload doesn't touch at all.
+    def _order_instant(self, order_id: uuid.UUID, column: str) -> datetime | None:
+        """The post-write value of one of an order's timeline instants
+        (`received_at`, `shipped_at`) — null when it will be unset — so a
+        spawned kit lands in the right status instead of always
+        `_initial_kit_status`'s default of "still on the way" (#47), and carries
+        the right `status_updated_at` (#93, #95). Checks this import's own
+        orders rows first — covering both a freshly created order and an
+        existing one this import updates — and falls back to the persisted row
+        for an order the upload doesn't touch at all.
 
         Resolved at *plan* time and carried on `_Spawn`, so the instant a spawn
-        will stamp is part of the plan the fingerprint binds: a receipt
-        correction landing between preview and apply changes the re-plan's hash
-        and the stale apply 409s, instead of stamping a value the operator never
-        saw (Codex round five, P3).
+        will stamp is part of the plan the fingerprint binds: a correction
+        landing between preview and apply changes the re-plan's hash and the
+        stale apply 409s, instead of stamping a value the operator never saw
+        (Codex round five, P3).
         """
         for row in self.rows.get("orders", []):
             candidate = row.new_id if row.action is RowAction.CREATE else row.matched_id
@@ -1608,15 +1613,21 @@ class _Planner:
                 continue
             # Only a row that will actually be written can answer from the file —
             # `add_only` deliberately leaves a matched order untouched (SKIP), so
-            # its uploaded `received_at` cell describes nothing that will land.
+            # its uploaded cell describes nothing that will land.
             writes = row.action in (RowAction.CREATE, RowAction.UPDATE)
-            if writes and "received_at" in row.present:
-                return row.values.get("received_at")
+            if writes and column in row.present:
+                return row.values.get(column)
             if row.target is not None:
-                return row.target.received_at
+                return getattr(row.target, column)
             return None
         existing = self.by_id["orders"].get(order_id)
-        return existing.received_at if existing is not None else None
+        return getattr(existing, column) if existing is not None else None
+
+    def _order_receipt(self, order_id: uuid.UUID) -> datetime | None:
+        return self._order_instant(order_id, "received_at")
+
+    def _order_shipment(self, order_id: uuid.UUID) -> datetime | None:
+        return self._order_instant(order_id, "shipped_at")
 
     def _attached_after(
         self, line_id: uuid.UUID, stored: list[Kit], kit_rows: list[_Row]
@@ -1928,6 +1939,7 @@ class _Planner:
                     row_number=row.row_number,
                     received=receipt is not None,
                     received_at=receipt,
+                    shipped_at=self._order_shipment(order_id),
                 )
             )
             row.messages.append(f"will create {missing} kit(s) from this line")
@@ -2383,6 +2395,7 @@ def _plan_fingerprint(
                 spawn.row_number,
                 spawn.received,
                 canon(spawn.received_at),
+                canon(spawn.shipped_at),
             ]
             for spawn in spawns
         ],
@@ -2443,6 +2456,46 @@ async def preview_import(
     session: AsyncSession, filename: str, content: bytes, mode: ImportMode
 ) -> ImportPlan:
     return (await plan_import(session, filename, content, mode)).plan
+
+
+def _advance_kits_for_newly_shipped_orders(execution: ExecutionPlan) -> None:
+    """Mirror `mark_order_shipped()`'s kit advance (rule 2) for a kit that
+    already existed before this apply, under an order this same apply is the one
+    marking shipped — `_advance_kits_for_newly_received_orders`'s shape one
+    stage earlier (#95), and everything its docstring says about reading the
+    before-state from `row.changes` holds here unchanged.
+
+    Runs before the receipt advance, mirroring the pipeline's own order. The
+    ordering is presentation, not correctness: an upload that ships AND receives
+    an order in one apply ends with the kit in backlog carrying the receipt
+    stamp either way (ship-first passes through in_transit; receive-first
+    leaves nothing ship-eligible behind) — the combined-upload test pins the
+    terminal state, not the path. Stamps `row.target.shipped_at`, the value the
+    upload stated; never touches stock (shipping has no stock semantics at
+    all), and never overrides a kit this upload gives its own `status` cell.
+    """
+    explicit_status_ids = {
+        row.matched_id
+        for row in execution.rows.get("kits", [])
+        if row.matched_id is not None and "status" in row.present
+    }
+    for row in execution.rows.get("orders", []):
+        if row.action is not RowAction.UPDATE or row.target is None:
+            continue
+        shipped_change = next((c for c in row.changes if c.field == "shipped_at"), None)
+        if shipped_change is None or shipped_change.before:
+            # Not touched, or already shipped before this apply — a correction is
+            # not a shipment. Only null -> non-null is one.
+            continue
+        for item in row.target.items:
+            if item.item_type is not ItemType.KIT:
+                continue
+            for kit in item.kits:
+                if kit.id in explicit_status_ids:
+                    continue
+                if kit.status in SHIP_ELIGIBLE:
+                    kit.status = KitStatus.IN_TRANSIT
+                    kit.status_updated_at = row.target.shipped_at
 
 
 def _advance_kits_for_newly_received_orders(execution: ExecutionPlan) -> None:
@@ -2600,6 +2653,7 @@ async def apply_import(
         await session.flush()
 
     _stamp_generated_status_changes(execution)
+    _advance_kits_for_newly_shipped_orders(execution)
     _advance_kits_for_newly_received_orders(execution)
 
     removed = 0
@@ -2635,6 +2689,8 @@ async def apply_import(
             count=spawn.count,
             received=spawn.received,
             received_at=spawn.received_at,
+            shipped=spawn.shipped_at is not None,
+            shipped_at=spawn.shipped_at,
         )
         spawned += spawn.count
 

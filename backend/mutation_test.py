@@ -589,6 +589,109 @@ CASES = [
         '        value = row.values.get("received_at")',
         "restores_a_future or restated_is_still",
     ),
+    # --- #95: shipped_at, one mutant per fix site ------------------------------------
+    (
+        "ship-1. the ship advance re-stamps kits already in transit",
+        ORD,
+        "                if kit.status in SHIP_ELIGIBLE:",
+        "                if kit.status in ARRIVAL_ELIGIBLE:",
+        "ship_moves_pipeline_kits",
+    ),
+    (
+        "ship-2. the ship advance forgets the stamp",
+        ORD,
+        "                    kit.status = KitStatus.IN_TRANSIT\n"
+        "                    kit.status_updated_at = now",
+        "                    kit.status = KitStatus.IN_TRANSIT",
+        "ship_moves_pipeline_kits or ship_without_a_date",
+    ),
+    (
+        "ship-3. a future entry-time shipment is accepted",
+        ORD,
+        "        _refuse_future_ship(data.shipped_at)",
+        "        pass",
+        "create_with_future_shipped_at",
+    ),
+    (
+        "ship-4. the import-side ship rules are off",
+        INV,
+        "    _check_ship_dates(rows)",
+        "    pass  # neutered",
+        "unship_by_import or future_ship_date_by_import",
+    ),
+    (
+        "ship-5. the import ship advance reads the clock",
+        IMP,
+        "                    kit.status_updated_at = row.target.shipped_at",
+        "                    kit.status_updated_at = datetime.now(UTC)",
+        "ship_by_import_advances",
+    ),
+    (
+        "ship-6. the spawn's ship instant falls out of the plan fingerprint",
+        IMP,
+        "                canon(spawn.received_at),\n                canon(spawn.shipped_at),",
+        "                canon(spawn.received_at),",
+        "ship_correction_between_preview_and_apply",
+    ),
+    (
+        "ship-7. a spawn never borrows the ship instant",
+        ORD,
+        "    if final_status is KitStatus.IN_TRANSIT:\n        stamp = shipped_at",
+        "    pass",
+        "create_shipped_lands_kits_in_transit or line_added_to_a_shipped_order",
+    ),
+    # --- round one, P3-3: the sites ship-4's whole-validator neuter and the ----------
+    # --- original seven left unmutated, one tuple per site; ship-8 is the P2 fix -----
+    (
+        "ship-4a. clearing a ship date imports again",
+        INV,
+        "        if change.before and not change.after:",
+        "        if False:",
+        "unship_by_import",
+    ),
+    (
+        "ship-4b. a future ship date imports again",
+        INV,
+        "        if value is not None and change.after and receipt_is_future(value):",
+        "        if False:",
+        "future_ship_date_by_import",
+    ),
+    (
+        "ship-8. the ship correction takes any kit with the old stamp",
+        ORD,
+        "only_status=KitStatus.IN_TRANSIT",
+        "only_status=None",
+        "never_takes_a_receipt",
+    ),
+    (
+        "ship-9. the transition's future guard is off",
+        ORD,
+        "    if shipped_at is not None:\n        _refuse_future_ship(shipped_at)",
+        "    pass",
+        "ship_with_a_future_date",
+    ),
+    (
+        "ship-10. the correction's future guard is off",
+        ORD,
+        "        _refuse_future_ship(new_ship)",
+        "        pass",
+        "patch_ship_correction_into_the_future",
+    ),
+    (
+        "ship-11. entry never lands a spawn in transit",
+        ORD,
+        "    if shipped and requested in SHIP_ELIGIBLE:\n        return KitStatus.IN_TRANSIT",
+        "    pass",
+        "create_shipped_lands_kits_in_transit",
+    ),
+    (
+        "ship-12. the import advance stamps without moving the status",
+        IMP,
+        "                    kit.status = KitStatus.IN_TRANSIT\n"
+        "                    kit.status_updated_at = row.target.shipped_at",
+        "                    kit.status_updated_at = row.target.shipped_at",
+        "ship_by_import_advances",
+    ),
     # --- #107 / PR #109: name uniqueness (tuples from the PR body's collapsed -------
     # --- block, anchors verified once at d1d051d; folded in after #86 landed) -------
     (
@@ -1757,6 +1860,7 @@ TEST_FILES = [
     "tests/test_build_dates.py",
     "tests/test_series.py",
     "tests/test_mcp_order_edit.py",
+    "tests/test_ship_dates.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.

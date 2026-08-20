@@ -284,6 +284,7 @@ a gamble that remembering which ones pack properly has real value.
 | tracking_url | text (nullable) | |
 | shipping_cost_minor | int (nullable) | see §6 for currency handling |
 | currency_code | text | ISO 4217 |
+| shipped_at | timestamp (nullable) | null = not marked shipped; a pure timeline record plus the in_transit kit advance — **never** a stock proxy (#95) |
 | received_at | timestamp (nullable) | null = pending (not yet arrived) — see §3.9 |
 
 ### 3.9 `order_items`
@@ -351,6 +352,24 @@ instant is supplied rather than always stamped "now":
   own date. The MCP `update_order` tool carries the same correction (#97). A
   correction arriving by CSV moves only the order — the importer never rewrites kit
   rows the upload doesn't name (#116)
+**Shipped (#95, 21/08/2026)** is the same machinery one stage earlier, minus the
+stock. `shipped_at` is suppliable at entry (date-or-nothing — with no separate
+"shipped" boolean anywhere, the instant is the whole assertion), a transition
+(`POST /orders/{id}/ship`, `mark_order_shipped`) that advances pre_ordered/ordered
+kits to in_transit stamped with the ship instant, and a correction of the same
+PATCH shape reusing the same restamp. It never applies stock — `received_at` stays
+the sole "stock was applied" proxy — which is also why shipping imports freely on
+every order where receiving by import is refused on catalog-bearing ones (§12.5).
+Receiving an unshipped order is legal and backfills nothing; shipping an
+already-received order records the date and moves nothing; un-shipping is refused
+everywhere; and there is deliberately **no cross-field check** against
+`order_date` (not comparable, above) or `received_at` (#113's rule — the user
+owns the values, and a service check would diverge from the importer). The
+pending pre-order distinction is *derived* in the browser from the kits already
+in the payload — once an order ships nobody cares it was a pre-order, so nothing
+is persisted; a catalog-only order carries no signal, accepted until pre-ordering
+consumables stops being rare.
+
 - **the future is refused, judged as a calendar date in the instant's own offset** —
   not as an instant against the server clock, which would refuse an honest "today"
   over clock skew. A receipt *earlier than `order_date`* is deliberately allowed:
@@ -662,9 +681,10 @@ is `/mcp/` on the API port (streamable HTTP).
   schema unchanged instead of a hand-written union of all three that every new column
   would have to be added to twice
 - `create_order(retailer, date, items[], order_number?, tracking?, received?,
-  received_at?)` — the items array drives the same fan-out/increment dispatch as the
-  REST endpoint; retailer matched by name case-insensitively, created if new;
-  `received_at` backdates an arrival logged after the fact (§3.9)
+  received_at?, shipped_at?)` — the items array drives the same fan-out/increment
+  dispatch as the REST endpoint; retailer matched by name case-insensitively,
+  created if new; `received_at` backdates an arrival logged after the fact (§3.9);
+  `shipped_at` (#95) needs no flag and lands spawned kits in_transit
 - `list_orders(pending_only?)` — find the order a shipping or arrival email belongs to
 - `get_order(id)` — one order in full, line ids and spawned kits included; the read an
   edit starts from (#97)
@@ -679,6 +699,8 @@ is `/mcp/` on the API port (streamable HTTP).
   a concurrent line addition (#97)
 - `mark_order_received(order_id, received_at?)` — applies stock, advances pipeline kits
   to backlog, stamped with the (optionally backdated) arrival (§3.9)
+- `mark_order_shipped(order_id, shipped_at?)` — advances pre_ordered/ordered kits to
+  in_transit, stamped the same way; applies no stock (#95)
 - `adjust_stock(catalog_id, delta, reason?)`
 - `apply_upgrade(upgrade_id, kit_id, quantity)`
 
@@ -1057,6 +1079,13 @@ The refusal reads the change, not the cell: a stored legacy future value restate
 as a no-op, and a create is a restore (the create rule above, applied to the date),
 so an archive carrying one stays importable — stated policy, with the accepted cost
 that a hand-written CSV can still create a future order.
+
+`shipped_at` (#95) rides the same rails: the ship arrival advances
+pre_ordered/ordered kits to in_transit stamped with the sheet's instant, freely on
+every order because shipping carries no stock semantics; clearing it is refused
+(un-shipping exists nowhere); the future is refused through the same shared
+predicate under the same change-not-cell reading; and the spawn descriptor carries
+the post-write ship instant, hash-bound beside the receipt.
 
 A blank cell in an *included* column means null; a column omitted from the file entirely
 is left alone. That's needed for archive fidelity, but it makes partial sheets dangerous

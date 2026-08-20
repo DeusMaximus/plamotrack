@@ -125,6 +125,9 @@ def _apply_converted_snapshot(item: OrderItem, line: OrderItemCreate) -> None:
 PROGRESSED_STATUSES = {KitStatus.BUILDING, KitStatus.COMPLETE}
 # Statuses that a delivery arrival naturally advances to backlog (in hand, unbuilt).
 ARRIVAL_ELIGIBLE = {KitStatus.PRE_ORDERED, KitStatus.ORDERED, KitStatus.IN_TRANSIT}
+# Statuses a shipment naturally advances to in_transit (#95) — one stage before
+# ARRIVAL_ELIGIBLE, which is why in_transit itself is not in it.
+SHIP_ELIGIBLE = {KitStatus.PRE_ORDERED, KitStatus.ORDERED}
 
 #: Columns of a stored order line no edit may change, whichever writer it arrives
 #: through (#44).
@@ -177,6 +180,16 @@ def _refuse_future_receipt(received_at: datetime) -> None:
         raise InvalidInputError(
             f"received_at {received_at.isoformat()} is in the future — "
             "an arrival can be backdated, not predicted"
+        )
+
+
+def _refuse_future_ship(shipped_at: datetime) -> None:
+    # Same calendar judgment as the receipt (#95 borrows #93's rule wholesale);
+    # only the column named differs.
+    if receipt_is_future(shipped_at):
+        raise InvalidInputError(
+            f"shipped_at {shipped_at.isoformat()} is in the future — "
+            "a shipment can be backdated, not predicted"
         )
 
 
@@ -398,9 +411,13 @@ async def _adjust_ref(
     await session.flush()
 
 
-def _initial_kit_status(requested: KitStatus, received: bool) -> KitStatus:
+def _initial_kit_status(requested: KitStatus, received: bool, shipped: bool = False) -> KitStatus:
+    # Received wins over shipped: an order can hold both instants, and the box
+    # being in hand is the later fact.
     if received and requested in ARRIVAL_ELIGIBLE:
         return KitStatus.BACKLOG
+    if shipped and requested in SHIP_ELIGIBLE:
+        return KitStatus.IN_TRANSIT
     return requested
 
 
@@ -416,6 +433,8 @@ async def spawn_kits(
     count: int = 1,
     received: bool = False,
     received_at: datetime | None = None,
+    shipped: bool = False,
+    shipped_at: datetime | None = None,
 ) -> None:
     """The §3.9 fan-out: one physical `kits` row per unit on a kit-type order line.
 
@@ -430,7 +449,7 @@ async def spawn_kits(
     """
     require_line_quantity(count, label="the number of kits on this line")
     requested = KitStatus(status) if status else KitStatus.ORDERED
-    final_status = _initial_kit_status(requested, received)
+    final_status = _initial_kit_status(requested, received, shipped)
     resolved_scale = scale if scale is not None else default_scale_for_grade(grade)
     # A kit landing in backlog on a received order entered the collection when the
     # box did, so it carries the order's receipt time — which may be backdated
@@ -439,6 +458,12 @@ async def spawn_kits(
     # the default: the receipt is not when that status began, and "when you told
     # me" is the honest fallback.
     stamp = received_at if final_status is KitStatus.BACKLOG else None
+    # The same rule one stage earlier (#95): a kit a shipment lands in transit
+    # left the retailer when the parcel did. No guard on `shipped` — on an
+    # unshipped order `shipped_at` is None and the server default stands, the
+    # exact shape of the backlog line above.
+    if final_status is KitStatus.IN_TRANSIT:
+        stamp = shipped_at
     for _ in range(count):
         kit = Kit(
             name=name,
@@ -461,6 +486,7 @@ async def _spawn_from_details(
     count: int,
     received: bool,
     received_at: datetime | None = None,
+    shipped_at: datetime | None = None,
 ) -> None:
     await spawn_kits(
         session,
@@ -473,6 +499,8 @@ async def _spawn_from_details(
         count=count,
         received=received,
         received_at=received_at,
+        shipped=shipped_at is not None,
+        shipped_at=shipped_at,
     )
 
 
@@ -544,13 +572,16 @@ async def _add_line(
     line: OrderItemCreate,
     received: bool,
     received_at: datetime | None = None,
+    shipped_at: datetime | None = None,
 ) -> OrderItem:
     """The §3.9 dispatch: kit lines FAN OUT into kits rows immediately; catalog
     lines INCREMENT stock — but only once the order is received.
 
     `received_at` is the receipt instant kits landing in backlog are stamped with
     (#93) — the order's stored receipt for an edit, the entry-supplied or fresh
-    one for a create. None when the order is pending."""
+    one for a create. None when the order is pending. `shipped_at` is the same
+    thing one stage earlier (#95): non-null means the order is shipped, so kits
+    land in_transit carrying it — unless received wins."""
     converted_minor, converted_code = _converted_snapshot(line)
     item = OrderItem(
         order_id=order.id,
@@ -565,7 +596,9 @@ async def _add_line(
     await session.flush()
 
     if line.item_type is ItemType.KIT:
-        await _spawn_from_details(session, item, line.kit, line.quantity, received, received_at)
+        await _spawn_from_details(
+            session, item, line.kit, line.quantity, received, received_at, shipped_at
+        )
     else:
         if line.new_item is not None:
             row = await _build_catalog_row(
@@ -607,6 +640,7 @@ async def _update_line(
     line: OrderItemCreate,
     received: bool,
     received_at: datetime | None = None,
+    shipped_at: datetime | None = None,
 ) -> None:
     if line.item_type != item.item_type:
         raise InvalidInputError(
@@ -663,7 +697,9 @@ async def _update_line(
         # defense in depth should the two ever drift.
         delta = line.quantity - len(line_kits)
         if delta > 0:
-            await _spawn_from_details(session, item, details, delta, received, received_at)
+            await _spawn_from_details(
+                session, item, details, delta, received, received_at, shipped_at
+            )
         elif delta < 0:
             await _delete_line_kits(session, item, count=-delta)
     else:
@@ -719,7 +755,7 @@ async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
     if retailer is None:
         raise NotFoundError(f"retailer {data.retailer_id} not found")
 
-    order = Order(**data.model_dump(exclude={"items", "received", "received_at"}))
+    order = Order(**data.model_dump(exclude={"items", "received", "received_at", "shipped_at"}))
     received_at: datetime | None = None
     if data.received:
         # The schema guarantees received_at only arrives alongside received=true.
@@ -727,12 +763,25 @@ async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
             _refuse_future_receipt(data.received_at)
         received_at = data.received_at or datetime.now(UTC)
         order.received_at = received_at
+    # Entry-time shipped (#95): date-or-nothing, no flag and no "now" default —
+    # unlike receipt there is no separate boolean anywhere, so the instant is the
+    # whole assertion. Alongside received=true it is a timeline record only.
+    if data.shipped_at is not None:
+        _refuse_future_ship(data.shipped_at)
+        order.shipped_at = data.shipped_at
     session.add(order)
     await session.flush()
 
     await _lock_catalog_targets(session, lines=data.items)
     for line in data.items:
-        await _add_line(session, order, line, received=data.received, received_at=received_at)
+        await _add_line(
+            session,
+            order,
+            line,
+            received=data.received,
+            received_at=received_at,
+            shipped_at=data.shipped_at,
+        )
 
     result = await get_order(session, order.id)
     await session.commit()
@@ -809,6 +858,29 @@ async def update_order(
         if new_receipt != order.received_at:
             await _restamp_receipt_kits(session, order, order.received_at, new_receipt)
             order.received_at = new_receipt
+    if "shipped_at" in header:
+        # The same correction-only shape (#95): the pending → shipped transition
+        # stays in mark_order_shipped, where the kit advance lives.
+        new_ship = header.pop("shipped_at")
+        if new_ship is None:
+            raise InvalidInputError(
+                "shipped_at cannot be cleared — un-shipping an order is not supported"
+            )
+        if order.shipped_at is None:
+            raise ConflictError(
+                "order is not marked shipped yet — record the shipment through the "
+                "ship endpoint; an edit only corrects a date already set"
+            )
+        _refuse_future_ship(new_ship)
+        if new_ship != order.shipped_at:
+            # Stamp equality alone is NOT enough here: a receipt recorded at the
+            # same instant (one shared local midnight) stamps backlog kits with a
+            # value equal to the old shipment, and those belong to the receipt.
+            # Only a kit still in_transit is the shipment's to re-date.
+            await _restamp_receipt_kits(
+                session, order, order.shipped_at, new_ship, only_status=KitStatus.IN_TRANSIT
+            )
+            order.shipped_at = new_ship
     for key, value in header.items():
         setattr(order, key, value)
 
@@ -835,9 +907,11 @@ async def update_order(
                 if line.id in seen:
                     raise InvalidInputError(f"order item {line.id} appears twice")
                 seen.add(line.id)
-                await _update_line(session, existing[line.id], line, received, order.received_at)
+                await _update_line(
+                    session, existing[line.id], line, received, order.received_at, order.shipped_at
+                )
             else:
-                await _add_line(session, order, line, received, order.received_at)
+                await _add_line(session, order, line, received, order.received_at, order.shipped_at)
         for item_id, item in existing.items():
             if item_id not in seen:
                 await _remove_line(session, item, received)
@@ -849,7 +923,12 @@ async def update_order(
 
 
 async def _restamp_receipt_kits(
-    session: AsyncSession, order: Order, old: datetime, new: datetime
+    session: AsyncSession,
+    order: Order,
+    old: datetime,
+    new: datetime,
+    *,
+    only_status: KitStatus | None = None,
 ) -> None:
     """A corrected receipt date follows the kits whose stamp *was* the receipt (#93).
 
@@ -857,15 +936,67 @@ async def _restamp_receipt_kits(
     order, so equality against the old value identifies exactly the kits whose
     last transition was that receipt — a kit dragged onward (or back) since then
     carries the drag's own time and is left alone. Status is deliberately not part
-    of the match: the timestamp is the receipt's signature, and a status check
-    would either restate the same fact or wrongly exclude a kit the entry itself
-    stamped."""
+    of the RECEIPT match: the timestamp is the receipt's signature, and a status
+    check would either restate the same fact or wrongly exclude a kit the entry
+    itself stamped.
+
+    `only_status` is the SHIP correction's narrower ownership rule (#95, review
+    round one P2): a ship and a receive can legitimately share an instant — two
+    date inputs on one calendar day both serialise as the same local midnight —
+    and the receipt owns the backlog kit, so the ship correction follows only
+    kits still in_transit whose stamp equals the old shipment. The receipt call
+    keeps stamp-equality alone; do not tighten it, that contract is #93's."""
     for item in order.items:
         if item.item_type is not ItemType.KIT:
             continue
         for kit in await _line_kits(session, item.id):
+            if only_status is not None and kit.status is not only_status:
+                continue
             if kit.status_updated_at == old:
                 kit.status_updated_at = new
+
+
+async def mark_order_shipped(
+    session: AsyncSession, order_id: uuid.UUID, shipped_at: datetime | None = None
+) -> Order:
+    """Mark an order shipped: record the instant and advance kits still ahead of
+    transit (pre_ordered / ordered → in_transit), mirroring `receive_order` one
+    stage earlier (#95). Applies NO stock — `received_at` stays the sole proxy
+    for "stock was applied" (rule 2), which is also why there is nothing to lock
+    beyond the order row itself.
+
+    `shipped_at` backdates the shipment (#93's rule, borrowed wholesale);
+    omitted, it shipped now. The kits this advances are stamped with the same
+    instant either way. Legal on an already-received order: the ship date is
+    chronologically prior information worth recording after the fact, and the
+    kits are past the stage, so the advance naturally moves nothing.
+    Double-shipping 409s like double-receiving. Deliberately NOT cross-validated
+    against `order_date` (not comparable across time zones, #93) or
+    `received_at` (#113's rule: the user owns the values, and a service-side
+    check would diverge from the importer)."""
+    await acquire_write_gate(session)
+    order = await _get_order_for_write(session, order_id)
+    if order.shipped_at is not None:
+        raise ConflictError("order is already marked shipped")
+    if shipped_at is not None:
+        _refuse_future_ship(shipped_at)
+    now = shipped_at or datetime.now(UTC)
+    order.shipped_at = now
+    for item in order.items:
+        if item.item_type is ItemType.KIT:
+            for kit in await _line_kits(session, item.id):
+                if kit.status in SHIP_ELIGIBLE:
+                    kit.status = KitStatus.IN_TRANSIT
+                    kit.status_updated_at = now
+                    # A no-op for in_transit today, same wiring rule as the
+                    # receive advance (#94): every live status writer goes
+                    # through the one derivation.
+                    stamp_build_date(kit, KitStatus.IN_TRANSIT, now)
+
+    await session.flush()
+    result = await get_order(session, order.id)
+    await session.commit()
+    return result
 
 
 async def receive_order(

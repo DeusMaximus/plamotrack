@@ -49,6 +49,10 @@ class Order(UUIDPrimaryKeyMixin, Base):
     tracking_url: Mapped[str | None]
     shipping_cost_minor: Mapped[int | None]
     currency_code: Mapped[str] = mapped_column(String(3))
+    # Null = not marked shipped. Purely a timeline record plus a kit advance
+    # (pre_ordered/ordered -> in_transit); it never applies stock — received_at
+    # stays the sole "stock was applied" proxy (#95, rule 2).
+    shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Null = pending (not yet arrived). Catalog stock increments are applied when
     # the order is received, not at entry — quantity_on_hand means "physically
     # on hand", not "on hand + on order".

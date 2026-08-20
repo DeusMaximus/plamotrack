@@ -248,6 +248,14 @@ order received, or correcting its date); a row restating a value the order alrea
 holds is left alone, and a **new** order imports whatever its sheet says — a
 restore records the past, even when the past held something odd.
 
+**`shipped_at` is simpler, because it never touches stock.** Marking an order
+shipped through `orders.csv` works on any order — including ones with tool,
+consumable or upgrade lines — and moves its waiting kits to In Transit, stamped
+with the date the sheet states. The same two rules apply: a future ship date is
+refused, and clearing `shipped_at` is refused (un-shipping isn't supported
+anywhere — remember that a blank cell in an included column means "empty this
+field", so restate the ship date on sheets that carry the column).
+
 **Reducing a kit line's quantity removes kits.** A line that says 1 where the
 collection holds 3 is a disagreement, so the import gives up the extra kits — newest
 first, and never one you've started: a kit that's building or complete, rated,

@@ -3,7 +3,7 @@ import uuid
 from fastapi import APIRouter
 
 from app.db import SessionDep
-from app.schemas.orders import OrderCreate, OrderRead, OrderReceive, OrderUpdate
+from app.schemas.orders import OrderCreate, OrderRead, OrderReceive, OrderShip, OrderUpdate
 from app.services import orders as orders_service
 
 router = APIRouter(prefix="/orders", tags=["orders"])
@@ -41,6 +41,17 @@ async def receive_order(order_id: uuid.UUID, session: SessionDep, data: OrderRec
     means it arrived now."""
     return await orders_service.receive_order(
         session, order_id, received_at=data.received_at if data else None
+    )
+
+
+@router.post("/{order_id}/ship", response_model=OrderRead)
+async def ship_order(order_id: uuid.UUID, session: SessionDep, data: OrderShip | None = None):
+    """Mark the order shipped: records the instant and moves kits still ahead of
+    transit (pre_ordered/ordered) to in_transit. Applies no stock — that happens
+    at receive. The optional body backdates the shipment (`shipped_at`,
+    offset-aware ISO 8601); no body means it shipped now."""
+    return await orders_service.mark_order_shipped(
+        session, order_id, shipped_at=data.shipped_at if data else None
     )
 
 
