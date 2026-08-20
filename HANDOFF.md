@@ -41,11 +41,11 @@ Template:
 
 ---
 
-## 2026-08-20 — Claude Code (Fable 5) — #93: PR #111 through Cursor round 1 (GO), P3-1 taken at `a78ce76`; awaiting merge call
+## 2026-08-20 — Claude Code (Fable 5) — #93 closed: PR #111 merged as `322afe9` after one Cursor round
 
-- **Done:** **#93 (backdatable `received_at`) implemented on
-  `feat/93-backdatable-received-at`; PR #111 open, head `a78ce76` after one Cursor
-  round (Grok 4.6) at `1ae9c4d`: GO, one P3, taken.** P3-1: the UTC-12 test could
+- **Done:** **#93 closed — PR #111 squash-merged as `322afe9`**, branch deleted,
+  on the owner's call after one Cursor round (Grok 4.6) at `1ae9c4d`: GO, one P3,
+  taken at `a78ce76`; CI green at both heads. P3-1: the UTC-12 test could
   not kill the `now(tzinfo)` → `now(UTC)` mutant at any hour (a behind offset's
   calendar date is never ahead of UTC's — the brief's "last second" claim was
   wrong, owned on the thread). Fix: a pinned-clock test (monkeypatched
@@ -89,15 +89,13 @@ Template:
   **23 red / 6 green on unfixed `main`** (re-measured at `a78ce76`), the 6 being
   compatibility controls (named in the PR body). Mutants: 5 hand-run tuples in
   the PR body (`rcpt-` prefixed, anchors verified to match once) — they join
-  the fold-in queue with #109's 17 once #86's harness lands. CI green at
-  `1ae9c4d`; the `a78ce76` run was in progress at hand-off amend time. GitHub
-  runners recovered from the 2026-08-19 outage. Live
+  the fold-in queue with #109's 17 once #86's harness lands. GitHub
+  runners recovered from the 2026-08-19 outage; every #111 run green. Live
   and still true: **#86 at `dfa7f29` owes its Codex round** and gates
   #44/#77/#87/#90; #104/#98/#99 → 0.2.8; #110 unmilestoned. Stale worktrees
   `/private/tmp/plamotrack-pr100` and `-pr108-main` remain, not this session's,
   left alone.
-- **Next:** the owner's merge call on #111 — round 1 was a GO and P3-1 is taken,
-  so nothing is owed. Then 0.2.7 clear of #86: **#94 + #96** (one branch, one migration,
+- **Next:** 0.2.7's remaining items clear of #86: **#94 + #96** (one branch, one migration,
   separate commits; both touch `spec.py` AND the hand-curated
   `STARTER_SHEET_COLUMNS`), **#95** after #86 (its importer half mirrors #86's
   arriving-receipt question), **#97** last — its order-edit tool should carry
