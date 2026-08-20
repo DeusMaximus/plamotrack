@@ -5,7 +5,7 @@ stock guards) without any duplicated rules."""
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
@@ -89,6 +89,26 @@ def _parse_uuid(value: str, what: str) -> uuid.UUID:
         return uuid.UUID(value)
     except ValueError:
         raise ToolError(f"{what} {value!r} is not a valid UUID") from None
+
+
+def _parse_received_at(value: str) -> datetime:
+    """An arrival instant supplied by an agent: ISO 8601, offset required (#93).
+
+    The offset is the only local calendar the app has until the instance grows a
+    time zone (M5.1) — a naive datetime would silently mean whatever the server's
+    clock means, which is exactly the ambiguity being refused."""
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        raise ToolError(
+            f"received_at {value!r} is not ISO 8601 — e.g. 2026-05-04T14:30:00+10:00"
+        ) from None
+    if parsed.tzinfo is None:
+        raise ToolError(
+            f"received_at {value!r} has no UTC offset — include one "
+            "(e.g. 2026-05-04T14:30:00+10:00, or a trailing Z for UTC)"
+        )
+    return parsed
 
 
 class _KitPatch(KitUpdate):
@@ -215,6 +235,7 @@ async def create_order(
     tracking_number: str | None = None,
     tracking_url: str | None = None,
     received: bool = False,
+    received_at: str | None = None,
 ) -> dict:
     """Record a purchase. The retailer is matched by name case-insensitively and
     created if new; order_date is ISO format (YYYY-MM-DD). Item lines follow the
@@ -226,15 +247,25 @@ async def create_order(
     row of that table case-insensitively is refused with a conflict naming the row,
     and the whole order with it. Catalog stock does NOT increase until the
     order is received: pass received=true for store purchases already in hand, or
-    call mark_order_received when a shipment arrives. Include the retailer's
-    order_number from the confirmation email when available (support reference —
-    only unique per retailer, never treat it as an identifier). Prices are integer
-    minor units (cents/yen) with an ISO 4217 currency_code; omit currency_code to
-    use the instance's own reference currency (see the `meta` resource)."""
+    call mark_order_received when a shipment arrives. When logging a purchase that
+    arrived before now (a backlog entry, an old confirmation email), also pass
+    received_at — offset-aware ISO 8601, e.g. "2026-05-04T14:30:00+10:00" — so the
+    order and the kits it delivered carry the real arrival instead of entry time;
+    received_at requires received=true and may not be in the future. Include the
+    retailer's order_number from the confirmation email when available (support
+    reference — only unique per retailer, never treat it as an identifier). Prices
+    are integer minor units (cents/yen) with an ISO 4217 currency_code; omit
+    currency_code to use the instance's own reference currency (see the `meta`
+    resource)."""
     try:
         parsed_date = date.fromisoformat(order_date)
     except ValueError:
         raise ToolError(f"order_date {order_date!r} is not ISO format (YYYY-MM-DD)") from None
+    parsed_received_at = _parse_received_at(received_at) if received_at is not None else None
+    if parsed_received_at is not None and not received:
+        raise ToolError(
+            "received_at asserts the order arrived — pass received=true with it, or omit the date"
+        )
     async with _tool_session() as session:
         retailer_row = await orders_service.get_or_create_retailer(session, retailer)
         data = OrderCreate(
@@ -247,6 +278,7 @@ async def create_order(
             shipping_cost_minor=shipping_cost_minor,
             currency_code=currency_code or get_settings().reference_currency,
             received=received,
+            received_at=parsed_received_at,
             items=items,
         )
         order = await orders_service.create_order(session, data)
@@ -266,13 +298,18 @@ async def list_orders(pending_only: bool = False) -> list[dict]:
 
 
 @mcp.tool
-async def mark_order_received(order_id: str) -> dict:
+async def mark_order_received(order_id: str, received_at: str | None = None) -> dict:
     """Mark an order as arrived/delivered: catalog stock increments are applied
     and kits still in the ordering pipeline (pre_ordered/ordered/in_transit)
-    move to backlog. Find the order with list_orders(pending_only=true)."""
+    move to backlog. Find the order with list_orders(pending_only=true).
+    If the delivery actually arrived earlier — logging it after the fact — pass
+    received_at as offset-aware ISO 8601 (e.g. "2026-05-04T14:30:00+10:00"); the
+    order and the kits it advances are stamped with that instant instead of now.
+    It may not be in the future."""
     parsed = _parse_uuid(order_id, "order_id")
+    parsed_received_at = _parse_received_at(received_at) if received_at is not None else None
     async with _tool_session() as session:
-        order = await orders_service.receive_order(session, parsed)
+        order = await orders_service.receive_order(session, parsed, parsed_received_at)
         return OrderRead.model_validate(order).model_dump(mode="json")
 
 
