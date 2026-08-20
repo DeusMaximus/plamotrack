@@ -1,14 +1,16 @@
 import { expect, request, test } from "@playwright/test";
 
 /**
- * #93 — a receipt backdated through the browser survives the whole trip.
+ * #93 — a receipt backdated through the browser survives the whole trip; since
+ * #120 the ship date rides along, both set in one save of the Edit dialog (the
+ * transitions dispatch ship first, then receive).
  *
  * The trap this pins is timezone folding: the picked date is sent as midnight
  * local *in the browser's own offset*, and the server judges "future" on the
  * instant's own calendar. A regression that converts to UTC first shifts the
  * asserted date for every user east of Greenwich — invisible to unit tests on
  * either side, because each half is individually consistent. So the assertion
- * reads the stored instant back through the API and puts it on the local
+ * reads the stored instants back through the API and puts them on the local
  * calendar the user picked from.
  */
 
@@ -25,7 +27,7 @@ function localDateISO(value: Date): string {
 
 const YESTERDAY = localDateISO(new Date(Date.now() - 24 * 60 * 60 * 1000));
 
-test("receiving with a backdate stamps the order and its kits with that date", async ({
+test("shipping and receiving with a backdate stamps the order and its kits with those dates", async ({
   page,
 }) => {
   const api = await request.newContext({ baseURL: API });
@@ -51,13 +53,15 @@ test("receiving with a backdate stamps the order and its kits with that date", a
 
   await page.goto("/orders");
   const orderRow = page.getByRole("row").filter({ hasText: SHOP });
-  await orderRow.getByRole("button", { name: "Receive" }).click();
-  const dialog = page.getByRole("dialog", { name: "Receive order" });
+  await orderRow.getByRole("button", { name: "Edit" }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit order" });
+  await dialog.getByLabel("Shipped on").fill(YESTERDAY);
   await dialog.getByLabel("Received on").fill(YESTERDAY);
-  await dialog.getByRole("button", { name: "Receive" }).click();
+  await dialog.getByRole("button", { name: "Save changes" }).click();
   await expect(orderRow.getByText("Received")).toBeVisible();
 
   const stored = await (await api.get(`/orders/${order.id}`)).json();
+  expect(localDateISO(new Date(stored.shipped_at))).toBe(YESTERDAY);
   expect(localDateISO(new Date(stored.received_at))).toBe(YESTERDAY);
 
   const kits: Array<{ id: string; status: string; status_updated_at: string }> = await (

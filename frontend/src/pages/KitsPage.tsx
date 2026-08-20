@@ -220,13 +220,6 @@ export function KitsPage() {
     error,
   } = useQuery({ queryKey: ["kits"], queryFn: () => api.listKits() });
 
-  const statusMutation = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: KitStatus }) =>
-      api.updateKit(id, { status }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["kits"] }),
-    onError: (err) => setActionError(err instanceof ApiError ? err.message : "Update failed"),
-  });
-
   const deleteMutation = useMutation({
     mutationFn: (id: string) => api.deleteKit(id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["kits"] }),
@@ -341,27 +334,11 @@ export function KitsPage() {
                   </td>
                   <td className="px-3 py-2">{kit.grade}</td>
                   <td className="px-3 py-2">{kit.scale ?? "—"}</td>
+                  {/* Display only (#120): status changes go through Edit, where the
+                      dates, rating and notes a real transition travels with live. The
+                      inline select this replaces invited a half-done change. */}
                   <td className="px-3 py-2">
-                    <div className="flex items-center gap-2">
-                      <StatusBadge status={kit.status} />
-                      <Select
-                        aria-label={`Change status of ${kit.name}`}
-                        value={kit.status}
-                        onChange={(event) =>
-                          statusMutation.mutate({
-                            id: kit.id,
-                            status: event.target.value as KitStatus,
-                          })
-                        }
-                        className="!w-auto !py-1 text-xs"
-                      >
-                        {KIT_STATUSES.map((status) => (
-                          <option key={status} value={status}>
-                            {STATUS_LABELS[status]}
-                          </option>
-                        ))}
-                      </Select>
-                    </div>
+                    <StatusBadge status={kit.status} />
                   </td>
                   <td className="px-3 py-2">
                     {kit.rating ? "★".repeat(kit.rating) + "☆".repeat(5 - kit.rating) : "—"}

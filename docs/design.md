@@ -368,7 +368,10 @@ owns the values, and a service check would diverge from the importer). The
 pending pre-order distinction is *derived* in the browser from the kits already
 in the payload — once an order ships nobody cares it was a pre-order, so nothing
 is persisted; a catalog-only order carries no signal, accepted until pre-ordering
-consumables stops being rare.
+consumables stops being rare. Entry mirrors that reading (#120, 21/08/2026): the
+browser sets pre-order once per order — one toggle applied to every kit line —
+because a retailer splitting a shipment becomes two plamotrack orders; the API
+keeps per-line status, which REST, MCP and CSV can still write.
 
 - **the future is refused, judged as a calendar date in the instant's own offset** —
   not as an instant against the server clock, which would refuse an honest "today"

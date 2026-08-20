@@ -54,6 +54,13 @@ interface LineValues {
    *  deliberately must survive an edit that never mentions it. */
   kit_scale: string;
   kit_number: string;
+  /** Carried per line because the API stores it per kit and an edit that bumps a
+   *  line's quantity spawns the extra kits with this status — but no longer shown
+   *  per line (#120): the browser sets it order-wide. On a create the Pre-order
+   *  toggle overwrites every line at submit; on an edit it round-trips the first
+   *  spawned kit's status, and a line added mid-edit inherits the order's own
+   *  derived pre-order state, so a new kit joins its shipment rather than
+   *  defaulting against it. */
   kit_status: "ordered" | "pre_ordered";
   catalog: CatalogSelection | null;
 }
@@ -72,13 +79,18 @@ interface OrderFormValues {
    *  of a received order it corrects the stored receipt — sent only when dirty,
    *  because a date-only field can't restate the stored *instant* losslessly. */
   received_date: string;
-  /** The ship date (#95), edit-only and the same dirty-only correction shape —
-   *  shipping itself goes through the Ship dialog, not this form. */
+  /** The ship date (#95), same shape. Since #120 both date fields also cover the
+   *  *transition* on an order that doesn't hold the instant yet — the submit
+   *  handler dispatches to ship/receive instead of the PATCH for that case. */
   shipped_date: string;
+  /** Create only (#120): one order-wide flag, applied to every kit line at
+   *  submit. Pre-order vs ordered is a fact about the shipment, not the line —
+   *  a retailer splitting a shipment becomes two plamotrack orders. */
+  pre_order: boolean;
   items: LineValues[];
 }
 
-function emptyLine(currency: string): LineValues {
+function emptyLine(currency: string, kitStatus: LineValues["kit_status"] = "ordered"): LineValues {
   return {
     item_type: "kit",
     quantity: 1,
@@ -90,7 +102,7 @@ function emptyLine(currency: string): LineValues {
     kit_grade: "",
     kit_scale: "",
     kit_number: "",
-    kit_status: "ordered",
+    kit_status: kitStatus,
     catalog: null,
   };
 }
@@ -122,6 +134,9 @@ function orderToFormValues(order: Order, catalogName: Map<string, string>): Orde
     received: order.received_at !== null,
     received_date: order.received_at === null ? "" : isoToLocalDateInput(order.received_at),
     shipped_date: order.shipped_at === null ? "" : isoToLocalDateInput(order.shipped_at),
+    // Not read on an edit — the toggle is create-only (#120); after entry the
+    // order's pre-order state is derived from its kits (`isPreOrder`).
+    pre_order: false,
     items: order.items.map((item) => {
       // Read off the order being edited, not a cached kit list. The line can only
       // show one set of kit fields, so it shows the first spawned kit's — the
@@ -327,14 +342,16 @@ function LineEditor({
       </div>
 
       {itemType === "kit" ? (
-        // A third for the name, two thirds for the four short fields — four of
-        // them in half the row left the status select too narrow to read.
+        // A third for the name, two thirds for the three short fields. No status
+        // select here any more (#120): pre-order is order-wide, set by the toggle
+        // on a create — a per-line picker rendered an order-level fact as if each
+        // line could ship on its own.
         <div className="grid grid-cols-3 gap-2">
           <Input
             placeholder="Kit name *"
             {...register(`items.${index}.kit_name`, { required: "Kit name is required" })}
           />
-          <div className="col-span-2 grid grid-cols-4 gap-2">
+          <div className="col-span-2 grid grid-cols-3 gap-2">
             <Input
               placeholder="Grade *"
               {...register(`items.${index}.kit_grade`, { required: "Grade is required" })}
@@ -346,10 +363,6 @@ function LineEditor({
               {...register(`items.${index}.kit_scale`)}
             />
             <Input placeholder="Kit #" {...register(`items.${index}.kit_number`)} />
-            <Select {...register(`items.${index}.kit_status`)}>
-              <option value="ordered">Ordered</option>
-              <option value="pre_ordered">Pre-ordered</option>
-            </Select>
           </div>
           {(lineErrors?.kit_name || lineErrors?.kit_grade) && (
             <span className="col-span-3 text-xs text-red-600">
@@ -483,6 +496,12 @@ function OrderForm({
   // double-click made two shops); the state is what greys the button out.
   const addingRetailer = useRef(false);
   const [retailerPending, setRetailerPending] = useState(false);
+  // One-way latches for the transition dispatch below (#120): if the PATCH lands
+  // but a following ship/receive call fails, the resubmit must not replay the
+  // call that succeeded — the server 409s the repeat, which would turn a fixable
+  // date typo into a dead end. Refs, not state: nothing renders from them, and
+  // the form unmounts on close so a fresh open starts clean.
+  const applied = useRef({ shipped: false, received: false });
   const { data: retailers } = useQuery({ queryKey: ["retailers"], queryFn: api.listRetailers });
 
   // Snapshotted once per open, deliberately: react-hook-form owns these values
@@ -503,6 +522,7 @@ function OrderForm({
         received: false,
         received_date: todayISO(),
         shipped_date: "",
+        pre_order: false,
         items: [emptyLine(referenceCurrency)],
       };
     }
@@ -569,10 +589,15 @@ function OrderForm({
         ? values.items.map((line) => toOrderItem(line, referenceCurrency))
         : undefined,
     };
-    // Correction only, and only when actually touched: a date field can't restate
-    // the stored receipt *instant* losslessly, so an edit that never opened it
-    // must not send it back — round-tripping would flatten a real arrival time
-    // to midnight. Sent as local midnight in the browser's own offset (#93).
+    // The same two date fields do two jobs (#120). On an order that already
+    // holds the instant they PATCH a *correction* — only when actually touched,
+    // because a date field can't restate the stored instant losslessly, so an
+    // edit that never opened it must not send it back (round-tripping would
+    // flatten a real arrival time to midnight). On an order that doesn't, they
+    // become the ship/receive *transition* below, after the PATCH: those stay
+    // separate service calls, because receiving applies stock and advances kits
+    // under a row lock (rule 2) — nothing a plain field edit may trigger
+    // implicitly. Dates go out as local midnight in the browser's offset (#93).
     if (order?.received_at && dirtyFields.received_date && values.received_date) {
       payload.received_at = localMidnightISO(values.received_date);
     }
@@ -582,7 +607,44 @@ function OrderForm({
     try {
       if (order) {
         await api.updateOrder(order.id, payload);
+        // Ship before receive: an order may take both in one save, and shipping
+        // is the earlier fact — receive advances the just-shipped kits onward.
+        // Today = "it happened now": no body, so the server stamps the actual
+        // moment rather than midnight, exactly as the old dialogs did.
+        if (
+          !order.shipped_at &&
+          !applied.current.shipped &&
+          dirtyFields.shipped_date &&
+          values.shipped_date
+        ) {
+          await api.shipOrder(
+            order.id,
+            values.shipped_date !== todayISO()
+              ? { shipped_at: localMidnightISO(values.shipped_date) }
+              : undefined,
+          );
+          applied.current.shipped = true;
+        }
+        if (
+          !order.received_at &&
+          !applied.current.received &&
+          dirtyFields.received_date &&
+          values.received_date
+        ) {
+          await api.receiveOrder(
+            order.id,
+            values.received_date !== todayISO()
+              ? { received_at: localMidnightISO(values.received_date) }
+              : undefined,
+          );
+          applied.current.received = true;
+        }
       } else {
+        // The order-wide flag applied to every kit line (#120). In hand wins:
+        // the server would land pre_ordered kits in backlog anyway on a received
+        // order, but there is no reason to assert a status the form greyed out.
+        const entryStatus: LineValues["kit_status"] =
+          values.pre_order && !values.received ? "pre_ordered" : "ordered";
         await api.createOrder({
           retailer_id: values.retailer_id,
           order_date: values.order_date,
@@ -599,7 +661,12 @@ function OrderForm({
             values.received && values.received_date && values.received_date !== todayISO()
               ? localMidnightISO(values.received_date)
               : undefined,
-          items: payload.items ?? [],
+          items: values.items.map((line) =>
+            toOrderItem(
+              line.item_type === "kit" ? { ...line, kit_status: entryStatus } : line,
+              referenceCurrency,
+            ),
+          ),
         });
       }
       await Promise.all(
@@ -716,7 +783,15 @@ function OrderForm({
             <label className="flex items-center gap-2 text-sm text-zinc-700">
               <input
                 type="checkbox"
-                {...register("received")}
+                {...register("received", {
+                  // In hand and pre-order contradict each other; ticking this
+                  // clears the other rather than leaving a hidden yes standing.
+                  onChange: (event) => {
+                    if ((event.target as HTMLInputElement).checked) {
+                      setValue("pre_order", false);
+                    }
+                  },
+                })}
                 className="h-4 w-4 accent-indigo-600"
               />
               Already in hand (store purchase / delivery arrived) — stock counts immediately
@@ -732,28 +807,56 @@ function OrderForm({
                 />
               </label>
             )}
+            {/* One flag for the whole order (#120): a retailer splitting a
+                shipment becomes two plamotrack orders, so per-line pre-order
+                status rendered an order-level fact as a line-level choice. */}
+            <label
+              className={`flex items-center gap-2 text-sm ${watch("received") ? "text-zinc-400" : "text-zinc-700"}`}
+              title={
+                watch("received") ? "An order already in hand cannot be a pre-order" : undefined
+              }
+            >
+              <input
+                type="checkbox"
+                disabled={watch("received")}
+                {...register("pre_order")}
+                className="h-4 w-4 accent-indigo-600"
+              />
+              Pre-order — kits wait as Pre-ordered until this order ships or arrives
+            </label>
           </div>
         )}
-        {order?.received_at && (
-          <div className="grid grid-cols-3 gap-3">
-            <Field label="Received on">
-              <Input type="date" max={todayISO()} {...register("received_date")} />
-            </Field>
-            <p className="col-span-2 self-end pb-2 text-xs text-zinc-500">
-              Correcting this re-dates the kits this delivery brought in — unless they have
-              been moved since, in which case they keep their own dates.
-            </p>
-          </div>
-        )}
-        {order?.shipped_at && (
-          <div className="grid grid-cols-3 gap-3">
-            <Field label="Shipped on">
-              <Input type="date" max={todayISO()} {...register("shipped_date")} />
-            </Field>
-            <p className="col-span-2 self-end pb-2 text-xs text-zinc-500">
-              Correcting this re-dates kits still marked In Transit by that shipment; kits
-              moved since keep their own dates.
-            </p>
+        {/* Both dates in one place regardless of state (#120): on an order that
+            already holds the instant the field corrects it; on one that doesn't,
+            filling it performs the ship/receive transition on save. Which call
+            goes out is decided in the submit handler above. */}
+        {order && (
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Field label="Shipped on">
+                <Input type="date" max={todayISO()} {...register("shipped_date")} />
+              </Field>
+              <p className="mt-1 text-xs text-zinc-500">
+                {order.shipped_at
+                  ? "Correcting this re-dates kits still marked In Transit by that " +
+                    "shipment; kits moved since keep their own dates."
+                  : "Setting a date marks the order shipped — kits still waiting on " +
+                    "the retailer move to In Transit. Leave blank if it hasn't."}
+              </p>
+            </div>
+            <div>
+              <Field label="Received on">
+                <Input type="date" max={todayISO()} {...register("received_date")} />
+              </Field>
+              <p className="mt-1 text-xs text-zinc-500">
+                {order.received_at
+                  ? "Correcting this re-dates the kits this delivery brought in — " +
+                    "unless they have been moved since, in which case they keep " +
+                    "their own dates."
+                  : "Setting a date marks the order received — stock is applied and " +
+                    "pipeline kits move to Backlog. Leave blank if it hasn't arrived."}
+              </p>
+            </div>
           </div>
         )}
 
@@ -763,7 +866,17 @@ function OrderForm({
             <Button
               type="button"
               variant="secondary"
-              onClick={() => append(emptyLine(getValues("currency_code")))}
+              onClick={() =>
+                append(
+                  emptyLine(
+                    getValues("currency_code"),
+                    // A line added mid-edit joins the order's shipment, so it
+                    // inherits the order's derived pre-order state (#120). On a
+                    // create the toggle overwrites this at submit anyway.
+                    order && isPreOrder(order) ? "pre_ordered" : "ordered",
+                  ),
+                )
+              }
             >
               + Add line
             </Button>
@@ -872,12 +985,6 @@ export function OrdersPage() {
       ),
     );
 
-  // Receiving asks for the arrival date (#93), so it gets a real dialog rather
-  // than window.confirm — a store purchase logged tonight arrived today, but a
-  // box unpacked from last week didn't. Shipping mirrors it (#95).
-  const [receiving, setReceiving] = useState<Order | null>(null);
-  const [shipping, setShipping] = useState<Order | null>(null);
-
   const remove = async (order: Order) => {
     const label = retailerName.get(order.retailer_id) ?? "this order";
     if (
@@ -933,6 +1040,8 @@ export function OrdersPage() {
                 <th className="px-3 py-2">Retailer</th>
                 <th className="px-3 py-2">Order #</th>
                 <th className="px-3 py-2">Status</th>
+                <th className="px-3 py-2">Shipped</th>
+                <th className="px-3 py-2">Received</th>
                 <th className="px-3 py-2">Items</th>
                 <th className="px-3 py-2">Total</th>
                 <th className="px-3 py-2">Tracking</th>
@@ -981,19 +1090,16 @@ export function OrdersPage() {
                       {retailerName.get(order.retailer_id) ?? "…"}
                     </td>
                     <td className="px-3 py-2 text-zinc-600">{order.order_number ?? "—"}</td>
+                    {/* No date tooltips on the pills any more — the Shipped and
+                        Received columns beside them carry the dates for every
+                        row at once, which is what the tooltip couldn't (#120). */}
                     <td className="px-3 py-2">
                       {order.received_at ? (
-                        <span
-                          className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700"
-                          title={`Received ${formatDate(order.received_at)}`}
-                        >
+                        <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
                           Received
                         </span>
                       ) : order.shipped_at ? (
-                        <span
-                          className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700"
-                          title={`Shipped ${formatDate(order.shipped_at)}`}
-                        >
+                        <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700">
                           Shipped
                         </span>
                       ) : isPreOrder(order) ? (
@@ -1001,7 +1107,7 @@ export function OrdersPage() {
                         // all pre_ordered is the pre-order; once it ships nobody
                         // cares, so there is nothing to persist.
                         <span
-                          className="rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700"
+                          className="whitespace-nowrap rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700"
                           title="All kits on this order are pre-ordered — not due yet"
                         >
                           Pre-order
@@ -1011,6 +1117,20 @@ export function OrdersPage() {
                           Pending
                         </span>
                       )}
+                    </td>
+                    {/* nowrap: "in transit · 6 d" split across lines reads as two
+                        facts, and the dates never benefit from wrapping. */}
+                    <td
+                      className="whitespace-nowrap px-3 py-2 text-zinc-500"
+                      title="Shipped by the retailer"
+                    >
+                      {order.shipped_at ? formatDate(order.shipped_at) : "—"}
+                    </td>
+                    <td
+                      className="whitespace-nowrap px-3 py-2 text-zinc-500"
+                      title="Delivered · days in transit"
+                    >
+                      {receivedCell(order)}
                     </td>
                     <td className="px-3 py-2">
                       {order.items.reduce((total, item) => total + item.quantity, 0)} across{" "}
@@ -1033,17 +1153,11 @@ export function OrdersPage() {
                       )}
                     </td>
                     <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
+                      {/* Ship and Receive are no longer row actions (#120) — both
+                          transitions live in the Edit dialog, next to the fields
+                          that correct them and the details a real status change
+                          travels with. */}
                       <div className="flex justify-end gap-1">
-                        {!order.received_at && !order.shipped_at && (
-                          <Button variant="secondary" onClick={() => setShipping(order)}>
-                            Ship
-                          </Button>
-                        )}
-                        {!order.received_at && (
-                          <Button variant="primary" onClick={() => setReceiving(order)}>
-                            Receive
-                          </Button>
-                        )}
                         <Button
                           variant="secondary"
                           onClick={() => setModal({ mode: "edit", order })}
@@ -1059,7 +1173,7 @@ export function OrdersPage() {
                   {expanded.has(order.id) && (
                     <tr className="border-b border-zinc-100 bg-zinc-50/60 last:border-0">
                       <td />
-                      <td colSpan={7} className="px-3 py-2">
+                      <td colSpan={10} className="px-3 py-2">
                         <ul className="space-y-1">
                           {order.items.map((item) => {
                             const label =
@@ -1106,24 +1220,27 @@ export function OrdersPage() {
           onClose={() => setModal(null)}
         />
       )}
-      {receiving && (
-        <ReceiveOrderModal
-          order={receiving}
-          retailerLabel={retailerName.get(receiving.retailer_id) ?? "this retailer"}
-          onClose={() => setReceiving(null)}
-          onReceived={invalidateAll}
-        />
-      )}
-      {shipping && (
-        <ShipOrderModal
-          order={shipping}
-          retailerLabel={retailerName.get(shipping.retailer_id) ?? "this retailer"}
-          onClose={() => setShipping(null)}
-          onShipped={invalidateAll}
-        />
-      )}
     </div>
   );
+}
+
+/** The received cell, mirroring the Kits table's Started/Completed pair (#120):
+ *  the delivery date, and when a ship date exists too, the days in transit
+ *  beside it. Shipped-but-not-received counts transit live instead — the
+ *  at-a-glance pipeline timing the status pill's tooltip could only show one
+ *  row at a time. Elapsed like the kits column: calendar distance, rounded. */
+function receivedCell(order: Order): string {
+  if (!order.received_at) {
+    if (!order.shipped_at) return "—";
+    const days = Math.round((Date.now() - new Date(order.shipped_at).getTime()) / 86_400_000);
+    return days <= 0 ? "in transit · today" : `in transit · ${days} d`;
+  }
+  const date = formatDate(order.received_at);
+  if (!order.shipped_at) return date;
+  const days = Math.round(
+    (new Date(order.received_at).getTime() - new Date(order.shipped_at).getTime()) / 86_400_000,
+  );
+  return days <= 0 ? `${date} · same day` : `${date} · ${days} d`;
 }
 
 /** A pending order whose kits are all still pre_ordered is the pre-order (#95).
@@ -1133,137 +1250,4 @@ export function OrdersPage() {
 function isPreOrder(order: Order): boolean {
   const statuses = order.items.flatMap((item) => item.kits.map((kit) => kit.status));
   return statuses.length > 0 && statuses.every((status) => status === "pre_ordered");
-}
-
-function ReceiveOrderModal({
-  order,
-  retailerLabel,
-  onClose,
-  onReceived,
-}: {
-  order: Order;
-  retailerLabel: string;
-  onClose: () => void;
-  onReceived: () => Promise<unknown>;
-}) {
-  const [date, setDate] = useState(todayISO());
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      // Today = "it arrived now": no body, so the server stamps the actual
-      // moment. A backdate is midnight local, in the browser's own offset (#93).
-      await api.receiveOrder(
-        order.id,
-        date && date !== todayISO() ? { received_at: localMidnightISO(date) } : undefined,
-      );
-      await onReceived();
-      onClose();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Receive failed");
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal title="Receive order" onClose={onClose}>
-      <div className="space-y-4">
-        <ErrorBanner message={error} />
-        <p className="text-sm text-zinc-700">
-          Mark the {formatDate(order.order_date)} order from {retailerLabel} as received?
-          Catalog stock will be applied and kits still in the ordering pipeline move to
-          Backlog.
-        </p>
-        <Field label="Received on">
-          <Input
-            type="date"
-            max={todayISO()}
-            value={date}
-            onChange={(event) => setDate(event.target.value)}
-          />
-        </Field>
-        <p className="text-xs text-zinc-500">
-          Defaults to today — pick the actual delivery date when logging one after the fact.
-        </p>
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button type="button" onClick={submit} disabled={busy}>
-            Receive
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  );
-}
-
-function ShipOrderModal({
-  order,
-  retailerLabel,
-  onClose,
-  onShipped,
-}: {
-  order: Order;
-  retailerLabel: string;
-  onClose: () => void;
-  onShipped: () => Promise<unknown>;
-}) {
-  const [date, setDate] = useState(todayISO());
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const submit = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      // Today = "it shipped now": no body, so the server stamps the actual
-      // moment. A backdate is midnight local, in the browser's own offset (#93).
-      await api.shipOrder(
-        order.id,
-        date && date !== todayISO() ? { shipped_at: localMidnightISO(date) } : undefined,
-      );
-      await onShipped();
-      onClose();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Ship failed");
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Modal title="Mark shipped" onClose={onClose}>
-      <div className="space-y-4">
-        <ErrorBanner message={error} />
-        <p className="text-sm text-zinc-700">
-          Mark the {formatDate(order.order_date)} order from {retailerLabel} as shipped? Kits
-          still waiting on the retailer move to In Transit. Stock is not touched — that
-          happens when the order is received.
-        </p>
-        <Field label="Shipped on">
-          <Input
-            type="date"
-            max={todayISO()}
-            value={date}
-            onChange={(event) => setDate(event.target.value)}
-          />
-        </Field>
-        <p className="text-xs text-zinc-500">
-          Defaults to today — pick the date from the shipping notification when logging one
-          after the fact.
-        </p>
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <Button type="button" onClick={submit} disabled={busy}>
-            Ship
-          </Button>
-        </div>
-      </div>
-    </Modal>
-  );
 }

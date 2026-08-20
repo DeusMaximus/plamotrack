@@ -8,6 +8,14 @@ const SHOP = `E2E Shop ${suffix}`;
 const KIT = `E2E Zaku ${suffix}`;
 const MARKER = `E2E Marker ${suffix}`;
 
+// Today on the browser's own calendar, matching what the date inputs display —
+// toISOString alone is yesterday for a while every morning east of Greenwich.
+const TODAY = (() => {
+  const shifted = new Date();
+  shifted.setMinutes(shifted.getMinutes() - shifted.getTimezoneOffset());
+  return shifted.toISOString().slice(0, 10);
+})();
+
 test.describe.configure({ mode: "serial" });
 
 // Wide enough that all seven board columns fit without horizontal scrolling —
@@ -56,13 +64,24 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   // which `toContainText` on the cell would not be — "10" contains "0".
   await expect(markerRow.getByTestId("stock-count")).toHaveText("0");
 
-  // Receive — a dialog now (#93): the date defaults to today, so confirming
-  // without touching it is the old one-click flow.
+  // Ship, then receive — both live in the Edit dialog now (#120): filling a
+  // date that isn't stored yet performs the transition on save. Today's date =
+  // "it happened now" (the server stamps the moment), matching the old dialogs.
   await page.goto("/orders");
-  await orderRow.getByRole("button", { name: "Receive" }).click();
-  const receiveDialog = page.getByRole("dialog", { name: "Receive order" });
-  await receiveDialog.getByRole("button", { name: "Receive" }).click();
+  await orderRow.getByRole("button", { name: "Edit" }).click();
+  const editDialog = page.getByRole("dialog", { name: "Edit order" });
+  await editDialog.getByLabel("Shipped on").fill(TODAY);
+  await editDialog.getByRole("button", { name: "Save changes" }).click();
+  await expect(orderRow.getByText("Shipped")).toBeVisible();
+  // The Received column counts transit live while the box is on its way (#120).
+  await expect(orderRow.getByText("in transit · today")).toBeVisible();
+
+  await orderRow.getByRole("button", { name: "Edit" }).click();
+  await editDialog.getByLabel("Received on").fill(TODAY);
+  await editDialog.getByRole("button", { name: "Save changes" }).click();
   await expect(orderRow.getByText("Received")).toBeVisible();
+  // …and switches to the delivery date with the transit time beside it.
+  await expect(orderRow.getByText(/· same day/)).toBeVisible();
 
   // Stock applied…
   await page.goto("/inventory");
