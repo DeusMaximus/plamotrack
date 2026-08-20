@@ -70,20 +70,34 @@ Template:
   received order stays REST/MCP), asserted-in_transit kits borrowing the ship
   stamp (the asserted-backlog parallel), and ship-after-receive legal while
   receive never backfills.
-- **State:** both PRs open, unreviewed; a Codex brief covering both is in this
-  session's scratchpad (`codex-brief-117-118.md`), handed to the owner. **The
-  two branches append to the same harness CASES tail — whichever merges second
-  resolves a mechanical append-append conflict: keep both blocks, and keep one
-  of the duplicate `ORD` constant declarations.** Dev servers are running on
-  :8000/:5173 from this session; the dev DB carries ship-demo rows,
-  disposable. Live and still true: **0.2.7 = #95 (PR #118)**; #110/#112 and
-  #77/#87/#90 unblocked by #86's merge; #114 is M5.1-shaped; #116 unmilestoned;
-  0.2.8 open (#104/#98/#99/#53/#54/#61/#63/#67).
-- **Next:** Codex reviews #117 (light — anchors, provenance, `-k` selection)
-  then #118 (full rigor), one session, a verdict posted per PR; respond per
-  `.agents/testing-and-review.md` → "Responding to a review". Merge #117 first,
-  then merge `main` forward into #118 and re-run its harness before merging.
-  0.2.7 is releasable once #118 lands.
+- **State: Codex round one is answered on both PRs.** **#117: GO, two P3s,
+  both taken at `34f9e52`**, reply posted — the harness now runs each selection
+  unmutated first and requires a pass (`SICK` otherwise; it caught the
+  stale-test-DB scenario live), a kill is exit 1 + "failed" + no "error"
+  (`ERROR` otherwise), `cell-4` re-anchored as a compiling mutant (its old
+  replacement never compiled — an IndentationError stood in for the assertion
+  for its whole life), and the runtime claim remeasured: **665s ≈ 11 min at 97
+  cases** (was a 30-40 min extrapolation slip, owned). **#118: NO-GO, P2 +
+  three P3s, answered at `5b98142`**, reply posted — P2 fixed red-first
+  (`_restamp_receipt_kits` gains `only_status`; ship correction passes
+  IN_TRANSIT because a ship and a receive can share a local-midnight instant
+  and the receipt owns the backlog kit; receipt contract untouched per the
+  review's "do not"); P3-3's six unmutated sites + the fix site now have
+  tuples (branch harness **82/82**, suite **897**); P3-4 docs fixed; **P3-2
+  filed as #119** (derived advances not plan-bound — BOTH ship and receipt
+  siblings, the receipt one pre-existing since #86). #118's harness still runs
+  the old kill contract until the #117 merge-forward. **The two branches
+  append to the same harness CASES tail — whichever merges second resolves a
+  mechanical append-append conflict: keep both blocks, keep one duplicate
+  `ORD` constant.** Dev servers running on :8000/:5173; dev DB disposable.
+  Live: **0.2.7 = #95 (PR #118)**; #110/#112 and #77/#87/#90 unblocked; #114
+  M5.1-shaped; #116 + #119 unmilestoned; 0.2.8 open
+  (#104/#98/#99/#53/#54/#61/#63/#67).
+- **Next:** round two — Codex replays #117 at `34f9e52` and #118 at `5b98142`
+  (the round-one comments are the record). On GO: merge #117 first, then merge
+  `main` forward into #118 (CASES-tail conflict, harness re-run under the new
+  contract — the reply on #118 promises exactly that), then #118 lands and
+  0.2.7 is releasable.
 
 ## 2026-08-20 — Claude Code (Fable 5) — #86 MERGED as `386ebda` after Codex rounds 5+6; #44 closed; #116 filed; the 0.2.7 gate is released
 
