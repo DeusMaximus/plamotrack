@@ -534,6 +534,20 @@ CASES = [
         '            after_line = kit_row.values.get("order_item_id")',
         "never_mentions_order_item_id",
     ),
+    (
+        "stamp-1. a spawned kit stops borrowing the order's receipt",
+        IMP,
+        "            received_at=order.received_at if order is not None else None,",
+        "            received_at=None,",
+        "borrows_its_receipt or carrying_its_receipt",
+    ),
+    (
+        "stamp-2. the receive-by-import advance reads the clock again",
+        IMP,
+        "                    kit.status_updated_at = row.target.received_at",
+        "                    kit.status_updated_at = datetime.now(UTC)",
+        "stamps_the_advance",
+    ),
 ]
 
 

@@ -231,12 +231,15 @@ be moved into or out of "received" by an import. What you can do instead:
 Everything else about receipt still imports:
 
 - an order that holds only kit lines moves in both directions — that's the ordinary
-  starter-sheet case, where a kit you already own arrives already received;
+  starter-sheet case, where a kit you already own arrives already received. The kits
+  the receipt advances to backlog are stamped with the arrival instant the sheet
+  states, the same as receiving in the app;
 - a **new** order imports with its receipt intact, in any mode. A full archive
   carries the received order *and* the post-receipt `quantity_on_hand` together, so
   restoring one is never ambiguous;
 - correcting a received order's date to a different date is fine — it changes when,
-  not whether.
+  not whether. It moves the order's own date only: unlike a correction in the app, a
+  CSV correction never re-dates the kits that arrived with the box.
 
 **Reducing a kit line's quantity removes kits.** A line that says 1 where the
 collection holds 3 is a disagreement, so the import gives up the extra kits — newest

@@ -2462,13 +2462,17 @@ def _advance_kits_for_newly_received_orders(execution: ExecutionPlan) -> None:
     is `render()`'s output for the old value — `""` for `None`, and non-empty for
     an already-set timestamp — so it's the one place that still distinguishes a
     genuine arrival from a same-state correction (review of #79/#47).
+
+    The stamp is the order's applied `received_at`, not the clock: a kit a
+    receipt lands in backlog carries the receipt instant — backdated included —
+    on every writer (#93), and `receive_order()` is what this mirrors. The
+    post-write value is exactly what the upload stated, so nothing is invented.
     """
     explicit_status_ids = {
         row.matched_id
         for row in execution.rows.get("kits", [])
         if row.matched_id is not None and "status" in row.present
     }
-    now = datetime.now(UTC)
     for row in execution.rows.get("orders", []):
         if row.action is not RowAction.UPDATE or row.target is None:
             continue
@@ -2488,7 +2492,7 @@ def _advance_kits_for_newly_received_orders(execution: ExecutionPlan) -> None:
                     continue
                 if kit.status in ARRIVAL_ELIGIBLE:
                     kit.status = KitStatus.BACKLOG
-                    kit.status_updated_at = now
+                    kit.status_updated_at = row.target.received_at
 
 
 def _stamp_generated_status_changes(execution: ExecutionPlan) -> None:
@@ -2599,6 +2603,13 @@ async def apply_import(
         item = await session.get(OrderItem, spawn.order_item_id)
         if item is None:
             continue
+        # The receipt instant comes from the post-write order row, not the plan:
+        # the write loop above has already applied any receipt this upload
+        # states, so a kit landing in backlog carries the order's `received_at`
+        # — backdated included — the same instant REST and MCP stamp (#93).
+        # `spawn_kits` itself keeps the stamp off any kit spawned with an
+        # explicitly asserted later status.
+        order = await session.get(Order, spawn.order_id)
         await spawn_kits(
             session,
             item,
@@ -2609,6 +2620,7 @@ async def apply_import(
             status=spawn.status or None,
             count=spawn.count,
             received=spawn.received,
+            received_at=order.received_at if order is not None else None,
         )
         spawned += spawn.count
 

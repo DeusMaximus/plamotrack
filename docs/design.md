@@ -339,15 +339,18 @@ instant is supplied rather than always stamped "now":
   pending order is a contradiction, refused rather than ignored); the receive call
   takes an optional one; both default to now
 - the kits a receipt lands in backlog are stamped with the same instant as the order,
-  including kits spawned later into an already-received order by a line edit; a kit
-  whose status the entry itself asserts (building, complete) keeps entry time — the
-  receipt is not when that status began
+  including kits spawned later into an already-received order by a line edit — or by
+  an import (§12.5: both of the importer's arrival sites borrow the same instant); a
+  kit whose status the entry itself asserts (building, complete) keeps entry time —
+  the receipt is not when that status began
 - **correction:** `PATCH /orders/{id}` adjusts a `received_at` that is already set,
   and 409s on a pending order — the pending → received transition stays in the receive
   path, where the stock dispatch lives. Explicit null is refused: un-receiving is not
   a supported operation. A correction follows exactly the kits whose stamp equals the
   old receipt (their last transition *was* the receipt); a kit moved since keeps its
-  own date. The MCP `update_order` tool carries the same correction (#97)
+  own date. The MCP `update_order` tool carries the same correction (#97). A
+  correction arriving by CSV moves only the order — the importer never rewrites kit
+  rows the upload doesn't name (#116)
 - **the future is refused, judged as a calendar date in the instant's own offset** —
   not as an instant against the server clock, which would refuse an honest "today"
   over clock skew. A receipt *earlier than `order_date`* is deliberately allowed:
@@ -1037,6 +1040,14 @@ null on an order holding a catalog line. Kit-only orders move freely in both
 directions (that is the starter-sheet path), and a *create* is untouched — a full
 archive carries the received order and its post-receipt `quantity_on_hand` together,
 which is how the invariant survives a restore today.
+
+The two arrivals an import *does* perform borrow the order's receipt instant, exactly
+as the live writers stamp it (#93): a kit-only receive-by-import stamps the kits it
+advances with the value the sheet states, and a kit the apply spawns into a received
+order carries the same instant — read from the post-write order row, so a receipt
+this same upload sets is honoured, backdated included. The value is stated, not
+invented, and neither site fires on a re-import. Corrections deliberately do not
+cascade a restamp the way REST's do (#116).
 
 A blank cell in an *included* column means null; a column omitted from the file entirely
 is left alone. That's needed for archive fidelity, but it makes partial sheets dangerous

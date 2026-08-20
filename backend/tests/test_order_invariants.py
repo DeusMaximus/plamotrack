@@ -18,6 +18,7 @@ each one does rather than that they match.
 import csv
 import io
 import zipfile
+from datetime import datetime
 
 import pytest
 from sqlalchemy import text as sa_text
@@ -1991,6 +1992,195 @@ async def test_a_received_order_with_catalog_lines_still_restores_from_an_archiv
         stored = (await client.get("/orders")).json()[0]
         assert stored["received_at"] is not None, mode
         assert order["order_number"] == stored["order_number"], mode
+
+
+# --- the receipt instant import-written arrivals inherit --------------------------
+#
+# Since #93, a kit a receipt lands in backlog is stamped with the order's
+# `received_at` — backdated included — by every writer: `receive_order`, entry
+# with `received=true`, and a line edit spawning into a received order. The
+# importer's two arrival sites (`_advance_kits_for_newly_received_orders` and the
+# apply loop's `spawn_kits` call) borrow the same instant. The value is stated in
+# the upload or already stored, so rule 10 is not offended: nothing is invented,
+# and neither site fires on a re-import (no quantity written, no null -> non-null
+# transition). Every RECEIPT below is months in the past precisely so the
+# importer's clock cannot produce a passing value by accident.
+
+RECEIPT = "2026-03-20T09:00:00Z"
+
+
+def instant(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+async def test_a_receipt_arriving_by_import_stamps_the_advance_with_the_stated_instant(
+    client, kit_order
+):
+    """Site one: the kit-only receive-by-import. The advance mirrors
+    `receive_order()` (rule 2), and `receive_order` stamps the kits it advances
+    with the receipt instant — so the mirror must too, or the same arrival sorts
+    differently on the Board depending on which writer recorded it."""
+    order = kit_order["order"]
+    content = archive(orders=[order_row(order, kit_order["retailer"], received_at=RECEIPT)])
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+
+    kit = (await client.get("/kits")).json()[0]
+    assert kit["status"] == "backlog"
+    assert instant(kit["status_updated_at"]) == instant(RECEIPT)
+
+
+async def test_a_kit_spawned_into_a_received_order_borrows_its_receipt(client, kit_order):
+    """Site two, the update shape: a quantity increase on a received order's line.
+    The same edit through REST stamps the new kit with the order's receipt; the
+    spawned kit entered the collection when the box did, whichever writer says
+    the line got bigger."""
+    order = kit_order["order"]
+    resp = await client.post(f"/orders/{order['id']}/receive", json={"received_at": RECEIPT})
+    assert resp.status_code == 200, resp.text
+    before = {k["id"] for k in (await client.get("/kits")).json()}
+
+    content = archive(order_items=[line_row(order, order["items"][0], quantity="2")])
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+
+    new = next(k for k in (await client.get("/kits")).json() if k["id"] not in before)
+    assert new["status"] == "backlog"
+    assert instant(new["status_updated_at"]) == instant(RECEIPT)
+
+
+async def test_one_upload_that_receives_and_spawns_stamps_both_kits_the_same(client, kit_order):
+    """Both sites in one apply, and the ordering seam pinned: the upload flips the
+    receipt AND grows the line, so the receipt the spawn borrows exists only in
+    the post-write order row — the stored row still says pending when the plan is
+    made. The advance stamps the pre-existing kit, the fan-out stamps the new
+    one, and both must say the instant the sheet stated, not the clock and not
+    the stored null."""
+    order = kit_order["order"]
+    before = {k["id"] for k in (await client.get("/kits")).json()}
+    assert len(before) == 1
+
+    content = archive(
+        orders=[order_row(order, kit_order["retailer"], received_at=RECEIPT)],
+        order_items=[line_row(order, order["items"][0], quantity="2")],
+    )
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+
+    kits = (await client.get("/kits")).json()
+    assert len(kits) == 2
+    for kit in kits:
+        assert kit["status"] == "backlog", kit
+        assert instant(kit["status_updated_at"]) == instant(RECEIPT), (
+            "advanced" if kit["id"] in before else "spawned"
+        )
+
+
+@pytest.mark.parametrize("mode", ["merge", "replace_all"])
+@pytest.mark.parametrize(
+    ("status_cell", "expected_status", "borrows"),
+    [
+        # The line states no kit status, so the spawn lands wherever the order
+        # says — backlog, carrying the order's receipt.
+        ("", "backlog", True),
+        # An explicitly asserted later status keeps the entry-time stamp: the
+        # receipt is not when "building" began. `spawn_kits` owns that gate for
+        # every caller; this drives it through the importer.
+        ("building", "building", False),
+    ],
+    ids=["lands in backlog", "asserted past backlog"],
+)
+async def test_a_created_received_order_spawns_kits_carrying_its_receipt(
+    client, status_cell, expected_status, borrows, mode
+):
+    """Site two, the create shape, in both modes that create rather than
+    transition — a restore is the shape's ordinary case, and `replace_all` is the
+    classification where every row is a CREATE. The fan-out runs at apply time,
+    after the write loop, so the instant comes from the post-write order row —
+    which is exactly what this upload stated."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order_id = "7d9a1c22-4e8b-4f3a-9c1d-2b6e8f4a5d30"
+    content = archive(
+        {
+            "retailers": ["id", "name"],
+            "orders": [
+                "id",
+                "retailer_id",
+                "order_date",
+                "order_number",
+                "currency_code",
+                "received_at",
+            ],
+            "order_items": [
+                "id",
+                "order_id",
+                "item_type",
+                "quantity",
+                "unit_price_minor",
+                "currency_code",
+                "kit_name",
+                "kit_grade",
+                "kit_status",
+            ],
+        },
+        retailers=[{"id": retailer["id"], "name": retailer["name"]}],
+        orders=[
+            {
+                "id": order_id,
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-9",
+                "currency_code": "JPY",
+                "received_at": RECEIPT,
+            }
+        ],
+        order_items=[
+            {
+                "id": "3f2b8d11-9a4c-4e7f-8b2a-1c5d9e6f7a48",
+                "order_id": order_id,
+                "item_type": "kit",
+                "quantity": "1",
+                "unit_price_minor": "2800",
+                "currency_code": "JPY",
+                "kit_name": "Gouf",
+                "kit_grade": "HG",
+                "kit_status": status_cell,
+            }
+        ],
+    )
+    extra = {"confirm": "REPLACE"} if mode == "replace_all" else {}
+    resp = await apply(client, content, mode=mode, **extra)
+    assert resp.status_code == 200, resp.text
+
+    kit = next(k for k in (await client.get("/kits")).json() if k["name"] == "Gouf")
+    assert kit["status"] == expected_status
+    assert (instant(kit["status_updated_at"]) == instant(RECEIPT)) is borrows
+
+
+async def test_a_correction_by_import_leaves_kit_stamps_alone(client, kit_order):
+    """The declared divergence, pinned. REST's correction path restamps exactly
+    the kits whose stamp equals the old receipt (`_restamp_receipt_kits`, #93);
+    an import correcting the same date does not — the importer writes only rows
+    the upload names plus the two arrival derivations above, and a full archive
+    states every kit's stamp explicitly. Filed as #116; if that decision is ever
+    reversed, this is the test to flip."""
+    order = kit_order["order"]
+    resp = await client.post(f"/orders/{order['id']}/receive", json={"received_at": RECEIPT})
+    assert resp.status_code == 200, resp.text
+
+    corrected = "2026-04-02T10:00:00Z"
+    stored = (await client.get(f"/orders/{order['id']}")).json()
+    content = archive(orders=[order_row(stored, kit_order["retailer"], received_at=corrected)])
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+
+    assert instant((await client.get(f"/orders/{order['id']}")).json()["received_at"]) == instant(
+        corrected
+    )
+    kit = (await client.get("/kits")).json()[0]
+    assert instant(kit["status_updated_at"]) == instant(RECEIPT), (
+        "import corrections do not cascade restamps"
+    )
 
 
 # --- a catalog line has to point at something ------------------------------------
