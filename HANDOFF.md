@@ -41,6 +41,50 @@ Template:
 
 ---
 
+## 2026-08-21 — Claude Code (Fable 5) — #120 implemented: PR #121 open, CI green; release cadence decided (no v0.2.6 tag)
+
+- **Done:** **#120 items 1+2 — PR #121** (branch `feat/120-status-editing`, head
+  `a8c4406`, CI green all three jobs). Browser-only; no service, schema, REST,
+  MCP or CSV change. Kits: inline status select + its mutation removed, badge
+  display-only (the board's `lib/kitStatusMutation.ts` is separate and
+  untouched). Orders: Ship/Receive modals and row buttons removed; Edit's
+  "Shipped on"/"Received on" fields show regardless of state — correction PATCH
+  when the instant is set (unchanged), ship/receive dispatch on save when it
+  isn't (ship before receive; one-way `useRef` latches so a retry after partial
+  failure can't replay a transition the server already took); SHIPPED/RECEIVED
+  table columns mirror Kits' Started/Completed, counting transit live
+  ("in transit · N d"); per-line Ordered/Pre-ordered picker replaced by one
+  create-time Pre-order toggle applied to every kit line at submit — the API
+  keeps per-line status (edits round-trip the first spawned kit's; a line added
+  mid-edit inherits the order's derived pre-order state). Design §3.9 gained a
+  sentence. e2e 20 → **21**: happy-path ships+receives through Edit and pins
+  both column renderings; receive-backdate does both backdates in one save
+  (the #93 tz pin now covers `shipped_at` too); new `preorder-toggle.spec.ts`
+  pins the every-line fan-out with two kit lines. Negative control in a `main`
+  worktree: 3 red, each on the exact control the branch adds (reasons in the PR
+  body); worktree + e2e DB removed after. vitest 109, build/oxlint clean; e2e
+  verified against a DB migrated from empty, all tables zero after.
+- **Decisions:** **Release cadence (owner's call, this session): no v0.2.6 tag
+  ever.** One release — v0.2.7-alpha — cut only when BOTH the 0.2.6 milestone
+  (#77, #87, #90, #112, #119 open) and 0.2.7 (#120) are done; both milestones
+  close at that tag. **Do not run the release gate when 0.2.7 alone empties.**
+  Deliberate calls on the PR: ship-backfill on a received order is now
+  browser-reachable (#118 kept it REST/MCP-only over button real estate, the
+  service is explicitly legal); in-hand clears + disables pre-order at create;
+  MCP's `update_kit_status` shortcut stays. **Review call: recommended no
+  external review** — frontend-only consolidation, no shared mechanism (#40
+  criterion); the owner had not yet confirmed at hand-off time.
+- **State:** PR #121 open, unmerged; CI green at `a8c4406`; no migration. Dev
+  servers running on :8000/:5173 (serving this branch). Note: the previous
+  session's hand-off commit `1c37dfb` was never pushed — it goes up with this
+  one. Stale worktrees `/private/tmp/plamotrack-pr100` and `-pr108-main`
+  remain, not this session's.
+- **Next:** owner decides review-or-merge on #121 (#120 closes on merge). Then
+  the 0.2.6 list, reprioritized by dogfooding — the owner plans to dogfood off
+  `main` once #120 lands, and **#112 goes before any real-collection import**
+  (the starter sheet drops kit-only fields on retailer-bearing rows). Gate +
+  v0.2.7-alpha tag only when both milestones are empty.
+
 ## 2026-08-21 — Claude Code (Sonnet 5) — #120 filed: the 0.2.7 "one more item" is named
 
 - **Done:** UI walkthrough with the owner over the Kits and Orders pages (no
@@ -259,64 +303,3 @@ Template:
   whole 0.2.8 list (#104 keyboard picker, #98, #99, #53, #54, #61, #63, #67);
   #114 is M5.1-shaped. Waiting on #86: #95, #110, #112, and the mutant fold-ins
   (#109's 17, #111's 6, #113's 8).
-
-## 2026-08-20 — Claude Code (Fable 5) — #93 closed: PR #111 merged as `322afe9` after one Cursor round
-
-- **Done:** **#93 closed — PR #111 squash-merged as `322afe9`**, branch deleted,
-  on the owner's call after one Cursor round (Grok 4.6) at `1ae9c4d`: GO, one P3,
-  taken at `a78ce76`; CI green at both heads. P3-1: the UTC-12 test could
-  not kill the `now(tzinfo)` → `now(UTC)` mutant at any hour (a behind offset's
-  calendar date is never ahead of UTC's — the brief's "last second" claim was
-  wrong, owned on the thread). Fix: a pinned-clock test (monkeypatched
-  `app.services.orders.datetime`, frozen 2026-08-20T20:00Z) driving an honest
-  "today in UTC+14 while UTC is on yesterday's date"; written red against the
-  live mutant (`422 == 200`), green on restored production code; production
-  check unchanged. Reply posted at `a78ce76`; PR body corrected (a negative-
-  control red was mislabelled — it reds on the kit≠order microsecond stamp gap)
-  and now carries the 5 `rcpt-` mutant tuples in a collapsed block for the #86
-  fold-in. Design §3.9 gained the reviewer's Board-ordering cost sentence
-  (an accepted behind-offset "today" can sit atop Backlog ~36 h). The
-  REST/import stamp divergence the review confirmed was commented onto PR #86
-  — importer-spawned kits on a received order still stamp now, by design;
-  whether they should borrow `orders.received_at` is #86's decision. Entry takes an
-  optional `received_at` (schema-refused without `received=true`); the receive
-  route takes an optional `OrderReceive` body (absent / `{}` / explicit null =
-  now, unchanged); `PATCH /orders/{id}` corrects an **already-set** date only —
-  409 on a pending order (the transition stays in `receive_order` under its
-  lock), explicit null refused. Kits a receipt lands in backlog are stamped with
-  the order's instant — at receive, at received-at-entry create, and when a line
-  edit spawns into an already-received order (previously server-now). A
-  correction restamps exactly the kits whose stamp equals the old receipt; kits
-  moved since keep their own. MCP `create_order` + `mark_order_received` gained
-  `received_at` (offset required, friendly ToolErrors). Browser: receive is now
-  a dated dialog (today = no body, server stamps the moment), the create
-  checkbox reveals an inline date, edit of a received order gets "Received on"
-  sent only when dirty. Helpers `isoToLocalDateInput`/`localMidnightISO` in
-  `lib/format.ts` write the browser's offset out, never folded to Z. Docs:
-  design §3.9 "Backdatable receipts" block, §7 signatures, README tool row.
-  No migration; importer deliberately untouched (rule 10, #86's file).
-- **Decisions (all flagged on the PR):** the future is refused as a calendar
-  date judged in the instant's **own offset** (service 422) — an instant-vs-
-  server-clock compare refuses an honest "today" over skew; a receipt earlier
-  than `order_date` is deliberately allowed (plain date vs timestamptz is not
-  comparable across unknown time zones); naive datetimes refused everywhere;
-  the interim no-instance-tz decision is recorded in §3.9 for M5.1 (#23/#27).
-  Kits asserted building/complete at entry keep entry-time stamps.
-- **State:** backend **713** (684 + 29 in `tests/test_receipt_dates.py`), vitest
-  109 (+9 `dates.test.ts`), e2e 20 (+`receive-backdate.spec.ts`), e2e verified
-  against a DB migrated from empty, all tables zero after. Negative control:
-  **23 red / 6 green on unfixed `main`** (re-measured at `a78ce76`), the 6 being
-  compatibility controls (named in the PR body). Mutants: 5 hand-run tuples in
-  the PR body (`rcpt-` prefixed, anchors verified to match once) — they join
-  the fold-in queue with #109's 17 once #86's harness lands. GitHub
-  runners recovered from the 2026-08-19 outage; every #111 run green. Live
-  and still true: **#86 at `dfa7f29` owes its Codex round** and gates
-  #44/#77/#87/#90; #104/#98/#99 → 0.2.8; #110 unmilestoned. Stale worktrees
-  `/private/tmp/plamotrack-pr100` and `-pr108-main` remain, not this session's,
-  left alone.
-- **Next:** 0.2.7's remaining items clear of #86: **#94 + #96** (one branch, one migration,
-  separate commits; both touch `spec.py` AND the hand-curated
-  `STARTER_SHEET_COLUMNS`), **#95** after #86 (its importer half mirrors #86's
-  arriving-receipt question), **#97** last — its order-edit tool should carry
-  `received_at` so MCP gains the correction path #111 leaves REST/browser-only.
-
