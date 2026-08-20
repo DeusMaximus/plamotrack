@@ -537,7 +537,7 @@ CASES = [
     (
         "stamp-1. a spawned kit stops borrowing the order's receipt",
         IMP,
-        "            received_at=order.received_at if order is not None else None,",
+        "            received_at=spawn.received_at,",
         "            received_at=None,",
         "borrows_its_receipt or carrying_its_receipt",
     ),
@@ -547,6 +547,30 @@ CASES = [
         "                    kit.status_updated_at = row.target.received_at",
         "                    kit.status_updated_at = datetime.now(UTC)",
         "stamps_the_advance",
+    ),
+    (
+        "stamp-3. the spawn's receipt instant falls out of the plan fingerprint",
+        IMP,
+        "                spawn.received,\n                canon(spawn.received_at),",
+        "                spawn.received,",
+        "stales_the_hash",
+    ),
+    (
+        "fut-1. the future-receipt check is off",
+        INV,
+        "    _check_future_receipts(rows)",
+        "    pass  # neutered",
+        "in_the_future or into_the_future",
+    ),
+    (
+        "fut-2. the refusal reads the cell instead of the change",
+        INV,
+        '        change = _change(row, "received_at")\n'
+        "        if change is None or not change.after:\n"
+        "            continue\n"
+        '        value = row.values.get("received_at")',
+        '        value = row.values.get("received_at")',
+        "restores_a_future or restated_is_still",
     ),
 ]
 

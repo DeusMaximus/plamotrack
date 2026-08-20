@@ -241,6 +241,13 @@ Everything else about receipt still imports:
   not whether. It moves the order's own date only: unlike a correction in the app, a
   CSV correction never re-dates the kits that arrived with the box.
 
+One more rule, on any order: **a receipt date in the future is refused** — an
+arrival can be backdated, not predicted, and the app refuses the same value
+everywhere else. This applies where the sheet *changes* `received_at` (marking an
+order received, or correcting its date); a row restating a value the order already
+holds is left alone, and a **new** order imports whatever its sheet says — a
+restore records the past, even when the past held something odd.
+
 **Reducing a kit line's quantity removes kits.** A line that says 1 where the
 collection holds 3 is a disagreement, so the import gives up the extra kits — newest
 first, and never one you've started: a kit that's building or complete, rated,

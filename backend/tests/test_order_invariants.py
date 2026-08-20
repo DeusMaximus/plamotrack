@@ -2183,6 +2183,176 @@ async def test_a_correction_by_import_leaves_kit_stamps_alone(client, kit_order)
     )
 
 
+# --- a receipt that hasn't happened yet (Codex round five) ------------------------
+#
+# REST and MCP refuse a future `received_at` at entry, receive and correction —
+# `_refuse_future_receipt`, judged as a calendar date in the instant's own offset
+# (#93). The importer was the one writer without the check, and once the arrival
+# sites borrow the instant, the accepted value became a Board stamp sitting in
+# 2099. The refusal reads the *change*, not the cell: a stored future value —
+# admitted before the check existed — restates and restores untouched, and a
+# create is a restore, not a data-entry path (the §12.5 create rule, applied to
+# the date). The predicate itself is shared from `services/orders.py`, so its
+# own-offset calendar semantics are #93's tested ground, not re-implemented here.
+
+FUTURE = "2099-01-02T09:00:00Z"
+
+
+async def test_an_import_cannot_receive_an_order_in_the_future(client, kit_order):
+    """Round five's P2, the arrival shape: null → future previewed clean and
+    applied at 200, stamping the kit's `status_updated_at` in 2099."""
+    order = kit_order["order"]
+    content = archive(orders=[order_row(order, kit_order["retailer"], received_at=FUTURE)])
+    plan = await preview(client, content)
+    assert actions(plan, "orders") == ["error"], plan["tables"]
+    error = plan["tables"][0]["rows"][0]["error"]
+    assert error.startswith("received_at:")
+    assert "future" in error
+    assert (await apply(client, content)).status_code == 409
+
+    assert (await client.get(f"/orders/{order['id']}")).json()["received_at"] is None
+    kit = (await client.get("/kits")).json()[0]
+    assert kit["status"] == "ordered", "no arrival happened, so no advance either"
+
+
+async def test_an_import_cannot_correct_a_receipt_into_the_future(client, kit_order):
+    """The correction shape of the same hole. A correction never moves stock, so
+    the receipt-transition refusal is deliberately silent here — this check has
+    to speak on its own, on any order."""
+    order = kit_order["order"]
+    resp = await client.post(f"/orders/{order['id']}/receive", json={"received_at": RECEIPT})
+    assert resp.status_code == 200, resp.text
+    stored = (await client.get(f"/orders/{order['id']}")).json()
+
+    content = archive(orders=[order_row(stored, kit_order["retailer"], received_at=FUTURE)])
+    plan = await preview(client, content)
+    assert actions(plan, "orders") == ["error"], plan["tables"]
+    assert "future" in plan["tables"][0]["rows"][0]["error"]
+    assert (await apply(client, content)).status_code == 409
+    assert instant((await client.get(f"/orders/{order['id']}")).json()["received_at"]) == instant(
+        RECEIPT
+    )
+
+
+async def test_a_stored_future_receipt_restated_is_still_a_no_op(client, kit_order):
+    """The refusal reads the change, not the cell: a legacy future value must
+    restate and round-trip untouched, or the archive of an instance that once
+    imported one becomes unimportable. Seeded by SQL because the application no
+    longer writes one anywhere."""
+    order = kit_order["order"]
+    async with session_scope() as session:
+        await session.execute(
+            sa_text("update orders set received_at = :v where id = :id"),
+            {"v": instant(FUTURE), "id": order["id"]},
+        )
+        await session.commit()
+
+    stored = (await client.get(f"/orders/{order['id']}")).json()
+    content = archive(orders=[order_row(stored, kit_order["retailer"])])
+    plan = await preview(client, content)
+    assert plan["blocking_errors"] == [], plan
+    assert (await apply(client, content)).status_code == 200
+    assert instant((await client.get(f"/orders/{order['id']}")).json()["received_at"]) == instant(
+        FUTURE
+    )
+
+
+@pytest.mark.parametrize("mode", ["merge", "replace_all"])
+async def test_a_created_order_still_restores_a_future_receipt(client, mode):
+    """The stated create policy (round five asked for it to be explicit rather
+    than accidental): a create is a restore. An archive holding a legacy future
+    receipt must restore in both creating modes, and the app itself no longer
+    writes one anywhere — entry, receive and correction (REST/MCP) and now
+    arrival and correction by import all refuse it. The accepted cost: a
+    hand-written CSV can still create a future order, and its kit will sort at
+    the Board's top until the date passes."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order_id = "b4c8e1f0-2d5a-4b7c-9e3f-6a1d8c2b5e70"
+    content = archive(
+        {
+            "retailers": ["id", "name"],
+            "orders": [
+                "id",
+                "retailer_id",
+                "order_date",
+                "order_number",
+                "currency_code",
+                "received_at",
+            ],
+            "order_items": [
+                "id",
+                "order_id",
+                "item_type",
+                "quantity",
+                "unit_price_minor",
+                "currency_code",
+                "kit_name",
+                "kit_grade",
+            ],
+        },
+        retailers=[{"id": retailer["id"], "name": retailer["name"]}],
+        orders=[
+            {
+                "id": order_id,
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-77",
+                "currency_code": "JPY",
+                "received_at": FUTURE,
+            }
+        ],
+        order_items=[
+            {
+                "id": "9e2f7a44-1b3c-4d8e-a5f6-0c9b8d7e6f51",
+                "order_id": order_id,
+                "item_type": "kit",
+                "quantity": "1",
+                "unit_price_minor": "2800",
+                "currency_code": "JPY",
+                "kit_name": "Acguy",
+                "kit_grade": "HG",
+            }
+        ],
+    )
+    extra = {"confirm": "REPLACE"} if mode == "replace_all" else {}
+    resp = await apply(client, content, mode=mode, **extra)
+    assert resp.status_code == 200, resp.text
+
+    kit = next(k for k in (await client.get("/kits")).json() if k["name"] == "Acguy")
+    assert kit["status"] == "backlog"
+    assert instant(kit["status_updated_at"]) == instant(FUTURE)
+
+
+async def test_a_receipt_correction_between_preview_and_apply_stales_the_hash(client, kit_order):
+    """Round five's P3. The hash binds what will be written, and a spawned kit's
+    stamp is a write — with the instant absent from the spawn descriptor, a
+    correction landing between preview and apply produced a kit stamped with a
+    value the operator never saw. The instant rides in `_Spawn` and the
+    fingerprint now, so the stale apply 409s and a fresh preview stamps the
+    corrected value."""
+    order = kit_order["order"]
+    resp = await client.post(f"/orders/{order['id']}/receive", json={"received_at": RECEIPT})
+    assert resp.status_code == 200, resp.text
+    content = archive(order_items=[line_row(order, order["items"][0], quantity="2")])
+    old_hash = (await preview(client, content))["plan_hash"]
+
+    corrected = "2026-04-02T10:00:00Z"
+    resp = await client.patch(f"/orders/{order['id']}", json={"received_at": corrected})
+    assert resp.status_code == 200, resp.text
+
+    stale = await apply(client, content, plan_hash=old_hash)
+    assert stale.status_code == 409, stale.text
+    assert "preview again" in stale.json()["detail"]
+
+    fresh_hash = (await preview(client, content))["plan_hash"]
+    assert fresh_hash != old_hash
+    before = {k["id"] for k in (await client.get("/kits")).json()}
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+    new = next(k for k in (await client.get("/kits")).json() if k["id"] not in before)
+    assert instant(new["status_updated_at"]) == instant(corrected)
+
+
 # --- a catalog line has to point at something ------------------------------------
 
 

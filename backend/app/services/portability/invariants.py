@@ -46,7 +46,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.models import ItemType
 from app.schemas.portability import RowAction
-from app.services.orders import IMMUTABLE_LINE_COLUMNS
+from app.services.orders import IMMUTABLE_LINE_COLUMNS, receipt_is_future
 from app.services.portability.spec import CATALOG_TABLE_BY_ITEM_TYPE
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, and importing.py imports us
@@ -69,6 +69,7 @@ def check(
     _check_immutable_line_columns(rows)
     _check_catalog_targets(rows, by_id=by_id, created_ids=created_ids, replace_all=replace_all)
     _check_receipt_transitions(rows)
+    _check_future_receipts(rows)
 
 
 def _writes(row: "_Row") -> bool:
@@ -274,6 +275,44 @@ def _check_receipt_transitions(rows: dict[str, list["_Row"]]) -> None:
             continue
         row.action = RowAction.ERROR
         row.error = _receipt_message(arriving, types)
+
+
+def _check_future_receipts(rows: dict[str, list["_Row"]]) -> None:
+    """Refuse a `received_at` this upload writes onto a date that hasn't happened.
+
+    The same calendar judgment every other writer applies — `receipt_is_future`
+    from `services/orders.py`, the instant's own offset (#93) — surfaced as a
+    preview-time row error. Entry, receive and correction already refuse it on
+    REST and MCP; without this the importer was the one writer that accepted it,
+    and the arrival stamps would carry the impossible date onto the Board
+    (Codex round five, P2).
+
+    Reads the *change*, not the cell, for the same reason the transition check
+    above does: a stored future value — admitted before this check existed —
+    restates and round-trips untouched, and a create is a restore rather than a
+    data-entry path (§12.5's create rule, applied to the date), so an archive
+    carrying a legacy future receipt stays importable. That is stated policy,
+    not accident: the cost, accepted, is that a hand-written CSV can still
+    *create* a future order. Both arrival (null → future) and correction
+    (non-null → future) are caught — the transition check is deliberately silent
+    on corrections, so this is the only voice on that shape.
+    """
+    for row in rows.get("orders", []):
+        if row.action is RowAction.ERROR:
+            # Already refused — the transition check's stock story is the more
+            # instructive message on a catalog-order arrival, future-dated or not.
+            continue
+        change = _change(row, "received_at")
+        if change is None or not change.after:
+            continue
+        value = row.values.get("received_at")
+        if value is not None and receipt_is_future(value):
+            row.action = RowAction.ERROR
+            row.error = (
+                f"received_at: {value.isoformat()} is in the future — an arrival can be "
+                f"backdated, not predicted (the same refusal the app gives). State the day "
+                f"the order actually arrived, or take received_at out of this sheet"
+            )
 
 
 def _receipt_message(arriving: bool, types: set[str]) -> str:

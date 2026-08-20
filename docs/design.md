@@ -1044,10 +1044,19 @@ which is how the invariant survives a restore today.
 The two arrivals an import *does* perform borrow the order's receipt instant, exactly
 as the live writers stamp it (#93): a kit-only receive-by-import stamps the kits it
 advances with the value the sheet states, and a kit the apply spawns into a received
-order carries the same instant — read from the post-write order row, so a receipt
-this same upload sets is honoured, backdated included. The value is stated, not
-invented, and neither site fires on a re-import. Corrections deliberately do not
-cascade a restamp the way REST's do (#116).
+order carries the same instant — resolved at plan time (`_order_receipt`, the
+post-write value), carried on the spawn descriptor and bound by the plan hash, so a
+receipt this same upload sets is honoured, backdated included, and a correction
+landing between preview and apply stales the hash instead of stamping a value the
+operator never saw. The value is stated, not invented, and neither site fires on a
+re-import. Corrections deliberately do not cascade a restamp the way REST's do
+(#116). And the instant has to be *possible*: a `received_at` an upload writes —
+arrival or correction — onto a future calendar date is refused at preview with the
+same own-offset judgment every other writer applies (`receipt_is_future`, #93).
+The refusal reads the change, not the cell: a stored legacy future value restates
+as a no-op, and a create is a restore (the create rule above, applied to the date),
+so an archive carrying one stays importable — stated policy, with the accepted cost
+that a hand-written CSV can still create a future order.
 
 A blank cell in an *included* column means null; a column omitted from the file entirely
 is left alone. That's needed for archive fidelity, but it makes partial sheets dangerous

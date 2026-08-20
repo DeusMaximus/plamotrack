@@ -577,6 +577,9 @@ class _Spawn:
     status: str
     row_number: int
     received: bool
+    #: The order's post-write receipt instant, resolved at plan time
+    #: (`_order_receipt`) and hash-bound like every other value a spawn writes.
+    received_at: datetime | None
 
 
 @dataclass
@@ -1584,13 +1587,20 @@ class _Planner:
                     "importing adds another, since two of the same kit are two kits"
                 )
 
-    def _order_received(self, order_id: uuid.UUID) -> bool:
-        """Whether the order a kit line belongs to has arrived, so a spawned kit
-        lands in the right status instead of always `_initial_kit_status`'s default
-        of "still on the way" (#47). Checks this import's own orders rows first —
-        covering both a freshly created order and an existing one this import
-        updates — and falls back to the persisted row for an order the upload
-        doesn't touch at all.
+    def _order_receipt(self, order_id: uuid.UUID) -> datetime | None:
+        """The post-write receipt instant of the order a kit line belongs to —
+        null when it will be pending — so a spawned kit lands in the right status
+        instead of always `_initial_kit_status`'s default of "still on the way"
+        (#47), and carries the right `status_updated_at` (#93). Checks this
+        import's own orders rows first — covering both a freshly created order
+        and an existing one this import updates — and falls back to the persisted
+        row for an order the upload doesn't touch at all.
+
+        Resolved at *plan* time and carried on `_Spawn`, so the instant a spawn
+        will stamp is part of the plan the fingerprint binds: a receipt
+        correction landing between preview and apply changes the re-plan's hash
+        and the stale apply 409s, instead of stamping a value the operator never
+        saw (Codex round five, P3).
         """
         for row in self.rows.get("orders", []):
             candidate = row.new_id if row.action is RowAction.CREATE else row.matched_id
@@ -1601,12 +1611,12 @@ class _Planner:
             # its uploaded `received_at` cell describes nothing that will land.
             writes = row.action in (RowAction.CREATE, RowAction.UPDATE)
             if writes and "received_at" in row.present:
-                return row.values.get("received_at") is not None
+                return row.values.get("received_at")
             if row.target is not None:
-                return row.target.received_at is not None
-            return False
+                return row.target.received_at
+            return None
         existing = self.by_id["orders"].get(order_id)
-        return existing is not None and existing.received_at is not None
+        return existing.received_at if existing is not None else None
 
     def _attached_after(
         self, line_id: uuid.UUID, stored: list[Kit], kit_rows: list[_Row]
@@ -1904,6 +1914,7 @@ class _Planner:
             # order_id is a required REF, already validated by `_resolve_all_refs` —
             # a row that reached here without one would already be RowAction.ERROR.
             order_id = row.values["order_id"]
+            receipt = self._order_receipt(order_id)
             self.spawns.append(
                 _Spawn(
                     order_item_id=line_id,
@@ -1915,7 +1926,8 @@ class _Planner:
                     kit_number=row.values.get("kit_number"),
                     status=str(status) if status else "",
                     row_number=row.row_number,
-                    received=self._order_received(order_id),
+                    received=receipt is not None,
+                    received_at=receipt,
                 )
             )
             row.messages.append(f"will create {missing} kit(s) from this line")
@@ -2370,6 +2382,7 @@ def _plan_fingerprint(
                 spawn.status,
                 spawn.row_number,
                 spawn.received,
+                canon(spawn.received_at),
             ]
             for spawn in spawns
         ],
@@ -2603,13 +2616,14 @@ async def apply_import(
         item = await session.get(OrderItem, spawn.order_item_id)
         if item is None:
             continue
-        # The receipt instant comes from the post-write order row, not the plan:
-        # the write loop above has already applied any receipt this upload
-        # states, so a kit landing in backlog carries the order's `received_at`
-        # — backdated included — the same instant REST and MCP stamp (#93).
-        # `spawn_kits` itself keeps the stamp off any kit spawned with an
-        # explicitly asserted later status.
-        order = await session.get(Order, spawn.order_id)
+        # The receipt instant is the plan's post-write resolution
+        # (`_order_receipt`), hash-bound with the rest of the spawn descriptor:
+        # a kit landing in backlog carries the order's `received_at` — backdated
+        # included — the same instant REST and MCP stamp (#93), and a correction
+        # landing between preview and apply changes the re-plan's fingerprint,
+        # so the stale hash 409s before this line runs. `spawn_kits` itself
+        # keeps the stamp off any kit spawned with an explicitly asserted later
+        # status.
         await spawn_kits(
             session,
             item,
@@ -2620,7 +2634,7 @@ async def apply_import(
             status=spawn.status or None,
             count=spawn.count,
             received=spawn.received,
-            received_at=order.received_at if order is not None else None,
+            received_at=spawn.received_at,
         )
         spawned += spawn.count
 

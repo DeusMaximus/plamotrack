@@ -147,8 +147,8 @@ ARRIVAL_ELIGIBLE = {KitStatus.PRE_ORDERED, KitStatus.ORDERED, KitStatus.IN_TRANS
 IMMUTABLE_LINE_COLUMNS: tuple[str, ...] = ("item_type", "order_id")
 
 
-def _refuse_future_receipt(received_at: datetime) -> None:
-    """A receipt date that has not happened yet is a typo, not a plan (#93).
+def receipt_is_future(received_at: datetime) -> bool:
+    """Whether a receipt date has not happened yet — a typo, not a plan (#93).
 
     Judged as a calendar date in the datetime's *own* offset, not as an instant
     against the server clock. The caller asserts "it arrived on this date, in my
@@ -158,14 +158,22 @@ def _refuse_future_receipt(received_at: datetime) -> None:
     a refusal. The instance has no time zone of its own until M5.1; the supplied
     offset is the only local calendar available.
 
-    Deliberately NOT refused here: a receipt earlier than the order's own
+    Deliberately NOT judged here: a receipt earlier than the order's own
     `order_date`. `order_date` is a plain date with no offset, so the comparison
     is not well-defined across time zones — a same-day store purchase entered in
     UTC+10 can hold a receipt instant that is "yesterday" in UTC — and backfilled
     collections carry approximate dates. Odd is allowed; impossible is not.
+
+    The predicate is separate from the refusal so the CSV importer can apply the
+    same calendar judgment as a preview-time row error (rule 1) — every writer
+    refuses the same set of values, in one place.
     """
     today_in_own_offset = datetime.now(received_at.tzinfo).date()
-    if received_at.date() > today_in_own_offset:
+    return received_at.date() > today_in_own_offset
+
+
+def _refuse_future_receipt(received_at: datetime) -> None:
+    if receipt_is_future(received_at):
         raise InvalidInputError(
             f"received_at {received_at.isoformat()} is in the future — "
             "an arrival can be backdated, not predicted"
