@@ -41,6 +41,58 @@ Template:
 
 ---
 
+## 2026-08-20 — Claude Code (Fable 5) — #86 synced with `main`, stamping decision taken at `5cbc31d`; #116 filed; Codex gating round briefed
+
+- **Done:** owner asked to continue #86. (1) **`main` merged into the branch**
+  (`cb6e952` — merge, not rebase, so the thread's SHA anchors survive): #109 +
+  #111 + #113 + #115, zero textual conflicts; verified after the merge — 850
+  backend, ruff clean, frontend build/oxlint/vitest clean, 63/63 mutants with
+  every anchor still matching once despite #111/#115 rewriting `orders.py` under
+  the branch's shared predicates. (2) **Stamping decision taken (owner's call):
+  both importer arrival sites borrow the order's `received_at`** (`5cbc31d`) —
+  `_advance_kits_for_newly_received_orders` stamps the applied receipt instead of
+  `now`, and the apply loop's `spawn_kits` call passes the post-write order row's
+  receipt (`spawn_kits`' own gate keeps it off kits asserted past backlog).
+  Sweeping the class found a third site: import corrections of a receipt date
+  don't restamp kits the way REST's `_restamp_receipt_kits` does — **declined and
+  filed as #116**, pinned by `test_a_correction_by_import_leaves_kit_stamps_alone`.
+  Docs in the same commit: design §3.9 + §12.5, import-export.md. Eight new tests
+  in `test_order_invariants.py` over the value, state and **mode** axes
+  (replace_all included, plus a receive-and-spawn-in-one-upload case that pins the
+  write-loop-before-fan-out ordering); negative control **5 red / 3 green at
+  `cb6e952`** (greens = the two asserted-past-backlog gate cases and the
+  no-cascade pin); mutants `stamp-1`/`stamp-2` added to the tracked harness, one
+  per fix site, each killed by a distinct test. Decision comment posted on the PR
+  at `5cbc31d`.
+- **Decisions:** merge-forward, never rebase, on a reviewed public PR (anchors +
+  squash-merge); borrow at both arrival sites but decline the correction cascade
+  (#116 — the importer writes only rows the upload names plus the two arrival
+  derivations); the fan-out reads the receipt **post-write** via
+  `session.get(Order, ...)` — a plan-time value would miss a receipt the same
+  upload sets.
+- **State:** branch head **`5cbc31d`, pushed**; backend **858**, ruff clean,
+  **65/65 mutants**; frontend untouched since `cb6e952` (verified clean there);
+  no migration beyond `main`'s. **The Codex gating round is briefed, not run** —
+  the brief (from `.agents/review-brief.md`) is in this session's scratchpad as
+  `codex-brief-86.md`, handed to the owner to paste. It routes the reviewer
+  through the thread since round four, flags the authority reversal (design
+  question A) for re-judgment, splits the test claims across their two baselines
+  (the 45-matrix vs `main`; the stamp tests vs `cb6e952`), and carries both
+  pre-round push-lists plus three new seams — the merge's semantic composition
+  with #111/#113/#115 is the one to watch. Trap re-confirmed the hard way: two
+  concurrent pytest sessions against `plamotrack_test` truncate each other into
+  phantom failures — one session at a time is already the written rule. Stale
+  worktrees `/private/tmp/plamotrack-pr100` and `-pr108-main` remain, not this
+  session's, left alone. Live and still true: **0.2.7 = #95-or-defer + the #86
+  gate**; #86 gates #44/#77/#87/#90, #95, #110, #112; the mutant fold-in queue
+  (#109's 17 + #111's 6 + #113's 8 + #115's 2) waits for #86 to land; 0.2.8 is
+  open ground (#104/#98/#99/#53/#54/#61/#63/#67); #114 is M5.1-shaped; #116
+  unmilestoned, sequenced after #86.
+- **Next:** owner pastes the brief → Codex round at `5cbc31d`; answer it per
+  `.agents/testing-and-review.md` → "Responding to a review". After #86 merges:
+  fold the queued mutant tuples into `mutation_test.py`, then #95-or-defer closes
+  0.2.7, and #110/#112 unblock.
+
 ## 2026-08-20 — Claude Code (Fable 5) — #97 closed: PR #115 merged as `7991a08` after one Cursor round; 0.2.7 now gated only by #86
 
 - **Done:** **#97 closed — PR #115 squash-merged as `7991a08`**, branch
@@ -264,47 +316,3 @@ Template:
   **#94 + #96** (one migration, separate commits; importer needs no logic change
   because it must not invent timestamps), **#95** after #86 (its importer half
   mirrors #86's arriving-receipt question), **#97** last.
-
-## 2026-08-19 — Claude Code (Fable 5) — #86 pre-round: `main` merged in, harness false-kill fixed, two defects closed, authority rule changed
-
-- **Done:** owner asked for a same-family pre-round on **#86** to make the next
-  Codex round cheaper (not to replace it). Branch head is **`dfa7f29`**, pushed;
-  two comments posted (at `e8cd2b3`, then `dfa7f29`). (1) `main` merged forward
-  (`aefaecc`, clean). (2) **The mutation harness reported 13 mutants killed that
-  never ran** (`fd8d195`): pytest exits 5 when `-k` deselects everything, read as
-  RED; the merge at `5c0963b` had unioned the case sets under this branch's two
-  target files. `TEST_FILES` is all three files; exit 5 reports `NONE`, counts as
-  surviving. (3) **Defect:** a mistyped `order_item_id` on one kit in a pristine
-  archive → 200, kit detached (#82 nulls a dangling optional ref) and a
-  replacement spawned. `_refuse_unresolved_overwrite` in `_classify` (`43b947c`,
-  `e8cd2b3`): an unresolvable optional REF may not clear a stored non-null link;
-  also speaks first for a mistyped `catalog_ref_id` on a stored catalog line.
-  (4) The arriving-receipt message offered a remedy the check never reads
-  (`7c0dc55`). (5) **Owner's call, design question A taken (`5b1ccdd`):** a line
-  is reconciled only where the upload *writes* its quantity (`_writes_quantity`:
-  create, or `quantity` in `changes`), and the kit-move refusal reads only rows
-  that *move* a kit. A restated archive line no longer authorises a delete or a
-  spawn; a drifted archive merge re-imports as a no-op. Reverses round one's
-  "any stated quantity" — flagged as such on the PR. Two tests re-driven where the
-  change had shadowed their mutants (`2c7c082`, `5b19290`; the refusal's `present`
-  guard is live only on a drifted line). (6) Docs: import-export states the rule;
-  **operations.md "If you imported CSVs before 0.2.6"** — the drift query and the
-  in-app fix (the order editor reconciles against the actual kit count); design
-  §12.5 records the rule.
-- **Decisions:** B (drift) → docs only, no migration/script: two fixes only a human
-  can pick, and the app already reconciles on save; owner will start the dogfood
-  instance fresh anyway. `test_review_rating_this_upload_writes_protects_provenance`
-  (Codex's embedded reproducer) edited to add a replacement kit — the only review
-  test touched, said on the PR.
-- **State:** 651 backend, ruff clean, **63/63 mutants**, frontend untouched since
-  `e8cd2b3` (build/lint/vitest clean there); e2e via CI. No migration. `main` is
-  `2772cb1` plus this entry (amended in place, same session). Codex budget resets
-  Thursday evening (owner); the round is owed at `dfa7f29`, and both
-  `_refuse_unresolved_overwrite` and `_writes_quantity` are new code with no
-  independent eye — the "where to push next" sections name the seams. Two stale
-  worktrees on this Mac (`/private/tmp/plamotrack-pr100`,
-  `/private/tmp/plamotrack-pr108-main`), not this session's, left alone. Live and
-  still true: #86 gates #44/#77/#87/#90; #107 → 0.2.7; #104/#98/#99 → 0.2.8.
-- **Next:** Codex round on #86 at `dfa7f29` — brief it with both comments' "where
-  to push next" and say A is a reversal it should judge. Then the 0.2.7 list
-  stands: #107, #93, #95, #94 + #96.
