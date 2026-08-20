@@ -17,6 +17,8 @@ EXPECTED_TOOLS = {
     "update_retailer",
     "create_order",
     "list_orders",
+    "get_order",
+    "update_order",
     "mark_order_received",
     "adjust_stock",
     "update_catalog_tool",
