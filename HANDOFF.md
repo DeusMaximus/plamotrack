@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-20 — Claude Code (Fable 5) — #86 synced with `main`, stamping decision taken at `5cbc31d`; #116 filed; Codex gating round briefed
+## 2026-08-20 — Claude Code (Fable 5) — #86 synced with `main`, stamping decision taken; #116 filed; Codex round 5 NO-GO answered at `5846c44`
 
 - **Done:** owner asked to continue #86. (1) **`main` merged into the branch**
   (`cb6e952` — merge, not rebase, so the thread's SHA anchors survive): #109 +
@@ -70,16 +70,25 @@ Template:
   derivations); the fan-out reads the receipt **post-write** via
   `session.get(Order, ...)` — a plan-time value would miss a receipt the same
   upload sets.
-- **State:** branch head **`5cbc31d`, pushed**; backend **858**, ruff clean,
-  **65/65 mutants**; frontend untouched since `cb6e952` (verified clean there);
-  no migration beyond `main`'s. **The Codex gating round is briefed, not run** —
-  the brief (from `.agents/review-brief.md`) is in this session's scratchpad as
-  `codex-brief-86.md`, handed to the owner to paste. It routes the reviewer
-  through the thread since round four, flags the authority reversal (design
-  question A) for re-judgment, splits the test claims across their two baselines
-  (the 45-matrix vs `main`; the stamp tests vs `cb6e952`), and carries both
-  pre-round push-lists plus three new seams — the merge's semantic composition
-  with #111/#113/#115 is the one to watch. Trap re-confirmed the hard way: two
+- **State:** branch head **`5846c44`, pushed**; backend **864**, ruff clean,
+  **68/68 mutants**; frontend untouched since `cb6e952` (verified clean there);
+  no migration beyond `main`'s. **Codex round 5 (the gating round, brief from
+  `.agents/review-brief.md`) ran at `5cbc31d`: NO-GO, one P2 + one P3, both
+  fixed at `5846c44`, reply posted; it took no issue with any deliberate call.**
+  P2: a future `received_at` was refused by REST/MCP but accepted by import —
+  `receipt_is_future` is now a shared predicate in `services/orders.py`, and
+  `invariants._check_future_receipts` refuses it at preview wherever an upload
+  *writes* the column (change-not-cell: legacy future values restate as no-ops;
+  **create-is-a-restore is the stated policy**, both modes pinned — flipping it
+  is one condition and two tests). P3: the spawn's stamp was read post-hash-
+  check; `_order_receipt` resolves the post-write instant at plan time, `_Spawn`
+  carries it, the fingerprint hashes it, apply writes the planned value — a
+  correction between preview and apply now stales the hash (409). Six tests
+  (3 red-first at `5cbc31d` on the review's own assertions / 3 controls);
+  mutants `stamp-3`/`fut-1`/`fut-2` new, `stamp-1` re-anchored. The queued
+  `rcpt-` fold-in tuples anchor lines the predicate refactor moved — re-check at
+  fold-in. **Awaiting round 6** (merging on a NO-GO discards the review).
+  Trap re-confirmed the hard way: two
   concurrent pytest sessions against `plamotrack_test` truncate each other into
   phantom failures — one session at a time is already the written rule. Stale
   worktrees `/private/tmp/plamotrack-pr100` and `-pr108-main` remain, not this
@@ -88,10 +97,11 @@ Template:
   (#109's 17 + #111's 6 + #113's 8 + #115's 2) waits for #86 to land; 0.2.8 is
   open ground (#104/#98/#99/#53/#54/#61/#63/#67); #114 is M5.1-shaped; #116
   unmilestoned, sequenced after #86.
-- **Next:** owner pastes the brief → Codex round at `5cbc31d`; answer it per
-  `.agents/testing-and-review.md` → "Responding to a review". After #86 merges:
-  fold the queued mutant tuples into `mutation_test.py`, then #95-or-defer closes
-  0.2.7, and #110/#112 unblock.
+- **Next:** Codex round 6 at `5846c44` — the PR thread carries the reply; a
+  fresh session replays it (the round-5 brief's shape still applies, at the new
+  head). After #86 merges: fold the queued mutant tuples into
+  `mutation_test.py` (re-checking the moved `rcpt-` anchors), then #95-or-defer
+  closes 0.2.7, and #110/#112 unblock.
 
 ## 2026-08-20 — Claude Code (Fable 5) — #97 closed: PR #115 merged as `7991a08` after one Cursor round; 0.2.7 now gated only by #86
 
