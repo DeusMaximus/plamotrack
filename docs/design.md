@@ -347,8 +347,7 @@ instant is supplied rather than always stamped "now":
   path, where the stock dispatch lives. Explicit null is refused: un-receiving is not
   a supported operation. A correction follows exactly the kits whose stamp equals the
   old receipt (their last transition *was* the receipt); a kit moved since keeps its
-  own date. MCP has no order-edit tool yet, so correction is REST/browser-only until
-  the update_order tool lands
+  own date. The MCP `update_order` tool carries the same correction (#97)
 - **the future is refused, judged as a calendar date in the instant's own offset** —
   not as an instant against the server clock, which would refuse an honest "today"
   over clock skew. A receipt *earlier than `order_date`* is deliberately allowed:
