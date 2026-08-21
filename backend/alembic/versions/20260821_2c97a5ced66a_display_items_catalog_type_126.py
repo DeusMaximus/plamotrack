@@ -57,38 +57,60 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Refuse rather than delete, on two counts — and they are two, not one
-    # (#129 review, P2-3).
-    #
-    # `display_items` itself: dropping the table discards inventory the owner
-    # entered, and silently destroying records to make a schema change fit is the
-    # opposite of what this application is for (§6). The first version of this
-    # migration guarded only the order-line case, so a standalone stand — bought
-    # before there was anywhere to record the order, which is exactly why the table
-    # exists — went from `alembic downgrade -1` to gone, exit 0.
-    #
-    # `order_items` as well, and NOT instead: `catalog_ref_id` is polymorphic with
-    # no foreign key, so a display line can point at a row that is already missing.
-    # That case has an empty `display_items` and still must not proceed, because
-    # dropping the value from the CHECK constraint would leave the line unreadable
-    # by the enum it is stored under.
-    #
-    # A collection that never recorded a display item — including the empty database
-    # the test suite migrates both ways on every run — is unaffected by either.
+    """Refuse while the collection holds display data of any kind.
+
+    One invariant, not two tripwires: this migration drops the `display_items`
+    table *and* the `display` value from the item_type CHECK, so it is destructive
+    unless nothing anywhere is using either. Both states are read before anything
+    is raised, because they interact — which is what two review rounds on this
+    function were really about (#129 rounds 1 and 2).
+
+    Round 1: only order lines were guarded, so a standalone stand — bought before
+    there was anywhere to record the order, which is the case the table exists for —
+    went from `alembic downgrade -1` to gone, exit 0.
+
+    Round 2: guarding both, but raising on the first one hit, produced advice the
+    operator could not follow. With a stored row *and* a line referencing it, the
+    row check fired first and said to delete the item — which the application
+    correctly refuses with a 409 while an order line points at it (rule 3). The
+    order matters and only a message that has read both counts can state it.
+
+    An empty collection — including the database the test suite migrates both ways
+    on every run — is unaffected.
+    """
     conn = op.get_bind()
     rows = conn.scalar(sa.text("SELECT count(*) FROM display_items"))
-    if rows:
-        raise RuntimeError(
-            f"display_items holds {rows} row(s) and this downgrade drops the table. "
-            "Export them (Data → Export, or GET /export/display_items.csv) and delete "
-            "them first if you really mean to go back."
-        )
+    # Counted separately from the table: `order_items.catalog_ref_id` is polymorphic
+    # with no foreign key, so a display line can outlive the row it points at. That
+    # state has an empty `display_items` and still must not proceed.
     lines = conn.scalar(sa.text("SELECT count(*) FROM order_items WHERE item_type = 'display'"))
-    if lines:
+
+    if rows or lines:
+        holds = " and ".join(
+            part
+            for part in (
+                f"{rows} display item(s)" if rows else "",
+                f"{lines} display order line(s)" if lines else "",
+            )
+            if part
+        )
+        steps = []
+        if lines:
+            steps.append(
+                f"remove or re-type the {lines} display order line(s) (or delete those "
+                "orders) — this has to come first, because the app refuses with a 409 "
+                "to delete a display item an order line still points at"
+            )
+        if rows:
+            steps.append(
+                ("then delete " if lines else "delete ")
+                + f"the {rows} display item(s) — export them first if you want to keep "
+                "them: Data → Export, or GET /export/display_items.csv"
+            )
+        ordered = "".join(f"\n  {n}. {step}" for n, step in enumerate(steps, 1))
         raise RuntimeError(
-            f"{lines} order line(s) are display lines, and this downgrade removes the "
-            "item_type they are stored under. Delete or re-type those lines first if "
-            "you really mean to go back."
+            f"this downgrade drops the display_items table and the 'display' item_type, "
+            f"and the collection holds {holds}. To go back:{ordered}"
         )
 
     op.drop_constraint(op.f("ck_order_items_item_type"), "order_items", type_="check")

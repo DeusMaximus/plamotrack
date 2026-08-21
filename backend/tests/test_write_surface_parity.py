@@ -70,12 +70,22 @@ async def _catalog_row(client, path: str, payload: dict) -> dict:
             "/upgrades",
             id="upgrade",
         ),
+        pytest.param(
+            "/display-items",
+            {"name": "Action Base 2", "category": "stand"},
+            "/display-items",
+            id="display",
+        ),
     ],
 )
-async def test_rest_adjust_reaches_all_three_catalog_tables(client, path, payload, list_path):
-    """One case per table, because `adjust_stock` resolves the id by walking them in
-    order and returning on the first hit. A route that only ever reached `tools` —
-    the first table in `CATALOG_MODELS` — passes any single-type test."""
+async def test_rest_adjust_reaches_every_catalog_table(client, path, payload, list_path):
+    """One case per table — and *every* table, which is the part that lapsed.
+
+    `adjust_stock` resolves the id by walking `CATALOG_MODELS` in order and
+    returning on the first hit, so a route that only ever reached `tools` — the
+    first entry — passes any single-type test. Display items are last in that
+    mapping, which makes them the case a short walk drops (#129 review, round 2).
+    """
     row = await _catalog_row(client, path, {**payload, "quantity_on_hand": 5})
 
     up = await client.post(f"/catalog/{row['id']}/adjust", json={"delta": 3, "reason": "restock"})
@@ -413,15 +423,31 @@ async def test_update_kit_status_remains_the_shortcut_for_the_same_service_call(
             "manufacturer",
             id="upgrade",
         ),
+        pytest.param(
+            "update_catalog_display",
+            "/display-items",
+            {"name": "Action Base 2", "category": "stand", "scale": "1/144"},
+            "display_item_id",
+            "scale",
+            "category",
+            id="display",
+        ),
     ],
 )
-async def test_mcp_catalog_edits_cover_all_three_tables(
+async def test_mcp_catalog_edits_cover_every_table(
     client, tool_name, path, create, id_arg, nullable, non_nullable
 ):
-    """One case per table. The three carry different fields — that is why they are
-    three tools taking the three real PATCH schemas rather than one tool over a
+    """One case per table. They carry different fields — that is why they are
+    separate tools taking the real PATCH schemas rather than one tool over a
     hand-written union of their columns, which would need editing again every time
-    a column is added to any of them."""
+    a column is added to any of them.
+
+    *Every* table, not most of them. `update_catalog_display` shipped covered only
+    by `test_all_doc_section_7_tools_exposed`, which proves a tool is registered and
+    nothing about where it writes: changing its `ItemType.DISPLAY` to `ItemType.TOOL`
+    left both suites green (#129 review, round 2). This row is what kills that —
+    the dispatch is only observable through a call that reads the row back.
+    """
     row = (await client.post(path, json={**create, "quantity_on_hand": 4})).json()
 
     renamed = await _tool(client, tool_name, {id_arg: row["id"], "changes": {"name": "Renamed"}})
