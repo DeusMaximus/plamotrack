@@ -29,7 +29,7 @@ from app.db import get_sessionmaker  # noqa: E402
 from app.main import app  # noqa: E402
 
 _TABLES = (
-    "kits, kit_photos, tools, consumables, upgrades, "
+    "kits, kit_photos, tools, consumables, upgrades, display_items, "
     "upgrade_applications, retailers, orders, order_items"
 )
 

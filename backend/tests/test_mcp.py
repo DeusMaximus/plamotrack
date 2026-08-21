@@ -25,6 +25,7 @@ EXPECTED_TOOLS = {
     "update_catalog_tool",
     "update_catalog_consumable",
     "update_catalog_upgrade",
+    "update_catalog_display",
     "apply_upgrade",
 }
 

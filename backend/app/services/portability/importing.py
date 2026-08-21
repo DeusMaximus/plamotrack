@@ -94,7 +94,7 @@ MAX_ROWS = 50_000
 
 #: Same list tests/conftest.py truncates — every table a replace-all restore owns.
 _PORTABLE_TABLES = (
-    "kits, kit_photos, tools, consumables, upgrades, "
+    "kits, kit_photos, tools, consumables, upgrades, display_items, "
     "upgrade_applications, retailers, orders, order_items"
 )
 
@@ -2256,7 +2256,7 @@ class _Planner:
             kits_removed=len(self.removals),
             stock_changes=0,
             stock_note=(
-                "Stock levels come from the tools/consumables/upgrades files. "
+                "Stock levels come from the catalog files. "
                 "Importing orders never changes what you have on hand."
             ),
             rows_deleted=deletes,

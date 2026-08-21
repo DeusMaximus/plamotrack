@@ -3,6 +3,9 @@ import type {
   Consumable,
   ConsumableCreate,
   ConsumableUpdate,
+  DisplayItem,
+  DisplayItemCreate,
+  DisplayItemUpdate,
   ImportMode,
   ImportPlan,
   ImportResult,
@@ -141,12 +144,18 @@ export const api = {
   updateUpgrade: (id: string, data: UpgradeUpdate) =>
     request<Upgrade>(`/upgrades/${id}`, patch(data)),
   deleteUpgrade: (id: string) => request<void>(`/upgrades/${id}`, { method: "DELETE" }),
+  listDisplayItems: () => request<DisplayItem[]>("/display-items"),
+  createDisplayItem: (data: DisplayItemCreate) =>
+    request<DisplayItem>("/display-items", post(data)),
+  updateDisplayItem: (id: string, data: DisplayItemUpdate) =>
+    request<DisplayItem>(`/display-items/${id}`, patch(data)),
+  deleteDisplayItem: (id: string) => request<void>(`/display-items/${id}`, { method: "DELETE" }),
   applyUpgrade: (upgradeId: string, data: { kit_id: string; quantity: number }) =>
     request<UpgradeApplication>(`/upgrades/${upgradeId}/apply`, post(data)),
 
   searchCatalog: (q: string) =>
     request<CatalogSearchResult[]>(`/catalog/search?q=${encodeURIComponent(q)}`),
-  /** Signed stock change, resolved across the three catalog tables server-side.
+  /** Signed stock change, resolved across every catalog table server-side.
    *
    * Not a PATCH of `quantity_on_hand`: an absolute write has to read the number
    * first, and three writer types can move it in between (#35). */

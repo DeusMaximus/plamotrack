@@ -71,7 +71,7 @@ You write kits; plamotrack works out the retailers, orders, and order lines.
 
 `plamotrack-templates.zip` holds a blank, header-only CSV for every table, in
 exactly the export's shape, plus `COLUMNS.txt` describing every column. Use this
-when you want to control tools, consumables, upgrades, or multi-line orders
+when you want to control tools, consumables, upgrades, display items, or multi-line orders
 precisely. Fill in whichever files you have data for — every file is optional.
 
 ### 3. An archive — restoring or merging a previous export
@@ -146,7 +146,7 @@ reference is rewritten to the local one. You don't end up with two Hobby Link Ja
 ## Two rules worth knowing
 
 **Stock never comes from orders.** `quantity_on_hand` is read only from
-`tools.csv` / `consumables.csv` / `upgrades.csv`. Importing an order — even a
+`tools.csv` / `consumables.csv` / `upgrades.csv` / `display_items.csv`. Importing an order — even a
 received one — never changes what you have on hand. Otherwise re-importing would
 quietly double your paint collection.
 
@@ -220,10 +220,11 @@ be moved into or out of "received" by an import. What you can do instead:
 
 - **To mark a pending order received:** leave `received_at` out of the sheet and
   receive the order in the app, which applies the stock. Stating the on-hand
-  quantity in `tools.csv` / `consumables.csv` / `upgrades.csv` does *not* stand in
+  quantity in the catalog files does *not* stand in
   for that — it corrects a number, and the receipt in the sheet is still refused.
 - **To correct a count on its own,** on an order you are not flipping: state it in
-  `tools.csv` / `consumables.csv` / `upgrades.csv`. That's where stock comes from.
+  `tools.csv` / `consumables.csv` / `upgrades.csv` / `display_items.csv`. That's where
+  stock comes from.
 - If you marked an order received **by mistake**: un-receiving isn't supported
   anywhere in plamotrack, by import or otherwise. Delete the order — that reverses
   the stock it applied — and enter it again as pending.
@@ -249,7 +250,7 @@ holds is left alone, and a **new** order imports whatever its sheet says — a
 restore records the past, even when the past held something odd.
 
 **`shipped_at` is simpler, because it never touches stock.** Marking an order
-shipped through `orders.csv` works on any order — including ones with tool,
+shipped through `orders.csv` works on any order — including ones with tool, display,
 consumable or upgrade lines — and moves its waiting kits to In Transit, stamped
 with the date the sheet states. The same two rules apply: a future ship date is
 refused, and clearing `shipped_at` is refused (un-shipping isn't supported

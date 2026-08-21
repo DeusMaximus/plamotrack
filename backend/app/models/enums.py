@@ -21,6 +21,7 @@ class ItemType(enum.StrEnum):
     TOOL = "tool"
     CONSUMABLE = "consumable"
     UPGRADE = "upgrade"
+    DISPLAY = "display"
 
 
 class PackingQuality(enum.StrEnum):

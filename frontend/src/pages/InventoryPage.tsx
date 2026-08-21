@@ -6,6 +6,8 @@ import { api, ApiError, metaQuery } from "../api/client";
 import type {
   Consumable,
   ConsumableUpdate,
+  DisplayItem,
+  DisplayItemUpdate,
   Tool,
   ToolUpdate,
   Upgrade,
@@ -16,19 +18,48 @@ import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
 import { currencyOptions, formatMoney, majorToMinor, minorToMajor, stepFor } from "../lib/format";
 
-type Tab = "tools" | "consumables" | "upgrades";
-type InventoryItem = Tool | Consumable | Upgrade;
+type Tab = "tools" | "consumables" | "upgrades" | "display-items";
+type InventoryItem = Tool | Consumable | Upgrade | DisplayItem;
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "tools", label: "Tools" },
   { id: "consumables", label: "Consumables" },
   { id: "upgrades", label: "Upgrades" },
+  { id: "display-items", label: "Display" },
 ];
+
+/** What one row of each tab is called. `tab.slice(0, -1)` was fine while every tab
+ * was a plain plural; "display-item" is neither the label nor the route. */
+const CATEGORY_PLACEHOLDER: Record<Tab, string> = {
+  tools: "cutting / filing / gluing",
+  consumables: "paint / cement / blades",
+  upgrades: "",
+  "display-items": "stand / base / scenery / structure",
+};
+
+/** The CSV table key, which is the spec registry's key and not the route segment:
+ * `/display-items` is the REST resource, `display_items.csv` is the file. Every
+ * other tab happens to spell them the same, which is why this needs saying. */
+const EXPORT_TABLE: Record<Tab, string> = {
+  tools: "tools",
+  consumables: "consumables",
+  upgrades: "upgrades",
+  "display-items": "display_items",
+};
+
+const SINGULAR: Record<Tab, string> = {
+  tools: "tool",
+  consumables: "consumable",
+  upgrades: "upgrade",
+  "display-items": "display item",
+};
 
 interface ItemFormValues {
   name: string;
   category: string;
   manufacturer: string;
+  scale: string;
+  notes: string;
   quantity_on_hand: number;
   low_stock_threshold: string;
   /** Major units of `unit_cost_reference_currency`. "" = no recorded cost. */
@@ -47,12 +78,14 @@ interface ItemFormValues {
  * Keyed off the API's own update types, so adding a column there stops
  * compiling until it is mapped here rather than silently dropping out of edits. */
 const PAYLOAD_SOURCES: Record<
-  keyof ToolUpdate | keyof ConsumableUpdate | keyof UpgradeUpdate,
+  keyof ToolUpdate | keyof ConsumableUpdate | keyof UpgradeUpdate | keyof DisplayItemUpdate,
   (keyof ItemFormValues)[]
 > = {
   name: ["name"],
   category: ["category"],
   manufacturer: ["manufacturer"],
+  scale: ["scale"],
+  notes: ["notes"],
   quantity_on_hand: ["quantity_on_hand"],
   low_stock_threshold: ["low_stock_threshold"],
   condition_notes: ["condition_notes"],
@@ -101,7 +134,7 @@ function ItemFormModal({
 
   if (!meta) {
     return (
-      <Modal title={item ? `Edit ${item.name}` : `Add ${tab.slice(0, -1)}`} onClose={onClose}>
+      <Modal title={item ? `Edit ${item.name}` : `Add ${SINGULAR[tab]}`} onClose={onClose}>
         <EmptyState>Loading…</EmptyState>
       </Modal>
     );
@@ -139,7 +172,9 @@ function ItemForm({
     defaultValues: {
       name: item?.name ?? "",
       category: item && "category" in item ? item.category : "",
-      manufacturer: item && "manufacturer" in item ? item.manufacturer : "",
+      manufacturer: item && "manufacturer" in item ? (item.manufacturer ?? "") : "",
+      scale: item && "scale" in item ? (item.scale ?? "") : "",
+      notes: item && "notes" in item ? (item.notes ?? "") : "",
       quantity_on_hand: item?.quantity_on_hand ?? 1,
       low_stock_threshold:
         item && "low_stock_threshold" in item ? (item.low_stock_threshold?.toString() ?? "") : "",
@@ -183,7 +218,7 @@ function ItemForm({
         await (item
           ? api.updateConsumable(item.id, editedOnly(payload, changed))
           : api.createConsumable(payload));
-      } else {
+      } else if (tab === "upgrades") {
         const payload = {
           name: values.name,
           manufacturer: values.manufacturer,
@@ -192,6 +227,21 @@ function ItemForm({
         await (item
           ? api.updateUpgrade(item.id, editedOnly(payload, changed))
           : api.createUpgrade(payload));
+      } else {
+        // Blank means "not recorded" on all three optional columns, and the API
+        // stores null rather than "" — an empty string here would come back as a
+        // scale of "" and read as a value the user typed.
+        const payload = {
+          name: values.name,
+          category: values.category,
+          scale: values.scale.trim() || null,
+          manufacturer: values.manufacturer.trim() || null,
+          quantity_on_hand: Number(values.quantity_on_hand),
+          notes: values.notes.trim() || null,
+        };
+        await (item
+          ? api.updateDisplayItem(item.id, editedOnly(payload, changed))
+          : api.createDisplayItem(payload));
       }
       await queryClient.invalidateQueries({ queryKey: [tab] });
       onClose();
@@ -202,7 +252,7 @@ function ItemForm({
 
   return (
     <Modal
-      title={item ? `Edit ${item.name}` : `Add ${tab.slice(0, -1)}`}
+      title={item ? `Edit ${item.name}` : `Add ${SINGULAR[tab]}`}
       onClose={onClose}
     >
       <form onSubmit={onSubmit} className="space-y-3">
@@ -214,13 +264,25 @@ function ItemForm({
           <Field label="Category" required error={errors.category?.message}>
             <Input
               {...register("category", { required: "Category is required" })}
-              placeholder={tab === "tools" ? "cutting / filing / gluing" : "paint / cement / blades"}
+              placeholder={CATEGORY_PLACEHOLDER[tab]}
             />
           </Field>
         ) : (
           <Field label="Manufacturer" required error={errors.manufacturer?.message}>
             <Input {...register("manufacturer", { required: "Manufacturer is required" })} />
           </Field>
+        )}
+        {/* Display items take a manufacturer too, but optional — the required one
+            above belongs to upgrades, where the column is NOT NULL. */}
+        {tab === "display-items" && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Manufacturer">
+              <Input {...register("manufacturer")} placeholder="e.g. Tomytec" />
+            </Field>
+            <Field label="Scale">
+              <Input {...register("scale")} placeholder="e.g. 1/144" />
+            </Field>
+          </div>
         )}
         <div className="grid grid-cols-2 gap-3">
           <Field label="Quantity on hand">
@@ -259,6 +321,11 @@ function ItemForm({
         {tab === "tools" && (
           <Field label="Condition notes">
             <Input {...register("condition_notes")} />
+          </Field>
+        )}
+        {tab === "display-items" && (
+          <Field label="Notes">
+            <Input {...register("notes")} placeholder="product code, where it lives, …" />
           </Field>
         )}
         <div className="flex justify-end gap-2 pt-1">
@@ -418,8 +485,10 @@ export function InventoryPage() {
         await api.deleteTool(item.id);
       } else if (tab === "consumables") {
         await api.deleteConsumable(item.id);
-      } else {
+      } else if (tab === "upgrades") {
         await api.deleteUpgrade(item.id);
+      } else {
+        await api.deleteDisplayItem(item.id);
       }
       await queryClient.invalidateQueries({ queryKey: [tab] });
     } catch (err) {
@@ -440,14 +509,19 @@ export function InventoryPage() {
     queryFn: api.listUpgrades,
     enabled: tab === "upgrades",
   });
+  const displayItems = useQuery({
+    queryKey: ["display-items"],
+    queryFn: api.listDisplayItems,
+    enabled: tab === "display-items",
+  });
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">Inventory</h1>
         <div className="flex gap-2">
-          <ExportCsvButton table={tab} />
-          <Button onClick={() => setAddOpen(true)}>+ Add {tab.slice(0, -1)}</Button>
+          <ExportCsvButton table={EXPORT_TABLE[tab]} />
+          <Button onClick={() => setAddOpen(true)}>+ Add {SINGULAR[tab]}</Button>
         </div>
       </div>
 
@@ -635,6 +709,62 @@ export function InventoryPage() {
           </div>
         ) : (
           <EmptyState>{upgrades.isLoading ? "Loading…" : "No upgrades yet."}</EmptyState>
+        ))}
+
+      {tab === "display-items" &&
+        (displayItems.isError ? (
+          <ErrorBanner
+            message={`Failed to load display items: ${(displayItems.error as Error).message}`}
+          />
+        ) : displayItems.data?.length ? (
+          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
+                  <th className="px-3 py-2">Name</th>
+                  <th className="px-3 py-2">Category</th>
+                  <th className="px-3 py-2">Scale</th>
+                  <th className="px-3 py-2">Manufacturer</th>
+                  <th className="px-3 py-2">On hand</th>
+                  <th className="px-3 py-2">Notes</th>
+                  <th className="px-3 py-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {displayItems.data.map((row) => (
+                  <tr key={row.id} className="border-b border-zinc-100 last:border-0">
+                    <td className="px-3 py-2 font-medium">{row.name}</td>
+                    <td className="px-3 py-2">{row.category}</td>
+                    <td className="px-3 py-2">{row.scale ?? "—"}</td>
+                    <td className="px-3 py-2">{row.manufacturer ?? "—"}</td>
+                    <td className="px-3 py-2">
+                      <span className="mr-2 tabular-nums" data-testid="stock-count">
+                        {row.quantity_on_hand}
+                      </span>
+                      <StockStepper item={row} queryKey="display-items" onError={setActionError} />
+                    </td>
+                    <td className="px-3 py-2 text-zinc-500">{row.notes ?? "—"}</td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button variant="secondary" onClick={() => setEditing(row)}>
+                          Edit
+                        </Button>
+                        <Button variant="danger" onClick={() => removeItem(row)}>
+                          Delete
+                        </Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <EmptyState>
+            {displayItems.isLoading
+              ? "Loading…"
+              : "No display items yet — stands, bases, diorama scenery."}
+          </EmptyState>
         ))}
 
       {addOpen && <ItemFormModal tab={tab} onClose={() => setAddOpen(false)} />}

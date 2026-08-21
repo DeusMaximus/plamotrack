@@ -5,11 +5,21 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
-from app.models import Consumable, ItemType, OrderItem, Tool, Upgrade, UpgradeApplication
+from app.models import (
+    Consumable,
+    DisplayItem,
+    ItemType,
+    OrderItem,
+    Tool,
+    Upgrade,
+    UpgradeApplication,
+)
 from app.schemas.catalog import (
     CatalogSearchResult,
     ConsumableCreate,
     ConsumableUpdate,
+    DisplayItemCreate,
+    DisplayItemUpdate,
     StockAdjustmentResult,
     ToolCreate,
     ToolUpdate,
@@ -21,6 +31,10 @@ from app.services.numeric import require_int4
 from app.services.write_gate import acquire_write_gate
 
 logger = logging.getLogger(__name__)
+
+#: Any row of a fungible catalog table. Named once so a fifth type is one line
+#: here rather than an edit at every signature that carries the union.
+type CatalogRow = Tool | Consumable | Upgrade | DisplayItem
 
 
 def guard_stock_ceiling(name: str, quantity: int) -> int:
@@ -46,17 +60,21 @@ def guard_stock_ceiling(name: str, quantity: int) -> int:
         raise ConflictError(str(exc)) from exc
 
 
-# The three fungible catalog tables an order line (or stock adjustment) can target.
-CATALOG_MODELS: dict[ItemType, type[Tool | Consumable | Upgrade]] = {
+#: The fungible catalog tables an order line (or stock adjustment) can target.
+#: Adding one here is most of what a new catalog type costs — search, stock
+#: adjustment, the order dispatch, locking and deletion all read this rather than
+#: naming the tables (#126).
+CATALOG_MODELS: dict[ItemType, type[CatalogRow]] = {
     ItemType.TOOL: Tool,
     ItemType.CONSUMABLE: Consumable,
     ItemType.UPGRADE: Upgrade,
+    ItemType.DISPLAY: DisplayItem,
 }
 
 
 async def lock_catalog_row(
-    session: AsyncSession, model: type[Tool | Consumable | Upgrade], item_id: uuid.UUID
-) -> Tool | Consumable | Upgrade | None:
+    session: AsyncSession, model: type[CatalogRow], item_id: uuid.UUID
+) -> CatalogRow | None:
     """Load one catalog row under FOR UPDATE, refreshed from the locked read (rule 7).
 
     The single place the row-lock half of rule 7 is spelled out, because every writer
@@ -84,13 +102,14 @@ async def lock_catalog_row(
     return await session.get(model, item_id, with_for_update=True, populate_existing=True)
 
 
-def _to_search_result(item_type: ItemType, row: Tool | Consumable | Upgrade) -> CatalogSearchResult:
+def _to_search_result(item_type: ItemType, row: CatalogRow) -> CatalogSearchResult:
     return CatalogSearchResult(
         item_type=item_type,
         id=row.id,
         name=row.name,
         category=getattr(row, "category", None),
         manufacturer=getattr(row, "manufacturer", None),
+        scale=getattr(row, "scale", None),
         quantity_on_hand=row.quantity_on_hand,
     )
 
@@ -115,10 +134,10 @@ async def search(
 
 async def _create_catalog_row(
     session: AsyncSession,
-    model: type[Tool | Consumable | Upgrade],
-    data: ToolCreate | ConsumableCreate | UpgradeCreate,
-) -> Tool | Consumable | Upgrade:
-    """The one insert behind the three creates, so the name rule is applied once.
+    model: type[CatalogRow],
+    data: ToolCreate | ConsumableCreate | UpgradeCreate | DisplayItemCreate,
+) -> CatalogRow:
+    """The one insert behind every catalog create, so the name rule is applied once.
 
     Gate first, then the name check, then the insert: the check is a read the insert
     depends on, and only the gate makes two callers naming the same new item at once
@@ -147,22 +166,32 @@ async def create_upgrade(session: AsyncSession, data: UpgradeCreate) -> Upgrade:
     return await _create_catalog_row(session, Upgrade, data)
 
 
-async def list_catalog(
-    session: AsyncSession, model: type[Tool | Consumable | Upgrade]
-) -> list[Tool | Consumable | Upgrade]:
+async def create_display_item(session: AsyncSession, data: DisplayItemCreate) -> DisplayItem:
+    return await _create_catalog_row(session, DisplayItem, data)
+
+
+async def list_catalog(session: AsyncSession, model: type[CatalogRow]) -> list[CatalogRow]:
     return list((await session.scalars(select(model).order_by(model.name))).all())
 
 
-# Fields that exist as NOT NULL columns — an explicit null in a PATCH is rejected.
+#: Fields that are NOT NULL on at least one catalog table — an explicit null in a
+#: PATCH is rejected *where the column actually forbids it*. `manufacturer` is the
+#: reason for that qualifier: NOT NULL on upgrades, nullable on display items, so
+#: membership here is a shortlist to check rather than the answer (`_is_nullable`).
 _NON_NULLABLE = {"name", "category", "manufacturer", "quantity_on_hand"}
+
+
+def _is_nullable(model: type[CatalogRow], field: str) -> bool:
+    column = model.__table__.columns.get(field)
+    return column is not None and column.nullable
 
 
 async def update_catalog_item(
     session: AsyncSession,
     item_type: ItemType,
     item_id: uuid.UUID,
-    data: ToolUpdate | ConsumableUpdate | UpgradeUpdate,
-) -> Tool | Consumable | Upgrade:
+    data: ToolUpdate | ConsumableUpdate | UpgradeUpdate | DisplayItemUpdate,
+) -> CatalogRow:
     await acquire_write_gate(session)
     model = CATALOG_MODELS[item_type]
     # Locked: this is a stock writer like any other — `quantity_on_hand` is a settable
@@ -173,7 +202,10 @@ async def update_catalog_item(
         raise NotFoundError(f"{item_type} {item_id} not found")
     fields = data.model_dump(exclude_unset=True)
     for key, value in fields.items():
-        if value is None and key in _NON_NULLABLE:
+        # Checked against the column rather than the name: `manufacturer` is NOT
+        # NULL on upgrades and nullable on display items, so a shared name set
+        # alone would refuse a legitimate clear on the latter.
+        if value is None and key in _NON_NULLABLE and not _is_nullable(model, key):
             raise InvalidInputError(f"{key} cannot be null")
     if fields.get("name") is not None:
         # A rename onto a name another row of this table holds is a 409; the row's
@@ -241,7 +273,7 @@ async def delete_catalog_item(
 async def adjust_stock(
     session: AsyncSession, catalog_id: uuid.UUID, delta: int, reason: str | None = None
 ) -> StockAdjustmentResult:
-    """Resolve a catalog id across the three fungible tables and adjust its stock."""
+    """Resolve a catalog id across the fungible tables and adjust its stock."""
     # Both callers now bound `delta` at their own edge — `Int4` on the MCP tool
     # argument and on `StockAdjustmentRequest` (#55) — but the check stays here
     # because the service is where they meet (rule 1), and a bound enforced only at
@@ -284,4 +316,4 @@ async def adjust_stock(
             quantity_on_hand=new_quantity,
             reason=reason,
         )
-    raise NotFoundError(f"no tool, consumable, or upgrade with id {catalog_id}")
+    raise NotFoundError(f"no catalog item with id {catalog_id}")

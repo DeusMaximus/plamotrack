@@ -448,3 +448,127 @@ async def test_spawn_kits_refuses_a_non_positive_count(client, count):
         item = await session.get(OrderItem, uuid.UUID(order["items"][0]["id"]))
         with pytest.raises(InvalidInputError, match="at least 1"):
             await orders.spawn_kits(session, item, name="Zaku II", grade="HG", count=count)
+
+
+# --- display lines (#126) --------------------------------------------------------
+
+
+async def test_display_line_new_item_carries_its_own_columns(client, retailer):
+    """The `display` branch of `_build_catalog_row`, which is the only new dispatch
+    code #126 adds.
+
+    Every column it can set is set, because the branch constructs the row field by
+    field: one it forgot to pass would still create a perfectly valid display item
+    and still increment stock, so a test asserting only name and quantity passes
+    against a branch that silently drops `scale` and `notes`.
+    """
+    resp = await client.post(
+        "/orders",
+        json={
+            "retailer_id": retailer["id"],
+            "order_date": "2026-08-01",
+            "currency_code": "AUD",
+            "received": True,
+            "items": [
+                {
+                    "item_type": "display",
+                    "quantity": 2,
+                    "unit_price_minor": 4599,
+                    "currency_code": "AUD",
+                    "new_item": {
+                        "name": "DCA11 Camp Set A",
+                        "category": "scenery",
+                        "scale": "1/144",
+                        "manufacturer": "Tomytec",
+                        "notes": "TMT31884",
+                    },
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+
+    created = (await client.get("/display-items")).json()
+    assert len(created) == 1
+    assert created[0]["name"] == "DCA11 Camp Set A"
+    assert created[0]["category"] == "scenery"
+    assert created[0]["scale"] == "1/144"
+    assert created[0]["manufacturer"] == "Tomytec"
+    assert created[0]["notes"] == "TMT31884"
+    assert created[0]["quantity_on_hand"] == 2
+
+
+async def test_new_display_item_requires_a_category_but_not_a_manufacturer(client, retailer):
+    """The two halves of the branch's own rule, asserted against each other.
+
+    Display items sit on the category side of `_build_catalog_row`'s first check
+    with tools and consumables, and on the *opposite* side of upgrades' manufacturer
+    check. Dropping either from the display branch leaves the other passing.
+    """
+
+    async def _order(new_item: dict):
+        return await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-08-01",
+                "currency_code": "AUD",
+                "items": [
+                    {
+                        "item_type": "display",
+                        "quantity": 1,
+                        "unit_price_minor": 2999,
+                        "currency_code": "AUD",
+                        "new_item": new_item,
+                    }
+                ],
+            },
+        )
+
+    missing_category = await _order({"name": "Wire Netting Fence"})
+    assert missing_category.status_code == 422
+    assert (await client.get("/display-items")).json() == []
+
+    no_manufacturer = await _order({"name": "Wire Netting Fence", "category": "scenery"})
+    assert no_manufacturer.status_code == 201, no_manufacturer.text
+    assert (await client.get("/display-items")).json()[0]["manufacturer"] is None
+
+
+async def test_pending_display_line_defers_its_increment(client, retailer):
+    """Rule 2 holds for the fourth table too: quantity means physically on hand, so
+    a pending order leaves it alone and receiving applies it."""
+    item = (
+        await client.post(
+            "/display-items",
+            json={"name": "Action Base 2", "category": "stand", "quantity_on_hand": 1},
+        )
+    ).json()
+
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-08-01",
+                "currency_code": "AUD",
+                "items": [
+                    {
+                        "item_type": "display",
+                        "quantity": 3,
+                        "unit_price_minor": 900,
+                        "currency_code": "AUD",
+                        "catalog_ref_id": item["id"],
+                    }
+                ],
+            },
+        )
+    ).json()
+    assert order["received_at"] is None
+    assert (await client.get("/display-items")).json()[0]["quantity_on_hand"] == 1  # unchanged
+
+    await client.post(f"/orders/{order['id']}/receive")
+    assert (await client.get("/display-items")).json()[0]["quantity_on_hand"] == 4  # 1 + 3
+
+    # Delete undoes the entry, stock included — the display table is not exempt.
+    assert (await client.delete(f"/orders/{order['id']}")).status_code == 204
+    assert (await client.get("/display-items")).json()[0]["quantity_on_hand"] == 1

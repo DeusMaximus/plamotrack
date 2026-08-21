@@ -1,7 +1,7 @@
 """One rule for what a retailer's or catalog item's name *is* (#107, rule 3).
 
 The CSV importer treats the case-insensitive name as the **natural key** for
-retailers and the three catalog tables (`spec._name_key`, design notes §12.4): an
+retailers and every catalog table (`spec._name_key`, design notes §12.4): an
 id-less `orders.csv` row names its shop, and two stored retailers that fold to the
 same key make that row unimportable. `get_or_create_retailer` already applied the
 rule on the way in (#49). The create and rename paths applied *no* rule — `POST
@@ -50,9 +50,9 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import ConflictError, InvalidInputError
-from app.models import Consumable, Retailer, Tool, Upgrade
+from app.models import Consumable, DisplayItem, Retailer, Tool, Upgrade
 
-type NamedRow = Retailer | Tool | Consumable | Upgrade
+type NamedRow = Retailer | Tool | Consumable | Upgrade | DisplayItem
 
 #: Every character Python's `str.strip()` removes, generated from `str.isspace()` at
 #: import so it can never drift from `clean_name` or the importer's `_norm_name`.
@@ -63,12 +63,15 @@ type NamedRow = Retailer | Tool | Consumable | Upgrade
 WHITESPACE = "".join(chr(code) for code in range(0x10000) if chr(code).isspace())
 
 #: What the refusal calls the row — the API's own vocabulary, article included, so
-#: the sentence reads the same for all four ("an upgrade", not "a upgrade").
+#: the sentence reads the same for every table ("an upgrade", not "a upgrade").
+#: A model missing from here is a `KeyError` inside the conflict path, i.e. a 500
+#: where a 409 was owed — which is what `display_items` did before #126 added it.
 _NOUN: dict[type, str] = {
     Retailer: "a retailer",
     Tool: "a tool",
     Consumable: "a consumable",
     Upgrade: "an upgrade",
+    DisplayItem: "a display item",
 }
 
 

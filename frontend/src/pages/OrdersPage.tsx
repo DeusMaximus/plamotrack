@@ -246,6 +246,7 @@ function toOrderItem(line: LineValues, referenceCurrency: string): OrderItemUpse
         name: line.catalog.name,
         category: line.catalog.category || null,
         manufacturer: line.catalog.manufacturer || null,
+        scale: line.catalog.scale || null,
       },
     };
   }
@@ -306,6 +307,7 @@ function LineEditor({
           <option value="tool">Tool</option>
           <option value="consumable">Consumable</option>
           <option value="upgrade">Upgrade</option>
+          <option value="display">Display item</option>
         </Select>
         <Field label="" className="!mb-0 w-20">
           <Input
@@ -381,6 +383,8 @@ function LineEditor({
                 if (!value.name.trim()) return "New item needs a name";
                 if (itemType === "upgrade" && !value.manufacturer.trim())
                   return "New upgrades need a manufacturer";
+                // Everything else — tools, consumables, display items — needs a
+                // category. Display items alone may leave the manufacturer blank.
                 if (itemType !== "upgrade" && !value.category.trim())
                   return "New items need a category";
               }
@@ -449,6 +453,10 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
     queryFn: api.listConsumables,
   });
   const { data: upgrades } = useQuery({ queryKey: ["upgrades"], queryFn: api.listUpgrades });
+  const { data: displayItems } = useQuery({
+    queryKey: ["display-items"],
+    queryFn: api.listDisplayItems,
+  });
 
   // Kit details are no longer in this list: they arrive on the order itself, so
   // there is no second cache to be stale. What's left is only the catalog naming
@@ -459,7 +467,7 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
   // means "fresh". That was survivable for kit details only because it isn't kit
   // details any more; a stale catalog name is a display string the form rewrites
   // nothing with (#65).
-  const hydrated = !order || (tools && consumables && upgrades);
+  const hydrated = !order || (tools && consumables && upgrades && displayItems);
   if (!meta || !hydrated) {
     return (
       <Modal title={order ? "Edit order" : "New order"} onClose={onClose} wide>
@@ -472,7 +480,12 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
       order={order}
       onClose={onClose}
       referenceCurrency={meta.reference_currency}
-      catalog={[...(tools ?? []), ...(consumables ?? []), ...(upgrades ?? [])]}
+      catalog={[
+        ...(tools ?? []),
+        ...(consumables ?? []),
+        ...(upgrades ?? []),
+        ...(displayItems ?? []),
+      ]}
     />
   );
 }
@@ -670,7 +683,7 @@ function OrderForm({
         });
       }
       await Promise.all(
-        ["orders", "kits", "tools", "consumables", "upgrades"].map((key) =>
+        ["orders", "kits", "tools", "consumables", "upgrades", "display-items"].map((key) =>
           queryClient.invalidateQueries({ queryKey: [key] }),
         ),
       );
@@ -962,6 +975,10 @@ export function OrdersPage() {
     queryFn: api.listConsumables,
   });
   const { data: upgrades } = useQuery({ queryKey: ["upgrades"], queryFn: api.listUpgrades });
+  const { data: displayItems } = useQuery({
+    queryKey: ["display-items"],
+    queryFn: api.listDisplayItems,
+  });
   // Warms the shared cache so the form modal has it the moment it opens.
   useQuery(metaQuery);
 
@@ -972,15 +989,20 @@ export function OrdersPage() {
   const itemName = useMemo(() => {
     const map = new Map<string, string>();
     for (const kit of kits ?? []) map.set(kit.id, kit.name);
-    for (const row of [...(tools ?? []), ...(consumables ?? []), ...(upgrades ?? [])]) {
+    for (const row of [
+      ...(tools ?? []),
+      ...(consumables ?? []),
+      ...(upgrades ?? []),
+      ...(displayItems ?? []),
+    ]) {
       map.set(row.id, row.name);
     }
     return map;
-  }, [kits, tools, consumables, upgrades]);
+  }, [kits, tools, consumables, upgrades, displayItems]);
 
   const invalidateAll = () =>
     Promise.all(
-      ["orders", "kits", "tools", "consumables", "upgrades"].map((key) =>
+      ["orders", "kits", "tools", "consumables", "upgrades", "display-items"].map((key) =>
         queryClient.invalidateQueries({ queryKey: [key] }),
       ),
     );

@@ -242,6 +242,53 @@ different from consumables, so it keeps its own table rather than being merged i
 | manufacturer | text | |
 | quantity_on_hand | int | |
 
+### 3.5a `display_items` ✅ (#126, 21/08/2026)
+
+Fungible and durable, like `tools` — stands, system bases, diorama scenery, backdrop
+panels. Bought to *display* models rather than to become part of one.
+
+| Field | Type | Notes |
+|---|---|---|
+| id | uuid | |
+| name | text | e.g. "D-CM01 Diocom Destroyed Factory" |
+| category | text | stand / base / scenery / structure / figures / backdrop |
+| scale | text (nullable) | which kit scale it suits — "1/144". Null = non-scale or unrecorded |
+| manufacturer | text (nullable) | "Tomytec". Nullable, unlike `upgrades` |
+| quantity_on_hand | int | |
+| notes | text (nullable) | |
+
+Until this existed the spend was simply invisible: a stand is not a tool (not
+equipment), not a consumable (nothing depletes), and not an upgrade (see below). One
+$260 order of Tomytec diorama sets prompted it, and that is not an unusual order.
+
+**Why not just extend `upgrades`.** Structurally they look identical — fungible rows,
+a quantity, and `upgrade_applications` is already M:N to kits, so an upgrade with no
+applications is stock on a shelf exactly as a spare base would be. The difference is
+that `upgrade_applications.quantity_used` **decrements stock**, because an applied
+upgrade is *spent*: a decal sheet is consumed, metal thrusters stay installed. Display
+gear is the opposite — the stand under one kit this month is under another the next.
+Merging the two would leave one table where some rows consume when linked and others
+don't, i.e. `quantity_on_hand` meaning two things depending on the row, which is the
+class of defect rule 2.1 exists to prevent.
+
+**No join table to kits, deliberately.** The same impermanence: the relationship is
+genuinely ephemeral, so a stored link would be wrong most of the time, and each link
+row would still need everything `upgrade_applications` carries (progressed-kit checks,
+delete refusals, importer child-row handling) to protect a fact with no durability.
+Quantity is the whole of what is worth knowing. If that turns out to be wrong the join
+is an additive migration onto a table that already exists.
+
+**No build status.** A row reading `quantity_on_hand: 5` cannot carry one honestly —
+which is exactly why `kits` is one row per physical item (§3.1). Something needing
+individual build state is kit-shaped and belongs in `kits`.
+
+**`category` is required**, and is the one column here doing real work beyond
+bookkeeping: it is what lets "how many display stands do I have" be answered by a
+filter rather than by an agent guessing stand-ness from product names. Free text like
+every other category in this schema — the filter and distinct-values surface that make
+it properly answerable are #127, and until they land it is a column you can read but
+not query.
+
 ### 3.6 `upgrade_applications`
 
 Join table: which upgrades have been used on which kits.
@@ -289,14 +336,14 @@ a gamble that remembering which ones pack properly has real value.
 
 ### 3.9 `order_items`
 
-The dispatch point between orders and the four catalog tables.
+The dispatch point between orders and the catalog tables.
 
 | Field | Type | Notes |
 |---|---|---|
 | id | uuid | |
 | order_id | uuid FK | |
-| item_type | enum | kit / tool / consumable / upgrade |
-| catalog_ref_id | uuid (nullable) | FK to a tools/consumables/upgrades row (null for kit-type, since kits are spawned fresh) |
+| item_type | enum | kit / tool / consumable / upgrade / display |
+| catalog_ref_id | uuid (nullable) | points at a row in one of the catalog tables (null for kit-type, since kits are spawned fresh) |
 | quantity | int | **semantics differ by item_type** — see below |
 | unit_price_minor | int | |
 | currency_code | text | ISO 4217 |
@@ -307,8 +354,9 @@ to be explicit in code and not merely documented:
 
 - `item_type = kit` → quantity **fans out**: creates N new rows in `kits`, each linked
   back to this order item, at entry time
-- `item_type = tool/consumable/upgrade` → quantity **increments** `quantity_on_hand` on
-  the referenced catalog row, **when the order is received** — not at entry
+- `item_type = tool/consumable/upgrade/display` → quantity **increments**
+  `quantity_on_hand` on the referenced catalog row, **when the order is received** —
+  not at entry
 
 **Order lifecycle (revised 06/08/2026).** Orders are pending → received. The original
 design incremented stock at entry, which meant plamotrack would cheerfully report five
@@ -427,7 +475,7 @@ agent and a browser honest about the same row; the gate keeps them honest about 
 neither of them named. *(Added 15/08/2026, #80; rule 7.1 in `AGENTS.md`.)*
 
 **Duplicate-catalog prevention.** Order entry uses search-and-select-or-create (a
-typeahead against existing tools/consumables/upgrades) rather than a free-text name
+typeahead against the existing catalog tables) rather than a free-text name
 field. This is a deliberate constraint rather than a UX nicety: free-text entry
 fragments the catalog within weeks — "GM02 Gundam Marker" and "Gundam Marker GM02" as
 two rows with split stock — and once fragmented it takes manual merging to fix. The
@@ -457,7 +505,7 @@ Standard CRUD plus a few purpose-built endpoints.
 - `GET/POST /kits`, `GET/PATCH/DELETE /kits/{id}` — PATCH handles Kanban drag (status
   change). Order-spawned kits refuse direct deletion (409) — undo happens at the order
   line, so purchase records and the collection can't drift apart
-- `GET/POST /tools|/consumables|/upgrades` + `PATCH/DELETE /{id}` on each — deletes are
+- `GET/POST /tools|/consumables|/upgrades|/display-items` + `PATCH/DELETE /{id}` on each — deletes are
   blocked (409) when the item appears in order history or upgrade applications; edit
   instead, history is fact
 - `POST /upgrades/{id}/apply` — body: kit_id, quantity → creates an
@@ -470,10 +518,9 @@ Standard CRUD plus a few purpose-built endpoints.
   per §3.9; the `converted_*` snapshot is the one field pair an omission preserves
   rather than clears — see §6)
 - `POST /orders/{id}/receive`, `DELETE /orders/{id}` — receive/undo per §3.9
-- `GET /catalog/search?q=` — powers the typeahead, searches across
-  tools/consumables/upgrades
+- `GET /catalog/search?q=` — powers the typeahead, searches every catalog table
 - `POST /catalog/{id}/adjust` — body: signed `delta`, optional `reason` → resolves the
-  id across tools/consumables/upgrades and moves stock by that much. The delta form
+  id across every catalog table and moves stock by that much. The delta form
   exists because the absolute `quantity_on_hand` on the PATCH routes has to be read
   before it can be written, and three writer types can move it in between; "one fewer"
   is what a consumable running out actually is. 409 below zero or past the column
@@ -679,10 +726,12 @@ is `/mcp/` on the API port (streamable HTTP).
   existing shop already holds, where `create_order` *reuses* it — the same
   case-insensitive key, two deliberate answers (§3.9, #107)
 - `update_catalog_tool(id, changes)`, `update_catalog_consumable(id, changes)`,
-  `update_catalog_upgrade(id, changes)` — one per table rather than one tool
-  dispatching on `item_type`, because each then takes the REST route's own PATCH
-  schema unchanged instead of a hand-written union of all three that every new column
-  would have to be added to twice
+  `update_catalog_upgrade(id, changes)`, `update_catalog_display(id, changes)` — one
+  per table rather than one tool dispatching on `item_type`, because each then takes
+  the REST route's own PATCH schema unchanged instead of a hand-written union of all
+  of them that every new column would have to be added to twice. `update_catalog_display`
+  says in its description that display items carry no kit link, so an agent doesn't go
+  looking for one or improvise a structured note (§3.5a)
 - `create_order(retailer, date, items[], order_number?, tracking?, received?,
   received_at?, shipped_at?)` — the items array drives the same fan-out/increment
   dispatch as the REST endpoint; retailer matched by name case-insensitively,
@@ -803,6 +852,16 @@ does not bundle a certificate authority or a heavyweight identity platform.
    taxonomy/config UI is built, not before the core schema. This is also why enums are
    text + CHECK constraint rather than native Postgres enums: changing the taxonomy
    stays a data migration.
+
+   **Evidence, not a decision (#126, 21/08/2026).** `display_items` arrived as a whole
+   new category without forcing the call: free-text `category` plus a nullable `scale`
+   is hobby-neutral by construction, and model-railway scenery, 1/35 armour and
+   wargaming terrain all land in it unmodified — the Tomytec Diorama Com line that
+   prompted it is sold into the military-model and railway markets, not the Gunpla one.
+   Taken as support for "stay generic until something forces specificity" rather than
+   as settling the question. `category` was kept free text over a fixed text enum for
+   the same reason: an enum would be definitive, but acrylic cases, lighting kits and
+   turntables would each then be a migration and a release.
 2. **§9.2 — Photo storage backend default.** A local volume is the safe v1 default, with
    S3/MinIO as an opt-in env var. Worth confirming before the upload handler is written,
    because it also decides the backup story — a Docker volume is covered by whatever
@@ -1011,7 +1070,7 @@ it — an archive lands in an instance that already knows a retailer without cre
 second copy of it.
 
 Rows without an id fall back to natural keys: case-insensitive name for retailers and
-the three catalog tables — equality after trimming and case-folding, never a pattern
+every catalog table — equality after trimming and case-folding, never a pattern
 match; `get_or_create_retailer` applies the same rule (#49 — a `%` in a shop's name is
 a character, not a wildcard), and since #107 so does every create and rename of a
 retailer or catalog item, which refuses a second row under a key that is already

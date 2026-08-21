@@ -147,6 +147,12 @@ async def test_every_integer_an_mcp_tool_takes_declares_its_ceiling():
             "quantity_on_hand",
             id="upgrades.quantity_on_hand",
         ),
+        pytest.param(
+            "/display-items",
+            {"name": "Action Base 2", "category": "stand"},
+            "quantity_on_hand",
+            id="display_items.quantity_on_hand",
+        ),
     ],
 )
 async def test_rest_refuses_an_integer_the_column_cannot_hold(http_client, path, payload, field):

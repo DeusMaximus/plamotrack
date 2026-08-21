@@ -65,14 +65,18 @@ class NewCatalogItem(BaseModel):
     required depends on the line's item_type; validated in the service."""
 
     name: str = Field(min_length=1)
-    category: str | None = None  # tools/consumables
-    manufacturer: str | None = None  # upgrades
+    category: str | None = None  # tools/consumables/display items — required on all three
+    manufacturer: str | None = None  # upgrades (required) / display items (optional)
+    scale: str | None = None  # display items
     low_stock_threshold: NonNegativeInt4 | None = None
     # Tools only. Minor units, with no currency field of its own — the line already
     # states the currency this was bought in, and asking twice invites the two to
     # disagree. The service stamps the line's code onto the row it creates.
     unit_cost_reference_minor: NonNegativeInt4 | None = None
     condition_notes: str | None = None
+    # Display items only. `condition_notes` above is the tools-only twin; the two
+    # land on differently-named columns, so they stay separate fields here.
+    notes: str | None = None
 
 
 class OrderItemCreate(BaseModel):

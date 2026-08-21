@@ -32,13 +32,18 @@ from sqlalchemy import text
 from app.db import session_scope
 from app.exceptions import ConflictError, InvalidInputError
 from app.mcp import mcp
-from app.models import Consumable, Retailer, Tool, Upgrade
-from app.schemas.catalog import ConsumableCreate, ToolCreate, UpgradeCreate
+from app.models import Consumable, DisplayItem, Retailer, Tool, Upgrade
+from app.schemas.catalog import (
+    ConsumableCreate,
+    DisplayItemCreate,
+    ToolCreate,
+    UpgradeCreate,
+)
 from app.schemas.orders import RetailerCreate
 from app.services import catalog, orders
 from app.services.write_gate import acquire_write_gate
 
-# --- the four tables, as REST sees them ------------------------------------------
+# --- the five tables, as REST sees them ------------------------------------------
 
 #: (collection path, the non-name fields a create needs, the model behind it)
 TABLES = [
@@ -46,6 +51,7 @@ TABLES = [
     pytest.param("/tools", {"category": "cutting"}, Tool, id="tools"),
     pytest.param("/consumables", {"category": "paint"}, Consumable, id="consumables"),
     pytest.param("/upgrades", {"manufacturer": "Metal Build"}, Upgrade, id="upgrades"),
+    pytest.param("/display-items", {"category": "stand"}, DisplayItem, id="display_items"),
 ]
 
 
@@ -72,6 +78,7 @@ def _raw_fields(model) -> dict:
         Tool: {"category": "x"},
         Consumable: {"category": "x"},
         Upgrade: {"manufacturer": "x"},
+        DisplayItem: {"category": "x"},
     }.get(model, {})
 
 
@@ -255,6 +262,20 @@ async def test_the_service_raises_a_conflict_not_an_integrity_error():
         with pytest.raises(ConflictError, match="already exists"):
             await catalog.create_upgrade(
                 session, UpgradeCreate(name="thrusters", manufacturer="MB")
+            )
+    async with session_scope() as session:
+        await catalog.create_display_item(
+            session, DisplayItemCreate(name="Action Base 2", category="stand")
+        )
+    async with session_scope() as session:
+        # The conflict message is built from a per-model noun table, and a model
+        # missing from it raises a KeyError *inside* the conflict path — a 500 where
+        # a 409 was owed, which is what display items did until #126 added the entry.
+        # `pytest.raises(ConflictError)` is what separates the two; a bare
+        # "this refused" assertion would have passed on the KeyError.
+        with pytest.raises(ConflictError, match="a display item named"):
+            await catalog.create_display_item(
+                session, DisplayItemCreate(name="ACTION BASE 2", category="stand")
             )
 
     async with session_scope() as session:

@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import (
     Consumable,
+    DisplayItem,
     ItemType,
     Kit,
     KitStatus,
@@ -28,7 +29,12 @@ from app.schemas.orders import (
     RetailerCreate,
     RetailerUpdate,
 )
-from app.services.catalog import CATALOG_MODELS, guard_stock_ceiling, lock_catalog_row
+from app.services.catalog import (
+    CATALOG_MODELS,
+    CatalogRow,
+    guard_stock_ceiling,
+    lock_catalog_row,
+)
 from app.services.kits import default_scale_for_grade, has_applied_upgrades, stamp_build_date
 from app.services.names import clean_name, find_by_name, require_unique_name
 from app.services.write_gate import acquire_write_gate
@@ -289,7 +295,7 @@ async def delete_retailer(session: AsyncSession, retailer_id: uuid.UUID) -> None
 
 async def _build_catalog_row(
     session: AsyncSession, item_type: ItemType, new_item: NewCatalogItem, currency_code: str
-) -> Tool | Consumable | Upgrade:
+) -> CatalogRow:
     """The catalog row a `new_item` line creates — or a 409 if one already answers to
     that name.
 
@@ -303,7 +309,7 @@ async def _build_catalog_row(
     and the whole order rolls back with it (rule 2) — say it on one line with the
     quantity, or pick the row the first line created.
     """
-    if item_type in (ItemType.TOOL, ItemType.CONSUMABLE):
+    if item_type in (ItemType.TOOL, ItemType.CONSUMABLE, ItemType.DISPLAY):
         if not new_item.category:
             raise InvalidInputError(f"new {item_type} items require a category")
     name = await require_unique_name(session, CATALOG_MODELS[item_type], new_item.name)
@@ -326,6 +332,17 @@ async def _build_catalog_row(
             category=new_item.category,
             quantity_on_hand=0,
             low_stock_threshold=new_item.low_stock_threshold,
+        )
+    if item_type is ItemType.DISPLAY:
+        # `manufacturer` is optional here, unlike upgrades below: a commercial set
+        # states one and a scratch-built piece has none (#126).
+        return DisplayItem(
+            name=name,
+            category=new_item.category,
+            scale=new_item.scale,
+            manufacturer=new_item.manufacturer,
+            quantity_on_hand=0,
+            notes=new_item.notes,
         )
     if not new_item.manufacturer:
         raise InvalidInputError("new upgrade items require a manufacturer")
@@ -365,7 +382,7 @@ async def _lock_catalog_targets(
     exist are skipped rather than reported — the per-line code raises that, with the
     message that knows which item was asked for.
     """
-    targets: dict[uuid.UUID, type[Tool | Consumable | Upgrade]] = {}
+    targets: dict[uuid.UUID, type[CatalogRow]] = {}
     for referrer in (*items, *lines):
         ref_id = referrer.catalog_ref_id
         if referrer.item_type is not ItemType.KIT and ref_id is not None:

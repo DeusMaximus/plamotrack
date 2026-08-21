@@ -151,6 +151,12 @@ async def collection(client):
             "/upgrades", json={"name": "Thruster", "manufacturer": "K", "quantity_on_hand": 6}
         )
     ).json()
+    display_item = (
+        await client.post(
+            "/display-items",
+            json={"name": "Action Base 2", "category": "stand", "quantity_on_hand": 3},
+        )
+    ).json()
     order = (
         await client.post(
             "/orders",
@@ -189,6 +195,10 @@ async def collection(client):
         "tools": {"id": tool["id"], "row": {"name": "Nippers", "category": "cutting"}},
         "consumables": {"id": consumable["id"], "row": {"name": "Paint", "category": "paint"}},
         "upgrades": {"id": upgrade["id"], "row": {"name": "Thruster", "manufacturer": "K"}},
+        "display_items": {
+            "id": display_item["id"],
+            "row": {"name": "Action Base 2", "category": "stand"},
+        },
         "orders": {
             "id": order["id"],
             "row": {"order_date": "2026-03-14", "currency_code": "JPY"},

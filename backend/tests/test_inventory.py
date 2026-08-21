@@ -193,17 +193,169 @@ async def test_retailer_update_and_guarded_delete(client):
     assert (await client.delete(f"/retailers/{unused['id']}")).status_code == 204
 
 
-async def test_catalog_search_spans_all_three_tables(client):
+async def test_catalog_search_spans_every_catalog_table(client):
     await client.post("/tools", json={"name": "Godhand Nippers", "category": "cutting"})
     await client.post("/consumables", json={"name": "Gundam Marker GM02", "category": "paint"})
     await client.post(
         "/upgrades", json={"name": "G-Rework Decal RX-78", "manufacturer": "G-Rework"}
     )
+    await client.post("/display-items", json={"name": "G-Stand riser", "category": "stand"})
 
     results = (await client.get("/catalog/search", params={"q": "g"})).json()
-    assert {r["item_type"] for r in results} == {"tool", "consumable", "upgrade"}
+    assert {r["item_type"] for r in results} == {"tool", "consumable", "upgrade", "display"}
 
     marker_only = (await client.get("/catalog/search", params={"q": "MARKER"})).json()
     assert len(marker_only) == 1
     assert marker_only[0]["item_type"] == "consumable"
     assert marker_only[0]["name"] == "Gundam Marker GM02"
+
+
+# --- display items (#126) --------------------------------------------------------
+
+
+async def _make_display_item(client, **overrides) -> dict:
+    payload = {"name": "Action Base 2", "category": "stand"} | overrides
+    resp = await client.post("/display-items", json=payload)
+    assert resp.status_code == 201, resp.text
+    return resp.json()
+
+
+async def test_display_item_round_trips_every_column(client):
+    """Create then read back, with every optional column *set* — a create that
+    silently dropped `scale` or `notes` reads identically to one that kept them if
+    the assertions only cover the required pair."""
+    item = await _make_display_item(
+        client,
+        scale="1/144",
+        manufacturer="Tomytec",
+        quantity_on_hand=3,
+        notes="D-CM01 Diocom Destroyed Factory",
+    )
+    assert item["scale"] == "1/144"
+    assert item["manufacturer"] == "Tomytec"
+    assert item["quantity_on_hand"] == 3
+    assert item["notes"] == "D-CM01 Diocom Destroyed Factory"
+
+    listed = (await client.get("/display-items")).json()
+    assert listed == [item]
+
+
+async def test_display_item_optional_columns_default_to_null(client):
+    """The other end of the value axis: the same route with them omitted. `scale`
+    and `manufacturer` are the two columns that differ from every sibling table, so
+    a default that quietly became "" rather than null would go unnoticed here."""
+    item = await _make_display_item(client)
+    assert item["scale"] is None
+    assert item["manufacturer"] is None
+    assert item["notes"] is None
+    assert item["quantity_on_hand"] == 0
+
+
+async def test_display_item_requires_a_category(client):
+    """Required, and required for a reason — it is the only field that answers
+    "how many stands do I have" without guessing from names (#126, #127)."""
+    resp = await client.post("/display-items", json={"name": "Action Base 2"})
+    assert resp.status_code == 422
+    assert (await client.get("/display-items")).json() == []
+
+
+async def test_display_item_patch_distinguishes_absent_from_null(client):
+    """Three values per field, per the PATCH rule the *Update schemas encode:
+    absent leaves the stored value, an explicit null clears it, a value replaces it."""
+    item = await _make_display_item(client, scale="1/144", manufacturer="Tomytec", notes="boxed")
+
+    # absent — untouched
+    resp = await client.patch(f"/display-items/{item['id']}", json={"quantity_on_hand": 5})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["scale"] == "1/144"
+    assert resp.json()["manufacturer"] == "Tomytec"
+
+    # a new value — replaced
+    resp = await client.patch(f"/display-items/{item['id']}", json={"scale": "1/100"})
+    assert resp.json()["scale"] == "1/100"
+
+    # explicit null — cleared
+    resp = await client.patch(f"/display-items/{item['id']}", json={"scale": None, "notes": None})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["scale"] is None
+    assert resp.json()["notes"] is None
+    assert resp.json()["quantity_on_hand"] == 5  # the earlier edit survived
+
+
+async def test_clearing_manufacturer_is_allowed_here_and_refused_on_an_upgrade(client):
+    """The same field name, opposite answers, because they are different columns.
+
+    `manufacturer` is NOT NULL on upgrades and nullable on display items, so
+    `_NON_NULLABLE` cannot be a bare name set — it has to ask the model. Both
+    directions are asserted together: a check that consulted only the name would
+    refuse the first call, and one that consulted neither would accept the second
+    and 500 at flush.
+    """
+    item = await _make_display_item(client, manufacturer="Tomytec")
+    resp = await client.patch(f"/display-items/{item['id']}", json={"manufacturer": None})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["manufacturer"] is None
+
+    upgrade = await _make_upgrade(client, 1)
+    refused = await client.patch(f"/upgrades/{upgrade['id']}", json={"manufacturer": None})
+    assert refused.status_code == 422
+    assert "manufacturer cannot be null" in refused.json()["detail"]
+
+
+async def test_display_item_category_cannot_be_nulled(client):
+    """`category` is NOT NULL here too — the nullable-manufacturer carve-out is per
+    column, not a blanket exemption for the whole table."""
+    item = await _make_display_item(client)
+    resp = await client.patch(f"/display-items/{item['id']}", json={"category": None})
+    assert resp.status_code == 422
+    assert "category cannot be null" in resp.json()["detail"]
+
+
+async def test_display_item_delete_and_its_order_guard(client):
+    """Unreferenced deletes; referenced refuses — rule 3, same as every catalog table."""
+    spare = await _make_display_item(client, name="Spare base")
+    assert (await client.delete(f"/display-items/{spare['id']}")).status_code == 204
+
+    retailer = (await client.post("/retailers", json={"name": "HLJ"})).json()
+    bought = await _make_display_item(client, name="Diocom Hangar")
+    await client.post(
+        "/orders",
+        json={
+            "retailer_id": retailer["id"],
+            "order_date": "2026-08-01",
+            "currency_code": "AUD",
+            "items": [
+                {
+                    "item_type": "display",
+                    "quantity": 1,
+                    "unit_price_minor": 7999,
+                    "currency_code": "AUD",
+                    "catalog_ref_id": bought["id"],
+                }
+            ],
+        },
+    )
+    resp = await client.delete(f"/display-items/{bought['id']}")
+    assert resp.status_code == 409
+    assert "order" in resp.json()["detail"]
+
+
+async def test_catalog_search_and_adjust_reach_display_items(client):
+    """The two cross-table paths that resolve by walking `CATALOG_MODELS`. Display
+    items are last in that mapping, so a loop that returned early still passes every
+    other table's version of this."""
+    item = await _make_display_item(client, scale="1/144", quantity_on_hand=2)
+
+    results = (await client.get("/catalog/search", params={"q": "action"})).json()
+    assert len(results) == 1
+    assert results[0]["item_type"] == "display"
+    assert results[0]["category"] == "stand"
+    assert results[0]["scale"] == "1/144"
+
+    adjusted = await client.post(f"/catalog/{item['id']}/adjust", json={"delta": -2})
+    assert adjusted.status_code == 200, adjusted.text
+    assert adjusted.json()["item_type"] == "display"
+    assert adjusted.json()["quantity_on_hand"] == 0
+
+    floored = await client.post(f"/catalog/{item['id']}/adjust", json={"delta": -1})
+    assert floored.status_code == 409

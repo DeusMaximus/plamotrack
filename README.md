@@ -55,11 +55,19 @@ If you look closely at the inventory below, Mr. Color Thinner sits at **0 on han
 it's on that pending Mecha Supply Co order. It'll count itself the moment you hit
 Receive.
 
-### Tools, consumables, and upgrades, counted
+### Tools, consumables, upgrades and display gear, counted
 
-Three quantity-tracked catalogs, with an optional low-stock threshold so you find out
+Four quantity-tracked catalogs, with an optional low-stock threshold so you find out
 you're nearly out of Extra Thin *before* the hobby shop closes. Upgrade parts can be
 applied to a specific kit, which decrements stock and records what went where.
+
+**Display gear** — action bases, system stands, diorama scenery, backdrop panels — is
+counted and categorised but deliberately *not* linked to particular kits. A stand under
+one model this month is under another the next, so recording where each one currently
+lives would be wrong more often than right; how many you own is the part worth knowing.
+Each carries a category and an optional scale, so "1/144 bases" is a question with an
+answer. It's also the least Gunpla-specific thing here: a model-railway or 1/35 armour
+collection fills that table with exactly the same shape of thing.
 
 Adding items to an order uses a search-and-pick typeahead, never a free text box. This
 is deliberate: give a naming-things-at-11pm hobbyist a text field and within a month
@@ -250,7 +258,7 @@ issue if yours needs something unusual.
 | `list_kit_series` | Series names already in use — check before writing a new spelling |
 | `get_kit` | One kit, in full |
 | `update_kit_status` | Move a kit along the pipeline |
-| `search_catalog` | Search tools/consumables/upgrades — the same search the UI typeahead uses, so agents hit the same de-duplication a human does |
+| `search_catalog` | Search every catalog — the same search the UI typeahead uses, so agents hit the same de-duplication a human does |
 | `create_order` | Full order with lines; kits fan out, retailers are matched by name or created |
 | `list_orders` | Optionally pending-only — how an agent finds the order a shipping email belongs to |
 | `get_order` | One order in full — the read an edit starts from |
@@ -259,6 +267,7 @@ issue if yours needs something unusual.
 | `mark_order_shipped` | Moves that order's waiting kits to in-transit — with an optional ship date, for shipping notifications logged after the fact; never touches stock |
 | `adjust_stock` | Nudge a quantity, with a reason |
 | `apply_upgrade` | Record an upgrade part going onto a kit |
+| `update_catalog_tool` / `_consumable` / `_upgrade` / `_display` | Edit a catalog row — one tool per catalog, each taking that table's own fields |
 
 Import and export deliberately have **no** MCP tools. An agent that can silently replace
 your entire collection is not a feature.
