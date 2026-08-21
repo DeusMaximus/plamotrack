@@ -41,6 +41,59 @@ Template:
 
 ---
 
+## 2026-08-21 — Claude Code (Opus 5) — #126 implemented: `display_items`, the fourth catalog type; #127 filed (narrowed against #98); both milestoned 0.2.8
+
+- **Done:** **#126 — PR #129** (branch `feat/126-display-items`, head `5a29cb2`),
+  pushed, **awaiting its review round**. New `display_items` table (name, category
+  required, scale?, manufacturer?, quantity_on_hand, notes) + `ItemType.DISPLAY`:
+  full REST CRUD, `update_catalog_display` MCP tool, order dispatch, CSV spec
+  entry, a fourth Inventory tab, docs (§3.5a new, §3.9/§4/§7/§9.1 updated,
+  README, import-export). 34 files, ~1,300 insertions.
+  Also **filed #127**, then **narrowed it**: as first written it duplicated
+  **#98**'s "MCP cannot list the catalog" half. #127 is now only the part #98
+  doesn't cover — a server-side folded `category` filter, a frequency-ordered
+  distinct-categories surface (#96's `series` pattern), and canonicalising
+  category spelling on write. #98 is its prerequisite. **#126 and #127 both
+  milestoned v0.2.8-alpha.**
+- **Decisions (owner, this session):**
+  - **No join table to kits and no build status**, and the reason is one thing:
+    `upgrade_applications.quantity_used` decrements because an applied upgrade is
+    *spent*, whereas a stand moves between kits freely. That also rules out
+    extending `upgrades` (the cheap option considered and rejected) — it would
+    leave one table where some rows consume when linked and others don't, i.e.
+    `quantity_on_hand` meaning two things by row. Reasoning is in §3.5a and the
+    model docstring so it isn't re-litigated.
+  - **`category` required**, because it is what makes "how many stands do I have"
+    a filter rather than an agent guessing from product names. The surface that
+    makes it *queryable* is deliberately **not** in this branch — building it for
+    one table would leave the other three behind (#98 + #127 sweep all four).
+  - **§9.1 unchanged as an open decision**, but display items recorded there as
+    *evidence* for staying generic: free-text category + nullable scale fits model
+    railway and 1/35 armour unmodified.
+- **State:** 936 backend (+16), 23 e2e (+2, against a database migrated from
+  empty; all tables 0 afterwards), 109 vitest, ruff + oxlint + `tsc -b` clean.
+  Migration is **hand-written** — autogenerate got the table right and then
+  proposed dropping `ck_kits_kit_status`, `ck_order_items_item_type` and all three
+  retailer enum constraints without recreating any; only item_type genuinely
+  changes. Downgrade **refuses** rather than deletes when display order lines
+  exist. Two defects found by the new coverage, both fixed: `names._NOUN` is a
+  per-model dict whose missing entry raised `KeyError` *inside* the conflict path
+  (a 500 where a 409 was owed), and `_NON_NULLABLE` was a bare name set that would
+  have refused clearing the nullable `manufacturer` here. **Three hand-run mutants,
+  no harness cases yet** — tuples are queued in the PR body for fold-in.
+  Dev servers may be running on :8000/:5173.
+- **Next:** **PR #129 goes to Codex** — 1,300 insertions is past Cursor's ~1,000
+  ceiling and this wants multi-round. Check Codex's remaining usage budget before
+  starting; the filled brief is in this session's scratchpad as
+  `codex-brief-129.md`. After merge: **#98 + #127 together** are the
+  natural next piece (same area, shared code through `CATALOG_MODELS`, and #127's
+  filters hang off #98's list tools). Live and still true: **release cadence — no
+  v0.2.6 tag ever**; one v0.2.7-alpha cut only when BOTH the 0.2.6 milestone
+  (#77, #87, #90, #112, #119 open) and 0.2.7 are done, so **do not run the release
+  gate when 0.2.7 alone empties**. #122 rides M6.5 (UI redesign, direction open,
+  before M7/M8). Mutant fold-ins still owed from #109 (17), #111 (6), #113 (8),
+  plus this branch's 5.
+
 ## 2026-08-21 — Claude Code (Fable 5) — #120 closed: PR #121 merged as `f3c5d1a`, review skipped; #122 filed; release cadence decided (no v0.2.6 tag)
 
 - **Done:** **#120 items 1+2 — PR #121** (branch `feat/120-status-editing`, head
@@ -251,65 +304,3 @@ Template:
   but the `rcpt-` set anchors lines the `receipt_is_future` refactor moved, so
   expect the harness to report those and re-anchor them. Then #95-or-defer
   decides 0.2.7; #110/#112 are ready when milestoned.
-
-## 2026-08-20 — Claude Code (Fable 5) — #94 + #96 closed: PR #113 merged as `93ec9cc` after one Cursor round; #112 + #114 filed
-
-- **Done:** **#94 + #96 closed — PR #113 squash-merged as `93ec9cc`**, branch
-  deleted, on the owner's call after one Cursor round (Grok 4.6) at `523deed`:
-  GO, P2-1 + P3-1, both taken at `8928f3e`; CI green at every head. No second
-  round: both remedies were the reviewer's own prescription, verified red-first
-  and one-site-mutated (the #109/#111 precedent). P2-1: the
-  #112 caveat omitted `series` from its own dropped-field list — one docs
-  sentence. P3-1: blank/whitespace series stored and served by /kits/series —
-  `_normalize_series` on both write paths (blank → null, values trimmed,
-  matching parse_text) plus a `names.WHITESPACE` btrim guard on the distinct
-  values; two tests red-first at `523deed`, three fix sites one-site-mutated.
-  Also took the review's two pins (re-completion mirror; MCP naive build date)
-  and filed **#114** (naive CSV dates read as midnight UTC — the class behind
-  the starter sheet's date columns; M5.1-shaped). Reply posted at `8928f3e`.**
-  Five separable commits: one additive hand-checked migration (three nullable
-  `kits` columns, **no backfill** per #94's decision); #94 — `stamp_build_date`
-  in `services/kits.py`, called by both live status writers (`update_kit`,
-  `receive_order`'s advance), stamps only-when-null and never against an
-  explicit value in the same request; importer and creation never derive
-  (rule 10 by analogy; cell states keep absent=keep / blank=clear /
-  populated=overwrite over a stored date); #96 — free-text `series`,
-  `GET /kits/series` + MCP `list_kit_series` (most-frequent-first) feeding the
-  kit form's datalist (`staleTime: 0`, the #49/#108 rule), `series=` filter on
-  service/REST/MCP with the #49 fold; spec.py + starter sheet + docs updated.
-  On owner feedback the Kits table now shows **Started/Completed** columns
-  (elapsed days inline) and dropped the `status_updated_at` "Since" column;
-  kit-side arrival date **considered and deferred** (recorded in design §3.1 —
-  derivable only via the spawning order; lives on the order side for now).
-  **#112 filed**: the starter sheet's retailer-bearing rows silently drop every
-  kit-only field (`rating`, `build_notes`, now the three new ones) — proven via
-  `expand()`; fix leans on the hybrid dispatch #86 is re-deciding, so sequenced
-  after #86; disclosed in import-export.md meanwhile.
-- **Decisions (on the PR as "Deliberate calls"):** stamp-only-when-null incl.
-  re-completion; creation never derives; **no cross-field validation** (user
-  owns the values; a service check would diverge from the importer); the
-  browser series *filter* is client-side while the form typeahead uses the
-  endpoint; `/kits/series` declared before `/{kit_id}` (route test pins it).
-- **State:** backend **742** (713 + 19 `test_build_dates.py` + 10
-  `test_series.py`), vitest 109, e2e 20 against a DB migrated from empty, all
-  zero after; ruff/oxlint/builds clean. Negative control: **24 red / 1 green
-  of 25 on unfixed `main`** (re-measured by the reviewer); round 1's four
-  additions split 2 red (P3-1) / 2 green (pins) against `523deed`, stated in
-  the PR body. **Worktree trap, learned:** `plamotrack_test`
-  migrated to a branch head makes `main`'s conftest downgrade explode — drop the
-  DB first; the Cursor brief warns about it. No mutants in the harness (#86's
-  file); five hand-mutant tuples with once-matching anchors are in the brief,
-  queued for the fold-in with #109's and #111's. **Cursor brief for #113 is in
-  this session's scratchpad** (`cursor-brief-113.md`), handed to the owner —
-  round complete — GO, answered. Live and still true: **#86 at `dfa7f29` owes its Codex
-  round** and gates #44/#77/#87/#90; #104/#98/#99 → 0.2.8; #110, #112 and #114
-  unmilestoned. Dev servers may be running on :8000/:5173 (this branch).
-- **Next:** clear of #86, 0.2.7 has only **#97** left (MCP `update_order` /
-  `get_order` — reuse `OrderUpdate` so #111's `received_at` correction and any
-  later fields flow in like `_KitPatch` does for kits; the line-set-replacement
-  foot-gun is the design question on the issue). **#95 needs #86** (its importer
-  half mirrors the arriving-receipt question), so 0.2.7's release gate is #86
-  itself unless the owner defers #95. Clear-of-#86 beyond the milestone: the
-  whole 0.2.8 list (#104 keyboard picker, #98, #99, #53, #54, #61, #63, #67);
-  #114 is M5.1-shaped. Waiting on #86: #95, #110, #112, and the mutant fold-ins
-  (#109's 17, #111's 6, #113's 8).
