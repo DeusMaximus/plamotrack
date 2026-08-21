@@ -157,6 +157,22 @@ each case the test that "covered" the rule stayed green when the rule was delete
 Mutate the specific rule; if it survives, find the input where only that rule can
 decide. → 2026-08-17 (#86, "Six things worth carrying")
 
+### An edit that never applied, asserted as landed
+Round 1 of #129's review added a fourth catalog type to every per-type parametrize
+list. One of those edits — the two matrices in `test_write_surface_parity.py` — was
+a scripted `.replace()` whose anchor did not match, so it silently changed nothing.
+The suite was run afterwards and was green, which is exactly what a *missing*
+stricter test also looks like, and the PR body then claimed the file had a fourth
+case. Codex found it in round 2 the only way it could be found: `ItemType.DISPLAY`
+→ `ItemType.TOOL` in the display MCP tool survived both suites at 31/31.
+
+Two rules out of it. **A green run never confirms an edit whose purpose is to make
+a suite stricter** — the new case has to be seen failing, or seen collected
+(`pytest --collect-only -k <id>`), before it is claimed. **A scripted edit reports
+whether it matched**: `assert s.count(old) == 1` before replacing, which the
+mutation harness has always done with its anchors and ad-hoc edit scripts had not.
+→ 2026-08-21 (#129 round 2)
+
 ### A field name found in a SQL dump
 An MCP test asserted `"unit_price_minor" in str(error)`. Without the bound the call
 still raised `ToolError` — the value reached Postgres, and SQLAlchemy stringified the

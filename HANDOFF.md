@@ -41,58 +41,51 @@ Template:
 
 ---
 
-## 2026-08-21 — Claude Code (Opus 5) — #126 implemented: `display_items`, the fourth catalog type; #127 filed (narrowed against #98); both milestoned 0.2.8
+## 2026-08-21 — Claude Code (Opus 5) — #126 closed: PR #129 merged as `20996e1` after two Codex rounds; #127 filed (narrowed against #98); both #127 and #98 sit on 0.2.8
 
-- **Done:** **#126 — PR #129** (branch `feat/126-display-items`, head `5a29cb2`),
-  pushed, **awaiting its review round**. New `display_items` table (name, category
-  required, scale?, manufacturer?, quantity_on_hand, notes) + `ItemType.DISPLAY`:
-  full REST CRUD, `update_catalog_display` MCP tool, order dispatch, CSV spec
-  entry, a fourth Inventory tab, docs (§3.5a new, §3.9/§4/§7/§9.1 updated,
-  README, import-export). 34 files, ~1,300 insertions.
-  Also **filed #127**, then **narrowed it**: as first written it duplicated
-  **#98**'s "MCP cannot list the catalog" half. #127 is now only the part #98
-  doesn't cover — a server-side folded `category` filter, a frequency-ordered
-  distinct-categories surface (#96's `series` pattern), and canonicalising
-  category spelling on write. #98 is its prerequisite. **#126 and #127 both
-  milestoned v0.2.8-alpha.**
-- **Decisions (owner, this session):**
-  - **No join table to kits and no build status**, and the reason is one thing:
-    `upgrade_applications.quantity_used` decrements because an applied upgrade is
-    *spent*, whereas a stand moves between kits freely. That also rules out
-    extending `upgrades` (the cheap option considered and rejected) — it would
-    leave one table where some rows consume when linked and others don't, i.e.
-    `quantity_on_hand` meaning two things by row. Reasoning is in §3.5a and the
-    model docstring so it isn't re-litigated.
-  - **`category` required**, because it is what makes "how many stands do I have"
-    a filter rather than an agent guessing from product names. The surface that
-    makes it *queryable* is deliberately **not** in this branch — building it for
-    one table would leave the other three behind (#98 + #127 sweep all four).
-  - **§9.1 unchanged as an open decision**, but display items recorded there as
-    *evidence* for staying generic: free-text category + nullable scale fits model
-    railway and 1/35 armour unmodified.
-- **State:** 936 backend (+16), 23 e2e (+2, against a database migrated from
-  empty; all tables 0 afterwards), 109 vitest, ruff + oxlint + `tsc -b` clean.
-  Migration is **hand-written** — autogenerate got the table right and then
-  proposed dropping `ck_kits_kit_status`, `ck_order_items_item_type` and all three
-  retailer enum constraints without recreating any; only item_type genuinely
-  changes. Downgrade **refuses** rather than deletes when display order lines
-  exist. Two defects found by the new coverage, both fixed: `names._NOUN` is a
-  per-model dict whose missing entry raised `KeyError` *inside* the conflict path
-  (a 500 where a 409 was owed), and `_NON_NULLABLE` was a bare name set that would
-  have refused clearing the nullable `manufacturer` here. **Three hand-run mutants,
-  no harness cases yet** — tuples are queued in the PR body for fold-in.
-  Dev servers may be running on :8000/:5173.
-- **Next:** **PR #129 goes to Codex** — 1,300 insertions is past Cursor's ~1,000
-  ceiling and this wants multi-round. Check Codex's remaining usage budget before
-  starting; the filled brief is in this session's scratchpad as
-  `codex-brief-129.md`. After merge: **#98 + #127 together** are the
-  natural next piece (same area, shared code through `CATALOG_MODELS`, and #127's
-  filters hang off #98's list tools). Live and still true: **release cadence — no
-  v0.2.6 tag ever**; one v0.2.7-alpha cut only when BOTH the 0.2.6 milestone
-  (#77, #87, #90, #112, #119 open) and 0.2.7 are done, so **do not run the release
-  gate when 0.2.7 alone empties**. #122 rides M6.5 (UI redesign, direction open,
-  before M7/M8). Mutant fold-ins still owed from #109 (17), #111 (6), #113 (8),
-  plus this branch's 5.
+- **Done:** **#126 closed — PR #129 squash-merged as `20996e1`**, branch deleted,
+  CI green at every head. `display_items` is the fourth catalog type: name,
+  category (required), scale?, manufacturer?, quantity_on_hand, notes, plus
+  `ItemType.DISPLAY` — REST CRUD, `update_catalog_display`, order dispatch, CSV
+  spec entry, a fourth Inventory tab, Data-page export, docs (§3.5a new; §3.9,
+  §4, §7, §9.1, README, import-export, AGENTS rule 2 swept). **Also filed #127**
+  and narrowed it after finding it duplicated **#98**'s "MCP cannot list the
+  catalog" half; #127 is now only the queryable-`category` part (server-side
+  folded filter, frequency-ordered distinct values, canonicalised spelling on
+  write) and #98 is its prerequisite. Both on **v0.2.8-alpha**.
+- **Decisions:** **No join table to kits, no build status** —
+  `upgrade_applications.quantity_used` decrements because an applied upgrade is
+  *spent*, whereas a stand moves between kits freely. That also ruled out
+  extending `upgrades` (considered, rejected): it would leave one table where
+  some rows consume when linked and others don't. Reasoning is in §3.5a and the
+  model docstring so it is not re-litigated. **`category` required** because it
+  is what makes "how many stands do I have" a filter rather than a guess; the
+  surface that makes it *queryable* was deliberately left to #98 + #127 rather
+  than built for one table. **§9.1 stays open**, with display items recorded
+  there as evidence for staying generic.
+- **State:** 965 backend (base 897), 23 e2e, 109 vitest; one additive migration,
+  hand-written (autogenerate wanted to drop five text-enum CHECKs and recreate
+  none). Its downgrade **refuses** on one invariant — no display data in any
+  form — with a state-aware message; **it has no pytest**, deliberately, because
+  migrations here are only exercised against an empty schema (**#54**) and that
+  harness is #54's job. Verified by shell across four states. **Two Codex rounds:**
+  round 1 NO-GO (3×P2 + 2×P3), round 2 GO (2×P3); all seven accepted and fixed,
+  none declined. **Eleven mutants, all killed — 10 backend tuples queued in the
+  PR body for `mutation_test.py` fold-in**, joining #109's 17, #111's 6 and
+  #113's 8; anchors want re-checking, the code moved under them. dsp-11 is
+  Codex's own and is worth folding in because it *survived* a green suite.
+  New lesson in `.agents/lessons.md` → "Green for the wrong reason" → **"An edit
+  that never applied, asserted as landed"**: a scripted `.replace()` silently
+  matched nothing, the suite stayed green (which is what a missing stricter test
+  also looks like), and the PR body claimed the file had been changed. Assert the
+  anchor matched; confirm a new case is collected before claiming it.
+- **Next:** **#98 + #127 together** are the natural next piece — same area, shared
+  code through `CATALOG_MODELS`, and #127's filters hang off #98's list tools;
+  doing #127 alone would leave three tables behind. Live and still true:
+  **release cadence — no v0.2.6 tag ever**; one v0.2.7-alpha cut only when BOTH
+  the 0.2.6 milestone (#77, #87, #90, #112, #119 open) and 0.2.7 are done, so
+  **do not run the release gate when 0.2.7 alone empties**. #122 rides M6.5 (UI
+  redesign, direction open, before M7/M8).
 
 ## 2026-08-21 — Claude Code (Fable 5) — #120 closed: PR #121 merged as `f3c5d1a`, review skipped; #122 filed; release cadence decided (no v0.2.6 tag)
 
