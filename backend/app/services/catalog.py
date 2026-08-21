@@ -1,7 +1,8 @@
 import logging
 import uuid
+from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import String, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
@@ -26,7 +27,7 @@ from app.schemas.catalog import (
     UpgradeCreate,
     UpgradeUpdate,
 )
-from app.services.names import require_unique_name
+from app.services.names import clean_optional_text, clean_required_text, require_unique_name
 from app.services.numeric import require_int4
 from app.services.write_gate import acquire_write_gate
 
@@ -146,6 +147,7 @@ async def _create_catalog_row(
     """
     await acquire_write_gate(session)
     fields = data.model_dump()
+    _normalise_text(model, fields)
     fields["name"] = await require_unique_name(session, model, data.name)
     row = model(**fields)
     session.add(row)
@@ -186,6 +188,26 @@ def _is_nullable(model: type[CatalogRow], field: str) -> bool:
     return column is not None and column.nullable
 
 
+def _normalise_text(model: type[CatalogRow], fields: dict[str, Any]) -> None:
+    """Trim every free-text column in place; refuse blank where the column is NOT
+    NULL, store None where it is nullable.
+
+    Driven off the mapped columns rather than a list of field names, for the same
+    reason `_is_nullable` is: `manufacturer` is required on upgrades and optional on
+    display items, and one hardcoded set cannot be right for both. `name` is skipped
+    — `require_unique_name` calls `clean_name` on it, which is the same rule plus
+    the uniqueness check (#129 review, P3-4).
+    """
+    for key, value in list(fields.items()):
+        column = model.__table__.columns.get(key)
+        if column is None or not isinstance(column.type, String) or key == "name":
+            continue
+        if column.nullable:
+            fields[key] = clean_optional_text(value)
+        elif value is not None:
+            fields[key] = clean_required_text(value, key)
+
+
 async def update_catalog_item(
     session: AsyncSession,
     item_type: ItemType,
@@ -207,6 +229,7 @@ async def update_catalog_item(
         # alone would refuse a legitimate clear on the latter.
         if value is None and key in _NON_NULLABLE and not _is_nullable(model, key):
             raise InvalidInputError(f"{key} cannot be null")
+    _normalise_text(model, fields)
     if fields.get("name") is not None:
         # A rename onto a name another row of this table holds is a 409; the row's
         # own id is excluded so it may keep or re-case its name (#107).

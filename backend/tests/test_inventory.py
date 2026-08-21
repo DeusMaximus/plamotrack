@@ -1,3 +1,6 @@
+import pytest
+
+
 async def _make_upgrade(client, quantity: int) -> dict:
     resp = await client.post(
         "/upgrades",
@@ -359,3 +362,105 @@ async def test_catalog_search_and_adjust_reach_display_items(client):
 
     floored = await client.post(f"/catalog/{item['id']}/adjust", json={"delta": -1})
     assert floored.status_code == 409
+
+
+# --- #129 review: blank-but-not-empty required text ------------------------------
+
+
+@pytest.mark.parametrize(
+    ("path", "payload", "field"),
+    [
+        pytest.param("/tools", {"name": "T"}, "category", id="tools.category"),
+        pytest.param("/consumables", {"name": "C"}, "category", id="consumables.category"),
+        pytest.param("/display-items", {"name": "D"}, "category", id="display_items.category"),
+        pytest.param("/upgrades", {"name": "U"}, "manufacturer", id="upgrades.manufacturer"),
+    ],
+)
+@pytest.mark.parametrize("blank", [" ", "   ", "\t", " "], ids=["space", "spaces", "tab", "nbsp"])
+async def test_a_required_text_column_refuses_whitespace(client, path, payload, field, blank):
+    """`min_length=1` is satisfied by a space, and the order dispatch tested
+    `not new_item.category`, which a space also passes — so `"   "` reached a NOT
+    NULL column verbatim and the create answered 201 (#129 review, P3-4).
+
+    Every required free-text column on every catalog table, because the defect was
+    the *rule* being absent rather than one table missing it; a fix that reached
+    only display items is the same bug on three other tables. The blanks include a
+    no-break space, which `str.strip()` removes and a naive `== " "` check does not.
+    """
+    resp = await client.post(path, json={**payload, field: blank})
+    assert resp.status_code == 422, resp.text
+    assert f"{field} cannot be blank" in resp.json()["detail"]
+    assert (await client.get(path)).json() == []
+
+
+@pytest.mark.parametrize(
+    ("path", "payload", "field"),
+    [
+        pytest.param("/tools", {"name": "T"}, "category", id="tools.category"),
+        pytest.param("/display-items", {"name": "D"}, "category", id="display_items.category"),
+        pytest.param("/upgrades", {"name": "U"}, "manufacturer", id="upgrades.manufacturer"),
+    ],
+)
+async def test_a_required_text_column_is_stored_trimmed(client, path, payload, field):
+    """The other half: padding around a real value is removed rather than refused.
+
+    Without this the fix could be "reject anything with whitespace", which would
+    refuse `" cutting "` — a paste from a spreadsheet, and exactly what the CSV
+    importer's `parse_text` accepts and trims. The two writers have to agree.
+    """
+    created = await client.post(path, json={**payload, field: "  cutting  "})
+    assert created.status_code == 201, created.text
+    assert created.json()[field] == "cutting"
+
+    patched = await client.patch(f"{path}/{created.json()['id']}", json={field: "  filing  "})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()[field] == "filing"
+
+
+async def test_display_item_optional_text_stores_blank_as_null(client):
+    """Nullable free text takes `_normalize_series`' rule (#113): trimmed, and blank
+    means "not recorded" rather than a value that happens to be spaces.
+
+    Asserted through both a create and a PATCH, and on `scale` in particular because
+    #127 will offer these columns as a distinct-values typeahead — where a stored
+    `"  "` becomes an empty option nobody can select or remove.
+    """
+    created = await client.post(
+        "/display-items",
+        json={"name": "Blank Optionals", "category": "stand", "scale": "   ", "notes": "\t"},
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["scale"] is None
+    assert created.json()["notes"] is None
+
+    patched = await client.patch(
+        f"/display-items/{created.json()['id']}", json={"scale": "  1/144  "}
+    )
+    assert patched.json()["scale"] == "1/144"
+    assert (
+        await client.patch(f"/display-items/{created.json()['id']}", json={"scale": "  "})
+    ).json()["scale"] is None
+
+
+async def test_an_order_line_new_item_holds_the_same_text_rule(client, retailer):
+    """The third writer onto these columns (rule 1). `_build_catalog_row` had its own
+    truthiness check, so the order path could store what the REST path now refuses."""
+    resp = await client.post(
+        "/orders",
+        json={
+            "retailer_id": retailer["id"],
+            "order_date": "2026-08-01",
+            "currency_code": "AUD",
+            "items": [
+                {
+                    "item_type": "display",
+                    "quantity": 1,
+                    "unit_price_minor": 900,
+                    "currency_code": "AUD",
+                    "new_item": {"name": "Whitespace Base", "category": "   "},
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 422, resp.text
+    assert (await client.get("/display-items")).json() == []

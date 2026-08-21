@@ -57,19 +57,38 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Refuse rather than delete. `order_items.catalog_ref_id` is polymorphic and
-    # carries no foreign key, so dropping this table would leave display lines
-    # pointing at rows that no longer exist — and silently discarding purchase
-    # history to make a schema change fit is the opposite of what this application
-    # is for (§6). Downgrading a collection that never recorded a display item —
-    # including the empty database the test suite migrates both ways on every run —
-    # is unaffected.
+    # Refuse rather than delete, on two counts — and they are two, not one
+    # (#129 review, P2-3).
+    #
+    # `display_items` itself: dropping the table discards inventory the owner
+    # entered, and silently destroying records to make a schema change fit is the
+    # opposite of what this application is for (§6). The first version of this
+    # migration guarded only the order-line case, so a standalone stand — bought
+    # before there was anywhere to record the order, which is exactly why the table
+    # exists — went from `alembic downgrade -1` to gone, exit 0.
+    #
+    # `order_items` as well, and NOT instead: `catalog_ref_id` is polymorphic with
+    # no foreign key, so a display line can point at a row that is already missing.
+    # That case has an empty `display_items` and still must not proceed, because
+    # dropping the value from the CHECK constraint would leave the line unreadable
+    # by the enum it is stored under.
+    #
+    # A collection that never recorded a display item — including the empty database
+    # the test suite migrates both ways on every run — is unaffected by either.
     conn = op.get_bind()
+    rows = conn.scalar(sa.text("SELECT count(*) FROM display_items"))
+    if rows:
+        raise RuntimeError(
+            f"display_items holds {rows} row(s) and this downgrade drops the table. "
+            "Export them (Data → Export, or GET /export/display_items.csv) and delete "
+            "them first if you really mean to go back."
+        )
     lines = conn.scalar(sa.text("SELECT count(*) FROM order_items WHERE item_type = 'display'"))
     if lines:
         raise RuntimeError(
-            f"{lines} order line(s) are display lines, and this downgrade removes the table "
-            "they point at. Delete or re-type those lines first if you really mean to go back."
+            f"{lines} order line(s) are display lines, and this downgrade removes the "
+            "item_type they are stored under. Delete or re-type those lines first if "
+            "you really mean to go back."
         )
 
     op.drop_constraint(op.f("ck_order_items_item_type"), "order_items", type_="check")

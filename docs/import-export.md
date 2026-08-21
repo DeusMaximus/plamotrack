@@ -107,7 +107,7 @@ exactly, so all the internal links survive untouched.
 | Table | Matched on |
 |---|---|
 | Retailers | Name, case-insensitive |
-| Tools / consumables / upgrades | Name, case-insensitive, within that table |
+| Tools / consumables / upgrades / display items | Name, case-insensitive, within that table |
 | Orders | Retailer + order number. No order number? Retailer + date + the set of lines |
 | Order lines | Item, quantity, unit price **and currency**, within their order |
 | Upgrade applications | Upgrade + kit + date applied |
@@ -116,7 +116,7 @@ exactly, so all the internal links survive untouched.
 An ambiguous match — two stored retailers or two catalog rows that differ only in
 case or surrounding whitespace — is reported as an error row asking for an explicit id.
 The application itself no longer creates that pair: since 0.2.7, adding or renaming a
-retailer, tool, consumable or upgrade onto a name another row of the same table
+retailer, tool, consumable, upgrade or display item onto a name another row of the same table
 already holds is refused. If an instance still carries one from before, rename one of
 the two in the app and import again.
 
@@ -200,9 +200,10 @@ between orders would take its kits with it and quietly rewrite what was bought
 where. To correct either, leave the line alone and enter a new one. The Orders page
 refuses both for the same reasons.
 
-**A tool, consumable or upgrade line has to point at something.** Fill in
-`catalog_ref_id`, or name the item in `catalog_name` and it's created for you at 0
-on hand. A line pointing at nothing can never move stock in either direction, so
+**A catalog line has to point at something.** Tool, consumable, upgrade and
+display lines all need either `catalog_ref_id`, or a name in `catalog_name` — which
+creates the item for you at 0 on hand, with a placeholder in any column it can't
+know (category, manufacturer). A line pointing at nothing can never move stock in either direction, so
 it's refused rather than stored.
 
 **A received order can't become pending, and a pending order with a catalog line
@@ -215,7 +216,7 @@ refuse to receive it, and the stock would never be applied at all. Clearing
 `received_at` on an order that genuinely arrived is the mirror image: the stock it
 already added stays where it is, and the next receive adds it a second time.
 
-So on an order that holds a tool, consumable or upgrade line, `received_at` may not
+So on an order that holds a tool, consumable, upgrade or display line, `received_at` may not
 be moved into or out of "received" by an import. What you can do instead:
 
 - **To mark a pending order received:** leave `received_at` out of the sheet and

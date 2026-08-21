@@ -36,7 +36,12 @@ from app.services.catalog import (
     lock_catalog_row,
 )
 from app.services.kits import default_scale_for_grade, has_applied_upgrades, stamp_build_date
-from app.services.names import clean_name, find_by_name, require_unique_name
+from app.services.names import (
+    clean_name,
+    clean_optional_text,
+    find_by_name,
+    require_unique_name,
+)
 from app.services.write_gate import acquire_write_gate
 
 #: The most units one order line may hold.
@@ -309,9 +314,14 @@ async def _build_catalog_row(
     and the whole order rolls back with it (rule 2) — say it on one line with the
     quantity, or pick the row the first line created.
     """
-    if item_type in (ItemType.TOOL, ItemType.CONSUMABLE, ItemType.DISPLAY):
-        if not new_item.category:
-            raise InvalidInputError(f"new {item_type} items require a category")
+    # Trimmed before it is judged, and the trimmed value is what gets stored.
+    # `not "   "` is False, so whitespace passed every one of these checks and landed
+    # in a NOT NULL column verbatim (#129 review, P3-4). `clean_optional_text` is the
+    # same rule for the columns where blank legitimately means "not recorded".
+    category = clean_optional_text(new_item.category)
+    manufacturer = clean_optional_text(new_item.manufacturer)
+    if item_type in (ItemType.TOOL, ItemType.CONSUMABLE, ItemType.DISPLAY) and not category:
+        raise InvalidInputError(f"new {item_type} items require a category")
     name = await require_unique_name(session, CATALOG_MODELS[item_type], new_item.name)
     if item_type is ItemType.TOOL:
         # The line's own currency, not the instance default: this row is being created
@@ -320,16 +330,16 @@ async def _build_catalog_row(
         cost_minor = new_item.unit_cost_reference_minor
         return Tool(
             name=name,
-            category=new_item.category,
+            category=category,
             quantity_on_hand=0,
             unit_cost_reference_minor=cost_minor,
             unit_cost_reference_currency=currency_code if cost_minor is not None else None,
-            condition_notes=new_item.condition_notes,
+            condition_notes=clean_optional_text(new_item.condition_notes),
         )
     if item_type is ItemType.CONSUMABLE:
         return Consumable(
             name=name,
-            category=new_item.category,
+            category=category,
             quantity_on_hand=0,
             low_stock_threshold=new_item.low_stock_threshold,
         )
@@ -338,17 +348,17 @@ async def _build_catalog_row(
         # states one and a scratch-built piece has none (#126).
         return DisplayItem(
             name=name,
-            category=new_item.category,
-            scale=new_item.scale,
-            manufacturer=new_item.manufacturer,
+            category=category,
+            scale=clean_optional_text(new_item.scale),
+            manufacturer=manufacturer,
             quantity_on_hand=0,
-            notes=new_item.notes,
+            notes=clean_optional_text(new_item.notes),
         )
-    if not new_item.manufacturer:
+    if not manufacturer:
         raise InvalidInputError("new upgrade items require a manufacturer")
     return Upgrade(
         name=name,
-        manufacturer=new_item.manufacturer,
+        manufacturer=manufacturer,
         quantity_on_hand=0,
     )
 

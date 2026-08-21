@@ -83,6 +83,40 @@ def clean_name(name: str) -> str:
     return cleaned
 
 
+def clean_required_text(value: str, field: str) -> str:
+    """`clean_name`'s rule for the other NOT NULL text columns — `category` on tools,
+    consumables and display items, `manufacturer` on upgrades.
+
+    `min_length=1` on the request schema is satisfied by a space, and the order
+    dispatch tested `not new_item.category`, which a space also passes — so
+    `category: "   "` was stored verbatim and `POST /display-items` answered 201
+    (#129 review, P3-4). The check belongs beside `clean_name` because it is the
+    same rule about the same kind of column, and in the service because three
+    writers reach these tables (rule 1).
+
+    The CSV importer already agreed: `spec.parse_text` strips and returns None for a
+    blank cell, so this brings the live writers into line with it rather than
+    inventing a fourth opinion.
+    """
+    cleaned = value.strip()
+    if not cleaned:
+        raise InvalidInputError(f"{field} cannot be blank")
+    return cleaned
+
+
+def clean_optional_text(value: str | None) -> str | None:
+    """Trimmed, with blank or whitespace-only meaning "not recorded".
+
+    The rule `_normalize_series` established for a free-text column (#113 review,
+    P3-1): a stored `"  "` is indistinguishable from a value the user typed, and it
+    would appear as an empty option the moment anything offers these columns as a
+    typeahead — which is what #127 does with `category`.
+    """
+    if value is None:
+        return None
+    return value.strip() or None
+
+
 def _same_key[R: NamedRow](model: type[R], name: str) -> Select[tuple[R]]:
     # Both sides folded by Postgres, the stored side trimmed with Python's own
     # whitespace set; see the module docstring for why.
