@@ -21,6 +21,7 @@ from app import __version__
 from app.exceptions import NotFoundError
 from app.models import (
     Consumable,
+    DisplayItem,
     ItemType,
     Kit,
     Order,
@@ -105,6 +106,9 @@ async def _load_all(session: AsyncSession) -> dict[str, list[Any]]:
             (await session.scalars(select(Consumable).order_by(Consumable.name))).all()
         ),
         "upgrades": list((await session.scalars(select(Upgrade).order_by(Upgrade.name))).all()),
+        "display_items": list(
+            (await session.scalars(select(DisplayItem).order_by(DisplayItem.name))).all()
+        ),
         "orders": list(orders),
         "order_items": list(order_items),
         "kits": list((await session.scalars(select(Kit).order_by(Kit.created_at, Kit.id))).all()),
@@ -131,6 +135,7 @@ def _fill_alternates(spec: TableSpec, row: dict[str, str], instance: Any, data: 
         ItemType.TOOL: {t.id: t.name for t in data["tools"]},
         ItemType.CONSUMABLE: {c.id: c.name for c in data["consumables"]},
         ItemType.UPGRADE: {u.id: u.name for u in data["upgrades"]},
+        ItemType.DISPLAY: {d.id: d.name for d in data["display_items"]},
     }
 
     for column in spec.columns:

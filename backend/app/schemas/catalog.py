@@ -107,6 +107,44 @@ class UpgradeRead(BaseModel):
     quantity_on_hand: int
 
 
+class DisplayItemCreate(BaseModel):
+    name: str = Field(min_length=1)
+    category: str = Field(
+        min_length=1,
+        description="stand / base / scenery / structure / figures / backdrop — free text.",
+    )
+    scale: str | None = Field(
+        default=None,
+        description='Kit scale the piece suits, e.g. "1/144". Null = non-scale or not recorded.',
+    )
+    manufacturer: str | None = None
+    quantity_on_hand: NonNegativeInt4 = 0
+    notes: str | None = None
+
+
+class DisplayItemUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str | None = Field(default=None, min_length=1)
+    category: str | None = Field(default=None, min_length=1)
+    scale: str | None = None
+    manufacturer: str | None = None
+    quantity_on_hand: NonNegativeInt4 | None = None
+    notes: str | None = None
+
+
+class DisplayItemRead(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    category: str
+    scale: str | None
+    manufacturer: str | None
+    quantity_on_hand: int
+    notes: str | None
+
+
 class UpgradeApplyRequest(BaseModel):
     kit_id: uuid.UUID
     quantity: PositiveInt4
@@ -128,8 +166,9 @@ class CatalogSearchResult(BaseModel):
     item_type: ItemType
     id: uuid.UUID
     name: str
-    category: str | None = None  # tools/consumables
-    manufacturer: str | None = None  # upgrades
+    category: str | None = None  # tools/consumables/display items
+    manufacturer: str | None = None  # upgrades/display items
+    scale: str | None = None  # display items
     quantity_on_hand: int
 
 

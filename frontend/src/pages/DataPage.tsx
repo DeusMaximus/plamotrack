@@ -42,6 +42,11 @@ function Card({
   );
 }
 
+/** Keys are `portability/spec.py` table keys, not REST paths — `/export/{key}.csv`.
+ *  Hand-maintained against that registry, which is the trap it fell into: the
+ *  backend gained `display_items` and exported it correctly, and only this list
+ *  decided nobody could reach it from the Data page (#129 review, P3-5). Adding a
+ *  portable table means adding a line here. */
 const TABLE_EXPORTS = [
   { key: "kits", label: "Kits" },
   { key: "orders", label: "Orders" },
@@ -49,6 +54,7 @@ const TABLE_EXPORTS = [
   { key: "tools", label: "Tools" },
   { key: "consumables", label: "Consumables" },
   { key: "upgrades", label: "Upgrades" },
+  { key: "display_items", label: "Display items" },
   { key: "retailers", label: "Retailers" },
 ];
 

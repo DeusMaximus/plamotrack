@@ -1,7 +1,7 @@
 """One rule for what a retailer's or catalog item's name *is* (#107, rule 3).
 
 The CSV importer treats the case-insensitive name as the **natural key** for
-retailers and the three catalog tables (`spec._name_key`, design notes §12.4): an
+retailers and every catalog table (`spec._name_key`, design notes §12.4): an
 id-less `orders.csv` row names its shop, and two stored retailers that fold to the
 same key make that row unimportable. `get_or_create_retailer` already applied the
 rule on the way in (#49). The create and rename paths applied *no* rule — `POST
@@ -50,9 +50,9 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.exceptions import ConflictError, InvalidInputError
-from app.models import Consumable, Retailer, Tool, Upgrade
+from app.models import Consumable, DisplayItem, Retailer, Tool, Upgrade
 
-type NamedRow = Retailer | Tool | Consumable | Upgrade
+type NamedRow = Retailer | Tool | Consumable | Upgrade | DisplayItem
 
 #: Every character Python's `str.strip()` removes, generated from `str.isspace()` at
 #: import so it can never drift from `clean_name` or the importer's `_norm_name`.
@@ -63,12 +63,15 @@ type NamedRow = Retailer | Tool | Consumable | Upgrade
 WHITESPACE = "".join(chr(code) for code in range(0x10000) if chr(code).isspace())
 
 #: What the refusal calls the row — the API's own vocabulary, article included, so
-#: the sentence reads the same for all four ("an upgrade", not "a upgrade").
+#: the sentence reads the same for every table ("an upgrade", not "a upgrade").
+#: A model missing from here is a `KeyError` inside the conflict path, i.e. a 500
+#: where a 409 was owed — which is what `display_items` did before #126 added it.
 _NOUN: dict[type, str] = {
     Retailer: "a retailer",
     Tool: "a tool",
     Consumable: "a consumable",
     Upgrade: "an upgrade",
+    DisplayItem: "a display item",
 }
 
 
@@ -78,6 +81,40 @@ def clean_name(name: str) -> str:
     if not cleaned:
         raise InvalidInputError("name cannot be blank")
     return cleaned
+
+
+def clean_required_text(value: str, field: str) -> str:
+    """`clean_name`'s rule for the other NOT NULL text columns — `category` on tools,
+    consumables and display items, `manufacturer` on upgrades.
+
+    `min_length=1` on the request schema is satisfied by a space, and the order
+    dispatch tested `not new_item.category`, which a space also passes — so
+    `category: "   "` was stored verbatim and `POST /display-items` answered 201
+    (#129 review, P3-4). The check belongs beside `clean_name` because it is the
+    same rule about the same kind of column, and in the service because three
+    writers reach these tables (rule 1).
+
+    The CSV importer already agreed: `spec.parse_text` strips and returns None for a
+    blank cell, so this brings the live writers into line with it rather than
+    inventing a fourth opinion.
+    """
+    cleaned = value.strip()
+    if not cleaned:
+        raise InvalidInputError(f"{field} cannot be blank")
+    return cleaned
+
+
+def clean_optional_text(value: str | None) -> str | None:
+    """Trimmed, with blank or whitespace-only meaning "not recorded".
+
+    The rule `_normalize_series` established for a free-text column (#113 review,
+    P3-1): a stored `"  "` is indistinguishable from a value the user typed, and it
+    would appear as an empty option the moment anything offers these columns as a
+    typeahead — which is what #127 does with `category`.
+    """
+    if value is None:
+        return None
+    return value.strip() or None
 
 
 def _same_key[R: NamedRow](model: type[R], name: str) -> Select[tuple[R]]:

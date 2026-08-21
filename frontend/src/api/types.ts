@@ -11,7 +11,7 @@ export const KIT_STATUSES = [
 
 export type KitStatus = (typeof KIT_STATUSES)[number];
 
-export type ItemType = "kit" | "tool" | "consumable" | "upgrade";
+export type ItemType = "kit" | "tool" | "consumable" | "upgrade" | "display";
 export type CatalogItemType = Exclude<ItemType, "kit">;
 
 export interface Kit {
@@ -109,6 +109,31 @@ export interface UpgradeCreate {
   quantity_on_hand?: number;
 }
 
+/** Stands, bases, diorama scenery (§3.5a, #126).
+ *
+ * Quantity only — deliberately no link to the kits it's used with, because a stand
+ * moves between kits freely and a recorded link would be wrong most of the time.
+ * `manufacturer` is nullable here but required on Upgrade. */
+export interface DisplayItem {
+  id: string;
+  name: string;
+  category: string;
+  /** Kit scale the piece suits, e.g. "1/144". Null = non-scale or not recorded. */
+  scale: string | null;
+  manufacturer: string | null;
+  quantity_on_hand: number;
+  notes: string | null;
+}
+
+export interface DisplayItemCreate {
+  name: string;
+  category: string;
+  scale?: string | null;
+  manufacturer?: string | null;
+  quantity_on_hand?: number;
+  notes?: string | null;
+}
+
 export interface UpgradeApplication {
   id: string;
   upgrade_id: string;
@@ -123,13 +148,15 @@ export interface CatalogSearchResult {
   name: string;
   category: string | null;
   manufacturer: string | null;
+  /** Display items only. */
+  scale: string | null;
   quantity_on_hand: number;
 }
 
 /** Result of a signed stock adjustment — `POST /catalog/{id}/adjust` (#55).
  *
  * `item_type` comes back because the caller doesn't state it: the service resolves
- * the id across tools, consumables and upgrades the same way the search does. */
+ * the id across every catalog table the same way the search does. */
 export interface StockAdjustment {
   item_type: CatalogItemType;
   id: string;
@@ -212,8 +239,12 @@ export interface OrderKitDetails {
 
 export interface NewCatalogItem {
   name: string;
+  /** Required for tools, consumables and display items; unused by upgrades. */
   category?: string | null;
+  /** Required for upgrades; optional on display items. */
   manufacturer?: string | null;
+  /** Display items only. */
+  scale?: string | null;
   low_stock_threshold?: number | null;
 }
 
@@ -304,6 +335,15 @@ export interface UpgradeUpdate {
   name?: string;
   manufacturer?: string;
   quantity_on_hand?: number;
+}
+
+export interface DisplayItemUpdate {
+  name?: string;
+  category?: string;
+  scale?: string | null;
+  manufacturer?: string | null;
+  quantity_on_hand?: number;
+  notes?: string | null;
 }
 
 export interface RetailerUpdate {

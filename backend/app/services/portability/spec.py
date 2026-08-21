@@ -34,6 +34,7 @@ from typing import Any
 from app.models import (
     Base,
     Consumable,
+    DisplayItem,
     Kit,
     KitPhoto,
     Order,
@@ -230,7 +231,7 @@ class ColumnSpec:
     role: ColumnRole = ColumnRole.DATA
     required: bool = False
     #: REF/ALT_REF only — table key this points at. "catalog" resolves dynamically
-    #: against tools/consumables/upgrades using the row's item_type.
+    #: against the catalog tables using the row's item_type.
     ref_table: str | None = None
     #: ALT_* only — the canonical column this mirrors.
     mirrors: str | None = None
@@ -505,6 +506,32 @@ UPGRADES = TableSpec(
     natural_key=_name_key,
 )
 
+DISPLAY_ITEMS = TableSpec(
+    key="display_items",
+    model=DisplayItem,
+    description="Stands, bases and diorama scenery — display gear (§3.5a).",
+    columns=(
+        id_col(),
+        col("name", parse_text, required=True),
+        col(
+            "category",
+            parse_text,
+            required=True,
+            help="stand / base / scenery / structure / figures / backdrop / ...",
+        ),
+        col(
+            "scale",
+            parse_text,
+            help="Kit scale the piece suits, e.g. 1/144. Blank = non-scale or not recorded.",
+        ),
+        col("manufacturer", parse_text, help="Optional — a scratch-built piece has none."),
+        col("quantity_on_hand", parse_int, help="Physically on hand. Not derived from orders."),
+        col("notes", parse_text),
+    ),
+    label=lambda row: row.get("name") or "(unnamed display item)",
+    natural_key=_name_key,
+)
+
 ORDERS = TableSpec(
     key="orders",
     model=Order,
@@ -561,7 +588,7 @@ ORDER_ITEMS = TableSpec(
         "Order lines (§3.9). kit_* columns only matter when no kits row covers the line — "
         "then they drive the fan-out."
     ),
-    depends_on=("orders", "tools", "consumables", "upgrades"),
+    depends_on=("orders", "tools", "consumables", "upgrades", "display_items"),
     special=True,
     columns=(
         id_col(),
@@ -570,7 +597,7 @@ ORDER_ITEMS = TableSpec(
             "item_type",
             enum_parser(ItemType),
             required=True,
-            help="kit / tool / consumable / upgrade",
+            help="kit / tool / consumable / upgrade / display",
         ),
         col(
             "catalog_ref_id",
@@ -740,6 +767,7 @@ TABLE_SPECS: tuple[TableSpec, ...] = (
     TOOLS,
     CONSUMABLES,
     UPGRADES,
+    DISPLAY_ITEMS,
     ORDERS,
     ORDER_ITEMS,
     KITS,
@@ -754,4 +782,5 @@ CATALOG_TABLE_BY_ITEM_TYPE: dict[str, str] = {
     ItemType.TOOL.value: "tools",
     ItemType.CONSUMABLE.value: "consumables",
     ItemType.UPGRADE.value: "upgrades",
+    ItemType.DISPLAY.value: "display_items",
 }

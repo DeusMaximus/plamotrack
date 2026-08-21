@@ -5,9 +5,9 @@ Guidance for AI coding agents (Claude Code, Codex, …) and humans working in th
 **plamotrack** is a self-hosted, open-source Gunpla/plamo collection & build tracker:
 kits move through a pipeline (pre_ordered → ordered → in_transit → backlog →
 building → complete; backlog = in hand, not started) on a drag-and-drop Kanban
-board with Build and Orders views, alongside
-quantity-tracked tools, consumables, and third-party upgrades. Ships as a Docker
-Compose stack: FastAPI REST API + embedded MCP server (same process, shared service
+board with Build and Orders views, alongside quantity-tracked tools, consumables,
+third-party upgrades, and display gear (stands, bases, diorama scenery). Ships as a
+Docker Compose stack: FastAPI REST API + embedded MCP server (same process, shared service
 layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
 
 ## Session protocol (multi-agent hand-off)
@@ -84,7 +84,7 @@ docker-compose.dev.yml  # explicit dev overlay: publishes Postgres on loopback o
 backend/
   Dockerfile            # multi-stage uv build; also the migrate service's image
   app/
-    models/             # SQLAlchemy 2.0 async models — 9 tables
+    models/             # SQLAlchemy 2.0 async models — 10 tables
     schemas/            # Pydantic v2 request/response models
     services/           # ALL business logic lives here (see rules below)
       portability/      # CSV import/export — spec.py registry drives all of it
@@ -186,9 +186,10 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
      `invariants.py` as well, and the shared matrix in
      `tests/test_order_invariants.py` is what makes a one-sided answer fail.
 2. **Order line dispatch (§3.9, amended):** `item_type=kit` lines fan out into N
-   `kits` rows (with `order_item_id` provenance) at entry. Catalog lines increment
-   `quantity_on_hand` **only when the order is received** (`received_at`) —
-   quantity means *physically on hand*, not on order. Receiving also advances
+   `kits` rows (with `order_item_id` provenance) at entry. Catalog lines —
+   tool/consumable/upgrade/display — increment `quantity_on_hand` **only when the
+   order is received** (`received_at`); quantity means *physically on hand*, not on
+   order. Receiving also advances
    pipeline kits (pre_ordered/ordered/in_transit → backlog). One transaction per
    order — any bad line rolls back all of it.
    - Order **edit** re-runs the dispatch diff (kit details propagate to spawned

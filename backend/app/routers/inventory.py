@@ -3,11 +3,14 @@ import uuid
 from fastapi import APIRouter
 
 from app.db import SessionDep
-from app.models import Consumable, ItemType, Tool, Upgrade
+from app.models import Consumable, DisplayItem, ItemType, Tool, Upgrade
 from app.schemas.catalog import (
     ConsumableCreate,
     ConsumableRead,
     ConsumableUpdate,
+    DisplayItemCreate,
+    DisplayItemRead,
+    DisplayItemUpdate,
     ToolCreate,
     ToolRead,
     ToolUpdate,
@@ -93,3 +96,29 @@ async def apply_upgrade(
 ):
     """Record an upgrade used on a kit; decrements stock (§4)."""
     return await upgrades_service.apply_upgrade(session, upgrade_id, data.kit_id, data.quantity)
+
+
+@router.get("/display-items", response_model=list[DisplayItemRead])
+async def list_display_items(session: SessionDep):
+    return await catalog_service.list_catalog(session, DisplayItem)
+
+
+@router.post("/display-items", response_model=DisplayItemRead, status_code=201)
+async def create_display_item(data: DisplayItemCreate, session: SessionDep):
+    """Stands, bases, diorama scenery — display gear, tracked by quantity only and
+    deliberately not linked to kits (§3.5a)."""
+    return await catalog_service.create_display_item(session, data)
+
+
+@router.patch("/display-items/{display_item_id}", response_model=DisplayItemRead)
+async def update_display_item(
+    display_item_id: uuid.UUID, data: DisplayItemUpdate, session: SessionDep
+):
+    return await catalog_service.update_catalog_item(
+        session, ItemType.DISPLAY, display_item_id, data
+    )
+
+
+@router.delete("/display-items/{display_item_id}", status_code=204)
+async def delete_display_item(display_item_id: uuid.UUID, session: SessionDep):
+    await catalog_service.delete_catalog_item(session, ItemType.DISPLAY, display_item_id)

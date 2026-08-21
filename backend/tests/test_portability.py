@@ -169,7 +169,28 @@ async def seed_collection(client) -> dict:
             json={"name": "Godhand Ultimate Nippers", "category": "cutting", "quantity_on_hand": 1},
         )
     ).json()
-    return {"retailer": retailer, "order": order, "tool": tool}
+    # Standalone rather than a third order line: the round-trip tests here assert on
+    # order-line counts, and this exists to prove the table survives an archive, not
+    # to restate the dispatch (which test_orders covers). `scale` is set because it
+    # is the one column no sibling table has — a spec entry that omitted it would
+    # round-trip a null and every other assertion would still hold.
+    display_item = (
+        await client.post(
+            "/display-items",
+            json={
+                "name": "Action Base 2",
+                "category": "stand",
+                "scale": "1/144",
+                "quantity_on_hand": 4,
+            },
+        )
+    ).json()
+    return {
+        "retailer": retailer,
+        "order": order,
+        "tool": tool,
+        "display_item": display_item,
+    }
 
 
 async def snapshot(client) -> dict:
@@ -183,6 +204,10 @@ async def snapshot(client) -> dict:
         ),
         "tools": sorted(
             (t["name"], t["quantity_on_hand"]) for t in (await client.get("/tools")).json()
+        ),
+        "display_items": sorted(
+            (d["name"], d["category"], d["scale"], d["quantity_on_hand"])
+            for d in (await client.get("/display-items")).json()
         ),
         "orders": sorted(
             (o["order_number"], len(o["items"])) for o in (await client.get("/orders")).json()
@@ -250,12 +275,17 @@ async def test_archive_restores_into_an_empty_instance(client):
     before = await snapshot(client)
     archive = (await client.get("/export/archive")).content
 
-    # Wipe by hand, then restore — the migration path onto a fresh instance.
+    # Wipe by hand, then restore — the migration path onto a fresh instance. Every
+    # standalone table the seed touches has to go, or the restore is never asked to
+    # bring it back and the assertion below passes on a row that simply never left.
     for order in (await client.get("/orders")).json():
         assert (await client.delete(f"/orders/{order['id']}")).status_code == 204
     for tool in (await client.get("/tools")).json():
         await client.delete(f"/tools/{tool['id']}")
+    for display_item in (await client.get("/display-items")).json():
+        assert (await client.delete(f"/display-items/{display_item['id']}")).status_code == 204
     assert (await client.get("/kits")).json() == []
+    assert (await client.get("/display-items")).json() == []
 
     resp = await apply(client, archive)
     assert resp.status_code == 200, resp.text
@@ -275,7 +305,15 @@ async def test_merge_import_is_idempotent(client):
     assert await snapshot(client) == before
 
     plan = await preview(client, archive)
-    for table in ("retailers", "orders", "order_items", "kits", "consumables", "tools"):
+    for table in (
+        "retailers",
+        "orders",
+        "order_items",
+        "kits",
+        "consumables",
+        "tools",
+        "display_items",
+    ):
         assert set(actions(plan, table)) <= {"unchanged"}, f"{table} would change on re-import"
 
     second = await apply(client, archive)
@@ -3523,7 +3561,8 @@ async def _dangling_references(column: str) -> list:
     targets = {
         "retailer_id": "SELECT id FROM retailers",
         "catalog_ref_id": (
-            "SELECT id FROM tools UNION SELECT id FROM consumables UNION SELECT id FROM upgrades"
+            "SELECT id FROM tools UNION SELECT id FROM consumables "
+            "UNION SELECT id FROM upgrades UNION SELECT id FROM display_items"
         ),
     }[column]
     async with session_scope() as session:
@@ -3866,3 +3905,228 @@ async def test_two_retailers_with_one_name_still_round_trip(client, mode):
         "Gundam Base",
         "Gundam Base",
     ]
+
+
+async def test_a_display_order_line_exports_and_reimports_its_catalog_name(client, retailer):
+    """The readable mirror for the fourth catalog table (#126).
+
+    `catalog_name` is filled from a per-item_type map in `_fill_alternates`, so it
+    is one of the few places a new catalog type needs naming rather than being
+    reached through `CATALOG_MODELS`. A missing entry exports a blank cell — which
+    still round-trips correctly on the uuid, so the archive tests pass and only the
+    human reading the sheet is worse off. Asserted on the exported cell for that
+    reason, and then re-imported to prove the blank would not have been benign
+    either: with the id stripped, the name is the only thing left to match on.
+    """
+    item = (
+        await client.post(
+            "/display-items",
+            json={"name": "DCM21 Dio-Com Hangar", "category": "structure", "scale": "1/144"},
+        )
+    ).json()
+    await client.post(
+        "/orders",
+        json={
+            "retailer_id": retailer["id"],
+            "order_date": "2026-08-01",
+            "order_number": "HLJ-99",
+            "currency_code": "AUD",
+            "items": [
+                {
+                    "item_type": "display",
+                    "quantity": 1,
+                    "unit_price_minor": 7999,
+                    "currency_code": "AUD",
+                    "catalog_ref_id": item["id"],
+                }
+            ],
+        },
+    )
+
+    tables = read_archive((await client.get("/export/archive")).content)
+    assert [row["name"] for row in tables["display_items"]] == ["DCM21 Dio-Com Hangar"]
+    line = tables["order_items"][0]
+    assert line["item_type"] == "display"
+    assert line["catalog_name"] == "DCM21 Dio-Com Hangar"
+
+    # Now make the name load-bearing: no uuid to fall back on, in a fresh instance.
+    for order in (await client.get("/orders")).json():
+        assert (await client.delete(f"/orders/{order['id']}")).status_code == 204
+    for row in (await client.get("/display-items")).json():
+        assert (await client.delete(f"/display-items/{row['id']}")).status_code == 204
+
+    tables["order_items"][0]["catalog_ref_id"] = ""
+    tables["display_items"][0]["id"] = ""
+    resp = await apply(client, make_archive(tables))
+    assert resp.status_code == 200, resp.text
+
+    restored = (await client.get("/display-items")).json()
+    assert len(restored) == 1, "the named row was matched, not duplicated"
+    assert restored[0]["name"] == "DCM21 Dio-Com Hangar"
+    assert restored[0]["scale"] == "1/144"
+    relinked = (await client.get("/orders")).json()[0]["items"][0]
+    assert relinked["catalog_ref_id"] == restored[0]["id"]
+
+
+# --- #129 review: the enumeration traps a fourth catalog table fell into ----------
+
+
+def test_every_catalog_table_can_be_stubbed():
+    """The registry and the stub placeholders agree — checked here as well as at
+    import, because the import-time check only runs where this module is imported.
+
+    Both defects below were one shape: a literal tuple of three table names inside
+    the importer, written when three was all there was. Asserting the *derived* sets
+    is what makes a fifth catalog type fail here rather than at someone's flush.
+    """
+    assert importing.CATALOG_TABLES == {"tools", "consumables", "upgrades", "display_items"}
+    required = {
+        column.name
+        for key in importing.CATALOG_TABLES | {"retailers"}
+        for column in spec.SPEC_BY_KEY[key].columns
+        if column.required and column.name != "name"
+    }
+    assert required <= importing.STUB_PLACEHOLDERS.keys(), (
+        f"no stub placeholder for {sorted(required - importing.STUB_PLACEHOLDERS.keys())}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("item_type", "table", "extra"),
+    [
+        ("consumable", "consumables", {"category": "uncategorised"}),
+        ("upgrade", "upgrades", {"manufacturer": "unknown"}),
+        ("display", "display_items", {"category": "uncategorised"}),
+    ],
+    ids=["consumable", "upgrade", "display"],
+)
+async def test_a_name_only_catalog_line_creates_a_stub_rather_than_500ing(
+    http_client, retailer, item_type, table, extra
+):
+    """A line naming an undeclared catalog item, with no CSV for that table.
+
+    Display is the case that broke: `_create_stub` filled `category` for tools and
+    consumables and `manufacturer` for upgrades, by name, so a display stub was
+    built without its NOT NULL `category`. Preview reported a clean CREATE and apply
+    died at flush — a 500 after the operator was told the import was fine (rule 6,
+    #129 review P2-1). The two working types are parametrised alongside it because a
+    fix that reached only the new table is the same defect one release later.
+
+    `http_client`, not `client`: the point is which status the apply earns.
+    """
+    order_id = "22222222-2222-4222-8222-222222222222"
+    archive = make_archive(
+        {
+            "orders": [
+                {
+                    "id": order_id,
+                    "retailer_id": retailer["id"],
+                    "order_date": "2026-08-01",
+                    "currency_code": "AUD",
+                }
+            ],
+            "order_items": [
+                {
+                    "id": "33333333-3333-4333-8333-333333333333",
+                    "order_id": order_id,
+                    "item_type": item_type,
+                    "catalog_name": "Undeclared Thing",
+                    "quantity": "2",
+                    "unit_price_minor": "900",
+                    "currency_code": "AUD",
+                }
+            ],
+        }
+    )
+
+    plan = await preview(http_client, archive)
+    assert not plan["blocking_errors"], plan["blocking_errors"]
+    assert actions(plan, table) == ["create"]
+
+    resp = await apply(http_client, archive)
+    assert resp.status_code == 200, resp.text
+
+    rows = (await http_client.get(f"/{table.replace('_', '-')}")).json()
+    assert len(rows) == 1
+    # Stock is never inferred from an order (rule 10), and the placeholder columns
+    # are asserted rather than just "a row exists" — a stub created with the wrong
+    # placeholder is still a row.
+    assert rows[0]["quantity_on_hand"] == 0
+    for field, value in extra.items():
+        assert rows[0][field] == value
+
+
+@pytest.mark.parametrize(
+    ("item_type", "table", "create"),
+    [
+        ("consumable", "consumables", {"name": "Shared Paint", "category": "paint"}),
+        ("display", "display_items", {"name": "Shared Base", "category": "stand"}),
+    ],
+    ids=["consumable", "display"],
+)
+async def test_an_order_arriving_under_a_foreign_uuid_matches_by_catalog_name(
+    client, retailer, item_type, table, create
+):
+    """The cross-instance case the whole natural-key machinery exists for: the same
+    order exported from another instance, where every uuid differs.
+
+    An order with no order number falls back to retailer + date + its line set, and
+    a line is compared by the item's *name* — read from `catalog_names`, which was
+    built from three tables. A display line's name was therefore never found, the
+    line never matched, and the order was recreated: two orders for one purchase
+    (#129 review, P2-2). Seeded through the API so the stored uuids are real, then
+    re-imported under uuids that deliberately do not exist here.
+    """
+    item = (await client.post(f"/{table.replace('_', '-')}", json=create)).json()
+    await client.post(
+        "/orders",
+        json={
+            "retailer_id": retailer["id"],
+            "order_date": "2026-08-01",
+            "currency_code": "AUD",
+            "items": [
+                {
+                    "item_type": item_type,
+                    "quantity": 1,
+                    "unit_price_minor": 900,
+                    "currency_code": "AUD",
+                    "catalog_ref_id": item["id"],
+                }
+            ],
+        },
+    )
+    before = await snapshot(client)
+
+    foreign_order = "99999999-9999-4999-8999-999999999999"
+    archive = make_archive(
+        {
+            "retailers": [{"id": retailer["id"], "name": retailer["name"]}],
+            "orders": [
+                {
+                    "id": foreign_order,
+                    "retailer_id": retailer["id"],
+                    "order_date": "2026-08-01",
+                    "currency_code": "AUD",
+                }
+            ],
+            "order_items": [
+                {
+                    "id": "88888888-8888-4888-8888-888888888888",
+                    "order_id": foreign_order,
+                    "item_type": item_type,
+                    "catalog_name": create["name"],
+                    "quantity": "1",
+                    "unit_price_minor": "900",
+                    "currency_code": "AUD",
+                }
+            ],
+        }
+    )
+
+    plan = await preview(client, archive)
+    assert actions(plan, "orders") == ["unchanged"], plan["tables"]
+
+    resp = await apply(client, archive)
+    assert resp.status_code == 200, resp.text
+    assert len((await client.get("/orders")).json()) == 1, "the foreign uuid duplicated the order"
+    assert await snapshot(client) == before

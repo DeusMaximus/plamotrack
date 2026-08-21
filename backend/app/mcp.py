@@ -20,6 +20,8 @@ from app.models.enums import KitStatus
 from app.schemas.catalog import (
     ConsumableRead,
     ConsumableUpdate,
+    DisplayItemRead,
+    DisplayItemUpdate,
     ToolRead,
     ToolUpdate,
     UpgradeRead,
@@ -50,7 +52,8 @@ mcp = FastMCP(
         "Track a Gunpla/plamo collection: kits move through a pipeline "
         "(pre_ordered → ordered → in_transit → backlog → building → complete; "
         "backlog = physically in hand but not started); "
-        "tools, consumables, and upgrades are quantity-tracked stock. "
+        "tools, consumables, upgrades and display items (stands, bases, diorama "
+        "scenery) are quantity-tracked stock. "
         "Before adding catalog items to an order, ALWAYS search_catalog first and reuse "
         "an existing item's id — free-text duplicates fragment the catalog. A new_item "
         "or create_retailer whose name matches an existing row case-insensitively is "
@@ -202,9 +205,12 @@ async def update_kit(kit_id: str, changes: _KitPatch) -> dict:
 
 @mcp.tool
 async def search_catalog(query: str) -> list[dict]:
-    """Search tools, consumables, and upgrades by name (same search the UI
-    typeahead uses). ALWAYS call this before adding catalog items to an order —
-    reuse an existing item's id as catalog_ref_id instead of creating a duplicate."""
+    """Search tools, consumables, upgrades, and display items by name (same search
+    the UI typeahead uses). ALWAYS call this before adding catalog items to an order
+    — reuse an existing item's id as catalog_ref_id instead of creating a duplicate.
+
+    Results carry `item_type`, so filter on that to search within one kind. Display
+    items also carry `scale` ("1/144") and a `category`."""
     async with _tool_session() as session:
         results = await catalog_service.search(session, query)
         return [r.model_dump(mode="json") for r in results]
@@ -269,13 +275,15 @@ async def create_order(
     created if new; order_date is ISO format (YYYY-MM-DD). Item lines follow the
     order's dispatch semantics: a `kit` line needs `kit` details (name, grade,
     optional kit_number; status defaults to `ordered`, use `pre_ordered` for
-    pre-orders) and spawns one collection row per quantity. A tool/consumable/
-    upgrade line needs either `catalog_ref_id` (an id from search_catalog — always
-    search first) or `new_item` details; a `new_item` whose name matches an existing
-    row of that table case-insensitively is refused with a conflict naming the row,
-    and the whole order with it. Catalog stock does NOT increase until the
-    order is received: pass received=true for store purchases already in hand, or
-    call mark_order_received when a shipment arrives. When logging a purchase that
+    pre-orders) and spawns one collection row per quantity. A tool, consumable,
+    upgrade or display line needs either `catalog_ref_id` (an id from search_catalog
+    — always search first) or `new_item` details; a `new_item` whose name matches an
+    existing row of that table case-insensitively is refused with a conflict naming the row,
+    and the whole order with it. A new tool, consumable or display item needs a
+    `category`; a new upgrade needs a `manufacturer` (optional on display items).
+    Catalog stock does NOT increase until the order is received: pass
+    received=true for store purchases already in hand, or call
+    mark_order_received when a shipment arrives. When logging a purchase that
     arrived before now (a backlog entry, an old confirmation email), also pass
     received_at — offset-aware ISO 8601, e.g. "2026-05-04T14:30:00+10:00" — so the
     order and the kits it delivered carry the real arrival instead of entry time;
@@ -414,9 +422,9 @@ async def mark_order_shipped(order_id: str, shipped_at: str | None = None) -> di
 
 @mcp.tool
 async def adjust_stock(catalog_id: str, delta: Int4, reason: str | None = None) -> dict:
-    """Adjust on-hand quantity of a tool, consumable, or upgrade by a signed delta
-    (e.g. -1 when a consumable runs out). Get ids from search_catalog. Fails if
-    the adjustment would take stock below zero."""
+    """Adjust on-hand quantity of any catalog item — tool, consumable, upgrade or
+    display item — by a signed delta (e.g. -1 when a consumable runs out). Get ids
+    from search_catalog. Fails if the adjustment would take stock below zero."""
     parsed = _parse_uuid(catalog_id, "catalog_id")
     async with _tool_session() as session:
         result = await catalog_service.adjust_stock(session, parsed, delta, reason)
@@ -469,6 +477,26 @@ async def update_catalog_upgrade(upgrade_id: str, changes: UpgradeUpdate) -> dic
     async with _tool_session() as session:
         row = await catalog_service.update_catalog_item(session, ItemType.UPGRADE, parsed, changes)
         return UpgradeRead.model_validate(row).model_dump(mode="json")
+
+
+@mcp.tool
+async def update_catalog_display(display_item_id: str, changes: DisplayItemUpdate) -> dict:
+    """Edit a display item (action stands, system bases, diorama scenery, backdrop
+    panels — anything bought to display models rather than to become part of one):
+    name, category, scale, manufacturer, quantity_on_hand, notes. Only the fields
+    present in `changes` are touched; an explicit null clears a nullable one. Ids
+    come from search_catalog. A rename onto a name another display item already
+    holds (case-insensitively) is a conflict.
+
+    Display items are tracked by quantity only — there is deliberately no link to
+    the kits they are used with, because a stand moves between kits freely. Do not
+    look for one, and do not encode it in the notes as if it were structured.
+
+    To count stock up or down, prefer adjust_stock — see update_catalog_tool."""
+    parsed = _parse_uuid(display_item_id, "display_item_id")
+    async with _tool_session() as session:
+        row = await catalog_service.update_catalog_item(session, ItemType.DISPLAY, parsed, changes)
+        return DisplayItemRead.model_validate(row).model_dump(mode="json")
 
 
 @mcp.tool

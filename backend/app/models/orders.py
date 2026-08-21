@@ -64,7 +64,7 @@ class Order(UUIDPrimaryKeyMixin, Base):
 
 
 class OrderItem(UUIDPrimaryKeyMixin, Base):
-    """Dispatch point between orders and the four catalog tables (§3.9).
+    """Dispatch point between orders and the catalog tables (§3.9).
 
     Quantity semantics differ by item_type — kit lines fan out into new `kits`
     rows, catalog lines increment `quantity_on_hand`. The dispatch lives in
@@ -77,8 +77,8 @@ class OrderItem(UUIDPrimaryKeyMixin, Base):
         ForeignKey("orders.id", ondelete="CASCADE"), index=True
     )
     item_type: Mapped[ItemType] = mapped_column(text_enum(ItemType, "item_type"))
-    # Points into tools/consumables/upgrades depending on item_type; null for kit
-    # lines (kits are spawned fresh). No DB-level FK is possible across three tables.
+    # Points into one of the catalog tables depending on item_type; null for kit
+    # lines (kits are spawned fresh). No DB-level FK is possible across four tables.
     catalog_ref_id: Mapped[uuid.UUID | None]
     quantity: Mapped[int]
     unit_price_minor: Mapped[int]

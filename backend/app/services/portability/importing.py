@@ -92,9 +92,46 @@ MAX_EXPANDED_BYTES = 100 * 1024 * 1024
 _EXPAND_CHUNK = 64 * 1024
 MAX_ROWS = 50_000
 
+#: Every catalog table an order line can point at, by spec key. Derived, so a fifth
+#: catalog type reaches the stub builder and the name map without an edit here.
+CATALOG_TABLES: frozenset[str] = frozenset(CATALOG_TABLE_BY_ITEM_TYPE.values())
+
+#: What a synthesized stub puts in a required column it was given no value for.
+#: Keyed by *column*, not by table, so two tables requiring `category` answer the
+#: same way and a new table requiring one is covered without being named.
+STUB_PLACEHOLDERS: dict[str, str] = {
+    "category": "uncategorised",
+    "manufacturer": "unknown",
+}
+
+
+def _check_stub_placeholders() -> None:
+    """Every required column a stub may have to fill has a placeholder.
+
+    Run at import. `_create_stub` reads this dict by column name, so a spec gaining
+    a required column without an entry here would raise KeyError mid-apply — a 500
+    on a preview that reported no error, which is the defect this replaced.
+    `name` is excluded: the stub exists precisely because something named it.
+    """
+    required = {
+        column.name
+        for key in CATALOG_TABLES | {"retailers"}
+        for column in SPEC_BY_KEY[key].columns
+        if column.required and column.name != "name"
+    }
+    missing = required - STUB_PLACEHOLDERS.keys()
+    if missing:
+        raise RuntimeError(
+            f"portability stub placeholders are missing required column(s): "
+            f"{', '.join(sorted(missing))} — add them to STUB_PLACEHOLDERS"
+        )
+
+
+_check_stub_placeholders()
+
 #: Same list tests/conftest.py truncates — every table a replace-all restore owns.
 _PORTABLE_TABLES = (
-    "kits, kit_photos, tools, consumables, upgrades, "
+    "kits, kit_photos, tools, consumables, upgrades, display_items, "
     "upgrade_applications, retailers, orders, order_items"
 )
 
@@ -685,7 +722,11 @@ class _Planner:
                         index.setdefault(key, []).append(instance)
             self.by_natural[spec.key] = index
 
-        for table in ("tools", "consumables", "upgrades"):
+        # Every catalog table, from the registry rather than a literal list. This
+        # map is what lets an order line arriving under a foreign uuid resolve by
+        # `catalog_name` and match a stored order instead of duplicating it; a table
+        # missing here is silently unmatched, not an error (#129 review, P2-2).
+        for table in CATALOG_TABLES:
             self.catalog_names.update(
                 {instance.id: instance.name for instance in self.existing[table]}
             )
@@ -855,18 +896,26 @@ class _Planner:
 
     def _create_stub(self, table: str, name: str | None, source: _Row) -> uuid.UUID:
         """A referenced-but-undeclared catalog item or retailer. Created at quantity
-        zero — stock is stated in the catalog CSVs, never inferred from an order."""
+        zero — stock is stated in the catalog CSVs, never inferred from an order.
+
+        The placeholders come from the spec's own `required` flags, not a list of
+        table names. Three literal tuples here previously decided which stubs got a
+        category, a manufacturer and a stock count, and a fourth catalog table
+        matched none of them: the stub was built without its NOT NULL `category`, so
+        preview reported a clean CREATE and apply died at flush with a 500 — the
+        shape rule 6 exists to prevent (#129 review, P2-1). `STUB_PLACEHOLDERS` is
+        checked against the registry at import, so a new required column fails
+        loudly here rather than at someone's flush.
+        """
         spec = SPEC_BY_KEY[table]
         new_id = uuid.uuid4()
         values: dict[str, Any] = {"id": new_id, "name": (name or "").strip()}
         present = {"id", "name"}
-        if table in ("tools", "consumables"):
-            values["category"] = "uncategorised"
-            present.add("category")
-        if table == "upgrades":
-            values["manufacturer"] = "unknown"
-            present.add("manufacturer")
-        if table in ("tools", "consumables", "upgrades"):
+        for column in spec.columns:
+            if column.required and column.name not in values:
+                values[column.name] = STUB_PLACEHOLDERS[column.name]
+                present.add(column.name)
+        if table in CATALOG_TABLES:
             values["quantity_on_hand"] = 0
             present.add("quantity_on_hand")
 
@@ -2256,7 +2305,7 @@ class _Planner:
             kits_removed=len(self.removals),
             stock_changes=0,
             stock_note=(
-                "Stock levels come from the tools/consumables/upgrades files. "
+                "Stock levels come from the catalog files. "
                 "Importing orders never changes what you have on hand."
             ),
             rows_deleted=deletes,

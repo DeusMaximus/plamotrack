@@ -71,7 +71,7 @@ You write kits; plamotrack works out the retailers, orders, and order lines.
 
 `plamotrack-templates.zip` holds a blank, header-only CSV for every table, in
 exactly the export's shape, plus `COLUMNS.txt` describing every column. Use this
-when you want to control tools, consumables, upgrades, or multi-line orders
+when you want to control tools, consumables, upgrades, display items, or multi-line orders
 precisely. Fill in whichever files you have data for — every file is optional.
 
 ### 3. An archive — restoring or merging a previous export
@@ -107,7 +107,7 @@ exactly, so all the internal links survive untouched.
 | Table | Matched on |
 |---|---|
 | Retailers | Name, case-insensitive |
-| Tools / consumables / upgrades | Name, case-insensitive, within that table |
+| Tools / consumables / upgrades / display items | Name, case-insensitive, within that table |
 | Orders | Retailer + order number. No order number? Retailer + date + the set of lines |
 | Order lines | Item, quantity, unit price **and currency**, within their order |
 | Upgrade applications | Upgrade + kit + date applied |
@@ -116,7 +116,7 @@ exactly, so all the internal links survive untouched.
 An ambiguous match — two stored retailers or two catalog rows that differ only in
 case or surrounding whitespace — is reported as an error row asking for an explicit id.
 The application itself no longer creates that pair: since 0.2.7, adding or renaming a
-retailer, tool, consumable or upgrade onto a name another row of the same table
+retailer, tool, consumable, upgrade or display item onto a name another row of the same table
 already holds is refused. If an instance still carries one from before, rename one of
 the two in the app and import again.
 
@@ -146,7 +146,7 @@ reference is rewritten to the local one. You don't end up with two Hobby Link Ja
 ## Two rules worth knowing
 
 **Stock never comes from orders.** `quantity_on_hand` is read only from
-`tools.csv` / `consumables.csv` / `upgrades.csv`. Importing an order — even a
+`tools.csv` / `consumables.csv` / `upgrades.csv` / `display_items.csv`. Importing an order — even a
 received one — never changes what you have on hand. Otherwise re-importing would
 quietly double your paint collection.
 
@@ -200,9 +200,10 @@ between orders would take its kits with it and quietly rewrite what was bought
 where. To correct either, leave the line alone and enter a new one. The Orders page
 refuses both for the same reasons.
 
-**A tool, consumable or upgrade line has to point at something.** Fill in
-`catalog_ref_id`, or name the item in `catalog_name` and it's created for you at 0
-on hand. A line pointing at nothing can never move stock in either direction, so
+**A catalog line has to point at something.** Tool, consumable, upgrade and
+display lines all need either `catalog_ref_id`, or a name in `catalog_name` — which
+creates the item for you at 0 on hand, with a placeholder in any column it can't
+know (category, manufacturer). A line pointing at nothing can never move stock in either direction, so
 it's refused rather than stored.
 
 **A received order can't become pending, and a pending order with a catalog line
@@ -215,15 +216,16 @@ refuse to receive it, and the stock would never be applied at all. Clearing
 `received_at` on an order that genuinely arrived is the mirror image: the stock it
 already added stays where it is, and the next receive adds it a second time.
 
-So on an order that holds a tool, consumable or upgrade line, `received_at` may not
+So on an order that holds a tool, consumable, upgrade or display line, `received_at` may not
 be moved into or out of "received" by an import. What you can do instead:
 
 - **To mark a pending order received:** leave `received_at` out of the sheet and
   receive the order in the app, which applies the stock. Stating the on-hand
-  quantity in `tools.csv` / `consumables.csv` / `upgrades.csv` does *not* stand in
+  quantity in the catalog files does *not* stand in
   for that — it corrects a number, and the receipt in the sheet is still refused.
 - **To correct a count on its own,** on an order you are not flipping: state it in
-  `tools.csv` / `consumables.csv` / `upgrades.csv`. That's where stock comes from.
+  `tools.csv` / `consumables.csv` / `upgrades.csv` / `display_items.csv`. That's where
+  stock comes from.
 - If you marked an order received **by mistake**: un-receiving isn't supported
   anywhere in plamotrack, by import or otherwise. Delete the order — that reverses
   the stock it applied — and enter it again as pending.
@@ -249,7 +251,7 @@ holds is left alone, and a **new** order imports whatever its sheet says — a
 restore records the past, even when the past held something odd.
 
 **`shipped_at` is simpler, because it never touches stock.** Marking an order
-shipped through `orders.csv` works on any order — including ones with tool,
+shipped through `orders.csv` works on any order — including ones with tool, display,
 consumable or upgrade lines — and moves its waiting kits to In Transit, stamped
 with the date the sheet states. The same two rules apply: a future ship date is
 refused, and clearing `shipped_at` is refused (un-shipping isn't supported

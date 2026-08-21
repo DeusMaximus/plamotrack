@@ -10,7 +10,23 @@ import { Button, Input } from "./ui";
  * free-text path that silently fragments the catalog. */
 export type CatalogSelection =
   | { mode: "existing"; id: string; name: string }
-  | { mode: "new"; name: string; category: string; manufacturer: string };
+  | { mode: "new"; name: string; category: string; manufacturer: string; scale: string };
+
+/** What the user is shown. `display` is a wire value, not a noun — "display item"
+ * is the phrase, and "displays" is not the plural of anything here. */
+const SINGULAR: Record<CatalogItemType, string> = {
+  tool: "tool",
+  consumable: "consumable",
+  upgrade: "upgrade",
+  display: "display item",
+};
+
+const PLURAL: Record<CatalogItemType, string> = {
+  tool: "tools",
+  consumable: "consumables",
+  upgrade: "upgrades",
+  display: "display items",
+};
 
 export function CatalogItemPicker({
   itemType,
@@ -63,7 +79,7 @@ export function CatalogItemPicker({
     return (
       <div className="space-y-2 rounded-md border border-dashed border-indigo-300 bg-indigo-50/50 p-2">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-indigo-700">New {itemType}</span>
+          <span className="text-xs font-medium text-indigo-700">New {SINGULAR[itemType]}</span>
           <button
             type="button"
             className="text-xs text-zinc-500 hover:text-zinc-700"
@@ -87,8 +103,27 @@ export function CatalogItemPicker({
           <Input
             value={value.category}
             onChange={(event) => onChange({ ...value, category: event.target.value })}
-            placeholder="Category (required)"
+            placeholder={
+              itemType === "display" ? "Category (required) — stand / scenery" : "Category (required)"
+            }
           />
+        )}
+        {/* Display items are the only type taking both, and neither is required: a
+            commercial set names a maker, a scratch-built piece doesn't, and a
+            backdrop panel has no scale. */}
+        {itemType === "display" && (
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              value={value.manufacturer}
+              onChange={(event) => onChange({ ...value, manufacturer: event.target.value })}
+              placeholder="Manufacturer"
+            />
+            <Input
+              value={value.scale}
+              onChange={(event) => onChange({ ...value, scale: event.target.value })}
+              placeholder="Scale, e.g. 1/144"
+            />
+          </div>
         )}
       </div>
     );
@@ -104,7 +139,7 @@ export function CatalogItemPicker({
         }}
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
-        placeholder={`Search ${itemType}s…`}
+        placeholder={`Search ${PLURAL[itemType]}…`}
       />
       {open && debounced.length > 0 && (
         <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-md border border-zinc-200 bg-white shadow-lg">
@@ -121,7 +156,7 @@ export function CatalogItemPicker({
               <span>
                 {result.name}
                 <span className="ml-2 text-xs text-zinc-400">
-                  {result.category ?? result.manufacturer}
+                  {[result.category ?? result.manufacturer, result.scale].filter(Boolean).join(" · ")}
                 </span>
               </span>
               <span className="text-xs text-zinc-400">{result.quantity_on_hand} on hand</span>
@@ -131,10 +166,16 @@ export function CatalogItemPicker({
             type="button"
             className="w-full border-t border-zinc-100 px-3 py-2 text-left text-sm font-medium text-indigo-600 hover:bg-indigo-50"
             onMouseDown={() =>
-              onChange({ mode: "new", name: query.trim(), category: "", manufacturer: "" })
+              onChange({
+                mode: "new",
+                name: query.trim(),
+                category: "",
+                manufacturer: "",
+                scale: "",
+              })
             }
           >
-            ＋ Create new {itemType} “{query.trim()}”
+            ＋ Create new {SINGULAR[itemType]} “{query.trim()}”
           </button>
         </div>
       )}

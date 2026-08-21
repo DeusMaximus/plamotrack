@@ -57,6 +57,47 @@ class Upgrade(UUIDPrimaryKeyMixin, Base):
     __table_args__ = (CheckConstraint("quantity_on_hand >= 0", name="quantity_non_negative"),)
 
 
+class DisplayItem(UUIDPrimaryKeyMixin, Base):
+    """Fungible, durable, and deliberately *not* linked to kits (§3.5a, #126).
+
+    Stands, bases, diorama scenery, backdrop panels — bought to display models
+    rather than to become part of one. Structurally this is `Tool` without the
+    cost pair: catalog and on-hand quantity in one row.
+
+    No join table to `kits`, unlike `upgrades`, and the difference is the point.
+    `upgrade_applications` decrements stock because an applied upgrade is *spent* —
+    a decal sheet is consumed, metal thrusters stay installed. Display gear is the
+    opposite: the stand under one kit this month is under another the next, so a
+    recorded link would be wrong most of the time, and every link row would still
+    need the guard machinery `upgrade_applications` carries to protect a fact with
+    no durability. Quantity is the whole of what is worth knowing.
+
+    No build status either. A row reading `quantity_on_hand: 5` cannot carry one
+    honestly, which is exactly why `kits` is one row per physical item (§3.1).
+    Something that genuinely needs individual build state is kit-shaped.
+    """
+
+    __tablename__ = "display_items"
+
+    name: Mapped[str] = mapped_column(index=True)
+    # Required, and load-bearing rather than decoration: it is the only field that
+    # answers "how many stands do I have" without inferring stand-ness from product
+    # names, which is what an MCP agent would otherwise have to do (#126, #127).
+    category: Mapped[str]
+    # Which kit scale the piece suits — "1/144", "1/100". Free text and nullable,
+    # following `kits.scale`, but with no grade to derive a default from. Null means
+    # non-scale or simply not recorded.
+    scale: Mapped[str | None]
+    # Nullable, unlike `upgrades.manufacturer`: a commercial set has one, a
+    # scratch-built terrain piece does not, and requiring it is friction with no
+    # invariant behind it.
+    manufacturer: Mapped[str | None]
+    quantity_on_hand: Mapped[int] = mapped_column(default=0)
+    notes: Mapped[str | None]
+
+    __table_args__ = (CheckConstraint("quantity_on_hand >= 0", name="quantity_non_negative"),)
+
+
 class UpgradeApplication(UUIDPrimaryKeyMixin, Base):
     """Join table: which upgrades have been used on which kits (§3.6)."""
 
