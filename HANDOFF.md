@@ -41,6 +41,50 @@ Template:
 
 ---
 
+## 2026-08-24 — Claude Code (Fable 5) — #98 + #127 implemented as PR #130 (awaiting Codex round); upgrades `category` decided-no
+
+- **Done:** **#98 + #127 in one branch — PR #130** (`feat/98-127-catalog-create-list`,
+  head `019f8dd`, **CI green all three jobs**; no migration) — the piece the previous
+  entry named. MCP gains `create_kit`, `create_catalog_{tool,consumable,upgrade,display}`,
+  `list_catalog_items(item_type, category?)` and `list_catalog_categories(item_type)`,
+  all thin over existing services (`test_mcp.py`'s `EXPECTED_TOOLS` pin extended — it
+  caught them, as designed). `services/catalog.py` gains `canonical_category` (a
+  category matching an existing one case-insensitively is stored under that spelling;
+  most-frequent wins, ties `COLLATE "C"`, own row excluded on update), wired into the
+  create, the PATCH, and orders' `_build_catalog_row` (rule 1: three live writers);
+  `list_catalog` grew a folded-equality category filter; `list_catalog_categories` is
+  the #96 shape. REST: `?category=` + `GET .../categories` on the three categorised
+  tables. Frontend: datalist typeaheads (Inventory forms + CatalogItemPicker new-mode),
+  client-side per-tab filter. Docs: design §3.5/§3.5a/§4/§7, import-export (imports
+  keep category spellings verbatim), README's MCP table — which was also missing
+  `update_kit` and the three retailer tools from #92/#97, backfilled in passing.
+- **Decisions:** **`upgrades` gets NO `category` column** (owner's call, this
+  session; recorded in design §3.5) — the machinery is generic over
+  `"category" in model.__table__.columns`, so the column is the whole cost if
+  revisited. **The importer does not canonicalise categories** (re-import must stay
+  a no-op; pinned by two tests) — the narrower fold-on-create-only variant is
+  flagged to the reviewer as a judged call, not implemented. **Codex for the
+  review** (1,063 insertions is past Cursor's ~1,000 ceiling); brief filled from
+  `.agents/review-brief.md`, saved to the session scratchpad as
+  `codex-brief-pr130.md` for the owner to paste.
+- **State:** backend **1003** (base 965), vitest 109, e2e **23/23 against a DB
+  migrated from empty** (all tables zero after, e2e DB dropped), ruff/build/oxlint
+  clean. Negative control in a `main` worktree: **34 red / 4 green** — the greens
+  are genuine controls, named in the PR body; sampled reds fail on the intended
+  assertions. **14 scratch mutants, all killed** (incl. the `COLLATE "C"` pin —
+  its kill proves the pin is live); tuples queued in the PR body for
+  `mutation_test.py` fold-in, joining the standing queue from #109/#111/#113/#118/#129;
+  untracked scratch harness left at `backend/mutation_scratch_127.py` for replay.
+  Dev servers running on :8000/:5173 serving the branch; dev DB throwaway (three
+  preview tools created and deleted through the API during browser verification).
+- **Next:** Codex round on #130; answer per `.agents/testing-and-review.md`; merge
+  on the owner's call (squash, `Closes #98, closes #127` — one `closes` each).
+  After merge: fold the 14 `cat-` tuples plus the standing queue into
+  `mutation_test.py` (anchors want re-checking). Live and still true: **no v0.2.6
+  tag ever** — one v0.2.7-alpha only when BOTH 0.2.6 (#77, #87, #90, #112, #119)
+  and 0.2.7 are done; 0.2.7 is empty, so **do not run the release gate**. **#112
+  before any real-collection starter-sheet import.** #122 rides M6.5.
+
 ## 2026-08-21 — Claude Code (Opus 5) — #126 closed: PR #129 merged as `20996e1` after two Codex rounds; #127 filed (narrowed against #98); both #127 and #98 sit on 0.2.8
 
 - **Done:** **#126 closed — PR #129 squash-merged as `20996e1`**, branch deleted,
@@ -231,69 +275,3 @@ Template:
   `main` is now 111 cases / ~13 min, baseline-inclusive — the runtime line in
   testing-and-review.md says 97 cases / ~11 min and can be refreshed in
   passing next time that file is edited.
-
-## 2026-08-20 — Claude Code (Fable 5) — #86 MERGED as `386ebda` after Codex rounds 5+6; #44 closed; #116 filed; the 0.2.7 gate is released
-
-- **Done:** owner asked to continue #86. (1) **`main` merged into the branch**
-  (`cb6e952` — merge, not rebase, so the thread's SHA anchors survive): #109 +
-  #111 + #113 + #115, zero textual conflicts; verified after the merge — 850
-  backend, ruff clean, frontend build/oxlint/vitest clean, 63/63 mutants with
-  every anchor still matching once despite #111/#115 rewriting `orders.py` under
-  the branch's shared predicates. (2) **Stamping decision taken (owner's call):
-  both importer arrival sites borrow the order's `received_at`** (`5cbc31d`) —
-  `_advance_kits_for_newly_received_orders` stamps the applied receipt instead of
-  `now`, and the apply loop's `spawn_kits` call passes the post-write order row's
-  receipt (`spawn_kits`' own gate keeps it off kits asserted past backlog).
-  Sweeping the class found a third site: import corrections of a receipt date
-  don't restamp kits the way REST's `_restamp_receipt_kits` does — **declined and
-  filed as #116**, pinned by `test_a_correction_by_import_leaves_kit_stamps_alone`.
-  Docs in the same commit: design §3.9 + §12.5, import-export.md. Eight new tests
-  in `test_order_invariants.py` over the value, state and **mode** axes
-  (replace_all included, plus a receive-and-spawn-in-one-upload case that pins the
-  write-loop-before-fan-out ordering); negative control **5 red / 3 green at
-  `cb6e952`** (greens = the two asserted-past-backlog gate cases and the
-  no-cascade pin); mutants `stamp-1`/`stamp-2` added to the tracked harness, one
-  per fix site, each killed by a distinct test. Decision comment posted on the PR
-  at `5cbc31d`.
-- **Decisions:** merge-forward, never rebase, on a reviewed public PR (anchors +
-  squash-merge); borrow at both arrival sites but decline the correction cascade
-  (#116 — the importer writes only rows the upload names plus the two arrival
-  derivations); the fan-out reads the receipt **post-write** via
-  `session.get(Order, ...)` — a plan-time value would miss a receipt the same
-  upload sets.
-- **State:** branch head **`5846c44`, pushed**; backend **864**, ruff clean,
-  **68/68 mutants**; frontend untouched since `cb6e952` (verified clean there);
-  no migration beyond `main`'s. **Codex round 5 (the gating round, brief from
-  `.agents/review-brief.md`) ran at `5cbc31d`: NO-GO, one P2 + one P3, both
-  fixed at `5846c44`, reply posted; it took no issue with any deliberate call.**
-  P2: a future `received_at` was refused by REST/MCP but accepted by import —
-  `receipt_is_future` is now a shared predicate in `services/orders.py`, and
-  `invariants._check_future_receipts` refuses it at preview wherever an upload
-  *writes* the column (change-not-cell: legacy future values restate as no-ops;
-  **create-is-a-restore is the stated policy**, both modes pinned — flipping it
-  is one condition and two tests). P3: the spawn's stamp was read post-hash-
-  check; `_order_receipt` resolves the post-write instant at plan time, `_Spawn`
-  carries it, the fingerprint hashes it, apply writes the planned value — a
-  correction between preview and apply now stales the hash (409). Six tests
-  (3 red-first at `5cbc31d` on the review's own assertions / 3 controls);
-  mutants `stamp-3`/`fut-1`/`fut-2` new, `stamp-1` re-anchored. The queued
-  `rcpt-` fold-in tuples anchor lines the predicate refactor moved — re-check at
-  fold-in. **Round 6: GO, clean** — Codex replayed both failure modes
-  independently at `5846c44`, accepted create-as-restore as a stated product
-  decision, and declared clear-to-merge; **#86 squash-merged as `386ebda`,
-  branch deleted, #44 closed**, on the owner's call. Six review rounds total on
-  this PR; all thread SHAs survive because the branch was always merged forward,
-  never rebased. Trap re-confirmed the hard way: two
-  concurrent pytest sessions against `plamotrack_test` truncate each other into
-  phantom failures — one session at a time is already the written rule. Stale
-  worktrees `/private/tmp/plamotrack-pr100` and `-pr108-main` remain, not this
-  session's, left alone. Live and still true: **the #86 gate is released** —
-  #95, #110, #112, #77, #87 and #90 are unblocked; **0.2.7 is now #95-or-defer,
-  owner's call**; 0.2.8 is open ground (#104/#98/#99/#53/#54/#61/#63/#67); #114
-  is M5.1-shaped; #116 unmilestoned.
-- **Next:** the mutant fold-in queue is actionable now that #86's harness is on
-  `main`: 33 tuples from the PR bodies of #109 (17), #111 (6), #113 (8) and
-  #115 (2) fold into `mutation_test.py` — anchors verified once at their source,
-  but the `rcpt-` set anchors lines the `receipt_is_future` refactor moved, so
-  expect the harness to report those and re-anchor them. Then #95-or-defer
-  decides 0.2.7; #110/#112 are ready when milestoned.
