@@ -130,6 +130,11 @@ export const api = {
     request<Kit>(`/kits/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   deleteKit: (id: string) => request<void>(`/kits/${id}`, { method: "DELETE" }),
 
+  /** Distinct category values in use on one catalog table, most frequent first —
+   *  the typeahead feed (#127; the listKitSeries shape). Per-table: a tool
+   *  category and a consumable category are separate vocabularies. */
+  listCategories: (table: "tools" | "consumables" | "display-items") =>
+    request<string[]>(`/${table}/categories`),
   listTools: () => request<Tool[]>("/tools"),
   createTool: (data: ToolCreate) => request<Tool>("/tools", post(data)),
   updateTool: (id: string, data: ToolUpdate) => request<Tool>(`/tools/${id}`, patch(data)),

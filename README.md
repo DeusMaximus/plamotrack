@@ -257,8 +257,16 @@ issue if yours needs something unusual.
 | `list_kits` | Filter by status, grade or series |
 | `list_kit_series` | Series names already in use — check before writing a new spelling |
 | `get_kit` | One kit, in full |
+| `create_kit` | Add a kit that *wasn't* bought — a gift, a trade, a carry-over from before tracking; purchases go through `create_order` |
 | `update_kit_status` | Move a kit along the pipeline |
+| `update_kit` | Edit a kit's details — name, grade, series, rating, notes, build dates |
 | `search_catalog` | Search every catalog — the same search the UI typeahead uses, so agents hit the same de-duplication a human does |
+| `list_catalog_items` | One whole catalog table, optionally filtered by category — the listing `search_catalog` isn't |
+| `list_catalog_categories` | Category names already in use on a table — check before writing a new spelling |
+| `create_catalog_tool` / `_consumable` / `_upgrade` / `_display` | Add a catalog row without a purchase — a first stocktake, a gift, a hand-me-down |
+| `update_catalog_tool` / `_consumable` / `_upgrade` / `_display` | Edit a catalog row — one tool per catalog, each taking that table's own fields |
+| `list_retailers` | Every shop on record, report card included |
+| `create_retailer` / `update_retailer` | Add a shop; rate it, note the crushed box, fill in the report card |
 | `create_order` | Full order with lines; kits fan out, retailers are matched by name or created |
 | `list_orders` | Optionally pending-only — how an agent finds the order a shipping email belongs to |
 | `get_order` | One order in full — the read an edit starts from |
@@ -267,7 +275,6 @@ issue if yours needs something unusual.
 | `mark_order_shipped` | Moves that order's waiting kits to in-transit — with an optional ship date, for shipping notifications logged after the fact; never touches stock |
 | `adjust_stock` | Nudge a quantity, with a reason |
 | `apply_upgrade` | Record an upgrade part going onto a kit |
-| `update_catalog_tool` / `_consumable` / `_upgrade` / `_display` | Edit a catalog row — one tool per catalog, each taking that table's own fields |
 
 Import and export deliberately have **no** MCP tools. An agent that can silently replace
 your entire collection is not a feature.

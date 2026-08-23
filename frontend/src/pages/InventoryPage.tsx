@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 
 import { api, ApiError, metaQuery } from "../api/client";
@@ -157,6 +157,14 @@ function ItemForm({
 }) {
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  // The typeahead half of the category vocabulary (#127) — the same device the kit
+  // form gives series. The server folds a case-insensitive match onto the stored
+  // spelling either way; this is what makes picking the stored spelling easy.
+  const { data: categoryValues } = useQuery({
+    queryKey: [tab, "categories"],
+    queryFn: () => api.listCategories(tab as "tools" | "consumables" | "display-items"),
+    enabled: tab !== "upgrades",
+  });
   // A stored cost is read back in the code it was recorded under, never today's
   // reference currency — a JPY tool must not be re-read with two decimal places (§6).
   const storedCurrency =
@@ -264,8 +272,14 @@ function ItemForm({
           <Field label="Category" required error={errors.category?.message}>
             <Input
               {...register("category", { required: "Category is required" })}
+              list="inventory-category-values"
               placeholder={CATEGORY_PLACEHOLDER[tab]}
             />
+            <datalist id="inventory-category-values">
+              {categoryValues?.map((value) => (
+                <option key={value} value={value} />
+              ))}
+            </datalist>
           </Field>
         ) : (
           <Field label="Manufacturer" required error={errors.manufacturer?.message}>
@@ -476,6 +490,7 @@ export function InventoryPage() {
   const [editing, setEditing] = useState<InventoryItem | null>(null);
   const [applying, setApplying] = useState<Upgrade | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [categoryFilter, setCategoryFilter] = useState("");
 
   const removeItem = async (item: InventoryItem) => {
     if (!window.confirm(`Delete "${item.name}"?`)) return;
@@ -515,6 +530,28 @@ export function InventoryPage() {
     enabled: tab === "display-items",
   });
 
+  // Distinct categories among the loaded rows, for the filter dropdown —
+  // KitsPage's series-filter shape. Alphabetical: a picker, not a ranking.
+  const categoryOptions = useMemo(() => {
+    const rows =
+      tab === "tools"
+        ? tools.data
+        : tab === "consumables"
+          ? consumables.data
+          : tab === "display-items"
+            ? displayItems.data
+            : undefined;
+    const values = new Set<string>();
+    for (const row of rows ?? []) if ("category" in row) values.add(row.category);
+    return [...values].sort((a, b) => a.localeCompare(b));
+  }, [tab, tools.data, consumables.data, displayItems.data]);
+
+  const inCategory = <T extends { category: string }>(rows: T[] | undefined) =>
+    categoryFilter ? (rows ?? []).filter((row) => row.category === categoryFilter) : (rows ?? []);
+  const filteredTools = inCategory(tools.data);
+  const filteredConsumables = inCategory(consumables.data);
+  const filteredDisplayItems = inCategory(displayItems.data);
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
@@ -529,7 +566,12 @@ export function InventoryPage() {
         {TABS.map((t) => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id)}
+            onClick={() => {
+              setTab(t.id);
+              // Vocabularies are per-table — a tool category filter is
+              // meaningless on the consumables tab.
+              setCategoryFilter("");
+            }}
             className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
               tab === t.id
                 ? "border-indigo-600 text-indigo-700"
@@ -541,12 +583,28 @@ export function InventoryPage() {
         ))}
       </div>
 
+      {tab !== "upgrades" && categoryOptions.length > 0 && (
+        <Select
+          aria-label="Filter by category"
+          className="w-auto"
+          value={categoryFilter}
+          onChange={(event) => setCategoryFilter(event.target.value)}
+        >
+          <option value="">All categories</option>
+          {categoryOptions.map((value) => (
+            <option key={value} value={value}>
+              {value}
+            </option>
+          ))}
+        </Select>
+      )}
+
       <ErrorBanner message={actionError} />
 
       {tab === "tools" &&
         (tools.isError ? (
           <ErrorBanner message={`Failed to load tools: ${(tools.error as Error).message}`} />
-        ) : tools.data?.length ? (
+        ) : filteredTools.length ? (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>
@@ -560,7 +618,7 @@ export function InventoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {tools.data.map((tool) => (
+                {filteredTools.map((tool) => (
                   <tr key={tool.id} className="border-b border-zinc-100 last:border-0">
                     <td className="px-3 py-2 font-medium">{tool.name}</td>
                     <td className="px-3 py-2">{tool.category}</td>
@@ -596,7 +654,13 @@ export function InventoryPage() {
             </table>
           </div>
         ) : (
-          <EmptyState>{tools.isLoading ? "Loading…" : "No tools yet."}</EmptyState>
+          <EmptyState>
+            {tools.isLoading
+              ? "Loading…"
+              : categoryFilter
+                ? `No tools in “${categoryFilter}”.`
+                : "No tools yet."}
+          </EmptyState>
         ))}
 
       {tab === "consumables" &&
@@ -604,7 +668,7 @@ export function InventoryPage() {
           <ErrorBanner
             message={`Failed to load consumables: ${(consumables.error as Error).message}`}
           />
-        ) : consumables.data?.length ? (
+        ) : filteredConsumables.length ? (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>
@@ -617,7 +681,7 @@ export function InventoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {consumables.data.map((item) => {
+                {filteredConsumables.map((item) => {
                   const low =
                     item.low_stock_threshold !== null &&
                     item.quantity_on_hand <= item.low_stock_threshold;
@@ -657,7 +721,13 @@ export function InventoryPage() {
             </table>
           </div>
         ) : (
-          <EmptyState>{consumables.isLoading ? "Loading…" : "No consumables yet."}</EmptyState>
+          <EmptyState>
+            {consumables.isLoading
+              ? "Loading…"
+              : categoryFilter
+                ? `No consumables in “${categoryFilter}”.`
+                : "No consumables yet."}
+          </EmptyState>
         ))}
 
       {tab === "upgrades" &&
@@ -716,7 +786,7 @@ export function InventoryPage() {
           <ErrorBanner
             message={`Failed to load display items: ${(displayItems.error as Error).message}`}
           />
-        ) : displayItems.data?.length ? (
+        ) : filteredDisplayItems.length ? (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>
@@ -731,7 +801,7 @@ export function InventoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {displayItems.data.map((row) => (
+                {filteredDisplayItems.map((row) => (
                   <tr key={row.id} className="border-b border-zinc-100 last:border-0">
                     <td className="px-3 py-2 font-medium">{row.name}</td>
                     <td className="px-3 py-2">{row.category}</td>
@@ -763,7 +833,9 @@ export function InventoryPage() {
           <EmptyState>
             {displayItems.isLoading
               ? "Loading…"
-              : "No display items yet — stands, bases, diorama scenery."}
+              : categoryFilter
+                ? `No display items in “${categoryFilter}”.`
+                : "No display items yet — stands, bases, diorama scenery."}
           </EmptyState>
         ))}
 

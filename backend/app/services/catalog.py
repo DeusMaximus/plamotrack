@@ -27,7 +27,12 @@ from app.schemas.catalog import (
     UpgradeCreate,
     UpgradeUpdate,
 )
-from app.services.names import clean_optional_text, clean_required_text, require_unique_name
+from app.services.names import (
+    WHITESPACE,
+    clean_optional_text,
+    clean_required_text,
+    require_unique_name,
+)
 from app.services.numeric import require_int4
 from app.services.write_gate import acquire_write_gate
 
@@ -70,6 +75,17 @@ CATALOG_MODELS: dict[ItemType, type[CatalogRow]] = {
     ItemType.CONSUMABLE: Consumable,
     ItemType.UPGRADE: Upgrade,
     ItemType.DISPLAY: DisplayItem,
+}
+
+#: The catalog tables that carry a `category` column — today all but `upgrades`,
+#: which was considered for one and decided against (#127; §3.5). Derived from the
+#: mapped columns rather than restated, so the category filter, the distinct-values
+#: surface and the canonicalisation below pick a table up the moment it grows the
+#: column, with no second list to update.
+CATEGORISED_MODELS: dict[ItemType, type[CatalogRow]] = {
+    item_type: model
+    for item_type, model in CATALOG_MODELS.items()
+    if "category" in model.__table__.columns
 }
 
 
@@ -133,6 +149,52 @@ async def search(
     return results
 
 
+async def canonical_category(
+    session: AsyncSession,
+    model: type[CatalogRow],
+    category: str,
+    *,
+    exclude_id: uuid.UUID | None = None,
+) -> str:
+    """The spelling `category` is stored under: an existing category of this table
+    matching case-insensitively is reused, otherwise the input stands as given (#127).
+
+    Reuse rather than refuse — the opposite lean from `require_unique_name` — because
+    a category is a *grouping*, not an identity: two tools named alike are a
+    conflict, two tools categorised "Cutting" and "cutting" are one group fragmented.
+    Where legacy rows already hold several spellings of one key, the most frequent
+    wins — the same entry `list_catalog_categories` puts on top, so what a write
+    folds onto is exactly what the typeahead offers. Ties break by byte order under
+    `COLLATE "C"`, pinned explicitly because the winner is *stored*: the database's
+    own collation orders case differently between libc flavours, and the dev Mac
+    and CI must not canonicalise onto different spellings. Per-table, like every
+    name predicate: a tool category and a consumable category are separate
+    vocabularies.
+
+    `exclude_id` is the update path's own row (`require_unique_name`'s #107 shape):
+    re-casing the category on the only row holding it is the user correcting the
+    vocabulary entry itself, and without the exclusion the row's stored spelling
+    would silently win over the correction.
+
+    Callers hold the write gate (every caller is a writer already), which is what
+    keeps two concurrent writers from each minting their own spelling of a new
+    category. Folding and trimming both happen in Postgres, stored side trimmed with
+    the Python whitespace set — the `names._same_key` rule, for the same #49/#109
+    reasons.
+    """
+    stmt = (
+        select(model.category)
+        .where(func.lower(func.btrim(model.category, WHITESPACE)) == func.lower(category.strip()))
+        .group_by(model.category)
+        .order_by(func.count().desc(), model.category.collate("C"))
+        .limit(1)
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(model.id != exclude_id)
+    existing = await session.scalar(stmt)
+    return existing if existing is not None else category
+
+
 async def _create_catalog_row(
     session: AsyncSession,
     model: type[CatalogRow],
@@ -149,6 +211,8 @@ async def _create_catalog_row(
     fields = data.model_dump()
     _normalise_text(model, fields)
     fields["name"] = await require_unique_name(session, model, data.name)
+    if fields.get("category"):
+        fields["category"] = await canonical_category(session, model, fields["category"])
     row = model(**fields)
     session.add(row)
     await session.flush()
@@ -172,8 +236,52 @@ async def create_display_item(session: AsyncSession, data: DisplayItemCreate) ->
     return await _create_catalog_row(session, DisplayItem, data)
 
 
-async def list_catalog(session: AsyncSession, model: type[CatalogRow]) -> list[CatalogRow]:
-    return list((await session.scalars(select(model).order_by(model.name))).all())
+async def list_catalog(
+    session: AsyncSession, model: type[CatalogRow], category: str | None = None
+) -> list[CatalogRow]:
+    stmt = select(model).order_by(model.name)
+    if category is not None:
+        if "category" not in model.__table__.columns:
+            # Reachable through the MCP tool, whose item_type and category are
+            # independent arguments; the REST routes never declare the parameter
+            # on a table without the column.
+            raise InvalidInputError(
+                f"{model.__tablename__} have no category column, so they cannot be filtered by one"
+            )
+        # Case-insensitive equality, not ILIKE — the `list_kits` grade/series
+        # predicate shape, for the same #49 reasons: `%` and `_` in a category are
+        # characters, and both sides fold in Postgres so the folds cannot disagree.
+        stmt = stmt.where(func.lower(model.category) == func.lower(category))
+    return list((await session.scalars(stmt)).all())
+
+
+async def list_catalog_categories(session: AsyncSession, model: type[CatalogRow]) -> list[str]:
+    """The category values in use on one catalog table, most frequent first (#127).
+
+    `list_kit_series`'s shape (#96), for the same reason: category is free text, so
+    the select-or-create device for it is a vocabulary the form's typeahead and the
+    MCP tool both read before writing. Frequency order puts the spelling the
+    collection actually uses on top; ties break alphabetically (case-insensitively,
+    then by byte order under `COLLATE "C"` for the case-variant pairs legacy rows
+    can hold — the same pin `canonical_category` carries, so the listing is stable
+    across libc flavours). Per-table — a tool category and a consumable category
+    are separate vocabularies, exactly as their names are separate namespaces.
+    """
+    if "category" not in model.__table__.columns:
+        raise InvalidInputError(
+            f"{model.__tablename__} have no category column, so there is no "
+            "category vocabulary to list"
+        )
+    # category is NOT NULL on every table that has it, but rows written before
+    # #129's blank refusal can hold whitespace — the btrim guard hides those the
+    # way `list_kit_series`'s does, with the same whitespace set (#109's lesson).
+    stmt = (
+        select(model.category)
+        .where(func.btrim(model.category, WHITESPACE) != "")
+        .group_by(model.category)
+        .order_by(func.count().desc(), func.lower(model.category), model.category.collate("C"))
+    )
+    return list((await session.scalars(stmt)).all())
 
 
 #: Fields that are NOT NULL on at least one catalog table — an explicit null in a
@@ -235,6 +343,12 @@ async def update_catalog_item(
         # own id is excluded so it may keep or re-case its name (#107).
         fields["name"] = await require_unique_name(
             session, model, fields["name"], exclude_id=item_id
+        )
+    if fields.get("category"):
+        # Same exclusion, opposite lean: another row's spelling is reused rather
+        # than refused, and the row's own is excluded so a re-case can correct it.
+        fields["category"] = await canonical_category(
+            session, model, fields["category"], exclude_id=item_id
         )
     for key, value in fields.items():
         setattr(row, key, value)
