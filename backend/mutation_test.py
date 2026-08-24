@@ -1295,6 +1295,62 @@ CASES = [
         "        received = settled.stated if settled is not None else False",
         "receipt_instant",
     ),
+    # --- #119 / PR #139: derived ship/receive advances as hash-bound plan ------------
+    # --- descriptors; one mutant per fix site. The equivalent mutant (receive --------
+    # --- branch reading kit.status instead of the ship-composed `after`) is ----------
+    # --- excluded: SHIP_ELIGIBLE ⊂ ARRIVAL_ELIGIBLE makes the two reads always agree.
+    (
+        "adv-1. the advance descriptors fall out of the plan fingerprint",
+        IMP,
+        '        "advances": sorted(\n'
+        "            [str(advance.kit_id), advance.before.value, advance.after.value, canon(advance.stamp)]\n"
+        "            for advance in advances\n"
+        "        ),",
+        '        "advances": [],',
+        "kit_progressed_between",
+    ),
+    (
+        "adv-2. the before-status falls out of the descriptor's fingerprint",
+        IMP,
+        "            [str(advance.kit_id), advance.before.value, advance.after.value, canon(advance.stamp)]",
+        "            [str(advance.kit_id), advance.after.value, canon(advance.stamp)]",
+        "still_eligible_move",
+    ),
+    (
+        "adv-3. the explicit-status yield is off",
+        IMP,
+        "                    if kit.id in explicit_status_ids:\n                        continue",
+        "                    if False:\n                        continue",
+        "do_not_both_stamp_one_kit",
+    ),
+    (
+        "adv-4. ship eligibility widens to every status",
+        IMP,
+        "                    if newly_shipped is not None and after in SHIP_ELIGIBLE:",
+        "                    if newly_shipped is not None:",
+        "preview_names_the_ship_advance",
+    ),
+    (
+        "adv-5. a correction counts as a transition again",
+        IMP,
+        "        change = next((c for c in row.changes if c.field == column), None)\n        if change is None or change.before:\n            return None",
+        "        change = next((c for c in row.changes if c.field == column), None)\n        if change is None:\n            return None",
+        "never_advances_a_regressed",
+    ),
+    (
+        "adv-6. the preview stops counting the advances",
+        IMP,
+        "            kits_advanced=len(self.advances),",
+        "            kits_advanced=0,",
+        "preview_names_the_ship_advance",
+    ),
+    (
+        "adv-7. the advances are never planned at all",
+        IMP,
+        "        self._plan_spawns(replace_all)\n        self._plan_advances()",
+        "        self._plan_spawns(replace_all)",
+        "ship_by_import_advances",
+    ),
 ]
 
 
