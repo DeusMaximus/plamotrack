@@ -297,10 +297,15 @@ a case-insensitively folded `category` filter on each list surface, a per-table
 distinct-values endpoint (most frequent first — the #96 series device), and one lean
 `series` does not have — a written category matching an existing one
 case-insensitively is stored under that existing spelling, on all three live writers
-(create, edit, and an order line's `new_item`). The CSV importer deliberately does
-not fold: a re-imported archive must be a no-op, and an instance can legitimately
-hold case-variant spellings from before the rule — folding them onto each other on
-import would rewrite rows the upload never named (§12.5a spirit). Vocabularies are
+(create, edit, and an order line's `new_item`). The CSV importer folds exactly one
+case — an id-less row classified CREATE (stubs included), which states no prior
+spelling to preserve; the fold happens at plan time, so the fingerprint binds it and
+the preview announces the spelling apply will store. Everything that *restores*
+stays verbatim: an UPDATE and an id-bearing create-is-a-restore each assert a stored
+fact, and rewriting one would make a re-imported archive a rewrite (#130 review,
+P2-3; §12.5a spirit). Matching, the filter and the vocabulary all read the *trimmed*
+stored spelling, so a legacy padded row is found and folded onto by its trimmed form
+without the padding ever propagating (#130 review, P2-2). Vocabularies are
 per-table: a tool category and a consumable category are separate namespaces, exactly
 as their names are.
 
@@ -724,6 +729,10 @@ pile of embedded copy.
 Exposed via FastMCP alongside the REST API, sharing the same service layer. The endpoint
 is `/mcp/` on the API port (streamable HTTP).
 
+- `get_meta()` (#99) — the app version and the instance's reference currency,
+  served by the same function as REST's `GET /meta` so the two cannot disagree.
+  What `create_order`'s "omit currency_code" advice used to point at as a `meta`
+  resource that never existed
 - `list_kits(status?, grade?, series?)`
 - `list_kit_series()` — the series spellings in use, most frequent first; the
   select-or-create device for a free-text column (#96) — agents check it before

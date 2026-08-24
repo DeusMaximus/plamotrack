@@ -425,9 +425,7 @@ async def test_a_create_folds_onto_a_restored_rows_spelling_in_the_same_upload(c
             {"id": restored_id, "name": "Godhand SPN-120", "category": "Cutting"},
         ]
     )
-    resp = await apply(
-        client, content, filename="tools.csv", mode="replace_all", confirm="REPLACE"
-    )
+    resp = await apply(client, content, filename="tools.csv", mode="replace_all", confirm="REPLACE")
     assert resp.status_code == 200, resp.text
 
     categories = {t["name"]: t["category"] for t in (await client.get("/tools")).json()}

@@ -18,6 +18,7 @@ from app.db import session_scope
 from app.exceptions import DomainError
 from app.models import ItemType
 from app.models.enums import KitStatus
+from app.routers.meta import read_meta
 from app.schemas.catalog import (
     ConsumableCreate,
     ConsumableRead,
@@ -174,6 +175,17 @@ class _KitInput(KitCreate):
     reaches the create tool without a second list to edit."""
 
     status: str = KitStatus.BACKLOG.value
+
+
+@mcp.tool
+async def get_meta() -> dict:
+    """Instance identity and settings: the app version and the instance's
+    reference currency — the default stamped onto any price entered without a
+    currency_code, and the target currency of every stored conversion snapshot
+    (#99). Read this before omitting currency_code on create_order, so "omit it"
+    is a decision about the purchase rather than a guess. The same function
+    serves REST's GET /meta, so the two surfaces cannot disagree."""
+    return (await read_meta()).model_dump(mode="json")
 
 
 @mcp.tool
@@ -452,8 +464,8 @@ async def create_order(
     retailer's order_number from the confirmation email when available (support
     reference — only unique per retailer, never treat it as an identifier). Prices
     are integer minor units (cents/yen) with an ISO 4217 currency_code; omit
-    currency_code to use the instance's own reference currency (see the `meta`
-    resource)."""
+    currency_code to use the instance's own reference currency, which get_meta
+    reports."""
     try:
         parsed_date = date.fromisoformat(order_date)
     except ValueError:

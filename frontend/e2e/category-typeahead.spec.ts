@@ -47,12 +47,14 @@ test("each new-item line resolves its own category vocabulary", async ({ page })
       .nth(nth)
       .evaluate((el: HTMLInputElement) => Array.from(el.list?.options ?? []).map((o) => o.value));
 
-  const toolOptions = await resolved(0);
-  const consumableOptions = await resolved(1);
-  expect(toolOptions).toContain(TOOL_CATEGORY);
-  expect(toolOptions).not.toContain(CONSUMABLE_CATEGORY);
-  expect(consumableOptions).toContain(CONSUMABLE_CATEGORY);
-  expect(consumableOptions).not.toContain(TOOL_CATEGORY);
+  // Polled: each vocabulary arrives from its own query, and an empty datalist
+  // before the response lands is loading, not the defect. The defect is the
+  // WRONG vocabulary resolving, which the not-contains below pin once each
+  // input has provably resolved its own.
+  await expect.poll(() => resolved(0), { timeout: 5_000 }).toContain(TOOL_CATEGORY);
+  await expect.poll(() => resolved(1), { timeout: 5_000 }).toContain(CONSUMABLE_CATEGORY);
+  expect(await resolved(0)).not.toContain(CONSUMABLE_CATEGORY);
+  expect(await resolved(1)).not.toContain(TOOL_CATEGORY);
 
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);

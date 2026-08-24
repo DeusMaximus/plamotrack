@@ -254,6 +254,7 @@ issue if yours needs something unusual.
 
 | Tool | What it does |
 |---|---|
+| `get_meta` | App version and the instance's reference currency — what an omitted `currency_code` means |
 | `list_kits` | Filter by status, grade or series |
 | `list_kit_series` | Series names already in use — check before writing a new spelling |
 | `get_kit` | One kit, in full |
