@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-24 — Claude Code (Fable 5) — #119 and #77 closed (PRs #139, #141, one Cursor round each); fold-in #140 merged, #142 open on merge call
+## 2026-08-24 — Claude Code (Fable 5) — #119 and #77 closed (PRs #139, #141, one Cursor round each); both fold-ins merged (#140, #142)
 
 - **Done:** **#119 — PR #139** squash-merged as `b6c083d`. Both derived advances
   (ship + receive) are plan-time `_Advance` descriptors (kit id, before-status,
@@ -68,15 +68,14 @@ Template:
   the diff-cap recipe on the PR if ever revisited. One terminal descriptor per
   kit on a combined ship+receive flip; before-status is hash-bound.
 - **Fold-ins:** #139's `adv-` queue merged as **PR #140** (`4b5f1f0`, 163/163).
-  #141's `cap-` queue open as **PR #142** (`8a41455`, CI green, harness
-  **170/170, 17m08s** at that head, rides without review per #40) — **awaiting
-  the owner's merge call** (pinged). #139 re-anchored ship-5/ship-12/stamp-2;
+  #141's `cap-` queue merged as **PR #142** (`85d3197`; harness
+  **170/170, 17m08s**, rode without review per #40). #139 re-anchored ship-5/ship-12/stamp-2;
   #141 re-anchored adv-7. No other queues outstanding.
 - **State:** `main` at `0302c36` (+ hand-off commits), backend **1050**, vitest
   109, e2e **24/24 from empty** (verified twice this session), CI green at every
-  merged head. Tracked harness on `main` is 163 until #142 merges. No dev servers
+  merged head. Tracked harness on `main` is 170/170. No dev servers
   running (:8000/:5173 free). No migrations this session.
-- **Next:** merge **#142**, then **0.2.6 is down to #87 alone** — blocked on the
+- **Next:** **0.2.6 is down to #87 alone** — blocked on the
   owner's product call (refuse vs leave; owner deferred to "discuss when we get
   there", and "there" is now). Live: **no v0.2.6 tag ever**; one v0.2.7-alpha
   only when BOTH 0.2.6 (#87) and 0.2.7 (empty) are done — the #87 call is the
