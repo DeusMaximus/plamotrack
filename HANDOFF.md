@@ -106,6 +106,16 @@ Template:
   `dfa87f3` on the owner's call; #98, #127 and #99 all closed; branch deleted;
   CI green at every head.** Dev servers on :8000/:5173 serve code identical to
   the merge.
+- **Also this session (amended in place): agent skills — PR #131 open**
+  (`feat/skills-gunpla`, head `e7e6452`, docs-only). The owner's Gunpla-conventions
+  draft, revised (decals reclassified as Upgrades per repo canon; the nonexistent
+  retailer-currency field replaced with per-order `currency_code` + `get_meta`; a
+  Categories section for the #127 vocabulary; grade advice tied to scale
+  derivation) and packaged as `skills/plamotrack-gunpla/SKILL.md` in the open
+  Agent Skills format, with `skills/README.md` (Claude Desktop install only,
+  others "coming soon" — owner's instruction), a README pointer, and design
+  §7/§9.1 notes (the skill layer recorded as more staying-generic evidence).
+  Review skipped (docs-only, #40 criterion). **Awaiting the owner's merge call.**
 - **Next:** **the mutant fold-in is now the queued mechanical piece** — 25 `cat-`
   tuples (in the PR #130 body and the untracked `backend/mutation_scratch_127.py`,
   which also holds the runner-ready form) plus #129's 10 `dsp-` tuples fold into
