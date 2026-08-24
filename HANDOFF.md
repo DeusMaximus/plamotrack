@@ -41,6 +41,59 @@ Template:
 
 ---
 
+## 2026-08-24 — Claude Code (Fable 5) — #90 + #112 closed (PRs #133, #136, one Cursor round each); both mutant queues folded (#135, #138); #137 filed
+
+- **Done:** **#90 — PR #133** squash-merged as `545f341`, Cursor round 1 GO clean.
+  `_resolve_ref` now dispatches catalog refs through `invariants.effective_item_type`,
+  which gained a `stored` parameter for the one caller that runs before matching
+  binds `row.target` (a typeless row can only match by id, so the lookup equals the
+  future target). Post-#86 the live damage was: dead uuid **written through on
+  stored kit lines**, `catalog_name` mirror silently ignored, upload-remapped id
+  falsely refused — all three red-first; 6 tests in `test_order_invariants.py`
+  (3 red / 3 green worktree control). **#112 — PR #136** squash-merged as
+  `ce59b2b`, Cursor GO + 2 P3s, both answered at `cf19d17`. The starter sheet's
+  retailer branch synthesizes stable line ids and emits full `kits` rows with
+  `order_item_id`, so the §3.9 hybrid dispatch spawns nothing and rating/notes/
+  build dates/series all travel; status + arrival stamp resolved through
+  `initial_kit_status` (made public — rule-1 shared predicate; the receive-advance
+  is UPDATE-only, so this resolution is load-bearing, proven by a mutant).
+  import-export.md's #112 caveat removed. P3-1 (cross-file same-order-key
+  restatement) remedied by documentation, its optional preview banner **declined**
+  (the update diff already shows the price/qty movement); P3-2 pinned as tests
+  (stated in_transit, replace_all). A st-2 count slip Cursor caught was owned and
+  corrected in the PR body.
+- **Decisions:** **line ids are keyed on order key + kit identity + occurrence,
+  overruling #112's "position" sketch** — position ids silently rewrite lines when
+  one order key (shop+date, numberless) spans two separately-imported files;
+  quantity/price deliberately outside the id so fix-and-re-import updates in
+  place. Review-endorsed (PR #136 deliberate calls 1–2). Cursor for both reviews
+  (~200 and ~340 insertions — size table).
+- **Fold-ins:** #133's queue merged as **PR #135** (`25f5b20`), #136's as
+  **PR #138** (`85468c9`); #136's tuples relabelled `st-` → `strt-` (`-k st-`
+  substring-matches "post-write" in old labels; prefix rule sharpened in the
+  procedure doc). Harness **156/156, 16m12s**; runtime + case-count lines
+  refreshed. **No mutant queues outstanding.**
+- **Also:** **#137 filed** — standalone (retailer-free) starter rows duplicate on
+  re-import (verified: one row, two applies, two kits); no synthesized standalone
+  id is safe (any scheme merges distinct physical kits across split files —
+  corruption beats duplication), so the remedy is a product call; unmilestoned.
+  A full-harness run mid-session read as ~15 mass failures: a spawned agent
+  session ran pytest against `plamotrack_test` concurrently — signature now in
+  testing-and-review.md ("a burst of failures that vanish on re-probe").
+- **State:** clean. `main` at `85468c9`, CI green at every merged head, backend
+  **1031**, harness 156/156. Dev servers on :8000/:5173 still run **pre-#133
+  code** — stale, restart before any browser verification. Codex budget ~99%
+  remaining (unused this session; both rounds were Cursor).
+- **Next:** **#119, in a fresh session** (owner's call, context budget) — derived
+  ship/receive kit advances hash-bound as plan descriptors, BOTH siblings in one
+  structural change extending the `_Spawn` precedent. Then #77 (aggregate fan-out
+  cap). **#87 stays blocked on the owner's product call** (refuse vs leave —
+  owner deferred to "discuss when we get there"). Live: **no v0.2.6 tag ever**;
+  one v0.2.7-alpha only when BOTH 0.2.6 (#119, #77, #87) and 0.2.7 are done, and
+  0.2.7 is empty, so **do not run the release gate**. #112 merged means the
+  real-collection starter import is unblocked — **back up the LXC before pulling
+  `main`**. #122 rides M6.5.
+
 ## 2026-08-24 — Claude Code (Fable 5) — #98 + #127 + #99 closed: PR #130 merged as `dfa87f3` after three Codex rounds; upgrades `category` decided-no
 
 - **Done:** **#98 + #127 in one branch — PR #130** (`feat/98-127-catalog-create-list`,
@@ -274,67 +327,3 @@ Template:
 - **Next:** implement #120 (items 1+2) — this is the "one more item" the prior
   entry said the owner was adding to 0.2.7. Once it lands, run the release gate
   (`.agents/testing-and-review.md`) and 0.2.7 is ready to cut.
-
-## 2026-08-21 — Claude Code (Fable 5) — #117 merged as `7396e5d`, #118 merged as `53009c0` (#95 closed) after two Codex rounds; 0.2.7 held open for one more item
-
-- **Done:** (1) **The fold-in queue, folded — PR #117** (branch
-  `test/fold-queued-mutants`, `985e6d7`; no app or test code — only
-  `mutation_test.py` and the procedure doc). The true queue was **29, not the 33
-  earlier entries said** (two count slips: #111 carries 5 tuples, and #113's
-  five live in its round-1 Cursor review while its body names only 3
-  candidates) — harness 68 → **97 over eight files**, TEST_FILES +6 suites,
-  `rcpt-1` re-anchored across #86's `receipt_is_future` refactor, every anchor
-  verified once against `386ebda`, full run **97/97 killed**. (2) **#95
-  implemented on the five agreed leans — PR #118** (branch `feat/95-shipped-at`,
-  `c8d4c75`): `shipped_at` + the ship transition on every writer, one additive
-  migration; the advance stamps the ship instant (the #93 rule one stage
-  earlier, `stamp_build_date` wired per #94); the importer ships **freely on
-  every order** (no stock basis to refuse, unlike the receipt), un-shipping
-  refused everywhere, **no cross-field validation** (#113's rule, the issue's
-  open constraint settled that way), the spawn's ship instant resolved at plan
-  time and hash-bound (round five's P3 lesson applied before a reviewer had
-  to); browser Ship dialog, Shipped badge, and the **derived** pre-order badge
-  (nothing persisted). 32 tests (**31 red / 1 explained green** against `main`
-  in a worktree, test DB dropped first), `ship-1..7` mutants one per fix site,
-  branch harness **75/75**, backend **896**, e2e **20**, and the browser loop
-  driven by hand — a backdated ship stored local-midnight in the browser's own
-  offset, both kits advanced on the same instant.
-- **Decisions (all in #118's "Deliberate calls"):** the five leans as agreed,
-  plus the browser Ship button on pending-unshipped rows only (backfill on a
-  received order stays REST/MCP), asserted-in_transit kits borrowing the ship
-  stamp (the asserted-backlog parallel), and ship-after-receive legal while
-  receive never backfills.
-- **State: Codex round one is answered on both PRs.** **#117: GO, two P3s,
-  both taken at `34f9e52`**, reply posted — the harness now runs each selection
-  unmutated first and requires a pass (`SICK` otherwise; it caught the
-  stale-test-DB scenario live), a kill is exit 1 + "failed" + no "error"
-  (`ERROR` otherwise), `cell-4` re-anchored as a compiling mutant (its old
-  replacement never compiled — an IndentationError stood in for the assertion
-  for its whole life), and the runtime claim remeasured: **665s ≈ 11 min at 97
-  cases** (was a 30-40 min extrapolation slip, owned). **#118: NO-GO, P2 +
-  three P3s, answered at `5b98142`**, reply posted — P2 fixed red-first
-  (`_restamp_receipt_kits` gains `only_status`; ship correction passes
-  IN_TRANSIT because a ship and a receive can share a local-midnight instant
-  and the receipt owns the backlog kit; receipt contract untouched per the
-  review's "do not"); P3-3's six unmutated sites + the fix site now have
-  tuples (branch harness **82/82**, suite **897**); P3-4 docs fixed; **P3-2
-  filed as #119** (derived advances not plan-bound — BOTH ship and receipt
-  siblings, the receipt one pre-existing since #86). **Round two: both GO,
-  clean** — Codex independently replayed the stale-DB and cell-4 controls on
-  #117 and the P2 regression + status-precedence corners on #118, declined the
-  JUnit alternative as unnecessary, and re-affirmed #119's scoping. **Merged in
-  the declared order, on the owner's call: #117 squash-merged as `7396e5d`;
-  `main` merged forward into #118 (the CASES-tail conflict resolved as
-  declared — both blocks, one `ORD`, TEST_FILES union), combined harness
-  **111/111 under the new kill contract** + suite **897** + CI green at
-  `4f98b69`; #118 squash-merged as `53009c0`, #95 closed, both branches
-  deleted.** Dev servers running on :8000/:5173; dev DB disposable. Live:
-  **0.2.7 is deliberately NOT closed — the owner is adding one more item to
-  the milestone** (unnamed at hand-off time; do not read "last item merged" as
-  "cut the release"). #110/#112 and #77/#87/#90 unblocked; #114 M5.1-shaped;
-  #116 + #119 unmilestoned; 0.2.8 open (#104/#98/#99/#53/#54/#61/#63/#67).
-- **Next:** wait for the owner's new 0.2.7 item; implement it; only then the
-  release gate (`.agents/testing-and-review.md`) for 0.2.7. The harness on
-  `main` is now 111 cases / ~13 min, baseline-inclusive — the runtime line in
-  testing-and-review.md says 97 cases / ~11 min and can be refreshed in
-  passing next time that file is edited.
