@@ -126,8 +126,10 @@ Template:
   runtime line refreshed (was 97/~11min, stale since #118) and the case-count
   paragraph now names all seven queues. Scratch harness deleted, superseded.
   Review: rides without a round per #40 (contract untouched, every tuple
-  reviewed in its source PR) — stated in the PR body, owner may overrule.
-  **Awaiting the owner's merge call.**
+  reviewed in its source PR) — stated in the PR body, owner concurred.
+  **Squash-merged as `41868d9` on the owner's call (merge-on-green), branch
+  deleted, CI green.** No queues remain outstanding — the tracked harness now
+  holds every tuple ever filed.
 - **Next:** **the mutant fold-in is now the queued mechanical piece** — 25 `cat-`
   tuples (in the PR #130 body and the untracked `backend/mutation_scratch_127.py`,
   which also holds the runner-ready form) plus #129's 10 `dsp-` tuples fold into
