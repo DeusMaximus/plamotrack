@@ -283,6 +283,15 @@ your entire collection is not a feature.
 > ⚠️ The MCP server has no auth either — it's the same unauthenticated process as the
 > REST API. Keep it on localhost or a trusted network.
 
+### Teach your agent your hobby's conventions
+
+The tools above are generic on purpose — nothing in plamotrack knows what a grade
+bucket or a P-Bandai suffix is. That knowledge ships separately as **agent skills**:
+packaged convention files your agent loads alongside the MCP connection, so records
+come out consistent instead of spelled three ways. The first one covers Gunpla —
+kit naming, Bandai kit numbers, Gundam Markers, decals, the lot. See
+[`skills/`](skills/) for what's available and how to install one.
+
 ---
 
 ## Developing on it
