@@ -1353,6 +1353,64 @@ CASES = [
         "        pass  # neutered",
         "ship_by_import_advances",
     ),
+    # --- #77 / PR #141: the aggregate fan-out ceiling; one mutant per fix site. ------
+    # --- Prefix note: `fan-` was rejected — `-k fan-` substring-matches "fan-out" ----
+    # --- in strt-7's label; `cap-` matches nothing else here. ------------------------
+    (
+        "cap-1. the aggregate ceiling is off",
+        ORD,
+        "    if total > MAX_TOTAL_FANOUT:",
+        "    if False:",
+        "cannot_derive_more_kits",
+    ),
+    (
+        "cap-2. entry stops asking the aggregate",
+        ORD,
+        "    require_total_fanout(_stated_kit_units(data.items))",
+        "    pass",
+        "cannot_derive_more_kits",
+    ),
+    (
+        "cap-3. the edit stops asking the aggregate",
+        ORD,
+        "    require_total_fanout(_stated_kit_units(data.items or ()))",
+        "    pass",
+        "cannot_state_the_order_past",
+    ),
+    (
+        "cap-4. the import plan stops asking the aggregate",
+        IMP,
+        "        try:\n"
+        "            require_total_fanout(\n"
+        "                sum(spawn.count for spawn in self.spawns),\n"
+        '                label="the kits this import would create from order lines",\n'
+        "            )\n"
+        "        except InvalidInputError as exc:\n"
+        "            self.blocking.append(str(exc))",
+        "        pass",
+        "import_cannot_spawn_past",
+    ),
+    (
+        "cap-5. catalog lines count toward the fan-out",
+        ORD,
+        "    return sum(line.quantity for line in lines if line.item_type is ItemType.KIT)",
+        "    return sum(line.quantity for line in lines)",
+        "catalog_lines_do_not_count_toward",
+    ),
+    (
+        "cap-6. the boundary moves down one",
+        ORD,
+        "    if total > MAX_TOTAL_FANOUT:",
+        "    if total >= MAX_TOTAL_FANOUT:",
+        "cannot_derive_more_kits",
+    ),
+    (
+        "cap-7. the import counts spawn descriptors instead of kits",
+        IMP,
+        "                sum(spawn.count for spawn in self.spawns),",
+        "                len(self.spawns),",
+        "import_cannot_spawn_past",
+    ),
 ]
 
 
