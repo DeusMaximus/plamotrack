@@ -1209,6 +1209,31 @@ CASES = [
         "                key: next(iter(counted.items()))[0]",
         "vote_by_frequency",
     ),
+    # --- #90 / PR #133: the typeless catalog dispatch (tuples from the PR body;
+    # anchors re-checked at the merged head `545f341`). The spawn-planning line of
+    # the same shape reads `self.by_id["order_items"].get(line_id)` — a different
+    # string, so ref-1/ref-2 cannot land there. -----------------------------------
+    (
+        "ref-1. the resolver reads the row as typeless again (#133)",
+        IMP,
+        '            stored = None if replace_all else self.by_id[spec.key].get(row.values.get("id"))',
+        "            stored = None",
+        "omitting_item_type",
+    ),
+    (
+        "ref-2. replace_all types the line from the doomed database (#133)",
+        IMP,
+        '            stored = None if replace_all else self.by_id[spec.key].get(row.values.get("id"))',
+        '            stored = self.by_id[spec.key].get(row.values.get("id"))',
+        "doomed_database",
+    ),
+    (
+        "ref-3. effective_item_type ignores the stored line it was handed (#133)",
+        INV,
+        '    return getattr(row.target if row.target is not None else stored, "item_type", None)',
+        '    return getattr(row.target, "item_type", None)',
+        "readable_mirror or uploads_remap or does_not_write_a_catalog_ref",
+    ),
 ]
 
 
