@@ -253,3 +253,29 @@ async def test_create_order_is_held_to_the_same_line_ceiling_as_rest(client):
                 },
             )
         assert (await mcp_client.call_tool("list_kits", {})).data == []
+
+
+async def test_create_order_is_held_to_the_aggregate_fanout_ceiling_too(client):
+    """#77's aggregate mate of the test above, same rule-1 reasoning: eleven lines,
+    each within its own ceiling, refused by the shared aggregate as a ToolError."""
+    async with Client(mcp) as mcp_client:
+        with pytest.raises(ToolError, match="add up to 10,001"):
+            await mcp_client.call_tool(
+                "create_order",
+                {
+                    "retailer": "USA Gundam Store",
+                    "order_date": "2026-08-02",
+                    "currency_code": "USD",
+                    "items": [
+                        {
+                            "item_type": "kit",
+                            "quantity": quantity,
+                            "unit_price_minor": 2999,
+                            "currency_code": "USD",
+                            "kit": {"name": f"RG Nu Gundam {i}", "grade": "RG"},
+                        }
+                        for i, quantity in enumerate([1_000] * 10 + [1])
+                    ],
+                },
+            )
+        assert (await mcp_client.call_tool("list_kits", {})).data == []

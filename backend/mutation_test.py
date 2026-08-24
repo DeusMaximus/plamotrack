@@ -1344,11 +1344,13 @@ CASES = [
         "            kits_advanced=0,",
         "preview_names_the_ship_advance",
     ),
+    # adv-7 re-anchored by #77: the aggregate fan-out check now sits between
+    # `_plan_spawns` and `_plan_advances` in `build()`, so the two-line anchor split.
     (
         "adv-7. the advances are never planned at all",
         IMP,
-        "        self._plan_spawns(replace_all)\n        self._plan_advances()",
-        "        self._plan_spawns(replace_all)",
+        "        self._plan_advances()",
+        "        pass  # neutered",
         "ship_by_import_advances",
     ),
 ]

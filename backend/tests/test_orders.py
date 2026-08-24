@@ -450,6 +450,100 @@ async def test_spawn_kits_refuses_a_non_positive_count(client, count):
             await orders.spawn_kits(session, item, name="Zaku II", grade="HG", count=count)
 
 
+# --- the aggregate fan-out ceiling (#77) -----------------------------------------
+#
+# Every line below is within its own ceiling (#43); the aggregate is what #77
+# bounds — "split it across several lines" was the documented way around the only
+# limit there was. Sizes and message fragments are literals (10 × 1,000, 10,001),
+# not the new constant, so this file still imports against a tree that predates
+# #77; the lockstep pin is the one place the constant is named.
+
+
+def kit_lines(count: int, quantity: int) -> list[dict]:
+    return [kit_line(quantity=quantity, name=f"Zaku II unit {i}") for i in range(count)]
+
+
+async def multi_line_order(client, retailer, lines: list[dict], **header):
+    return await client.post(
+        "/orders",
+        json={
+            "retailer_id": retailer["id"],
+            "order_date": "2026-08-01",
+            "currency_code": "JPY",
+            "items": lines,
+            **header,
+        },
+    )
+
+
+async def test_the_aggregate_ceiling_matches_its_documented_number():
+    """The lockstep pin: every other test in this block sizes off the literal, and
+    this is what keeps the literal and the constant the same number."""
+    assert orders.MAX_TOTAL_FANOUT == 10_000
+
+
+@pytest.mark.parametrize(
+    ("shape", "accepted"),
+    [
+        pytest.param([(10, 1_000)], True, id="exactly at the ceiling"),
+        pytest.param([(10, 1_000), (1, 1)], False, id="one unit over, every line legal"),
+    ],
+)
+async def test_an_order_cannot_derive_more_kits_than_the_aggregate_ceiling(
+    client, retailer, shape, accepted
+):
+    lines = [line for count, quantity in shape for line in kit_lines(count, quantity)]
+    resp = await multi_line_order(client, retailer, lines)
+
+    if accepted:
+        assert resp.status_code == 201, resp.text
+        spawned = sum(len(item["spawned_kit_ids"]) for item in resp.json()["items"])
+        assert spawned == 10_000
+    else:
+        assert resp.status_code == 422, resp.text
+        # The aggregate message, not the per-line one — "an order line holds at
+        # most" is the neighbouring refusal and would pass a containment check.
+        assert "add up to 10,001" in resp.json()["detail"]
+        assert (await client.get("/kits")).json() == []
+        assert (await client.get("/orders")).json() == []  # not even the order header
+
+
+async def test_catalog_lines_do_not_count_toward_the_aggregate_ceiling(client, retailer):
+    """Stock lines adjust a count instead of fanning out. An at-ceiling kit load
+    plus a 1,000-unit consumable line is 11,000 by the wrong sum and exactly at
+    the ceiling by the right one — acceptance is the assertion."""
+    lines = kit_lines(10, 1_000)
+    lines.append(
+        {
+            "item_type": "consumable",
+            "quantity": 1_000,
+            "unit_price_minor": 500,
+            "currency_code": "JPY",
+            "new_item": {"name": "Mr Surfacer 1200", "category": "primer"},
+        }
+    )
+    resp = await multi_line_order(client, retailer, lines)
+    assert resp.status_code == 201, resp.text
+
+
+async def test_an_edit_cannot_state_the_order_past_the_aggregate_ceiling(client, retailer):
+    """The full-replacement edit is the other live route to the fan-out, and the
+    check reads the *stated* set — the restated line's single unit is what tips
+    10 × 1,000 over, so this also pins that restatements count (a deliberate
+    call: the stated total bounds the derived creates from above, without
+    re-deriving the dispatch diff before the order lock)."""
+    order = (await multi_line_order(client, retailer, [kit_line(quantity=2)])).json()
+    line = order["items"][0]
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={"items": [{**kit_line(quantity=1), "id": line["id"]}, *kit_lines(10, 1_000)]},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "add up to 10,001" in resp.json()["detail"]
+    assert len((await client.get("/kits")).json()) == 2  # the edit did not half-apply
+
+
 # --- display lines (#126) --------------------------------------------------------
 
 
