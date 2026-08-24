@@ -822,7 +822,15 @@ class _Planner:
         """
         table = column.ref_table
         if table == "catalog":
-            item_type = row.values.get("item_type")
+            # Matching hasn't bound `row.target` yet, and a row that omits
+            # `item_type` can only ever match by id (the line fingerprint carries
+            # the type), so the stored line the sheet's id names is exactly what
+            # matching will bind — look it up rather than read the row as typeless
+            # and pass the reference through unresolved (#90). Not under
+            # `replace_all`: the stored line is truncated before the plan lands
+            # (#45), and the typeless create is refused for the missing column.
+            stored = None if replace_all else self.by_id[spec.key].get(row.values.get("id"))
+            item_type = invariants.effective_item_type(row, stored=stored)
             if item_type is None:
                 return None
             table = CATALOG_TABLE_BY_ITEM_TYPE.get(str(item_type))
