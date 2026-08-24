@@ -413,6 +413,49 @@ async def test_two_id_less_creates_in_one_upload_fold_onto_one_spelling(client):
     assert categories == {"Godhand SPN-120": "Cutting", "Glass file": "Cutting"}
 
 
+async def test_a_create_folds_onto_the_spelling_an_update_is_writing(client):
+    # The vocabulary the fold consults is the EFFECTIVE post-import one (#130
+    # round 2, P2-5): a stored row being rewritten by this same upload votes
+    # with the spelling it will hold after apply, not the one it held before —
+    # otherwise the create folds onto a spelling the import itself is erasing,
+    # and the fold recreates the exact split it exists to prevent.
+    existing = await make_tool(client, "Existing nipper", "Cutting")
+
+    content = _tools_csv(
+        [
+            {"id": existing["id"], "name": "Existing nipper", "category": "cutting"},
+            {"name": "Glass file", "category": "CUTTING"},
+        ]
+    )
+    assert (await apply(client, content, filename="tools.csv")).status_code == 200
+
+    categories = {t["name"]: t["category"] for t in (await client.get("/tools")).json()}
+    assert categories == {"Existing nipper": "cutting", "Glass file": "cutting"}
+
+
+async def test_replace_all_restores_vote_by_frequency_not_file_order(client):
+    # Verbatim rows are a multiset, not a first-wins set: three restores under
+    # one key pick the winner by the same most-frequent / byte-order rule
+    # `canonical_category` uses, so reordering the sheet cannot change which
+    # spelling a create receives (#130 round 2, P2-5). The minority spelling
+    # deliberately comes first in file order.
+    ids = [str(uuid.uuid4()) for _ in range(3)]
+    content = _tools_csv(
+        [
+            {"id": ids[0], "name": "A", "category": "cutting"},
+            {"id": ids[1], "name": "B", "category": "Cutting"},
+            {"id": ids[2], "name": "C", "category": "Cutting"},
+            {"name": "Glass file", "category": "CUTTING"},
+        ]
+    )
+    resp = await apply(client, content, filename="tools.csv", mode="replace_all", confirm="REPLACE")
+    assert resp.status_code == 200, resp.text
+
+    categories = {t["name"]: t["category"] for t in (await client.get("/tools")).json()}
+    # Restores verbatim; the create gets the 2:1 winner, not the first row's.
+    assert categories == {"A": "cutting", "B": "Cutting", "C": "Cutting", "Glass file": "Cutting"}
+
+
 async def test_a_create_folds_onto_a_restored_rows_spelling_in_the_same_upload(client):
     # An id-bearing restore's spelling will exist after apply, so an id-less
     # create in the same upload folds onto it — regardless of row order in the

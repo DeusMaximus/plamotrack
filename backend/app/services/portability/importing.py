@@ -1660,9 +1660,24 @@ class _Planner:
         folded value lands in `row.values`, so the fingerprint binds it and apply
         writes exactly what was planned — a spelling landing between preview and
         apply stales the hash instead of silently changing the outcome (#86 round
-        5's rule). The stored seed is skipped under replace_all: those rows are
-        deleted before the creates land, so the only spellings that will exist are
-        the upload's own.
+        5's rule).
+
+        The vocabulary consulted is the **effective post-write multiset** (#130
+        round 2, P2-5) — what each key's spellings will be AFTER this plan
+        applies, not before, and counted rather than first-seen:
+
+        * a stored row an UPDATE in this upload rewrites votes with the spelling
+          it will hold, not the one the import is erasing;
+        * under replace_all the stored rows are doomed, so only the upload's own
+          verbatim rows vote;
+        * every verbatim row is a vote in a multiset — the winner is the same
+          most-frequent / byte-order pick `canonical_category` makes, so sheet
+          order cannot decide a spelling.
+
+        Only a key nothing verbatim holds falls back to first-claim among the
+        fold-eligible creates themselves — there any deterministic pick is
+        equally right, and a create's own stated spelling should not be rewritten
+        by a later row.
         """
 
         def stated_category(row: _Row) -> str | None:
@@ -1682,26 +1697,40 @@ class _Planner:
             rows = self.rows.get(spec.key, [])
             if not rows:
                 continue
-            vocab: dict[str, str] = {}
-            if not replace_all:
-                spellings: dict[str, Counter[str]] = defaultdict(Counter)
-                for instance in self.existing[spec.key]:
-                    stored = (instance.category or "").strip()
-                    if stored:
-                        spellings[stored.lower()][stored] += 1
-                for key, counted in spellings.items():
-                    # Most frequent, ties by byte order — `canonical_category`'s
-                    # pick, computed over the same trimmed spellings.
-                    vocab[key] = min(counted.items(), key=lambda item: (-item[1], item[0]))[0]
 
-            # Verbatim rows first, in both modes: a restore's spelling will exist
-            # after apply, so a create later in the file folds onto it regardless
-            # of row order in the sheet.
+            # Overlay: the spelling each targeted stored row will hold after this
+            # plan. An UPDATE that does not state a category leaves the stored
+            # spelling in place, so only `present` columns overlay.
+            overlays: dict[uuid.UUID, str | None] = {}
             for row in rows:
-                if row.action in (RowAction.UPDATE, RowAction.CREATE) and not folds(row):
+                if row.action is RowAction.UPDATE and row.matched_id is not None:
+                    if "category" in row.present:
+                        overlays[row.matched_id] = stated_category(row)
+
+            spellings: dict[str, Counter[str]] = defaultdict(Counter)
+            if not replace_all:
+                for instance in self.existing[spec.key]:
+                    if instance.id in overlays:
+                        effective = overlays[instance.id]
+                    else:
+                        effective = (instance.category or "").strip() or None
+                    if effective:
+                        spellings[effective.lower()][effective] += 1
+            for row in rows:
+                if row.action is RowAction.CREATE and not folds(row):
+                    # An id-bearing create-is-a-restore votes; UPDATEs already
+                    # voted through the overlay of the row they rewrite.
                     value = stated_category(row)
                     if value is not None:
-                        vocab.setdefault(value.lower(), value)
+                        spellings[value.lower()][value] += 1
+
+            vocab = {
+                # Most frequent, ties by byte order — `canonical_category`'s pick,
+                # computed over the same trimmed spellings.
+                key: min(counted.items(), key=lambda item: (-item[1], item[0]))[0]
+                for key, counted in spellings.items()
+            }
+
             for row in rows:
                 if not folds(row):
                     continue

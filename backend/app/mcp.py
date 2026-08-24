@@ -18,7 +18,6 @@ from app.db import session_scope
 from app.exceptions import DomainError
 from app.models import ItemType
 from app.models.enums import KitStatus
-from app.routers.meta import read_meta
 from app.schemas.catalog import (
     ConsumableCreate,
     ConsumableRead,
@@ -48,6 +47,7 @@ from app.services import catalog as catalog_service
 from app.services import kits as kits_service
 from app.services import orders as orders_service
 from app.services import upgrades as upgrades_service
+from app.services.meta import instance_meta
 
 mcp = FastMCP(
     "plamotrack",
@@ -185,7 +185,7 @@ async def get_meta() -> dict:
     (#99). Read this before omitting currency_code on create_order, so "omit it"
     is a decision about the purchase rather than a guess. The same function
     serves REST's GET /meta, so the two surfaces cannot disagree."""
-    return (await read_meta()).model_dump(mode="json")
+    return instance_meta().model_dump(mode="json")
 
 
 @mcp.tool
