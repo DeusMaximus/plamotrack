@@ -6,12 +6,20 @@ from app.mcp import mcp
 from app.services import orders
 
 EXPECTED_TOOLS = {
+    "get_meta",
     "list_kits",
     "list_kit_series",
     "get_kit",
+    "create_kit",
     "update_kit_status",
     "update_kit",
     "search_catalog",
+    "list_catalog_items",
+    "list_catalog_categories",
+    "create_catalog_tool",
+    "create_catalog_consumable",
+    "create_catalog_upgrade",
+    "create_catalog_display",
     "list_retailers",
     "create_retailer",
     "update_retailer",
@@ -34,6 +42,15 @@ async def test_all_doc_section_7_tools_exposed():
     async with Client(mcp) as client:
         tools = await client.list_tools()
         assert {t.name for t in tools} == EXPECTED_TOOLS
+
+
+async def test_get_meta_matches_rest(client):
+    # One function serves both surfaces (#99) — the parity is an equality, and
+    # the create_order docstring's pointer at get_meta points at something real.
+    async with Client(mcp) as mcp_client:
+        meta = (await mcp_client.call_tool("get_meta", {})).data
+    assert meta == (await client.get("/meta")).json()
+    assert set(meta) == {"version", "reference_currency"}
 
 
 async def test_create_order_fans_out_like_rest():

@@ -9,6 +9,7 @@ from datetime import date, datetime
 
 from fastmcp import FastMCP
 from fastmcp.exceptions import ToolError
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import __version__
@@ -18,16 +19,20 @@ from app.exceptions import DomainError
 from app.models import ItemType
 from app.models.enums import KitStatus
 from app.schemas.catalog import (
+    ConsumableCreate,
     ConsumableRead,
     ConsumableUpdate,
+    DisplayItemCreate,
     DisplayItemRead,
     DisplayItemUpdate,
+    ToolCreate,
     ToolRead,
     ToolUpdate,
+    UpgradeCreate,
     UpgradeRead,
     UpgradeUpdate,
 )
-from app.schemas.kits import KitRead, KitUpdate
+from app.schemas.kits import KitCreate, KitRead, KitUpdate
 from app.schemas.numeric import Int4, NonNegativeInt4, PositiveInt4
 from app.schemas.orders import (
     OrderCreate,
@@ -42,6 +47,7 @@ from app.services import catalog as catalog_service
 from app.services import kits as kits_service
 from app.services import orders as orders_service
 from app.services import upgrades as upgrades_service
+from app.services.meta import instance_meta
 
 mcp = FastMCP(
     "plamotrack",
@@ -58,7 +64,12 @@ mcp = FastMCP(
         "an existing item's id — free-text duplicates fragment the catalog. A new_item "
         "or create_retailer whose name matches an existing row case-insensitively is "
         "refused with a conflict naming that row; a near-miss ('Tamiya cement' vs "
-        "'Tamiya Extra Thin Cement') is not, which is why searching first still matters."
+        "'Tamiya Extra Thin Cement') is not, which is why searching first still matters. "
+        "Catalog categories are per-table vocabularies — check list_catalog_categories "
+        "before writing one and reuse a value that fits. Record purchases with "
+        "create_order; the create_kit / create_catalog_* tools are only for things "
+        "acquired without a purchase (gifts, trades, a first stocktake) — never invent "
+        "an order that didn't happen."
     ),
 )
 
@@ -95,6 +106,35 @@ def _parse_uuid(value: str, what: str) -> uuid.UUID:
         raise ToolError(f"{what} {value!r} is not a valid UUID") from None
 
 
+#: What each catalog table's rows read back as — the same per-type schemas the REST
+#: routes serve, so an MCP listing and a REST listing of one table cannot differ.
+_CATALOG_READ_MODELS: dict[ItemType, type[BaseModel]] = {
+    ItemType.TOOL: ToolRead,
+    ItemType.CONSUMABLE: ConsumableRead,
+    ItemType.UPGRADE: UpgradeRead,
+    ItemType.DISPLAY: DisplayItemRead,
+}
+
+
+def _parse_item_type(value: str) -> ItemType:
+    """A catalog table named by an agent — tolerant of case, plurals and the
+    display-item long forms ("Display Items", "display_item"), the way
+    `_parse_status` is tolerant of the status vocabulary."""
+    normalized = value.strip().lower().replace("-", "_").replace(" ", "_")
+    normalized = normalized.removesuffix("s")
+    normalized = {"display_item": "display"}.get(normalized, normalized)
+    if normalized == "kit":
+        raise ToolError(
+            "kits are not a catalog table — list them with list_kits, add one with "
+            "create_kit (or a kit line on create_order for a purchase)"
+        )
+    try:
+        return ItemType(normalized)
+    except ValueError:
+        valid = ", ".join(t.value for t in _CATALOG_READ_MODELS)
+        raise ToolError(f"invalid item_type {value!r} — valid types: {valid}") from None
+
+
 def _parse_instant(value: str, field: str = "received_at") -> datetime:
     """A timeline instant supplied by an agent: ISO 8601, offset required (#93).
 
@@ -127,6 +167,25 @@ class _KitPatch(KitUpdate):
     """
 
     status: str | None = None
+
+
+class _KitInput(KitCreate):
+    """`KitCreate` with the tolerant status vocabulary — `_KitPatch`'s shape, for
+    the same reason: only `status` is overridden, so a field added to `KitCreate`
+    reaches the create tool without a second list to edit."""
+
+    status: str = KitStatus.BACKLOG.value
+
+
+@mcp.tool
+async def get_meta() -> dict:
+    """Instance identity and settings: the app version and the instance's
+    reference currency — the default stamped onto any price entered without a
+    currency_code, and the target currency of every stored conversion snapshot
+    (#99). Read this before omitting currency_code on create_order, so "omit it"
+    is a decision about the purchase rather than a guess. The same function
+    serves REST's GET /meta, so the two surfaces cannot disagree."""
+    return instance_meta().model_dump(mode="json")
 
 
 @mcp.tool
@@ -204,16 +263,126 @@ async def update_kit(kit_id: str, changes: _KitPatch) -> dict:
 
 
 @mcp.tool
+async def create_kit(kit: _KitInput) -> dict:
+    """Add a kit to the collection directly — for a kit acquired WITHOUT a purchase
+    to record: a gift, a trade, one carried over from before tracking started. For
+    anything bought, use create_order with a kit line instead, and NEVER invent an
+    order to get a kit in — the purchase history is kept honest by recording only
+    purchases that happened. Requires name and grade (HG, RG, MG, PG, SD, ...);
+    scale derives from the grade when omitted (MG → 1/100). status defaults to
+    backlog (= in hand, not started) and takes the same vocabulary as
+    update_kit_status. Before setting a series, check list_kit_series and reuse an
+    existing spelling. build_started_at / build_completed_at are offset-aware ISO
+    8601 backfill fields for a kit arriving with history — they are never derived
+    from the status, so a kit created already-complete carries only the dates you
+    supply."""
+    fields = kit.model_dump()
+    fields["status"] = _parse_status(fields["status"])
+    async with _tool_session() as session:
+        row = await kits_service.create_kit(session, KitCreate(**fields))
+        return KitRead.model_validate(row).model_dump(mode="json")
+
+
+@mcp.tool
 async def search_catalog(query: str) -> list[dict]:
     """Search tools, consumables, upgrades, and display items by name (same search
     the UI typeahead uses). ALWAYS call this before adding catalog items to an order
     — reuse an existing item's id as catalog_ref_id instead of creating a duplicate.
 
     Results carry `item_type`, so filter on that to search within one kind. Display
-    items also carry `scale` ("1/144") and a `category`."""
+    items also carry `scale` ("1/144") and a `category`. This is a name search with
+    a per-type result cap — to read a whole table ("what paints do I own?"), use
+    list_catalog_items."""
     async with _tool_session() as session:
         results = await catalog_service.search(session, query)
         return [r.model_dump(mode="json") for r in results]
+
+
+@mcp.tool
+async def list_catalog_items(item_type: str, category: str | None = None) -> list[dict]:
+    """List one catalog table in full — item_type is tool, consumable, upgrade or
+    display. Unlike search_catalog this takes no query and has no result cap, and
+    each row carries its table's full fields (a consumable's low_stock_threshold,
+    a tool's unit cost, a display item's notes) — so "what paints do I own?" and
+    "what am I low on?" are answered by the data rather than guessed. category
+    filters to one exact value, case-insensitively, server-side — get the values
+    in use from list_catalog_categories rather than inventing one (upgrades have
+    no category). Kits are not a catalog table — use list_kits."""
+    parsed_type = _parse_item_type(item_type)
+    read_model = _CATALOG_READ_MODELS[parsed_type]
+    async with _tool_session() as session:
+        rows = await catalog_service.list_catalog(
+            session, catalog_service.CATALOG_MODELS[parsed_type], category=category
+        )
+        return [read_model.model_validate(row).model_dump(mode="json") for row in rows]
+
+
+@mcp.tool
+async def list_catalog_categories(item_type: str) -> list[str]:
+    """The category values in use on one catalog table (tool, consumable or
+    display — upgrades have no category), most frequent first. ALWAYS check this
+    before writing a category onto an item and reuse a value that fits — category
+    is free text, and each table keeps its own vocabulary. A category matching an
+    existing one case-insensitively is folded onto that stored spelling
+    automatically; a near-miss ("cutters" vs "cutting") is not, which is why
+    checking first still matters."""
+    parsed_type = _parse_item_type(item_type)
+    async with _tool_session() as session:
+        return await catalog_service.list_catalog_categories(
+            session, catalog_service.CATALOG_MODELS[parsed_type]
+        )
+
+
+@mcp.tool
+async def create_catalog_tool(tool: ToolCreate) -> dict:
+    """Add a hobby tool (nippers, files, an airbrush) to the catalog WITHOUT a
+    purchase to record — a first stocktake, a gift, a hand-me-down. For a purchase,
+    use create_order with a new_item line instead, so the price and retailer are
+    kept. ALWAYS search_catalog first — a name matching an existing tool
+    case-insensitively is refused with a conflict naming that row. Check
+    list_catalog_categories("tool") and reuse a category that fits. quantity_on_hand
+    means physically on hand (defaults to 0). The two unit-cost fields are one pair
+    — both or neither."""
+    async with _tool_session() as session:
+        row = await catalog_service.create_tool(session, tool)
+        return ToolRead.model_validate(row).model_dump(mode="json")
+
+
+@mcp.tool
+async def create_catalog_consumable(consumable: ConsumableCreate) -> dict:
+    """Add a consumable (paint, cement, sanding sticks) to the catalog WITHOUT a
+    purchase to record — see create_catalog_tool for when that is right and when
+    create_order is. ALWAYS search_catalog first; check
+    list_catalog_categories("consumable") and reuse a category that fits.
+    low_stock_threshold makes "what am I low on?" answerable later — set it when
+    the user states one."""
+    async with _tool_session() as session:
+        row = await catalog_service.create_consumable(session, consumable)
+        return ConsumableRead.model_validate(row).model_dump(mode="json")
+
+
+@mcp.tool
+async def create_catalog_upgrade(upgrade: UpgradeCreate) -> dict:
+    """Add a third-party upgrade (decals, metal parts, resin conversions) to the
+    catalog WITHOUT a purchase to record — see create_catalog_tool for when that is
+    right and when create_order is. ALWAYS search_catalog first. Requires a
+    manufacturer; upgrades have no category."""
+    async with _tool_session() as session:
+        row = await catalog_service.create_upgrade(session, upgrade)
+        return UpgradeRead.model_validate(row).model_dump(mode="json")
+
+
+@mcp.tool
+async def create_catalog_display(display_item: DisplayItemCreate) -> dict:
+    """Add a display item (action stands, system bases, diorama scenery) to the
+    catalog WITHOUT a purchase to record — see create_catalog_tool for when that is
+    right and when create_order is. ALWAYS search_catalog first; check
+    list_catalog_categories("display") and reuse a category that fits. Display
+    items are quantity-tracked only and deliberately not linked to kits — a stand
+    moves between kits freely."""
+    async with _tool_session() as session:
+        row = await catalog_service.create_display_item(session, display_item)
+        return DisplayItemRead.model_validate(row).model_dump(mode="json")
 
 
 @mcp.tool
@@ -280,7 +449,8 @@ async def create_order(
     — always search first) or `new_item` details; a `new_item` whose name matches an
     existing row of that table case-insensitively is refused with a conflict naming the row,
     and the whole order with it. A new tool, consumable or display item needs a
-    `category`; a new upgrade needs a `manufacturer` (optional on display items).
+    `category` — check list_catalog_categories for that type and reuse a value
+    that fits; a new upgrade needs a `manufacturer` (optional on display items).
     Catalog stock does NOT increase until the order is received: pass
     received=true for store purchases already in hand, or call
     mark_order_received when a shipment arrives. When logging a purchase that
@@ -294,8 +464,8 @@ async def create_order(
     retailer's order_number from the confirmation email when available (support
     reference — only unique per retailer, never treat it as an identifier). Prices
     are integer minor units (cents/yen) with an ISO 4217 currency_code; omit
-    currency_code to use the instance's own reference currency (see the `meta`
-    resource)."""
+    currency_code to use the instance's own reference currency, which get_meta
+    reports."""
     try:
         parsed_date = date.fromisoformat(order_date)
     except ValueError:
@@ -439,6 +609,8 @@ async def update_catalog_tool(tool_id: str, changes: ToolUpdate) -> dict:
     null clears a nullable one. The two unit-cost fields are one pair — after the
     edit the row must hold both or neither. Ids come from search_catalog. A rename
     onto a name another tool already holds (case-insensitively) is a conflict.
+    Before changing a category, check list_catalog_categories("tool") and reuse a
+    value that fits — a case-insensitive match folds onto the stored spelling.
 
     To count stock up or down, prefer adjust_stock: it takes a signed delta, so it
     cannot overwrite a quantity that changed between your read and your write."""
@@ -454,7 +626,8 @@ async def update_catalog_consumable(consumable_id: str, changes: ConsumableUpdat
     quantity_on_hand, low_stock_threshold. Only the fields present in `changes` are
     touched; an explicit null clears a nullable one. Ids come from search_catalog.
     A rename onto a name another consumable already holds (case-insensitively) is a
-    conflict.
+    conflict. Before changing a category, check
+    list_catalog_categories("consumable") and reuse a value that fits.
 
     To count stock up or down, prefer adjust_stock — see update_catalog_tool."""
     parsed = _parse_uuid(consumable_id, "consumable_id")
@@ -486,7 +659,8 @@ async def update_catalog_display(display_item_id: str, changes: DisplayItemUpdat
     name, category, scale, manufacturer, quantity_on_hand, notes. Only the fields
     present in `changes` are touched; an explicit null clears a nullable one. Ids
     come from search_catalog. A rename onto a name another display item already
-    holds (case-insensitively) is a conflict.
+    holds (case-insensitively) is a conflict. Before changing a category, check
+    list_catalog_categories("display") and reuse a value that fits.
 
     Display items are tracked by quantity only — there is deliberately no link to
     the kits they are used with, because a stand moves between kits freely. Do not

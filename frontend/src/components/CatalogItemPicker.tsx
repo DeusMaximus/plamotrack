@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { api } from "../api/client";
 import type { CatalogItemType } from "../api/types";
@@ -26,6 +26,16 @@ const PLURAL: Record<CatalogItemType, string> = {
   consumable: "consumables",
   upgrade: "upgrades",
   display: "display items",
+};
+
+/** The categories route segment per wire type — upgrades have no category column
+ * (#127, decided against), hence no entry rather than a route that would 404. */
+const CATEGORY_ROUTES: Partial<
+  Record<CatalogItemType, "tools" | "consumables" | "display-items">
+> = {
+  tool: "tools",
+  consumable: "consumables",
+  display: "display-items",
 };
 
 export function CatalogItemPicker({
@@ -61,6 +71,24 @@ export function CatalogItemPicker({
   });
 
   const matches = (results ?? []).filter((result) => result.item_type === itemType);
+
+  // The category vocabulary for the "new item" form below (#127) — same typeahead
+  // the Inventory forms get, so a line entered mid-order folds onto the same
+  // spellings. Fetched only once the form is actually showing a category field.
+  // The datalist id is per component instance: an order holds one picker per
+  // line, and a shared literal id bound every input to whichever datalist
+  // rendered first — a consumable line offering the tool vocabulary
+  // (#130 review, P3-4).
+  const categoryListId = useId();
+  const categoryRoute = CATEGORY_ROUTES[itemType];
+  const { data: categoryValues } = useQuery({
+    // Same key shape the Inventory page uses, so the two share one cache entry.
+    // The "upgrades" fallback only keeps the key serializable — the query is
+    // disabled whenever categoryRoute is undefined.
+    queryKey: [categoryRoute ?? "upgrades", "categories"],
+    queryFn: () => api.listCategories(categoryRoute!),
+    enabled: value?.mode === "new" && categoryRoute !== undefined,
+  });
 
   if (value?.mode === "existing") {
     return (
@@ -100,13 +128,23 @@ export function CatalogItemPicker({
             placeholder="Manufacturer (required)"
           />
         ) : (
-          <Input
-            value={value.category}
-            onChange={(event) => onChange({ ...value, category: event.target.value })}
-            placeholder={
-              itemType === "display" ? "Category (required) — stand / scenery" : "Category (required)"
-            }
-          />
+          <>
+            <Input
+              value={value.category}
+              onChange={(event) => onChange({ ...value, category: event.target.value })}
+              list={categoryListId}
+              placeholder={
+                itemType === "display"
+                  ? "Category (required) — stand / scenery"
+                  : "Category (required)"
+              }
+            />
+            <datalist id={categoryListId}>
+              {categoryValues?.map((category) => (
+                <option key={category} value={category} />
+              ))}
+            </datalist>
+          </>
         )}
         {/* Display items are the only type taking both, and neither is required: a
             commercial set names a maker, a scratch-built piece doesn't, and a

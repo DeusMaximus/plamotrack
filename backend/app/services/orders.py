@@ -31,7 +31,9 @@ from app.schemas.orders import (
 )
 from app.services.catalog import (
     CATALOG_MODELS,
+    CATEGORISED_MODELS,
     CatalogRow,
+    canonical_category,
     guard_stock_ceiling,
     lock_catalog_row,
 )
@@ -322,6 +324,15 @@ async def _build_catalog_row(
     manufacturer = clean_optional_text(new_item.manufacturer)
     if item_type in (ItemType.TOOL, ItemType.CONSUMABLE, ItemType.DISPLAY) and not category:
         raise InvalidInputError(f"new {item_type} items require a category")
+    if category is not None and item_type in CATEGORISED_MODELS:
+        # Same rule as the direct create/update paths (#127): a category matching an
+        # existing one case-insensitively reuses that spelling. Three live writers
+        # reach these tables and the vocabulary only holds if all three fold.
+        # Gated on the tables that carry the column: `NewCatalogItem` is one schema
+        # for every line type, so an upgrade line may state a category, and the
+        # standing behaviour is to ignore it — not to 500 on a column upgrades
+        # don't have (#130 review, P2-1).
+        category = await canonical_category(session, CATEGORISED_MODELS[item_type], category)
     name = await require_unique_name(session, CATALOG_MODELS[item_type], new_item.name)
     if item_type is ItemType.TOOL:
         # The line's own currency, not the instance default: this row is being created

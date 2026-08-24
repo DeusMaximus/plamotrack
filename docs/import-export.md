@@ -120,6 +120,16 @@ retailer, tool, consumable, upgrade or display item onto a name another row of t
 already holds is refused. If an instance still carries one from before, rename one of
 the two in the app and import again.
 
+**Category spellings fold only on brand-new rows.** In the app, giving an item a
+category that matches an existing one case-insensitively stores the existing
+spelling, so "stands" and "Stands" stay one group. The importer applies the same
+rule to rows it *creates* without an id — a new row has no stored spelling to
+preserve, and the preview tells you when one will be stored under an existing
+spelling. Rows that update or restore existing records keep your file's spelling
+verbatim, which is what keeps re-importing an export a no-op. If an instance holds
+two spellings of one category from before this rule, both appear in the category
+list — edit the rows you want folded together and the app will converge them.
+
 **Kits are deliberately excluded.** A kit row is one *physical* kit, so two of the
 same product are legitimately two rows. Matching them by name would silently merge
 purchases you actually made. Instead, importing a kit that looks like one you own

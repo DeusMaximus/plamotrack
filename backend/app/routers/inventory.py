@@ -27,8 +27,19 @@ router = APIRouter(tags=["inventory"])
 
 
 @router.get("/tools", response_model=list[ToolRead])
-async def list_tools(session: SessionDep):
-    return await catalog_service.list_catalog(session, Tool)
+async def list_tools(session: SessionDep, category: str | None = None):
+    """Optionally filtered by category — exact value, case-insensitively; the
+    spellings in use come from /tools/categories (#127)."""
+    return await catalog_service.list_catalog(session, Tool, category=category)
+
+
+# Declared before any parameterised sibling out of the same caution as /kits/series;
+# today the only /tools/{...} routes are PATCH and DELETE, so GET cannot collide.
+@router.get("/tools/categories", response_model=list[str])
+async def list_tool_categories(session: SessionDep):
+    """Distinct tool categories in use, most frequent first — feeds the tool form's
+    typeahead so free text stays de-duplicated in practice (#127, the #96 shape)."""
+    return await catalog_service.list_catalog_categories(session, Tool)
 
 
 @router.post("/tools", response_model=ToolRead, status_code=201)
@@ -47,8 +58,13 @@ async def delete_tool(tool_id: uuid.UUID, session: SessionDep):
 
 
 @router.get("/consumables", response_model=list[ConsumableRead])
-async def list_consumables(session: SessionDep):
-    return await catalog_service.list_catalog(session, Consumable)
+async def list_consumables(session: SessionDep, category: str | None = None):
+    return await catalog_service.list_catalog(session, Consumable, category=category)
+
+
+@router.get("/consumables/categories", response_model=list[str])
+async def list_consumable_categories(session: SessionDep):
+    return await catalog_service.list_catalog_categories(session, Consumable)
 
 
 @router.post("/consumables", response_model=ConsumableRead, status_code=201)
@@ -99,8 +115,13 @@ async def apply_upgrade(
 
 
 @router.get("/display-items", response_model=list[DisplayItemRead])
-async def list_display_items(session: SessionDep):
-    return await catalog_service.list_catalog(session, DisplayItem)
+async def list_display_items(session: SessionDep, category: str | None = None):
+    return await catalog_service.list_catalog(session, DisplayItem, category=category)
+
+
+@router.get("/display-items/categories", response_model=list[str])
+async def list_display_item_categories(session: SessionDep):
+    return await catalog_service.list_catalog_categories(session, DisplayItem)
 
 
 @router.post("/display-items", response_model=DisplayItemRead, status_code=201)

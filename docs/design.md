@@ -242,6 +242,13 @@ different from consumables, so it keeps its own table rather than being merged i
 | manufacturer | text | |
 | quantity_on_hand | int | |
 
+The only catalog table without a `category` column, and as of #127 that is a decision
+rather than a gap (owner's call, 24/08/2026): `manufacturer` plus the name is how
+upgrades are actually told apart, an honest backfill for existing rows is impossible,
+and a nullable category would be the lone nullable one of four. The filter,
+distinct-values and canonicalisation machinery is generic over whichever tables carry
+the column, so if this is revisited the column is the whole cost.
+
 ### 3.5a `display_items` ✅ (#126, 21/08/2026)
 
 Fungible and durable, like `tools` — stands, system bases, diorama scenery, backdrop
@@ -285,9 +292,22 @@ individual build state is kit-shaped and belongs in `kits`.
 **`category` is required**, and is the one column here doing real work beyond
 bookkeeping: it is what lets "how many display stands do I have" be answered by a
 filter rather than by an agent guessing stand-ness from product names. Free text like
-every other category in this schema — the filter and distinct-values surface that make
-it properly answerable are #127, and until they land it is a column you can read but
-not query.
+every other category in this schema. What makes it properly answerable landed as #127:
+a case-insensitively folded `category` filter on each list surface, a per-table
+distinct-values endpoint (most frequent first — the #96 series device), and one lean
+`series` does not have — a written category matching an existing one
+case-insensitively is stored under that existing spelling, on all three live writers
+(create, edit, and an order line's `new_item`). The CSV importer folds exactly one
+case — an id-less row classified CREATE (stubs included), which states no prior
+spelling to preserve; the fold happens at plan time, so the fingerprint binds it and
+the preview announces the spelling apply will store. Everything that *restores*
+stays verbatim: an UPDATE and an id-bearing create-is-a-restore each assert a stored
+fact, and rewriting one would make a re-imported archive a rewrite (#130 review,
+P2-3; §12.5a spirit). Matching, the filter and the vocabulary all read the *trimmed*
+stored spelling, so a legacy padded row is found and folded onto by its trimmed form
+without the padding ever propagating (#130 review, P2-2). Vocabularies are
+per-table: a tool category and a consumable category are separate namespaces, exactly
+as their names are.
 
 ### 3.6 `upgrade_applications`
 
@@ -507,7 +527,10 @@ Standard CRUD plus a few purpose-built endpoints.
   line, so purchase records and the collection can't drift apart
 - `GET/POST /tools|/consumables|/upgrades|/display-items` + `PATCH/DELETE /{id}` on each — deletes are
   blocked (409) when the item appears in order history or upgrade applications; edit
-  instead, history is fact
+  instead, history is fact. The list routes (upgrades aside — no category column, §3.5)
+  take `?category=`, folded case-insensitively server-side, and each categorised table
+  has a `GET .../categories` distinct-values route (most frequent first) feeding the
+  form typeaheads (#127, the `/kits/series` shape)
 - `POST /upgrades/{id}/apply` — body: kit_id, quantity → creates an
   `upgrade_applications` row, decrements stock
 - `GET/POST /retailers`, `PATCH/DELETE /retailers/{id}` — delete blocked when the
@@ -706,6 +729,10 @@ pile of embedded copy.
 Exposed via FastMCP alongside the REST API, sharing the same service layer. The endpoint
 is `/mcp/` on the API port (streamable HTTP).
 
+- `get_meta()` (#99) — the app version and the instance's reference currency,
+  served by the same function as REST's `GET /meta` so the two cannot disagree.
+  What `create_order`'s "omit currency_code" advice used to point at as a `meta`
+  resource that never existed
 - `list_kits(status?, grade?, series?)`
 - `list_kit_series()` — the series spellings in use, most frequent first; the
   select-or-create device for a free-text column (#96) — agents check it before
@@ -717,8 +744,27 @@ is `/mcp/` on the API port (streamable HTTP).
 - `update_kit(id, changes)` — name, grade, scale, kit_number, series, status, rating,
   build_notes, and the two build dates (#94: a transition stamps one only when null,
   so a value set here is never overwritten by a later move)
+- `create_kit(kit)` (#98) — a kit acquired *without* a purchase to record: a gift, a
+  trade, a carry-over from before tracking. Its description steers agents to
+  `create_order` for anything bought — inventing an order to smuggle a kit in would
+  be a permanent wrong entry in the purchase history (§6) — and the service derives
+  scale from grade exactly as the REST route does (§3.1)
 - `search_catalog(query)` — the same backing search as the UI typeahead, so an agent
   adding an order hits the same de-dup logic a human would
+- `list_catalog_items(item_type, category?)` (#98) — one catalog table in full, with
+  its own per-type schema. `search_catalog` takes a query and caps results per type;
+  it was never a listing, and "what am I low on?" needs the whole table. The
+  `category` filter is folded server-side (#127) so the counting isn't left to the
+  model
+- `list_catalog_categories(item_type)` (#127) — the category spellings in use on one
+  table, most frequent first; the #96 device applied to the catalog's own free-text
+  column. Agents check it before writing a category
+- `create_catalog_tool(tool)`, `create_catalog_consumable(consumable)`,
+  `create_catalog_upgrade(upgrade)`, `create_catalog_display(display_item)` (#98) —
+  the create half of the same parity sweep that produced the update tools; per-table
+  for the same reason (each takes the REST route's own create schema unchanged).
+  First stocktakes, gifts and hand-me-downs; purchases go through `create_order`,
+  and every description says to `search_catalog` first (§3.9)
 - `list_retailers()`, `create_retailer(retailer)`, `update_retailer(id, changes)` —
   rating, packing quality, shipping speed, would-order-again, notes (§3.7). A retailer
   named on `create_order` is created holding nothing but a name; this is how the rest
