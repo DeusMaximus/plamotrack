@@ -49,6 +49,12 @@ Orders are *pending* until you mark them received. That matters more than it sou
 stock only lands in your inventory when the box does. No more being told you have five
 Gundam markers while they're demonstrably still in Osaka.
 
+They know when they shipped, too. Mark an order shipped and its kits ride along in
+In Transit with the days counting; mark it received and everything arrives at once.
+Both dates backdate — you log the box when you find the time, not when it lands —
+and completed builds carry start/finish dates, a rating, and a series you name
+yourself, so "everything Iron-Blooded Orphans" is a filter, not an archaeology dig.
+
 ![Orders, with one expanded to show its lines](docs/screenshots/orders.png)
 
 If you look closely at the inventory below, Mr. Color Thinner sits at **0 on hand** —
@@ -136,6 +142,7 @@ Being honest up front beats you finding out at 11pm:
 | **Internationalisation foundations** | 🔨 Milestone 5.1 — English catalogue and locale-aware formatting; the configurable reference currency already shipped |
 | **Authentication + OAuth-compatible remote MCP** | 🔨 Milestone 6 — yes, really, see the warning above |
 | **MCP `2026-07-28` compatibility** | 🔨 Milestone 6.1 — dual-era, without dropping current clients |
+| **UI redesign** | 🔨 Milestone 6.5 — moving off the stock-component look, so the gallery and showcase get built in the new one; direction still being explored, and opinions are welcome on the tracker |
 | **Photo gallery per kit** | 🔨 Milestone 7 |
 | **Public read-only showcase page** | 🔨 Milestone 8 — after the admin and MCP paths are protected |
 
