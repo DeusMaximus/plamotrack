@@ -9,6 +9,16 @@ apply) is then the same code path as an archive import.
 Rows that name a retailer become an order; rows that don't become standalone kits.
 Rows sharing a retailer + date + order number collapse into one order with several
 lines, so a five-kit haul is five rows here and one order in the app.
+
+Both branches emit full `kits` rows. The retailer-bearing branch used to emit only
+the order line and let the importer's fan-out spawn the kits — which silently
+dropped every field that lives on the kit and not on the line's `kit_*` mirror:
+`rating`, `build_notes`, `build_started`, `build_completed`, `series` (#112). It
+now synthesizes stable line ids, emits one kit row per unit carrying
+`order_item_id`, and the §3.9 hybrid dispatch sees the line as supplied and spawns
+nothing. Status and arrival stamps are resolved through the same
+`initial_kit_status` the spawn path uses, so the two routes to an order-backed kit
+cannot drift.
 """
 
 import uuid
@@ -18,7 +28,7 @@ from dataclasses import dataclass
 from app.config import get_settings
 from app.exceptions import InvalidInputError
 from app.models.enums import KitStatus
-from app.services.orders import require_line_quantity
+from app.services.orders import initial_kit_status, require_line_quantity
 from app.services.portability.spec import (
     ColumnSpec,
     col,
@@ -192,13 +202,15 @@ def _present(source_row: str, **cells: str) -> dict[str, str]:
     return row
 
 
-def _standalone_count(cell: str) -> int:
-    """How many kits a retailer-free row stands for.
+def _kit_count(cell: str) -> int:
+    """How many kits one sheet row stands for, whichever branch reads it.
 
     Blank is one, as the sheet's guidance says. Anything else has to be a whole
-    number of at least one, and is held to the same ceiling as an order line: this
-    branch is the one route to a kit that produces no order line, so it is also the
-    one route `_check_line_quantity` never sees.
+    number of at least one, held to the same ceiling as an order line. On a
+    retailer-free row this is the only check the cell ever meets — that branch
+    produces no order line for `_check_line_quantity` to see. The retailer branch
+    reads it too (its kit fan-out is per unit, #112), but delegates the *error*
+    to its order line, which still carries the cell.
     """
     try:
         count = parse_int(cell)
@@ -223,6 +235,42 @@ class _Receipt:
 
     stated: bool
     row: str
+
+
+@dataclass(frozen=True)
+class _PendingKits:
+    """A retailer-bearing row's kit fan-out, parked until the receipts settle.
+
+    Any row of an order group may be the one that states `received`, and the kit
+    rows' status cannot be resolved until the whole group has been read — the
+    same reason `received_at` itself is settled after the loop.
+    """
+
+    source_row: str
+    key: str
+    line_id: str
+    count: int
+    requested: KitStatus | None
+    fields: dict[str, str]
+
+
+def _line_id(key: str, kit_name: str, grade: str, occurrence: int) -> str:
+    """A stable synthesized id for one order line, keyed on the order group plus
+    the *kit's identity* — deliberately not the row's position in the sheet.
+
+    Position-keyed ids looked simpler, but the same order key can arrive across
+    two separately-imported files (a numberless order needs only the same shop and
+    date), and there position 0 of the second file would silently rewrite position
+    0 of the first — line, kits, ratings and all. Identity-keyed ids reproduce the
+    line fingerprint's semantics instead: the same kit restated is the same line,
+    a different kit is a new one. `occurrence` separates genuinely repeated rows
+    (two identical Zaku rows are two lines), counting per key + identity so row
+    order between distinct kits never changes an id. The cost, shared with the
+    fingerprint this replaces: a re-import that *renames* a kit reads as a new
+    line, not a correction.
+    """
+    identity = f"{kit_name.strip().lower()}|{grade.strip().lower()}"
+    return str(uuid.uuid5(_NAMESPACE, f"{key}|line|{identity}|{occurrence}"))
 
 
 def _received(cell: str) -> bool | None:
@@ -266,6 +314,11 @@ def expand(
     receipts: dict[str, _Receipt] = {}
     order_items: list[dict[str, str]] = []
     kits: list[dict[str, str]] = []
+    #: Kit fan-outs waiting on the receipts (#112) — built after the loop.
+    pending_kits: list[_PendingKits] = []
+    #: How many lines each (order key, kit identity) pair has produced, so a
+    #: genuinely repeated row gets its own line id (`_line_id`).
+    line_occurrence: dict[tuple[str, str], int] = {}
     problems: list[str] = []
     produced = 0
 
@@ -304,7 +357,7 @@ def expand(
             # A column cannot mean "how many of this kit" when a shop is named and
             # nothing at all when one isn't.
             try:
-                count = _standalone_count(quantity)
+                count = _kit_count(quantity)
             except InvalidInputError as exc:
                 problems.append(f"row {source_row}: {exc}")
                 continue
@@ -368,22 +421,62 @@ def expand(
                 continue
             receipts[key] = _Receipt(stated=stated, row=source_row)
 
-        spend(1)
+        # The kit fan-out reads the same two cells the line carries. Where either
+        # cell is bad, `count` drops to None and only the line is emitted — its own
+        # parse (`_check_line_quantity`, the `kit_status` parser) then reports the
+        # cell against this row's number, once, exactly as it always has. Emitting
+        # kit rows too would repeat one typo as `count` errors.
+        try:
+            count = _kit_count(quantity)
+            requested = _KIT_STATUS(status)
+        except (InvalidInputError, ValueError):
+            count, requested = None, None
+
+        kit_name = row.get("kit_name") or ""
+        grade = row.get("grade") or ""
+        seq_key = (key, f"{kit_name.strip().lower()}|{grade.strip().lower()}")
+        occurrence = line_occurrence.get(seq_key, 0)
+        line_occurrence[seq_key] = occurrence + 1
+        line_id = _line_id(key, kit_name, grade, occurrence)
+
+        spend(1 + (count or 0))
         order_items.append(
             _present(
                 source_row,
+                id=line_id,
                 order_id=orders[key]["id"],
                 item_type="kit",
                 quantity=quantity,
                 unit_price=row.get("unit_price", ""),
                 currency_code=currency,
-                kit_name=row.get("kit_name", ""),
-                kit_grade=row.get("grade", ""),
+                kit_name=kit_name,
+                kit_grade=grade,
                 kit_scale=row.get("scale", ""),
                 kit_number=row.get("kit_number", ""),
                 kit_status=status,
             )
         )
+        if count is not None:
+            pending_kits.append(
+                _PendingKits(
+                    source_row=source_row,
+                    key=key,
+                    line_id=line_id,
+                    count=count,
+                    requested=requested,
+                    fields={
+                        "name": kit_name,
+                        "grade": grade,
+                        "scale": row.get("scale", ""),
+                        "kit_number": row.get("kit_number", ""),
+                        "series": row.get("series", ""),
+                        "build_started_at": row.get("build_started", ""),
+                        "build_completed_at": row.get("build_completed", ""),
+                        "rating": row.get("rating", ""),
+                        "build_notes": row.get("build_notes", ""),
+                    },
+                )
+            )
 
     # Settled after the whole sheet has been read, because any row of a group may
     # be the one that states it — and set unconditionally, bypassing `_present`.
@@ -397,6 +490,33 @@ def expand(
         # Received-on defaults to the order date rather than today, so a migrated
         # collection doesn't claim it all arrived on import day.
         order_row["received_at"] = order_row.get("order_date", "") if received else ""
+
+    # The deferred fan-out (#112): one kit row per unit, landing on the status —
+    # and, for an arrival, the stamp — `spawn_kits` would have produced, resolved
+    # through the same shared predicate now that every receipt is settled. Scale
+    # stays as the sheet wrote it: the kits create path derives a blank one from
+    # the grade, the same as the spawn.
+    for pending in pending_kits:
+        settled = receipts.get(pending.key)
+        received = settled.stated if settled is not None else True
+        requested = pending.requested or KitStatus.ORDERED
+        final = initial_kit_status(requested, received)
+        # A kit landing in backlog entered the collection when the box did (#93):
+        # it carries the order's receipt instant, which this sheet defaults to the
+        # order date — blank on an unreceived order, so nothing is stamped there.
+        # Any other landing keeps the server default, exactly as `spawn_kits` does.
+        stamp = orders[pending.key].get("received_at", "") if final is KitStatus.BACKLOG else ""
+        for unit in range(pending.count):
+            kits.append(
+                _present(
+                    pending.source_row,
+                    id=str(uuid.uuid5(_NAMESPACE, f"{pending.line_id}|kit|{unit}")),
+                    order_item_id=pending.line_id,
+                    status=final.value,
+                    status_updated_at=stamp,
+                    **pending.fields,
+                )
+            )
 
     expanded: dict[str, list[dict[str, str]]] = {}
     if retailers:

@@ -579,7 +579,11 @@ async def test_starter_sheet_expands_into_retailers_orders_and_kits(client):
 
     plan = await preview(client, sheet, filename="starter-sheet.csv")
     assert plan["source"] == "starter-sheet"
-    assert plan["derived"]["kits_spawned"] == 2  # the two order-backed rows
+    # Order-backed kits arrive as explicit kit rows, not spawns (#112) — the
+    # expansion supplies every line's kits itself, so the fan-out has nothing
+    # left to conjure and all three kits are visible creates in the preview.
+    assert plan["derived"]["kits_spawned"] == 0
+    assert actions(plan, "kits") == ["create"] * 3
 
     resp = await apply(client, sheet, filename="starter-sheet.csv")
     assert resp.status_code == 200, resp.text
@@ -663,6 +667,148 @@ async def test_starter_sheet_reimport_does_not_duplicate_orders(client):
     assert len((await client.get("/orders")).json()) == 1
     assert len((await client.get("/retailers")).json()) == 1
     assert len((await client.get("/kits")).json()) == 1
+
+
+# --- #112: kit-only fields on retailer-bearing rows ------------------------------
+#
+# The retailer branch used to emit only the order line and let the fan-out spawn
+# the kits, so every field living on the kit and not on the line's kit_* mirror
+# silently vanished. These drive the five fields the issue names, across the
+# receipt axis, and pin the id synthesis that keeps re-imports no-ops.
+
+
+def kit_fields_row(**overrides) -> dict:
+    row = {
+        "kit_name": "MSN-04 Sazabi Ver.Ka",
+        "grade": "MG",
+        "series": "Char's Counterattack",
+        "status": "",
+        "build_started": "2026-01-10",
+        "build_completed": "2026-02-08",
+        "rating": "4",
+        "build_notes": "Panel-lined, waiting on decals.",
+        "quantity": "1",
+        "retailer": "Hobby Link Japan",
+        "order_date": "2026-03-14",
+        "order_number": "HLJ-88213",
+        "unit_price": "112.00",
+        "currency": "AUD",
+        "received": "yes",
+    }
+    row.update(overrides)
+    return row
+
+
+@pytest.mark.parametrize(
+    ("received", "expected_status"),
+    [
+        pytest.param("yes", "backlog", id="received lands in backlog"),
+        pytest.param("no", "ordered", id="unreceived stays on the way"),
+    ],
+)
+async def test_a_retailer_row_carries_every_kit_field(client, received, expected_status):
+    """The #112 acceptance row: rating, notes, both build dates and series survive
+    a retailer-bearing row, on both sides of the receipt axis — and the kit still
+    lands on the status the spawn path would have chosen for that side."""
+    sheet = starter_sheet_csv([kit_fields_row(received=received)])
+
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+    assert plan["blocking_errors"] == [], plan
+
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+    [kit] = (await client.get("/kits")).json()
+    assert kit["rating"] == 4
+    assert kit["build_notes"] == "Panel-lined, waiting on decals."
+    assert kit["series"] == "Char's Counterattack"
+    assert kit["build_started_at"] is not None
+    assert kit["build_completed_at"] is not None
+    assert kit["status"] == expected_status
+    assert kit["scale"] == "1/100", "blank scale still derives from the grade"
+    [order] = (await client.get("/orders")).json()
+    assert kit["order_item_id"] == order["items"][0]["id"], "purchase provenance held"
+    # The mechanism, pinned after the outcome: the kits were supplied by the
+    # upload's own rows, not conjured by the fan-out.
+    assert plan["derived"]["kits_spawned"] == 0, "supplied by the upload, not spawned"
+    assert actions(plan, "kits") == ["create"]
+
+
+@pytest.mark.parametrize(
+    "received",
+    [
+        pytest.param("yes", id="stated"),
+        pytest.param("", id="blank, the documented default"),
+    ],
+)
+async def test_a_received_starter_kit_carries_the_receipt_instant(client, received):
+    """`spawn_kits` stamps a backlog arrival with the order's receipt instant
+    rather than the import instant (#93); the explicit kit rows owe the same
+    stamp, or a migrated collection claims everything arrived on import day.
+    Blank `received` is the documented "yes" — the kit fan-out reads the settled
+    receipt, not the cell, so the default has to land the same way."""
+    sheet = starter_sheet_csv([kit_fields_row(status="", received=received)])
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+
+    [kit] = (await client.get("/kits")).json()
+    [order] = (await client.get("/orders")).json()
+    assert kit["status"] == "backlog"
+    assert kit["status_updated_at"] == order["received_at"]
+
+
+async def test_reimporting_a_kit_carrying_sheet_is_a_noop(client):
+    """The #112 acceptance's second row: the synthesized line and kit ids are
+    stable across runs, so the same sheet twice is one order, one line per row,
+    and the same physical kits — not a re-spawn, a removal, or a rename."""
+    sheet = starter_sheet_csv([kit_fields_row(quantity="2")])
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+    first = sorted(k["id"] for k in (await client.get("/kits")).json())
+    assert len(first) == 2
+
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+    assert plan["blocking_errors"] == [], plan
+    assert plan["derived"]["kits_spawned"] == 0
+    assert plan["derived"]["kits_removed"] == 0
+    for table in plan["tables"]:
+        assert [row["action"] for row in table["rows"]] == ["unchanged"] * len(table["rows"]), table
+
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+    assert sorted(k["id"] for k in (await client.get("/kits")).json()) == first
+
+
+async def test_two_identical_rows_of_one_order_are_two_lines_and_two_kits(client):
+    """The occurrence half of the line id: a genuinely repeated row is a second
+    purchase of the same kit, not a restatement — and it stays two lines on
+    re-import rather than collapsing or colliding."""
+    row = kit_fields_row()
+    sheet = starter_sheet_csv([row, dict(row)])
+
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+    assert plan["blocking_errors"] == [], plan
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+    [order] = (await client.get("/orders")).json()
+    assert len(order["items"]) == 2
+    assert len((await client.get("/kits")).json()) == 2
+
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+    assert len((await client.get("/orders")).json()[0]["items"]) == 2
+    assert len((await client.get("/kits")).json()) == 2
+
+
+async def test_a_bad_cell_on_a_retailer_row_is_reported_once(client):
+    """The fan-out reads `quantity` and `status` before it can build kit rows, but
+    a bad cell stays the order line's error to report — one row error naming the
+    sheet's own line, not that error plus one copy per kit unit."""
+    sheet = starter_sheet_csv([kit_fields_row(status="definitely-not-a-status")])
+    plan = await preview(client, sheet, filename="starter-sheet.csv")
+    assert plan["blocking_errors"], plan
+    flagged = [
+        row
+        for table in plan["tables"]
+        for row in table["rows"]
+        if row["action"] == "error" and "not valid here" in (row["error"] or "")
+    ]
+    assert len(flagged) == 1, flagged
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 409
+    assert (await client.get("/kits")).json() == []
 
 
 # --- safety -------------------------------------------------------------------
@@ -2841,7 +2987,7 @@ async def test_received_cell_is_parsed_as_a_boolean(client, cell, outcome):
 
 async def test_a_received_starter_order_lands_its_kits_in_backlog(client):
     """A received order used to spawn its kits `ordered` regardless: `apply_import`
-    called `spawn_kits` without `received`, so `_initial_kit_status` never ran and
+    called `spawn_kits` without `received`, so `initial_kit_status` never ran and
     the collection was wrong the moment onboarding finished (#47).
     """
     row = sheet_row("1", retailer="Hobby Link Japan")

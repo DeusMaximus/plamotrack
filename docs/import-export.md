@@ -59,13 +59,9 @@ Download `starter-sheet.csv`, fill it in, import it.
 | `unit_price`, `currency` | Major units (`49.99`). Currency blank = your instance's `REFERENCE_CURRENCY` (`AUD` unless you changed it). The example rows in the downloaded sheet are already filled in with yours. |
 | `received` | `yes`/`no`. Blank = yes. Received-on defaults to the order date, not today. When several rows collapse into one order you only need to say it once — but if two rows of the same order say *different* things, that's an error rather than a guess. Re-importing with `no` un-marks an order you'd previously imported as received. |
 
-You write kits; plamotrack works out the retailers, orders, and order lines.
-
-> **Known limitation ([#112](https://github.com/DeusMaximus/plamotrack/issues/112)):**
-> on a row that **names a retailer**, only the kit's identity travels (name, grade,
-> scale, kit number, status). `rating`, `build_notes`, `series` and the build dates
-> currently survive only on rows *without* a retailer — put those kits on retailer-less rows,
-> or fill the fields in afterwards.
+You write kits; plamotrack works out the retailers, orders, and order lines. Every
+kit column travels whether or not the row names a retailer — `rating`,
+`build_notes`, `series` and the build dates land on the kit either way.
 
 ### 2. The template pack — one file per table
 
