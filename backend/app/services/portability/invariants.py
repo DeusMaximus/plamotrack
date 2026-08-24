@@ -126,7 +126,7 @@ def _immutable_message(column: str, before: str, after: str) -> str:
 # --- a catalog line points at something (the third preview refusal) --------------
 
 
-def effective_item_type(row: "_Row") -> Any:
+def effective_item_type(row: "_Row", stored: Any | None = None) -> Any:
     """What this row's line will be once written — the sheet's `item_type` where it
     states one, otherwise the stored line's. A partial sheet legitimately omits the
     column, and reading `values` alone would then treat every such row as typeless
@@ -137,10 +137,15 @@ def effective_item_type(row: "_Row") -> Any:
     omitting the column skipped the fan-out entirely and a reduced quantity left
     every kit attached (external review of #86). One definition, because two
     readings of "what type is this line" is how that happened — the correct one
-    already existed here when the wrong one was written one module over."""
+    already existed here when the wrong one was written one module over.
+
+    `stored` is for the one caller that runs before matching has bound
+    `row.target`: `_resolve_ref` dispatches the catalog reference by this same
+    reading, and at that point the stored line is a lookup it has to make itself
+    (#90). Precedence is unchanged — the sheet's stated type always wins."""
     if "item_type" in row.present and row.values.get("item_type") is not None:
         return row.values["item_type"]
-    return getattr(row.target, "item_type", None)
+    return getattr(row.target if row.target is not None else stored, "item_type", None)
 
 
 def _check_catalog_targets(

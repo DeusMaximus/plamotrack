@@ -842,6 +842,190 @@ async def test_a_partial_line_update_that_omits_item_type_still_reconciles(clien
     assert len(stored["kits"]) == 1, "the line and the collection have to agree"
 
 
+# --- #90: the omitted-item_type axis of catalog reference resolution -------------
+#
+# `_resolve_ref` dispatches `catalog_ref_id` by the line's item_type, and a partial
+# sheet legitimately omits that column. These cases cross the omitted axis with
+# what the reference cell holds; the shared matrix above never varies it because
+# `line_row` always supplies `item_type`, and the REST driver has no analogue at
+# all — the schema requires the field, so only the importer can reach this state.
+
+
+DEAD_REF = "11111111-1111-1111-1111-111111111111"
+
+
+async def line_ref_after(client, order) -> str | None:
+    return (await client.get(f"/orders/{order['id']}")).json()["items"][0]["catalog_ref_id"]
+
+
+async def test_a_kit_line_update_omitting_item_type_does_not_write_a_catalog_ref(client):
+    """The #90 write-through, on the branch #86's invariant cannot see.
+
+    A stored *catalog* line omitting `item_type` is refused downstream by
+    `_check_catalog_targets`, whose effective reading knows the stored type — but a
+    stored **kit** line passes that check by design (kit lines don't reference the
+    catalog), so a resolver that reads `values` alone sent the raw cell straight to
+    the database: a dangling uuid on a kit line, silently, at 200. The fix gives the
+    resolver the same effective reading, so the cell earns #89's ignored-reference
+    message instead of a write."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [kit_line(1)])
+    item = order["items"][0]
+
+    content = sheet(
+        "order_items",
+        ["id", "order_id", "catalog_ref_id"],
+        [{"id": item["id"], "order_id": order["id"], "catalog_ref_id": DEAD_REF}],
+    )
+    plan = await preview(client, content, filename="order_items.csv")
+    assert plan["blocking_errors"] == [], plan
+    [row] = plan["tables"][0]["rows"]
+    assert any("doesn't reference the catalog" in message for message in row["messages"]), row
+
+    resp = await apply(client, content, filename="order_items.csv")
+    assert resp.status_code == 200, resp.text
+    assert await line_ref_after(client, order) is None, (
+        "a kit line must never hold a catalog reference"
+    )
+
+
+async def test_a_catalog_line_update_omitting_item_type_still_refuses_a_dead_ref(client):
+    """The issue's headline row, pinned at its post-#86 verdict: refused, not
+    written. Before the resolver fix the refusal came from `_check_catalog_targets`
+    alone; with it, the resolver nulls the cell and `_refuse_unresolved_overwrite`
+    speaks first. Either way the layer is the preview and the answer is a blocking
+    error on this column — which is what this asserts, not the wording."""
+    paint = await make_consumable(client)
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [consumable_line(paint["id"])])
+    item = order["items"][0]
+
+    content = sheet(
+        "order_items",
+        ["id", "order_id", "catalog_ref_id"],
+        [{"id": item["id"], "order_id": order["id"], "catalog_ref_id": DEAD_REF}],
+    )
+    plan = await preview(client, content, filename="order_items.csv")
+    assert plan["blocking_errors"], plan
+    [row] = plan["tables"][0]["rows"]
+    assert row["action"] == "error"
+    assert row["error"].startswith("catalog_ref_id:"), row["error"]
+
+    resp = await apply(client, content, filename="order_items.csv")
+    assert resp.status_code == 409, resp.text
+    assert await line_ref_after(client, order) == paint["id"]
+
+
+async def test_a_catalog_line_update_omitting_item_type_repoints_at_a_local_id(client):
+    """The green control on the same axis: a resolvable local uuid imports whether
+    or not the resolver dispatches, because `_check_catalog_targets` accepts what
+    `by_id` holds. Here so the two red neighbours can't be read as 'omitting
+    item_type refuses everything'."""
+    paint = await make_consumable(client, "Panel liner")
+    topcoat = await make_consumable(client, "Top coat")
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [consumable_line(paint["id"])])
+    item = order["items"][0]
+
+    content = sheet(
+        "order_items",
+        ["id", "order_id", "catalog_ref_id"],
+        [{"id": item["id"], "order_id": order["id"], "catalog_ref_id": topcoat["id"]}],
+    )
+    plan = await preview(client, content, filename="order_items.csv")
+    assert plan["blocking_errors"] == [], plan
+
+    resp = await apply(client, content, filename="order_items.csv")
+    assert resp.status_code == 200, resp.text
+    assert await line_ref_after(client, order) == topcoat["id"]
+
+
+async def test_a_catalog_line_update_omitting_item_type_resolves_the_readable_mirror(client):
+    """`catalog_name` is documented as standing in for the uuid, and a typeless
+    resolver skipped the mirror entirely — the cell the operator filled in was
+    ignored without a message, and the line silently kept its old reference."""
+    paint = await make_consumable(client, "Panel liner")
+    topcoat = await make_consumable(client, "Top coat")
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [consumable_line(paint["id"])])
+    item = order["items"][0]
+
+    content = sheet(
+        "order_items",
+        ["id", "order_id", "catalog_name"],
+        [{"id": item["id"], "order_id": order["id"], "catalog_name": "Top coat"}],
+    )
+    plan = await preview(client, content, filename="order_items.csv")
+    assert plan["blocking_errors"] == [], plan
+
+    resp = await apply(client, content, filename="order_items.csv")
+    assert resp.status_code == 200, resp.text
+    assert await line_ref_after(client, order) == topcoat["id"]
+    rows = (await client.get("/consumables")).json()
+    assert {r["name"] for r in rows} == {"Panel liner", "Top coat"}, "no stub conjured"
+
+
+async def test_a_catalog_line_update_omitting_item_type_follows_the_uploads_remap(client):
+    """A consumables.csv row natural-matching a local item records a remap, and
+    every later reference through the file's id is supposed to follow it. The
+    typeless resolver never consulted the remap, so the line's reference read as
+    pointing at nothing and a legitimate partial archive was refused."""
+    topcoat = await make_consumable(client, "Top coat")
+    paint = await make_consumable(client, "Panel liner")
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [consumable_line(paint["id"])])
+    item = order["items"][0]
+    foreign = "22222222-2222-2222-2222-222222222222"
+
+    content = archive(
+        {
+            "consumables": ["id", "name"],
+            "order_items": ["id", "order_id", "catalog_ref_id"],
+        },
+        consumables=[{"id": foreign, "name": "Top coat"}],
+        order_items=[{"id": item["id"], "order_id": order["id"], "catalog_ref_id": foreign}],
+    )
+    plan = await preview(client, content)
+    assert plan["blocking_errors"] == [], plan
+
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+    assert await line_ref_after(client, order) == topcoat["id"]
+
+
+async def test_replace_all_does_not_type_the_line_from_the_doomed_database(client):
+    """#45's rule holds for the stored line too: a replace-all truncates it, so its
+    item_type must not drive resolution. The typeless row is a create refused for
+    the missing column — and the mirror name it carries must not conjure a stub
+    from a dispatch that had no right to run."""
+    paint = await make_consumable(client, "Panel liner")
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = await make_order(client, retailer, [consumable_line(paint["id"])])
+    item = order["items"][0]
+
+    content = archive(
+        {
+            "retailers": ["id", "name"],
+            "order_items": ["id", "order_id", "catalog_name", "quantity"],
+        },
+        retailers=[{"id": retailer["id"], "name": retailer["name"]}],
+        orders=[order_row(order, retailer)],
+        order_items=[
+            {
+                "id": item["id"],
+                "order_id": order["id"],
+                "catalog_name": "Panel liner",
+                "quantity": "3",
+            }
+        ],
+    )
+    plan = await preview(client, content, mode="replace_all")
+    line_rows = next(entry["rows"] for entry in plan["tables"] if entry["table"] == "order_items")
+    assert line_rows[0]["action"] == "error"
+    assert line_rows[0]["error"].startswith("item_type:"), line_rows[0]["error"]
+    assert actions(plan, "consumables") == [], "no stub conjured from the mirror"
+
+
 async def test_an_existing_kit_moved_onto_a_line_this_upload_creates_supplies_it(client):
     """The action axis of `_attached_after`: the line is a CREATE, so it has no
     stored kits — but a `kits.csv` update can still point an existing kit at it, and
