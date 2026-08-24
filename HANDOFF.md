@@ -41,6 +41,48 @@ Template:
 
 ---
 
+## 2026-08-24 — Claude Code (Fable 5) — #119 closed: PR #139 merged as `b6c083d` after one Cursor round (GO + 1 P3); adv- fold-in open as PR #140
+
+- **Done:** **#119 — PR #139** squash-merged as `b6c083d` on the owner's call, CI
+  green at every head. Both derived advances (ship + receive) are now plan-time
+  `_Advance` descriptors (kit id, before-status, landing status, stamp): planned by
+  `_plan_advances`, hash-bound in `_plan_fingerprint`, consumed verbatim by
+  `_apply_planned_advances` — the `_Spawn` precedent extended to rows the plan
+  *moves*; the two apply-time re-deciding functions are deleted. The preview shows
+  the moves (`DerivedEffects.kits_advanced` + per-order messages), `ImportResult`
+  counts them, frontend mirrors, docs swept (design §12.3 + import-export). 11 new
+  tests in `test_ship_dates.py`, both siblings in each matrix; negative control
+  **9 red / 2 green** in a `main` worktree — the six stale-hash tests red on
+  exactly `200 == 409`, the greens the correction-guard controls. Cursor round 1:
+  **GO + P3-1** (import-export's *ship* paragraph lacked the bind claim its
+  receipt bullet got) — accepted, fixed at `7de77bb`, reply posted. Cursor also
+  ran an 18-cell composition matrix, an n=8 two-preview hash-stability probe, a
+  reparenting divergence probe (none found), and judged both add_only guard
+  layers live.
+- **Decisions:** **Cursor over Codex despite a full Codex tank** — Codex
+  prescribed this exact remedy in #118's round, so it reviewing its own
+  prescription is the weaker independence check; 415 insertions also routes
+  Cursor by size. **One terminal descriptor per kit** on a combined ship+receive
+  row, and **before-status is hash-bound** (an eligibility-preserving move still
+  stales) — both deliberate calls, both review-endorsed.
+- **Fold-in:** **PR #140 open** (`test/fold-adv-mutants`, head `645b66f`, CI
+  green) — the 7 `adv-` tuples into the tracked harness, scratch runner deleted,
+  **163/163 killed, 16m31s measured**, runtime + case-count lines refreshed.
+  Rides without a review round per #40 (contract untouched; Cursor re-ran every
+  tuple in the source round — stated in the PR body). **Awaiting the owner's
+  merge call.** #139 itself re-anchored ship-5/ship-12/stamp-2 in place (their
+  old anchors lived in the deleted functions).
+- **State:** `main` at `b6c083d` (+ this entry), backend **1042**, vitest 109,
+  e2e **24/24 from empty** verified this session, no migration. No dev servers
+  running — :8000/:5173 are both free; the stale pre-#133 pair the last entry
+  warned about is gone. No mutant queues outstanding once #140 merges.
+- **Next:** merge #140 (owner's call), then **#77** (aggregate fan-out cap) — the
+  last 0.2.6 item besides **#87, blocked on the owner's product call**. Live:
+  **no v0.2.6 tag ever**; one v0.2.7-alpha only when BOTH 0.2.6 (#77, #87) and
+  0.2.7 are done, and 0.2.7 is empty, so **do not run the release gate**.
+  **Back up the LXC before pulling `main`.** #137 stays unmilestoned (product
+  call). #122 rides M6.5.
+
 ## 2026-08-24 — Claude Code (Fable 5) — #90 + #112 closed (PRs #133, #136, one Cursor round each); both mutant queues folded (#135, #138); #137 filed
 
 - **Done:** **#90 — PR #133** squash-merged as `545f341`, Cursor round 1 GO clean.
@@ -300,30 +342,3 @@ Template:
   is the Proxmox LXC), and **#112 goes before any real-collection import**
   (the starter sheet drops kit-only fields on retailer-bearing rows). Gate +
   v0.2.7-alpha tag only when both milestones are empty.
-
-## 2026-08-21 — Claude Code (Sonnet 5) — #120 filed: the 0.2.7 "one more item" is named
-
-- **Done:** UI walkthrough with the owner over the Kits and Orders pages (no
-  code changed this session). Three gaps surfaced and filed as **#120**,
-  milestoned to v0.2.7-alpha: (1) Kits table shows status as both a badge and a
-  redundant inline `<select>` — the dropdown bypasses Edit and should go,
-  status changes only through Edit going forward; (2) Orders — Ship/Receive
-  already backdate correctly (#95/#111) but live in separate modals from
-  Edit's date-correction fields, should fold into one Edit-order dialog; the
-  row space Ship/Receive buttons free up becomes `SHIPPED`/`RECEIVED` columns
-  mirroring Kits' Started/Completed elapsed-day pattern; the per-line
-  `kit_status` (ordered/pre_ordered) picker on order line items is a confusing
-  per-line rendering of what's really an order-wide flag (a retailer splitting
-  a shipment becomes two plamotrack orders, per the owner's stated workflow) —
-  promote to one flag set at order creation, applied to every line, drop the
-  per-line picker. (3) Board cards (Build and Orders kanban) don't open the
-  same Edit dialog their list-page rows do — filed but **explicitly deferred
-  by the owner** to a future UI redesign, not 0.2.7 scope.
-- **Decisions:** #120 items 1+2 are 0.2.7 scope; item 3 is deferred and
-  deliberately *not* milestoned to 0.2.7 (the issue body says so — don't pull
-  it into this milestone without asking).
-- **State:** no code changes, no migration, no tests touched. Dev servers were
-  already running on :8000/:5173 from the prior session; left as-is.
-- **Next:** implement #120 (items 1+2) — this is the "one more item" the prior
-  entry said the owner was adding to 0.2.7. Once it lands, run the release gate
-  (`.agents/testing-and-review.md`) and 0.2.7 is ready to cut.
