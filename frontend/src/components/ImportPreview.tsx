@@ -204,6 +204,13 @@ export function ImportPreview({ plan }: { plan: ImportPlan }) {
             deleted, from order lines whose quantity went down.
           </p>
         )}
+        {/* Also named by no row — the per-order messages below say which way. */}
+        {plan.derived.kits_advanced > 0 && (
+          <p className="mt-1 text-zinc-600">
+            {plan.derived.kits_advanced} kit{plan.derived.kits_advanced === 1 ? "" : "s"} already
+            on these orders will move with the shipped/received dates.
+          </p>
+        )}
         <p className="mt-1 text-xs text-zinc-500">{plan.derived.stock_note}</p>
       </div>
 

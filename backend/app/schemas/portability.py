@@ -54,6 +54,10 @@ class DerivedEffects(BaseModel):
     #: so it is stated in the preview next to `rows_deleted` rather than discovered
     #: afterwards — nothing in the row list mentions these kits.
     kits_removed: int = 0
+    #: Pre-existing kits an order this upload marks shipped or received moves
+    #: (in_transit / backlog). Derived, hash-bound as plan descriptors (#119),
+    #: and named by no row — the per-order messages say which way each moves.
+    kits_advanced: int = 0
     stock_changes: int = 0
     stock_note: str = ""
     rows_deleted: dict[str, int] = Field(default_factory=dict)
@@ -89,5 +93,6 @@ class ImportResult(BaseModel):
     skipped: int
     kits_spawned: int
     kits_removed: int = 0
+    kits_advanced: int = 0
     rows_deleted: dict[str, int] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)

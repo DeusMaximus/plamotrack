@@ -3392,7 +3392,7 @@ async def test_correcting_an_already_received_orders_timestamp_does_not_touch_it
 
     No spawn anywhere in this import, on purpose: nothing on the fan-out path
     could have caught it, so the distinction has to live in
-    `_advance_kits_for_newly_received_orders` itself.
+    `_plan_advances`' change-not-cell reading (`_newly_set`) itself.
     """
     retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
     order = (
@@ -3454,8 +3454,8 @@ async def test_an_import_does_not_revert_a_kit_someone_moved_on_during_it(client
     """Codex repro 3 from the #79 review, reachable only now that the importer has
     a kit-arrival side effect at all.
 
-    An orders-only receipt update plans just the Order, but
-    `_advance_kits_for_newly_received_orders` also mutates pre-existing kits — off
+    An orders-only receipt update plans just the Order, but the planned
+    advance descriptors also mutate pre-existing kits — off
     the relationship snapshot planning loaded. A normal `PATCH /kits/{id}` to
     `building` landing between the plan and that write used to be overwritten back
     to `backlog`, which the REST receive path would never do.

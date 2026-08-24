@@ -633,11 +633,33 @@ class _Removal:
 
 
 @dataclass
+class _Advance:
+    """A pre-existing kit this apply's own ship/receive transition moves (#119).
+
+    The `_Spawn` precedent extended from rows the plan creates to rows it moves:
+    resolved at plan time, hash-bound, and consumed verbatim by the apply. The
+    old shape decided from `kit.status` *at apply*, after the hash check, so the
+    set of kits an approved preview implied would move was not the set the apply
+    moved — a kit progressed between preview and apply was silently skipped (or
+    a fresh one silently taken) under a hash that still matched.
+    """
+
+    kit_id: uuid.UUID
+    before: KitStatus
+    after: KitStatus
+    #: The order's post-write instant that lands as `status_updated_at` — the
+    #: ship instant for a kit landing in_transit, the receipt for backlog (#93,
+    #: #95). Always the transition the descriptor exists for, never the clock.
+    stamp: datetime
+
+
+@dataclass
 class ExecutionPlan:
     mode: ImportMode
     rows: dict[str, list[_Row]]
     spawns: list[_Spawn]
     removals: list[_Removal]
+    advances: list[_Advance]
     plan: ImportPlan
 
 
@@ -672,6 +694,7 @@ class _Planner:
         self.rows: dict[str, list[_Row]] = {}
         self.spawns: list[_Spawn] = []
         self.removals: list[_Removal] = []
+        self.advances: list[_Advance] = []
         self.warnings: list[str] = list(upload.warnings)
         self.blocking: list[str] = list(upload.errors)
         self.catalog_names: dict[uuid.UUID, str] = {}
@@ -1487,6 +1510,7 @@ class _Planner:
         # plan is finished, so the fingerprint hashes the folded values (#130, P2-3).
         self._fold_new_categories(replace_all)
         self._plan_spawns(replace_all)
+        self._plan_advances()
         return self._finish()
 
     def _check_line_quantity(self, spec: TableSpec, row: _Row) -> None:
@@ -2363,6 +2387,103 @@ class _Planner:
             )
         row.messages.append(f"will remove {surplus} kit(s) from this line")
 
+    @staticmethod
+    def _newly_set(row: _Row, column: str) -> datetime | None:
+        """The post-write instant iff this row is `column`'s null -> non-null
+        transition — None for an untouched, restated, corrected or cleared cell.
+
+        Reads the before-state from `row.changes` rather than `row.target`,
+        because `FieldChange.before` is `render()`'s output for the *stored*
+        value — `""` for null, non-empty for an already-set timestamp — computed
+        during planning and immune to what the apply later writes through. A
+        change registered with an empty `before` can only be a transition to
+        non-null (null -> null renders equal and registers nothing), so the
+        value in `row.values` is a real instant whenever this returns one
+        (review of #79/#47).
+        """
+        change = next((c for c in row.changes if c.field == column), None)
+        if change is None or change.before:
+            return None
+        return row.values.get(column)
+
+    def _plan_advances(self) -> None:
+        """Both derived kit advances — ship and receive — as plan descriptors (#119).
+
+        Mirrors `mark_order_shipped()` / `receive_order()`'s kit side effects
+        (rule 2) for a kit that already existed before this apply, under an
+        order this same apply is the one marking shipped or received. A kit this
+        apply spawns lands in the right status on its own, through `_Spawn`
+        (#47/#95); a pre-existing kit nothing else in the upload mentions used
+        to just sit wherever it was, because the importer writes model rows
+        directly and none of the live writers' side effects ran (review of
+        #79/#47).
+
+        Resolved here rather than at apply time so the fingerprint binds the
+        set: kit id, before-status, landing status and stamp. The apply consumes
+        the descriptors verbatim — a kit progressed between preview and apply
+        changes the re-plan's advance list and the stale hash 409s, instead of
+        the apply silently moving a different set of kits than the preview
+        implied (#119, from the review of #118).
+
+        Deliberately narrower than the live writers: never touches
+        `quantity_on_hand` (rule 10 keeps stock out of anything import derives
+        from a receipt — shipping has no stock semantics at all), and never
+        overrides a kit this same upload gives its own `status` cell — an
+        explicit value in the file always wins over a derived one. Only the
+        null -> non-null transition counts (`_newly_set`): a correction is not a
+        shipment or an arrival, and clearing has no "un-ship"/"un-arrive" to
+        mirror. Ship composes with receive the way the pipeline does — a row
+        setting both instants lands its eligible kits in backlog carrying the
+        receipt stamp, one descriptor per kit stating the terminal state, since
+        the pass through in_transit is unobservable inside one transaction.
+
+        Empty under `replace_all` without saying so: every order row is a
+        CREATE there, and only an UPDATE can be a transition on a pre-existing
+        order. Empty under `add_only` the same way — a matched order is a SKIP,
+        and `_newly_set` reads `changes`, which a SKIP never carries.
+        """
+        explicit_status_ids = {
+            row.matched_id
+            for row in self.rows.get("kits", [])
+            if row.matched_id is not None and "status" in row.present
+        }
+        for row in self.rows.get("orders", []):
+            if row.action is not RowAction.UPDATE or row.target is None:
+                continue
+            newly_shipped = self._newly_set(row, "shipped_at")
+            newly_received = self._newly_set(row, "received_at")
+            if newly_shipped is None and newly_received is None:
+                continue
+            moved: dict[KitStatus, int] = {}
+            for item in row.target.items:
+                if item.item_type is not ItemType.KIT:
+                    continue
+                for kit in item.kits:
+                    if kit.id in explicit_status_ids:
+                        continue
+                    after = kit.status
+                    stamp = None
+                    if newly_shipped is not None and after in SHIP_ELIGIBLE:
+                        after, stamp = KitStatus.IN_TRANSIT, newly_shipped
+                    if newly_received is not None and after in ARRIVAL_ELIGIBLE:
+                        after, stamp = KitStatus.BACKLOG, newly_received
+                    if stamp is None:
+                        continue
+                    self.advances.append(
+                        _Advance(kit_id=kit.id, before=kit.status, after=after, stamp=stamp)
+                    )
+                    moved[after] = moved.get(after, 0) + 1
+            if moved.get(KitStatus.IN_TRANSIT):
+                row.messages.append(
+                    f"marking this order shipped moves "
+                    f"{moved[KitStatus.IN_TRANSIT]} kit(s) to in transit"
+                )
+            if moved.get(KitStatus.BACKLOG):
+                row.messages.append(
+                    f"marking this order received moves "
+                    f"{moved[KitStatus.BACKLOG]} kit(s) to backlog"
+                )
+
     def _finish(self) -> ExecutionPlan:
         table_plans: list[TablePlan] = []
         error_count = 0
@@ -2418,6 +2539,7 @@ class _Planner:
         derived = DerivedEffects(
             kits_spawned=sum(spawn.count for spawn in self.spawns),
             kits_removed=len(self.removals),
+            kits_advanced=len(self.advances),
             stock_changes=0,
             stock_note=(
                 "Stock levels come from the catalog files. "
@@ -2433,6 +2555,7 @@ class _Planner:
                 self.rows,
                 self.spawns,
                 self.removals,
+                self.advances,
                 deleted_ids,
             ),
             mode=self.mode,
@@ -2448,6 +2571,7 @@ class _Planner:
             rows=self.rows,
             spawns=self.spawns,
             removals=self.removals,
+            advances=self.advances,
             plan=plan,
         )
 
@@ -2458,16 +2582,17 @@ def _plan_fingerprint(
     rows: dict[str, list[_Row]],
     spawns: list[_Spawn],
     removals: list[_Removal],
+    advances: list[_Advance],
     deleted_ids: dict[str, list[str]],
 ) -> str:
     """Fingerprints what would be written, not the file it came from.
 
-    Covers the resolved value set of every row, the spawn descriptors and the
-    deletion set — so a second file that merely *plans the same shape* (same row
-    count, same actions) no longer passes a hash taken against the first. The
-    previous fingerprint read only `(row_number, action, matched_id, changes)`,
-    which a CREATE contributes nothing to beyond its position and the word
-    "create".
+    Covers the resolved value set of every row, the spawn, removal and advance
+    descriptors and the deletion set — so a second file that merely *plans the
+    same shape* (same row count, same actions) no longer passes a hash taken
+    against the first. The previous fingerprint read only `(row_number, action,
+    matched_id, changes)`, which a CREATE contributes nothing to beyond its
+    position and the word "create".
 
     Two families of value must stay out of it, or preview and apply can never
     agree on a sheet that supplies no ids:
@@ -2571,6 +2696,15 @@ def _plan_fingerprint(
             [str(removal.kit_id), str(removal.order_item_id), str(removal.row_number)]
             for removal in removals
         ),
+        # Which pre-existing kits this apply's own ship/receive flip moves, from
+        # which status to which, stamped with what (#119). A spawned kit is
+        # never an advance, so the ids are all stored and need no `canon`;
+        # sorted because the set is enumerated off loaded relationship
+        # collections, whose ordering is not part of the plan.
+        "advances": sorted(
+            [str(advance.kit_id), advance.before.value, advance.after.value, canon(advance.stamp)]
+            for advance in advances
+        ),
     }
     return hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
@@ -2622,107 +2756,33 @@ async def preview_import(
     return (await plan_import(session, filename, content, mode)).plan
 
 
-def _advance_kits_for_newly_shipped_orders(execution: ExecutionPlan) -> None:
-    """Mirror `mark_order_shipped()`'s kit advance (rule 2) for a kit that
-    already existed before this apply, under an order this same apply is the one
-    marking shipped — `_advance_kits_for_newly_received_orders`'s shape one
-    stage earlier (#95), and everything its docstring says about reading the
-    before-state from `row.changes` holds here unchanged.
+async def _apply_planned_advances(session: AsyncSession, execution: ExecutionPlan) -> int:
+    """Consume the plan's `_Advance` descriptors (#119) — the derived ship/receive
+    kit moves, decided by `_plan_advances` and bound by the fingerprint.
 
-    Runs before the receipt advance, mirroring the pipeline's own order. The
-    ordering is presentation, not correctness: an upload that ships AND receives
-    an order in one apply ends with the kit in backlog carrying the receipt
-    stamp either way (ship-first passes through in_transit; receive-first
-    leaves nothing ship-eligible behind) — the combined-upload test pins the
-    terminal state, not the path. Stamps `row.target.shipped_at`, the value the
-    upload stated; never touches stock (shipping has no stock semantics at
-    all), and never overrides a kit this upload gives its own `status` cell.
+    Deliberately re-decides nothing: the hash check just proved the re-plan's
+    descriptors equal the previewed ones, so reading live status here again
+    would only reopen the gap the descriptor exists to close. `session.get` on
+    a row the plan just loaded is an identity-map hit, and a miss means the row
+    vanished mid-transaction — impossible under the write gate, tolerated the
+    same way the removal loop tolerates it.
+
+    Runs after the write loop for the same reason
+    `_stamp_generated_status_changes` does: the loaded `row.target` instances
+    were just written through, and setting attributes here marks the kits dirty
+    again so the flush before commit carries them. The stamp is the descriptor's
+    — the order's post-write ship or receipt instant, backdated included (#93,
+    #95), never the clock.
     """
-    explicit_status_ids = {
-        row.matched_id
-        for row in execution.rows.get("kits", [])
-        if row.matched_id is not None and "status" in row.present
-    }
-    for row in execution.rows.get("orders", []):
-        if row.action is not RowAction.UPDATE or row.target is None:
+    advanced = 0
+    for advance in execution.advances:
+        kit = await session.get(Kit, advance.kit_id)
+        if kit is None:
             continue
-        shipped_change = next((c for c in row.changes if c.field == "shipped_at"), None)
-        if shipped_change is None or shipped_change.before:
-            # Not touched, or already shipped before this apply — a correction is
-            # not a shipment. Only null -> non-null is one.
-            continue
-        for item in row.target.items:
-            if item.item_type is not ItemType.KIT:
-                continue
-            for kit in item.kits:
-                if kit.id in explicit_status_ids:
-                    continue
-                if kit.status in SHIP_ELIGIBLE:
-                    kit.status = KitStatus.IN_TRANSIT
-                    kit.status_updated_at = row.target.shipped_at
-
-
-def _advance_kits_for_newly_received_orders(execution: ExecutionPlan) -> None:
-    """Mirror `receive_order()`'s kit-arrival side effect (rule 2) for a kit that
-    already existed before this apply, under an order this same apply is the one
-    marking received.
-
-    A kit this apply spawns already lands `backlog` on its own, through
-    `spawn.received` (#47). A pre-existing kit under that same order — one
-    nothing in this upload otherwise mentions — used to just sit wherever it
-    already was: the importer writes model rows directly, so none of
-    `receive_order()`'s side effects ran, even though the REST/MCP path never
-    allows an order to become received without advancing every arrival-eligible
-    kit on it (review of #79/#47).
-
-    Deliberately narrower than `receive_order()`: this never touches
-    `quantity_on_hand` (rule 10 keeps stock out of anything import derives from a
-    receipt) and never overrides a kit this same upload explicitly gives its own
-    `status` cell — an explicit value in the file always wins over a derived one.
-    Only the explicit `unreceived -> received` transition counts as an arrival —
-    correcting an already-received order's timestamp to a different non-null
-    value is not one, and clearing `received_at` doesn't have an established
-    "un-arrive" equivalent to mirror, so both are left alone.
-
-    Reads whether the order was received *before* this apply from `row.changes`
-    rather than `row.target`: this runs after the main write loop, which already
-    applied `setattr` to every changed field on `row.target`, so its
-    `received_at` is the new value by the time this function sees it. `changes`
-    was computed during planning, before that mutation, and `FieldChange.before`
-    is `render()`'s output for the old value — `""` for `None`, and non-empty for
-    an already-set timestamp — so it's the one place that still distinguishes a
-    genuine arrival from a same-state correction (review of #79/#47).
-
-    The stamp is the order's applied `received_at`, not the clock: a kit a
-    receipt lands in backlog carries the receipt instant — backdated included —
-    on every writer (#93), and `receive_order()` is what this mirrors. The
-    post-write value is exactly what the upload stated, so nothing is invented.
-    """
-    explicit_status_ids = {
-        row.matched_id
-        for row in execution.rows.get("kits", [])
-        if row.matched_id is not None and "status" in row.present
-    }
-    for row in execution.rows.get("orders", []):
-        if row.action is not RowAction.UPDATE or row.target is None:
-            continue
-        received_change = next((c for c in row.changes if c.field == "received_at"), None)
-        if received_change is None or received_change.before:
-            # `received_at` wasn't touched, or it already held a value before
-            # this apply — a timestamp correction and a clear-while-received
-            # both leave `before` non-empty, and neither is an arrival. Only
-            # `before == ""` (was null) with a change registered at all — which
-            # therefore can only be a transition to non-null — is one.
-            continue
-        for item in row.target.items:
-            if item.item_type is not ItemType.KIT:
-                continue
-            for kit in item.kits:
-                if kit.id in explicit_status_ids:
-                    continue
-                if kit.status in ARRIVAL_ELIGIBLE:
-                    kit.status = KitStatus.BACKLOG
-                    kit.status_updated_at = row.target.received_at
+        kit.status = advance.after
+        kit.status_updated_at = advance.stamp
+        advanced += 1
+    return advanced
 
 
 def _stamp_generated_status_changes(execution: ExecutionPlan) -> None:
@@ -2736,14 +2796,14 @@ def _stamp_generated_status_changes(execution: ExecutionPlan) -> None:
     keeps it in `present` and is left exactly as written.
 
     Runs after the write loop for the same reason
-    `_advance_kits_for_newly_received_orders` does: `row.target` is the mapped
+    `_apply_planned_advances` does: `row.target` is the mapped
     instance the loop just wrote through, so setting the attribute here marks it
     dirty again and the flush before commit carries it.
 
-    Deliberately not merged into that function. This is the general
-    `kits.csv` status move; that one is the receipt derivation, keyed off an order
-    row, and it already skips any kit this upload gives an explicit status — so a
-    kit reachable by both is stamped here, once.
+    Deliberately not merged into the advances. This is the general
+    `kits.csv` status move; those are the ship/receipt derivation, keyed off an
+    order row, and `_plan_advances` already skips any kit this upload gives an
+    explicit status — so a kit reachable by both is stamped here, once.
     """
     now = datetime.now(UTC)
     for row in execution.rows.get("kits", []):
@@ -2817,8 +2877,7 @@ async def apply_import(
         await session.flush()
 
     _stamp_generated_status_changes(execution)
-    _advance_kits_for_newly_shipped_orders(execution)
-    _advance_kits_for_newly_received_orders(execution)
+    advanced = await _apply_planned_advances(session, execution)
 
     removed = 0
     for removal in execution.removals:
@@ -2868,6 +2927,7 @@ async def apply_import(
         skipped=skipped,
         kits_spawned=spawned,
         kits_removed=removed,
+        kits_advanced=advanced,
         rows_deleted=plan.derived.rows_deleted,
         warnings=plan.warnings,
     )
