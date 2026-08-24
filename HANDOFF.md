@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-24 — Claude Code (Fable 5) — #98 + #127 (+ #99) as PR #130; Codex round 1 NO-GO answered; upgrades `category` decided-no
+## 2026-08-24 — Claude Code (Fable 5) — #98 + #127 (+ #99) as PR #130; Codex rounds 1+2 NO-GO answered; upgrades `category` decided-no
 
 - **Done:** **#98 + #127 in one branch — PR #130** (`feat/98-127-catalog-create-list`,
   head `019f8dd`, **CI green all three jobs**; no migration) — the piece the previous
@@ -88,9 +88,19 @@ Template:
   tuples live in untracked `backend/mutation_scratch_127.py`, fold in after merge.
   Round-1 tests at the reviewed head: 8 red / 2 green (the greens: UPDATE and
   id-bearing-restore verbatim controls). Dev servers on :8000/:5173, branch code.
-- **Next:** Codex round 2 on #130; then merge on the owner's call (squash,
+- **Round 2 (amended in place): NO-GO at `0660980` — P2-5 + P3-6, both accepted,
+  fixed at `f2215ff`, reply posted; CI pending there.** P2-5 (second round in
+  `_fold_new_categories` — taken as the invariant signal it is): the fold now
+  builds one **effective post-write multiset** per key — stored rows overlaid by
+  the UPDATEs rewriting them, id-bearing restores voting, winner most-frequent
+  with the byte-order tie-break, `setdefault` gone; sheet order cannot pick a
+  spelling; both Codex reproducers in red-first; mutants cat-24 (overlay off) and
+  cat-25 (first-seen winner) die, cat-21/22 re-anchored — harness **25/25**.
+  P3-6: `get_meta` no longer imports the REST layer — `services/meta.instance_meta`
+  + `schemas/meta.MetaRead`, both wrappers delegate. Backend **1016**.
+- **Next:** Codex round 3 (or GO) on #130; then merge on the owner's call (squash,
   `Closes #98, closes #127, closes #99` — one `closes` each). After merge: fold
-  the 23 `cat-` tuples plus the standing queue into `mutation_test.py` (anchors
+  the 25 `cat-` tuples plus the standing queue into `mutation_test.py` (anchors
   want re-checking). Procedure changed this session (owner's call): review briefs
   are **printed in the chat in a copyable four-backtick block**, never handed over
   as a scratchpad path — written into `.agents/review-brief.md` +
