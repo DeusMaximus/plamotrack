@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-24 — Claude Code (Fable 5) — #98 + #127 implemented as PR #130 (awaiting Codex round); upgrades `category` decided-no
+## 2026-08-24 — Claude Code (Fable 5) — #98 + #127 (+ #99) as PR #130; Codex round 1 NO-GO answered; upgrades `category` decided-no
 
 - **Done:** **#98 + #127 in one branch — PR #130** (`feat/98-127-catalog-create-list`,
   head `019f8dd`, **CI green all three jobs**; no migration) — the piece the previous
@@ -67,23 +67,37 @@ Template:
   review** (1,063 insertions is past Cursor's ~1,000 ceiling); brief filled from
   `.agents/review-brief.md`, saved to the session scratchpad as
   `codex-brief-pr130.md` for the owner to paste.
-- **State:** backend **1003** (base 965), vitest 109, e2e **23/23 against a DB
-  migrated from empty** (all tables zero after, e2e DB dropped), ruff/build/oxlint
-  clean. Negative control in a `main` worktree: **34 red / 4 green** — the greens
-  are genuine controls, named in the PR body; sampled reds fail on the intended
-  assertions. **14 scratch mutants, all killed** (incl. the `COLLATE "C"` pin —
-  its kill proves the pin is live); tuples queued in the PR body for
-  `mutation_test.py` fold-in, joining the standing queue from #109/#111/#113/#118/#129;
-  untracked scratch harness left at `backend/mutation_scratch_127.py` for replay.
-  Dev servers running on :8000/:5173 serving the branch; dev DB throwaway (three
-  preview tools created and deleted through the API during browser verification).
-- **Next:** Codex round on #130; answer per `.agents/testing-and-review.md`; merge
-  on the owner's call (squash, `Closes #98, closes #127` — one `closes` each).
-  After merge: fold the 14 `cat-` tuples plus the standing queue into
-  `mutation_test.py` (anchors want re-checking). Live and still true: **no v0.2.6
-  tag ever** — one v0.2.7-alpha only when BOTH 0.2.6 (#77, #87, #90, #112, #119)
-  and 0.2.7 are done; 0.2.7 is empty, so **do not run the release gate**. **#112
-  before any real-collection starter-sheet import.** #122 rides M6.5.
+- **State (amended in place after round 1):** **Codex round 1 at `019f8dd`: NO-GO,
+  3×P2 + P3 — all four accepted, reproduced red-first, fixed** (`14406ef`, docs +
+  #99 at `0660980`); reply posted at head `0660980`, CI pending there. P2-1: the
+  `new_item` fold is gated on `CATEGORISED_MODELS` (an upgrade line carrying a
+  category is ignored again, not 500'd). P2-2: one trimmed `btrim` expression across
+  the canonical pick, filter and vocabulary — legacy padding matched, never
+  propagated. P2-3 (Codex overruled the importer exclusion, accepted as prescribed):
+  id-less CREATEs (stubs incl., via `synthetic_id`) fold at **plan time** —
+  hash-bound, announced as a preview message; UPDATEs and id-bearing restores stay
+  verbatim; replace_all folds against the upload's own rows only, verbatim rows
+  seed first so sheet order can't matter. P3-4: `useId` per picker; new
+  `e2e/category-typeahead.spec.ts` asserts each line's *resolved* datalist options
+  (polled — an empty datalist is loading, not the defect). **#99 folded in per the
+  #98 triage note**: `get_meta` serves the same function as `GET /meta`; PR closes
+  line now carries it. Counts: backend **1014**, vitest 109, e2e **24/24 from
+  empty** (Playwright booting its own servers — a run that *reuses* dev servers
+  is NOT from-empty), ruff/build/oxlint clean. Scratch harness **23/23 killed**
+  (14 re-anchored after P2-2 moved code + cat-15..23, one per round-1 fix site);
+  tuples live in untracked `backend/mutation_scratch_127.py`, fold in after merge.
+  Round-1 tests at the reviewed head: 8 red / 2 green (the greens: UPDATE and
+  id-bearing-restore verbatim controls). Dev servers on :8000/:5173, branch code.
+- **Next:** Codex round 2 on #130; then merge on the owner's call (squash,
+  `Closes #98, closes #127, closes #99` — one `closes` each). After merge: fold
+  the 23 `cat-` tuples plus the standing queue into `mutation_test.py` (anchors
+  want re-checking). Procedure changed this session (owner's call): review briefs
+  are **printed in the chat in a copyable four-backtick block**, never handed over
+  as a scratchpad path — written into `.agents/review-brief.md` +
+  `testing-and-review.md`. Live and still true: **no v0.2.6 tag ever** — one
+  v0.2.7-alpha only when BOTH 0.2.6 (#77, #87, #90, #112, #119) and 0.2.7 are
+  done; 0.2.7 is empty, so **do not run the release gate**. **#112 before any
+  real-collection starter-sheet import.** #122 rides M6.5.
 
 ## 2026-08-21 — Claude Code (Opus 5) — #126 closed: PR #129 merged as `20996e1` after two Codex rounds; #127 filed (narrowed against #98); both #127 and #98 sit on 0.2.8
 

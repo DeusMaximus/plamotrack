@@ -243,8 +243,10 @@ queue. Both external tools output to chat unless told otherwise.
 
 ### Briefing a reviewer
 
-**The brief is a template — `.agents/review-brief.md`.** Fill its `‹slots›`, save
-the result to the scratchpad for the owner to paste, don't write one from memory:
+**The brief is a template — `.agents/review-brief.md`.** Fill its `‹slots›` and
+**print the finished brief in the chat, in full, in a copyable fenced block**
+(four backticks — the brief contains three-backtick blocks); a path to a scratchpad
+file is not a deliverable (owner's call, 2026-08-24). Don't write one from memory:
 the fixed sentences are the wording that has worked, and the file's last section is
 the checklist that produces the per-PR "where I'd push" bullets, which is where the
 findings come from. The template also names the PR-body sections it points at

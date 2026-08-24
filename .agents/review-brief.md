@@ -5,9 +5,14 @@ prompt has been rewritten from memory every time. The parts that recur are the p
 that have cost time when forgotten: `--body-file` not `--body`, the phrase *mutation
 testing*, a fresh chat per Cursor round, a worktree rather than `git checkout --` for
 the negative control, the attribution line. This file holds them once. The agent
-opening the PR fills the `‹slots›`, saves the result to its scratchpad, and the owner
-pastes it. The reasons behind the fixed parts are in `testing-and-review.md` →
-"External review" and `lessons.md` → "Review"; this file is the shape, not the why.
+opening the PR fills the `‹slots›` and **prints the finished brief directly in the
+chat, in full, inside a fenced block the owner can copy** — a four-backtick fence,
+because the brief itself contains three-backtick blocks. Never hand over only a path
+to a file in a temp directory: the owner's next step is paste, not `cat` (owner's
+call, 2026-08-24). Saving a scratchpad copy alongside is fine as a backup for later
+rounds; it is not the deliverable. The reasons behind the fixed parts are in
+`testing-and-review.md` → "External review" and `lessons.md` → "Review"; this file
+is the shape, not the why.
 
 **The PR body is the payload; the brief is the envelope.** The brief points at
 sections of the PR body by heading rather than repeating them, so the PR thread stays
