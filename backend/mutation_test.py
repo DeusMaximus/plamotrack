@@ -1411,6 +1411,51 @@ CASES = [
         "                len(self.spawns),",
         "import_cannot_spawn_past",
     ),
+    # --- #87 / PR #143: a catalog line may not join a received order; one mutant ----
+    # --- per condition. rcv-2's anchor is widened with its unique neighbour because -
+    # --- the bare if-line also appears in _check_catalog_targets. -------------------
+    (
+        "rcv-1. the line-join guard is off",
+        INV,
+        "    _check_lines_joining_received_orders(rows, by_id=by_id, replace_all=replace_all)",
+        "    pass  # neutered",
+        "cannot_join_a_received_order",
+    ),
+    (
+        "rcv-2. kit lines are caught too",
+        INV,
+        '        if item_type is None or item_type is ItemType.KIT:\n            continue\n        parent = by_id["orders"].get(row.values.get("order_id"))',
+        '        if item_type is None:\n            continue\n        parent = by_id["orders"].get(row.values.get("order_id"))',
+        "new_kit_line_still_joins",
+    ),
+    (
+        "rcv-3. the doomed database is consulted under replace_all",
+        INV,
+        "    if replace_all:\n        return",
+        "    if False:\n        return",
+        "restores_from_an_archive",
+    ),
+    (
+        "rcv-4. updates are caught along with creates",
+        INV,
+        "        if row.action is not RowAction.CREATE:\n            continue",
+        "        if row.action is RowAction.ERROR:\n            continue",
+        "still_updates_by_import",
+    ),
+    (
+        "rcv-5. pending parents are refused too",
+        INV,
+        "        if parent is None or parent.received_at is None:\n            continue",
+        "        if parent is None:\n            continue",
+        "joining_a_pending_order_stays_legal",
+    ),
+    (
+        "rcv-6. a parent the upload itself creates is dereferenced",
+        INV,
+        "        if parent is None or parent.received_at is None:\n            continue",
+        "        if parent.received_at is None:\n            continue",
+        "created_received_order_with_a_catalog_line",
+    ),
 ]
 
 
