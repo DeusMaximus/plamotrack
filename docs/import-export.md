@@ -223,7 +223,14 @@ refuse to receive it, and the stock would never be applied at all. Clearing
 already added stays where it is, and the next receive adds it a second time.
 
 So on an order that holds a tool, consumable, upgrade or display line, `received_at` may not
-be moved into or out of "received" by an import. What you can do instead:
+be moved into or out of "received" by an import. The same rule from the line's
+side: a **new** tool, consumable, upgrade or display line may not be added to an
+order that's *already* received — its units would read as bought but never
+counted, and deleting or editing the order later would move stock that was never
+applied. (Restating or updating a line the order already has is fine, kit lines
+are fine, and an order the same file creates restores whole — this is only about
+a new stock-bearing line joining an order that arrived without it.) What you can
+do instead:
 
 - **To mark a pending order received:** leave `received_at` out of the sheet and
   receive the order in the app, which applies the stock. Stating the on-hand
@@ -232,6 +239,10 @@ be moved into or out of "received" by an import. What you can do instead:
 - **To correct a count on its own,** on an order you are not flipping: state it in
   `tools.csv` / `consumables.csv` / `upgrades.csv` / `display_items.csv`. That's where
   stock comes from.
+- **To add a forgotten line to an order that's already received:** do it in the
+  app — an order edit applies the stock as it saves. A full-archive `replace_all`
+  restore also carries such lines fine, because the archive brings the
+  post-receipt counts with it.
 - If you marked an order received **by mistake**: un-receiving isn't supported
   anywhere in plamotrack, by import or otherwise. Delete the order — that reverses
   the stock it applied — and enter it again as pending.
