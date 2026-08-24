@@ -29,7 +29,7 @@ import json
 import uuid
 import zipfile
 import zlib
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -1475,6 +1475,9 @@ class _Planner:
             created_ids=self.created_ids,
             replace_all=replace_all,
         )
+        # After the invariants (a row they refuse must not fold) and before the
+        # plan is finished, so the fingerprint hashes the folded values (#130, P2-3).
+        self._fold_new_categories(replace_all)
         self._plan_spawns(replace_all)
         return self._finish()
 
@@ -1639,6 +1642,81 @@ class _Planner:
                     f"you already have {same} kit(s) called '{row.values.get('name')}' — "
                     "importing adds another, since two of the same kit are two kits"
                 )
+
+    def _fold_new_categories(self, replace_all: bool) -> None:
+        """#127's canonicalisation, for the importer's one honest case (#130, P2-3).
+
+        An id-less row classified CREATE states no prior spelling to preserve — the
+        row exists only after apply, and the first export records whatever this
+        writes — so it folds onto the vocabulary like every live writer. Everything
+        that *restores* stays verbatim: an UPDATE and an id-bearing
+        create-is-a-restore each assert a stored fact, and rewriting one would make
+        a re-imported archive a rewrite (rule 10 by analogy). Stubs fold too —
+        `synthetic_id` marks an id this plan minted rather than one the upload
+        stated.
+
+        Folded in Python (`strip().lower()`), the importer's own key (`_norm_name`,
+        §12.4), not the live writers' Postgres fold. Plan-time on purpose: the
+        folded value lands in `row.values`, so the fingerprint binds it and apply
+        writes exactly what was planned — a spelling landing between preview and
+        apply stales the hash instead of silently changing the outcome (#86 round
+        5's rule). The stored seed is skipped under replace_all: those rows are
+        deleted before the creates land, so the only spellings that will exist are
+        the upload's own.
+        """
+
+        def stated_category(row: _Row) -> str | None:
+            value = row.values.get("category")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+            return None
+
+        def folds(row: _Row) -> bool:
+            return row.action is RowAction.CREATE and (
+                row.synthetic_id or row.values.get("id") is None
+            )
+
+        for spec in TABLE_SPECS:
+            if "category" not in spec.model.__table__.columns:
+                continue
+            rows = self.rows.get(spec.key, [])
+            if not rows:
+                continue
+            vocab: dict[str, str] = {}
+            if not replace_all:
+                spellings: dict[str, Counter[str]] = defaultdict(Counter)
+                for instance in self.existing[spec.key]:
+                    stored = (instance.category or "").strip()
+                    if stored:
+                        spellings[stored.lower()][stored] += 1
+                for key, counted in spellings.items():
+                    # Most frequent, ties by byte order — `canonical_category`'s
+                    # pick, computed over the same trimmed spellings.
+                    vocab[key] = min(counted.items(), key=lambda item: (-item[1], item[0]))[0]
+
+            # Verbatim rows first, in both modes: a restore's spelling will exist
+            # after apply, so a create later in the file folds onto it regardless
+            # of row order in the sheet.
+            for row in rows:
+                if row.action in (RowAction.UPDATE, RowAction.CREATE) and not folds(row):
+                    value = stated_category(row)
+                    if value is not None:
+                        vocab.setdefault(value.lower(), value)
+            for row in rows:
+                if not folds(row):
+                    continue
+                value = stated_category(row)
+                if value is None:
+                    continue
+                key = value.lower()
+                if key not in vocab:
+                    vocab[key] = value
+                elif vocab[key] != value:
+                    row.values["category"] = vocab[key]
+                    row.messages.append(
+                        f"category '{value}' will be stored as '{vocab[key]}', "
+                        "matching the spelling already in use"
+                    )
 
     def _order_instant(self, order_id: uuid.UUID, column: str) -> datetime | None:
         """The post-write value of one of an order's timeline instants

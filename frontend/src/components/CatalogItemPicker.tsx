@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 
 import { api } from "../api/client";
 import type { CatalogItemType } from "../api/types";
@@ -75,6 +75,11 @@ export function CatalogItemPicker({
   // The category vocabulary for the "new item" form below (#127) — same typeahead
   // the Inventory forms get, so a line entered mid-order folds onto the same
   // spellings. Fetched only once the form is actually showing a category field.
+  // The datalist id is per component instance: an order holds one picker per
+  // line, and a shared literal id bound every input to whichever datalist
+  // rendered first — a consumable line offering the tool vocabulary
+  // (#130 review, P3-4).
+  const categoryListId = useId();
   const categoryRoute = CATEGORY_ROUTES[itemType];
   const { data: categoryValues } = useQuery({
     // Same key shape the Inventory page uses, so the two share one cache entry.
@@ -127,14 +132,14 @@ export function CatalogItemPicker({
             <Input
               value={value.category}
               onChange={(event) => onChange({ ...value, category: event.target.value })}
-              list="order-line-category-values"
+              list={categoryListId}
               placeholder={
                 itemType === "display"
                   ? "Category (required) — stand / scenery"
                   : "Category (required)"
               }
             />
-            <datalist id="order-line-category-values">
+            <datalist id={categoryListId}>
               {categoryValues?.map((category) => (
                 <option key={category} value={category} />
               ))}

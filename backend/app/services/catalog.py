@@ -180,13 +180,18 @@ async def canonical_category(
     keeps two concurrent writers from each minting their own spelling of a new
     category. Folding and trimming both happen in Postgres, stored side trimmed with
     the Python whitespace set — the `names._same_key` rule, for the same #49/#109
-    reasons.
+    reasons. What is selected and returned is the *trimmed* stored spelling, not the
+    raw cell: a legacy row can carry padding from before trimming existed, and
+    reusing its bytes would write that padding onto every new row that folds onto
+    it (#130 review, P2-2). The spelling is the vocabulary entry; the padding is
+    an accident of one row.
     """
+    trimmed = func.btrim(model.category, WHITESPACE)
     stmt = (
-        select(model.category)
-        .where(func.lower(func.btrim(model.category, WHITESPACE)) == func.lower(category.strip()))
-        .group_by(model.category)
-        .order_by(func.count().desc(), model.category.collate("C"))
+        select(trimmed)
+        .where(func.lower(trimmed) == func.lower(category.strip()))
+        .group_by(trimmed)
+        .order_by(func.count().desc(), trimmed.collate("C"))
         .limit(1)
     )
     if exclude_id is not None:
@@ -251,7 +256,12 @@ async def list_catalog(
         # Case-insensitive equality, not ILIKE — the `list_kits` grade/series
         # predicate shape, for the same #49 reasons: `%` and `_` in a category are
         # characters, and both sides fold in Postgres so the folds cannot disagree.
-        stmt = stmt.where(func.lower(model.category) == func.lower(category))
+        # The stored side is additionally trimmed: a legacy padded row is the same
+        # logical category as its trimmed spelling, and the vocabulary below offers
+        # the trimmed form — a filter that can't find what the vocabulary offered
+        # would be the two surfaces disagreeing (#130 review, P2-2).
+        trimmed = func.btrim(model.category, WHITESPACE)
+        stmt = stmt.where(func.lower(trimmed) == func.lower(category.strip()))
     return list((await session.scalars(stmt)).all())
 
 
@@ -275,11 +285,15 @@ async def list_catalog_categories(session: AsyncSession, model: type[CatalogRow]
     # category is NOT NULL on every table that has it, but rows written before
     # #129's blank refusal can hold whitespace — the btrim guard hides those the
     # way `list_kit_series`'s does, with the same whitespace set (#109's lesson).
+    # Selected and grouped *trimmed*, like `canonical_category` and the filter: a
+    # padded legacy row and its clean siblings are one vocabulary entry, offered
+    # in the spelling a filter can actually find (#130 review, P2-2).
+    trimmed = func.btrim(model.category, WHITESPACE)
     stmt = (
-        select(model.category)
-        .where(func.btrim(model.category, WHITESPACE) != "")
-        .group_by(model.category)
-        .order_by(func.count().desc(), func.lower(model.category), model.category.collate("C"))
+        select(trimmed)
+        .where(trimmed != "")
+        .group_by(trimmed)
+        .order_by(func.count().desc(), func.lower(trimmed), trimmed.collate("C"))
     )
     return list((await session.scalars(stmt)).all())
 

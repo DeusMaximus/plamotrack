@@ -7,11 +7,14 @@ before writing) plus one lean the series column does not have: a write whose
 category matches an existing one case-insensitively is stored under that existing
 spelling (`canonical_category`). Three live writers reach these tables (rule 1) —
 the direct create, the PATCH, and an order line's `new_item` — and all three
-fold. The CSV importer deliberately does NOT: a re-imported archive must be a
-no-op, and folding stored rows onto a sibling's spelling would rewrite rows the
-upload never asked to change (rule 10 by analogy). `upgrades` has no category
-column at all — decided against in #127, not an oversight.
+fold. The CSV importer folds exactly one case: an id-less row classified CREATE,
+which states no prior spelling to preserve (#130 review, P2-3). Everything that
+*restores* — an UPDATE, an id-bearing create-is-a-restore — stays verbatim, so a
+re-imported archive remains a no-op (rule 10 by analogy). `upgrades` has no
+category column at all — decided against in #127, not an oversight.
 """
+
+import uuid
 
 import pytest
 from fastmcp import Client
@@ -233,6 +236,76 @@ async def test_an_order_new_item_line_folds_its_category(client, retailer):
     assert spawned["category"] == "Cutting"
 
 
+async def test_an_upgrade_new_item_line_carrying_a_category_is_still_accepted(
+    http_client, client, retailer
+):
+    # `NewCatalogItem` is one schema for every line type, so an upgrade line may
+    # state a category; upgrades have no column and the base behaviour was to
+    # ignore it. Canonicalisation must not turn that valid shape into a 500
+    # (#130 review, P2-1). `http_client`, because the point is the status.
+    resp = await http_client.post(
+        "/orders",
+        json={
+            "retailer_id": retailer["id"],
+            "order_date": "2026-08-01",
+            "currency_code": "AUD",
+            "items": [
+                {
+                    "item_type": "upgrade",
+                    "quantity": 1,
+                    "unit_price_minor": 1500,
+                    "currency_code": "AUD",
+                    "new_item": {
+                        "name": "Delpi holo decals",
+                        "manufacturer": "Delpi",
+                        "category": "decals",
+                    },
+                }
+            ],
+        },
+    )
+    assert resp.status_code == 201, resp.text
+    (row,) = (await client.get("/upgrades")).json()
+    assert row["name"] == "Delpi holo decals"
+
+
+# --- legacy padding: matched, never propagated (#130 review, P2-2) ----------------
+
+
+def _seed_padded_legacy_tool():
+    # Tab and NBSP, not ASCII space — the padding must stay aligned with the
+    # full WHITESPACE set, not just what a spacebar produces (#109's lesson).
+    from app.db import get_sessionmaker
+    from app.models import Tool
+
+    async def _seed():
+        async with get_sessionmaker()() as session:
+            session.add(Tool(name="Legacy", category="\tCutting\u00a0", quantity_on_hand=0))
+            await session.commit()
+
+    return _seed()
+
+
+async def test_a_legacy_padded_category_is_found_by_its_trimmed_spelling(client):
+    # Padding from before trimming existed is a supported stored state. The
+    # filter and the vocabulary answer for the *logical* category: the row is
+    # found under its trimmed spelling, and the vocabulary offers the trimmed
+    # spelling rather than the raw padded cell.
+    await _seed_padded_legacy_tool()
+    rows = (await client.get("/tools", params={"category": "cutting"})).json()
+    assert [row["name"] for row in rows] == ["Legacy"]
+    assert (await client.get("/tools/categories")).json() == ["Cutting"]
+
+
+async def test_a_write_never_propagates_legacy_padding(client):
+    # The fold reuses the *spelling*, not the stored bytes: a new row folding
+    # onto a padded legacy row gets the trimmed spelling — at the base the live
+    # write stored the clean input, and canonicalisation must not regress that.
+    await _seed_padded_legacy_tool()
+    row = await make_tool(client, "Fresh", "cutting")
+    assert row["category"] == "Cutting"
+
+
 async def test_mcp_update_folds_a_category_too(client):
     # The MCP wrapper is thin over the same service (rule 1) — one case to pin
     # that the fold is reachable from the third live writer's surface as well.
@@ -248,18 +321,136 @@ async def test_mcp_update_folds_a_category_too(client):
     assert edited["category"] == "Cutting"
 
 
-# --- the importer deliberately does not fold -------------------------------------
+# --- the importer folds id-less CREATEs, and only those (#130 review, P2-3) -------
 
 
-async def test_the_importer_does_not_canonicalise_categories(client):
+def _tools_csv(rows: list[dict[str, str]]) -> bytes:
+    return make_csv([c.name for c in spec.TOOLS.columns], rows)
+
+
+async def test_an_id_less_import_create_folds_its_category(client):
+    # An id-less row classified CREATE states no prior spelling to preserve —
+    # the row exists only after apply — so it folds like every live writer.
     await make_tool(client, "Godhand SPN-120", "Cutting")
 
-    header = [c.name for c in spec.TOOLS.columns]
-    content = make_csv(header, [{"name": "Glass file", "category": "cutting"}])
+    content = _tools_csv([{"name": "Glass file", "category": "cutting"}])
     assert (await apply(client, content, filename="tools.csv")).status_code == 200
 
     (imported,) = [t for t in (await client.get("/tools")).json() if t["name"] == "Glass file"]
-    assert imported["category"] == "cutting"
+    assert imported["category"] == "Cutting"
+
+
+async def test_the_fold_is_stated_in_the_preview(client):
+    # `changes` is empty on a create (the state axis AGENTS.md warns about), so
+    # the fold announces itself as a row message — the preview says what apply
+    # will write rather than diverging from it silently.
+    from tests.test_portability import preview
+
+    await make_tool(client, "Godhand SPN-120", "Cutting")
+    plan = await preview(
+        client, _tools_csv([{"name": "Glass file", "category": "cutting"}]), filename="tools.csv"
+    )
+    table = next(t for t in plan["tables"] if t["table"] == "tools")
+    (row,) = [r for r in table["rows"] if r["label"] == "Glass file"]
+    assert any("stored as 'Cutting'" in message for message in row["messages"])
+
+
+async def test_a_vocabulary_change_between_preview_and_apply_stales_the_hash(client):
+    # The fold is computed at plan time and the fingerprint hashes the planned
+    # values, so a spelling landing between preview and apply means the shown
+    # plan no longer describes what apply would write — 409, re-preview (the
+    # #86 round-5 shape, applied to this derivation).
+    from tests.test_portability import preview
+
+    content = _tools_csv([{"name": "Glass file", "category": "cutting"}])
+    plan = await preview(client, content, filename="tools.csv")
+
+    await make_tool(client, "Godhand SPN-120", "Cutting")
+
+    resp = await apply(client, content, filename="tools.csv", plan_hash=plan["plan_hash"])
+    assert resp.status_code == 409, resp.text
+
+
+async def test_an_import_update_keeps_its_stated_spelling(client):
+    # The other half of the rule: an UPDATE asserts a stored fact, and rewriting
+    # it would make a re-imported archive a rewrite. Verbatim, by design.
+    await make_tool(client, "Godhand SPN-120", "Cutting")
+    await make_tool(client, "Glass file", "Cutting")
+
+    content = _tools_csv([{"name": "Glass file", "category": "cutting"}])
+    assert (await apply(client, content, filename="tools.csv")).status_code == 200
+
+    (updated,) = [t for t in (await client.get("/tools")).json() if t["name"] == "Glass file"]
+    assert updated["category"] == "cutting"
+
+
+async def test_an_id_bearing_restore_create_keeps_its_stated_spelling(client):
+    # create-is-a-restore (#86's stated policy): a row arriving under its own id
+    # is a stored fact being put back, even when nothing currently holds the id.
+    await make_tool(client, "Godhand SPN-120", "Cutting")
+
+    restored_id = str(uuid.uuid4())
+    content = _tools_csv([{"id": restored_id, "name": "Glass file", "category": "cutting"}])
+    assert (await apply(client, content, filename="tools.csv")).status_code == 200
+
+    (restored,) = [t for t in (await client.get("/tools")).json() if t["name"] == "Glass file"]
+    assert restored["id"] == restored_id
+    assert restored["category"] == "cutting"
+
+
+async def test_two_id_less_creates_in_one_upload_fold_onto_one_spelling(client):
+    # Nothing stored: the vocabulary is the upload's own, first spelling in file
+    # order wins, and the second row folds onto it rather than fragmenting.
+    content = _tools_csv(
+        [
+            {"name": "Godhand SPN-120", "category": "Cutting"},
+            {"name": "Glass file", "category": "cutting"},
+        ]
+    )
+    assert (await apply(client, content, filename="tools.csv")).status_code == 200
+
+    categories = {t["name"]: t["category"] for t in (await client.get("/tools")).json()}
+    assert categories == {"Godhand SPN-120": "Cutting", "Glass file": "Cutting"}
+
+
+async def test_a_create_folds_onto_a_restored_rows_spelling_in_the_same_upload(client):
+    # An id-bearing restore's spelling will exist after apply, so an id-less
+    # create in the same upload folds onto it — regardless of row order in the
+    # sheet (the create deliberately comes first here; verbatim rows seed the
+    # vocabulary before any create is folded).
+    restored_id = str(uuid.uuid4())
+    content = _tools_csv(
+        [
+            {"name": "Glass file", "category": "cutting"},
+            {"id": restored_id, "name": "Godhand SPN-120", "category": "Cutting"},
+        ]
+    )
+    resp = await apply(
+        client, content, filename="tools.csv", mode="replace_all", confirm="REPLACE"
+    )
+    assert resp.status_code == 200, resp.text
+
+    categories = {t["name"]: t["category"] for t in (await client.get("/tools")).json()}
+    assert categories == {"Godhand SPN-120": "Cutting", "Glass file": "Cutting"}
+
+
+async def test_replace_all_folds_against_the_uploads_own_rows_not_the_doomed_ones(client):
+    # Under replace_all the stored rows are deleted before the creates land, so
+    # the only spellings that will exist are the upload's own — folding onto a
+    # doomed row's spelling would canonicalise onto something being destroyed.
+    await make_tool(client, "Old nipper", "cutting")
+
+    content = _tools_csv(
+        [
+            {"name": "Godhand SPN-120", "category": "Cutting"},
+            {"name": "Glass file", "category": "CUTTING"},
+        ]
+    )
+    resp = await apply(client, content, filename="tools.csv", mode="replace_all", confirm="REPLACE")
+    assert resp.status_code == 200, resp.text
+
+    categories = {t["name"]: t["category"] for t in (await client.get("/tools")).json()}
+    assert categories == {"Godhand SPN-120": "Cutting", "Glass file": "Cutting"}
 
 
 async def test_reimporting_an_export_with_divergent_spellings_is_a_noop(client):
