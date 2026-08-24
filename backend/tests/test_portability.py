@@ -3879,16 +3879,42 @@ async def test_a_line_in_another_currency_is_a_different_purchase(client):
     wrote `currency_code: JPY` over it as an ordinary field update: #12's
     relabelling reached from a different direction, and §6's whole point is that
     the code on the row is what the amount means.
+
+    On a *pending* order since #87: the fingerprint's answer — create, don't
+    relabel — is the subject here, and on a received order the create it
+    rightly plans is now refused before it can land (the join guard; the
+    stored line keeping its currency there is that refusal's doing, not the
+    fingerprint's).
     """
-    seeded = await seed_collection(client)
-    line = next(i for i in seeded["order"]["items"] if i["item_type"] == "consumable")
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-88213",
+                "currency_code": "AUD",
+                "items": [
+                    {
+                        "item_type": "consumable",
+                        "quantity": 3,
+                        "unit_price_minor": 500,
+                        "currency_code": "AUD",
+                        "new_item": {"name": "Gundam Marker GM02", "category": "paint"},
+                    },
+                ],
+            },
+        )
+    ).json()
+    line = next(i for i in order["items"] if i["item_type"] == "consumable")
 
     content = make_csv(
         spec.ORDER_ITEMS.header,
         [
             {
                 "id": "",
-                "order_id": seeded["order"]["id"],
+                "order_id": order["id"],
                 "item_type": "consumable",
                 "catalog_name": "Gundam Marker GM02",
                 "quantity": "3",
@@ -3910,7 +3936,7 @@ async def test_a_line_in_another_currency_is_a_different_purchase(client):
     stored = (await client.get("/orders")).json()[0]["items"]
     original = next(i for i in stored if i["id"] == line["id"])
     assert original["currency_code"] == "AUD", "the stored line was relabelled to JPY"
-    assert len(stored) == 3, "the yen line should have been recorded as its own purchase"
+    assert len(stored) == 2, "the yen line should have been recorded as its own purchase"
 
 
 @pytest.mark.parametrize(
