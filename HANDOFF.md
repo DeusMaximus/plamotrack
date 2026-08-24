@@ -117,6 +117,17 @@ Template:
   §7/§9.1 notes (the skill layer recorded as more staying-generic evidence).
   Review skipped (docs-only, #40 criterion). **Squash-merged as `2b94a41` on the
   owner's call, branch deleted, CI green.**
+- **Fold-in done (amended in place): PR #132 open** (`test/fold-cat-dsp-mutants`,
+  head `1365ddd`; only `mutation_test.py` + the procedure doc, the #117 shape).
+  #129's 10 `dsp-` + #130's 25 `cat-` tuples folded; TEST_FILES +5
+  (inventory, orders, write_surface_parity, catalog_categories,
+  mcp_catalog_create); dsp anchors pre-checked at `2b94a41` (none moved);
+  **full harness 146/146 killed, 15m38s measured** — the testing-and-review.md
+  runtime line refreshed (was 97/~11min, stale since #118) and the case-count
+  paragraph now names all seven queues. Scratch harness deleted, superseded.
+  Review: rides without a round per #40 (contract untouched, every tuple
+  reviewed in its source PR) — stated in the PR body, owner may overrule.
+  **Awaiting the owner's merge call.**
 - **Next:** **the mutant fold-in is now the queued mechanical piece** — 25 `cat-`
   tuples (in the PR #130 body and the untracked `backend/mutation_scratch_127.py`,
   which also holds the runner-ready form) plus #129's 10 `dsp-` tuples fold into
