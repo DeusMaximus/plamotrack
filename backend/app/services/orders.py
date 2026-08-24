@@ -87,6 +87,47 @@ def require_line_quantity(quantity: int, *, label: str = "quantity") -> int:
     return quantity
 
 
+#: #77: the aggregate mate of MAX_LINE_QUANTITY. The per-line ceiling bounds one
+#: line at 1,000, but "split it across several lines" made the number of lines the
+#: only limit — the reachable fan-out was the row budget multiplied by the line
+#: budget. Sized against the row budget (`importing.MAX_ROWS`, 50,000), not the
+#: line budget: an order of magnitude below it, and an order of magnitude above a
+#: large personal collection, so no honest request or archive gets near it.
+MAX_TOTAL_FANOUT = 10_000
+
+
+def require_total_fanout(total: int, *, label: str = "the kit lines on this order") -> int:
+    """The aggregate fan-out ceiling REST, MCP and the CSV importer all answer to
+    (#77, rule 1 — same sharing shape as `require_line_quantity`: the live writers
+    let the error propagate, the importer catches it and turns it into a blocking
+    preview diagnostic).
+
+    REST and MCP pass the request's *stated* kit-unit total (`_stated_kit_units`),
+    which bounds what the request can derive from above and holds for both entry
+    and the full-replacement edit without re-deriving the dispatch diff early. The
+    importer passes the plan's actual spawn total — stated quantities a `kits.csv`
+    already supplies spawn nothing (§3.9 hybrid dispatch), so a full-archive
+    restore of any size stays importable; its explicit rows answer to `MAX_ROWS`
+    instead.
+
+    No lower bound here, deliberately: zero kit units is an ordinary catalog-only
+    order, and the per-line range is `require_line_quantity`'s job.
+    """
+    if total > MAX_TOTAL_FANOUT:
+        raise InvalidInputError(
+            f"{label} add up to {total:,} kits — at most {MAX_TOTAL_FANOUT:,} can be "
+            "created in one go. Split it up."
+        )
+    return total
+
+
+def _stated_kit_units(lines) -> int:
+    """The kit rows a payload asks for in total. Catalog lines adjust stock instead
+    of fanning out, so they stay outside the count — they answer to the per-line
+    ceiling alone, exactly as they did before #77."""
+    return sum(line.quantity for line in lines if line.item_type is ItemType.KIT)
+
+
 def _converted_snapshot(line: OrderItemCreate) -> tuple[int | None, str | None]:
     """The §6 conversion snapshot: an amount and the currency it was captured in.
 
@@ -794,6 +835,7 @@ async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
         # takes anything: an absurd payload should not get as far as holding row
         # locks other writers are waiting on.
         require_line_quantity(line.quantity)
+    require_total_fanout(_stated_kit_units(data.items))
 
     retailer = await session.get(Retailer, data.retailer_id)
     if retailer is None:
@@ -868,6 +910,7 @@ async def update_order(
     await acquire_write_gate(session)
     for line in data.items or ():
         require_line_quantity(line.quantity)
+    require_total_fanout(_stated_kit_units(data.items or ()))
 
     order = await _get_order_for_write(session, order_id)
     received = order.received_at is not None

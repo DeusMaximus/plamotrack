@@ -1903,6 +1903,49 @@ async def test_an_update_row_is_held_to_the_ceiling_as_well(client):
     assert len((await client.get("/kits")).json()) == 1
 
 
+# --- the aggregate fan-out ceiling (#77) -----------------------------------------
+#
+# Sizes and message fragments are literals here for the same reason as in
+# test_orders.py's #77 block: the file has to import against a tree that predates
+# the constant, and that block's lockstep pin covers both files' literals.
+
+
+async def test_an_import_cannot_spawn_past_the_aggregate_ceiling(client):
+    """Eleven rows, every one within its own ceiling, deriving 10,001 kits between
+    them — ten creates and one update raising the stored line, so both actions
+    feed the sum (the per-line matrices above vary the action because their check
+    reads the row; this one reads the spawn list, downstream of every action, and
+    this is the proof). No single row is wrong, so the refusal is a blocking
+    error on the plan — the rows stay clean — and apply refuses the same plan."""
+    order = await seeded_order(client)
+    line = order["items"][0]
+    rows = [order_line_row(order["id"], 1_000, kit_name=f"Zaku II unit {i}") for i in range(10)]
+    # The stored line holds 1 kit; stating 2 spawns the one that tips it over.
+    rows.append(order_line_row(order["id"], 2, id=line["id"]))
+    content = make_csv(spec.ORDER_ITEMS.header, rows)
+
+    plan = await preview(client, content, filename="order_items.csv")
+    assert set(actions(plan, "order_items")) == {"create", "update"}, "no row is itself wrong"
+    assert any("add up to 10,001" in error for error in plan["blocking_errors"]), plan[
+        "blocking_errors"
+    ]
+    assert (await apply(client, content, filename="order_items.csv")).status_code == 409
+    assert len((await client.get(f"/orders/{order['id']}")).json()["items"]) == 1
+    assert len((await client.get("/kits")).json()) == 1, "nothing landed"
+
+
+async def test_an_import_at_the_aggregate_ceiling_plans_clean(client):
+    """The boundary from below: exactly 10,000 derived kits previews with no
+    blocking error and states the number it will create."""
+    order = await seeded_order(client)
+    rows = [order_line_row(order["id"], 1_000, kit_name=f"Zaku II unit {i}") for i in range(10)]
+    content = make_csv(spec.ORDER_ITEMS.header, rows)
+
+    plan = await preview(client, content, filename="order_items.csv")
+    assert plan["blocking_errors"] == [], plan["blocking_errors"]
+    assert plan["derived"]["kits_spawned"] == 10_000
+
+
 async def test_an_update_that_stays_under_the_ceiling_still_applies(client):
     """The control: refusing the over-ceiling update must not mean refusing updates."""
     order = await seeded_order(client)

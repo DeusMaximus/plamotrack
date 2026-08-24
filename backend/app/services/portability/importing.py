@@ -63,6 +63,7 @@ from app.services.orders import (
     SHIP_ELIGIBLE,
     kit_progressed,
     require_line_quantity,
+    require_total_fanout,
     spawn_kits,
 )
 from app.services.portability import invariants, starter_sheet
@@ -1510,6 +1511,22 @@ class _Planner:
         # plan is finished, so the fingerprint hashes the folded values (#130, P2-3).
         self._fold_new_categories(replace_all)
         self._plan_spawns(replace_all)
+        # The aggregate mate of the per-line ceiling `_check_line_quantity`
+        # enforces (#77): every line can be individually legal while the plan as
+        # a whole derives an absurd number of kits — the reachable total was
+        # MAX_ROWS × MAX_LINE_QUANTITY. Counts *spawns*, not stated quantities,
+        # so a full-archive restore of any size stays importable: its kits are
+        # explicit rows, spawn nothing, and answer to MAX_ROWS instead. Blocking
+        # rather than a row error because no single row is wrong — and blocking
+        # at preview is also the apply refusal, since apply re-plans and rejects
+        # a plan holding blocking errors before the hash check.
+        try:
+            require_total_fanout(
+                sum(spawn.count for spawn in self.spawns),
+                label="the kits this import would create from order lines",
+            )
+        except InvalidInputError as exc:
+            self.blocking.append(str(exc))
         self._plan_advances()
         return self._finish()
 
