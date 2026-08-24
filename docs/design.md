@@ -1193,10 +1193,16 @@ moved stock by the wrong amount — while clearing the flag re-armed the increme
 double-counted a delivery. Telling "received" from "received, stock outstanding" apart
 needs a column, and that column has no correct backfill, no answer in the CSV (rule 9),
 and four call sites to teach. So an import may not move `received_at` into or out of
-null on an order holding a catalog line. Kit-only orders move freely in both
+null on an order holding a catalog line, and — the same state reached from the
+line's side (#87) — a new catalog line may not join an order whose stored
+`received_at` is already set: there is no transition to refuse there, so the line's
+create is what gets refused, with the app edit (which applies stock) as the named
+remedy. Kit-only orders move freely in both
 directions (that is the starter-sheet path), and a *create* is untouched — a full
 archive carries the received order and its post-receipt `quantity_on_hand` together,
-which is how the invariant survives a restore today.
+which is how the invariant survives a restore today (the line-join guard likewise
+skips lines whose parent order the same upload creates, and skips the stored lookup
+entirely under `replace_all`, where the database it would consult is about to go).
 
 The two arrivals an import *does* perform borrow the order's receipt instant, exactly
 as the live writers stamp it (#93): a kit-only receive-by-import stamps the kits it

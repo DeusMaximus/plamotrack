@@ -2178,6 +2178,175 @@ async def test_a_received_order_with_catalog_lines_still_restores_from_an_archiv
         assert order["order_number"] == stored["order_number"], mode
 
 
+# --- #87: a catalog line may not join an order that was already received ----------
+#
+# Case 4a's end state reached from the line's side: no transition to refuse, the
+# order was received all along, and the joining line's stock was never applied
+# (rule 10) while `received_at` promised it was (rule 2.1). The guard refuses the
+# CREATE against a *stored* received parent; every other shape on the axes stays
+# what it was — updates, kit lines, pending parents, same-upload-created parents,
+# and both restore modes (the archive test above is the standing control for the
+# last two).
+
+
+def joining_line(order_id: str, ref_id: str, item_type: str = "consumable") -> dict:
+    """A NEW line (blank id) pointed at an existing order — the #87 reproduction row."""
+    return {
+        "id": "",
+        "order_id": order_id,
+        "item_type": item_type,
+        "catalog_ref_id": ref_id,
+        "quantity": "4",
+        "unit_price_minor": "500",
+        "currency_code": "JPY",
+    }
+
+
+@pytest.mark.parametrize(
+    ("item_type", "endpoint", "payload"),
+    [
+        (
+            "consumable",
+            "/consumables",
+            {"name": "Top coat", "category": "topcoat", "quantity_on_hand": 0},
+        ),
+        (
+            "tool",
+            "/tools",
+            {"name": "Godhand SPN-120", "category": "cutting", "quantity_on_hand": 0},
+        ),
+    ],
+)
+async def test_a_catalog_line_cannot_join_a_received_order_by_import(
+    client, catalog_order, item_type, endpoint, payload
+):
+    """The #87 reproduction. Pre-guard, the line imported cleanly, its stock was
+    never applied, and the measured consequences were an undeletable order (409
+    blaming consumption that never happened) and edits moving stock from a
+    phantom baseline. The refusal deletes the state instead — #44's answer, from
+    the line's side — and its remedy is the one that accounts correctly."""
+    order = catalog_order["order"]
+    assert (await client.post(f"/orders/{order['id']}/receive")).status_code == 200
+    created = await client.post(endpoint, json=payload)
+    assert created.status_code == 201, created.text
+    target = created.json()
+
+    content = archive(order_items=[joining_line(order["id"], target["id"], item_type)])
+    plan = await preview(client, content)
+    assert actions(plan, "order_items") == ["error"], plan["tables"]
+    error = plan["tables"][0]["rows"][0]["error"]
+    assert error.startswith("order_id:") and "already received" in error
+    assert "in the app" in error and "replace_all" in error
+    assert (await apply(client, content)).status_code == 409
+    stored = (await client.get(f"/orders/{order['id']}")).json()
+    assert len(stored["items"]) == 1, "the line never landed"
+    assert (await client.delete(f"/orders/{order['id']}")).status_code == 204, (
+        "the order this guard exists to protect stays deletable"
+    )
+
+
+async def test_an_existing_line_on_a_received_order_still_updates_by_import(client, catalog_order):
+    """The action axis: an UPDATE's stock was applied when the line originally
+    dispatched, so only the joining create is the unaccounted shape. Rule 10
+    still holds on the way through — the import writes the quantity and leaves
+    the count where it was."""
+    order, consumable = catalog_order["order"], catalog_order["consumable"]
+    assert (await client.post(f"/orders/{order['id']}/receive")).status_code == 200
+    assert await stock_of(client, consumable["id"]) == 3
+
+    content = archive(order_items=[line_row(order, order["items"][0], quantity="5")])
+    plan = await preview(client, content)
+    assert actions(plan, "order_items") == ["update"], plan["tables"]
+    assert (await apply(client, content)).status_code == 200
+    assert (await client.get(f"/orders/{order['id']}")).json()["items"][0]["quantity"] == 5
+    assert await stock_of(client, consumable["id"]) == 3, "imports never adjust stock"
+
+
+async def test_a_new_kit_line_still_joins_a_received_order_by_import(client, kit_order):
+    """The item-type boundary: kits carry no stock, so the kit half of a line
+    join stays what it always was — the spawned kit lands backlog carrying the
+    order's receipt (#93), whichever writer says the line exists."""
+    order = kit_order["order"]
+    resp = await client.post(f"/orders/{order['id']}/receive", json={"received_at": RECEIPT})
+    assert resp.status_code == 200, resp.text
+    before = {k["id"] for k in (await client.get("/kits")).json()}
+
+    line = {
+        "id": "",
+        "order_id": order["id"],
+        "item_type": "kit",
+        "quantity": "1",
+        "unit_price_minor": "3200",
+        "currency_code": "JPY",
+        # A different kit than the stored line carries: an id-less row that
+        # restates a stored line's exact shape fingerprint-matches it and plans
+        # UNCHANGED — this test needs a genuine create.
+        "kit_name": "Gouf Custom",
+        "kit_grade": "HG",
+    }
+    content = archive(order_items=[line])
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+    new = next(k for k in (await client.get("/kits")).json() if k["id"] not in before)
+    assert new["status"] == "backlog"
+    assert instant(new["status_updated_at"]) == instant(RECEIPT)
+
+
+async def test_a_catalog_line_joining_a_pending_order_stays_legal(client, catalog_order):
+    """The other value on the received axis — and the coherent path the refusal
+    points at: the line lands while the order is pending, and the app's receive
+    applies both lines' stock together."""
+    order, consumable = catalog_order["order"], catalog_order["consumable"]
+    other = await make_consumable(client, name="Top coat")
+
+    content = archive(order_items=[joining_line(order["id"], other["id"])])
+    plan = await preview(client, content)
+    assert actions(plan, "order_items") == ["create"], plan["tables"]
+    assert (await apply(client, content)).status_code == 200
+    assert await stock_of(client, other["id"]) == 0, "imported pending, nothing applied"
+
+    assert (await client.post(f"/orders/{order['id']}/receive")).status_code == 200
+    assert await stock_of(client, consumable["id"]) == 3
+    assert await stock_of(client, other["id"]) == 4, "the app's receive applied it"
+
+
+async def test_a_created_received_order_with_a_catalog_line_still_imports(client):
+    """`parent is None`: a line on an order this same upload creates is an
+    archive restoring a received order with its post-receipt counts — the
+    create-is-a-restore reading, pinned against the guard consulting `by_id`
+    for a parent the upload itself supplies."""
+    retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()
+    consumable = await make_consumable(client)
+    order_id = "3f9d2a81-7c4e-4b06-9d5a-8e1f6b3c2a44"
+    content = archive(
+        {
+            "orders": [
+                "id",
+                "retailer_id",
+                "order_date",
+                "order_number",
+                "currency_code",
+                "received_at",
+            ],
+        },
+        orders=[
+            {
+                "id": order_id,
+                "retailer_id": retailer["id"],
+                "order_date": "2026-03-14",
+                "order_number": "HLJ-9",
+                "currency_code": "JPY",
+                "received_at": RECEIPT,
+            }
+        ],
+        order_items=[joining_line(order_id, consumable["id"])],
+    )
+    plan = await preview(client, content)
+    assert plan["blocking_errors"] == [], plan
+    assert (await apply(client, content)).status_code == 200
+    assert await stock_of(client, consumable["id"]) == 0, "restored, not applied (rule 10)"
+
+
 # --- the receipt instant import-written arrivals inherit --------------------------
 #
 # Since #93, a kit a receipt lands in backlog is stamped with the order's

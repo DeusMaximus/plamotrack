@@ -68,6 +68,7 @@ def check(
     """
     _check_immutable_line_columns(rows)
     _check_catalog_targets(rows, by_id=by_id, created_ids=created_ids, replace_all=replace_all)
+    _check_lines_joining_received_orders(rows, by_id=by_id, replace_all=replace_all)
     _check_receipt_transitions(rows)
     _check_future_receipts(rows)
     _check_ship_dates(rows)
@@ -228,6 +229,68 @@ def _catalog_files(types: set[str]) -> str:
     if len(files) <= 1:
         return files[0] if files else "the catalog files"
     return f"{', '.join(files[:-1])} and {files[-1]}"
+
+
+def _check_lines_joining_received_orders(
+    rows: dict[str, list["_Row"]],
+    *,
+    by_id: dict[str, dict[uuid.UUID, Any]],
+    replace_all: bool,
+) -> None:
+    """Refuse a NEW catalog line joining an order that was already received (#87).
+
+    #44 case 4a's end state, reached from the other side: `_check_receipt_transitions`
+    refuses the *flip* on an order with catalog lines; this refuses the *line*
+    joining an order whose stored `received_at` is already set. Either way the state
+    that never gets represented is "received, with stock unaccounted" (rule 2.1) —
+    without this, the line imported cleanly, its stock was never applied (rule 10),
+    and the order became undeletable with a message blaming consumption that never
+    happened, while a quantity edit moved stock by a delta from a phantom baseline.
+
+    Only a **create**, and only against a **stored** parent. An UPDATE's stock was
+    applied when the line originally dispatched, and a line on an order this same
+    upload creates is an archive restoring a received order together with its
+    post-receipt counts — the same create-is-a-restore reading as the transition
+    check. Kit lines stay legal in every shape: kits carry no stock, and a kit
+    joining a received order is the ordinary backdated-line case (#93).
+
+    **The `replace_all` return is load-bearing, unlike the transition check's
+    (whose docstring explains why it has none).** `by_id` is loaded from the
+    database that mode is about to truncate, and an archive exported from this
+    same instance keeps its uuids — so without the return, restoring a received
+    catalog order over itself would find its own doomed row as the "stored"
+    parent and refuse its own restore. The archive is judged against itself, the
+    same reason `_check_catalog_targets` skips the stored lookup in that mode.
+
+    A same-file flip needs no case here: the transition check reads the union of
+    stored and incoming lines, so an upload that both flips `received_at` and
+    adds the catalog line is already refused on the order row. This check reads
+    the stored state alone.
+    """
+    if replace_all:
+        return
+    for row in rows.get("order_items", []):
+        if row.action is not RowAction.CREATE:
+            continue
+        item_type = effective_item_type(row)
+        if item_type is None or item_type is ItemType.KIT:
+            continue
+        parent = by_id["orders"].get(row.values.get("order_id"))
+        if parent is None or parent.received_at is None:
+            continue
+        row.action = RowAction.ERROR
+        row.error = _joining_received_message(str(item_type))
+
+
+def _joining_received_message(item_type: str) -> str:
+    return (
+        f"order_id: this {item_type} line would join an order that's already received, "
+        f"and an import never changes what you have on hand (rule 10) — the units would "
+        f"read as bought but never counted, and deleting or editing the order later "
+        f"would move stock that was never applied. Add the line in the app instead, "
+        f"which applies the stock as it saves, or restore a full archive with "
+        f"replace_all"
+    )
 
 
 def _check_receipt_transitions(rows: dict[str, list["_Row"]]) -> None:

@@ -209,7 +209,9 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    moved stock by the wrong delta, and *clearing* the column re-armed the increment
    and double-counted a delivery (#44). The answer is to refuse the transition, not to
    represent it — `invariants.py` blocks an import moving `received_at` into or out of
-   null on an order with catalog lines. Do not add a `stock_applied` column instead:
+   null on an order with catalog lines, and (#87) blocks a *new* catalog line joining
+   an order whose stored `received_at` is already set, which is the same unaccounted
+   state reached from the line's side. Do not add a `stock_applied` column instead:
    the backfill cannot be right on a live instance, and in the CSV (rule 9) it becomes
    a sheet asserting that stock was applied, which is this defect on a worse field.
 3. **Catalog de-dup (§3.9):** catalog items are select-or-create — order lines take
