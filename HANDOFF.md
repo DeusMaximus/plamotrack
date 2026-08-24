@@ -41,47 +41,48 @@ Template:
 
 ---
 
-## 2026-08-24 — Claude Code (Fable 5) — #119 and #77 closed (PRs #139, #141, one Cursor round each); both fold-ins merged (#140, #142)
+## 2026-08-25 — Claude Code (Fable 5) — v0.2.7-alpha RELEASED; #119, #77, #87 closed (one Cursor round each); docs + screenshots refreshed; both milestones closed
 
-- **Done:** **#119 — PR #139** squash-merged as `b6c083d`. Both derived advances
-  (ship + receive) are plan-time `_Advance` descriptors (kit id, before-status,
-  landing, stamp): planned by `_plan_advances`, hash-bound in `_plan_fingerprint`,
-  consumed verbatim by `_apply_planned_advances` — the `_Spawn` precedent extended
-  to rows the plan *moves*; preview shows the moves (`kits_advanced` + per-order
-  messages). Cursor round 1: GO + P3-1 (import-export's ship paragraph lacked the
-  bind claim), fixed at `7de77bb`. **#77 — PR #141** squash-merged as `0302c36`:
-  `require_total_fanout` / `MAX_TOTAL_FANOUT = 10_000` in `services/orders.py`,
-  shared rule-1 style — `create_order`/`update_order` pass the request's *stated*
-  kit-unit total pre-lock (MCP inherits), the import planner passes *actual
-  spawns* as a blocking preview error, so archive restores of any size stay
-  importable. Cursor round 1: GO + 2 P3s, both fixed at `0f16ef8` — P3-1: the new
-  test block split the per-line update test at its 409, orphaning its
-  nothing-landed asserts onto a preview-only test (the "edit landed elsewhere"
-  lesson class; restored verbatim); P3-2: the starter-quantity docs claimed the
-  10,000 cap, but that path emits explicit rows under `MAX_ROWS` (reworded).
-- **Decisions:** **Cursor over Codex both rounds** — size (415/233 insertions),
-  and for #119 independence: Codex prescribed that remedy in #118's round, so it
-  reviewing its own prescription is the weaker check (Codex tank still ~99%).
-  **REST caps stated totals, importer caps spawns** — deliberate asymmetry,
-  review-endorsed; Cursor corrected the 7.1 rationale (gate already held in
-  update_order; pre-row-lock placement is courtesy, not the gate rule) and left
-  the diff-cap recipe on the PR if ever revisited. One terminal descriptor per
-  kit on a combined ship+receive flip; before-status is hash-bound.
-- **Fold-ins:** #139's `adv-` queue merged as **PR #140** (`4b5f1f0`, 163/163).
-  #141's `cap-` queue merged as **PR #142** (`85d3197`; harness
-  **170/170, 17m08s**, rode without review per #40). #139 re-anchored ship-5/ship-12/stamp-2;
-  #141 re-anchored adv-7. No other queues outstanding.
-- **State:** `main` at `0302c36` (+ hand-off commits), backend **1050**, vitest
-  109, e2e **24/24 from empty** (verified twice this session), CI green at every
-  merged head. Tracked harness on `main` is 170/170. No dev servers
-  running (:8000/:5173 free). No migrations this session.
-- **Next:** **0.2.6 is down to #87 alone** — blocked on the
-  owner's product call (refuse vs leave; owner deferred to "discuss when we get
-  there", and "there" is now). Live: **no v0.2.6 tag ever**; one v0.2.7-alpha
-  only when BOTH 0.2.6 (#87) and 0.2.7 (empty) are done — the #87 call is the
-  only remaining gate, so **do not run the release gate** until it is decided
-  and landed. **Back up the LXC before pulling `main`.** #137 stays unmilestoned
-  (product call). #122 rides M6.5.
+- **Released: v0.2.7-alpha** at tag `921c4f1` ("the importer keeps its promises"),
+  `--prerelease`, notes owner-approved; gate ran clean (both surfaces 0.2.7,
+  packaged stack healthy, migrate Exited (0), container-exported manifest carries
+  app_version 0.2.7 + schema `2c97a5ced66a`; dev overlay restored). Milestones
+  0.2.6 and 0.2.7 both closed at the tag. **No v0.2.6 tag exists, by design.**
+- **Done this session:** **#119 — PR #139** (`b6c083d`): derived ship/receive
+  advances as hash-bound `_Advance` plan descriptors; Cursor GO + 1 P3 (docs),
+  fixed `7de77bb`. **#77 — PR #141** (`0302c36`): `require_total_fanout` /
+  MAX_TOTAL_FANOUT=10,000 shared by entry, edit (stated totals, pre-lock) and the
+  import planner (actual spawns → blocking error; restore-safe); Cursor GO + 2 P3s
+  fixed `0f16ef8`. **#87 — PR #143** (`d41d7c5`), owner chose option 1: a new
+  catalog line may not join a stored already-received order
+  (`_check_lines_joining_received_orders`; the replace_all return is load-bearing);
+  Cursor clean GO, zero findings. Fold-ins #140/#142/#145 merged — tracked
+  harness **176/176** (`adv-`/`cap-`/`rcv-`), no queues outstanding.
+  **Docs PR #146**: all six screenshots re-shot post-#120/#126 via the new
+  repeatable `frontend/e2e/screenshots.spec.ts` (skipped unless SCREENSHOTS=1;
+  seeds a throwaway `plamotrack_demo` DB, refuses a non-empty one); README gained
+  the order-timeline paragraph + the M6.5 redesign row; operations.md's
+  "before 0.2.6" → 0.2.7. Version bump PR #147 (`921c4f1`).
+- **Notable finds:** the pre-existing currency-fingerprint test seeded the exact
+  #87 defect and asserted it as good — adapted to a pending parent (its subject
+  preserved; disclosed in PR #143, verified by the round). `-k fan-` collides
+  with "fan-out" in strt-7's label (prefix rule matters); cap-/rcv- chosen by
+  grep-first.
+- **Filed:** **#144** — parallel agent sessions collide on `plamotrack_test`,
+  the dev ports and the harness's in-place mutation; sketch: `PLAMOTRACK_TEST_DB`
+  override + per-session ports. **Owner's call: backburner** until parallel
+  sessions ramp up. #137 stays unmilestoned (product call).
+- **State:** `main` at `921c4f1` == the tag (+ this entry), backend **1056**,
+  vitest 109, e2e 24 (+1 skipped screenshot spec), harness 176/176 @ 18m08s,
+  CI green at every head. Dev db container back on the dev overlay; no dev
+  servers running. Codex budget still ~full (unused; all four rounds were
+  Cursor).
+- **Next:** the owner will likely pull the release onto the LXC — **back up the
+  LXC database first** (real collection). Then the 0.2.8 backlog
+  (#104/#53/#54/#61/#63/#67) or M5.1; #122 rides M6.5; #137 and #144 await
+  product calls. The AI-native-SDLC review (owner asked, this session) filed no
+  issues but shortlisted: deterministic hooks for `down -v` / migration edits,
+  a scheduled CI harness run, plan-first for M6, per-worktree test DBs (#144).
 
 ## 2026-08-24 — Claude Code (Fable 5) — #90 + #112 closed (PRs #133, #136, one Cursor round each); both mutant queues folded (#135, #138); #137 filed
 
