@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-24 — Claude Code (Fable 5) — #98 + #127 (+ #99) as PR #130; Codex rounds 1+2 NO-GO answered; upgrades `category` decided-no
+## 2026-08-24 — Claude Code (Fable 5) — #98 + #127 + #99 closed: PR #130 merged as `dfa87f3` after three Codex rounds; upgrades `category` decided-no
 
 - **Done:** **#98 + #127 in one branch — PR #130** (`feat/98-127-catalog-create-list`,
   head `019f8dd`, **CI green all three jobs**; no migration) — the piece the previous
@@ -98,10 +98,21 @@ Template:
   cat-25 (first-seen winner) die, cat-21/22 re-anchored — harness **25/25**.
   P3-6: `get_meta` no longer imports the REST layer — `services/meta.instance_meta`
   + `schemas/meta.MetaRead`, both wrappers delegate. Backend **1016**.
-- **Next:** Codex round 3 (or GO) on #130; then merge on the owner's call (squash,
-  `Closes #98, closes #127, closes #99` — one `closes` each). After merge: fold
-  the 25 `cat-` tuples plus the standing queue into `mutation_test.py` (anchors
-  want re-checking). Procedure changed this session (owner's call): review briefs
+- **Round 3 (amended in place): GO, clean, at `f2215ff`** — Codex replayed both
+  round-2 reproducers, shuffled restore row order, probed the omitted-column
+  overlay and stub-fold cells itself, verified `import app.mcp` loads no
+  `app.routers*`, and declared the invariant answered ("constructs the effective
+  post-write multiset before selecting any winner"). **PR #130 squash-merged as
+  `dfa87f3` on the owner's call; #98, #127 and #99 all closed; branch deleted;
+  CI green at every head.** Dev servers on :8000/:5173 serve code identical to
+  the merge.
+- **Next:** **the mutant fold-in is now the queued mechanical piece** — 25 `cat-`
+  tuples (in the PR #130 body and the untracked `backend/mutation_scratch_127.py`,
+  which also holds the runner-ready form) plus #129's 10 `dsp-` tuples fold into
+  `mutation_test.py` with TEST_FILES + anchors re-checked (the #117 shape: its own
+  branch + PR). Then the 0.2.6 list (#77, #87, #90, #112, #119) toward the
+  release, or the rest of 0.2.8 (#104/#53/#54/#61/#63/#67 remain).
+  Procedure changed this session (owner's call): review briefs
   are **printed in the chat in a copyable four-backtick block**, never handed over
   as a scratchpad path — written into `.agents/review-brief.md` +
   `testing-and-review.md`. Live and still true: **no v0.2.6 tag ever** — one
