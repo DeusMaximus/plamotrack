@@ -819,6 +819,11 @@ with this MCP server and a mail connector both active, reading one and writing t
 other. Building that as a feature would mean owning IMAP credentials, per-retailer
 parsers, and a support burden — for something the agent layer already does better.
 
+Hobby-specific conventions ride the same separation: `skills/` ships packaged agent
+skills (the first covers Gunpla) that teach an agent the naming and classification
+conventions plamotrack deliberately doesn't encode. The app stays generic (§9.1);
+the genre knowledge lives with the agent that applies it.
+
 ### 7.1 Protocol modernisation 🔨 **Planned (M6.1)**
 
 The current server uses the handshake/session-era MCP implementation. The `2026-07-28`
@@ -908,6 +913,14 @@ does not bundle a certificate authority or a heavyweight identity platform.
    as settling the question. `category` was kept free text over a fixed text enum for
    the same reason: an enum would be definitive, but acrylic cases, lighting kits and
    turntables would each then be a migration and a release.
+
+   **More evidence, same direction (skills, 24/08/2026).** The genre knowledge found a
+   home that isn't the schema at all: `skills/` ships packaged agent skills — the
+   first covers Gunpla naming, grade buckets, Bandai kit numbers, Gundam Markers —
+   that an agent loads alongside the MCP connection. The conventions live with the
+   layer that applies them, each hobby can carry its own, and the application stays
+   generic without anyone losing the specificity. If the taxonomy question is ever
+   forced, this is the pressure valve that has to fail first.
 2. **§9.2 — Photo storage backend default.** A local volume is the safe v1 default, with
    S3/MinIO as an opt-in env var. Worth confirming before the upload handler is written,
    because it also decides the backup story — a Docker volume is covered by whatever
