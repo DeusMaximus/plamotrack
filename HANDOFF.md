@@ -130,11 +130,10 @@ Template:
   **Squash-merged as `41868d9` on the owner's call (merge-on-green), branch
   deleted, CI green.** No queues remain outstanding — the tracked harness now
   holds every tuple ever filed.
-- **Reviewer budget (live, 24/08/2026): Codex is at 99% of its usage budget** —
-  effectively no Codex round until its reset. The next 0.2.6 fixes that warrant
-  review (#87, #119 are shared-mechanism-shaped) should brief **Cursor (Grok
-  4.6)** instead — right-sized per the procedure table for changes under ~1,000
-  insertions — or wait for the reset. Check what remains before any round.
+- **Reviewer budget (live, 24/08/2026, corrected): Codex has ~99% of its usage
+  budget REMAINING** — a full tank, despite three rounds on #130. No reviewer
+  constraint on the next 0.2.6 fixes; route by size per the procedure table as
+  usual. (An earlier revision of this entry read the number backwards.)
 - **Next:** **the mutant fold-in is now the queued mechanical piece** — 25 `cat-`
   tuples (in the PR #130 body and the untracked `backend/mutation_scratch_127.py`,
   which also holds the runner-ready form) plus #129's 10 `dsp-` tuples fold into
