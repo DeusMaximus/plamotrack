@@ -156,8 +156,9 @@ named tests, restores from a backup in a `finally`, and reports killed vs
 surviving.
 
 ```bash
-cd backend && uv run python mutation_test.py          # every case — ~11 min at 97 cases on
-                                                      # the primary dev Mac (measured, #117;
+cd backend && uv run python mutation_test.py          # every case — ~16 min at 146 cases on
+                                                      # the primary dev Mac (measured at the
+                                                      # #129/#130 fold-in, 24/08/2026;
                                                       # hardware-dependent — each case runs
                                                       # its selection twice: baseline + mutant)
 uv run python mutation_test.py -k rcpt-                # cases whose label contains "rcpt-"
@@ -182,9 +183,10 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 97 cases over eight files** — #86's
+- **On `main` at the time of writing: 146 cases over thirteen files** — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
-  #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`) and #115 (`moe-`).
+  #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
+  #118 (`ship-`), #129 (`dsp-`) and #130 (`cat-`).
   A branch that runs mutants ahead of the harness (a scratch copy, a hand run)
   queues its tuples in the PR body for folding in after merge — anchors get
   re-checked at fold-in, since the code may have moved under them. Labels are

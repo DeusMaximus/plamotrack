@@ -72,6 +72,7 @@ CAT = ROOT / "app/services/catalog.py"
 KITS = ROOT / "app/services/kits.py"
 MCP = ROOT / "app/mcp.py"
 SPEC = ROOT / "app/services/portability/spec.py"
+EXP = ROOT / "app/services/portability/exporting.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -921,6 +922,292 @@ CASES = [
         "allow_line_removal=remove_missing_lines",
         "allow_line_removal=True",
         "test_omitting_a_stored_line_is_refused_by_default",
+    ),
+    # --- #126 / PR #129: display_items (tuples from the PR body; anchors re-checked --
+    # --- at fold-in against `2b94a41` — none had moved under #130) -------------------
+    (
+        "dsp-1. the export loses the display_items table",
+        EXP,
+        '        "display_items": list(\n'
+        "            (await session.scalars(select(DisplayItem).order_by(DisplayItem.name))).all()\n"
+        "        ),",
+        '        "display_items": [],',
+        "round_trips_through_replace_all or restores_into_an_empty",
+    ),
+    (
+        "dsp-2. the export drops the DISPLAY catalog-name map",
+        EXP,
+        '        ItemType.DISPLAY: {d.id: d.name for d in data["display_items"]},\n',
+        "",
+        "display_order_line_exports_and_reimports",
+    ),
+    (
+        "dsp-4. names._NOUN loses its DisplayItem entry",
+        NAMES,
+        '    DisplayItem: "a display item",\n',
+        "",
+        "raises_a_conflict_not_an_integrity_error",
+    ),
+    (
+        "dsp-5. _is_nullable reverts to the bare name set",
+        CAT,
+        "    return column is not None and column.nullable",
+        "    return False",
+        "clearing_manufacturer",
+    ),
+    (
+        "dsp-6. DISPLAY drops out of the category-required tuple",
+        ORD,
+        "    if item_type in (ItemType.TOOL, ItemType.CONSUMABLE, ItemType.DISPLAY) and not category:",
+        "    if item_type in (ItemType.TOOL, ItemType.CONSUMABLE) and not category:",
+        "requires_a_category_but_not",
+    ),
+    (
+        "dsp-7. catalog_names back to the three-table literal",
+        IMP,
+        "        for table in CATALOG_TABLES:\n            self.catalog_names.update(",
+        '        for table in ("tools", "consumables", "upgrades"):\n'
+        "            self.catalog_names.update(",
+        "foreign_uuid",
+    ),
+    (
+        "dsp-8. stubs skip required columns for display_items",
+        IMP,
+        "            if column.required and column.name not in values:",
+        '            if column.required and column.name not in values and table != "display_items":',
+        "name_only_catalog_line",
+    ),
+    (
+        "dsp-9. _normalise_text leaves required text alone",
+        CAT,
+        "        elif value is not None:\n            fields[key] = clean_required_text(value, key)",
+        "        elif value is not None:\n            pass",
+        "required_text_column",
+    ),
+    (
+        "dsp-10. the order dispatch stops trimming category",
+        ORD,
+        "    category = clean_optional_text(new_item.category)",
+        "    category = new_item.category",
+        "new_item_holds_the_same_text_rule",
+    ),
+    (
+        "dsp-11. update_catalog_display dispatches TOOL (survived a green suite once)",
+        MCP,
+        "row = await catalog_service.update_catalog_item(session, ItemType.DISPLAY, parsed, changes)",
+        "row = await catalog_service.update_catalog_item(session, ItemType.TOOL, parsed, changes)",
+        "mcp_catalog_edits_cover_every_table",
+    ),
+    # --- #98 + #127 (+ #99) / PR #130: catalog create/list + category vocabulary -----
+    # --- (tuples from the PR body and the three review rounds; verified at `f2215ff`,
+    # --- re-checked at fold-in against `2b94a41`) ------------------------------------
+    (
+        "cat-1. create path fold off",
+        CAT,
+        '    if fields.get("category"):\n'
+        '        fields["category"] = await canonical_category(session, model, fields["category"])\n',
+        "",
+        "create_folds_category_onto_the_existing_spelling",
+    ),
+    (
+        "cat-2. update path fold off",
+        CAT,
+        '    if fields.get("category"):\n'
+        "        # Same exclusion, opposite lean: another row's spelling is reused rather\n"
+        "        # than refused, and the row's own is excluded so a re-case can correct it.\n"
+        '        fields["category"] = await canonical_category(\n'
+        '            session, model, fields["category"], exclude_id=item_id\n'
+        "        )\n",
+        "",
+        "update_folds_category_onto_another_rows_spelling or mcp_update_folds",
+    ),
+    (
+        "cat-3. exclude_id dropped",
+        CAT,
+        "        stmt = stmt.where(model.id != exclude_id)",
+        "        pass  # neutered",
+        "recasing_the_only_holder_wins",
+    ),
+    (
+        "cat-4. canonical pick ignores frequency",
+        CAT,
+        '        .order_by(func.count().desc(), trimmed.collate("C"))',
+        '        .order_by(trimmed.collate("C"))',
+        "most_frequent_legacy_spelling_wins",
+    ),
+    (
+        "cat-5. canonical tie-break loses its collation pin",
+        CAT,
+        '        .order_by(func.count().desc(), trimmed.collate("C"))',
+        "        .order_by(func.count().desc(), trimmed)",
+        "frequency_tie_breaks_by_byte_order",
+    ),
+    (
+        "cat-6. order new_item fold off",
+        ORD,
+        "        category = await canonical_category(session, CATEGORISED_MODELS[item_type], category)\n",
+        "        pass\n",
+        "order_new_item_line_folds_its_category",
+    ),
+    (
+        "cat-7. list filter becomes a pattern",
+        CAT,
+        "        stmt = stmt.where(func.lower(trimmed) == func.lower(category.strip()))",
+        "        stmt = stmt.where(model.category.ilike(category))",
+        "category_filter_is_case_insensitive_equality",
+    ),
+    (
+        "cat-8. list filter folds one side only",
+        CAT,
+        "        stmt = stmt.where(func.lower(trimmed) == func.lower(category.strip()))",
+        "        stmt = stmt.where(trimmed == func.lower(category.strip()))",
+        "category_filter_is_case_insensitive_equality",
+    ),
+    (
+        "cat-9. vocabulary ignores frequency",
+        CAT,
+        '        .order_by(func.count().desc(), func.lower(trimmed), trimmed.collate("C"))',
+        '        .order_by(func.lower(trimmed), trimmed.collate("C"))',
+        "distinct_categories_come_most_frequent_first",
+    ),
+    (
+        "cat-10. vocabulary blank guard off",
+        CAT,
+        '        .where(trimmed != "")\n',
+        "",
+        "distinct_categories_hide_a_legacy_blank_row",
+    ),
+    (
+        "cat-11. kit refusal off in item_type parsing",
+        MCP,
+        '    if normalized == "kit":\n'
+        "        raise ToolError(\n"
+        '            "kits are not a catalog table — list them with list_kits, add one with "\n'
+        '            "create_kit (or a kit line on create_order for a purchase)"\n'
+        "        )\n",
+        "",
+        "kits_are_refused or refuses_category_asks",
+    ),
+    (
+        "cat-12. create_kit status vocabulary off",
+        MCP,
+        '    fields = kit.model_dump()\n    fields["status"] = _parse_status(fields["status"])\n',
+        "    fields = kit.model_dump()\n",
+        "create_kit_takes_the_tolerant_status_vocabulary",
+    ),
+    (
+        "cat-13. filter's no-column refusal off",
+        CAT,
+        "            raise InvalidInputError(\n"
+        '                f"{model.__tablename__} have no category column, so they cannot be filtered by one"\n'
+        "            )",
+        "            pass  # neutered",
+        "refuses_category_asks_that_have_no_answer",
+    ),
+    (
+        "cat-14. vocabulary's no-column refusal off",
+        CAT,
+        "        raise InvalidInputError(\n"
+        '            f"{model.__tablename__} have no category column, so there is no "\n'
+        '            "category vocabulary to list"\n'
+        "        )",
+        "        pass  # neutered",
+        "refuses_category_asks_that_have_no_answer",
+    ),
+    (
+        "cat-15. upgrade new_item gate off (#130 round 1, P2-1)",
+        ORD,
+        "    if category is not None and item_type in CATEGORISED_MODELS:",
+        "    if category is not None:",
+        "upgrade_new_item_line_carrying_a_category",
+    ),
+    (
+        "cat-16. canonical pick returns the raw stored bytes (#130 round 1, P2-2)",
+        CAT,
+        "    stmt = (\n        select(trimmed)\n"
+        "        .where(func.lower(trimmed) == func.lower(category.strip()))",
+        "    stmt = (\n        select(model.category)\n"
+        "        .where(func.lower(trimmed) == func.lower(category.strip()))",
+        "never_propagates_legacy_padding",
+    ),
+    (
+        "cat-17. filter loses its stored-side trim (#130 round 1, P2-2)",
+        CAT,
+        "        trimmed = func.btrim(model.category, WHITESPACE)\n"
+        "        stmt = stmt.where(func.lower(trimmed) == func.lower(category.strip()))",
+        "        stmt = stmt.where(func.lower(model.category) == func.lower(category.strip()))",
+        "legacy_padded_category_is_found",
+    ),
+    (
+        "cat-18. vocabulary returns the raw stored bytes (#130 round 1, P2-2)",
+        CAT,
+        '        select(trimmed)\n        .where(trimmed != "")',
+        '        select(model.category)\n        .where(trimmed != "")',
+        "legacy_padded_category_is_found",
+    ),
+    (
+        "cat-19. importer folds id-bearing restores too (#130 round 1, P2-3)",
+        IMP,
+        "            return row.action is RowAction.CREATE and (\n"
+        '                row.synthetic_id or row.values.get("id") is None\n'
+        "            )",
+        "            return row.action is RowAction.CREATE",
+        "id_bearing_restore_create_keeps_its_stated_spelling",
+    ),
+    (
+        "cat-20. importer fold off entirely (#130 round 1, P2-3)",
+        IMP,
+        "        self._fold_new_categories(replace_all)",
+        "        pass  # neutered",
+        "id_less_import_create_folds_its_category",
+    ),
+    (
+        "cat-21. replace_all seeds the doomed stored vocabulary (#130 round 1, P2-3)",
+        IMP,
+        "            if not replace_all:\n                for instance in self.existing[spec.key]:",
+        "            if True:\n                for instance in self.existing[spec.key]:",
+        "uploads_own_rows_not_the_doomed_ones",
+    ),
+    (
+        "cat-22. restores stop voting in the multiset (#130 round 2, P2-5)",
+        IMP,
+        "            for row in rows:\n"
+        "                if row.action is RowAction.CREATE and not folds(row):\n"
+        "                    # An id-bearing create-is-a-restore votes; UPDATEs already\n"
+        "                    # voted through the overlay of the row they rewrite.\n"
+        "                    value = stated_category(row)\n"
+        "                    if value is not None:\n"
+        "                        spellings[value.lower()][value] += 1\n",
+        "",
+        "folds_onto_a_restored_rows_spelling or vote_by_frequency",
+    ),
+    (
+        "cat-23. the fold stops announcing itself in the preview (#130 round 1, P2-3)",
+        IMP,
+        "                    row.messages.append(\n"
+        "                        f\"category '{value}' will be stored as '{vocab[key]}', \"\n"
+        '                        "matching the spelling already in use"\n'
+        "                    )",
+        "                    pass",
+        "fold_is_stated_in_the_preview",
+    ),
+    (
+        "cat-24. updates stop overlaying the rows they rewrite (#130 round 2, P2-5)",
+        IMP,
+        "            overlays: dict[uuid.UUID, str | None] = {}\n"
+        "            for row in rows:\n"
+        "                if row.action is RowAction.UPDATE and row.matched_id is not None:\n"
+        '                    if "category" in row.present:\n'
+        "                        overlays[row.matched_id] = stated_category(row)\n",
+        "            overlays: dict[uuid.UUID, str | None] = {}\n",
+        "update_is_writing",
+    ),
+    (
+        "cat-25. the winner reverts to first-seen instead of the counted pick (#130 round 2, P2-5)",
+        IMP,
+        "                key: min(counted.items(), key=lambda item: (-item[1], item[0]))[0]",
+        "                key: next(iter(counted.items()))[0]",
+        "vote_by_frequency",
     ),
 ]
 
@@ -1861,6 +2148,13 @@ TEST_FILES = [
     "tests/test_series.py",
     "tests/test_mcp_order_edit.py",
     "tests/test_ship_dates.py",
+    # The #129 (dsp-) and #130 (cat-) fold-in — same rule as above: each file is
+    # named by at least one case's `-k` expression.
+    "tests/test_inventory.py",
+    "tests/test_orders.py",
+    "tests/test_write_surface_parity.py",
+    "tests/test_catalog_categories.py",
+    "tests/test_mcp_catalog_create.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
