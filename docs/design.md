@@ -1101,10 +1101,17 @@ derived effects. `POST /import/apply` **re-parses and re-plans**, then compares 
 `plan_hash` against the one previewed — a mismatch is a 409.
 
 The hash is **required**: applying without one is a 422, not an unchecked apply. It
-covers the resolved value set of every row, the spawn descriptors and the identity of
-what a `replace_all` would destroy — not merely the shape of the plan. Two files that
-plan the same *actions* at the same *positions* are otherwise indistinguishable, so a
-hash taken against one would authorise the other.
+covers the resolved value set of every row, the spawn, removal and advance
+descriptors and the identity of what a `replace_all` would destroy — not merely the
+shape of the plan. Two files that plan the same *actions* at the same *positions* are
+otherwise indistinguishable, so a hash taken against one would authorise the other.
+The advance descriptors (#119) bind the derived side of a ship/receive flip the same
+way `_Spawn` binds created kits: each pre-existing kit the flip moves is resolved at
+plan time — kit id, before-status, landing status, stamp — shown in the preview
+(a derived count plus per-order messages), and consumed verbatim by the apply. A kit
+progressed between preview and apply changes the re-plan's descriptors and the stale
+hash 409s, instead of the apply silently moving a different set of kits than the
+preview implied.
 
 Two things are excluded by necessity rather than oversight. Uuids minted during
 planning — every id-less create, every catalog or retailer stub conjured from a
@@ -1194,8 +1201,9 @@ which is how the invariant survives a restore today.
 The two arrivals an import *does* perform borrow the order's receipt instant, exactly
 as the live writers stamp it (#93): a kit-only receive-by-import stamps the kits it
 advances with the value the sheet states, and a kit the apply spawns into a received
-order carries the same instant — resolved at plan time (`_order_receipt`, the
-post-write value), carried on the spawn descriptor and bound by the plan hash, so a
+order carries the same instant — each resolved at plan time (the `_Advance`
+descriptors of #119 for pre-existing kits; `_order_receipt`, the post-write value,
+on the spawn descriptor) and bound by the plan hash, so a
 receipt this same upload sets is honoured, backdated included, and a correction
 landing between preview and apply stales the hash instead of stamping a value the
 operator never saw. The value is stated, not invented, and neither site fires on a

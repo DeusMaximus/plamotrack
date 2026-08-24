@@ -2183,8 +2183,8 @@ async def test_a_received_order_with_catalog_lines_still_restores_from_an_archiv
 # Since #93, a kit a receipt lands in backlog is stamped with the order's
 # `received_at` — backdated included — by every writer: `receive_order`, entry
 # with `received=true`, and a line edit spawning into a received order. The
-# importer's two arrival sites (`_advance_kits_for_newly_received_orders` and the
-# apply loop's `spawn_kits` call) borrow the same instant. The value is stated in
+# importer's two arrival sites (the `_Advance` descriptors `_plan_advances` binds
+# and the apply loop's `spawn_kits` call) borrow the same instant. The value is stated in
 # the upload or already stored, so rule 10 is not offended: nothing is invented,
 # and neither site fires on a re-import (no quantity written, no null -> non-null
 # transition). Every RECEIPT below is months in the past precisely so the
@@ -2842,7 +2842,7 @@ async def test_a_generated_status_stamp_does_not_move_the_plan_hash(
 async def test_an_arrival_and_a_status_row_do_not_both_stamp_one_kit(client):
     """The two derivations that write this column meet on one kit: an order this
     import receives, whose kit the same import also gives an explicit status.
-    `_advance_kits_for_newly_received_orders` already yields to an explicit status
+    `_plan_advances` already yields to an explicit status
     cell, so the generated stamp has to come from the kits row alone — and the
     explicit status is what lands, not `backlog`."""
     retailer = (await client.post("/retailers", json={"name": "Hobby Link Japan"})).json()

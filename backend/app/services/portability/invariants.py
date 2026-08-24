@@ -92,7 +92,7 @@ def _check_immutable_line_columns(rows: dict[str, list["_Row"]]) -> None:
 
     Reads `row.changes` rather than comparing values, so a sheet that merely
     restates the column it already holds is silent — the same reading
-    `_advance_kits_for_newly_received_orders` takes of `received_at`, and the
+    `importing._Planner._newly_set` takes of `received_at`, and the
     reason a full archive re-import stays a no-op.
     """
     for row in rows.get("order_items", []):
@@ -234,7 +234,7 @@ def _check_receipt_transitions(rows: dict[str, list["_Row"]]) -> None:
     """Refuse a `received_at` flip on an order whose lines move stock.
 
     `before`/`after` are `render()` output, so `""` is null — the same reading
-    `_advance_kits_for_newly_received_orders` relies on, and the only one that
+    `importing._Planner._newly_set` relies on, and the only one that
     tells a first arrival apart from a correction between two non-null timestamps.
 
     **`replace_all` is carried by the `UPDATE` test, not by a mode check.** An
@@ -328,7 +328,7 @@ def _check_ship_dates(rows: dict[str, list["_Row"]]) -> None:
 
     Shipping applies no stock, so — unlike the receipt — the null → non-null
     direction is free on every order, catalog lines included; the kits it
-    advances are `_advance_kits_for_newly_shipped_orders`'s job at apply time.
+    advances are `_plan_advances`' job, as hash-bound descriptors (#119).
     Clearing mirrors REST's refusal (rule 1): there is no un-ship transition
     anywhere, so a sheet may not be the way around. The future rule reads the
     change, not the cell, exactly as `_check_future_receipts` above — a stored

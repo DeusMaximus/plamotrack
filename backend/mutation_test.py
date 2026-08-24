@@ -561,10 +561,10 @@ CASES = [
         "borrows_its_receipt or carrying_its_receipt",
     ),
     (
-        "stamp-2. the receive-by-import advance reads the clock again",
+        "stamp-2. the receive advance's descriptor takes the clock, not the receipt",
         IMP,
-        "                    kit.status_updated_at = row.target.received_at",
-        "                    kit.status_updated_at = datetime.now(UTC)",
+        "                        after, stamp = KitStatus.BACKLOG, newly_received",
+        "                        after, stamp = KitStatus.BACKLOG, datetime.now(UTC)",
         "stamps_the_advance",
     ),
     (
@@ -621,11 +621,14 @@ CASES = [
         "    pass  # neutered",
         "unship_by_import or future_ship_date_by_import",
     ),
+    # ship-5/ship-12/stamp-2 were re-anchored by #119: the apply-time advance
+    # functions became plan-time `_Advance` descriptors consumed by
+    # `_apply_planned_advances`, so the sites moved with them.
     (
-        "ship-5. the import ship advance reads the clock",
+        "ship-5. the apply stamps the advance with the clock, not the descriptor",
         IMP,
-        "                    kit.status_updated_at = row.target.shipped_at",
-        "                    kit.status_updated_at = datetime.now(UTC)",
+        "        kit.status_updated_at = advance.stamp",
+        "        kit.status_updated_at = datetime.now(UTC)",
         "ship_by_import_advances",
     ),
     (
@@ -689,9 +692,8 @@ CASES = [
     (
         "ship-12. the import advance stamps without moving the status",
         IMP,
-        "                    kit.status = KitStatus.IN_TRANSIT\n"
-        "                    kit.status_updated_at = row.target.shipped_at",
-        "                    kit.status_updated_at = row.target.shipped_at",
+        "        kit.status = advance.after\n        kit.status_updated_at = advance.stamp",
+        "        kit.status_updated_at = advance.stamp",
         "ship_by_import_advances",
     ),
     # --- #107 / PR #109: name uniqueness (tuples from the PR body's collapsed -------

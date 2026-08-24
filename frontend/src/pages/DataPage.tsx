@@ -315,6 +315,8 @@ export function DataPage() {
               {result.created} created · {result.updated} updated · {result.skipped} skipped
               {result.kits_spawned > 0 && ` · ${result.kits_spawned} kits created from order lines`}
               {result.kits_removed > 0 && ` · ${result.kits_removed} kits removed from order lines`}
+              {result.kits_advanced > 0 &&
+                ` · ${result.kits_advanced} kits moved with shipped/received dates`}
             </p>
           </div>
         )}

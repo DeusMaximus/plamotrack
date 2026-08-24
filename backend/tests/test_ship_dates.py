@@ -550,6 +550,194 @@ async def test_a_ship_correction_between_preview_and_apply_stales_the_hash(clien
     assert instant(new["status_updated_at"]) == instant(corrected)
 
 
+# --- #119: the derived advances are bound by the plan hash -----------------------
+#
+# The fingerprint binds the `_Advance` descriptors — kit id, before-status,
+# landing status, stamp — so the set of pre-existing kits an approved preview
+# says will move IS the set the apply moves. Before #119 the advance re-decided
+# from live `kit.status` at apply time, after the hash check: a kit progressed
+# between preview and apply was silently skipped (or a fresh one silently
+# taken) under a hash that still matched. Both siblings — ship and receive —
+# went through one structural change, so both sit in each matrix here.
+
+
+@pytest.mark.parametrize(
+    "column, value", [("shipped_at", SHIP), ("received_at", RECEIPT)], ids=["ship", "receive"]
+)
+async def test_a_kit_progressed_between_preview_and_apply_stales_the_hash(
+    client, retailer, column, value
+):
+    """The #119 reproduction: preview a null -> set flip, progress the order's
+    kit through the app, apply the old hash. The derived advance the operator
+    approved no longer exists, so the apply must 409 — not mark the order
+    shipped/received while silently moving nothing."""
+    order = await make_order(client, retailer, [kit_line(quantity=1)])
+    (kit,) = await order_kits(client, order)
+    content = archive(orders=[order_row(order, retailer, **{column: value})])
+    old_hash = (await preview(client, content))["plan_hash"]
+
+    assert (
+        await client.patch(f"/kits/{kit['id']}", json={"status": "building"})
+    ).status_code == 200
+
+    stale = await apply(client, content, plan_hash=old_hash)
+    assert stale.status_code == 409, stale.text
+    assert "preview again" in stale.json()["detail"]
+    stored = (await client.get(f"/orders/{order['id']}")).json()
+    assert stored[column] is None, "the stale apply landed nothing"
+
+    # The honest path after re-previewing: the flip lands, and the progressed
+    # kit keeps the state the user gave it — same as the live writers.
+    fresh = await preview(client, content)
+    assert fresh["derived"]["kits_advanced"] == 0
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["kits_advanced"] == 0
+    assert instant((await client.get(f"/orders/{order['id']}")).json()[column]) == instant(value)
+    assert (await client.get(f"/kits/{kit['id']}")).json()["status"] == "building"
+
+
+@pytest.mark.parametrize(
+    "column, value, landing",
+    [("shipped_at", SHIP, "in_transit"), ("received_at", RECEIPT, "backlog")],
+    ids=["ship", "receive"],
+)
+async def test_a_still_eligible_move_between_preview_and_apply_stales_the_hash(
+    client, retailer, column, value, landing
+):
+    """The value axis on the descriptor's before-status: ordered -> pre_ordered
+    keeps the kit eligible, so the *set* of advances is unchanged — but the
+    descriptor the operator approved said "ordered", and the plan is bound to
+    what it said, not merely to how many kits it moves."""
+    order = await make_order(client, retailer, [kit_line(quantity=1)])
+    (kit,) = await order_kits(client, order)
+    content = archive(orders=[order_row(order, retailer, **{column: value})])
+    old_hash = (await preview(client, content))["plan_hash"]
+
+    assert (
+        await client.patch(f"/kits/{kit['id']}", json={"status": "pre_ordered"})
+    ).status_code == 200
+
+    stale = await apply(client, content, plan_hash=old_hash)
+    assert stale.status_code == 409, stale.text
+    # Re-previewed, the advance is real again: the still-eligible kit moves.
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["kits_advanced"] == 1
+    kit = (await client.get(f"/kits/{kit['id']}")).json()
+    assert kit["status"] == landing
+    assert instant(kit["status_updated_at"]) == instant(value)
+
+
+@pytest.mark.parametrize(
+    "column, value", [("shipped_at", SHIP), ("received_at", RECEIPT)], ids=["ship", "receive"]
+)
+async def test_a_kit_turning_eligible_between_preview_and_apply_stales_the_hash(
+    client, retailer, column, value
+):
+    """The other direction: the preview showed *no* derived movement (the kit
+    was building), then the kit returns to ordered before the apply. Unbound,
+    the apply would move a kit the operator was never told about; bound, it
+    409s."""
+    order = await make_order(client, retailer, [kit_line(quantity=1)])
+    (kit,) = await order_kits(client, order)
+    assert (
+        await client.patch(f"/kits/{kit['id']}", json={"status": "building"})
+    ).status_code == 200
+    content = archive(orders=[order_row(order, retailer, **{column: value})])
+    old_hash = (await preview(client, content))["plan_hash"]
+
+    assert (await client.patch(f"/kits/{kit['id']}", json={"status": "ordered"})).status_code == 200
+
+    stale = await apply(client, content, plan_hash=old_hash)
+    assert stale.status_code == 409, stale.text
+    assert (await client.get(f"/kits/{kit['id']}")).json()["status"] == "ordered"
+
+
+async def test_the_preview_names_the_ship_advance_and_the_result_counts_it(client, retailer):
+    """The advance the plan binds is also the advance the operator can *see*:
+    the derived count, the per-order message, and the result line. The building
+    kit on the same order is the boundary — outside the eligible set, outside
+    the count, untouched by the apply."""
+    order = await make_order(client, retailer, [kit_line(quantity=3)])
+    kits = await order_kits(client, order)
+    progressed, *pipeline = kits
+    assert (
+        await client.patch(f"/kits/{progressed['id']}", json={"status": "building"})
+    ).status_code == 200
+
+    content = archive(orders=[order_row(order, retailer, shipped_at=SHIP)])
+    plan = await preview(client, content)
+    assert plan["derived"]["kits_advanced"] == 2
+    (row,) = plan["tables"][0]["rows"]
+    assert "marking this order shipped moves 2 kit(s) to in transit" in row["messages"]
+
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["kits_advanced"] == 2
+    after = {k["id"]: k["status"] for k in (await client.get("/kits")).json()}
+    assert after[progressed["id"]] == "building"
+    assert [after[k["id"]] for k in pipeline] == ["in_transit", "in_transit"]
+
+
+async def test_a_combined_flip_previews_one_advance_per_kit_landing_in_backlog(client, retailer):
+    """Ship and receive in one row compose into a single terminal descriptor —
+    the pass through in_transit is unobservable inside one transaction, so the
+    kit is counted once and the message says where it actually lands."""
+    order = await make_order(client, retailer, [kit_line(quantity=1)])
+    content = archive(orders=[order_row(order, retailer, shipped_at=SHIP, received_at=RECEIPT)])
+    plan = await preview(client, content)
+    assert plan["derived"]["kits_advanced"] == 1
+    (row,) = plan["tables"][0]["rows"]
+    assert "marking this order received moves 1 kit(s) to backlog" in row["messages"]
+    assert not any("in transit" in message for message in row["messages"])
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["kits_advanced"] == 1
+
+
+@pytest.mark.parametrize("column", ["shipped_at", "received_at"], ids=["ship", "receive"])
+async def test_a_correction_by_import_never_advances_a_regressed_kit(client, retailer, column):
+    """Change-not-cell, now read at plan time (`_newly_set`): a correction
+    between two non-null instants is not a transition, so a kit the user moved
+    back into the pipeline stays exactly where they put it — no descriptor, no
+    movement. Green before #119 too: this is the guard the descriptors
+    inherited, pinned so the move to plan time cannot have dropped it."""
+    order = await make_order(client, retailer, [kit_line(quantity=1)])
+    verb = "ship" if column == "shipped_at" else "receive"
+    assert (
+        await client.post(f"/orders/{order['id']}/{verb}", json={column: SHIP})
+    ).status_code == 200
+    (kit,) = await order_kits(client, order)
+    assert (await client.patch(f"/kits/{kit['id']}", json={"status": "ordered"})).status_code == 200
+
+    stored = (await client.get(f"/orders/{order['id']}")).json()
+    corrected = "2026-05-03T08:00:00+10:00"
+    content = archive(orders=[order_row(stored, retailer, **{column: corrected})])
+    resp = await apply(client, content)
+    assert resp.status_code == 200, resp.text
+    assert instant((await client.get(f"/orders/{order['id']}")).json()[column]) == instant(
+        corrected
+    )
+    assert (await client.get(f"/kits/{kit['id']}")).json()["status"] == "ordered"
+
+
+async def test_add_only_plans_no_advance_for_a_matched_order(client, retailer):
+    """A matched order is a SKIP under add_only — its shipped_at cell describes
+    nothing that will land, so no advance is derived and the apply moves
+    nothing."""
+    order = await make_order(client, retailer, [kit_line(quantity=1)])
+    content = archive(orders=[order_row(order, retailer, shipped_at=SHIP)])
+    plan = await preview(client, content, mode="add_only")
+    assert actions(plan, "orders") == ["skip"]
+    assert plan["derived"]["kits_advanced"] == 0
+    resp = await apply(client, content, mode="add_only")
+    assert resp.status_code == 200, resp.text
+    assert (await client.get(f"/orders/{order['id']}")).json()["shipped_at"] is None
+    (kit,) = await order_kits(client, order)
+    assert (await client.get(f"/kits/{kit['id']}")).json()["status"] == "ordered"
+
+
 async def test_an_archive_of_a_shipped_order_round_trips(client, retailer):
     """Create-is-a-restore for the new column, in both creating modes."""
     order = await make_order(client, retailer, [kit_line(quantity=1)], shipped_at=SHIP)

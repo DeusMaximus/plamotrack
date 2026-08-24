@@ -241,7 +241,10 @@ Everything else about receipt still imports:
 - an order that holds only kit lines moves in both directions — that's the ordinary
   starter-sheet case, where a kit you already own arrives already received. The kits
   the receipt advances to backlog are stamped with the arrival instant the sheet
-  states, the same as receiving in the app;
+  states, the same as receiving in the app. The preview says so up front — a count
+  of the kits that will move, and a message on each order saying which way — and
+  the apply is held to exactly that set: if a kit moves in the app between preview
+  and apply, the apply refuses and asks you to preview again;
 - a **new** order imports with its receipt intact, in any mode. A full archive
   carries the received order *and* the post-receipt `quantity_on_hand` together, so
   restoring one is never ambiguous;
@@ -259,10 +262,13 @@ restore records the past, even when the past held something odd.
 **`shipped_at` is simpler, because it never touches stock.** Marking an order
 shipped through `orders.csv` works on any order — including ones with tool, display,
 consumable or upgrade lines — and moves its waiting kits to In Transit, stamped
-with the date the sheet states. The same two rules apply: a future ship date is
-refused, and clearing `shipped_at` is refused (un-shipping isn't supported
-anywhere — remember that a blank cell in an included column means "empty this
-field", so restate the ship date on sheets that carry the column).
+with the date the sheet states. The preview shows these moves the same way it shows
+a receipt's — the count, and a message on the order saying which way — and the
+apply is held to exactly that set: if a kit moves in the app between preview and
+apply, the apply refuses and asks you to preview again. The same two rules apply:
+a future ship date is refused, and clearing `shipped_at` is refused (un-shipping
+isn't supported anywhere — remember that a blank cell in an included column means
+"empty this field", so restate the ship date on sheets that carry the column).
 
 **Reducing a kit line's quantity removes kits.** A line that says 1 where the
 collection holds 3 is a disagreement, so the import gives up the extra kits — newest

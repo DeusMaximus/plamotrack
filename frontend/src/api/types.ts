@@ -390,6 +390,8 @@ export interface DerivedEffects {
   kits_spawned: number;
   /** Kits a reduced order-line quantity gives up. Destructive, and named by no row. */
   kits_removed: number;
+  /** Pre-existing kits moved by an order this upload ships/receives (#119). */
+  kits_advanced: number;
   stock_changes: number;
   stock_note: string;
   rows_deleted: Record<string, number>;
@@ -422,6 +424,7 @@ export interface ImportResult {
   skipped: number;
   kits_spawned: number;
   kits_removed: number;
+  kits_advanced: number;
   rows_deleted: Record<string, number>;
   warnings: string[];
 }
