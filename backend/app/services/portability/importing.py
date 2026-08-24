@@ -1759,7 +1759,7 @@ class _Planner:
         """The post-write value of one of an order's timeline instants
         (`received_at`, `shipped_at`) — null when it will be unset — so a
         spawned kit lands in the right status instead of always
-        `_initial_kit_status`'s default of "still on the way" (#47), and carries
+        `initial_kit_status`'s default of "still on the way" (#47), and carries
         the right `status_updated_at` (#93, #95). Checks this import's own
         orders rows first — covering both a freshly created order and an
         existing one this import updates — and falls back to the persisted row

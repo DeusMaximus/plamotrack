@@ -449,7 +449,13 @@ async def _adjust_ref(
     await session.flush()
 
 
-def _initial_kit_status(requested: KitStatus, received: bool, shipped: bool = False) -> KitStatus:
+def initial_kit_status(requested: KitStatus, received: bool, shipped: bool = False) -> KitStatus:
+    """Where a kit entering the collection actually starts, given its order's state.
+
+    Public because it is a shared predicate (rule 1): the starter-sheet expansion
+    emits explicit kit rows for retailer-bearing rows (#112) and has to land them
+    on the same status `spawn_kits` would have, or the two routes to an
+    order-backed kit drift apart."""
     # Received wins over shipped: an order can hold both instants, and the box
     # being in hand is the later fact.
     if received and requested in ARRIVAL_ELIGIBLE:
@@ -487,7 +493,7 @@ async def spawn_kits(
     """
     require_line_quantity(count, label="the number of kits on this line")
     requested = KitStatus(status) if status else KitStatus.ORDERED
-    final_status = _initial_kit_status(requested, received, shipped)
+    final_status = initial_kit_status(requested, received, shipped)
     resolved_scale = scale if scale is not None else default_scale_for_grade(grade)
     # A kit landing in backlog on a received order entered the collection when the
     # box did, so it carries the order's receipt time — which may be backdated
