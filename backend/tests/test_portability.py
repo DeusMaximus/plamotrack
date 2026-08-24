@@ -1898,6 +1898,9 @@ async def test_an_update_row_is_held_to_the_ceiling_as_well(client):
     assert actions(plan, "order_items") == ["error"]
     assert "quantity" in plan["tables"][0]["rows"][0]["error"]
     assert (await apply(client, content, filename="order_items.csv")).status_code == 409
+    # The stored line is untouched, and no kits were spawned against it.
+    assert (await client.get(f"/orders/{order['id']}")).json()["items"][0]["quantity"] == 1
+    assert len((await client.get("/kits")).json()) == 1
 
 
 # --- the aggregate fan-out ceiling (#77) -----------------------------------------
@@ -1941,9 +1944,6 @@ async def test_an_import_at_the_aggregate_ceiling_plans_clean(client):
     plan = await preview(client, content, filename="order_items.csv")
     assert plan["blocking_errors"] == [], plan["blocking_errors"]
     assert plan["derived"]["kits_spawned"] == 10_000
-    # The stored line is untouched, and no kits were spawned against it.
-    assert (await client.get(f"/orders/{order['id']}")).json()["items"][0]["quantity"] == 1
-    assert len((await client.get("/kits")).json()) == 1
 
 
 async def test_an_update_that_stays_under_the_ceiling_still_applies(client):

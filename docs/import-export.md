@@ -53,7 +53,7 @@ Download `starter-sheet.csv`, fill it in, import it.
 | `status` | `pre_ordered` / `ordered` / `in_transit` / `backlog` / `building` / `complete`. Blank = backlog. |
 | `rating` | 1–5, if you've finished it. |
 | `build_started`, `build_completed` | `YYYY-MM-DD` — when you started / finished the build. Blank = not recorded; the importer never invents one. |
-| `quantity` | How many of this kit. Blank = 1, at most 1,000 per row. You get that many kits in your collection either way — whether the row names a retailer or not — so a bigger haul goes on more than one row (one import creates at most 10,000 kits in total this way — see Limits). |
+| `quantity` | How many of this kit. Blank = 1, at most 1,000 per row. You get that many kits in your collection either way — whether the row names a retailer or not — so a bigger haul goes on more than one row. Starter rows spell their kits out as ordinary rows, so the whole sheet answers to the 50,000-row limit (see Limits). |
 | `retailer` | Where you bought it. **Blank = no order recorded**, just a kit in the collection. |
 | `order_date`, `order_number` | The purchase. Rows sharing a retailer + date + number collapse into **one order** — across separate imports too, so **fill in `order_number` whenever a shop + date pair isn't unique**. A row that reaches an existing order and names a kit already on it *restates that purchase line* (its price and quantity included) rather than adding a second one; a second copy of the same kit on one order is a second row in the **same** sheet. |
 | `unit_price`, `currency` | Major units (`49.99`). Currency blank = your instance's `REFERENCE_CURRENCY` (`AUD` unless you changed it). The example rows in the downloaded sheet are already filled in with yours. |
