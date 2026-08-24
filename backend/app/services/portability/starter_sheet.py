@@ -267,7 +267,11 @@ def _line_id(key: str, kit_name: str, grade: str, occurrence: int) -> str:
     (two identical Zaku rows are two lines), counting per key + identity so row
     order between distinct kits never changes an id. The cost, shared with the
     fingerprint this replaces: a re-import that *renames* a kit reads as a new
-    line, not a correction.
+    line, not a correction. And because `occurrence` resets per expansion, the
+    same kit under the same order key in a *separately imported* file restates
+    the first file's line — price and quantity included, shown as an ordinary
+    update in the preview (#136 review, P3-1; the docs tell people to fill in
+    `order_number` when shop + date is not unique).
     """
     identity = f"{kit_name.strip().lower()}|{grade.strip().lower()}"
     return str(uuid.uuid5(_NAMESPACE, f"{key}|line|{identity}|{occurrence}"))

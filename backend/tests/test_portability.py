@@ -811,6 +811,49 @@ async def test_a_bad_cell_on_a_retailer_row_is_reported_once(client):
     assert (await client.get("/kits")).json() == []
 
 
+async def test_a_stated_in_transit_starter_kit_gets_no_invented_stamp(client):
+    """The spawn-parity corner the #136 review drove and asked to have pinned
+    (P3-2): `in_transit` stated on an unreceived row lands as stated, and its
+    stamp is the entry time — a starter order has no ship instant to borrow, and
+    the receipt stamp belongs only to a backlog arrival."""
+    sheet = starter_sheet_csv([kit_fields_row(status="in_transit", received="no")])
+    assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
+
+    [kit] = (await client.get("/kits")).json()
+    assert kit["status"] == "in_transit"
+    assert kit["rating"] == 4, "the kit fields still travel on this status"
+    assert not kit["status_updated_at"].startswith("2026-03-14"), (
+        "no receipt instant was invented for a kit that hasn't arrived"
+    )
+    [order] = (await client.get("/orders")).json()
+    assert order["received_at"] is None
+    assert order["shipped_at"] is None
+
+
+async def test_replace_all_of_a_kit_carrying_sheet_lands_everything(client):
+    """The other P3-2 pin: under `replace_all` every synthesized row is a create,
+    the kit rows resolve their line through `created_ids`, and the fields ride —
+    nothing about the supply mechanism leans on merge-mode matching."""
+    await client.post("/retailers", json={"name": "Doomed Shop"})
+    sheet = starter_sheet_csv([kit_fields_row(quantity="2")])
+
+    plan = await preview(client, sheet, filename="starter-sheet.csv", mode="replace_all")
+    assert plan["blocking_errors"] == [], plan
+    assert plan["derived"]["kits_spawned"] == 0
+    assert actions(plan, "kits") == ["create"] * 2
+
+    resp = await apply(
+        client, sheet, filename="starter-sheet.csv", mode="replace_all", confirm="REPLACE"
+    )
+    assert resp.status_code == 200, resp.text
+    assert [r["name"] for r in (await client.get("/retailers")).json()] == ["Hobby Link Japan"]
+    kits = (await client.get("/kits")).json()
+    [order] = (await client.get("/orders")).json()
+    assert len(kits) == 2
+    assert all(k["rating"] == 4 and k["series"] == "Char's Counterattack" for k in kits)
+    assert {k["order_item_id"] for k in kits} == {order["items"][0]["id"]}
+
+
 # --- safety -------------------------------------------------------------------
 
 
