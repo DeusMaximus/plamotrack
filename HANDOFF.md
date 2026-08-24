@@ -41,47 +41,48 @@ Template:
 
 ---
 
-## 2026-08-24 — Claude Code (Fable 5) — #119 closed: PR #139 merged as `b6c083d` after one Cursor round (GO + 1 P3); adv- fold-in open as PR #140
+## 2026-08-24 — Claude Code (Fable 5) — #119 and #77 closed (PRs #139, #141, one Cursor round each); fold-in #140 merged, #142 open on merge call
 
-- **Done:** **#119 — PR #139** squash-merged as `b6c083d` on the owner's call, CI
-  green at every head. Both derived advances (ship + receive) are now plan-time
-  `_Advance` descriptors (kit id, before-status, landing status, stamp): planned by
-  `_plan_advances`, hash-bound in `_plan_fingerprint`, consumed verbatim by
-  `_apply_planned_advances` — the `_Spawn` precedent extended to rows the plan
-  *moves*; the two apply-time re-deciding functions are deleted. The preview shows
-  the moves (`DerivedEffects.kits_advanced` + per-order messages), `ImportResult`
-  counts them, frontend mirrors, docs swept (design §12.3 + import-export). 11 new
-  tests in `test_ship_dates.py`, both siblings in each matrix; negative control
-  **9 red / 2 green** in a `main` worktree — the six stale-hash tests red on
-  exactly `200 == 409`, the greens the correction-guard controls. Cursor round 1:
-  **GO + P3-1** (import-export's *ship* paragraph lacked the bind claim its
-  receipt bullet got) — accepted, fixed at `7de77bb`, reply posted. Cursor also
-  ran an 18-cell composition matrix, an n=8 two-preview hash-stability probe, a
-  reparenting divergence probe (none found), and judged both add_only guard
-  layers live.
-- **Decisions:** **Cursor over Codex despite a full Codex tank** — Codex
-  prescribed this exact remedy in #118's round, so it reviewing its own
-  prescription is the weaker independence check; 415 insertions also routes
-  Cursor by size. **One terminal descriptor per kit** on a combined ship+receive
-  row, and **before-status is hash-bound** (an eligibility-preserving move still
-  stales) — both deliberate calls, both review-endorsed.
-- **Fold-in:** **PR #140 open** (`test/fold-adv-mutants`, head `645b66f`, CI
-  green) — the 7 `adv-` tuples into the tracked harness, scratch runner deleted,
-  **163/163 killed, 16m31s measured**, runtime + case-count lines refreshed.
-  Rides without a review round per #40 (contract untouched; Cursor re-ran every
-  tuple in the source round — stated in the PR body). **Awaiting the owner's
-  merge call.** #139 itself re-anchored ship-5/ship-12/stamp-2 in place (their
-  old anchors lived in the deleted functions).
-- **State:** `main` at `b6c083d` (+ this entry), backend **1042**, vitest 109,
-  e2e **24/24 from empty** verified this session, no migration. No dev servers
-  running — :8000/:5173 are both free; the stale pre-#133 pair the last entry
-  warned about is gone. No mutant queues outstanding once #140 merges.
-- **Next:** merge #140 (owner's call), then **#77** (aggregate fan-out cap) — the
-  last 0.2.6 item besides **#87, blocked on the owner's product call**. Live:
-  **no v0.2.6 tag ever**; one v0.2.7-alpha only when BOTH 0.2.6 (#77, #87) and
-  0.2.7 are done, and 0.2.7 is empty, so **do not run the release gate**.
-  **Back up the LXC before pulling `main`.** #137 stays unmilestoned (product
-  call). #122 rides M6.5.
+- **Done:** **#119 — PR #139** squash-merged as `b6c083d`. Both derived advances
+  (ship + receive) are plan-time `_Advance` descriptors (kit id, before-status,
+  landing, stamp): planned by `_plan_advances`, hash-bound in `_plan_fingerprint`,
+  consumed verbatim by `_apply_planned_advances` — the `_Spawn` precedent extended
+  to rows the plan *moves*; preview shows the moves (`kits_advanced` + per-order
+  messages). Cursor round 1: GO + P3-1 (import-export's ship paragraph lacked the
+  bind claim), fixed at `7de77bb`. **#77 — PR #141** squash-merged as `0302c36`:
+  `require_total_fanout` / `MAX_TOTAL_FANOUT = 10_000` in `services/orders.py`,
+  shared rule-1 style — `create_order`/`update_order` pass the request's *stated*
+  kit-unit total pre-lock (MCP inherits), the import planner passes *actual
+  spawns* as a blocking preview error, so archive restores of any size stay
+  importable. Cursor round 1: GO + 2 P3s, both fixed at `0f16ef8` — P3-1: the new
+  test block split the per-line update test at its 409, orphaning its
+  nothing-landed asserts onto a preview-only test (the "edit landed elsewhere"
+  lesson class; restored verbatim); P3-2: the starter-quantity docs claimed the
+  10,000 cap, but that path emits explicit rows under `MAX_ROWS` (reworded).
+- **Decisions:** **Cursor over Codex both rounds** — size (415/233 insertions),
+  and for #119 independence: Codex prescribed that remedy in #118's round, so it
+  reviewing its own prescription is the weaker check (Codex tank still ~99%).
+  **REST caps stated totals, importer caps spawns** — deliberate asymmetry,
+  review-endorsed; Cursor corrected the 7.1 rationale (gate already held in
+  update_order; pre-row-lock placement is courtesy, not the gate rule) and left
+  the diff-cap recipe on the PR if ever revisited. One terminal descriptor per
+  kit on a combined ship+receive flip; before-status is hash-bound.
+- **Fold-ins:** #139's `adv-` queue merged as **PR #140** (`4b5f1f0`, 163/163).
+  #141's `cap-` queue open as **PR #142** (`8a41455`, CI green, harness
+  **170/170, 17m08s** at that head, rides without review per #40) — **awaiting
+  the owner's merge call** (pinged). #139 re-anchored ship-5/ship-12/stamp-2;
+  #141 re-anchored adv-7. No other queues outstanding.
+- **State:** `main` at `0302c36` (+ hand-off commits), backend **1050**, vitest
+  109, e2e **24/24 from empty** (verified twice this session), CI green at every
+  merged head. Tracked harness on `main` is 163 until #142 merges. No dev servers
+  running (:8000/:5173 free). No migrations this session.
+- **Next:** merge **#142**, then **0.2.6 is down to #87 alone** — blocked on the
+  owner's product call (refuse vs leave; owner deferred to "discuss when we get
+  there", and "there" is now). Live: **no v0.2.6 tag ever**; one v0.2.7-alpha
+  only when BOTH 0.2.6 (#87) and 0.2.7 (empty) are done — the #87 call is the
+  only remaining gate, so **do not run the release gate** until it is decided
+  and landed. **Back up the LXC before pulling `main`.** #137 stays unmilestoned
+  (product call). #122 rides M6.5.
 
 ## 2026-08-24 — Claude Code (Fable 5) — #90 + #112 closed (PRs #133, #136, one Cursor round each); both mutant queues folded (#135, #138); #137 filed
 
