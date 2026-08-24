@@ -96,9 +96,9 @@ docker compose logs migrate
 **Back up before upgrading.** Migrations run forward automatically; rolling one
 back is a manual `alembic downgrade` and some are deliberately lossy about it.
 
-### If you imported CSVs before 0.2.6
+### If you imported CSVs before 0.2.7
 
-Importers before 0.2.6 could leave a kit order line holding a different number of
+Importers before 0.2.7 could leave a kit order line holding a different number of
 kits than its quantity said. Nothing in the app minds, but an archive exported from
 such a collection is refused when you try to restore it with *replace everything*
 ("this line says quantity N, but this upload supplies M kit(s)"). Check once, before
