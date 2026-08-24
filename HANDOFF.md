@@ -115,7 +115,8 @@ Template:
   Agent Skills format, with `skills/README.md` (Claude Desktop install only,
   others "coming soon" — owner's instruction), a README pointer, and design
   §7/§9.1 notes (the skill layer recorded as more staying-generic evidence).
-  Review skipped (docs-only, #40 criterion). **Awaiting the owner's merge call.**
+  Review skipped (docs-only, #40 criterion). **Squash-merged as `2b94a41` on the
+  owner's call, branch deleted, CI green.**
 - **Next:** **the mutant fold-in is now the queued mechanical piece** — 25 `cat-`
   tuples (in the PR #130 body and the untracked `backend/mutation_scratch_127.py`,
   which also holds the runner-ready form) plus #129's 10 `dsp-` tuples fold into
