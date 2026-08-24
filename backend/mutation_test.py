@@ -66,6 +66,7 @@ import pytest
 ROOT = pathlib.Path(__file__).resolve().parent
 INV = ROOT / "app/services/portability/invariants.py"
 IMP = ROOT / "app/services/portability/importing.py"
+STARTER = ROOT / "app/services/portability/starter_sheet.py"
 NAMES = ROOT / "app/services/names.py"
 ORD = ROOT / "app/services/orders.py"
 CAT = ROOT / "app/services/catalog.py"
@@ -1233,6 +1234,64 @@ CASES = [
         '    return getattr(row.target if row.target is not None else stored, "item_type", None)',
         '    return getattr(row.target, "item_type", None)',
         "readable_mirror or uploads_remap or does_not_write_a_catalog_ref",
+    ),
+    # --- #112 / PR #136: the starter sheet's kit fan-out (tuples from the PR body,
+    # queued as st-1..7 there; relabelled strt- at fold-in because "st-" is a
+    # substring of "post-write" and "first-seen" in older labels, so `-k st-`
+    # would select those too). Anchors re-checked at the merged head `ce59b2b`. ---
+    (
+        "strt-1. kit rows lose their purchase provenance (#136)",
+        STARTER,
+        "                    order_item_id=pending.line_id,\n",
+        "",
+        "retailer_row_carries_every_kit_field",
+    ),
+    (
+        "strt-2. the landing status skips the shared resolution (#136)",
+        STARTER,
+        "        final = initial_kit_status(requested, received)",
+        "        final = requested",
+        "retailer_row_carries_every_kit_field",
+    ),
+    (
+        "strt-3. the arrival stamp is never written (#136)",
+        STARTER,
+        '        stamp = orders[pending.key].get("received_at", "") if final is KitStatus.BACKLOG'
+        ' else ""',
+        '        stamp = ""',
+        "receipt_instant",
+    ),
+    (
+        "strt-4. repeated rows collapse onto one line id (#136)",
+        STARTER,
+        "        occurrence = line_occurrence.get(seq_key, 0)",
+        "        occurrence = 0",
+        "identical_rows_of_one_order",
+    ),
+    (
+        "strt-5. the order line loses its synthesized id (#136)",
+        STARTER,
+        "                id=line_id,\n",
+        "",
+        "retailer_row_carries_every_kit_field or reimporting_a_kit_carrying",
+    ),
+    (
+        "strt-6. series stops travelling (#136)",
+        STARTER,
+        '                        "series": row.get("series", ""),',
+        '                        "series": "",',
+        "retailer_row_carries_every_kit_field",
+    ),
+    (
+        "strt-7. the kit fan-out reads blank received as no (#136)",
+        STARTER,
+        "    for pending in pending_kits:\n"
+        "        settled = receipts.get(pending.key)\n"
+        "        received = settled.stated if settled is not None else True",
+        "    for pending in pending_kits:\n"
+        "        settled = receipts.get(pending.key)\n"
+        "        received = settled.stated if settled is not None else False",
+        "receipt_instant",
     ),
 ]
 
