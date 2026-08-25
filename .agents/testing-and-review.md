@@ -156,9 +156,9 @@ named tests, restores from a backup in a `finally`, and reports killed vs
 surviving.
 
 ```bash
-cd backend && uv run python mutation_test.py          # every case — ~20 min at 194 cases on
-                                                      # the primary dev Mac (19m48s measured
-                                                      # at the #151 fold-in, 25/08/2026;
+cd backend && uv run python mutation_test.py          # every case — ~20 min at 199 cases on
+                                                      # the primary dev Mac (19m06s measured
+                                                      # at the #154 fold-in, 26/08/2026;
                                                       # hardware-dependent — each case runs
                                                       # its selection twice: baseline + mutant)
 uv run python mutation_test.py -k rcpt-                # cases whose label contains "rcpt-"
@@ -189,7 +189,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 194 cases over sixteen files** — #86's
+- **On `main` at the time of writing: 199 cases over sixteen files** — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
   #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
   #118 (`ship-`), #129 (`dsp-`), #130 (`cat-`), #133 (`ref-`), #136
@@ -203,7 +203,8 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   #151 (`mig-` — the first cases that mutate **migrations** rather than app
   code; the clean-tree check covers `alembic/` since that fold-in, and the
   walk fixture suppresses a teardown restore failure only when the test body
-  already failed, so these kills read as the one failure they are).
+  already failed, so these kills read as the one failure they are) and #154
+  (`o67-` — silent kit lines).
   A branch that runs mutants ahead of the harness (a scratch copy, a hand run)
   queues its tuples in the PR body for folding in after merge — anchors get
   re-checked at fold-in, since the code may have moved under them. Labels are

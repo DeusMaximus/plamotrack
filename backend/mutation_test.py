@@ -77,6 +77,7 @@ EXP = ROOT / "app/services/portability/exporting.py"
 UPG = ROOT / "app/services/upgrades.py"
 INVR = ROOT / "app/routers/inventory.py"
 VERS = ROOT / "alembic/versions"
+SCH = ROOT / "app/schemas/orders.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -1612,6 +1613,43 @@ CASES = [
     )""",
         "    pass  # neutered",
         "converted_snapshot",
+    ),
+    # --- #67 / PR #154: silent kit lines (o67-). An id-bearing kit line may
+    # omit `kit`; what a client cannot state it cannot revert. ---
+    (
+        "o67-1. schema override loses the id branch",
+        SCH,
+        "            if self.kit is None and self.id is None:",
+        "            if self.kit is None:",
+        "kit_omitted or update_order_kit_omitted",
+    ),
+    (
+        "o67-2. service forgets details can be absent",
+        ORD,
+        "        if details is not None and line_kits:",
+        "        if line_kits:",
+        "kit_omitted_line_edit",
+    ),
+    (
+        "o67-3. clone gate off",
+        ORD,
+        "            if details is None:",
+        "            if False:",
+        "kit_omitted_quantity_growth",
+    ),
+    (
+        "o67-4. clone drops the scale",
+        ORD,
+        "                    scale=reference.scale,",
+        "                    scale=None,",
+        "kit_omitted_quantity_growth",
+    ),
+    (
+        "o67-5. clone always spawns pre_ordered",
+        ORD,
+        "                    else KitStatus.ORDERED,",
+        "                    else KitStatus.PRE_ORDERED,",
+        "kit_omitted_quantity_growth",
     ),
 ]
 
