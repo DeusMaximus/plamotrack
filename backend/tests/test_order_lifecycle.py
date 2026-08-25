@@ -615,6 +615,133 @@ async def test_item_type_change_rejected(client, retailer):
     assert resp.status_code == 422
 
 
+# --- #67: an edit that doesn't mention the kits cannot revert them ---------------
+
+
+async def test_kit_omitted_line_edit_cannot_revert_an_out_of_band_change(client, retailer):
+    """The residual of #65/#66: the server cannot tell a typed value from a stale
+    echo — both arrive as a field that differs from what is stored — so the
+    client that didn't touch the kit fields now says nothing, and what it
+    cannot state it cannot revert. A price edit sent with `kit` omitted leaves
+    an out-of-band change standing; the same edit *stating* stale details still
+    restates them, which is the control and the documented REST/MCP posture."""
+    order = await make_order(client, retailer, [kit_line(quantity=2)])
+    line = order["items"][0]
+    kit_id = line["spawned_kit_ids"][0]
+    # Out-of-band: another tab or an MCP agent edits the kit while a stale page
+    # sits open elsewhere.
+    resp = await client.patch(f"/kits/{kit_id}", json={"scale": "1/48", "kit_number": "OOB-1"})
+    assert resp.status_code == 200
+
+    silent = {
+        "id": line["id"],
+        "item_type": "kit",
+        "quantity": 2,
+        "unit_price_minor": 5999,  # the actual edit: a price correction
+        "currency_code": "AUD",
+    }
+    resp = await client.patch(f"/orders/{order['id']}", json={"items": [silent]})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["items"][0]["unit_price_minor"] == 5999  # the edit landed
+    kits = {k["id"]: k for k in (await client.get("/kits")).json()}
+    assert kits[kit_id]["scale"] == "1/48"  # the out-of-band change survived
+    assert kits[kit_id]["kit_number"] == "OOB-1"
+
+    echo = silent | {
+        "kit": {
+            "name": "RX-79[G] Gundam Ground Type",
+            "grade": "HG",
+            "scale": "1/144",
+            "kit_number": "HGUC 210",
+        }
+    }
+    resp = await client.patch(f"/orders/{order['id']}", json={"items": [echo]})
+    assert resp.status_code == 200
+    kits = {k["id"]: k for k in (await client.get("/kits")).json()}
+    assert kits[kit_id]["scale"] == "1/144"  # a stated value restates, by design
+
+
+async def test_kit_omitted_quantity_growth_clones_the_line_kit(client, retailer):
+    """Growing a line without restating details spawns copies of the kit the
+    line renders — the live first kit, not whatever a client echoed (#67)."""
+    order = await make_order(client, retailer, [kit_line(quantity=1)])
+    line = order["items"][0]
+    await client.patch(f"/kits/{line['spawned_kit_ids'][0]}", json={"scale": "1/48"})
+
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={
+            "items": [
+                {
+                    "id": line["id"],
+                    "item_type": "kit",
+                    "quantity": 3,
+                    "unit_price_minor": 4999,
+                    "currency_code": "AUD",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    kits = (await client.get("/kits")).json()
+    assert len(kits) == 3
+    assert {k["name"] for k in kits} == {"RX-79[G] Gundam Ground Type"}
+    assert all(k["scale"] == "1/48" for k in kits)  # clones copy the live kit
+    assert all(k["kit_number"] == "HGUC 210" for k in kits)
+    assert all(k["status"] == "ordered" for k in kits)
+
+
+async def test_kit_omitted_quantity_shrink_still_works(client, retailer):
+    order = await make_order(client, retailer, [kit_line(quantity=2)])
+    line = order["items"][0]
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={
+            "items": [
+                {
+                    "id": line["id"],
+                    "item_type": "kit",
+                    "quantity": 1,
+                    "unit_price_minor": 4999,
+                    "currency_code": "AUD",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    assert len((await client.get("/kits")).json()) == 1
+
+
+async def test_a_new_kit_line_still_requires_details(client, retailer):
+    """The omission is an *update* affordance only: a line without an id spawns
+    from its details, so it still demands them — 422, nothing written."""
+    order = await make_order(client, retailer, [kit_line(quantity=1)])
+    line = order["items"][0]
+    resp = await client.patch(
+        f"/orders/{order['id']}",
+        json={
+            "items": [
+                {
+                    "id": line["id"],
+                    "item_type": "kit",
+                    "quantity": 1,
+                    "unit_price_minor": 4999,
+                    "currency_code": "AUD",
+                },
+                {
+                    "item_type": "kit",
+                    "quantity": 1,
+                    "unit_price_minor": 2999,
+                    "currency_code": "AUD",
+                },
+            ]
+        },
+    )
+    assert resp.status_code == 422
+    assert "require 'kit' details" in resp.text
+    assert len((await client.get("/kits")).json()) == 1  # nothing spawned
+
+
 # --- applied upgrades protect a spawned kit -------------------------------------
 
 

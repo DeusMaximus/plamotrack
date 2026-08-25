@@ -187,6 +187,9 @@ export const api = {
   getMeta: () => request<Meta>("/meta"),
 
   listOrders: () => request<Order[]>("/orders"),
+  /** One order, fresh — what the editor hydrates from (#67): the list is a
+   *  cache exactly as stale as the page is old. */
+  getOrder: (id: string) => request<Order>(`/orders/${id}`),
   createOrder: (data: OrderCreate) => request<Order>("/orders", post(data)),
   updateOrder: (id: string, data: OrderUpdate) => request<Order>(`/orders/${id}`, patch(data)),
   receiveOrder: (id: string, data?: OrderReceive) =>

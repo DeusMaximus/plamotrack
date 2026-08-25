@@ -330,3 +330,55 @@ async def test_receipt_correction_flows_through_the_tool(client, retailer):
                 "update_order",
                 {"order_id": pending["id"], "changes": {"received_at": BACKDATE}},
             )
+
+
+async def test_update_order_kit_omitted_leaves_details_alone():
+    """The #67 posture on this surface: an agent restating a line it is not
+    changing kit details on omits `kit`, and what it does not state it cannot
+    revert — one schema and one service under both surfaces (rule 1)."""
+    async with Client(mcp) as mcp_client:
+        order = (
+            await mcp_client.call_tool(
+                "create_order",
+                {
+                    "retailer": "Kit Omission Works",
+                    "order_date": "2026-08-02",
+                    "items": [
+                        {
+                            "item_type": "kit",
+                            "quantity": 1,
+                            "unit_price_minor": 4500,
+                            "currency_code": "AUD",
+                            "kit": {"name": "HG Barbatos", "grade": "HG"},
+                        }
+                    ],
+                },
+            )
+        ).data
+        kit_id = order["items"][0]["spawned_kit_ids"][0]
+        # Out-of-band, as another writer: the kit gains a number.
+        await mcp_client.call_tool(
+            "update_kit", {"kit_id": kit_id, "changes": {"kit_number": "ASW-G-08"}}
+        )
+        updated = (
+            await mcp_client.call_tool(
+                "update_order",
+                {
+                    "order_id": order["id"],
+                    "changes": {
+                        "items": [
+                            {
+                                "id": order["items"][0]["id"],
+                                "item_type": "kit",
+                                "quantity": 1,
+                                "unit_price_minor": 4999,
+                                "currency_code": "AUD",
+                            }
+                        ]
+                    },
+                },
+            )
+        ).data
+        assert updated["items"][0]["unit_price_minor"] == 4999  # the edit landed
+        kit = (await mcp_client.call_tool("get_kit", {"kit_id": kit_id})).data
+        assert kit["kit_number"] == "ASW-G-08"  # untouched by the silent line

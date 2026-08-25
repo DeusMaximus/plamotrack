@@ -551,7 +551,12 @@ async def update_order(
     refused (naming them) unless you pass remove_missing_lines=true; restate
     every line you are not changing. Line edits re-run the dispatch: kit details
     propagate to spawned kits, quantity changes spawn or remove kits, and stock
-    follows on received orders. Kits that are building/complete, rated, or have
+    follows on received orders. When restating a kit line you are NOT changing
+    kit details on, omit `kit` entirely — stated details are compared against
+    the live first kit and a difference is applied, so echoing details from an
+    earlier read can revert someone else's newer edit (#67); omitted details
+    touch nothing, and a quantity increase then clones the line's current kit.
+    Kits that are building/complete, rated, or have
     photos, and stock already consumed, block destructive edits with a conflict.
     A line's item_type cannot change. Omit converted_price_minor /
     converted_currency_code to keep a line's stored entry-time conversion
