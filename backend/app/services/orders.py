@@ -1,3 +1,4 @@
+import logging
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -45,6 +46,8 @@ from app.services.names import (
     require_unique_name,
 )
 from app.services.write_gate import acquire_write_gate
+
+logger = logging.getLogger(__name__)
 
 #: The most units one order line may hold.
 #:
@@ -454,7 +457,12 @@ async def _lock_catalog_targets(
 
 
 async def _adjust_ref(
-    session: AsyncSession, item_type: ItemType, ref_id: uuid.UUID, delta: int
+    session: AsyncSession,
+    item_type: ItemType,
+    ref_id: uuid.UUID,
+    delta: int,
+    *,
+    missing_ok: bool = False,
 ) -> None:
     """Row-locked stock adjustment with a can't-go-negative guard.
 
@@ -468,17 +476,30 @@ async def _adjust_ref(
         # Reachable only from a stored reference, never a payload one — every caller
         # either passes `item.catalog_ref_id` or a target this transaction has just
         # validated under its lock. So this is not "you named something that doesn't
-        # exist", it is a line left dangling by the unlocked delete this release fixed,
-        # and 404 sends the owner looking for a request they never made. It is a
-        # conflict with what is stored, and there is currently no way out of it
-        # through the API — every path that touches the line reverses its stock first
-        # and lands back here. Filed as #63; the message says so rather than
-        # suggesting a repair that doesn't work.
+        # exist", it is a line left dangling by the unlocked delete #36 fixed.
+        # #63 (owner's call, 2026-08-25): reversing stock against a row that no
+        # longer exists is a genuine no-op only where the *entry itself* is being
+        # undone — the item is gone and its quantity_on_hand went with it, so
+        # `delete_order` passes missing_ok and the skip is logged. Every other
+        # path stays strict: an edit that adopts a new target, or a receive that
+        # applies stock, while shrugging at the old reference would stop telling
+        # the truth about a state we have not fully explained.
+        if missing_ok:
+            logger.warning(
+                "skipping stock reversal for a dangling %s reference %s (%+d): the "
+                "row is gone and its stock went with it — undoing the order entry "
+                "wholesale (#63)",
+                item_type,
+                ref_id,
+                delta,
+            )
+            return
         raise ConflictError(
             f"this order line points at a {item_type} ({ref_id}) that is no longer in "
             "the catalog, so its stock cannot be adjusted. A pre-0.2.4 catalog delete "
-            "could race an order and leave a line behind like this; the row needs "
-            "repairing in the database"
+            "could race an order and leave a line behind like this. Deleting the "
+            "order undoes the entry wholesale and skips this reversal (#63) — "
+            "delete it and re-enter what the order should say"
         )
     new_quantity = row.quantity_on_hand + delta
     if new_quantity < 0:
@@ -705,12 +726,22 @@ async def _add_line(
     return item
 
 
-async def _undo_line_dispatch(session: AsyncSession, item: OrderItem, received: bool) -> None:
-    """Undo one line's side effects: delete spawned kits / reverse applied stock."""
+async def _undo_line_dispatch(
+    session: AsyncSession, item: OrderItem, received: bool, *, missing_ok: bool = False
+) -> None:
+    """Undo one line's side effects: delete spawned kits / reverse applied stock.
+
+    `missing_ok` is `delete_order`'s flag alone (#63) — an order delete undoes the
+    entry wholesale, so a dangling reference has nothing real to give back. A line
+    *removal* inside an edit keeps the default: the rest of the order survives, so
+    the strict 409 keeps telling the owner what state it is in.
+    """
     if item.item_type is ItemType.KIT:
         await _delete_line_kits(session, item, count=None)
     elif received and item.catalog_ref_id is not None:
-        await _adjust_ref(session, item.item_type, item.catalog_ref_id, -item.quantity)
+        await _adjust_ref(
+            session, item.item_type, item.catalog_ref_id, -item.quantity, missing_ok=missing_ok
+        )
 
 
 async def _remove_line(session: AsyncSession, item: OrderItem, received: bool) -> None:
@@ -1161,8 +1192,10 @@ async def delete_order(session: AsyncSession, order_id: uuid.UUID) -> None:
     received = order.received_at is not None
     await _lock_catalog_targets(session, items=order.items)
     for item in list(order.items):
-        # dispatch undo only — deleting the order cascades the items themselves
-        await _undo_line_dispatch(session, item, received)
+        # dispatch undo only — deleting the order cascades the items themselves.
+        # missing_ok: a dangling reference blocks edits and receives (strict, the
+        # #62 message), but must not make the entry un-undoable (#63).
+        await _undo_line_dispatch(session, item, received, missing_ok=True)
     await session.delete(order)
     await session.flush()
     await session.commit()

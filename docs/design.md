@@ -423,7 +423,17 @@ Gundam markers on hand while they were still in a warehouse in Osaka. Quantity m
   MCP callers keep the comparison as their protection, which is why #36's optimistic
   version columns stay unbuilt for kits too: the two cheap layers close the browser's
   window, and the honest fix stays priced for the day a second writer needs it
-- **delete = undo the entry**: spawned kits removed, applied stock reversed
+- **delete = undo the entry**: spawned kits removed, applied stock reversed. One
+  tolerance (#63, decided 25/08/2026): a line left dangling by the pre-0.2.4
+  unlocked catalog delete — `catalog_ref_id` is polymorphic with no FK — has
+  nothing real to reverse, so the undo skips it and logs rather than refusing;
+  the item and its `quantity_on_hand` went together. *Only* the undo: a receive
+  would apply stock for a row that doesn't exist, and a retarget adopts a new
+  target while shrugging at the old one, so both keep the strict 409 (which now
+  names the delete-and-re-enter escape). Always-tolerant and document-the-SQL
+  were considered and declined: the first teaches every path to shrug at a state
+  we haven't fully explained, the second leaves a dead end in an API that has a
+  safe way to express the recovery
 - guards throughout: kits that are building/complete, rated, or carrying photos, and
   stock that's already been consumed, block destructive edits with a 409 rather than
   silently losing history

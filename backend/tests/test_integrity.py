@@ -630,35 +630,132 @@ async def test_editing_an_order_while_an_upgrade_is_applied_does_not_deadlock(cl
         assert outcome is None or isinstance(outcome, ConflictError | NotFoundError), outcome
 
 
-async def test_a_line_left_dangling_by_the_old_delete_says_so_instead_of_404ing(client, retailer):
-    """The residue the lock cannot help with (#63).
-
-    A database that ran the pre-0.2.4 unlocked delete can hold a line pointing at a
-    catalog row that is gone. Every path that touches such a line reverses its stock
-    first and so cannot proceed — but "consumable <uuid> not found" reads as though
-    the *caller* named something missing, and sends the owner hunting a request they
-    never made. Forged here with a raw delete, because the fixed code will no longer
-    produce it.
-    """
-    consumable = (
+async def test_the_undo_skips_a_dangling_reversal_and_reverses_the_rest(
+    client, retailer, monkeypatch
+):
+    """#63 (owner's call, 2026-08-25, option 2): a database that ran the
+    pre-0.2.4 unlocked delete can hold a line pointing at a catalog row that is
+    gone. Reversing stock against that row is a genuine no-op — the item and its
+    quantity_on_hand went together — but only where the *entry itself* is being
+    undone. `delete_order` skips the reversal, logs it, and still reverses every
+    line that has a row to reverse. Forged with a raw delete, because the fixed
+    code no longer produces the state."""
+    healthy = (
+        await client.post("/consumables", json={"name": "Honest cement", "category": "cement"})
+    ).json()
+    doomed = (
         await client.post("/consumables", json={"name": "Ghost cement", "category": "cement"})
     ).json()
-    consumable_id = uuid.UUID(consumable["id"])
-    order_id = await _catalog_order(retailer["id"], (consumable_id, 2))
+    doomed_id = uuid.UUID(doomed["id"])
+    order_id = await _catalog_order(retailer["id"], (uuid.UUID(healthy["id"]), 3), (doomed_id, 2))
 
     async with session_scope() as session:
-        await session.execute(text("DELETE FROM consumables WHERE id = :id"), {"id": consumable_id})
+        await session.execute(text("DELETE FROM consumables WHERE id = :id"), {"id": doomed_id})
         await session.commit()
 
+    # Not caplog: the session conftest runs alembic, whose fileConfig disables
+    # every already-imported app logger (verified — the logger's `disabled` flag
+    # flips), so records emitted by app modules never reach pytest's handler in
+    # this suite. Patching the module logger asserts the call itself, which is
+    # the named control; production logging is untouched (the API process never
+    # runs fileConfig).
+    logged: list[str] = []
+    monkeypatch.setattr(
+        orders_service.logger, "warning", lambda msg, *args: logged.append(msg % args)
+    )
+    resp = await client.delete(f"/orders/{order_id}")
+    assert resp.status_code == 204
+    assert (await client.get("/orders")).json() == []
+    # The healthy line's 3 were reversed exactly; the dangling line's 2 went
+    # nowhere, because there is nowhere for them to go.
+    (remaining,) = (await client.get("/consumables")).json()
+    assert remaining["name"] == "Honest cement"
+    assert remaining["quantity_on_hand"] == 0
+    # And the skip is on the record, naming the row it could not reverse.
+    assert any(str(doomed_id) in message and "dangling" in message for message in logged)
+
+
+async def test_receiving_a_dangling_line_still_refuses(client, retailer):
+    """The strict half of #63: a receive would *apply* stock for a row that no
+    longer exists, and shrugging there would miscount the collection — the 409
+    stays, names the id, and now points at the one way out."""
+    doomed = (
+        await client.post("/consumables", json={"name": "Ghost glue", "category": "cement"})
+    ).json()
+    doomed_id = uuid.UUID(doomed["id"])
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-08-01",
+                "currency_code": "AUD",
+                "items": [
+                    {
+                        "item_type": "consumable",
+                        "quantity": 2,
+                        "unit_price_minor": 650,
+                        "currency_code": "AUD",
+                        "catalog_ref_id": doomed["id"],
+                    }
+                ],
+            },
+        )
+    ).json()
+    async with session_scope() as session:
+        await session.execute(text("DELETE FROM consumables WHERE id = :id"), {"id": doomed_id})
+        await session.commit()
+
+    resp = await client.post(f"/orders/{order['id']}/receive")
+    assert resp.status_code == 409
+    assert "no longer in the catalog" in resp.json()["detail"]
+    assert str(doomed_id) in resp.json()["detail"]
+    assert "Deleting the order" in resp.json()["detail"]  # the escape, named
+    # The undo is that escape, even on the pending order.
+    assert (await client.delete(f"/orders/{order['id']}")).status_code == 204
+
+
+async def test_retargeting_a_dangling_line_still_refuses(client, retailer):
+    """The other strict half: a retarget reverses the old reference before it
+    adopts the new one, and an edit that shrugs at the old reference stops
+    telling the truth about a state we have not fully explained. Header-only
+    edits stay possible — an unrelated field is not held hostage."""
+    doomed = (
+        await client.post("/consumables", json={"name": "Ghost primer", "category": "paint"})
+    ).json()
+    replacement = (
+        await client.post("/consumables", json={"name": "Real primer", "category": "paint"})
+    ).json()
+    doomed_id = uuid.UUID(doomed["id"])
+    order_id = await _catalog_order(retailer["id"], (doomed_id, 2))
+    async with session_scope() as session:
+        await session.execute(text("DELETE FROM consumables WHERE id = :id"), {"id": doomed_id})
+        await session.commit()
+
+    async with session_scope() as session:
+        order = await orders_service.get_order(session, order_id)
+        line_id = order.items[0].id
     with pytest.raises(ConflictError) as refusal:
         async with session_scope() as session:
-            await orders_service.delete_order(session, order_id)
+            await orders_service.update_order(
+                session,
+                order_id,
+                OrderUpdate(
+                    items=[
+                        OrderItemUpsert(
+                            id=line_id,
+                            item_type=ItemType.CONSUMABLE,
+                            quantity=2,
+                            unit_price_minor=650,
+                            currency_code="AUD",
+                            catalog_ref_id=uuid.UUID(replacement["id"]),
+                        )
+                    ]
+                ),
+            )
     assert "no longer in the catalog" in str(refusal.value)
-    assert str(consumable_id) in str(refusal.value)
+    assert str(doomed_id) in str(refusal.value)
 
-    # Header-only edits stay possible: an unrelated field must not be held hostage
-    # by a corrupt line, which is why the up-front locking skips missing rows rather
-    # than refusing outright.
     async with session_scope() as session:
         edited = await orders_service.update_order(
             session, order_id, OrderUpdate(tracking_number="EE123456789AU")
