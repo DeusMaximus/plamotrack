@@ -24,7 +24,7 @@ last edited, so a large jump either way is worth a look.
 
 | What | Command | Notes |
 | --- | --- | --- |
-| Backend (~1078) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
+| Backend (~1080) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
 | Lint + format | `uv run ruff check --fix . && uv run ruff format .` | Before every commit. CI checks both. |
 | Frontend unit (~109) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. |
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. |

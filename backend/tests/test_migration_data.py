@@ -89,26 +89,42 @@ class _Walk:
         command.upgrade(self._cfg, revision)
 
 
+def _restore_head(cfg: Config, *, body_failed: bool) -> None:
+    """The way home from wherever a test stopped, without eating the evidence.
+
+    A restore failure is recovered by rebuilding from base over the empty
+    schema — but recovery and verdict are separate questions (PR #151 review,
+    P2-1). When the test body already failed, the primary signal exists and
+    the recovery stays silent, so a deliberate mutant kill reads as the one
+    failure it is. When the body PASSED, a failure first observed here is the
+    only signal — a later migration choking on rows an earlier era seeded is
+    exactly what this harness exists to catch — so it is re-raised after the
+    database is safe. Teardown never *downgrades* first: a downgrade can
+    legitimately refuse (2c97a5ced66a), and the way home must not."""
+    try:
+        command.upgrade(cfg, "head")
+    except Exception:
+        command.downgrade(cfg, "base")
+        command.upgrade(cfg, "head")
+        if not body_failed:
+            raise
+
+
 @pytest.fixture
-def walk():
-    """Alembic movements with a guaranteed way home: teardown upgrades to head no
-    matter where the test stopped, so a failure mid-walk cannot strand the rest
-    of the session on an old schema. Teardown never *downgrades* — a downgrade
-    can legitimately refuse (2c97a5ced66a), and the way home must not."""
+def walk(request):
+    """Alembic movements with a guaranteed way home: teardown restores head no
+    matter where the test stopped, so a failure mid-walk cannot strand the
+    rest of the session on an old schema. See `_restore_head` for what happens
+    when the restore itself fails. The body-failed signal is the session
+    failure counter's delta across this fixture's lifetime — the call-phase
+    report is processed before teardown runs, and nothing else executes in
+    between."""
     cfg = Config("alembic.ini")
+    failed_before = request.session.testsfailed
     try:
         yield _Walk(cfg)
     finally:
-        try:
-            command.upgrade(cfg, "head")
-        except Exception:
-            # A mutated migration (the mutation pass deliberately breaks one
-            # data statement at a time) can make the forward path fail against
-            # the rows a test seeded. Rebuilding from base over an empty schema
-            # is the reliable way home — and it must not mask the test's own
-            # verdict with a teardown error.
-            command.downgrade(cfg, "base")
-            command.upgrade(cfg, "head")
+        _restore_head(cfg, body_failed=request.session.testsfailed > failed_before)
 
 
 @pytest.fixture
@@ -168,10 +184,14 @@ def test_received_at_backfills_every_order_and_advances_no_kit(walk):
     )
 
     walk.up(RECEIVED_AT)
-    # ::date in the same server the migration ran on, so the date -> timestamptz
-    # cast reads back under the timezone it was written under.
+    # Exact-instant equality with the same cast the migration's UPDATE used —
+    # both connections read the database's default timezone, so this holds in
+    # any zone. (`received_at::date = order_date` does NOT: a civil date the
+    # zone skipped casts to the next existing instant and reads back as the
+    # next day. That case has its own test below; PR #151 review, P3-2.)
     assert db(
-        "SELECT count(*) FROM orders WHERE received_at IS NULL OR received_at::date != order_date"
+        "SELECT count(*) FROM orders "
+        "WHERE received_at IS NULL OR received_at != order_date::timestamptz"
     ) == [(0,)]
     assert db("SELECT count(*) FROM orders") == [(2,)]
     assert db("SELECT status FROM kits WHERE id = :k", k=kit_id) == [("ordered",)]
@@ -179,6 +199,78 @@ def test_received_at_backfills_every_order_and_advances_no_kit(walk):
     walk.down(INITIAL)
     assert not column_exists("orders", "received_at")
     assert db("SELECT count(*) FROM orders") == [(2,)]  # only the column went
+
+
+@pytest.fixture
+def database_timezone_pacific_apia():
+    """ALTER DATABASE, so every NEW connection — the walk's alembic runs and
+    the assertions alike, all NullPool — reads Pacific/Apia as its default
+    timezone; reset on the way out. Apia crossed the date line westward at the
+    end of 2011-12-29 and never had a 2011-12-30, which is the standing
+    counter-example to any date -> timestamptz -> date identity claim."""
+    dbname = db("SELECT current_database()")[0][0]
+    db(f"ALTER DATABASE \"{dbname}\" SET timezone = 'Pacific/Apia'")
+    yield
+    db(f'ALTER DATABASE "{dbname}" RESET timezone')
+
+
+def test_received_at_on_a_skipped_civil_date_stamps_the_next_existing_instant(
+    database_timezone_pacific_apia, walk
+):
+    """The policy the backfill implies, stated rather than assumed (PR #151
+    review, P3-2): `SET received_at = order_date` casts through the session
+    timezone, and a civil date the zone skipped has no midnight to stamp —
+    Postgres lands on the earliest instant that exists, which reads back as
+    the NEXT day. Pinned as-is, not "fixed": the migration ran on real
+    instances in 2026, and what this test records is what it does — and that
+    the exact-instant assertion above is the only identity this file may
+    claim."""
+    walk.down(INITIAL)
+    _, skipped = seed_retailer_and_order("2011-12-30")  # Apia never had this day
+    _, ordinary = seed_retailer_and_order("2026-08-01")
+
+    walk.up(RECEIVED_AT)
+    assert db(
+        "SELECT received_at = timestamptz '2011-12-31 00:00:00+14', received_at::date "
+        "FROM orders WHERE id = :o",
+        o=skipped,
+    ) == [(True, date(2011, 12, 31))]
+    # The in-zone control: an ordinary date keeps the naive identity even here.
+    assert db(
+        "SELECT received_at = order_date::timestamptz, received_at::date FROM orders WHERE id = :o",
+        o=ordinary,
+    ) == [(True, date(2026, 8, 1))]
+
+
+def test_restore_head_reraises_when_the_test_body_gave_no_signal(monkeypatch):
+    """The P2-1 regression control (PR #151 review): a forward-path failure
+    first observed during the restore must survive the recovery when the test
+    body passed — the reviewed head recovered silently, so a later migration
+    choking on seeded rows read green. The first upgrade call is faked to fail
+    (the review's data-conditional probe means editing a shipped migration
+    file, which a committed test cannot do); the rebuild underneath is real
+    both times, asserted by the database finishing at head."""
+    calls = {"n": 0}
+    real_upgrade = command.upgrade
+
+    def failing_once(cfg, revision):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("data-conditional failure in a later migration")
+        real_upgrade(cfg, revision)
+
+    cfg = Config("alembic.ini")
+    monkeypatch.setattr(command, "upgrade", failing_once)
+
+    with pytest.raises(RuntimeError, match="data-conditional failure"):
+        _restore_head(cfg, body_failed=False)
+    assert current_revision() == DISPLAY_ITEMS  # recovered before re-raising
+    assert calls["n"] == 2  # the rebuild really ran
+
+    calls["n"] = 0
+    _restore_head(cfg, body_failed=True)  # primary signal exists: swallow
+    assert current_revision() == DISPLAY_ITEMS
+    assert calls["n"] == 2
 
 
 # --- 9d78b6148c30: merge in_hand into backlog -----------------------------------
