@@ -399,6 +399,14 @@ say what they really were.
   invent — kits your file lists explicitly in `kits.csv` are ordinary rows under
   the row limit, so a full archive of any size restores fine. The preview refuses
   up front and names the total.
+- **Cells export exactly as stored — including text beginning `=`, `+`, `-` or
+  `@`, which a spreadsheet may read as a formula rather than text.** Escaping
+  them would stop the files round-tripping: a kit genuinely named `=RX-78` has
+  to come back through an import as `=RX-78`, so the archive keeps your bytes
+  and carries this caveat instead (the bundled `README.txt` says the same).
+  Your own export holds only your own data. An archive someone else sent you
+  deserves the same caution as any other file from them — leave your
+  spreadsheet's own warnings about external links and macros switched on.
 - **Files must be UTF-8.** A file that isn't is refused by name and line number
   rather than imported with the odd character replaced — if your spreadsheet offers
   a plain "CSV" and a "CSV UTF-8", pick the second. A byte-order mark is fine.
