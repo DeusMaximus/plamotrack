@@ -326,6 +326,49 @@ test("a price edit does not revert a kit changed while the dialog was open (#67)
   expect(line.unit_price_minor).not.toBe(4999); // and the edit itself landed
 });
 
+test("an order deleted under a stale row says so instead of loading forever (PR #154 review, P3-1)", async ({
+  page,
+}) => {
+  // The fresh read's failure mode: the row is cached, the order is gone, and
+  // the 404 must surface as words — not as a Loading state that never ends.
+  const api = await request.newContext({ baseURL: API });
+  const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
+  const created = (await (
+    await api.post("/orders", {
+      data: {
+        retailer_id: retailers.find((r) => r.name === SHOP)!.id,
+        order_date: "2026-08-01",
+        order_number: `GONE-${suffix}`,
+        currency_code: reference,
+        items: [
+          {
+            item_type: "kit",
+            quantity: 1,
+            unit_price_minor: 1000,
+            currency_code: reference,
+            kit: { name: `${KIT} doomed`, grade: "HG" },
+          },
+        ],
+      },
+    })
+  ).json()) as { id: string };
+
+  await page.goto("/orders");
+  const row = page.getByRole("row").filter({ hasText: `GONE-${suffix}` });
+  await expect(row).toBeVisible();
+
+  // Out from under the page: deleted in another window or by an agent.
+  await api.delete(`/orders/${created.id}`);
+  await api.dispose();
+
+  await row.getByRole("button", { name: "Edit" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog.getByText(/no longer exists/)).toBeVisible();
+  await dialog.getByRole("button", { name: "Close" }).click();
+  // The 404 also refreshed the list, so the stale row went with it.
+  await expect(row).toHaveCount(0);
+});
+
 test.afterAll("clean up everything this run created", async () => {
   const api = await request.newContext({ baseURL: API });
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
