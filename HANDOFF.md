@@ -41,6 +41,50 @@ Template:
 
 ---
 
+## 2026-08-26 — Claude Code (Fable 5) — #104 + #67 closed (PRs #153/#154/#155); 0.2.8 is down to #63
+
+- **Done:** **#104 — PR #153** (`e295e7e`, review skipped per the #121 precedent,
+  owner concurred): the catalog picker closes only when focus genuinely leaves
+  it (container `onBlur` + `relatedTarget`; the 150ms timer and its race are
+  gone) and both result buttons select on `onClick`, which keyboard activation
+  shares. The focus-containment test's pre-fix block rewritten (it pinned the
+  timer close); a new e2e drives Tab → Enter through to the stored order's
+  `catalog_ref_id`. Negative control: red on main on exactly that assertion.
+  **#67 — PR #154** (`4d547ef`, Codex round 1 GO + 1 P3, fixed `7ffa587`):
+  an id-bearing kit line may omit `kit` — `OrderItemUpsert` overrides the
+  create-shape check, `_update_line` restates/propagates nothing it wasn't
+  given, a silent quantity increase clones the live first kit (status
+  normalised ordered/pre_ordered). Browser: editor hydrates from a fresh
+  `GET /orders/{id}` (**`isFetchedAfterMount` is the load-bearing gate** —
+  `data` alone serves the stale cache while refetching) and sends kit details
+  only when their fields are dirty. Stated details still restate (REST/MCP
+  posture, in the MCP docstring + design §3.9/§7 with the #36 pricing note).
+  The P3 (Codex measured my own where-I'd-push bullet): a 404'd fresh read sat
+  on Loading… forever — now renders words, skips the retry backoff, and
+  invalidates the list so the stale row goes too; red-first e2e. Negative
+  control 4 red / 1 green (the green: new lines still require details —
+  unchanged rule). **Fold-in PR #155** (`fd606a3`): 5 `o67-` tuples, first
+  schema-file path constant; harness **199/199 @ 19m06s**. No queues out.
+- **Decisions:** quantity growth on a silent line clones rather than refuses —
+  refusing would force details onto every quantity change, re-opening the
+  stale-echo window for #67's own example. Codex endorsed all five deliberate
+  calls, incl. the no-stall e2e pin (it replayed the spec with the omission
+  branch disabled and watched it fail on the persisted value).
+- **Notable:** Cursor was rate-limited all day — Codex took every round this
+  session (#151 ×2, #154 ×1); check its meter before the next buy.
+  `_line_kits` and `OrderRead`'s nested kits both order `(created_at, id)` —
+  Codex probed it; that agreement is what makes "the first kit" one kit.
+- **State:** `main` at `fd606a3` (+ this entry), CI green at every head.
+  Backend **1085**, vitest 109, e2e **29** (+1 skipped screenshots) — both new
+  suites verified from-empty, tables zero after. Harness 199/199 @ 19m06s.
+  No dev servers running; stale worktrees `/private/tmp/plamotrack-pr100` and
+  `-pr108-main` persist (pre-date these sessions).
+- **Next:** 0.2.8's last open item — the **#63 implementation** (owner decided
+  option 2 on 2026-08-25, recorded on the issue: `delete_order` treats a
+  dangling old `catalog_ref_id` as nothing-to-reverse, logged; everything else
+  stays strict; design.md reasoning lands with it). Then the 0.2.8 gate.
+  #137/#144 await product calls; #122 rides M6.5. LXC: back up before pulling.
+
 ## 2026-08-25 — Claude Code (Fable 5) — 0.2.8 underway: #53 + #61 + #54 closed (PRs #148–#152), #63 decided
 
 - **Done:** **#53 — PR #148** (`64ac350`, docs-only, review skipped per #40,
@@ -304,49 +348,3 @@ Template:
   v0.2.7-alpha only when BOTH 0.2.6 (#77, #87, #90, #112, #119) and 0.2.7 are
   done; 0.2.7 is empty, so **do not run the release gate**. **#112 before any
   real-collection starter-sheet import.** #122 rides M6.5.
-
-## 2026-08-21 — Claude Code (Opus 5) — #126 closed: PR #129 merged as `20996e1` after two Codex rounds; #127 filed (narrowed against #98); both #127 and #98 sit on 0.2.8
-
-- **Done:** **#126 closed — PR #129 squash-merged as `20996e1`**, branch deleted,
-  CI green at every head. `display_items` is the fourth catalog type: name,
-  category (required), scale?, manufacturer?, quantity_on_hand, notes, plus
-  `ItemType.DISPLAY` — REST CRUD, `update_catalog_display`, order dispatch, CSV
-  spec entry, a fourth Inventory tab, Data-page export, docs (§3.5a new; §3.9,
-  §4, §7, §9.1, README, import-export, AGENTS rule 2 swept). **Also filed #127**
-  and narrowed it after finding it duplicated **#98**'s "MCP cannot list the
-  catalog" half; #127 is now only the queryable-`category` part (server-side
-  folded filter, frequency-ordered distinct values, canonicalised spelling on
-  write) and #98 is its prerequisite. Both on **v0.2.8-alpha**.
-- **Decisions:** **No join table to kits, no build status** —
-  `upgrade_applications.quantity_used` decrements because an applied upgrade is
-  *spent*, whereas a stand moves between kits freely. That also ruled out
-  extending `upgrades` (considered, rejected): it would leave one table where
-  some rows consume when linked and others don't. Reasoning is in §3.5a and the
-  model docstring so it is not re-litigated. **`category` required** because it
-  is what makes "how many stands do I have" a filter rather than a guess; the
-  surface that makes it *queryable* was deliberately left to #98 + #127 rather
-  than built for one table. **§9.1 stays open**, with display items recorded
-  there as evidence for staying generic.
-- **State:** 965 backend (base 897), 23 e2e, 109 vitest; one additive migration,
-  hand-written (autogenerate wanted to drop five text-enum CHECKs and recreate
-  none). Its downgrade **refuses** on one invariant — no display data in any
-  form — with a state-aware message; **it has no pytest**, deliberately, because
-  migrations here are only exercised against an empty schema (**#54**) and that
-  harness is #54's job. Verified by shell across four states. **Two Codex rounds:**
-  round 1 NO-GO (3×P2 + 2×P3), round 2 GO (2×P3); all seven accepted and fixed,
-  none declined. **Eleven mutants, all killed — 10 backend tuples queued in the
-  PR body for `mutation_test.py` fold-in**, joining #109's 17, #111's 6 and
-  #113's 8; anchors want re-checking, the code moved under them. dsp-11 is
-  Codex's own and is worth folding in because it *survived* a green suite.
-  New lesson in `.agents/lessons.md` → "Green for the wrong reason" → **"An edit
-  that never applied, asserted as landed"**: a scripted `.replace()` silently
-  matched nothing, the suite stayed green (which is what a missing stricter test
-  also looks like), and the PR body claimed the file had been changed. Assert the
-  anchor matched; confirm a new case is collected before claiming it.
-- **Next:** **#98 + #127 together** are the natural next piece — same area, shared
-  code through `CATALOG_MODELS`, and #127's filters hang off #98's list tools;
-  doing #127 alone would leave three tables behind. Live and still true:
-  **release cadence — no v0.2.6 tag ever**; one v0.2.7-alpha cut only when BOTH
-  the 0.2.6 milestone (#77, #87, #90, #112, #119 open) and 0.2.7 are done, so
-  **do not run the release gate when 0.2.7 alone empties**. #122 rides M6.5 (UI
-  redesign, direction open, before M7/M8).
