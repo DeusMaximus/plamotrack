@@ -658,11 +658,19 @@ async def test_the_undo_skips_a_dangling_reversal_and_reverses_the_rest(
     # flips), so records emitted by app modules never reach pytest's handler in
     # this suite. Patching the module logger asserts the call itself, which is
     # the named control; production logging is untouched (the API process never
-    # runs fileConfig).
-    logged: list[str] = []
-    monkeypatch.setattr(
-        orders_service.logger, "warning", lambda msg, *args: logged.append(msg % args)
-    )
+    # runs fileConfig). The whole *object* is patched with raising=False so the
+    # negative-control tree — `main` has no module logger at all — fails on the
+    # behavioural assert below, not on an AttributeError up here (PR #156
+    # review, P3-1).
+    class _Recorder:
+        def __init__(self):
+            self.messages: list[str] = []
+
+        def warning(self, msg, *args):
+            self.messages.append(msg % args)
+
+    recorder = _Recorder()
+    monkeypatch.setattr(orders_service, "logger", recorder, raising=False)
     resp = await client.delete(f"/orders/{order_id}")
     assert resp.status_code == 204
     assert (await client.get("/orders")).json() == []
@@ -672,7 +680,7 @@ async def test_the_undo_skips_a_dangling_reversal_and_reverses_the_rest(
     assert remaining["name"] == "Honest cement"
     assert remaining["quantity_on_hand"] == 0
     # And the skip is on the record, naming the row it could not reverse.
-    assert any(str(doomed_id) in message and "dangling" in message for message in logged)
+    assert any(str(doomed_id) in message and "dangling" in message for message in recorder.messages)
 
 
 async def test_receiving_a_dangling_line_still_refuses(client, retailer):
@@ -761,6 +769,51 @@ async def test_retargeting_a_dangling_line_still_refuses(client, retailer):
             session, order_id, OrderUpdate(tracking_number="EE123456789AU")
         )
     assert edited.tracking_number == "EE123456789AU"
+
+
+async def test_removing_a_dangling_line_from_an_edit_still_refuses(client, retailer):
+    """The strict boundary the review found unpinned (PR #156, P3-2): a line
+    *removal* inside an edit is `_remove_line`, not `delete_order` — the rest of
+    the order survives, so the reversal stays strict. An edit that omits the
+    dangling line must 409 and leave both lines and the healthy stock alone."""
+    healthy = (
+        await client.post("/consumables", json={"name": "Honest primer", "category": "paint"})
+    ).json()
+    doomed = (
+        await client.post("/consumables", json={"name": "Ghost topcoat", "category": "paint"})
+    ).json()
+    doomed_id = uuid.UUID(doomed["id"])
+    order_id = await _catalog_order(retailer["id"], (uuid.UUID(healthy["id"]), 3), (doomed_id, 2))
+    async with session_scope() as session:
+        await session.execute(text("DELETE FROM consumables WHERE id = :id"), {"id": doomed_id})
+        await session.commit()
+
+    order = (await client.get(f"/orders/{order_id}")).json()
+    healthy_line = next(item for item in order["items"] if item["catalog_ref_id"] == healthy["id"])
+    resp = await client.patch(
+        f"/orders/{order_id}",
+        json={
+            "items": [
+                {
+                    "id": healthy_line["id"],
+                    "item_type": "consumable",
+                    "quantity": 3,
+                    "unit_price_minor": 650,
+                    "currency_code": "AUD",
+                    "catalog_ref_id": healthy["id"],
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 409
+    assert "no longer in the catalog" in resp.json()["detail"]
+    assert str(doomed_id) in resp.json()["detail"]
+    # One transaction: nothing about the refused edit landed.
+    assert len((await client.get(f"/orders/{order_id}")).json()["items"]) == 2
+    (remaining,) = [
+        row for row in (await client.get("/consumables")).json() if row["name"] == "Honest primer"
+    ]
+    assert remaining["quantity_on_hand"] == 3
 
 
 async def test_two_lines_on_one_order_share_a_target_without_losing_an_increment(client, retailer):
