@@ -412,7 +412,17 @@ Gundam markers on hand while they were still in a warehouse in Osaka. Quantity m
   entered as separate orders — deliberately no per-line receiving lifecycle
 - **edit** re-runs the dispatch diff: kit detail fixes propagate to the spawned kits
   (names live on the kits, the line just re-syncs them), and quantity or target changes
-  spawn/remove kits and adjust applied stock
+  spawn/remove kits and adjust applied stock. An id-bearing kit line may omit `kit`
+  entirely (#67, 25/08/2026): the server-side comparison cannot tell a typed value
+  from one echoed off a stale read — both arrive as a field that differs from what is
+  stored — so a client that didn't touch the kit fields says nothing, and what it
+  cannot state it cannot revert. The browser does exactly that (kit details ride only
+  when their fields are dirty, and the editor hydrates from a fresh per-order read
+  rather than the page's cached list); a quantity increase sent without details
+  clones the line's current first kit. A *stated* value still restates — REST and
+  MCP callers keep the comparison as their protection, which is why #36's optimistic
+  version columns stay unbuilt for kits too: the two cheap layers close the browser's
+  window, and the honest fix stays priced for the day a second writer needs it
 - **delete = undo the entry**: spawned kits removed, applied stock reversed
 - guards throughout: kits that are building/complete, rated, or carrying photos, and
   stock that's already been consumed, block destructive edits with a 409 rather than
@@ -820,7 +830,10 @@ is `/mcp/` on the API port (streamable HTTP).
   reconstructing an order from a listing is the writer most likely to send a partial
   set, and an omitted line silently deletes purchase records. The gate lives in the
   service under the order's `FOR UPDATE` lock, not in the wrapper, so it cannot race
-  a concurrent line addition (#97)
+  a concurrent line addition (#97). A restated kit line may omit `kit` (#67): stated
+  details are compared against the live first kit and differences applied, so an
+  agent echoing details from an earlier `get_order` can revert a newer edit —
+  omit them unless changing them, and the tool's docstring says so
 - `mark_order_received(order_id, received_at?)` — applies stock, advances pipeline kits
   to backlog, stamped with the (optionally backdated) arrival (§3.9)
 - `mark_order_shipped(order_id, shipped_at?)` — advances pre_ordered/ordered kits to

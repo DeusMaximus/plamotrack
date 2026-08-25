@@ -763,7 +763,11 @@ async def _update_line(
         # The same reading covers `kit_number`, the other nullable one: null is "not
         # mentioned", so clearing either belongs on the Kits page, which can say null
         # and mean it. `name` and `grade` are required, so the guard never sees them.
-        if line_kits:
+        # `details is None` is an update that never mentioned the kits — legal
+        # only with an id (the Upsert schema) — so nothing is restated and
+        # nothing propagates (#67). The comparison above cannot tell a typed
+        # value from a stale echo; a client that says nothing reverts nothing.
+        if details is not None and line_kits:
             reference = line_kits[0]
             restated = {
                 field: value
@@ -782,6 +786,30 @@ async def _update_line(
         # defense in depth should the two ever drift.
         delta = line.quantity - len(line_kits)
         if delta > 0:
+            if details is None:
+                # A quantity-only edit grows the line: clone the kit the line
+                # renders (the first — the same reference the restatement block
+                # reads). Status is normalised the way every client already
+                # normalises it on echo: pre-orders stay pre-orders, anything
+                # else spawns as ordered and lets the received/shipped state
+                # advance it. A cleared scale on the reference re-derives the
+                # grade default on the clone — spawning is the one place a
+                # missing scale legitimately means "work one out".
+                if not line_kits:
+                    raise InvalidInputError(
+                        "this line has no kits to copy details from — restate the "
+                        "kit details to add more"
+                    )
+                reference = line_kits[0]
+                details = OrderKitDetails(
+                    name=reference.name,
+                    grade=reference.grade,
+                    scale=reference.scale,
+                    kit_number=reference.kit_number,
+                    status=KitStatus.PRE_ORDERED
+                    if reference.status is KitStatus.PRE_ORDERED
+                    else KitStatus.ORDERED,
+                )
             await _spawn_from_details(
                 session, item, details, delta, received, received_at, shipped_at
             )

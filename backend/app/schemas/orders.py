@@ -178,13 +178,39 @@ class OrderItemUpsert(OrderItemCreate):
     """A line in an order edit: with id = update that line, without = new line.
     Existing lines omitted from the edit payload are removed (dispatch undone).
 
-    A supplied line replaces the stored one field for field, with one deliberate
-    exception: the `converted_*` snapshot pair. Omit those and the stored snapshot
-    survives the edit; send an explicit null to clear it (issue #3). They are a
-    recorded fact rather than a restatable value — an editor that never had the
-    entry-time rate shouldn't destroy one by changing a quantity."""
+    A supplied line replaces the stored one field for field, with two deliberate
+    exceptions. The `converted_*` snapshot pair: omit those and the stored
+    snapshot survives the edit; send an explicit null to clear it (issue #3).
+    They are a recorded fact rather than a restatable value — an editor that
+    never had the entry-time rate shouldn't destroy one by changing a quantity.
+    And `kit` (#67): an id-bearing kit line may omit it entirely, meaning "this
+    edit does not mention the kits". The server-side restatement comparison
+    cannot tell a typed value from one the client echoed from a stale read —
+    both arrive as a field that differs from what is stored — so the client
+    that didn't touch the kit fields says nothing, and what it cannot state it
+    cannot revert."""
 
     id: uuid.UUID | None = None
+
+    @model_validator(mode="after")
+    def _validate_dispatch_payload(self) -> "OrderItemUpsert":
+        # Replaces the create-shape check by name (pydantic collects validators
+        # per name, so the subclass definition wins): a *new* line still spawns
+        # from its details and requires them; an update may stay silent (#67).
+        if self.item_type is ItemType.KIT:
+            if self.kit is None and self.id is None:
+                raise ValueError("kit lines require 'kit' details (name, grade, ...)")
+            if self.catalog_ref_id is not None or self.new_item is not None:
+                raise ValueError("kit lines must not set catalog_ref_id or new_item")
+        else:
+            if self.kit is not None:
+                raise ValueError(f"{self.item_type} lines must not set 'kit' details")
+            if (self.catalog_ref_id is None) == (self.new_item is None):
+                raise ValueError(
+                    f"{self.item_type} lines require exactly one of catalog_ref_id "
+                    "(existing item) or new_item (create new)"
+                )
+        return self
 
 
 class OrderUpdate(BaseModel):

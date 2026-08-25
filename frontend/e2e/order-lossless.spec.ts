@@ -281,6 +281,51 @@ test("a warm page does not revert a kit changed while it was open", async ({ pag
   expect(firstAfter.kit_number).toBe("CACHE-NEW");
 });
 
+test("the editor hydrates from a fresh read, not the page's cache (#67)", async ({ page }) => {
+  await page.goto("/orders");
+  await expect(page.getByRole("row").filter({ hasText: MULTI })).toBeVisible();
+
+  // Lands after the page cached its list. The pre-#67 editor hydrated from that
+  // cache and would render the old number here.
+  const [first] = await kitsOf(MULTI);
+  await patchKit(first.id, { kit_number: "FRESH-67" });
+
+  const row = page.getByRole("row").filter({ hasText: MULTI });
+  await row.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByPlaceholder("Kit #")).toHaveValue("FRESH-67");
+  await page.getByRole("button", { name: "Close" }).click();
+});
+
+test("a price edit does not revert a kit changed while the dialog was open (#67)", async ({
+  page,
+}) => {
+  // The window the fresh read cannot close: the change lands *after* the form
+  // hydrated. The form provably holds the older values — only the dirty-only
+  // kit payload keeps it from echoing them. No stall needed: the ordering is
+  // enforced by awaiting hydration (the field renders) before the change.
+  await page.goto("/orders");
+  const row = page.getByRole("row").filter({ hasText: MULTI });
+  await expect(row).toBeVisible();
+  await row.getByRole("button", { name: "Edit" }).click();
+  await expect(page.getByPlaceholder("Kit #")).toHaveValue("FRESH-67"); // hydrated, pre-change
+
+  const [first] = await kitsOf(MULTI);
+  await patchKit(first.id, { kit_number: "MID-EDIT-67", scale: "1/35" });
+
+  await page.getByLabel("Unit price").fill("99");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await expect(page.getByRole("button", { name: "Save changes" })).toBeHidden();
+
+  const [firstAfter] = await kitsOf(MULTI);
+  expect(firstAfter.kit_number).toBe("MID-EDIT-67"); // survived the price edit
+  expect(firstAfter.scale).toBe("1/35");
+  const api = await request.newContext({ baseURL: API });
+  const orders = (await (await api.get("/orders")).json()) as StoredOrder[];
+  await api.dispose();
+  const line = orders.find((order) => order.order_number === MULTI)!.items[0];
+  expect(line.unit_price_minor).not.toBe(4999); // and the edit itself landed
+});
+
 test.afterAll("clean up everything this run created", async () => {
   const api = await request.newContext({ baseURL: API });
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];

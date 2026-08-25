@@ -189,7 +189,11 @@ function snapshotIsDerivable(
   return lineId === undefined && lineCurrency === referenceCurrency;
 }
 
-function toOrderItem(line: LineValues, referenceCurrency: string): OrderItemUpsert {
+function toOrderItem(
+  line: LineValues,
+  referenceCurrency: string,
+  kitRestated: boolean,
+): OrderItemUpsert {
   const currency = line.currency_code;
   const unitPriceMinor = majorToMinor(line.unit_price, currency);
   // A snapshot already taken keeps its own currency; a newly typed one is in the
@@ -215,6 +219,15 @@ function toOrderItem(line: LineValues, referenceCurrency: string): OrderItemUpse
     converted_currency_code: converted === null ? null : snapshotCode,
   };
   if (line.item_type === "kit") {
+    // A stored line whose kit fields this edit never touched says nothing about
+    // them (#67): the server compares stated details against the live first kit
+    // and applies any difference, and a value echoed from a stale read is
+    // indistinguishable from a typed one. Omitting `kit` is how the form avoids
+    // reverting an out-of-band change with values it merely displayed. A new
+    // line (no id) always states details — it has kits to spawn.
+    if (line.id !== undefined && !kitRestated) {
+      return { ...base, item_type: "kit" };
+    }
     return {
       ...base,
       item_type: "kit",
@@ -447,6 +460,20 @@ function LineEditor({
  * "rarely" being exactly why the bug would have survived. */
 function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void }) {
   const { data: meta } = useQuery(metaQuery);
+  // The order the caller has is the list's cached copy, stale for as long as
+  // the page has been open (#67). Refetch it on every open and hydrate from
+  // the answer — this shrinks the stale window from "page age" to "during this
+  // edit"; the dirty-only kit payload below is what closes the rest.
+  // isFetchedAfterMount is the load-bearing half: `data` alone serves whatever
+  // the cache holds *while* refetching, which is the stale copy this exists to
+  // replace. The gate below waits for an answer this open actually fetched.
+  const { data: freshOrder, isFetchedAfterMount } = useQuery({
+    queryKey: ["order", order?.id],
+    queryFn: () => api.getOrder(order!.id),
+    enabled: order !== undefined,
+    refetchOnMount: "always",
+    staleTime: 0,
+  });
   const { data: tools } = useQuery({ queryKey: ["tools"], queryFn: api.listTools });
   const { data: consumables } = useQuery({
     queryKey: ["consumables"],
@@ -467,7 +494,8 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
   // means "fresh". That was survivable for kit details only because it isn't kit
   // details any more; a stale catalog name is a display string the form rewrites
   // nothing with (#65).
-  const hydrated = !order || (tools && consumables && upgrades && displayItems);
+  const hydrated =
+    !order || (freshOrder && isFetchedAfterMount && tools && consumables && upgrades && displayItems);
   if (!meta || !hydrated) {
     return (
       <Modal title={order ? "Edit order" : "New order"} onClose={onClose} wide>
@@ -477,7 +505,7 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
   }
   return (
     <OrderForm
-      order={order}
+      order={order ? freshOrder : undefined}
       onClose={onClose}
       referenceCurrency={meta.reference_currency}
       catalog={[
@@ -599,7 +627,20 @@ function OrderForm({
       // the whole dispatch diff. A new order still sends its lines below; only an
       // edit can decline to.
       items: lineDirty
-        ? values.items.map((line) => toOrderItem(line, referenceCurrency))
+        ? values.items.map((line, index) => {
+            // Per-line: were any of the KIT fields on this row actually edited?
+            // The other line fields (quantity, price) travel regardless — only
+            // the kit details are omit-able, because only they propagate (#67).
+            const lineDirtyFields = dirtyFields.items?.[index];
+            const kitRestated = anyDirty([
+              lineDirtyFields?.kit_name,
+              lineDirtyFields?.kit_grade,
+              lineDirtyFields?.kit_scale,
+              lineDirtyFields?.kit_number,
+              lineDirtyFields?.kit_status,
+            ]);
+            return toOrderItem(line, referenceCurrency, kitRestated);
+          })
         : undefined,
     };
     // The same two date fields do two jobs (#120). On an order that already
@@ -678,6 +719,7 @@ function OrderForm({
             toOrderItem(
               line.item_type === "kit" ? { ...line, kit_status: entryStatus } : line,
               referenceCurrency,
+              true, // a create always states kit details — there is nothing stored to echo
             ),
           ),
         });
