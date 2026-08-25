@@ -24,12 +24,12 @@ last edited, so a large jump either way is worth a look.
 
 | What | Command | Notes |
 | --- | --- | --- |
-| Backend (~534) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
+| Backend (~1078) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
 | Lint + format | `uv run ruff check --fix . && uv run ruff format .` | Before every commit. CI checks both. |
-| Frontend unit (~100) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. |
+| Frontend unit (~109) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. |
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. |
 | Frontend lint | `npm run lint` | oxlint. |
-| E2E (~17) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. |
+| E2E (~26) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. |
 | Mutation harness | `uv run python mutation_test.py` | See below. |
 
 **One pytest session at a time.** Two runs against `plamotrack_test` interfere —

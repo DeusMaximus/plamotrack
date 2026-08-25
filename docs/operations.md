@@ -119,6 +119,21 @@ save the line — the order editor reconciles the count against the kits actuall
 there (it spawns the missing one, or leaves an extra one where it is once you set
 the quantity to match). Then export again.
 
+### If your database predates 2026-08-06 (the first public schema)
+
+The migration that introduced pending/received orders marked every order that
+existed before it as received — those orders had their stock applied at entry, so
+they were received by definition. It did **not** touch the kits those orders had
+spawned. A database that crossed that revision can therefore hold a received order
+whose kit still says *Ordered* or *In transit*, which the app would never produce
+on its own.
+
+This is cosmetic, and it is deliberately not repaired by a later migration: a
+repair running today would overwrite kit statuses set by hand since, which is
+worse than the blemish. If you see such a kit, drag it to the right column (or
+edit its status) — that is the whole fix. Fresh installations are unaffected; the
+window was a single day of pre-public history.
+
 ## Configuration
 
 Everything lives in `.env` at the repo root — one file, read by both Compose and
