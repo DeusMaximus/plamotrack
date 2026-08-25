@@ -76,6 +76,7 @@ SPEC = ROOT / "app/services/portability/spec.py"
 EXP = ROOT / "app/services/portability/exporting.py"
 UPG = ROOT / "app/services/upgrades.py"
 INVR = ROOT / "app/routers/inventory.py"
+VERS = ROOT / "alembic/versions"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -1550,6 +1551,68 @@ CASES = [
         "        applications = []",
         "get_kit_embeds_upgrade_applications",
     ),
+    # --- #54 / PR #151: data-bearing migration mutants (mig-). These mutate the
+    # MIGRATIONS, not the app — the harness's clean-tree check covers alembic/
+    # for exactly this reason. mig-2/mig-3 kill because the target migration's
+    # own CHECK creation refuses the unconverted rows (the round-2 review read
+    # that as a valid semantic kill, value asserts as the backstop); a mutant
+    # that orphans a bindparam kills every walk at the first step and proves
+    # nothing — mig-6 inverts the WHERE instead (PR #151 body, the lesson). ---
+    (
+        "mig-1. received_at backfill removed",
+        VERS / "20260806_6cbd8315df95_orders_received_at.py",
+        '    op.execute("UPDATE orders SET received_at = order_date")',
+        "    pass  # neutered",
+        "received_at_backfills",
+    ),
+    (
+        "mig-2. in_hand merge UPDATE removed",
+        VERS / "20260806_9d78b6148c30_merge_in_hand_into_backlog.py",
+        "    op.execute(\"UPDATE kits SET status = 'backlog' WHERE status = 'in_hand'\")",
+        "    pass  # neutered",
+        "in_hand_merges",
+    ),
+    (
+        "mig-3. snapshot AUD backfill removed",
+        VERS / "20260810_2b293c6fd496_neutral_reference_currency_on_order_.py",
+        """    op.execute(
+        "UPDATE order_items SET converted_currency_code = 'AUD' "
+        "WHERE converted_price_minor IS NOT NULL"
+    )""",
+        "    pass  # neutered",
+        "converted_snapshot",
+    ),
+    (
+        "mig-4. tool cost loses the exponent",
+        VERS / "20260811_24ee4c9024e4_tool_reference_cost_carries_its_currency.py",
+        'f"SET unit_cost_reference_minor = ROUND(unit_cost_reference * {factor})::bigint, "',
+        'f"SET unit_cost_reference_minor = ROUND(unit_cost_reference)::bigint, "',
+        "tool_cost_scales",
+    ),
+    (
+        "mig-5. display refusal demands both states",
+        VERS / "20260821_2c97a5ced66a_display_items_catalog_type_126.py",
+        "    if rows or lines:",
+        "    if rows and lines:",
+        "display_downgrade_refuses",
+    ),
+    (
+        "mig-6. tool downgrade WHERE inverted (relabels foreign)",
+        VERS / "20260811_24ee4c9024e4_tool_reference_cost_carries_its_currency.py",
+        '"WHERE unit_cost_reference_currency = :code"',
+        '"WHERE unit_cost_reference_currency != :code"',
+        "tool_cost_scales",
+    ),
+    (
+        "mig-7. snapshot downgrade keeps foreign amounts",
+        VERS / "20260810_2b293c6fd496_neutral_reference_currency_on_order_.py",
+        """    op.execute(
+        "UPDATE order_items SET converted_price_minor = NULL "
+        "WHERE converted_currency_code IS DISTINCT FROM 'AUD'"
+    )""",
+        "    pass  # neutered",
+        "converted_snapshot",
+    ),
 ]
 
 
@@ -2500,6 +2563,8 @@ TEST_FILES = [
     # names a second kill site in test_order_lifecycle.py (review P3-1).
     "tests/test_mcp.py",
     "tests/test_order_lifecycle.py",
+    # The #151 (mig-) fold-in.
+    "tests/test_migration_data.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
@@ -2535,7 +2600,7 @@ def run(expr: str) -> tuple[int, str]:
 
 def tree_is_clean() -> bool:
     proc = subprocess.run(
-        ["git", "status", "--porcelain", "app", "tests"],
+        ["git", "status", "--porcelain", "app", "tests", "alembic"],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -2549,7 +2614,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if not tree_is_clean():
-        print("app/ or tests/ has uncommitted changes — commit or stash first, so that a")
+        print("app/, tests/ or alembic/ has uncommitted changes — commit or stash first, so that a")
         print("restore that doesn't happen is visible rather than mixed in with your edits.")
         return 2
 
