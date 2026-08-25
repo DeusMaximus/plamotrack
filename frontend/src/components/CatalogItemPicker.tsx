@@ -168,7 +168,21 @@ export function CatalogItemPicker({
   }
 
   return (
-    <div className="relative">
+    <div
+      className="relative"
+      // Close only when focus has genuinely left the picker — relatedTarget is
+      // where focus is going, and focusout bubbles, so this one handler sees
+      // the input and every result button alike. The old per-input blur timer
+      // closed the list under a keyboard user mid-Tab, unmounting the node
+      // they had just focused (#104); relatedTarget is null when focus leaves
+      // the document entirely, and contains(null) is false, so that still
+      // closes.
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+          setOpen(false);
+        }
+      }}
+    >
       <Input
         value={query}
         onChange={(event) => {
@@ -176,7 +190,6 @@ export function CatalogItemPicker({
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
         placeholder={`Search ${PLURAL[itemType]}…`}
       />
       {open && debounced.length > 0 && (
@@ -187,9 +200,11 @@ export function CatalogItemPicker({
               key={result.id}
               type="button"
               className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-indigo-50"
-              onMouseDown={() =>
-                onChange({ mode: "existing", id: result.id, name: result.name })
-              }
+              // onClick, not onMouseDown: a keyboard's Enter/Space activates a
+              // button through click and never fires mousedown (#104). The
+              // mousedown-first ordering the old handler relied on is covered
+              // by the container's relatedTarget check above instead.
+              onClick={() => onChange({ mode: "existing", id: result.id, name: result.name })}
             >
               <span>
                 {result.name}
@@ -203,7 +218,7 @@ export function CatalogItemPicker({
           <button
             type="button"
             className="w-full border-t border-zinc-100 px-3 py-2 text-left text-sm font-medium text-indigo-600 hover:bg-indigo-50"
-            onMouseDown={() =>
+            onClick={() =>
               onChange({
                 mode: "new",
                 name: query.trim(),

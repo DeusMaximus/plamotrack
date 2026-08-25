@@ -9,10 +9,11 @@
  *  Driven through Playwright rather than a unit test because every assertion here
  *  is about real focus and real Tab order, which is the browser's own behaviour
  *  and not something a mock can stand in for. A keypress either moves focus or it
- *  does not, so most of this needs no timing care at all — but two cases do have
- *  a window, and both are pinned to an event rather than a duration: the picker's
- *  own blur timer is waited out by the result list emptying, and the submit
- *  button's disabled window is held open by stalling the request.
+ *  does not, so most of this needs no timing care at all — but one case does have
+ *  a window, pinned to an event rather than a duration: the submit button's
+ *  disabled window is held open by stalling the request. (The picker's blur
+ *  timer, which this file once waited out, is gone — #104 closes the list on
+ *  focus genuinely leaving it, which is not a race.)
  */
 import { expect, request, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
@@ -221,19 +222,18 @@ test("the order dialog holds focus through dynamic rows and the catalog picker",
   const results = dialog.locator("div.absolute button");
   await expect(results.first()).toBeVisible();
 
-  // Tab off the input. The results follow it in DOM order so focus lands on one,
-  // and the list then closes 150ms after the input's blur — pulling the focused
-  // node out from under it. Removing a focused node fires no blur and no
-  // focusout, so nothing event-driven sees this; focus simply becomes <body>.
+  // Tab off the input. The results follow it in DOM order, so focus lands on
+  // the first one — and since #104 the list stays open under it: the picker
+  // closes only when focus genuinely leaves it, not on a timer racing the
+  // keyboard. (The pre-#104 behaviour this block used to pin — the blur timer
+  // unmounting the focused node, which fires no blur and no focusout — is why
+  // the dialog's recapture below still exists and is still asserted.)
   await search.press("Tab");
+  await expect(results.first()).toBeFocused();
+  await expect(results.first()).toBeVisible(); // the list held
   expect(await inDialog(page), `focus left immediately, to ${await focusDescription(page)}`).toBe(
     true,
   );
-  // Wait for the list to actually go, rather than for a duration that happens to
-  // outlast the picker's 150ms blur timer. Same event, named.
-  await expect(results).toHaveCount(0);
-  expect(await inDialog(page), `focus escaped to ${await focusDescription(page)} when the picker closed`)
-    .toBe(true);
 
   for (let i = 0; i < 40; i++) {
     await page.keyboard.press("Tab");
@@ -245,6 +245,53 @@ test("the order dialog holds focus through dynamic rows and the catalog picker",
   await page.keyboard.press("Escape");
   await expect(dialog).toBeHidden();
   await expect(trigger).toBeFocused();
+});
+
+
+test("a keyboard user can select a catalog search result (#104)", async ({ page }) => {
+  // The case the focus test above deliberately stops short of: Tab onto a
+  // result, press Enter, and the selection must land — driven through to the
+  // stored order's catalog_ref_id, not just the form state. Rule 3 means the
+  // alternative to this working is not "type the name", it is "create a
+  // duplicate", which is exactly what select-or-create exists to prevent.
+  await page.goto("/orders");
+  await page.getByRole("button", { name: "+ New order" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+
+  await dialog.getByLabel("Retailer").selectOption(retailerId);
+  await dialog.locator('select:has(option[value="consumable"])').selectOption("consumable");
+  await dialog.getByLabel("Unit price").fill("6.50");
+
+  const search = dialog.getByPlaceholder(/Search consumables/);
+  await search.fill(CONSUMABLE);
+  const results = dialog.locator("div.absolute button");
+  await expect(results.first()).toBeVisible(); // debounced — wait for real rows
+
+  await search.press("Tab");
+  await expect(results.first()).toBeFocused();
+  await page.keyboard.press("Enter");
+
+  // The picker collapsed to the chosen-item chip; no free text survived.
+  await expect(dialog.getByText(CONSUMABLE, { exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Change" })).toBeVisible();
+
+  await dialog.getByRole("button", { name: "Record order" }).click();
+  await expect(dialog).toBeHidden();
+
+  // Driven through: the stored line carries the id of the item picked by key.
+  const api = await request.newContext({ baseURL: API });
+  const orders = (await (await api.get("/orders")).json()) as {
+    id: string;
+    items: { item_type: string; catalog_ref_id: string | null }[];
+  }[];
+  const stored = orders.find((order) =>
+    order.items.some((item) => item.catalog_ref_id === consumableId),
+  );
+  expect(stored, "the keyboard-picked line reached the API with the item's id").toBeTruthy();
+  expect(stored!.items[0].item_type).toBe("consumable");
+  await api.delete(`/orders/${stored!.id}`); // self-cleaning
+  await api.dispose();
 });
 
 
