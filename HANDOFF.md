@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-25 — Claude Code (Fable 5) — 0.2.8 underway: #53 + #61 closed (PRs #148/#149/#150), #63 decided
+## 2026-08-25 — Claude Code (Fable 5) — 0.2.8 underway: #53 + #61 + #54 closed (PRs #148–#152), #63 decided
 
 - **Done:** **#53 — PR #148** (`64ac350`, docs-only, review skipped per #40,
   owner concurred). Decision: **export unescaped, document it** — caveat in the
@@ -60,8 +60,23 @@ Template:
   untested) — fixed `def519b`, red-proofed under the wdr-6 mutant.
   **Fold-in PR #150** (`8d7bde2`, review skipped per the #132 precedent, owner
   concurred): 11 `wdr-` tuples; TEST_FILES + `test_mcp.py` +
-  `test_order_lifecycle.py`; harness **187/187 @ 19m48s**. No queues
-  outstanding.
+  `test_order_lifecycle.py`. **#54 — PR #151** (`204e957`, TWO Codex rounds —
+  Cursor was down on high load): `tests/test_migration_data.py`, 7 tests that
+  walk `plamotrack_test` to each data-bearing revision's parent, seed the old
+  shape by textual SQL, and assert both directions — the four #54 revisions
+  plus the #126 display downgrade guard across its four states;
+  operations.md documents the 6cbd legacy state (received order, `ordered`
+  kit — never repaired, by design). Round 1 NO-GO, both findings real and
+  reproduced first: P2 (my walk-teardown fallback swallowed a later
+  migration failing against seeded rows — recovery and verdict now separate
+  in `_restore_head`, re-raise when the body passed) and P3 (the
+  date→timestamptz→date identity is FALSE for a civil date the zone skipped
+  — Pacific/Apia never had 2011-12-30; the contract is exact-instant
+  equality, and the skipped-date policy is pinned under an ALTER DATABASE'd
+  Apia default). Round 2 clean GO, everything replayed. **Fold-in PR #152**
+  (`6ef0d1b`): 7 `mig-` tuples — the first cases that mutate MIGRATIONS;
+  `tree_is_clean` now covers `alembic/`; harness **194/194 @ 19m48s**. No
+  queues outstanding.
 - **Decisions:** **#63 (owner, this session): option 2** — `delete_order`
   treats a dangling old `catalog_ref_id` as nothing-to-reverse (logged);
   receive/edit/retarget stay strict 409s. Recorded on the issue; implementation
@@ -73,16 +88,19 @@ Template:
   also reproduced both #44-shaped import interactions under deliberate call 5
   and endorsed no `invariants.py` change — its paragraph on the PR is the
   reference if that ever resurfaces.
-- **State:** `main` at `8d7bde2` (+ this entry), CI green at every head.
-  Backend **1073**, vitest 109, e2e 26 (+1 skipped screenshots spec) verified
-  from-empty, harness 187/187. No dev servers running; stale worktrees
+- **State:** `main` at `6ef0d1b` (+ this entry), CI green at every head.
+  Backend **1080**, vitest 109, e2e 26 (+1 skipped screenshots spec) verified
+  from-empty, harness 194/194; the procedure doc's drifted suite-count table
+  refreshed (~534 → ~1080). No dev servers running; stale worktrees
   `/private/tmp/plamotrack-pr100` and `-pr108-main` persist (not this
   session's). Codex budget untouched — both rounds this session were Cursor.
-- **Next:** the 0.2.8 remainder — **#54** (migration harness; wants to exist
-  before M5.1's settings migration), **#104**, **#67**, and the **#63
-  implementation** (decision recorded, small strict-scope branch). #137/#144
-  still await product calls; #122 rides M6.5. LXC: if v0.2.7 hasn't been
-  pulled yet, **back up the LXC database first** (real collection).
+- **Next:** the 0.2.8 remainder — **#104**, **#67**, and the **#63
+  implementation** (decision recorded, small strict-scope branch). The
+  migration harness (#54) now exists for M5.1's settings migration to lean
+  on. Codex took both #151 rounds (Cursor down); its budget is dented but was
+  ~full. #137/#144 still await product calls; #122 rides M6.5. LXC: if
+  v0.2.7 hasn't been pulled yet, **back up the LXC database first** (real
+  collection).
 
 ## 2026-08-25 — Claude Code (Fable 5) — v0.2.7-alpha RELEASED; #119, #77, #87 closed (one Cursor round each); docs + screenshots refreshed; both milestones closed
 
