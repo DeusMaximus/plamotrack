@@ -41,6 +41,49 @@ Template:
 
 ---
 
+## 2026-08-25 — Claude Code (Fable 5) — 0.2.8 underway: #53 + #61 closed (PRs #148/#149/#150), #63 decided
+
+- **Done:** **#53 — PR #148** (`64ac350`, docs-only, review skipped per #40,
+  owner concurred). Decision: **export unescaped, document it** — caveat in the
+  archive's bundled README.txt (the `_README` string in `exporting.py`),
+  import-export.md "Limits and safety", reasoning + both declined alternatives
+  in design §12.8. **#61 — PR #149** (`914fcac`):
+  `withdraw_upgrade_application` — write-gated, upgrade row locked in
+  `apply_upgrade`'s order on BOTH flavours, **`restore_stock` required with no
+  default on any surface**; REST `DELETE
+  /upgrades/{id}/applications/{aid}?restore_stock=` + `GET
+  /kits/{id}/applications`; MCP tool (docstring: ask, don't guess) + `get_kit`
+  embeds applications; kit editor "Applied upgrades" section (two equal-weight
+  buttons, no default); the two dead-end guard messages (#37 kit delete,
+  upgrade delete) now point at withdrawal and release after it. Design §3.6
+  block in the same commit. Cursor round 1 **GO + 1 P3** (order-line release
+  untested) — fixed `def519b`, red-proofed under the wdr-6 mutant.
+  **Fold-in PR #150** (`8d7bde2`, review skipped per the #132 precedent, owner
+  concurred): 11 `wdr-` tuples; TEST_FILES + `test_mcp.py` +
+  `test_order_lifecycle.py`; harness **187/187 @ 19m48s**. No queues
+  outstanding.
+- **Decisions:** **#63 (owner, this session): option 2** — `delete_order`
+  treats a dangling old `catalog_ref_id` as nothing-to-reverse (logged);
+  receive/edit/retarget stay strict 409s. Recorded on the issue; implementation
+  stays open on 0.2.8; reasoning lands in design.md with it.
+- **Notable:** my brief's wdr-7 kill mechanism was wrong (claimed
+  `StaleDataError`; measured: both racers succeed, the empty DELETE is a
+  `SAWarning`, the end-state assert kills) — Cursor corrected it; owned in the
+  PR #149 reply and recorded beside the tuples in `mutation_test.py`. Cursor
+  also reproduced both #44-shaped import interactions under deliberate call 5
+  and endorsed no `invariants.py` change — its paragraph on the PR is the
+  reference if that ever resurfaces.
+- **State:** `main` at `8d7bde2` (+ this entry), CI green at every head.
+  Backend **1073**, vitest 109, e2e 26 (+1 skipped screenshots spec) verified
+  from-empty, harness 187/187. No dev servers running; stale worktrees
+  `/private/tmp/plamotrack-pr100` and `-pr108-main` persist (not this
+  session's). Codex budget untouched — both rounds this session were Cursor.
+- **Next:** the 0.2.8 remainder — **#54** (migration harness; wants to exist
+  before M5.1's settings migration), **#104**, **#67**, and the **#63
+  implementation** (decision recorded, small strict-scope branch). #137/#144
+  still await product calls; #122 rides M6.5. LXC: if v0.2.7 hasn't been
+  pulled yet, **back up the LXC database first** (real collection).
+
 ## 2026-08-25 — Claude Code (Fable 5) — v0.2.7-alpha RELEASED; #119, #77, #87 closed (one Cursor round each); docs + screenshots refreshed; both milestones closed
 
 - **Released: v0.2.7-alpha** at tag `921c4f1` ("the importer keeps its promises"),
@@ -289,57 +332,3 @@ Template:
   the 0.2.6 milestone (#77, #87, #90, #112, #119 open) and 0.2.7 are done, so
   **do not run the release gate when 0.2.7 alone empties**. #122 rides M6.5 (UI
   redesign, direction open, before M7/M8).
-
-## 2026-08-21 — Claude Code (Fable 5) — #120 closed: PR #121 merged as `f3c5d1a`, review skipped; #122 filed; release cadence decided (no v0.2.6 tag)
-
-- **Done:** **#120 items 1+2 — PR #121** (branch `feat/120-status-editing`, head
-  `a8c4406`, CI green all three jobs). Browser-only; no service, schema, REST,
-  MCP or CSV change. Kits: inline status select + its mutation removed, badge
-  display-only (the board's `lib/kitStatusMutation.ts` is separate and
-  untouched). Orders: Ship/Receive modals and row buttons removed; Edit's
-  "Shipped on"/"Received on" fields show regardless of state — correction PATCH
-  when the instant is set (unchanged), ship/receive dispatch on save when it
-  isn't (ship before receive; one-way `useRef` latches so a retry after partial
-  failure can't replay a transition the server already took); SHIPPED/RECEIVED
-  table columns mirror Kits' Started/Completed, counting transit live
-  ("in transit · N d"); per-line Ordered/Pre-ordered picker replaced by one
-  create-time Pre-order toggle applied to every kit line at submit — the API
-  keeps per-line status (edits round-trip the first spawned kit's; a line added
-  mid-edit inherits the order's derived pre-order state). Design §3.9 gained a
-  sentence. e2e 20 → **21**: happy-path ships+receives through Edit and pins
-  both column renderings; receive-backdate does both backdates in one save
-  (the #93 tz pin now covers `shipped_at` too); new `preorder-toggle.spec.ts`
-  pins the every-line fan-out with two kit lines. Negative control in a `main`
-  worktree: 3 red, each on the exact control the branch adds (reasons in the PR
-  body); worktree + e2e DB removed after. vitest 109, build/oxlint clean; e2e
-  verified against a DB migrated from empty, all tables zero after.
-- **Decisions:** **Release cadence (owner's call, this session): no v0.2.6 tag
-  ever.** One release — v0.2.7-alpha — cut only when BOTH the 0.2.6 milestone
-  (#77, #87, #90, #112, #119 open) and 0.2.7 (#120) are done; both milestones
-  close at that tag. **Do not run the release gate when 0.2.7 alone empties.**
-  Deliberate calls on the PR: ship-backfill on a received order is now
-  browser-reachable (#118 kept it REST/MCP-only over button real estate, the
-  service is explicitly legal); in-hand clears + disables pre-order at create;
-  MCP's `update_kit_status` shortcut stays. **Review skipped, owner's call** —
-  frontend-only consolidation, no shared mechanism (#40 criterion); Copilot
-  auto-review stays disabled until 1 September, Cursor offered and declined.
-  **M6.5 — UI redesign created (owner's call, same session):** standalone
-  milestone, after M6/6.1 and before M7/M8, so the gallery and showcase are
-  built in the new look once; direction still under exploration, deliberately
-  undecided. Roadmaps updated in AGENTS.md + design §11 (which also got its
-  stale hardening paragraph refreshed: #97/#120 shipped, the no-v0.2.6-tag
-  cadence written in). #122 milestoned to M6.5.
-- **State (amended in place after the merge):** **PR #121 squash-merged as
-  `f3c5d1a`, branch deleted, #120 closed** on the owner's call, CI green at
-  `a8c4406` (the merged head). No migration. **#122 filed** — #120's deferred
-  item 3 (board cards → Edit dialog) spun out so it isn't lost in the closed
-  issue; milestoned to **M6.5 — UI redesign** on the owner's call. **The
-  0.2.7 milestone is now empty — do NOT run the release gate** (cadence above:
-  one v0.2.7-alpha release only when 0.2.6 is also done). Dev servers running
-  on :8000/:5173, now serving merged `main`. Stale worktrees
-  `/private/tmp/plamotrack-pr100` and `-pr108-main` remain, not this session's.
-- **Next:** the 0.2.6 list (#77, #87, #90, #112, #119), reprioritized by
-  dogfooding — the owner intends to start dogfooding off `main` (real instance
-  is the Proxmox LXC), and **#112 goes before any real-collection import**
-  (the starter sheet drops kit-only fields on retailer-bearing rows). Gate +
-  v0.2.7-alpha tag only when both milestones are empty.
