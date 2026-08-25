@@ -69,6 +69,13 @@ Two things worth knowing if you plan to edit these by hand:
     column wins when both are set.
 
 Leave the `id` column blank on rows you add by hand and one will be generated.
+
+Cells hold exactly what you stored -- including text starting with =, +, - or
+@, which a spreadsheet may read as a formula rather than text. plamotrack does
+not escape these on the way out, because the escape would come back through an
+import as part of the value. Your own export holds only your own data; an
+archive someone else sent you deserves the same caution as anything else they
+sent you.
 """
 
 

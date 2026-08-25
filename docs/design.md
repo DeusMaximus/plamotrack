@@ -1249,3 +1249,20 @@ No MCP tools for import/export. The operations are file-upload-shaped and fit to
 badly, and an agent that can silently replace an entire collection is not a feature.
 The services stay callable if that ever changes. The REST/MCP parity rule is about logic
 living in the service layer, which it does.
+
+### 12.8 Formula-looking cells export verbatim (#53, 25/08/2026)
+
+CSV exports write cell values byte-faithfully, including text beginning `=`, `+`, `-`
+or `@` that a spreadsheet will read as a formula. Decided and kept that way. Escaping
+on export — the usual CSV-injection prescription of a leading apostrophe or tab —
+breaks the round-trip contract §12.1 rests on: the escape comes back through the
+importer as part of the value, a kit named `=RX-78` stops being one, and re-importing
+your own archive stops being a no-op. Fidelity is the property the format exists to
+provide, and it protects the common case: this is a single-owner application exporting
+the owner's own data, so there is no untrusted author in the normal path. The risk
+case — opening an archive somebody *else* sent you — is the ordinary caution about
+files from strangers, not a property of this format, and is documented where a person
+meets it: the archive's bundled `README.txt` and `docs/import-export.md`. An
+escape-and-strip pair (fidelity dependent on both halves staying in sync forever) and
+a second "spreadsheet-safe" export variant (two formats, guaranteed drift) were both
+considered and declined.
