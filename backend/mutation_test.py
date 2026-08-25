@@ -1651,6 +1651,53 @@ CASES = [
         "                    else KitStatus.PRE_ORDERED,",
         "kit_omitted_quantity_growth",
     ),
+    # --- #63 / PR #156: the dangling-reversal tolerance (d63-). delete_order
+    # alone may shrug at a missing stored reference; everything else refuses. ---
+    (
+        "d63-1. delete_order stays strict (fix off)",
+        ORD,
+        "        await _undo_line_dispatch(session, item, received, missing_ok=True)",
+        "        await _undo_line_dispatch(session, item, received)",
+        "undo_skips_a_dangling",
+    ),
+    (
+        "d63-2. everything tolerant",
+        ORD,
+        "        if missing_ok:",
+        "        if True:",
+        "receiving_a_dangling or retargeting_a_dangling",
+    ),
+    (
+        "d63-3. the skip forgets to log",
+        ORD,
+        """            logger.warning(
+                "skipping stock reversal for a dangling %s reference %s (%+d): the "
+                "row is gone and its stock went with it — undoing the order entry "
+                "wholesale (#63)",
+                item_type,
+                ref_id,
+                delta,
+            )
+            return""",
+        "            return",
+        "undo_skips_a_dangling",
+    ),
+    (
+        "d63-4. dispatch drops the passthrough",
+        ORD,
+        "            session, item.item_type, item.catalog_ref_id, -item.quantity, missing_ok=missing_ok",
+        "            session, item.item_type, item.catalog_ref_id, -item.quantity",
+        "undo_skips_a_dangling",
+    ),
+    (
+        "d63-5. line removal turns tolerant",
+        ORD,
+        """    await _undo_line_dispatch(session, item, received)
+    await session.delete(item)""",
+        """    await _undo_line_dispatch(session, item, received, missing_ok=True)
+    await session.delete(item)""",
+        "removing_a_dangling",
+    ),
 ]
 
 
@@ -2603,6 +2650,8 @@ TEST_FILES = [
     "tests/test_order_lifecycle.py",
     # The #151 (mig-) fold-in.
     "tests/test_migration_data.py",
+    # The #156 (d63-) fold-in.
+    "tests/test_integrity.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
