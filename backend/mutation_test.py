@@ -74,6 +74,8 @@ KITS = ROOT / "app/services/kits.py"
 MCP = ROOT / "app/mcp.py"
 SPEC = ROOT / "app/services/portability/spec.py"
 EXP = ROOT / "app/services/portability/exporting.py"
+UPG = ROOT / "app/services/upgrades.py"
+INVR = ROOT / "app/routers/inventory.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -1456,6 +1458,98 @@ CASES = [
         "        if parent.received_at is None:\n            continue",
         "created_received_order_with_a_catalog_line",
     ),
+    # --- #61 / PR #149: upgrade-application withdrawal (wdr-). The kill for
+    # wdr-7 is the end-state assert seeing ['withdrawn', 'withdrawn'] — no
+    # StaleDataError is raised; the empty DELETE is only a SAWarning (measured
+    # in the PR #149 round 1 review; the PR thread carries the correction). ---
+    (
+        "wdr-1. restore flag ignored (always restores)",
+        UPG,
+        "    if restore_stock:",
+        "    if True:",
+        "withdraw_without_restore_keeps_stock_spent",
+    ),
+    (
+        "wdr-2. restore flag inverted (never restores)",
+        UPG,
+        "    if restore_stock:",
+        "    if not restore_stock:",
+        "withdraw_with_restore_returns_the_whole_quantity",
+    ),
+    (
+        "wdr-3. restores one instead of quantity_used",
+        UPG,
+        "            upgrade.name, upgrade.quantity_on_hand + application.quantity_used",
+        "            upgrade.name, upgrade.quantity_on_hand + 1",
+        "withdraw_with_restore_returns_the_whole_quantity",
+    ),
+    (
+        "wdr-4. pairing check off",
+        UPG,
+        "    if upgrade_id is not None and application.upgrade_id != upgrade_id:",
+        "    if False:",
+        "withdraw_under_the_wrong_upgrade_is_404",
+    ),
+    (
+        "wdr-5. ceiling guard bypassed on restore",
+        UPG,
+        """        upgrade.quantity_on_hand = guard_stock_ceiling(
+            upgrade.name, upgrade.quantity_on_hand + application.quantity_used
+        )""",
+        "        upgrade.quantity_on_hand = upgrade.quantity_on_hand + application.quantity_used",
+        "withdraw_restore_past_int4_ceiling_refused",
+    ),
+    (
+        "wdr-6. application row never deleted",
+        UPG,
+        "    await session.delete(application)",
+        "    pass  # neutered",
+        "withdraw_with_restore_returns_the_whole_quantity or line_quantity_decrease_unblocked_after_withdrawal",
+    ),
+    (
+        "wdr-7. write gate skipped by the withdrawal",
+        UPG,
+        """    await acquire_write_gate(session)
+    application = await session.get(UpgradeApplication, application_id)""",
+        "    application = await session.get(UpgradeApplication, application_id)",
+        "concurrent_double_withdraw_restores_stock_once",
+    ),
+    (
+        "wdr-8. missing-application guard off",
+        UPG,
+        """    if application is None:
+        raise NotFoundError(f"upgrade application {application_id} not found")""",
+        """    if False:
+        raise NotFoundError(f"upgrade application {application_id} not found")""",
+        "withdraw_unknown_application_is_404",
+    ),
+    (
+        "wdr-9. REST restore_stock gains a default",
+        INVR,
+        """    restore_stock: bool,
+    session: SessionDep,
+):
+    \"\"\"Withdraw a recorded application""",
+        """    session: SessionDep,
+    restore_stock: bool = False,
+):
+    \"\"\"Withdraw a recorded application""",
+        "withdraw_without_the_restore_choice_is_422",
+    ),
+    (
+        "wdr-10. applications listed newest first",
+        UPG,
+        "        .order_by(UpgradeApplication.applied_at, UpgradeApplication.id)",
+        "        .order_by(UpgradeApplication.applied_at.desc(), UpgradeApplication.id)",
+        "kit_applications_listed_oldest_first",
+    ),
+    (
+        "wdr-11. MCP get_kit stops embedding applications",
+        MCP,
+        "        applications = await upgrades_service.list_kit_applications(session, parsed)",
+        "        applications = []",
+        "get_kit_embeds_upgrade_applications",
+    ),
 ]
 
 
@@ -2402,6 +2496,10 @@ TEST_FILES = [
     "tests/test_write_surface_parity.py",
     "tests/test_catalog_categories.py",
     "tests/test_mcp_catalog_create.py",
+    # The #149 (wdr-) fold-in: wdr-11's tests live in test_mcp.py, and wdr-6
+    # names a second kill site in test_order_lifecycle.py (review P3-1).
+    "tests/test_mcp.py",
+    "tests/test_order_lifecycle.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
