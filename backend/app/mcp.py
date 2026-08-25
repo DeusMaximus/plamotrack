@@ -217,11 +217,25 @@ async def list_kit_series() -> list[str]:
 
 @mcp.tool
 async def get_kit(kit_id: str) -> dict:
-    """Get a single kit by id, including status, rating, and build notes."""
+    """Get a single kit by id, including status, rating, build notes, and the
+    upgrade applications recorded on it (each carries the application id that
+    withdraw_upgrade_application takes)."""
     parsed = _parse_uuid(kit_id, "kit_id")
     async with _tool_session() as session:
         kit = await kits_service.get_kit(session, parsed)
-        return KitRead.model_validate(kit).model_dump(mode="json")
+        payload = KitRead.model_validate(kit).model_dump(mode="json")
+        applications = await upgrades_service.list_kit_applications(session, parsed)
+        payload["upgrade_applications"] = [
+            {
+                "id": str(application.id),
+                "upgrade_id": str(application.upgrade_id),
+                "upgrade_name": application.upgrade.name,
+                "quantity_used": application.quantity_used,
+                "applied_at": application.applied_at.isoformat(),
+            }
+            for application in applications
+        ]
+        return payload
 
 
 @mcp.tool
@@ -689,4 +703,31 @@ async def apply_upgrade(upgrade_id: str, kit_id: str, quantity: PositiveInt4 = 1
             "kit_id": str(application.kit_id),
             "quantity_used": application.quantity_used,
             "applied_at": application.applied_at.isoformat(),
+        }
+
+
+@mcp.tool
+async def withdraw_upgrade_application(application_id: str, restore_stock: bool) -> dict:
+    """Withdraw (delete) a recorded upgrade application — the undo of
+    apply_upgrade. Application ids come from get_kit's upgrade_applications.
+
+    restore_stock is REQUIRED and states whether the physical part goes back
+    into stock: true when it never actually left the box (recorded against the
+    wrong kit, or by accident), false when the part was consumed or destroyed
+    (a decal applied and then torn off cannot be reused). plamotrack cannot
+    infer which happened and neither can you — if the conversation doesn't say,
+    ask the user rather than guessing. Withdrawing removes the whole
+    application; restoring returns all of quantity_used."""
+    parsed = _parse_uuid(application_id, "application_id")
+    async with _tool_session() as session:
+        result = await upgrades_service.withdraw_upgrade_application(
+            session, parsed, restore_stock=restore_stock
+        )
+        return {
+            "application_id": str(result.application_id),
+            "upgrade_id": str(result.upgrade_id),
+            "kit_id": str(result.kit_id),
+            "quantity_used": result.quantity_used,
+            "stock_restored": result.stock_restored,
+            "quantity_on_hand": result.quantity_on_hand,
         }

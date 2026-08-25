@@ -1,4 +1,12 @@
+import asyncio
+import uuid
+
 import pytest
+
+from app.db import session_scope
+from app.exceptions import ConflictError, NotFoundError
+from app.services import kits as kits_service
+from app.services import upgrades as upgrades_service
 
 
 async def _make_upgrade(client, quantity: int) -> dict:
@@ -464,3 +472,245 @@ async def test_an_order_line_new_item_holds_the_same_text_rule(client, retailer)
     )
     assert resp.status_code == 422, resp.text
     assert (await client.get("/display-items")).json() == []
+
+
+# --- Withdrawing an upgrade application (#61, §3.6) ---------------------------------
+
+
+async def _apply(client, upgrade_id: str, kit_id: str, quantity: int) -> dict:
+    resp = await client.post(
+        f"/upgrades/{upgrade_id}/apply", json={"kit_id": kit_id, "quantity": quantity}
+    )
+    assert resp.status_code == 201
+    return resp.json()
+
+
+async def test_withdraw_with_restore_returns_the_whole_quantity(client):
+    """quantity_used > 1 on purpose: an application is one event, not a running
+    balance, so restoring returns all of it."""
+    upgrade = await _make_upgrade(client, 10)
+    kit = await _make_kit(client)
+    application = await _apply(client, upgrade["id"], kit["id"], 3)
+    assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 7
+
+    resp = await client.delete(
+        f"/upgrades/{upgrade['id']}/applications/{application['id']}",
+        params={"restore_stock": True},
+    )
+    assert resp.status_code == 204
+    assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 10
+    assert (await client.get(f"/kits/{kit['id']}/applications")).json() == []
+
+
+async def test_withdraw_without_restore_keeps_stock_spent(client):
+    upgrade = await _make_upgrade(client, 5)
+    kit = await _make_kit(client)
+    application = await _apply(client, upgrade["id"], kit["id"], 2)
+
+    resp = await client.delete(
+        f"/upgrades/{upgrade['id']}/applications/{application['id']}",
+        params={"restore_stock": False},
+    )
+    assert resp.status_code == 204
+    assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 3  # still spent
+    assert (await client.get(f"/kits/{kit['id']}/applications")).json() == []
+
+
+async def test_withdraw_without_the_restore_choice_is_422(http_client):
+    """`restore_stock` has no default anywhere, deliberately (#61): omitting it is
+    refused at the validation layer, before the service can act."""
+    upgrade = await _make_upgrade(http_client, 5)
+    kit = await _make_kit(http_client)
+    application = await _apply(http_client, upgrade["id"], kit["id"], 2)
+
+    resp = await http_client.delete(f"/upgrades/{upgrade['id']}/applications/{application['id']}")
+    assert resp.status_code == 422
+    assert any(err["loc"] == ["query", "restore_stock"] for err in resp.json()["detail"])
+    # Nothing happened: the application survives and the stock stays spent.
+    assert len((await http_client.get(f"/kits/{kit['id']}/applications")).json()) == 1
+    assert (await http_client.get("/upgrades")).json()[0]["quantity_on_hand"] == 3
+
+
+async def test_withdraw_under_the_wrong_upgrade_is_404(client):
+    upgrade = await _make_upgrade(client, 5)
+    other = (
+        await client.post(
+            "/upgrades",
+            json={"name": "Water decals", "manufacturer": "Bandai", "quantity_on_hand": 1},
+        )
+    ).json()
+    kit = await _make_kit(client)
+    application = await _apply(client, upgrade["id"], kit["id"], 2)
+
+    resp = await client.delete(
+        f"/upgrades/{other['id']}/applications/{application['id']}",
+        params={"restore_stock": True},
+    )
+    assert resp.status_code == 404
+    assert "does not belong" in resp.json()["detail"]
+    assert len((await client.get(f"/kits/{kit['id']}/applications")).json()) == 1
+
+
+async def test_withdraw_unknown_application_is_404(client):
+    resp = await client.delete(
+        f"/upgrades/{uuid.uuid4()}/applications/{uuid.uuid4()}",
+        params={"restore_stock": True},
+    )
+    assert resp.status_code == 404
+    assert "not found" in resp.json()["detail"]
+
+
+async def test_withdraw_twice_second_is_404_and_stock_restores_once(client):
+    upgrade = await _make_upgrade(client, 5)
+    kit = await _make_kit(client)
+    application = await _apply(client, upgrade["id"], kit["id"], 2)
+
+    path = f"/upgrades/{upgrade['id']}/applications/{application['id']}"
+    assert (await client.delete(path, params={"restore_stock": True})).status_code == 204
+    assert (await client.delete(path, params={"restore_stock": True})).status_code == 404
+    assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 5  # 3 + 2, once
+
+
+async def test_withdraw_unblocks_kit_delete(client):
+    """#37's guard holds until the application is withdrawn, then releases —
+    and its message points at a route that now exists."""
+    upgrade = await _make_upgrade(client, 2)
+    kit = await _make_kit(client)
+    application = await _apply(client, upgrade["id"], kit["id"], 1)
+
+    resp = await client.delete(f"/kits/{kit['id']}")
+    assert resp.status_code == 409
+    assert "Withdraw the application" in resp.json()["detail"]
+
+    resp = await client.delete(
+        f"/upgrades/{upgrade['id']}/applications/{application['id']}",
+        params={"restore_stock": False},
+    )
+    assert resp.status_code == 204
+    assert (await client.delete(f"/kits/{kit['id']}")).status_code == 204
+    assert (await client.get("/kits")).json() == []
+
+
+async def test_withdraw_unblocks_upgrade_delete(client):
+    """The same release on the other end of the join: `delete_catalog_item`'s
+    applied-upgrade guard has nothing to hold once the applications are gone."""
+    upgrade = await _make_upgrade(client, 2)
+    kit = await _make_kit(client)
+    application = await _apply(client, upgrade["id"], kit["id"], 1)
+
+    assert (await client.delete(f"/upgrades/{upgrade['id']}")).status_code == 409
+    resp = await client.delete(
+        f"/upgrades/{upgrade['id']}/applications/{application['id']}",
+        params={"restore_stock": True},
+    )
+    assert resp.status_code == 204
+    assert (await client.delete(f"/upgrades/{upgrade['id']}")).status_code == 204
+    assert (await client.get("/upgrades")).json() == []
+
+
+async def test_withdraw_restore_past_int4_ceiling_refused(client):
+    """A reachable state: apply, then stock adjusted up to the column max. The
+    restore would derive out of range, so the stored state refuses (409, the #74
+    family), the application survives, and the no-restore withdrawal stays open."""
+    upgrade = await _make_upgrade(client, 5)
+    kit = await _make_kit(client)
+    application = await _apply(client, upgrade["id"], kit["id"], 2)
+    resp = await client.post(f"/catalog/{upgrade['id']}/adjust", json={"delta": 2_147_483_644})
+    assert resp.status_code == 200
+    assert resp.json()["quantity_on_hand"] == 2_147_483_647
+
+    path = f"/upgrades/{upgrade['id']}/applications/{application['id']}"
+    resp = await client.delete(path, params={"restore_stock": True})
+    assert resp.status_code == 409
+    assert "would hold" in resp.json()["detail"]
+    # The refusal is atomic: application still there, stock untouched.
+    assert len((await client.get(f"/kits/{kit['id']}/applications")).json()) == 1
+    assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 2_147_483_647
+
+    assert (await client.delete(path, params={"restore_stock": False})).status_code == 204
+
+
+async def test_kit_applications_listed_oldest_first_with_upgrade_embedded(client):
+    upgrade = await _make_upgrade(client, 5)
+    second = (
+        await client.post(
+            "/upgrades",
+            json={"name": "Water decals", "manufacturer": "Bandai", "quantity_on_hand": 3},
+        )
+    ).json()
+    kit = await _make_kit(client)
+    first_app = await _apply(client, upgrade["id"], kit["id"], 1)
+    second_app = await _apply(client, second["id"], kit["id"], 2)
+
+    listed = (await client.get(f"/kits/{kit['id']}/applications")).json()
+    assert [row["id"] for row in listed] == [first_app["id"], second_app["id"]]
+    assert [row["upgrade"]["name"] for row in listed] == ["Metal thrusters", "Water decals"]
+
+    # Withdrawing one leaves the other untouched — two rows seeded on purpose.
+    resp = await client.delete(
+        f"/upgrades/{upgrade['id']}/applications/{first_app['id']}",
+        params={"restore_stock": False},
+    )
+    assert resp.status_code == 204
+    listed = (await client.get(f"/kits/{kit['id']}/applications")).json()
+    assert [row["id"] for row in listed] == [second_app["id"]]
+
+
+async def test_kit_applications_empty_list_and_unknown_kit(client):
+    kit = await _make_kit(client)
+    assert (await client.get(f"/kits/{kit['id']}/applications")).json() == []
+    assert (await client.get(f"/kits/{uuid.uuid4()}/applications")).status_code == 404
+
+
+async def test_concurrent_double_withdraw_restores_stock_once(client):
+    """Two simultaneous withdrawals of one application: the write gate and the
+    upgrade row lock let exactly one through; the loser finds the row gone."""
+    upgrade = await _make_upgrade(client, 5)
+    kit = await _make_kit(client)
+    application = await _apply(client, upgrade["id"], kit["id"], 2)
+    app_id = uuid.UUID(application["id"])
+
+    async def attempt() -> str:
+        try:
+            async with session_scope() as session:
+                await upgrades_service.withdraw_upgrade_application(
+                    session, app_id, restore_stock=True
+                )
+            return "withdrawn"
+        except NotFoundError:
+            return "not_found"
+
+    results = await asyncio.gather(attempt(), attempt())
+    assert sorted(results) == ["not_found", "withdrawn"]
+    assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 5  # 3 + 2, once
+
+
+async def test_withdraw_racing_kit_delete_leaves_no_stock_unexplained(client):
+    """Whichever order the gate serializes them in, the application is never
+    cascaded away with its stock still counted as spent: either the delete is
+    blocked by #37's guard and succeeds on retry, or it ran after the withdrawal."""
+    upgrade = await _make_upgrade(client, 5)
+    kit = await _make_kit(client)
+    application = await _apply(client, upgrade["id"], kit["id"], 2)
+    app_id = uuid.UUID(application["id"])
+    kit_id = uuid.UUID(kit["id"])
+
+    async def withdraw() -> str:
+        async with session_scope() as session:
+            await upgrades_service.withdraw_upgrade_application(session, app_id, restore_stock=True)
+        return "withdrawn"
+
+    async def delete() -> str:
+        try:
+            async with session_scope() as session:
+                await kits_service.delete_kit(session, kit_id)
+            return "deleted"
+        except ConflictError:
+            return "blocked"
+
+    withdrew, deleted = await asyncio.gather(withdraw(), delete())
+    assert withdrew == "withdrawn"
+    assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 5
+    if deleted == "blocked":
+        assert (await client.delete(f"/kits/{kit['id']}")).status_code == 204
+    assert (await client.get("/kits")).json() == []

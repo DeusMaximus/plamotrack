@@ -35,6 +35,7 @@ EXPECTED_TOOLS = {
     "update_catalog_upgrade",
     "update_catalog_display",
     "apply_upgrade",
+    "withdraw_upgrade_application",
 }
 
 
@@ -279,3 +280,101 @@ async def test_create_order_is_held_to_the_aggregate_fanout_ceiling_too(client):
                 },
             )
         assert (await mcp_client.call_tool("list_kits", {})).data == []
+
+
+# --- Withdrawing an upgrade application (#61, §3.6) ---------------------------------
+
+
+async def _seed_upgrade_and_kit(client, quantity: int) -> tuple[dict, dict]:
+    upgrade = (
+        await client.post(
+            "/upgrades",
+            json={
+                "name": "Metal thrusters",
+                "manufacturer": "Metal Build",
+                "quantity_on_hand": quantity,
+            },
+        )
+    ).json()
+    kit = (await client.post("/kits", json={"name": "Sazabi Ver.Ka", "grade": "MG"})).json()
+    return upgrade, kit
+
+
+async def test_get_kit_embeds_upgrade_applications(client):
+    """Both state axes: the list is present-and-empty before any application, and
+    carries the application id + upgrade name after — the id is what
+    withdraw_upgrade_application takes."""
+    upgrade, kit = await _seed_upgrade_and_kit(client, 5)
+    async with Client(mcp) as mcp_client:
+        empty = (await mcp_client.call_tool("get_kit", {"kit_id": kit["id"]})).data
+        assert empty["upgrade_applications"] == []
+
+        applied = (
+            await mcp_client.call_tool(
+                "apply_upgrade",
+                {"upgrade_id": upgrade["id"], "kit_id": kit["id"], "quantity": 2},
+            )
+        ).data
+        loaded = (await mcp_client.call_tool("get_kit", {"kit_id": kit["id"]})).data
+        (application,) = loaded["upgrade_applications"]
+        assert application["id"] == applied["id"]
+        assert application["upgrade_name"] == "Metal thrusters"
+        assert application["quantity_used"] == 2
+
+
+async def test_withdraw_tool_restores_or_keeps_stock_as_told(client):
+    upgrade, kit = await _seed_upgrade_and_kit(client, 5)
+    async with Client(mcp) as mcp_client:
+        applied = (
+            await mcp_client.call_tool(
+                "apply_upgrade",
+                {"upgrade_id": upgrade["id"], "kit_id": kit["id"], "quantity": 2},
+            )
+        ).data
+        result = (
+            await mcp_client.call_tool(
+                "withdraw_upgrade_application",
+                {"application_id": applied["id"], "restore_stock": True},
+            )
+        ).data
+        assert result["stock_restored"] is True
+        assert result["quantity_on_hand"] == 5
+
+        applied = (
+            await mcp_client.call_tool(
+                "apply_upgrade",
+                {"upgrade_id": upgrade["id"], "kit_id": kit["id"], "quantity": 1},
+            )
+        ).data
+        result = (
+            await mcp_client.call_tool(
+                "withdraw_upgrade_application",
+                {"application_id": applied["id"], "restore_stock": False},
+            )
+        ).data
+        assert result["stock_restored"] is False
+        assert result["quantity_on_hand"] == 4
+    assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 4
+
+
+async def test_withdraw_tool_requires_the_restore_choice(client):
+    """No default on the MCP surface either (#61): an agent is not allowed to
+    guess whether the part physically survived."""
+    upgrade, kit = await _seed_upgrade_and_kit(client, 5)
+    async with Client(mcp) as mcp_client:
+        applied = (
+            await mcp_client.call_tool(
+                "apply_upgrade",
+                {"upgrade_id": upgrade["id"], "kit_id": kit["id"], "quantity": 2},
+            )
+        ).data
+        # match pins the refusal to the missing argument — a bare ToolError is
+        # also what an unknown tool raises, which is what this call does on a
+        # tree without the tool, and that must not read as the control working.
+        with pytest.raises(ToolError, match="restore_stock"):
+            await mcp_client.call_tool(
+                "withdraw_upgrade_application", {"application_id": applied["id"]}
+            )
+    # Nothing happened: the application survives and the stock stays spent.
+    assert len((await client.get(f"/kits/{kit['id']}/applications")).json()) == 1
+    assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 3

@@ -4,8 +4,10 @@ from fastapi import APIRouter
 
 from app.db import SessionDep
 from app.models.enums import KitStatus
+from app.schemas.catalog import UpgradeApplicationDetailRead
 from app.schemas.kits import KitCreate, KitRead, KitUpdate
 from app.services import kits as kits_service
+from app.services import upgrades as upgrades_service
 
 router = APIRouter(prefix="/kits", tags=["kits"])
 
@@ -36,6 +38,13 @@ async def create_kit(data: KitCreate, session: SessionDep):
 @router.get("/{kit_id}", response_model=KitRead)
 async def get_kit(kit_id: uuid.UUID, session: SessionDep):
     return await kits_service.get_kit(session, kit_id)
+
+
+@router.get("/{kit_id}/applications", response_model=list[UpgradeApplicationDetailRead])
+async def list_kit_applications(kit_id: uuid.UUID, session: SessionDep):
+    """The upgrade applications recorded on this kit, oldest first — the read
+    side of withdrawal (§3.6, #61)."""
+    return await upgrades_service.list_kit_applications(session, kit_id)
 
 
 @router.patch("/{kit_id}", response_model=KitRead)

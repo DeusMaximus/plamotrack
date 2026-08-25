@@ -28,6 +28,7 @@ import type {
   ToolUpdate,
   Upgrade,
   UpgradeApplication,
+  UpgradeApplicationDetail,
   UpgradeCreate,
   UpgradeUpdate,
 } from "./types";
@@ -157,6 +158,16 @@ export const api = {
   deleteDisplayItem: (id: string) => request<void>(`/display-items/${id}`, { method: "DELETE" }),
   applyUpgrade: (upgradeId: string, data: { kit_id: string; quantity: number }) =>
     request<UpgradeApplication>(`/upgrades/${upgradeId}/apply`, post(data)),
+  /** The applications recorded on one kit, oldest first (#61). */
+  listKitApplications: (kitId: string) =>
+    request<UpgradeApplicationDetail[]>(`/kits/${kitId}/applications`),
+  /** Withdraw an application. `restoreStock` is required — no default anywhere,
+   *  because whether the part physically survived is not inferable (§3.6). */
+  withdrawUpgradeApplication: (upgradeId: string, applicationId: string, restoreStock: boolean) =>
+    request<void>(
+      `/upgrades/${upgradeId}/applications/${applicationId}?restore_stock=${restoreStock}`,
+      { method: "DELETE" },
+    ),
 
   searchCatalog: (q: string) =>
     request<CatalogSearchResult[]>(`/catalog/search?q=${encodeURIComponent(q)}`),

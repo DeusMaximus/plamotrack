@@ -655,6 +655,34 @@ async def test_line_quantity_decrease_blocked_by_an_applied_upgrade(client, reta
     assert len((await client.get("/kits")).json()) == 2  # neither kit removed
 
 
+async def test_line_quantity_decrease_unblocked_after_withdrawal(client, retailer):
+    """The third leg of #61's freeze: the order line (PR #149 review, P3-1).
+
+    `delete_kit` still refuses a spawned kit after withdrawal — `order_item_id`
+    is #37's other guard and does not release — so for a spawned kit the release
+    a withdrawal buys is line reduction. The shared predicate (`kit_progressed`
+    via `has_applied_upgrades`) has nothing left to hold once the applications
+    are gone; this pins that the blocked sibling above actually un-blocks."""
+    order = await make_order(client, retailer, [kit_line(quantity=2)])
+    line = order["items"][0]
+    for kit_id in line["spawned_kit_ids"]:
+        await apply_an_upgrade(client, kit_id)
+
+    reduce = {"items": [kit_line(quantity=1) | {"id": line["id"]}]}
+    assert (await client.patch(f"/orders/{order['id']}", json=reduce)).status_code == 409
+
+    for kit_id in line["spawned_kit_ids"]:
+        (application,) = (await client.get(f"/kits/{kit_id}/applications")).json()
+        resp = await client.delete(
+            f"/upgrades/{application['upgrade_id']}/applications/{application['id']}",
+            params={"restore_stock": False},
+        )
+        assert resp.status_code == 204
+
+    assert (await client.patch(f"/orders/{order['id']}", json=reduce)).status_code == 200
+    assert len((await client.get("/kits")).json()) == 1  # one spawned kit removed
+
+
 async def test_line_removal_blocked_by_an_applied_upgrade(client, retailer):
     consumable = await make_consumable(client)
     order = await make_order(

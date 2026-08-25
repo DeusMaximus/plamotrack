@@ -210,15 +210,15 @@ async def delete_kit(session: AsyncSession, kit_id: uuid.UUID) -> None:
             "purchase record and the collection stay consistent"
         )
     if has_applied_upgrades(kit):
-        # Deliberately a hard stop with no escape hatch offered, because there
-        # isn't one: applications can be recorded but not withdrawn. Saying
-        # "remove the application first" would send someone looking for a route
-        # that does not exist. The same dead end already applies from the upgrade
-        # side, so this is symmetric rather than new.
+        # The application is the record of where upgrade stock went, and deleting
+        # the kit would cascade it away with the stock still counted as spent. The
+        # escape hatch is withdrawal (#61), which asks the question this delete has
+        # no business answering implicitly: whether the stock comes back.
         raise ConflictError(
             f"'{kit.name}' has {len(kit.upgrade_applications)} upgrade(s) applied to it — "
             "that record is what explains the stock they used, so the kit is kept. "
-            "Withdrawing an application isn't supported yet"
+            "Withdraw the application(s) first; each withdrawal asks whether its "
+            "stock returns"
         )
     await session.delete(kit)
     await session.flush()

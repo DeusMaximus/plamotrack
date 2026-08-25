@@ -160,6 +160,12 @@ class UpgradeApplicationRead(BaseModel):
     applied_at: datetime
 
 
+class UpgradeApplicationDetailRead(UpgradeApplicationRead):
+    """An application with its upgrade embedded — what the kit editor lists (#61)."""
+
+    upgrade: UpgradeRead
+
+
 class CatalogSearchResult(BaseModel):
     """Type-tagged row from the cross-table typeahead search (§4)."""
 
