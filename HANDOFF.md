@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-26 — Claude Code (Fable 5) — #104 + #67 closed (PRs #153/#154/#155); 0.2.8 is down to #63
+## 2026-08-26 — Claude Code (Fable 5) — #104 + #67 + #63 closed; v0.2.8-alpha RELEASED (“the dead ends open”)
 
 - **Done:** **#104 — PR #153** (`e295e7e`, review skipped per the #121 precedent,
   owner concurred): the catalog picker closes only when focus genuinely leaves
@@ -79,11 +79,29 @@ Template:
   suites verified from-empty, tables zero after. Harness 199/199 @ 19m06s.
   No dev servers running; stale worktrees `/private/tmp/plamotrack-pr100` and
   `-pr108-main` persist (pre-date these sessions).
-- **Next:** 0.2.8's last open item — the **#63 implementation** (owner decided
-  option 2 on 2026-08-25, recorded on the issue: `delete_order` treats a
-  dangling old `catalog_ref_id` as nothing-to-reverse, logged; everything else
-  stays strict; design.md reasoning lands with it). Then the 0.2.8 gate.
-  #137/#144 await product calls; #122 rides M6.5. LXC: back up before pulling.
+- **Released: v0.2.8-alpha** at tag `ee2355d` ("the dead ends open"),
+  `--prerelease`, notes owner-approved; milestone closed at the tag. Gate ran
+  clean: both surfaces 0.2.8, packaged stack four-healthy, migrate Exited (0),
+  container-exported manifest carries app_version 0.2.8 + schema
+  `2c97a5ced66a`; dev overlay restored. **No migrations in this release.**
+  **Also this session: #63 — PR #156** (`ec311c1`, Codex GO + 2 P3s, both
+  evidence gaps, fixed `2a3e2a5`): `_adjust_ref` gains keyword-only
+  `missing_ok`, set ONLY by `delete_order` — a dangling reversal is skipped
+  and logged where the entry is being undone wholesale; receive/retarget/line
+  removal stay strict, their 409 naming the delete-and-re-enter escape. P3-1:
+  my negative control died on main at the logger monkeypatch, not the
+  behavioural assert — patch the logger OBJECT with raising=False; P3-2: the
+  line-removal boundary was unpinned — test + d63-5 added. **Fold-in PR #157**
+  (`a6a0e16`): 5 `d63-` tuples, TEST_FILES + test_integrity.py, harness
+  **204/204 @ 21m21s**. Bump **PR #158** (`ee2355d`). Suite-count note: the
+  session conftest's alembic fileConfig DISABLES pre-imported app loggers —
+  caplog cannot see app-module records anywhere in this suite (measured;
+  production unaffected; recorded in PR #156 deliberate call 3).
+- **Next:** 0.2.8 done — the backlog ahead is **M5.1** (settings +
+  i18n foundation; the #54 harness now exists for its settings migration) or
+  owner's pick. #137/#144 await product calls; #122 rides M6.5. Codex carried
+  every round this session (Cursor rate-limited) — check its meter. LXC:
+  **back up the LXC database before pulling the release** (real collection).
 
 ## 2026-08-25 — Claude Code (Fable 5) — 0.2.8 underway: #53 + #61 + #54 closed (PRs #148–#152), #63 decided
 
