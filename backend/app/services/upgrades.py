@@ -1,10 +1,13 @@
 import uuid
+from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import Kit, Upgrade, UpgradeApplication
-from app.services.catalog import lock_catalog_row
+from app.services.catalog import guard_stock_ceiling, lock_catalog_row
 from app.services.numeric import require_int4
 from app.services.write_gate import acquire_write_gate
 
@@ -55,3 +58,92 @@ async def apply_upgrade(
     await session.flush()
     await session.commit()
     return application
+
+
+async def list_kit_applications(
+    session: AsyncSession, kit_id: uuid.UUID
+) -> list[UpgradeApplication]:
+    """The upgrade applications on one kit, upgrade rows eager-loaded, oldest first.
+
+    The read side of withdrawal (#61): before this existed nothing exposed a kit's
+    applications, so the guards that referenced them pointed at records the caller
+    could not see. REST serves it at GET /kits/{id}/applications; the MCP get_kit
+    embeds it — one loader for both (rule 1).
+    """
+    kit = await session.get(Kit, kit_id)
+    if kit is None:
+        raise NotFoundError(f"kit {kit_id} not found")
+    stmt = (
+        select(UpgradeApplication)
+        .where(UpgradeApplication.kit_id == kit_id)
+        .options(selectinload(UpgradeApplication.upgrade))
+        .order_by(UpgradeApplication.applied_at, UpgradeApplication.id)
+    )
+    return list((await session.scalars(stmt)).all())
+
+
+@dataclass(frozen=True)
+class UpgradeWithdrawal:
+    """What a withdrawal did — echoed by the MCP tool; REST answers 204 instead."""
+
+    application_id: uuid.UUID
+    upgrade_id: uuid.UUID
+    kit_id: uuid.UUID
+    quantity_used: int
+    stock_restored: bool
+    quantity_on_hand: int
+
+
+async def withdraw_upgrade_application(
+    session: AsyncSession,
+    application_id: uuid.UUID,
+    *,
+    restore_stock: bool,
+    upgrade_id: uuid.UUID | None = None,
+) -> UpgradeWithdrawal:
+    """Remove a recorded application; the caller states whether stock returns (§3.6, #61).
+
+    `restore_stock` is required and has no default on any surface, deliberately:
+    whether the part goes back into stock is a fact about the physical world —
+    recorded against the wrong kit means it never left the box; a decal torn on
+    the way down is destroyed — and nothing stored can infer it. Whichever default
+    we picked would be silently wrong half the time, so the caller says.
+
+    A withdrawal removes the whole application: it is one event, not a running
+    balance, so restoring returns all of `quantity_used`. A restore that would
+    push stock past what the column holds is refused (the stored state refusing,
+    #74) and the application stays.
+
+    `upgrade_id`, when given, is the REST route's pairing check — the application
+    must belong to that upgrade or the URL named a row that isn't there (404).
+    """
+    await acquire_write_gate(session)
+    application = await session.get(UpgradeApplication, application_id)
+    if application is None:
+        raise NotFoundError(f"upgrade application {application_id} not found")
+    if upgrade_id is not None and application.upgrade_id != upgrade_id:
+        raise NotFoundError(f"application {application_id} does not belong to upgrade {upgrade_id}")
+    # Same lock, same ordering, as apply_upgrade: the catalog row serializes every
+    # stock writer (rule 7), and it is taken whether or not stock moves so the two
+    # withdrawal flavours hold identical ground against a concurrent apply/delete.
+    upgrade = await lock_catalog_row(session, Upgrade, application.upgrade_id)
+    if upgrade is None:
+        # Unreachable while delete_catalog_item refuses applied upgrades and the FK
+        # cascades — kept so this function refuses rather than shrugs if that changes.
+        raise NotFoundError(f"upgrade {application.upgrade_id} not found")
+    if restore_stock:
+        upgrade.quantity_on_hand = guard_stock_ceiling(
+            upgrade.name, upgrade.quantity_on_hand + application.quantity_used
+        )
+    result = UpgradeWithdrawal(
+        application_id=application.id,
+        upgrade_id=upgrade.id,
+        kit_id=application.kit_id,
+        quantity_used=application.quantity_used,
+        stock_restored=restore_stock,
+        quantity_on_hand=upgrade.quantity_on_hand,
+    )
+    await session.delete(application)
+    await session.flush()
+    await session.commit()
+    return result

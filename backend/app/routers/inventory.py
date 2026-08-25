@@ -114,6 +114,22 @@ async def apply_upgrade(
     return await upgrades_service.apply_upgrade(session, upgrade_id, data.kit_id, data.quantity)
 
 
+@router.delete("/upgrades/{upgrade_id}/applications/{application_id}", status_code=204)
+async def withdraw_upgrade_application(
+    upgrade_id: uuid.UUID,
+    application_id: uuid.UUID,
+    restore_stock: bool,
+    session: SessionDep,
+):
+    """Withdraw a recorded application (§3.6, #61). `restore_stock` is required —
+    no default, deliberately: true when the part never actually left the box
+    (wrong kit, mis-click), false when it was consumed or destroyed. plamotrack
+    cannot infer which happened, so the caller states it."""
+    await upgrades_service.withdraw_upgrade_application(
+        session, application_id, restore_stock=restore_stock, upgrade_id=upgrade_id
+    )
+
+
 @router.get("/display-items", response_model=list[DisplayItemRead])
 async def list_display_items(session: SessionDep, category: str | None = None):
     return await catalog_service.list_catalog(session, DisplayItem, category=category)

@@ -321,6 +321,27 @@ Join table: which upgrades have been used on which kits.
 | quantity_used | int | |
 | applied_at | timestamp | |
 
+**Withdrawal (#61, 25/08/2026).** An application can be removed again —
+`DELETE /upgrades/{id}/applications/{application_id}`, or the
+`withdraw_upgrade_application` MCP tool — and the caller states **`restore_stock`**,
+required, with no default on any surface. The question is not "was this a mistake";
+it is whether the part still physically exists, and nothing stored can answer that:
+recorded against the wrong kit means the part never left the box (stock returns),
+while a decal applied and then torn off is destroyed (crediting it back would invent
+inventory that isn't in the room). Both are ordinary. *Always restore* and *never
+restore* were each rejected for being silently wrong in one of those halves; a
+default was rejected because the caller who didn't think about it is exactly the
+caller who gets it wrong — a required field forces the judgement at the one moment
+the answer is known, on the MCP surface too, where an agent must not be allowed to
+guess. A withdrawal removes the whole application (it is one event, not a running
+balance), so restoring returns all of `quantity_used`; a restore that would overflow
+the stock column is refused with the application intact (the #74 family). Withdrawal
+is also what releases the two guards that reference applications — the kit delete
+(#37) and the upgrade delete — which until #61 were permanent freezes: one mis-click
+while applying froze the kit, its order line, and the upgrade for good. The read
+side, `GET /kits/{id}/applications` (embedded in the MCP `get_kit`), exists for the
+same reason — the guards pointed at records no surface could show.
+
 ### 3.7 `retailers`
 
 | Field | Type | Notes |
@@ -533,6 +554,10 @@ Standard CRUD plus a few purpose-built endpoints.
   form typeaheads (#127, the `/kits/series` shape)
 - `POST /upgrades/{id}/apply` — body: kit_id, quantity → creates an
   `upgrade_applications` row, decrements stock
+- `DELETE /upgrades/{id}/applications/{application_id}?restore_stock=` — withdraws the
+  application; `restore_stock` is required (422 when omitted) and states whether the
+  part physically returns to stock (§3.6). `GET /kits/{id}/applications` lists a
+  kit's applications, upgrade embedded, oldest first
 - `GET/POST /retailers`, `PATCH/DELETE /retailers/{id}` — delete blocked when the
   retailer has orders
 - `GET/POST /orders`, `GET /orders/{id}` — POST body includes nested order items; the
@@ -737,7 +762,8 @@ is `/mcp/` on the API port (streamable HTTP).
 - `list_kit_series()` — the series spellings in use, most frequent first; the
   select-or-create device for a free-text column (#96) — agents check it before
   writing a spelling nobody uses
-- `get_kit(id)`
+- `get_kit(id)` — embeds the kit's upgrade applications (id, upgrade name,
+  quantity, date), which is where withdrawal gets its application ids (§3.6)
 - `update_kit_status(id, status)` — the status-only shortcut for `update_kit`, kept
   because moving a card is the frequent case and removing a tool a client may already
   call is a visible break
@@ -801,6 +827,10 @@ is `/mcp/` on the API port (streamable HTTP).
   in_transit, stamped the same way; applies no stock (#95)
 - `adjust_stock(catalog_id, delta, reason?)`
 - `apply_upgrade(upgrade_id, kit_id, quantity)`
+- `withdraw_upgrade_application(application_id, restore_stock)` — the undo of
+  apply_upgrade; the required `restore_stock` states whether the part physically
+  survived (§3.6), and the docstring tells an agent to ask rather than guess.
+  Application ids come from `get_kit`, which embeds a kit's applications
 
 Status arguments are normalised for agents ("In Transit" → `in_transit`), including
 aliases for the retired `in_hand` vocabulary, because an agent's idea of the status

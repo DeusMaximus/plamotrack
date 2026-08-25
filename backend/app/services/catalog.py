@@ -414,7 +414,8 @@ async def delete_catalog_item(
         if applications:
             raise ConflictError(
                 f"'{row.name}' has been applied to {applications} kit(s) — "
-                "build history is kept, so it cannot be deleted"
+                "build history is kept, so it cannot be deleted. Withdraw the "
+                "applications first if they are wrongly recorded"
             )
     await session.delete(row)
     await session.flush()

@@ -3,7 +3,13 @@ import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 
 import { api, ApiError } from "../api/client";
-import type { Kit, KitCreate, KitStatus, KitUpdate } from "../api/types";
+import type {
+  Kit,
+  KitCreate,
+  KitStatus,
+  KitUpdate,
+  UpgradeApplicationDetail,
+} from "../api/types";
 import { KIT_STATUSES } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
@@ -192,6 +198,7 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
         <Field label="Build notes">
           <Textarea {...register("build_notes")} placeholder="Nub cleanup, panel lining…" />
         </Field>
+        {kit && <AppliedUpgradesSection kitId={kit.id} />}
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="secondary" onClick={onClose}>
             Cancel
@@ -202,6 +209,113 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
         </div>
       </form>
     </Modal>
+  );
+}
+
+/** The upgrade applications on this kit, each with its withdrawal control (#61).
+ *
+ * Withdrawing asks whether the stock returns as two equal-weight buttons rather
+ * than a pre-ticked box: whether the part physically survived is a fact
+ * plamotrack cannot know, and a default would be silently wrong half the time
+ * (§3.6). Every button is type="button" — this renders inside the edit form.
+ */
+function AppliedUpgradesSection({ kitId }: { kitId: string }) {
+  const queryClient = useQueryClient();
+  const [error, setError] = useState<string | null>(null);
+  const [withdrawing, setWithdrawing] = useState<UpgradeApplicationDetail | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  // staleTime 0 for the same reason as the series typeahead: an MCP agent can
+  // apply or withdraw between two opens of this dialog.
+  const { data: applications } = useQuery({
+    queryKey: ["kit-applications", kitId],
+    queryFn: () => api.listKitApplications(kitId),
+    staleTime: 0,
+  });
+
+  if (!applications || applications.length === 0) return null;
+
+  const withdraw = async (restoreStock: boolean) => {
+    if (!withdrawing) return;
+    setSubmitting(true);
+    try {
+      await api.withdrawUpgradeApplication(withdrawing.upgrade_id, withdrawing.id, restoreStock);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["kit-applications", kitId] }),
+        queryClient.invalidateQueries({ queryKey: ["upgrades"] }),
+      ]);
+      setWithdrawing(null);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Withdrawal failed");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2 rounded-md border border-zinc-200 p-3">
+      <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        Applied upgrades
+      </div>
+      <ErrorBanner message={error} />
+      <ul className="space-y-1">
+        {applications.map((application) => (
+          <li key={application.id} className="flex items-center justify-between gap-2 text-sm">
+            <span>
+              {application.upgrade.name}
+              {application.quantity_used > 1 && ` ×${application.quantity_used}`}
+              <span className="text-xs text-zinc-400"> · {formatDate(application.applied_at)}</span>
+            </span>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => {
+                setWithdrawing(application);
+                setError(null);
+              }}
+            >
+              Withdraw…
+            </Button>
+          </li>
+        ))}
+      </ul>
+      {withdrawing && (
+        <div className="space-y-2 rounded-md bg-zinc-50 p-2 text-sm">
+          <p>
+            Withdraw “{withdrawing.upgrade.name}”
+            {withdrawing.quantity_used > 1 ? ` (×${withdrawing.quantity_used})` : ""}? Choose
+            whether the stock comes back: only if the part physically survived — one that was
+            used or damaged is gone either way.
+          </p>
+          <div className="flex flex-wrap justify-end gap-2">
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setWithdrawing(null)}
+              disabled={submitting}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              onClick={() => withdraw(false)}
+              disabled={submitting}
+            >
+              Withdraw — stock stays spent
+            </Button>
+            <Button
+              type="button"
+              variant="danger"
+              onClick={() => withdraw(true)}
+              disabled={submitting}
+            >
+              Withdraw — return to stock
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

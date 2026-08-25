@@ -142,6 +142,11 @@ export interface UpgradeApplication {
   applied_at: string;
 }
 
+/** An application with its upgrade embedded — what the kit editor lists (#61). */
+export interface UpgradeApplicationDetail extends UpgradeApplication {
+  upgrade: Upgrade;
+}
+
 export interface CatalogSearchResult {
   item_type: CatalogItemType;
   id: string;

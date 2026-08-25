@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, UUIDPrimaryKeyMixin
 
@@ -109,5 +109,9 @@ class UpgradeApplication(UUIDPrimaryKeyMixin, Base):
     kit_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("kits.id", ondelete="CASCADE"), index=True)
     quantity_used: Mapped[int]
     applied_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    # Read-only convenience for the surfaces that list a kit's applications (#61);
+    # writes go through the id column, and the CASCADE lives on the FK, not here.
+    upgrade: Mapped["Upgrade"] = relationship(viewonly=True)
 
     __table_args__ = (CheckConstraint("quantity_used > 0", name="quantity_used_positive"),)

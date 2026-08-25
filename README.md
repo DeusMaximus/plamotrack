@@ -283,6 +283,7 @@ issue if yours needs something unusual.
 | `mark_order_shipped` | Moves that order's waiting kits to in-transit — with an optional ship date, for shipping notifications logged after the fact; never touches stock |
 | `adjust_stock` | Nudge a quantity, with a reason |
 | `apply_upgrade` | Record an upgrade part going onto a kit |
+| `withdraw_upgrade_application` | Undo an application — you say whether the part goes back into stock |
 
 Import and export deliberately have **no** MCP tools. An agent that can silently replace
 your entire collection is not a feature.
