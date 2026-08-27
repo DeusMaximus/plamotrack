@@ -32,6 +32,53 @@ then read the entry that matched.
 Template:
 
 ```markdown
+## 2026-08-27 — Claude Code (Fable 5) — M5.1 opened: #23 implemented, PR #159 awaiting review
+
+- **Done:** **#23 — PR #159 open** (`feat/23-instance-settings`, head `18cfc45`,
+  ~1,555 insertions — Codex-sized). The `instance_settings` singleton: model
+  (int PK, CHECK id=1; DateStyle/HourCycle text enums on the Intl vocabularies),
+  migration `f9979ec7b9cb` seeding en-AU/en-AU/UTC/locale/locale plus the
+  env-configured REFERENCE_CURRENCY (bootstrap-only from here on),
+  `services/instance_settings.py` (gate → FOR UPDATE → per-field validation;
+  validators are ValueError-raising module functions the CSV spec parsers
+  share), `GET/PATCH /settings`, DB-backed `/meta` (both wrappers async now).
+  Every `get_settings().reference_currency` read site rewired: orders snapshots
+  (reference threaded per mutation), MCP create_order, the importer's
+  `_default_money_currency` (read ONCE in `plan_import` before parsing,
+  hash-bound), the starter sheet (examples + expansion take the value).
+  Portability: `TableSpec.singleton` — exported, update-only on import, outside
+  `_PORTABLE_TABLES`, excluded from replace_all's rows_deleted, absent sheet =
+  untouched, a second row dies on the target claim. conftest RESETS (never
+  truncates) the row between tests. `tzdata` dependency added. Frontend: client
+  types + getSettings/updateSettings, DataPage export row, `matched_id` widened
+  (the singleton matches by the int 1). Docs: design §3.10 + §6.1,
+  import-export.md ("the one exception"), operations.md ("Bootstrap vs
+  runtime"), .env.example, README's M5.1 row.
+- **Decisions (deliberate calls, the full numbered list is in the PR body):**
+  UTC constant tz bootstrap; interface language membership-tested vs formatting
+  locale shape-only; BCP 47 extension subtags refused; no id column in
+  settings.csv; replace_all updates rather than resets; **no new MCP tools**
+  (get_meta stays the MCP read surface — revisit at #24/#27); enum membership
+  left to pydantic/enum_parser rather than a third list.
+- **State:** backend **1152** green, vitest 109, e2e 30 (+1 skipped
+  screenshots) verified from-empty and self-cleaning, ruff/build/oxlint clean;
+  CI pending on the PR at hand-off time. **Scratch harness 18/18 killed**
+  (`stg-` — `iset-` was rejected: `-k iset` substring-matches cat-22's
+  "multiset"); tuples in the PR body and untracked
+  `backend/mutation_scratch_23.py`; the fold-in owes TEST_FILES +
+  test_settings.py, test_settings_portability.py, test_reference_currency.py.
+  test_reference_currency's env fixture split in two: `bootstrap_currency`
+  (monkeypatch, the two config tests) vs the row-writing, awaited
+  `reference_currency`. No dev servers running; stale worktrees
+  `/private/tmp/plamotrack-pr100` and `-pr108-main` persist (pre-date this).
+- **Next:** owner pastes the **Codex brief** (printed in the session chat;
+  backup at the session scratchpad as `codex-brief-23.md`) — **check Codex's
+  meter first**; Cursor was rate-limited on 26/08 and this PR is past its
+  ceiling anyway. After merge: the stg- fold-in branch (the #117 shape), then
+  the rest of M5.1 — #24 (Settings page; the client methods already exist),
+  #22/#25/#26/#27, #114. LXC is still pre-0.2.8: **back up the LXC database
+  before pulling** (real collection).
+
 ## YYYY-MM-DD — <agent> — <short title>
 - **Done:**
 - **Decisions:**
@@ -259,110 +306,3 @@ Template:
   0.2.7 is empty, so **do not run the release gate**. #112 merged means the
   real-collection starter import is unblocked — **back up the LXC before pulling
   `main`**. #122 rides M6.5.
-
-## 2026-08-24 — Claude Code (Fable 5) — #98 + #127 + #99 closed: PR #130 merged as `dfa87f3` after three Codex rounds; upgrades `category` decided-no
-
-- **Done:** **#98 + #127 in one branch — PR #130** (`feat/98-127-catalog-create-list`,
-  head `019f8dd`, **CI green all three jobs**; no migration) — the piece the previous
-  entry named. MCP gains `create_kit`, `create_catalog_{tool,consumable,upgrade,display}`,
-  `list_catalog_items(item_type, category?)` and `list_catalog_categories(item_type)`,
-  all thin over existing services (`test_mcp.py`'s `EXPECTED_TOOLS` pin extended — it
-  caught them, as designed). `services/catalog.py` gains `canonical_category` (a
-  category matching an existing one case-insensitively is stored under that spelling;
-  most-frequent wins, ties `COLLATE "C"`, own row excluded on update), wired into the
-  create, the PATCH, and orders' `_build_catalog_row` (rule 1: three live writers);
-  `list_catalog` grew a folded-equality category filter; `list_catalog_categories` is
-  the #96 shape. REST: `?category=` + `GET .../categories` on the three categorised
-  tables. Frontend: datalist typeaheads (Inventory forms + CatalogItemPicker new-mode),
-  client-side per-tab filter. Docs: design §3.5/§3.5a/§4/§7, import-export (imports
-  keep category spellings verbatim), README's MCP table — which was also missing
-  `update_kit` and the three retailer tools from #92/#97, backfilled in passing.
-- **Decisions:** **`upgrades` gets NO `category` column** (owner's call, this
-  session; recorded in design §3.5) — the machinery is generic over
-  `"category" in model.__table__.columns`, so the column is the whole cost if
-  revisited. **The importer does not canonicalise categories** (re-import must stay
-  a no-op; pinned by two tests) — the narrower fold-on-create-only variant is
-  flagged to the reviewer as a judged call, not implemented. **Codex for the
-  review** (1,063 insertions is past Cursor's ~1,000 ceiling); brief filled from
-  `.agents/review-brief.md`, saved to the session scratchpad as
-  `codex-brief-pr130.md` for the owner to paste.
-- **State (amended in place after round 1):** **Codex round 1 at `019f8dd`: NO-GO,
-  3×P2 + P3 — all four accepted, reproduced red-first, fixed** (`14406ef`, docs +
-  #99 at `0660980`); reply posted at head `0660980`, CI pending there. P2-1: the
-  `new_item` fold is gated on `CATEGORISED_MODELS` (an upgrade line carrying a
-  category is ignored again, not 500'd). P2-2: one trimmed `btrim` expression across
-  the canonical pick, filter and vocabulary — legacy padding matched, never
-  propagated. P2-3 (Codex overruled the importer exclusion, accepted as prescribed):
-  id-less CREATEs (stubs incl., via `synthetic_id`) fold at **plan time** —
-  hash-bound, announced as a preview message; UPDATEs and id-bearing restores stay
-  verbatim; replace_all folds against the upload's own rows only, verbatim rows
-  seed first so sheet order can't matter. P3-4: `useId` per picker; new
-  `e2e/category-typeahead.spec.ts` asserts each line's *resolved* datalist options
-  (polled — an empty datalist is loading, not the defect). **#99 folded in per the
-  #98 triage note**: `get_meta` serves the same function as `GET /meta`; PR closes
-  line now carries it. Counts: backend **1014**, vitest 109, e2e **24/24 from
-  empty** (Playwright booting its own servers — a run that *reuses* dev servers
-  is NOT from-empty), ruff/build/oxlint clean. Scratch harness **23/23 killed**
-  (14 re-anchored after P2-2 moved code + cat-15..23, one per round-1 fix site);
-  tuples live in untracked `backend/mutation_scratch_127.py`, fold in after merge.
-  Round-1 tests at the reviewed head: 8 red / 2 green (the greens: UPDATE and
-  id-bearing-restore verbatim controls). Dev servers on :8000/:5173, branch code.
-- **Round 2 (amended in place): NO-GO at `0660980` — P2-5 + P3-6, both accepted,
-  fixed at `f2215ff`, reply posted; CI pending there.** P2-5 (second round in
-  `_fold_new_categories` — taken as the invariant signal it is): the fold now
-  builds one **effective post-write multiset** per key — stored rows overlaid by
-  the UPDATEs rewriting them, id-bearing restores voting, winner most-frequent
-  with the byte-order tie-break, `setdefault` gone; sheet order cannot pick a
-  spelling; both Codex reproducers in red-first; mutants cat-24 (overlay off) and
-  cat-25 (first-seen winner) die, cat-21/22 re-anchored — harness **25/25**.
-  P3-6: `get_meta` no longer imports the REST layer — `services/meta.instance_meta`
-  + `schemas/meta.MetaRead`, both wrappers delegate. Backend **1016**.
-- **Round 3 (amended in place): GO, clean, at `f2215ff`** — Codex replayed both
-  round-2 reproducers, shuffled restore row order, probed the omitted-column
-  overlay and stub-fold cells itself, verified `import app.mcp` loads no
-  `app.routers*`, and declared the invariant answered ("constructs the effective
-  post-write multiset before selecting any winner"). **PR #130 squash-merged as
-  `dfa87f3` on the owner's call; #98, #127 and #99 all closed; branch deleted;
-  CI green at every head.** Dev servers on :8000/:5173 serve code identical to
-  the merge.
-- **Also this session (amended in place): agent skills — PR #131 open**
-  (`feat/skills-gunpla`, head `e7e6452`, docs-only). The owner's Gunpla-conventions
-  draft, revised (decals reclassified as Upgrades per repo canon; the nonexistent
-  retailer-currency field replaced with per-order `currency_code` + `get_meta`; a
-  Categories section for the #127 vocabulary; grade advice tied to scale
-  derivation) and packaged as `skills/plamotrack-gunpla/SKILL.md` in the open
-  Agent Skills format, with `skills/README.md` (Claude Desktop install only,
-  others "coming soon" — owner's instruction), a README pointer, and design
-  §7/§9.1 notes (the skill layer recorded as more staying-generic evidence).
-  Review skipped (docs-only, #40 criterion). **Squash-merged as `2b94a41` on the
-  owner's call, branch deleted, CI green.**
-- **Fold-in done (amended in place): PR #132 open** (`test/fold-cat-dsp-mutants`,
-  head `1365ddd`; only `mutation_test.py` + the procedure doc, the #117 shape).
-  #129's 10 `dsp-` + #130's 25 `cat-` tuples folded; TEST_FILES +5
-  (inventory, orders, write_surface_parity, catalog_categories,
-  mcp_catalog_create); dsp anchors pre-checked at `2b94a41` (none moved);
-  **full harness 146/146 killed, 15m38s measured** — the testing-and-review.md
-  runtime line refreshed (was 97/~11min, stale since #118) and the case-count
-  paragraph now names all seven queues. Scratch harness deleted, superseded.
-  Review: rides without a round per #40 (contract untouched, every tuple
-  reviewed in its source PR) — stated in the PR body, owner concurred.
-  **Squash-merged as `41868d9` on the owner's call (merge-on-green), branch
-  deleted, CI green.** No queues remain outstanding — the tracked harness now
-  holds every tuple ever filed.
-- **Reviewer budget (live, 24/08/2026, corrected): Codex has ~99% of its usage
-  budget REMAINING** — a full tank, despite three rounds on #130. No reviewer
-  constraint on the next 0.2.6 fixes; route by size per the procedure table as
-  usual. (An earlier revision of this entry read the number backwards.)
-- **Next:** **the mutant fold-in is now the queued mechanical piece** — 25 `cat-`
-  tuples (in the PR #130 body and the untracked `backend/mutation_scratch_127.py`,
-  which also holds the runner-ready form) plus #129's 10 `dsp-` tuples fold into
-  `mutation_test.py` with TEST_FILES + anchors re-checked (the #117 shape: its own
-  branch + PR). Then the 0.2.6 list (#77, #87, #90, #112, #119) toward the
-  release, or the rest of 0.2.8 (#104/#53/#54/#61/#63/#67 remain).
-  Procedure changed this session (owner's call): review briefs
-  are **printed in the chat in a copyable four-backtick block**, never handed over
-  as a scratchpad path — written into `.agents/review-brief.md` +
-  `testing-and-review.md`. Live and still true: **no v0.2.6 tag ever** — one
-  v0.2.7-alpha only when BOTH 0.2.6 (#77, #87, #90, #112, #119) and 0.2.7 are
-  done; 0.2.7 is empty, so **do not run the release gate**. **#112 before any
-  real-collection starter-sheet import.** #122 rides M6.5.
