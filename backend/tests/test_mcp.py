@@ -81,6 +81,33 @@ async def test_create_order_fans_out_like_rest():
         assert all(k["grade"] == "RG" for k in kits)
 
 
+async def test_an_omitted_currency_reads_the_settings_row(client):
+    # The default the docstring points agents at is the instance-settings row
+    # (#23) — a changed setting must reach the very next tool call, same
+    # process, no restart.
+    await client.patch("/settings", json={"reference_currency": "JPY"})
+    async with Client(mcp) as mcp_client:
+        order = (
+            await mcp_client.call_tool(
+                "create_order",
+                {
+                    "retailer": "Yodobashi",
+                    "order_date": "2026-08-02",
+                    "items": [
+                        {
+                            "item_type": "kit",
+                            "quantity": 1,
+                            "unit_price_minor": 2999,
+                            "currency_code": "JPY",
+                            "kit": {"name": "HG Nightingale", "grade": "HG"},
+                        }
+                    ],
+                },
+            )
+        ).data
+    assert order["currency_code"] == "JPY"
+
+
 async def test_retailer_get_or_create_is_case_insensitive(client):
     async with Client(mcp) as mcp_client:
         for retailer_name in ("Gundam Express Australia", "gundam express australia"):

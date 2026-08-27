@@ -54,6 +54,12 @@ def unstatable_columns() -> list[tuple[str, str]]:
     — the exact set that used to reach `IntegrityError`."""
     found = []
     for table in spec.TABLE_SPECS:
+        if table.singleton:
+            # A singleton is never created by an import (#23) — the planner
+            # updates the row migrations made, or errors — so the create half of
+            # this contract has no path to it, and a blank cell lands on the
+            # keep-stored rule like any other update.
+            continue
         for column in table.columns:
             if column.name == "id" or not column.persisted or column.required:
                 continue

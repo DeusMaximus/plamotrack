@@ -35,6 +35,7 @@ from app.models import (
     Base,
     Consumable,
     DisplayItem,
+    InstanceSettings,
     Kit,
     KitPhoto,
     Order,
@@ -45,11 +46,19 @@ from app.models import (
     UpgradeApplication,
 )
 from app.models.enums import (
+    DateStyle,
+    HourCycle,
     ItemType,
     KitStatus,
     PackingQuality,
     ShippingSpeed,
     WouldOrderAgain,
+)
+from app.services.currency import require_currency_code
+from app.services.instance_settings import (
+    validate_formatting_locale,
+    validate_interface_language,
+    validate_time_zone,
 )
 from app.services.numeric import require_int4, strip_numeric_grouping
 
@@ -162,12 +171,15 @@ def parse_datetime(raw: str) -> datetime | None:
 
 
 def parse_currency(raw: str) -> str | None:
-    value = raw.strip().upper()
+    value = raw.strip()
     if not value:
         return None
-    if len(value) != 3 or not value.isalpha():
-        raise ValueError(f"'{raw}' is not a 3-letter ISO 4217 currency code")
-    return value
+    # The same ASCII shape test PATCH /settings applies. This used `isalpha()`,
+    # which is Unicode-wide, so 'ÅUD' imported cleanly while REST refused it
+    # (PR #159 review, P2). Still its own function rather than the predicate
+    # directly, because `_warn_unknown_currency` finds currency columns by this
+    # function's identity.
+    return require_currency_code(value)
 
 
 def enum_parser(enum_cls: type[StrEnum], *, aliases: dict[str, str] | None = None) -> Callable:
@@ -263,6 +275,20 @@ class ColumnSpec:
         return not self.is_alternate and not self.virtual
 
 
+def setting_parser(validate: Callable[[str], str]) -> Callable[[str], str | None]:
+    """Blank stays None (the generic keep-stored path answers it); anything else
+    goes through the same canonicaliser `PATCH /settings` uses, so the importer
+    cannot land a value the service would refuse (rule 1: shared predicates)."""
+
+    def _parse(raw: str) -> str | None:
+        value = raw.strip()
+        if not value:
+            return None
+        return validate(value)
+
+    return _parse
+
+
 def col(
     name: str,
     parse: Callable[[str], Any],
@@ -321,6 +347,10 @@ class TableSpec:
     money_pairs: tuple[tuple[str, str], ...] = ()
     #: Handled by dedicated importer logic rather than the generic row path.
     special: bool = False
+    #: Exactly one row exists, created by migration, never by import (#23). The
+    #: planner only ever UPDATEs it — a replace_all neither truncates it nor counts
+    #: it deleted, and an absent sheet leaves it untouched in every mode.
+    singleton: bool = False
     description: str = ""
     _by_name: dict[str, ColumnSpec] = field(default_factory=dict, compare=False, repr=False)
 
@@ -422,6 +452,52 @@ _MONEY_HELP = (
 # same aliases app/mcp.py extends, so a status spelled "In Hand" imports cleanly.
 _KIT_STATUS_PARSER = enum_parser(
     KitStatus, aliases={"in hand": "backlog", "in_hand": "backlog", "arrived": "backlog"}
+)
+
+INSTANCE_SETTINGS = TableSpec(
+    key="instance_settings",
+    model=InstanceSettings,
+    description=(
+        "The one instance-settings row (§6.1): language, region, time zone and "
+        "reference currency. An import can only update it — never add, remove, or "
+        "replace it — and a file that leaves it out leaves it alone."
+    ),
+    singleton=True,
+    columns=(
+        # No id column: there is exactly one row and the constant natural key below
+        # always finds it, so an id would only be something to get wrong.
+        col(
+            "interface_language",
+            setting_parser(validate_interface_language),
+            help="BCP 47 tag of a language this build ships. Currently: en-AU.",
+        ),
+        col(
+            "formatting_locale",
+            setting_parser(validate_formatting_locale),
+            help="BCP 47 tag driving date/number presentation, e.g. en-AU or ja-JP.",
+        ),
+        col(
+            "time_zone",
+            setting_parser(validate_time_zone),
+            help="IANA zone name, e.g. Australia/Sydney or UTC.",
+        ),
+        col("date_style", enum_parser(DateStyle), help="locale / short / medium / long / full"),
+        col("hour_cycle", enum_parser(HourCycle), help="locale / h12 / h23"),
+        # `parse_currency`, not the service validator: the two enforce the same
+        # three-letter shape, and the identity check in `_warn_unknown_currency`
+        # keys on this exact function — so an unrecognised code gets the same
+        # spoken warning here that it gets on every other currency column.
+        col(
+            "reference_currency",
+            parse_currency,
+            help=(
+                "Default currency for new entries (§6). Changing it never restates "
+                "amounts already stored."
+            ),
+        ),
+    ),
+    label=lambda row: "instance settings",
+    natural_key=lambda row: ("instance_settings",),
 )
 
 RETAILERS = TableSpec(
@@ -761,8 +837,10 @@ KIT_PHOTOS = TableSpec(
 )
 
 #: Declaration order IS import order — it follows the FK graph (kits after
-#: order_items for the provenance FK, applications and photos last).
+#: order_items for the provenance FK, applications and photos last). The settings
+#: singleton has no FK edges and goes first: instance identity before data.
 TABLE_SPECS: tuple[TableSpec, ...] = (
+    INSTANCE_SETTINGS,
     RETAILERS,
     TOOLS,
     CONSUMABLES,

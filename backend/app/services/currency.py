@@ -18,6 +18,7 @@ well want forint shown without decimals. That is a formatting choice layered on 
 of a stored amount, not a change to what the stored integer counts.
 """
 
+import re
 from decimal import Decimal
 
 from app.services.numeric import is_lone_group, strip_numeric_grouping
@@ -85,6 +86,27 @@ KNOWN_CURRENCIES = frozenset(
         "XDR", "XOF", "XPF", "XSU", "YER", "ZAR", "ZMW", "ZWG", "ZWL",
     }
 )  # fmt: skip
+
+
+#: ASCII on purpose — `[A-Za-z]` in `re`, never `str.isalpha()`, which is
+#: Unicode-wide: 'ÅUD' is three "letters" to isalpha and no currency to ISO 4217.
+_CODE_SHAPE = re.compile(r"[A-Za-z]{3}")
+
+
+def require_currency_code(raw: str) -> str:
+    """Three ASCII letters, uppercased — the §6 shape, or a ValueError naming it.
+
+    The one shape test every writer shares. It lives here because the CSV
+    importer once judged "three letters" with `isalpha()` while `PATCH /settings`
+    used an ASCII regex, and the code the REST surface refused imported cleanly
+    and was stamped into new conversion snapshots (PR #159 review, P2).
+    Deliberately not a membership test against KNOWN_CURRENCIES — see that set's
+    note on why an unrecognised code is accepted everywhere.
+    """
+    value = raw.strip()
+    if not _CODE_SHAPE.fullmatch(value):
+        raise ValueError(f"'{raw}' is not a 3-letter ISO 4217 currency code")
+    return value.upper()
 
 
 def normalise_code(currency_code: str | None) -> str:

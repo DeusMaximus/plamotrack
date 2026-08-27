@@ -25,7 +25,6 @@ import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
 
-from app.config import get_settings
 from app.exceptions import InvalidInputError
 from app.models.enums import KitStatus
 from app.services.orders import initial_kit_status, require_line_quantity
@@ -168,9 +167,11 @@ _STARTER_SHEET_EXAMPLES: list[dict[str, str]] = [
 ]
 
 
-def starter_sheet_examples() -> list[dict[str, str]]:
-    """Sample rows for the downloadable template, in this instance's currency."""
-    currency = get_settings().reference_currency
+def starter_sheet_examples(reference_currency: str) -> list[dict[str, str]]:
+    """Sample rows for the downloadable template, in this instance's currency —
+    the caller reads it from the settings row (#23) and passes it down, because
+    everything in this module is sync and sessionless by design."""
+    currency = reference_currency
     return [
         {name: (currency if value == _INSTANCE_CURRENCY else value) for name, value in row.items()}
         for row in _STARTER_SHEET_EXAMPLES
@@ -297,6 +298,7 @@ def expand(
     rows: list[dict[str, str]],
     *,
     row_budget: int,
+    reference_currency: str,
 ) -> tuple[dict[str, list[dict[str, str]]], list[str]]:
     """Flat sheet rows -> normalized {table_key: [row, ...]}, plus what wouldn't go.
 
@@ -346,9 +348,7 @@ def expand(
     for row in rows:
         source_row = row.get(_ROW_MARKER, "")
         retailer_name = (row.get("retailer") or "").strip()
-        currency = (row.get("currency") or "").strip().upper() or (
-            get_settings().reference_currency
-        )
+        currency = (row.get("currency") or "").strip().upper() or reference_currency
         quantity = (row.get("quantity") or "").strip() or "1"
         status = (row.get("status") or "").strip()
 

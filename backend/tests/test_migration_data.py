@@ -38,6 +38,7 @@ CONVERTED_SNAPSHOT = "2b293c6fd496"
 TOOL_COST_CURRENCY = "24ee4c9024e4"
 SHIPPED_AT = "bcdb375e32d0"
 DISPLAY_ITEMS = "2c97a5ced66a"
+INSTANCE_SETTINGS = "f9979ec7b9cb"
 
 
 def db(sql: str, **params) -> list[tuple]:
@@ -264,12 +265,12 @@ def test_restore_head_reraises_when_the_test_body_gave_no_signal(monkeypatch):
 
     with pytest.raises(RuntimeError, match="data-conditional failure"):
         _restore_head(cfg, body_failed=False)
-    assert current_revision() == DISPLAY_ITEMS  # recovered before re-raising
+    assert current_revision() == INSTANCE_SETTINGS  # recovered to head before re-raising
     assert calls["n"] == 2  # the rebuild really ran
 
     calls["n"] = 0
     _restore_head(cfg, body_failed=True)  # primary signal exists: swallow
-    assert current_revision() == DISPLAY_ITEMS
+    assert current_revision() == INSTANCE_SETTINGS
     assert calls["n"] == 2
 
 
@@ -433,7 +434,9 @@ def test_display_downgrade_refuses_until_no_display_data_in_any_form(walk):
     )
     with pytest.raises(RuntimeError, match=r"1 display item\(s\)"):
         walk.down(SHIPPED_AT)
-    assert current_revision() == DISPLAY_ITEMS  # transactional: nothing moved
+    # Transactional: nothing moved — including the instance_settings drop that
+    # sits between head and the refusing revision, rolled back with the rest.
+    assert current_revision() == INSTANCE_SETTINGS
     assert db("SELECT count(*) FROM display_items") == [(1,)]
 
     # An order line, with the row also present: the message must put the line
@@ -471,3 +474,47 @@ def test_display_downgrade_refuses_until_no_display_data_in_any_form(walk):
             l=uuid.uuid4(),
             o=order_id,
         )
+
+
+# --- f9979ec7b9cb: instance settings singleton (#23) -----------------------------
+
+
+@pytest.fixture
+def bootstrap_currency_jpy(monkeypatch):
+    """The seed's one environment input, pinned to something the host .env is
+    not — the point under test is that an installation's configured currency
+    survives the upgrade, so the pin has to differ from the AUD default."""
+    monkeypatch.setenv("REFERENCE_CURRENCY", "JPY")
+    config.get_settings.cache_clear()
+    yield
+    config.get_settings.cache_clear()
+
+
+def test_instance_settings_seeds_one_env_configured_row(bootstrap_currency_jpy, walk):
+    """Upgrade creates the table with exactly one row: documented defaults plus
+    the env-configured reference currency (the compatibility promise — an
+    installation that set REFERENCE_CURRENCY keeps its default). Downgrade drops
+    the table whole; the env var resumes its pre-#23 role on the old code."""
+    walk.down(DISPLAY_ITEMS)
+    assert not table_exists("instance_settings")
+
+    walk.up(INSTANCE_SETTINGS)
+    assert db(
+        "SELECT id, interface_language, formatting_locale, time_zone, date_style, "
+        "hour_cycle, reference_currency FROM instance_settings"
+    ) == [(1, "en-AU", "en-AU", "UTC", "locale", "locale", "JPY")]
+    # The CHECK holds the table to its one row — a second is a constraint
+    # violation, not a divergent set of preferences.
+    with pytest.raises(IntegrityError, match="ck_instance_settings_singleton"):
+        db(
+            "INSERT INTO instance_settings (id, interface_language, formatting_locale, "
+            "time_zone, date_style, hour_cycle, reference_currency) "
+            "VALUES (2, 'en-AU', 'en-AU', 'UTC', 'locale', 'locale', 'AUD')"
+        )
+
+    # Settings the post-upgrade app could hold; the downgrade loses them, which
+    # the migration docstring discloses rather than guesses around.
+    db("UPDATE instance_settings SET time_zone = 'Australia/Sydney'")
+
+    walk.down(DISPLAY_ITEMS)
+    assert not table_exists("instance_settings")

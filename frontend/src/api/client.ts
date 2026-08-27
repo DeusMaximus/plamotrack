@@ -9,6 +9,8 @@ import type {
   ImportMode,
   ImportPlan,
   ImportResult,
+  InstanceSettings,
+  InstanceSettingsUpdate,
   Kit,
   KitCreate,
   KitStatus,
@@ -185,6 +187,10 @@ export const api = {
   deleteRetailer: (id: string) => request<void>(`/retailers/${id}`, { method: "DELETE" }),
 
   getMeta: () => request<Meta>("/meta"),
+
+  getSettings: () => request<InstanceSettings>("/settings"),
+  updateSettings: (data: InstanceSettingsUpdate) =>
+    request<InstanceSettings>("/settings", patch(data)),
 
   listOrders: () => request<Order[]>("/orders"),
   /** One order, fresh — what the editor hydrates from (#67): the list is a

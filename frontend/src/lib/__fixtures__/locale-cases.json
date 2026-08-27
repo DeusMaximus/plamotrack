@@ -1,0 +1,32 @@
+{
+  "note": "Cross-layer formatting-locale cases (#23; PR #159 review, P3-2). Read by backend/tests/test_settings.py AND frontend/src/lib/locale-cases.test.ts, so a tag the backend stores that the browser's Intl formatter then throws on fails a test instead of reaching the Settings page. The backend asserts canonical_locale agrees with `canonical`; the frontend asserts Intl.getCanonicalLocales accepts every accepted input (producing the same canonical form) and throws on everything refused_everywhere. refused_by_policy is valid to Intl but deliberately refused by plamotrack — extension/private-use subtags would smuggle in a second hour-cycle or calendar — so the frontend only asserts those don't throw. `why` is for the reader; nothing asserts on it.",
+  "accepted": [
+    { "input": "en-AU", "canonical": "en-AU", "why": "the instance default" },
+    { "input": "EN-au", "canonical": "en-AU", "why": "casing is canonicalised, not stored as typed" },
+    { "input": "ja", "canonical": "ja" },
+    { "input": "und", "canonical": "und", "why": "ISO 639's 'undetermined' is a real tag" },
+    { "input": "zh-hans-tw", "canonical": "zh-Hans-TW", "why": "script + region casing" },
+    { "input": "sr-Latn", "canonical": "sr-Latn" },
+    { "input": "es-419", "canonical": "es-419", "why": "three-digit UN M.49 region" },
+    { "input": "de-DE-1901", "canonical": "de-DE-1901", "why": "a digit-led variant" },
+    { "input": "SL-ROZAJ-BISKE", "canonical": "sl-biske-rozaj", "why": "two distinct variants survive, in UTS 35's sorted canonical order — Intl sorts them, so unsorted storage would make one locale two settings" },
+    { "input": "sl-biske-rozaj", "canonical": "sl-biske-rozaj", "why": "the other spelling of the same tag lands on the same canonical form" },
+    { "input": "abcde", "canonical": "abcde", "why": "the 5-8 letter language window is shape-valid to Intl" }
+  ],
+  "refused_everywhere": [
+    { "input": "", "why": "empty" },
+    { "input": "   ", "why": "whitespace only" },
+    { "input": "not a tag!", "why": "not a tag" },
+    { "input": "abcd", "why": "four-letter language subtags are reserved in BCP 47; Intl throws" },
+    { "input": "en-abcde-abcde", "why": "a repeated variant; Intl throws (the review's reproduction)" },
+    { "input": "sl-ROZAJ-rozaj", "why": "variants repeat case-insensitively too" },
+    { "input": "x-pirate", "why": "private-use-only tags name no language" },
+    { "input": "en--AU", "why": "empty subtag" },
+    { "input": "123", "why": "digits are not a language" }
+  ],
+  "refused_by_policy": [
+    { "input": "en-AU-u-hc-h23", "why": "a -u-hc- extension is a second hour_cycle setting" },
+    { "input": "th-TH-u-ca-buddhist", "why": "a -u-ca- extension is a calendar setting this schema doesn't hold" },
+    { "input": "en-x-priv", "why": "private-use suffix carries meaning only its author knows" }
+  ]
+}

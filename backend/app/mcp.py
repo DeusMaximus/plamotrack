@@ -13,7 +13,6 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import __version__
-from app.config import get_settings
 from app.db import session_scope
 from app.exceptions import DomainError
 from app.models import ItemType
@@ -44,6 +43,7 @@ from app.schemas.orders import (
     RetailerUpdate,
 )
 from app.services import catalog as catalog_service
+from app.services import instance_settings as settings_service
 from app.services import kits as kits_service
 from app.services import orders as orders_service
 from app.services import upgrades as upgrades_service
@@ -185,7 +185,8 @@ async def get_meta() -> dict:
     (#99). Read this before omitting currency_code on create_order, so "omit it"
     is a decision about the purchase rather than a guess. The same function
     serves REST's GET /meta, so the two surfaces cannot disagree."""
-    return instance_meta().model_dump(mode="json")
+    async with _tool_session() as session:
+        return (await instance_meta(session)).model_dump(mode="json")
 
 
 @mcp.tool
@@ -500,7 +501,7 @@ async def create_order(
             tracking_number=tracking_number,
             tracking_url=tracking_url,
             shipping_cost_minor=shipping_cost_minor,
-            currency_code=currency_code or get_settings().reference_currency,
+            currency_code=currency_code or await settings_service.reference_currency(session),
             received=received,
             received_at=parsed_received_at,
             shipped_at=parsed_shipped_at,

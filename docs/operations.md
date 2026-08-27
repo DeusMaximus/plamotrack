@@ -144,10 +144,23 @@ the API. `.env.example` documents every key. The ones worth knowing:
 | `POSTGRES_PASSWORD` | — | Required. Only read when the database volume is first created. |
 | `WEB_BIND` | `127.0.0.1` | The interface the stack listens on. Leave it here until M6. |
 | `WEB_PORT` | `8080` | Host port for the UI, `/api`, and `/mcp`. |
-| `REFERENCE_CURRENCY` | `AUD` | Your currency. Changing it affects new entries only — stored snapshots keep the currency they were recorded in. |
+| `REFERENCE_CURRENCY` | `AUD` | Your currency — **first-run bootstrap only**. The migration seeds it into the instance settings; after that the database row is the setting (`PATCH /settings`), and editing the env var does nothing. Changing the setting affects new entries only — stored snapshots keep the currency they were recorded in. |
 | `DATABASE_URL` | — | Set it to use a Postgres you manage yourself; the `POSTGRES_*` values then only configure the bundled `db`. |
 
 Changes to `.env` need `docker compose up -d` to take effect.
+
+### Bootstrap vs runtime settings
+
+Interface language, formatting locale, time zone, date style, hour cycle, and the
+reference currency are **runtime settings**: they live in the database (the
+one-row `instance_settings` table), so every browser and agent sees the same
+values. Read them with `GET /api/settings`, change them with `PATCH /api/settings`
+(the Settings page arrives with M5.1). A fresh install bootstraps them once:
+`en-AU` interface language and formatting locale, `UTC` time zone, locale-default
+date style and hour cycle, and the reference currency from `REFERENCE_CURRENCY`
+in `.env`. After that first migration the env var is inert. The full-archive
+export includes the settings row and a restore updates it in place — details in
+`docs/import-export.md`.
 
 ## Reaching it from another machine
 

@@ -1452,6 +1452,12 @@ def test_every_int4_column_is_declared_with_parse_int(client):
         for column in table.columns:
             if not isinstance(column.type, sa.Integer) or isinstance(column.type, sa.BigInteger):
                 continue
+            if table_spec.singleton and table_spec.column(column.name) is None:
+                # The singleton spec deliberately exposes no id column (#23): its
+                # constant key cannot be stated by a sheet, so no parsed integer
+                # ever reaches it. Any *exposed* singleton int column still owes
+                # parse_int like everything else.
+                continue
             declared = table_spec.column(column.name)
             if declared is not None and declared.parse is spec.parse_int:
                 continue
@@ -2532,7 +2538,7 @@ async def test_archive_structure_is_processed_in_linear_time(client):
     assert len(content) < importing.MAX_UPLOAD_BYTES, "the upload limit would catch it first"
 
     started = time.perf_counter()
-    upload = importing.read_upload("archive.zip", content)
+    upload = importing.read_upload("archive.zip", content, reference_currency="AUD")
     elapsed = time.perf_counter() - started
 
     assert elapsed < _STRUCTURAL_BUDGET_SECONDS, (

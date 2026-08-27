@@ -378,7 +378,8 @@ export interface PlannedRow {
   row_number: number;
   action: RowAction;
   label: string;
-  matched_id: string | null;
+  /** uuid of the matched row; the number 1 for the instance_settings singleton. */
+  matched_id: string | number | null;
   matched_by: string | null;
   changes: FieldChange[];
   messages: string[];
@@ -439,4 +440,31 @@ export interface Meta {
   version: string;
   /** Default currency for new entries; each snapshot stores its own code. */
   reference_currency: string;
+}
+
+/** Intl.DateTimeFormat dateStyle values, plus "locale" = the locale's default. */
+export type DateStyle = "locale" | "short" | "medium" | "long" | "full";
+
+/** Intl.DateTimeFormat hourCycle values in real-world use; "locale" defers. */
+export type HourCycle = "locale" | "h12" | "h23";
+
+/** The instance-settings singleton (§6.1, #23) — one row, shared by every
+ *  browser and agent. Mirrors backend/app/schemas/settings.py. */
+export interface InstanceSettings {
+  interface_language: string;
+  formatting_locale: string;
+  time_zone: string;
+  date_style: DateStyle;
+  hour_cycle: HourCycle;
+  reference_currency: string;
+  updated_at: string;
+}
+
+export interface InstanceSettingsUpdate {
+  interface_language?: string;
+  formatting_locale?: string;
+  time_zone?: string;
+  date_style?: DateStyle;
+  hour_cycle?: HourCycle;
+  reference_currency?: string;
 }
