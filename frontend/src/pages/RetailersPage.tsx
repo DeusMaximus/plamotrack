@@ -83,7 +83,7 @@ function RetailerFormModal({
           <Input {...register("name", { required: t("validation.nameRequired") })} />
         </Field>
         <Field label={t("retailers.url")}>
-          <Input {...register("url")} placeholder={t("retailers.urlPlaceholder")} />
+          <Input {...register("url")} placeholder={t("common.urlPlaceholder")} />
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label={t("retailers.overallRating")} error={errors.rating?.message}>

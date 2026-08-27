@@ -29,6 +29,7 @@ import {
   importTableLabel,
   itemTypeLabel,
   itemTypePlural,
+  itemTypeTitle,
   packingQualityLabel,
   shippingSpeedLabel,
   statusLabel,
@@ -208,8 +209,8 @@ describe("dynamic keys resolve for every runtime enum member", () => {
     expect(label).not.toContain(status); // resolved, not echoed back as the key
   });
 
-  it.each(ITEM_TYPES)("item type %s has singular and plural nouns", (type) => {
-    for (const label of [itemTypeLabel(type), itemTypePlural(type)]) {
+  it.each(ITEM_TYPES)("item type %s has singular, plural and title nouns", (type) => {
+    for (const label of [itemTypeLabel(type), itemTypePlural(type), itemTypeTitle(type)]) {
       expect(label).not.toBe("");
       expect(label).not.toContain("itemType.");
     }
@@ -244,6 +245,17 @@ describe("dynamic keys resolve for every runtime enum member", () => {
     // never wraps; a plain space here is the transcription defect this pins.
     expect(dateWithElapsed("8/26/2026", 0)).toBe("8/26/2026 · same day");
     expect(dateWithElapsed("8/26/2026", 3)).toBe("8/26/2026 · 3 d");
+  });
+
+  it("the orders counted phrases keep their bytes", () => {
+    expect(i18n.t("orders.acrossLines", { total: 1, count: 1 })).toBe("1 across 1 line");
+    expect(i18n.t("orders.acrossLines", { total: 7, count: 3 })).toBe("7 across 3 lines");
+    expect(i18n.t("orders.spawnedKits", { count: 1 })).toBe("spawned 1 kit");
+    expect(i18n.t("orders.spawnedKits", { count: 4 })).toBe("spawned 4 kits");
+    // NBSP before the "d", matching the Kits column — the disclosed one-byte
+    // normalization of the received cell's plain space (#164 → PR 4).
+    expect(i18n.t("orders.inTransitDays", { count: 3 })).toBe("in transit · 3\u00a0d");
+    expect(i18n.t("orders.inTransitToday")).toBe("in transit · today");
   });
 
   it("the pill and totals phrasings diverge exactly where main's did (#163 P3-1)", () => {

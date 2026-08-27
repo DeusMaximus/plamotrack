@@ -800,9 +800,10 @@ inline bad fixtures before judging the real files), plus a parity test in
 `backend/tests/test_settings.py` holding `SUPPORTED_INTERFACE_LANGUAGES` to
 exactly the manifest's enabled tags. CI appends `npm run i18n:report`'s
 coverage table to the job summary. The contribution contract — proposing,
-reviewing, and enabling a language — is `docs/translating.md`. Page copy is
-migrating into the catalogue in staged PRs; the extraction keeps every en-AU
-string byte-identical, which the unchanged Playwright suite proves.
+reviewing, and enabling a language — is `docs/translating.md`. The extraction ran as four
+staged PRs keeping every en-AU string byte-identical — the unchanged Playwright
+suite is the standing proof — and every page's copy is served from the
+catalogue.
 
 The presentation boundary follows from that contract:
 
