@@ -39,7 +39,6 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import get_settings
 from app.exceptions import ConflictError, DomainError, InvalidInputError
 from app.models import ItemType, Kit, Order, OrderItem
 from app.models.enums import KitStatus
@@ -54,6 +53,7 @@ from app.schemas.portability import (
     RowAction,
     TablePlan,
 )
+from app.services import instance_settings
 from app.services.currency import is_known_currency, major_to_minor, minor_fraction_digits
 from app.services.kits import default_scale_for_grade
 from app.services.numeric import is_lone_group, require_int4
@@ -131,6 +131,9 @@ def _check_stub_placeholders() -> None:
 _check_stub_placeholders()
 
 #: Same list tests/conftest.py truncates — every table a replace-all restore owns.
+#: `instance_settings` is deliberately not here: a replace_all wipes the
+#: *collection*, not the instance's identity. The singleton row survives and the
+#: archive's settings sheet, if any, is applied to it as an update (#23).
 _PORTABLE_TABLES = (
     "kits, kit_photos, tools, consumables, upgrades, display_items, "
     "upgrade_applications, retailers, orders, order_items"
@@ -198,7 +201,10 @@ def _detect_table(filename: str, header: list[str]) -> str | None:
     return best
 
 
-def read_upload(filename: str, content: bytes) -> ParsedUpload:
+def read_upload(filename: str, content: bytes, *, reference_currency: str) -> ParsedUpload:
+    """`reference_currency` is the settings-row value (#23), read by the caller —
+    parsing is sync and sessionless, and only the starter-sheet expansion spends
+    it (a priced row naming no currency is priced in the instance's own)."""
     if len(content) > MAX_UPLOAD_BYTES:
         raise InvalidInputError(
             f"that file is {len(content) // 1024 // 1024} MB — the import limit is "
@@ -206,9 +212,9 @@ def read_upload(filename: str, content: bytes) -> ParsedUpload:
         )
     name = (filename or "upload").lower()
     if name.endswith(".zip") or content[:2] == b"PK":
-        return _read_zip(content)
+        return _read_zip(content, reference_currency)
     if name.endswith(".csv") or b"," in content[:4096]:
-        return _read_single_csv(filename, content)
+        return _read_single_csv(filename, content, reference_currency)
     raise InvalidInputError("unsupported file — import a .csv or a .zip archive")
 
 
@@ -410,7 +416,7 @@ def _reconcile_manifest(
             )
 
 
-def _read_zip(content: bytes) -> ParsedUpload:
+def _read_zip(content: bytes, reference_currency: str) -> ParsedUpload:
     tables: dict[str, list[dict[str, str]]] = {}
     warnings: list[str] = []
     errors: list[str] = []
@@ -510,7 +516,7 @@ def _read_zip(content: bytes) -> ParsedUpload:
                 # a fresh budget per file.
                 spent = sum(len(existing) for existing in tables.values())
                 expanded_tables, problems = starter_sheet.expand(
-                    rows, row_budget=max(0, MAX_ROWS - spent)
+                    rows, row_budget=max(0, MAX_ROWS - spent), reference_currency=reference_currency
                 )
                 for key, expanded in expanded_tables.items():
                     tables.setdefault(key, []).extend(expanded)
@@ -537,10 +543,12 @@ def _read_zip(content: bytes) -> ParsedUpload:
     )
 
 
-def _read_single_csv(filename: str, content: bytes) -> ParsedUpload:
+def _read_single_csv(filename: str, content: bytes, reference_currency: str) -> ParsedUpload:
     header, rows = _read_csv_text(content, filename or "upload")
     if starter_sheet.is_starter_sheet(header):
-        expanded, problems = starter_sheet.expand(rows, row_budget=MAX_ROWS)
+        expanded, problems = starter_sheet.expand(
+            rows, row_budget=MAX_ROWS, reference_currency=reference_currency
+        )
         return ParsedUpload(source="starter-sheet", tables=expanded, errors=problems)
     table_key = _detect_table(filename, header)
     if table_key is None:
@@ -683,10 +691,16 @@ def _dangling_optional_message(column: str, table: str, missing: uuid.UUID) -> s
 
 
 class _Planner:
-    def __init__(self, session: AsyncSession, upload: ParsedUpload, mode: ImportMode) -> None:
+    def __init__(
+        self, session: AsyncSession, upload: ParsedUpload, mode: ImportMode, reference_currency: str
+    ) -> None:
         self.session = session
         self.upload = upload
         self.mode = mode
+        # The settings-row value (#23), read once by `plan_import` before parsing
+        # began, so the fill below and the starter expansion that may have produced
+        # this upload agree on what "the instance default" was.
+        self.reference_currency = reference_currency
         self.remap: dict[tuple[str, uuid.UUID], uuid.UUID] = {}
         self.existing: dict[str, list[Any]] = {}
         self.by_id: dict[str, dict[uuid.UUID, Any]] = {}
@@ -796,7 +810,7 @@ class _Planner:
                 errors.append(f"{column.name} is required")
 
         filled: set[str] = set()
-        _default_money_currency(spec, values, present, filled)
+        _default_money_currency(spec, values, present, filled, self.reference_currency)
 
         row = _Row(
             table=spec.key,
@@ -1391,6 +1405,26 @@ class _Planner:
         row.changes = changes
         row.action = RowAction.UPDATE if changes else RowAction.UNCHANGED
 
+    def _classify_singleton(self, spec: TableSpec, row: _Row) -> None:
+        """A singleton (#23) has exactly one fate: update the row migrations made.
+
+        Not a create — the stored row always exists, and the table's CHECK holds
+        it to one — and not a delete, in any mode. `_classify` then answers the
+        rest: add_only skips it, a diff becomes an UPDATE the preview shows
+        field-by-field, and a second row in the file dies on `_claim_identity`
+        because both resolve to the same target.
+        """
+        if row.action is RowAction.ERROR:
+            return
+        if row.target is None:
+            row.action = RowAction.ERROR
+            row.error = (
+                f"this instance holds no {spec.key} row to update — migrations "
+                "create it; run `alembic upgrade head` before importing"
+            )
+            return
+        self._classify(spec, row)
+
     def _defer_generated_status_stamp(self, spec: TableSpec, row: _Row) -> None:
         """A kit whose status this sheet moves, without the sheet saying when (#44
         case 5).
@@ -1474,7 +1508,7 @@ class _Planner:
                 # `_classify` and leave a `remap` entry behind it.
                 self._claim_source_id(spec, row)
 
-                if not replace_all and row.action is not RowAction.ERROR:
+                if (not replace_all or spec.singleton) and row.action is not RowAction.ERROR:
                     if spec.key == "orders":
                         self._match_order(row, incoming_lines)
                     elif spec.key == "order_items":
@@ -1482,7 +1516,12 @@ class _Planner:
                     else:
                         self._match_generic(spec, row)
 
-                if replace_all:
+                if spec.singleton:
+                    # A singleton is only ever updated: replace_all does not
+                    # truncate it, so the CREATE branch below would try to insert
+                    # a second row into a table whose CHECK allows one (#23).
+                    self._classify_singleton(spec, row)
+                elif replace_all:
                     if row.action is not RowAction.ERROR:
                         row.action = RowAction.CREATE
                         row.new_id = row.values.get("id") or uuid.uuid4()
@@ -2539,8 +2578,16 @@ class _Planner:
             )
 
         replace_all = self.mode is ImportMode.REPLACE_ALL
+        # Singletons sit outside the TRUNCATE (#23): a replace_all neither deletes
+        # the settings row nor lists it as a loss, so it stays out of both maps.
         deletes = (
-            {key: len(rows) for key, rows in self.existing.items() if rows} if replace_all else {}
+            {
+                key: len(rows)
+                for key, rows in self.existing.items()
+                if rows and not SPEC_BY_KEY[key].singleton
+            }
+            if replace_all
+            else {}
         )
         # The preview shows counts, but the hash has to cover *which* rows go: two
         # collections of the same size are the same number and a different loss.
@@ -2548,7 +2595,7 @@ class _Planner:
             {
                 key: sorted(str(instance.id) for instance in rows)
                 for key, rows in self.existing.items()
-                if rows
+                if rows and not SPEC_BY_KEY[key].singleton
             }
             if replace_all
             else {}
@@ -2756,14 +2803,18 @@ async def check_compatibility(session: AsyncSession, upload: ParsedUpload) -> li
 async def plan_import(
     session: AsyncSession, filename: str, content: bytes, mode: ImportMode
 ) -> ExecutionPlan:
-    upload = read_upload(filename, content)
+    # One read, before parsing: the starter expansion and the planner's money
+    # fill both spend this value, and reading it twice would let a concurrent
+    # settings change hand the two halves of one plan different defaults.
+    reference = await instance_settings.reference_currency(session)
+    upload = read_upload(filename, content, reference_currency=reference)
     total = sum(len(rows) for rows in upload.tables.values())
     if total > MAX_ROWS:
         raise InvalidInputError(
             f"that import holds {total:,} rows — the limit is {MAX_ROWS:,}. Split it up."
         )
     upload.warnings.extend(await check_compatibility(session, upload))
-    planner = _Planner(session, upload, mode)
+    planner = _Planner(session, upload, mode, reference)
     return await planner.build()
 
 
@@ -2951,7 +3002,11 @@ async def apply_import(
 
 
 def _default_money_currency(
-    spec: TableSpec, values: dict[str, Any], present: set[str], filled: set[str]
+    spec: TableSpec,
+    values: dict[str, Any],
+    present: set[str],
+    filled: set[str],
+    reference_currency: str,
 ) -> None:
     """Settle each optional pair's currency, mirroring `_converted_snapshot` in
     services/orders.py — the REST and MCP paths get this from the service layer, but
@@ -2983,7 +3038,7 @@ def _default_money_currency(
         if not has_amount or values.get(currency_column) is not None:
             continue
         supplied = currency_column in present
-        values[currency_column] = get_settings().reference_currency
+        values[currency_column] = reference_currency
         present.add(currency_column)
         if not supplied:
             filled.add(currency_column)

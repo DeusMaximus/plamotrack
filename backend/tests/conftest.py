@@ -27,10 +27,29 @@ os.environ["DATABASE_POOL"] = "null"
 
 from app.db import get_sessionmaker  # noqa: E402
 from app.main import app  # noqa: E402
+from app.services.instance_settings import DEFAULTS as _SETTINGS_DEFAULTS  # noqa: E402
 
 _TABLES = (
     "kits, kit_photos, tools, consumables, upgrades, display_items, "
     "upgrade_applications, retailers, orders, order_items"
+)
+
+# The instance_settings singleton is deliberately NOT in _TABLES — truncating it
+# would delete the row migrations created, which nothing at runtime can do (#23).
+# It is reset to its bootstrap values instead, the same shape the migration seeds.
+_RESET_SETTINGS = (
+    "INSERT INTO instance_settings "
+    "(id, interface_language, formatting_locale, time_zone, date_style, hour_cycle, "
+    " reference_currency) "
+    "VALUES (1, :interface_language, :formatting_locale, :time_zone, :date_style, "
+    " :hour_cycle, :reference_currency) "
+    "ON CONFLICT (id) DO UPDATE SET "
+    "interface_language = EXCLUDED.interface_language, "
+    "formatting_locale = EXCLUDED.formatting_locale, "
+    "time_zone = EXCLUDED.time_zone, "
+    "date_style = EXCLUDED.date_style, "
+    "hour_cycle = EXCLUDED.hour_cycle, "
+    "reference_currency = EXCLUDED.reference_currency"
 )
 
 
@@ -63,6 +82,10 @@ async def clean_tables(apply_migrations):
     yield
     async with get_sessionmaker()() as session:
         await session.execute(text(f"TRUNCATE {_TABLES} CASCADE"))
+        await session.execute(
+            text(_RESET_SETTINGS),
+            _SETTINGS_DEFAULTS | {"reference_currency": Settings().reference_currency},
+        )
         await session.commit()
 
 

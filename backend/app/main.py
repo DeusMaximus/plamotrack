@@ -6,7 +6,7 @@ from app import __version__
 from app.db import SessionDep
 from app.exceptions import ConflictError, DomainError, InvalidInputError, NotFoundError
 from app.mcp import mcp
-from app.routers import catalog, inventory, kits, meta, orders, portability, retailers
+from app.routers import catalog, inventory, kits, meta, orders, portability, retailers, settings
 
 # REST and MCP share one process and one service layer (§2). The MCP endpoint is
 # mounted at /mcp on the same port — a deliberate simplification of §8's
@@ -28,6 +28,7 @@ for router in (
     orders.router,
     portability.router,
     meta.router,
+    settings.router,
 ):
     app.include_router(router)
 

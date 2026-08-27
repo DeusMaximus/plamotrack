@@ -56,6 +56,7 @@ const TABLE_EXPORTS = [
   { key: "upgrades", label: "Upgrades" },
   { key: "display_items", label: "Display items" },
   { key: "retailers", label: "Retailers" },
+  { key: "instance_settings", label: "Instance settings" },
 ];
 
 export function DataPage() {

@@ -7,7 +7,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.config import get_settings
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import (
     Consumable,
@@ -30,6 +29,7 @@ from app.schemas.orders import (
     RetailerCreate,
     RetailerUpdate,
 )
+from app.services import instance_settings as settings_service
 from app.services.catalog import (
     CATALOG_MODELS,
     CATEGORISED_MODELS,
@@ -131,22 +131,21 @@ def _stated_kit_units(lines) -> int:
     return sum(line.quantity for line in lines if line.item_type is ItemType.KIT)
 
 
-def _converted_snapshot(line: OrderItemCreate) -> tuple[int | None, str | None]:
+def _converted_snapshot(line: OrderItemCreate, reference: str) -> tuple[int | None, str | None]:
     """The §6 conversion snapshot: an amount and the currency it was captured in.
 
     A caller that supplies an amount but no currency means "the instance's
-    reference currency" — resolved once, here, at write time. Reading the setting
-    on the way out instead would make every historical amount change meaning the
-    day the operator edits an env var.
+    reference currency" — resolved once, at write time, from the settings row the
+    mutation read under its own gate (#23). Reading the setting on the way out
+    instead would make every historical amount change meaning the day the owner
+    changes it.
     """
     if line.converted_price_minor is None:
         return None, None
-    return line.converted_price_minor, (
-        line.converted_currency_code or get_settings().reference_currency
-    )
+    return line.converted_price_minor, (line.converted_currency_code or reference)
 
 
-def _apply_converted_snapshot(item: OrderItem, line: OrderItemCreate) -> None:
+def _apply_converted_snapshot(item: OrderItem, line: OrderItemCreate, reference: str) -> None:
     """An edit that never mentions the snapshot leaves it alone (issue #3).
 
     Everything else on a line is replaced wholesale by an edit; this pair is the
@@ -172,9 +171,7 @@ def _apply_converted_snapshot(item: OrderItem, line: OrderItemCreate) -> None:
         return
     item.converted_price_minor = line.converted_price_minor
     item.converted_currency_code = (
-        line.converted_currency_code
-        or item.converted_currency_code
-        or get_settings().reference_currency
+        line.converted_currency_code or item.converted_currency_code or reference
     )
 
 
@@ -679,6 +676,8 @@ async def _add_line(
     received: bool,
     received_at: datetime | None = None,
     shipped_at: datetime | None = None,
+    *,
+    reference: str,
 ) -> OrderItem:
     """The §3.9 dispatch: kit lines FAN OUT into kits rows immediately; catalog
     lines INCREMENT stock — but only once the order is received.
@@ -688,7 +687,7 @@ async def _add_line(
     one for a create. None when the order is pending. `shipped_at` is the same
     thing one stage earlier (#95): non-null means the order is shipped, so kits
     land in_transit carrying it — unless received wins."""
-    converted_minor, converted_code = _converted_snapshot(line)
+    converted_minor, converted_code = _converted_snapshot(line, reference)
     item = OrderItem(
         order_id=order.id,
         item_type=line.item_type,
@@ -757,6 +756,8 @@ async def _update_line(
     received: bool,
     received_at: datetime | None = None,
     shipped_at: datetime | None = None,
+    *,
+    reference: str,
 ) -> None:
     if line.item_type != item.item_type:
         raise InvalidInputError(
@@ -880,7 +881,7 @@ async def _update_line(
     item.quantity = line.quantity
     item.unit_price_minor = line.unit_price_minor
     item.currency_code = line.currency_code
-    _apply_converted_snapshot(item, line)
+    _apply_converted_snapshot(item, line, reference)
     await session.flush()
 
 
@@ -918,6 +919,7 @@ async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
     await session.flush()
 
     await _lock_catalog_targets(session, lines=data.items)
+    reference = await settings_service.reference_currency(session)
     for line in data.items:
         await _add_line(
             session,
@@ -926,6 +928,7 @@ async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
             received=data.received,
             received_at=received_at,
             shipped_at=data.shipped_at,
+            reference=reference,
         )
 
     result = await get_order(session, order.id)
@@ -1046,6 +1049,7 @@ async def update_order(
                     "remove_missing_lines=true to delete the omitted ones"
                 )
         seen: set[uuid.UUID] = set()
+        reference = await settings_service.reference_currency(session)
         for line in data.items:
             if line.id is not None:
                 if line.id not in existing:
@@ -1054,10 +1058,24 @@ async def update_order(
                     raise InvalidInputError(f"order item {line.id} appears twice")
                 seen.add(line.id)
                 await _update_line(
-                    session, existing[line.id], line, received, order.received_at, order.shipped_at
+                    session,
+                    existing[line.id],
+                    line,
+                    received,
+                    order.received_at,
+                    order.shipped_at,
+                    reference=reference,
                 )
             else:
-                await _add_line(session, order, line, received, order.received_at, order.shipped_at)
+                await _add_line(
+                    session,
+                    order,
+                    line,
+                    received,
+                    order.received_at,
+                    order.shipped_at,
+                    reference=reference,
+                )
         for item_id, item in existing.items():
             if item_id not in seen:
                 await _remove_line(session, item, received)

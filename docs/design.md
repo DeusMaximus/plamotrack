@@ -555,6 +555,25 @@ refused — that is what the search is still for. The schema carries no unique i
 yet: one would refuse to build on an instance that already holds a pair, so it waits
 for a repair story (#54). *(Added 20/08/2026, #107.)*
 
+### 3.10 `instance_settings` ✅ (#23, 27/08/2026)
+
+The one-row settings singleton (§6.1). Integer primary key with `CHECK (id = 1)`,
+so "a second settings row" is a constraint violation rather than a state.
+
+| column | type | notes |
+| --- | --- | --- |
+| id | int PK, CHECK id = 1 | always 1 |
+| interface_language | text | BCP 47; membership-tested against shipped catalogues (`en-AU`) |
+| formatting_locale | text | BCP 47; shape-tested only — `Intl` resolves the rest |
+| time_zone | text | IANA name, validated against the tz database |
+| date_style | text + CHECK | locale / short / medium / long / full |
+| hour_cycle | text + CHECK | locale / h12 / h23 |
+| reference_currency | text(3) | default currency for new entries (§6) |
+
+Created and seeded by its migration; nothing at runtime creates or deletes it.
+All reads and writes go through `services/instance_settings.py` (§6.1 has the
+seeding, validation, and portability semantics).
+
 ---
 
 ## 4. API Design (REST)
@@ -595,13 +614,13 @@ Standard CRUD plus a few purpose-built endpoints.
   ceiling. Same service call as the MCP `adjust_stock` tool
 - `GET /export/archive`, `GET /export/{table}.csv`, `GET /export/templates`,
   `GET /export/starter-sheet.csv`, `POST /import/preview`, `POST /import/apply` — see §12
+- `GET /settings`, `PATCH /settings` — the instance-settings singleton (§6.1, #23):
+  language, region, time zone, date style, hour cycle, reference currency. PATCH
+  updates only the supplied fields, refuses nulls (nothing is nullable), and
+  serializes on the write gate
 - `GET /healthz`
 
 **Planned 🔨**
-
-- `GET /settings`, `PATCH /settings` — **M5.1**, singleton settings shared by every
-  client of this single-owner instance. Not implemented; runtime defaults still come
-  from application configuration
 - `GET /kits/{id}/photos`, `POST /kits/{id}/photos` (multipart upload) — **M7**, blocked
   on the §9.2 storage decision. Not implemented; the `kit_photos` table exists but
   nothing writes to it
@@ -657,22 +676,25 @@ logs; "a login page exists" is not the completion criterion.
   load would make spend history drift underneath the person reading it. If a live-rate
   lookup at entry time is wanted (a nice-to-have, not built), it's a one-shot call at
   creation, result stored, done
-- ✅ `REFERENCE_CURRENCY` — the instance's own currency (default `AUD`). Order forms,
-  starter-sheet templates, and the MCP `create_order` default all read it. A CHECK
-  constraint keeps the amount and its code null-or-present together
+- ✅ the reference currency — the instance's own currency (default `AUD`). Order
+  forms, starter-sheet templates, and the MCP `create_order` default all read it —
+  since #23 from the `instance_settings` row (§6.1), which the `REFERENCE_CURRENCY`
+  env var only seeds on first run. A CHECK constraint keeps the amount and its code
+  null-or-present together
 
 ✅ **The AUD assumption is gone** (shipped ahead of M5.1, alongside M5). The amount
 column was `converted_price_aud_minor` — a name that asserted a currency the schema
 never stored. It is now a neutral amount with its code beside it, and the code is
 written **at entry time**, not read from config on the way out: an amount whose meaning
-can be changed by editing an env var is not a snapshot. Moving `REFERENCE_CURRENCY`
+can be changed by editing an env var is not a snapshot. Moving the reference currency
 later therefore changes what *new* entries default to and nothing else.
 
-M5.1 moves that runtime default into the singleton instance-settings record so the
-owner can change it from the Settings page and every REST, MCP, and browser client sees
-the same value. The existing environment value becomes a first-run/upgrade bootstrap,
-not a permanent override. That changes where the default lives, not the historical rule:
-stored amounts keep their recorded currency and are never restated when the default moves.
+✅ **That runtime default now lives in the singleton instance-settings record** (#23):
+the owner changes it through `PATCH /settings` (the Settings page rides #24) and every
+REST, MCP, and browser client sees the same value. The environment value is a
+first-run/upgrade bootstrap — the migration that created the table seeded it and it has
+been inert since. That changed where the default lives, not the historical rule: stored
+amounts keep their recorded currency and are never restated when the default moves.
 
 Two compatibility notes for anyone who used the 0.1.0 alpha:
 
@@ -709,24 +731,46 @@ The browser follows from the same premise. It derives a snapshot only for a line
 *creating* in the instance's own currency, where the converted amount is the price and
 no rate is involved. For a line that already exists it shows what was recorded — in the
 currency it was recorded in — and sends that back untouched. Notably, "the purchase
-currency equals `REFERENCE_CURRENCY`" is **not** grounds to recompute: a yen purchase
+currency equals the reference currency" is **not** grounds to recompute: a yen purchase
 carrying an AUD snapshot on an instance that later moved to `JPY` would be silently
 restamped as yen, which is precisely the drift this section exists to prevent. Nor is
 "the amount differs from the unit price" — an imported AUD 95 against an AUD 100 line
 is a record, not a rounding error. Correcting or removing a snapshot is a thing the
 operator does on purpose, in a field put there for it.
 
-### 6.1 Instance settings & internationalisation 🔨 **Planned (M5.1)**
+### 6.1 Instance settings & internationalisation 🔨 **In progress (M5.1 — the settings record shipped with #23)**
 
 The first localisation milestone is infrastructure, not a promise to ship a particular
 translation. It also supplies the settings surface the localisation controls need.
 
-**One owner, one settings record.** Plamotrack remains a single-owner application after
-authentication lands, so interface language, formatting locale, IANA time zone, date
-style, hour cycle, and reference currency belong to the instance rather than one
-browser's local storage. Every device reads the same values. `en-AU` is the deterministic
-language and formatting fallback; the time zone also has one explicit instance value
-rather than being inferred independently by each browser.
+✅ **One owner, one settings record** (#23). Plamotrack remains a single-owner
+application after authentication lands, so interface language, formatting locale, IANA
+time zone, date style, hour cycle, and reference currency belong to the instance rather
+than one browser's local storage. Every device reads the same values. `en-AU` is the
+deterministic language and formatting fallback; the time zone also has one explicit
+instance value rather than being inferred independently by each browser.
+
+How that landed: a one-row `instance_settings` table (a CHECK pins the primary key to
+1), created and seeded by its migration — `en-AU` language and formatting, `UTC` time
+zone, locale-default date style and hour cycle, and the reference currency read from
+`REFERENCE_CURRENCY` at upgrade time so an existing installation keeps what it
+configured. From then on the env var is inert bootstrap input. `GET /settings` and
+`PATCH /settings` are thin over `services/instance_settings.py`; updates take the write
+gate and the row `FOR UPDATE` (rules 7/7.1), and validation predicates (supported
+language, BCP 47 well-formedness, IANA zone membership, currency shape) are module
+functions the CSV importer's cell parsers share (rule 1). `date_style` is
+`locale`/`short`/`medium`/`long`/`full` and `hour_cycle` is `locale`/`h12`/`h23` — the
+`Intl.DateTimeFormat` vocabularies, since that is the formatter that will consume them.
+The interface language is a membership test (only shipped catalogues), while the
+formatting locale is shape-only — `Intl` resolves any well-formed tag to its nearest
+supported locale, the same accept-the-unknown reasoning `KNOWN_CURRENCIES` records.
+
+In the portability layer the table is a **singleton spec**: exported in the archive,
+and on import only ever *updated* — never created, never deleted, exactly one row. A
+`replace_all` restore does not truncate it (the restore replaces the collection, not
+the instance's identity) and counts no settings row among its deletions; an upload
+without the sheet leaves settings untouched in every mode; the preview shows a settings
+change field-by-field like any other update. Starter sheets never carry settings.
 
 Language and regional presentation are separate settings. Selecting Japanese may suggest
 `ja-JP`, for example, but it does not silently replace a formatting locale the owner chose

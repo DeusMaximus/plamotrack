@@ -56,7 +56,7 @@ Download `starter-sheet.csv`, fill it in, import it.
 | `quantity` | How many of this kit. Blank = 1, at most 1,000 per row. You get that many kits in your collection either way — whether the row names a retailer or not — so a bigger haul goes on more than one row. Starter rows spell their kits out as ordinary rows, so the whole sheet answers to the 50,000-row limit (see Limits). |
 | `retailer` | Where you bought it. **Blank = no order recorded**, just a kit in the collection. |
 | `order_date`, `order_number` | The purchase. Rows sharing a retailer + date + number collapse into **one order** — across separate imports too, so **fill in `order_number` whenever a shop + date pair isn't unique**. A row that reaches an existing order and names a kit already on it *restates that purchase line* (its price and quantity included) rather than adding a second one; a second copy of the same kit on one order is a second row in the **same** sheet. |
-| `unit_price`, `currency` | Major units (`49.99`). Currency blank = your instance's `REFERENCE_CURRENCY` (`AUD` unless you changed it). The example rows in the downloaded sheet are already filled in with yours. |
+| `unit_price`, `currency` | Major units (`49.99`). Currency blank = your instance's reference currency setting (`AUD` unless you changed it). The example rows in the downloaded sheet are already filled in with yours. |
 | `received` | `yes`/`no`. Blank = yes. Received-on defaults to the order date, not today. When several rows collapse into one order you only need to say it once — but if two rows of the same order say *different* things, that's an error rather than a guess. Re-importing with `no` un-marks an order you'd previously imported as received. |
 
 You write kits; plamotrack works out the retailers, orders, and order lines. Every
@@ -86,6 +86,23 @@ Drop the `.zip` straight back in.
 
 Replace everything requires typing `REPLACE` to confirm, and tells you how many
 existing records it will delete before you do.
+
+### Instance settings are the one exception
+
+The archive includes `instance_settings.csv` — one row holding the instance's
+interface language, formatting locale, time zone, date style, hour cycle, and
+reference currency. It doesn't behave like a data table, because it isn't one:
+
+- an import can only **update** the settings — never add a second row, never
+  delete the one that exists. Two rows in the file is an error;
+- **Replace everything keeps your settings.** The wipe-and-restore applies to the
+  collection; the settings row survives it, is never counted among the deletions,
+  and is updated from the archive's sheet like a merge would;
+- a file that doesn't include `instance_settings.csv` (a starter sheet, a single
+  table, a partial pack) never touches settings, in any mode;
+- values are validated like a `PATCH /settings` would — an unsupported interface
+  language or a made-up time zone is a row error, and a blank cell keeps the
+  stored value (the preview says so).
 
 ---
 

@@ -3,11 +3,13 @@ from app.models.catalog import Consumable, DisplayItem, Tool, Upgrade, UpgradeAp
 from app.models.enums import ItemType, KitStatus
 from app.models.kits import Kit, KitPhoto
 from app.models.orders import Order, OrderItem, Retailer
+from app.models.settings import InstanceSettings
 
 __all__ = [
     "Base",
     "Consumable",
     "DisplayItem",
+    "InstanceSettings",
     "ItemType",
     "Kit",
     "KitPhoto",

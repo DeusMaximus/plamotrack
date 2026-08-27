@@ -5,7 +5,7 @@ from fastapi.responses import Response
 
 from app.db import SessionDep
 from app.schemas.portability import ImportMode, ImportPlan, ImportResult
-from app.services import portability
+from app.services import instance_settings, portability
 from app.services.portability import exporting, importing
 
 router = APIRouter(tags=["import/export"])
@@ -31,17 +31,26 @@ async def export_archive(session: SessionDep) -> Response:
 
 
 @router.get("/export/templates")
-async def export_templates() -> Response:
+async def export_templates(session: SessionDep) -> Response:
     """Blank, header-only CSVs in the export's exact shape, plus a column guide
     and the starter sheet."""
-    return _attachment(portability.template_pack(), "plamotrack-templates.zip", "application/zip")
+    return _attachment(
+        portability.template_pack(
+            reference_currency=await instance_settings.reference_currency(session)
+        ),
+        "plamotrack-templates.zip",
+        "application/zip",
+    )
 
 
 @router.get("/export/starter-sheet.csv")
-async def export_starter_sheet(examples: bool = True) -> Response:
+async def export_starter_sheet(session: SessionDep, examples: bool = True) -> Response:
     """One row per kit — the onboarding path for someone coming off a spreadsheet."""
     return _attachment(
-        portability.starter_sheet_csv(with_examples=examples),
+        portability.starter_sheet_csv(
+            with_examples=examples,
+            reference_currency=await instance_settings.reference_currency(session),
+        ),
         "plamotrack-starter-sheet.csv",
         "text/csv; charset=utf-8",
     )

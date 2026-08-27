@@ -22,6 +22,7 @@ from app.exceptions import NotFoundError
 from app.models import (
     Consumable,
     DisplayItem,
+    InstanceSettings,
     ItemType,
     Kit,
     Order,
@@ -107,6 +108,7 @@ async def _load_all(session: AsyncSession) -> dict[str, list[Any]]:
         )
     ).all()
     return {
+        "instance_settings": list((await session.scalars(select(InstanceSettings))).all()),
         "retailers": list((await session.scalars(select(Retailer).order_by(Retailer.name))).all()),
         "tools": list((await session.scalars(select(Tool).order_by(Tool.name))).all()),
         "consumables": list(
@@ -256,11 +258,12 @@ def _column_guide(spec: TableSpec) -> str:
     return "\n".join(lines) + "\n"
 
 
-def template_pack() -> bytes:
+def template_pack(*, reference_currency: str) -> bytes:
     """Blank, header-only CSVs in exactly the export's shape, plus a per-file guide.
 
     Generated from the same specs as the export, so a template can never describe
-    a column the importer doesn't accept.
+    a column the importer doesn't accept. `reference_currency` comes from the
+    settings row (#23) and only flavours the starter sheet's example rows.
     """
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -268,7 +271,10 @@ def template_pack() -> bytes:
         for spec in TABLE_SPECS:
             archive.writestr(spec.filename, _write_csv(spec.header, []))
             guides.append(_column_guide(spec))
-        archive.writestr("starter-sheet.csv", starter_sheet_csv(with_examples=True))
+        archive.writestr(
+            "starter-sheet.csv",
+            starter_sheet_csv(with_examples=True, reference_currency=reference_currency),
+        )
         archive.writestr(
             "COLUMNS.txt",
             "plamotrack import templates\n"
@@ -283,6 +289,6 @@ def template_pack() -> bytes:
     return buffer.getvalue()
 
 
-def starter_sheet_csv(*, with_examples: bool = True) -> str:
-    rows = starter_sheet.starter_sheet_examples() if with_examples else []
+def starter_sheet_csv(*, with_examples: bool = True, reference_currency: str) -> str:
+    rows = starter_sheet.starter_sheet_examples(reference_currency) if with_examples else []
     return _write_csv(starter_sheet.STARTER_SHEET_HEADER, rows)

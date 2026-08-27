@@ -46,6 +46,28 @@ class WouldOrderAgain(enum.StrEnum):
     NO = "no"
 
 
+class DateStyle(enum.StrEnum):
+    """How the browser renders dates (§6.1). `locale` defers to the formatting
+    locale's own convention; the rest are the `Intl.DateTimeFormat` dateStyle
+    values, so the setting maps straight onto the formatter that consumes it."""
+
+    LOCALE = "locale"
+    SHORT = "short"
+    MEDIUM = "medium"
+    LONG = "long"
+    FULL = "full"
+
+
+class HourCycle(enum.StrEnum):
+    """12- or 24-hour clock (§6.1). `locale` defers to the formatting locale;
+    `h12` and `h23` are the two `Intl.DateTimeFormat` hourCycle values in real-world
+    use (h11 and h24 exist in CLDR but no region defaults to them)."""
+
+    LOCALE = "locale"
+    H12 = "h12"
+    H23 = "h23"
+
+
 def text_enum(enum_cls: type[enum.StrEnum], name: str) -> SAEnum:
     """Text column + CHECK constraint instead of a native Postgres enum, so future
     taxonomy changes are a data migration rather than an ALTER TYPE dance (§9.1)."""

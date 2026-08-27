@@ -32,7 +32,10 @@ class PlannedRow(BaseModel):
     row_number: int
     action: RowAction
     label: str
-    matched_id: uuid.UUID | None = None
+    #: Primary key of the stored row this one resolved to. Every collection table
+    #: keys on a uuid; the int is the instance_settings singleton (#23), whose key
+    #: is the constant 1.
+    matched_id: uuid.UUID | int | None = None
     #: How it was matched — "id", "name", "retailer + order number", ...
     matched_by: str | None = None
     changes: list[FieldChange] = Field(default_factory=list)

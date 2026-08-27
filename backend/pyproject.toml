@@ -15,6 +15,10 @@ dependencies = [
     "pydantic-settings>=2.3",
     "fastmcp>=3.0",
     "python-multipart>=0.0.9",  # FastAPI needs it for the import file upload
+    # IANA time-zone db shipped with the app (#23). zoneinfo consults the OS
+    # database first and this as the fallback/union, so /settings accepts a
+    # current zone list even on an image whose OS tzdata is absent or ancient.
+    "tzdata>=2025.1",
 ]
 
 [dependency-groups]

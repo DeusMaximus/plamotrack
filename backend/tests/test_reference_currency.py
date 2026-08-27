@@ -10,12 +10,18 @@ import io
 import pytest
 
 from app.config import get_settings
+from app.db import session_scope
+from app.schemas.settings import InstanceSettingsUpdate
+from app.services import instance_settings
 
 
 @pytest.fixture
-def reference_currency(monkeypatch):
-    """Set REFERENCE_CURRENCY for one test. get_settings is lru_cached, so the
-    cache has to be cleared on the way in *and* out or the override leaks."""
+def bootstrap_currency(monkeypatch):
+    """Set the REFERENCE_CURRENCY *bootstrap* input for one test. Since #23 it
+    only seeds the settings row when the migration runs — runtime reads the row —
+    so only the two config tests below still want this. get_settings is
+    lru_cached, so the cache has to be cleared on the way in *and* out or the
+    override leaks."""
 
     def _set(code: str) -> None:
         monkeypatch.setenv("REFERENCE_CURRENCY", code)
@@ -23,6 +29,21 @@ def reference_currency(monkeypatch):
 
     yield _set
     get_settings.cache_clear()
+
+
+@pytest.fixture
+def reference_currency():
+    """Set the instance's reference currency for one test — the settings row
+    (#23), which is what every runtime read consults. conftest's clean_tables
+    resets it between tests."""
+
+    async def _set(code: str) -> None:
+        async with session_scope() as session:
+            await instance_settings.update_instance_settings(
+                session, InstanceSettingsUpdate(reference_currency=code)
+            )
+
+    return _set
 
 
 async def _preview_then_apply(client, filename: str, content: bytes):
@@ -75,20 +96,21 @@ async def make_order(client, retailer, items: list[dict], **extra):
 
 
 async def test_meta_reports_the_reference_currency(client, reference_currency):
-    reference_currency("JPY")
+    await reference_currency("JPY")
     resp = await client.get("/meta")
     assert resp.status_code == 200
     assert resp.json()["reference_currency"] == "JPY"
 
 
-async def test_reference_currency_is_normalised(reference_currency):
-    reference_currency("jpy")
+async def test_bootstrap_reference_currency_is_normalised(bootstrap_currency):
+    bootstrap_currency("jpy")
     assert get_settings().reference_currency == "JPY"
 
 
-async def test_nonsense_reference_currency_is_rejected(reference_currency):
-    reference_currency("Australian Dollars")
-    # Settings are lazy, so the complaint lands on first use — which is startup.
+async def test_nonsense_bootstrap_reference_currency_is_rejected(bootstrap_currency):
+    bootstrap_currency("Australian Dollars")
+    # Settings are lazy, so the complaint lands on first use — which for this
+    # value is the migration that seeds the settings row (#23).
     with pytest.raises(ValueError, match="ISO 4217"):
         get_settings()
 
@@ -97,7 +119,7 @@ async def test_nonsense_reference_currency_is_rejected(reference_currency):
 
 
 async def test_snapshot_defaults_to_the_instance_currency(client, retailer, reference_currency):
-    reference_currency("EUR")
+    await reference_currency("EUR")
     resp = await make_order(client, retailer, [kit_line(converted_price_minor=3200)])
     assert resp.status_code == 201, resp.text
     line = resp.json()["items"][0]
@@ -106,7 +128,7 @@ async def test_snapshot_defaults_to_the_instance_currency(client, retailer, refe
 
 
 async def test_an_explicit_snapshot_currency_wins(client, retailer, reference_currency):
-    reference_currency("EUR")
+    await reference_currency("EUR")
     resp = await make_order(
         client,
         retailer,
@@ -134,18 +156,18 @@ async def test_moving_the_instance_currency_does_not_restate_history(
     client, retailer, reference_currency
 ):
     """The whole point of storing the code per row (§6)."""
-    reference_currency("AUD")
+    await reference_currency("AUD")
     created = await make_order(client, retailer, [kit_line(converted_price_minor=4999)])
     order_id = created.json()["id"]
 
-    reference_currency("JPY")
+    await reference_currency("JPY")
     reread = (await client.get(f"/orders/{order_id}")).json()["items"][0]
     assert reread["converted_price_minor"] == 4999
     assert reread["converted_currency_code"] == "AUD"  # not reinterpreted as yen
 
 
 async def test_editing_a_line_restamps_the_snapshot(client, retailer, reference_currency):
-    reference_currency("AUD")
+    await reference_currency("AUD")
     created = await make_order(client, retailer, [kit_line(converted_price_minor=4999)])
     order = created.json()
     line_id = order["items"][0]["id"]
@@ -165,7 +187,7 @@ async def test_editing_a_line_preserves_an_omitted_snapshot(client, retailer, re
 
     No client can restate a foreign-currency conversion — it has no entry-time
     rate — so an absent field has to mean "leave it", not "clear it"."""
-    reference_currency("AUD")
+    await reference_currency("AUD")
     created = await make_order(
         client, retailer, [kit_line(unit_price_minor=3800, converted_price_minor=7350)]
     )
@@ -191,7 +213,7 @@ async def test_correcting_only_the_amount_keeps_the_recorded_currency(
     The stored code outranks the instance default here: stamping AUD onto a GBP
     snapshot because the payload didn't restate the code would turn £42.00 into
     A$43.00 — the same config-overwrites-a-record failure as the omitted case."""
-    reference_currency("AUD")
+    await reference_currency("AUD")
     created = await make_order(
         client,
         retailer,
@@ -212,7 +234,7 @@ async def test_correcting_only_the_amount_keeps_the_recorded_currency(
 
 async def test_an_explicit_null_clears_the_snapshot(client, retailer, reference_currency):
     """The other half of the rule: clearing is possible, it just has to be meant."""
-    reference_currency("AUD")
+    await reference_currency("AUD")
     created = await make_order(client, retailer, [kit_line(converted_price_minor=7350)])
     order = created.json()
     line_id = order["items"][0]["id"]
@@ -229,7 +251,7 @@ async def test_an_explicit_null_clears_the_snapshot(client, retailer, reference_
 
 async def test_a_new_line_in_an_edit_invents_no_snapshot(client, retailer, reference_currency):
     """Preserving what exists must not turn into inventing what doesn't."""
-    reference_currency("AUD")
+    await reference_currency("AUD")
     created = await make_order(client, retailer, [kit_line(converted_price_minor=7350)])
     order = created.json()
     line_id = order["items"][0]["id"]
@@ -285,7 +307,7 @@ async def test_legacy_converted_price_column_is_read_as_aud(client, retailer, re
     """A pre-0.2 archive names the column converted_price_aud_minor and has no
     currency column. That name asserted AUD, so the rows are AUD even on an
     instance whose own reference currency is something else entirely."""
-    reference_currency("JPY")
+    await reference_currency("JPY")
     order = await seeded_order(client, retailer)
     line = order["items"][0]
 
@@ -385,7 +407,7 @@ async def test_import_stamps_the_instance_currency_on_a_blank_code(
     """A hand-written sheet fills in an amount and leaves the code blank — which the
     column help says means the instance default. Reaching Postgres as NULL would trip
     the paired CHECK constraint as an unhandled 500."""
-    reference_currency("EUR")
+    await reference_currency("EUR")
     order = await seeded_order(client, retailer)
     content = order_items_csv(
         [
@@ -454,7 +476,7 @@ async def test_import_without_a_currency_column_keeps_the_recorded_code(
     The import path of the same rule the API follows since #3 — otherwise correcting
     an amount reissues a GBP snapshot as this instance's currency, changing what the
     number means by a rate nobody supplied."""
-    reference_currency("AUD")
+    await reference_currency("AUD")
     order = await seeded_order_with_snapshot(client, retailer, 4200, "GBP")
 
     resp = await _preview_then_apply(client, "order_items.csv", amount_only_csv(order, "4400"))
@@ -469,7 +491,7 @@ async def test_import_preview_does_not_claim_a_currency_change(
     client, retailer, reference_currency
 ):
     """The preview has to show what apply will really write, or it isn't a preview."""
-    reference_currency("AUD")
+    await reference_currency("AUD")
     order = await seeded_order_with_snapshot(client, retailer, 4200, "GBP")
 
     resp = await client.post(
@@ -489,7 +511,7 @@ async def test_import_without_a_currency_column_still_fills_a_missing_code(
 ):
     """Deferring to what's recorded must not stop the fill where nothing is recorded —
     the paired CHECK constraint still needs both halves for a brand-new snapshot."""
-    reference_currency("EUR")
+    await reference_currency("EUR")
     order = await seeded_order(client, retailer)  # no snapshot on the line
 
     resp = await _preview_then_apply(client, "order_items.csv", amount_only_csv(order, "3200"))
@@ -504,7 +526,7 @@ async def test_a_blank_cell_still_means_the_instance_default(client, retailer, r
     """The deliberate line between silence and an instruction: a sheet that carries the
     column and leaves it blank *has* said something, and the column help promises blank
     means the instance default. Only a missing column defers to what's recorded."""
-    reference_currency("EUR")
+    await reference_currency("EUR")
     order = await seeded_order_with_snapshot(client, retailer, 4200, "GBP")
     content = order_items_csv(
         [
@@ -644,7 +666,7 @@ async def test_a_tool_currency_without_a_cost_is_refused(client):
 async def test_correcting_only_a_tool_cost_keeps_its_currency(client, reference_currency):
     """The rule #3 established, on the other table: a PATCH that carries the amount
     and not the code is a correction, not a redenomination."""
-    reference_currency("AUD")
+    await reference_currency("AUD")
     tool = await make_tool(
         client, unit_cost_reference_minor=1200, unit_cost_reference_currency="JPY"
     )
@@ -685,7 +707,7 @@ async def test_an_order_line_stamps_its_own_currency_on_a_new_tool(
     """The select-or-create path (§3.9) is the one place a tool's cost arrives with
     its currency already known — the line states it. Falling back to the instance
     default here would invent an exchange rate nobody supplied."""
-    reference_currency("AUD")
+    await reference_currency("AUD")
     resp = await make_order(
         client,
         retailer,
@@ -719,7 +741,7 @@ async def test_import_scales_a_tool_cost_by_its_own_currency(client, reference_c
     """The major-unit column is scaled by the row's *own* currency column, not by a
     column named `currency_code` — tools have no such column, and the two-decimal
     default would have read ¥1200 as ¥120000."""
-    reference_currency("AUD")
+    await reference_currency("AUD")
     content = tools_csv(
         [
             "name",
@@ -746,7 +768,7 @@ async def test_import_scales_a_tool_cost_by_its_own_currency(client, reference_c
 
 
 async def test_import_stamps_the_instance_currency_on_a_blank_tool_code(client, reference_currency):
-    reference_currency("EUR")
+    await reference_currency("EUR")
     content = tools_csv(
         [
             "name",
@@ -777,7 +799,7 @@ async def test_import_without_a_tool_currency_column_keeps_the_recorded_code(
 ):
     """#12's rule, generalised: a sheet with no currency column at all hasn't asked
     to relabel anything, so an existing row keeps the code it recorded."""
-    reference_currency("AUD")
+    await reference_currency("AUD")
     tool = await make_tool(
         client,
         name="Mr Cement S",
@@ -887,7 +909,7 @@ async def test_import_of_a_pre_0_2_3_tools_export_stamps_the_instance_currency(
     anywhere. The amount still has to land with a code beside it, or it trips the
     paired CHECK — and the code has to be settled *before* the major units are scaled,
     or ¥1200 is read with two decimal places."""
-    reference_currency("JPY")
+    await reference_currency("JPY")
     content = tools_csv(
         ["name", "category", "quantity_on_hand", "unit_cost_reference"],
         [
