@@ -5,6 +5,7 @@ from typing import Any
 from sqlalchemy import String, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import error_codes
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import (
     Consumable,
@@ -63,7 +64,11 @@ def guard_stock_ceiling(name: str, quantity: int) -> int:
     try:
         return require_int4(quantity, f"'{name}' would hold {quantity:,}")
     except ValueError as exc:
-        raise ConflictError(str(exc)) from exc
+        raise ConflictError(
+            str(exc),
+            code=error_codes.STOCK_LIMIT_EXCEEDED,
+            params={"name": name, "quantity": quantity},
+        ) from exc
 
 
 #: The fungible catalog tables an order line (or stock adjustment) can target.
@@ -251,7 +256,9 @@ async def list_catalog(
             # independent arguments; the REST routes never declare the parameter
             # on a table without the column.
             raise InvalidInputError(
-                f"{model.__tablename__} have no category column, so they cannot be filtered by one"
+                f"{model.__tablename__} have no category column, so they cannot be filtered by one",
+                code=error_codes.CATALOG_ITEM_CATEGORY_UNSUPPORTED,
+                params={"table": model.__tablename__},
             )
         # Case-insensitive equality, not ILIKE — the `list_kits` grade/series
         # predicate shape, for the same #49 reasons: `%` and `_` in a category are
@@ -280,7 +287,9 @@ async def list_catalog_categories(session: AsyncSession, model: type[CatalogRow]
     if "category" not in model.__table__.columns:
         raise InvalidInputError(
             f"{model.__tablename__} have no category column, so there is no "
-            "category vocabulary to list"
+            "category vocabulary to list",
+            code=error_codes.CATALOG_ITEM_CATEGORY_UNSUPPORTED,
+            params={"table": model.__tablename__},
         )
     # category is NOT NULL on every table that has it, but rows written before
     # #129's blank refusal can hold whitespace — the btrim guard hides those the
@@ -343,14 +352,22 @@ async def update_catalog_item(
     # order dispatch rather than racing them (rule 7).
     row = await lock_catalog_row(session, model, item_id)
     if row is None:
-        raise NotFoundError(f"{item_type} {item_id} not found")
+        raise NotFoundError(
+            f"{item_type} {item_id} not found",
+            code=error_codes.CATALOG_ITEM_NOT_FOUND,
+            params={"item_type": item_type, "item_id": item_id},
+        )
     fields = data.model_dump(exclude_unset=True)
     for key, value in fields.items():
         # Checked against the column rather than the name: `manufacturer` is NOT
         # NULL on upgrades and nullable on display items, so a shared name set
         # alone would refuse a legitimate clear on the latter.
         if value is None and key in _NON_NULLABLE and not _is_nullable(model, key):
-            raise InvalidInputError(f"{key} cannot be null")
+            raise InvalidInputError(
+                f"{key} cannot be null",
+                code=error_codes.FIELD_NOT_NULLABLE,
+                params={"field": key},
+            )
     _normalise_text(model, fields)
     if fields.get("name") is not None:
         # A rename onto a name another row of this table holds is a 409; the row's
@@ -373,7 +390,8 @@ async def update_catalog_item(
     ):
         raise InvalidInputError(
             "unit_cost_reference_minor and unit_cost_reference_currency must be set "
-            "together or cleared together"
+            "together or cleared together",
+            code=error_codes.CATALOG_ITEM_COST_PAIR_MISMATCH,
         )
     await session.flush()
     await session.commit()
@@ -395,7 +413,11 @@ async def delete_catalog_item(
     # two serialize.
     row = await lock_catalog_row(session, model, item_id)
     if row is None:
-        raise NotFoundError(f"{item_type} {item_id} not found")
+        raise NotFoundError(
+            f"{item_type} {item_id} not found",
+            code=error_codes.CATALOG_ITEM_NOT_FOUND,
+            params={"item_type": item_type, "item_id": item_id},
+        )
 
     order_refs = await session.scalar(
         select(func.count()).select_from(OrderItem).where(OrderItem.catalog_ref_id == item_id)
@@ -403,7 +425,9 @@ async def delete_catalog_item(
     if order_refs:
         raise ConflictError(
             f"'{row.name}' appears on {order_refs} order line(s) — "
-            "order history is kept, so it cannot be deleted"
+            "order history is kept, so it cannot be deleted",
+            code=error_codes.CATALOG_ITEM_ON_ORDER_HISTORY,
+            params={"name": row.name, "count": order_refs},
         )
     if item_type is ItemType.UPGRADE:
         applications = await session.scalar(
@@ -415,7 +439,9 @@ async def delete_catalog_item(
             raise ConflictError(
                 f"'{row.name}' has been applied to {applications} kit(s) — "
                 "build history is kept, so it cannot be deleted. Withdraw the "
-                "applications first if they are wrongly recorded"
+                "applications first if they are wrongly recorded",
+                code=error_codes.CATALOG_ITEM_HAS_APPLICATIONS,
+                params={"name": row.name, "count": applications},
             )
     await session.delete(row)
     await session.flush()
@@ -435,7 +461,11 @@ async def adjust_stock(
     try:
         require_int4(delta, f"delta '{delta:,}'")
     except ValueError as exc:
-        raise InvalidInputError(str(exc)) from exc
+        raise InvalidInputError(
+            str(exc),
+            code=error_codes.VALUE_OUT_OF_RANGE,
+            params={"value": delta},
+        ) from exc
 
     await acquire_write_gate(session)
     for item_type, model in CATALOG_MODELS.items():
@@ -446,7 +476,13 @@ async def adjust_stock(
         if new_quantity < 0:
             raise ConflictError(
                 f"cannot adjust {item_type} '{row.name}' by {delta}: "
-                f"only {row.quantity_on_hand} on hand"
+                f"only {row.quantity_on_hand} on hand",
+                code=error_codes.STOCK_INSUFFICIENT,
+                params={
+                    "name": row.name,
+                    "on_hand": row.quantity_on_hand,
+                    "requested": -delta,
+                },
             )
         guard_stock_ceiling(row.name, new_quantity)
         row.quantity_on_hand = new_quantity
@@ -468,4 +504,8 @@ async def adjust_stock(
             quantity_on_hand=new_quantity,
             reason=reason,
         )
-    raise NotFoundError(f"no catalog item with id {catalog_id}")
+    raise NotFoundError(
+        f"no catalog item with id {catalog_id}",
+        code=error_codes.CATALOG_ITEM_NOT_FOUND,
+        params={"item_id": catalog_id},
+    )

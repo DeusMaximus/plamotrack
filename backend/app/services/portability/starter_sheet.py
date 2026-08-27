@@ -25,6 +25,7 @@ import uuid
 from collections import OrderedDict
 from dataclasses import dataclass
 
+from app import error_codes
 from app.exceptions import InvalidInputError
 from app.models.enums import KitStatus
 from app.services.orders import initial_kit_status, require_line_quantity
@@ -216,7 +217,11 @@ def _kit_count(cell: str) -> int:
     try:
         count = parse_int(cell)
     except (ArithmeticError, ValueError) as exc:
-        raise InvalidInputError(f"quantity: {exc}") from exc
+        raise InvalidInputError(
+            f"quantity: {exc}",
+            code=error_codes.IMPORT_CELL_INVALID,
+            params={"field": "quantity"},
+        ) from exc
     if count is None:
         return 1
     # The whole range, from the shared invariant — not a second lower bound written
@@ -291,7 +296,11 @@ def _received(cell: str) -> bool | None:
     try:
         return parse_bool(cell)
     except ValueError as exc:
-        raise InvalidInputError(f"received: {exc}") from exc
+        raise InvalidInputError(
+            f"received: {exc}",
+            code=error_codes.IMPORT_CELL_INVALID,
+            params={"field": "received"},
+        ) from exc
 
 
 def expand(
@@ -342,7 +351,9 @@ def expand(
         if produced > row_budget:
             raise InvalidInputError(
                 f"this sheet expands to more than {row_budget:,} rows — the import "
-                "limit. Split it into separate files, or use fewer per row."
+                "limit. Split it into separate files, or use fewer per row.",
+                code=error_codes.IMPORT_TOO_MANY_ROWS,
+                params={"maximum": row_budget},
             )
 
     for row in rows:

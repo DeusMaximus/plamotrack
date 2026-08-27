@@ -17,7 +17,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app import __version__
+from app import __version__, error_codes
 from app.exceptions import NotFoundError
 from app.models import (
     Consumable,
@@ -203,7 +203,11 @@ async def schema_version(session: AsyncSession) -> str | None:
 async def export_table_csv(session: AsyncSession, table_key: str) -> str:
     spec = SPEC_BY_KEY.get(table_key)
     if spec is None:
-        raise NotFoundError(f"no exportable table named '{table_key}'")
+        raise NotFoundError(
+            f"no exportable table named '{table_key}'",
+            code=error_codes.EXPORT_TABLE_UNKNOWN,
+            params={"table": table_key},
+        )
     data = await _load_all(session)
     return _write_csv(spec.header, _rows_for(spec, data))
 

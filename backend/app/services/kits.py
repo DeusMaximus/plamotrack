@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app import error_codes
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import Kit, KitStatus
 from app.schemas.kits import KitCreate, KitUpdate
@@ -137,7 +138,11 @@ async def list_kit_series(session: AsyncSession) -> list[str]:
 async def get_kit(session: AsyncSession, kit_id: uuid.UUID) -> Kit:
     kit = await session.get(Kit, kit_id)
     if kit is None:
-        raise NotFoundError(f"kit {kit_id} not found")
+        raise NotFoundError(
+            f"kit {kit_id} not found",
+            code=error_codes.KIT_NOT_FOUND,
+            params={"kit_id": kit_id},
+        )
     return kit
 
 
@@ -147,7 +152,11 @@ async def update_kit(session: AsyncSession, kit_id: uuid.UUID, data: KitUpdate) 
     fields = data.model_dump(exclude_unset=True)
     for non_nullable in ("name", "grade", "status"):
         if non_nullable in fields and fields[non_nullable] is None:
-            raise InvalidInputError(f"{non_nullable} cannot be null")
+            raise InvalidInputError(
+                f"{non_nullable} cannot be null",
+                code=error_codes.FIELD_NOT_NULLABLE,
+                params={"field": non_nullable},
+            )
     if "series" in fields:
         fields["series"] = _normalize_series(fields["series"])
     entered: KitStatus | None = None
@@ -200,14 +209,20 @@ async def delete_kit(session: AsyncSession, kit_id: uuid.UUID) -> None:
         .with_for_update()
     )
     if kit is None:
-        raise NotFoundError(f"kit {kit_id} not found")
+        raise NotFoundError(
+            f"kit {kit_id} not found",
+            code=error_codes.KIT_NOT_FOUND,
+            params={"kit_id": kit_id},
+        )
     if kit.order_item_id is not None:
         # Deleting a spawned kit directly would leave its order line claiming a
         # quantity the collection no longer backs. Undo happens at the order.
         raise ConflictError(
             f"'{kit.name}' was spawned by an order line — edit that order "
             "(reduce the line quantity or remove the line) instead, so the "
-            "purchase record and the collection stay consistent"
+            "purchase record and the collection stay consistent",
+            code=error_codes.KIT_ORDER_SPAWNED,
+            params={"name": kit.name},
         )
     if has_applied_upgrades(kit):
         # The application is the record of where upgrade stock went, and deleting
@@ -218,7 +233,9 @@ async def delete_kit(session: AsyncSession, kit_id: uuid.UUID) -> None:
             f"'{kit.name}' has {len(kit.upgrade_applications)} upgrade(s) applied to it — "
             "that record is what explains the stock they used, so the kit is kept. "
             "Withdraw the application(s) first; each withdrawal asks whether its "
-            "stock returns"
+            "stock returns",
+            code=error_codes.KIT_HAS_APPLICATIONS,
+            params={"name": kit.name, "count": len(kit.upgrade_applications)},
         )
     await session.delete(kit)
     await session.flush()
