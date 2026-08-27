@@ -78,6 +78,8 @@ UPG = ROOT / "app/services/upgrades.py"
 INVR = ROOT / "app/routers/inventory.py"
 VERS = ROOT / "alembic/versions"
 SCH = ROOT / "app/schemas/orders.py"
+SET = ROOT / "app/services/instance_settings.py"
+META = ROOT / "app/services/meta.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -1698,6 +1700,177 @@ CASES = [
     await session.delete(item)""",
         "removing_a_dangling",
     ),
+    # --- #23 / PR #159: the instance-settings singleton (stg-). stg-1..18 rode
+    # the branch; stg-19..23 are the round-1 remedies, one per fixed site (the
+    # shared ASCII currency shape, the Intl-true locale shapes, variant sorting).
+    # stg-5's kill is the pg_blocking_pids holder->updater edge — a decoy
+    # advisory waiter parked elsewhere must NOT satisfy it (round 1 proved the
+    # count-based observation could be); stg-17 mutates a MIGRATION's seed, under
+    # the same clean-tree cover as the mig- set. ---
+    (
+        "stg-1. replace_all stops matching the singleton",
+        IMP,
+        "                if (not replace_all or spec.singleton) and row.action is not RowAction.ERROR:",
+        "                if not replace_all and row.action is not RowAction.ERROR:",
+        "replace_all_updates_the_settings or replace_all_without_the_sheet",
+    ),
+    (
+        "stg-2. singleton rows take the replace_all CREATE path",
+        IMP,
+        "                if spec.singleton:\n",
+        "                if False:\n",
+        "replace_all_updates_the_settings or replace_all_without_the_sheet",
+    ),
+    (
+        "stg-3. replace_all counts the singleton among its deletions",
+        IMP,
+        "                key: len(rows)\n                for key, rows in self.existing.items()\n                if rows and not SPEC_BY_KEY[key].singleton",
+        "                key: len(rows)\n                for key, rows in self.existing.items()\n                if rows",
+        "replace_all_updates_the_settings",
+    ),
+    (
+        "stg-4. replace_all truncates the settings row",
+        IMP,
+        '    "upgrade_applications, retailers, orders, order_items"\n)',
+        '    "upgrade_applications, retailers, orders, order_items, instance_settings"\n)',
+        "replace_all_without_the_sheet_leaves_settings_alone or replace_all_updates_the_settings",
+    ),
+    (
+        "stg-5. settings update skips the write gate",
+        SET,
+        "    await acquire_write_gate(session)\n    row = await session.get(InstanceSettings, SINGLETON_ROW_ID, with_for_update=True)",
+        "    row = await session.get(InstanceSettings, SINGLETON_ROW_ID, with_for_update=True)",
+        "waits_its_turn_on_the_write_gate",
+    ),
+    (
+        "stg-6. explicit null slides through to the row",
+        SET,
+        "        if value is None:",
+        "        if False:",
+        "explicit_null_is_refused",
+    ),
+    (
+        "stg-7. PATCH values skip the canonicalisers",
+        SET,
+        "        validator = _VALIDATORS.get(field)",
+        "        validator = None",
+        "values_are_canonicalised or invalid_values_are_refused",
+    ),
+    (
+        "stg-8. any well-formed tag is an interface language",
+        SET,
+        "    if value not in SUPPORTED_INTERFACE_LANGUAGES:",
+        "    if False:",
+        "invalid_values_are_refused or invalid_cells_are_row_errors",
+    ),
+    (
+        "stg-9. time zones stop being membership-checked",
+        SET,
+        "    if found is None:",
+        "    if False:",
+        "invalid_values_are_refused or invalid_cells_are_row_errors",
+    ),
+    (
+        "stg-10. meta answers from a constant, not the row",
+        META,
+        "        reference_currency=await instance_settings.reference_currency(session),",
+        '        reference_currency="AUD",',
+        "meta_reads_the_row",
+    ),
+    (
+        "stg-11. a new snapshot's default currency is hardcoded",
+        ORD,
+        "    return line.converted_price_minor, (line.converted_currency_code or reference)",
+        '    return line.converted_price_minor, (line.converted_currency_code or "AUD")',
+        "new_conversion_snapshots_default",
+    ),
+    (
+        "stg-12. the edit path's snapshot fallback is hardcoded",
+        ORD,
+        "        line.converted_currency_code or item.converted_currency_code or reference",
+        '        line.converted_currency_code or item.converted_currency_code or "AUD"',
+        "edit_that_adds_a_snapshot",
+    ),
+    (
+        "stg-13. the MCP order default is hardcoded",
+        MCP,
+        "            currency_code=currency_code or await settings_service.reference_currency(session),",
+        '            currency_code=currency_code or "AUD",',
+        "omitted_currency_reads_the_settings_row",
+    ),
+    (
+        "stg-14. the importer's blank-currency fill is hardcoded",
+        IMP,
+        "        values[currency_column] = reference_currency",
+        '        values[currency_column] = "AUD"',
+        "stales_the_hash or stamps_the_instance_currency",
+    ),
+    (
+        "stg-15. the starter sheet's blank-currency fill is hardcoded",
+        STARTER,
+        '        currency = (row.get("currency") or "").strip().upper() or reference_currency',
+        '        currency = (row.get("currency") or "").strip().upper() or "AUD"',
+        "starter_sheet_priced_without_a_currency",
+    ),
+    (
+        "stg-16. the spec forgets the table is a singleton",
+        SPEC,
+        "    singleton=True,",
+        "    singleton=False,",
+        "replace_all_updates_the_settings or every_column_the_database_requires",
+    ),
+    (
+        "stg-17. the migration seed ignores the configured currency",
+        VERS / "20260827_f9979ec7b9cb_instance_settings_singleton_23.py",
+        "        ).bindparams(reference_currency=get_settings().reference_currency)",
+        '        ).bindparams(reference_currency="AUD")',
+        "instance_settings_seeds_one_env_configured_row",
+    ),
+    (
+        "stg-18. the export loads no settings row",
+        EXP,
+        '        "instance_settings": list((await session.scalars(select(InstanceSettings))).all()),',
+        '        "instance_settings": [],',
+        "the_archive_exports_the_settings_row",
+    ),
+    (
+        "stg-19. parse_currency judges letters with isalpha again (round 1, P2)",
+        SPEC,
+        "    return require_currency_code(value)",
+        "    value = value.upper()\n"
+        "    if len(value) != 3 or not value.isalpha():\n"
+        "        raise ValueError(f\"'{raw}' is not a 3-letter ISO 4217 currency code\")\n"
+        "    return value",
+        "unicode_letter_code_is_refused_on_every_currency_column",
+    ),
+    (
+        "stg-20. repeated variants slide through (round 1, P3)",
+        SET,
+        "        if len(set(variants)) != len(variants):",
+        "        if False:",
+        "invalid_values_are_refused or locale_shapes",
+    ),
+    (
+        "stg-21. four-letter language subtags come back (round 1, P3)",
+        SET,
+        '    r"^(?P<language>[A-Za-z]{2,3}|[A-Za-z]{5,8})"',
+        '    r"^(?P<language>[A-Za-z]{2,8})"',
+        "invalid_values_are_refused or locale_shapes",
+    ),
+    (
+        "stg-22. the PATCH currency entry stops shape-testing (round 1, P2)",
+        SET,
+        '    "reference_currency": require_currency_code,',
+        '    "reference_currency": lambda raw: raw.strip().upper(),',
+        "invalid_values_are_refused",
+    ),
+    (
+        "stg-23. variants stored in input order, not UTS 35 order (round 1)",
+        SET,
+        "        parts.extend(sorted(variants))",
+        "        parts.extend(variants)",
+        "values_are_canonicalised or locale_shapes",
+    ),
 ]
 
 
@@ -2652,6 +2825,12 @@ TEST_FILES = [
     "tests/test_migration_data.py",
     # The #156 (d63-) fold-in.
     "tests/test_integrity.py",
+    # The #159 (stg-) fold-in — the instance-settings singleton (#23). The
+    # reference-currency suite joined because stg-14's and stg-19's kills live
+    # there since the round-1 class sweep.
+    "tests/test_settings.py",
+    "tests/test_settings_portability.py",
+    "tests/test_reference_currency.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
