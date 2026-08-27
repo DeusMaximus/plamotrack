@@ -54,7 +54,12 @@ export function importActionLabel(action: RowAction): string {
 
 /** Portable-table display name, falling back to the raw spec key so a table
  * the catalogue doesn't know yet still renders something true rather than a
- * dotted key. Keys are `portability/spec.py` table keys. */
+ * dotted key. Keys are `portability/spec.py` table keys. Note the unified
+ * vocabulary is wider than the preview's old private map: `display_items` and
+ * `instance_settings` headings used to render as raw spec keys and now render
+ * their labels (#163 review, P3-2 — sanctioned visible change). The
+ * `exists`+`t` pattern here is safe only on flat keys — `exists` is false for
+ * a plural base like `importCount.skip` even though `t` resolves it. */
 export function importTableLabel(table: string): string {
   const key = `importTable.${table}`;
   return i18n.exists(key) ? i18n.t(key as "importTable.kits") : table;

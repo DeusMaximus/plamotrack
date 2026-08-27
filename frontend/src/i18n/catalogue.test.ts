@@ -227,13 +227,22 @@ describe("dynamic keys resolve for every runtime enum member", () => {
     expect(wouldOrderAgainLabel(answer)).not.toContain("wouldOrderAgain.");
   });
 
-  it.each(ROW_ACTIONS)("row action %s has a badge word and a counted phrase", (action) => {
+  it.each(ROW_ACTIONS)("row action %s has a badge word and both counted phrases", (action) => {
     expect(importActionLabel(action)).not.toContain("importAction.");
     for (const count of [1, 5]) {
-      const phrase = i18n.t(`importCount.${action}`, { count });
-      expect(phrase).toContain(String(count));
-      expect(phrase).not.toContain("importCount.");
+      for (const group of ["importCount", "importPill"] as const) {
+        const phrase = i18n.t(`${group}.${action}`, { count });
+        expect(phrase, `${group}.${action}`).toContain(String(count));
+        expect(phrase, `${group}.${action}`).not.toContain(`${group}.`);
+      }
     }
+  });
+
+  it("the pill and totals phrasings diverge exactly where main's did (#163 P3-1)", () => {
+    // The one action whose two phrasings differ is the standing proof the two
+    // groups are both load-bearing — collapse them and this goes red.
+    expect(i18n.t("importPill.error", { count: 6 })).toBe("6 error");
+    expect(i18n.t("importCount.error", { count: 6 })).toBe("6 with errors");
   });
 
   it.each(IMPORT_MODES)("import mode %s has a label and a blurb", (mode) => {

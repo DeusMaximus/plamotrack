@@ -24,10 +24,17 @@ function sourceLabel(source: string): string {
   return source;
 }
 
-/** A counted action phrase — "3 new", "1 skipped". The `importCount.*` plural
- * keys own the wording; the bare badge word is `importActionLabel` instead. */
+/** The totals line's counted phrase — "3 new", "6 with errors". */
 function actionCount(action: RowAction, count: number): string {
   return i18n.t(`importCount.${action}`, { count });
+}
+
+/** A table-header pill — "3 new", "6 error". A third grammatical slot, not a
+ * restatement: the pill pairs the count with the badge word where the totals
+ * line says "with errors" (#163 review, P3-1 — the pills borrowed the totals
+ * group and silently reworded the one action whose two phrasings differ). */
+function pillCount(action: RowAction, count: number): string {
+  return i18n.t(`importPill.${action}`, { count });
 }
 
 function CountPills({ counts }: { counts: Record<RowAction, number> }) {
@@ -42,7 +49,7 @@ function CountPills({ counts }: { counts: Record<RowAction, number> }) {
           key={action}
           className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${ACTION_STYLES[action]}`}
         >
-          {actionCount(action, counts[action])}
+          {pillCount(action, counts[action])}
         </span>
       ))}
     </span>

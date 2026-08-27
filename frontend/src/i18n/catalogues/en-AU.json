@@ -85,6 +85,18 @@
     "skip": "skipped",
     "error": "error"
   },
+  "importPill": {
+    "create_one": "{{count}} new",
+    "create_other": "{{count}} new",
+    "update_one": "{{count}} updated",
+    "update_other": "{{count}} updated",
+    "unchanged_one": "{{count}} unchanged",
+    "unchanged_other": "{{count}} unchanged",
+    "skip_one": "{{count}} skipped",
+    "skip_other": "{{count}} skipped",
+    "error_one": "{{count}} error",
+    "error_other": "{{count}} error"
+  },
   "importCount": {
     "create_one": "{{count}} new",
     "create_other": "{{count}} new",
