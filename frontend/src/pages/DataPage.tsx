@@ -1,28 +1,13 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { api, ApiError, downloadFile } from "../api/client";
 import type { ImportMode, ImportPlan, ImportResult } from "../api/types";
+import { IMPORT_MODES } from "../api/types";
 import { ImportPreview } from "../components/ImportPreview";
 import { Button, ErrorBanner, Select } from "../components/ui";
-
-const MODES: { id: ImportMode; label: string; blurb: string }[] = [
-  {
-    id: "merge",
-    label: "Merge",
-    blurb: "Update anything that matches, add anything new. The usual choice.",
-  },
-  {
-    id: "add_only",
-    label: "Add only",
-    blurb: "Add what's new and leave everything you already have untouched.",
-  },
-  {
-    id: "replace_all",
-    label: "Replace everything",
-    blurb: "Delete the whole collection first, then restore this file over the top.",
-  },
-];
+import { importTableLabel } from "../lib/labels";
 
 function Card({
   title,
@@ -46,20 +31,22 @@ function Card({
  *  Hand-maintained against that registry, which is the trap it fell into: the
  *  backend gained `display_items` and exported it correctly, and only this list
  *  decided nobody could reach it from the Data page (#129 review, P3-5). Adding a
- *  portable table means adding a line here. */
+ *  portable table means adding a line here — and its label to `importTable.*` in
+ *  the catalogue, which ImportPreview reads too. */
 const TABLE_EXPORTS = [
-  { key: "kits", label: "Kits" },
-  { key: "orders", label: "Orders" },
-  { key: "order_items", label: "Order lines" },
-  { key: "tools", label: "Tools" },
-  { key: "consumables", label: "Consumables" },
-  { key: "upgrades", label: "Upgrades" },
-  { key: "display_items", label: "Display items" },
-  { key: "retailers", label: "Retailers" },
-  { key: "instance_settings", label: "Instance settings" },
+  "kits",
+  "orders",
+  "order_items",
+  "tools",
+  "consumables",
+  "upgrades",
+  "display_items",
+  "retailers",
+  "instance_settings",
 ];
 
 export function DataPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -144,38 +131,30 @@ export function DataPage() {
   return (
     <div className="max-w-4xl space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Data</h1>
-        <p className="mt-0.5 text-sm text-zinc-500">
-          Back up your collection, move it somewhere else, or bring it in from a spreadsheet.
-        </p>
+        <h1 className="text-2xl font-bold">{t("data.title")}</h1>
+        <p className="mt-0.5 text-sm text-zinc-500">{t("data.subtitle")}</p>
       </div>
 
       <ErrorBanner message={error} />
 
-      <Card
-        title="Export"
-        description="Plain CSV — yours to keep, open anywhere, and import straight back."
-      >
+      <Card title={t("data.exportTitle")} description={t("data.exportDescription")}>
         <div className="flex flex-wrap gap-2">
           <Button onClick={() => download("/export/archive", "plamotrack-export.zip")}>
-            Download full archive (.zip)
+            {t("data.archiveButton")}
           </Button>
           {TABLE_EXPORTS.map((table) => (
             <Button
-              key={table.key}
+              key={table}
               variant="secondary"
-              onClick={() => download(`/export/${table.key}.csv`, `${table.key}.csv`)}
+              onClick={() => download(`/export/${table}.csv`, `${table}.csv`)}
             >
-              {table.label} .csv
+              {importTableLabel(table)} .csv
             </Button>
           ))}
         </div>
       </Card>
 
-      <Card
-        title="Blank templates"
-        description="Starting points for entering a collection by hand."
-      >
+      <Card title={t("data.templatesTitle")} description={t("data.templatesDescription")}>
         <div className="flex flex-wrap gap-2">
           <Button
             variant="secondary"
@@ -183,26 +162,19 @@ export function DataPage() {
               download("/export/starter-sheet.csv", "plamotrack-starter-sheet.csv")
             }
           >
-            Starter sheet (.csv)
+            {t("data.starterSheetButton")}
           </Button>
           <Button
             variant="secondary"
             onClick={() => download("/export/templates", "plamotrack-templates.zip")}
           >
-            Full template pack (.zip)
+            {t("data.templatePackButton")}
           </Button>
         </div>
-        <p className="mt-2 text-xs text-zinc-500">
-          The starter sheet is one row per kit — name, grade, where you bought it — and the app
-          works out the retailers, orders, and order lines from that. The template pack is one
-          blank file per table, for when you want to control everything.
-        </p>
+        <p className="mt-2 text-xs text-zinc-500">{t("data.starterBlurb")}</p>
       </Card>
 
-      <Card
-        title="Import"
-        description="Nothing is written until you've seen exactly what will change."
-      >
+      <Card title={t("data.importTitle")} description={t("data.importDescription")}>
         <div
           onDragOver={(event) => {
             event.preventDefault();
@@ -235,17 +207,17 @@ export function DataPage() {
                 onClick={reset}
                 className="text-xs text-indigo-600 hover:underline"
               >
-                choose a different file
+                {t("data.chooseDifferent")}
               </button>
             </div>
           ) : (
             <div className="space-y-1">
-              <p className="text-sm text-zinc-600">Drop a .csv or .zip here</p>
+              <p className="text-sm text-zinc-600">{t("data.dropHere")}</p>
               <label
                 htmlFor="import-file"
                 className="cursor-pointer text-xs text-indigo-600 hover:underline"
               >
-                or browse for one
+                {t("data.browse")}
               </label>
             </div>
           )}
@@ -254,7 +226,7 @@ export function DataPage() {
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <label className="block">
             <span className="mb-1 block text-xs font-medium text-zinc-600">
-              If something already exists
+              {t("data.modeLabel")}
             </span>
             <Select
               value={mode}
@@ -265,20 +237,18 @@ export function DataPage() {
               }}
               className="w-56"
             >
-              {MODES.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
+              {IMPORT_MODES.map((option) => (
+                <option key={option} value={option}>
+                  {t(`importMode.${option}.label`)}
                 </option>
               ))}
             </Select>
           </label>
           <Button onClick={runPreview} disabled={!file || busy !== null}>
-            {busy === "preview" ? "Reading…" : "Preview changes"}
+            {busy === "preview" ? t("data.reading") : t("data.previewChanges")}
           </Button>
         </div>
-        <p className="mt-1.5 text-xs text-zinc-500">
-          {MODES.find((option) => option.id === mode)?.blurb}
-        </p>
+        <p className="mt-1.5 text-xs text-zinc-500">{t(`importMode.${mode}.blurb`)}</p>
 
         {plan && (
           <div className="mt-4 space-y-3">
@@ -287,7 +257,7 @@ export function DataPage() {
             {mode === "replace_all" && !blocked && (
               <label className="block rounded-md border border-red-200 bg-red-50 px-3 py-2">
                 <span className="mb-1 block text-xs font-medium text-red-700">
-                  This deletes your current collection. Type REPLACE to confirm.
+                  {t("data.replaceConfirm")}
                 </span>
                 <input
                   value={confirmText}
@@ -300,10 +270,10 @@ export function DataPage() {
 
             <div className="flex items-center gap-2">
               <Button onClick={runApply} disabled={blocked || needsConfirm || busy !== null}>
-                {busy === "apply" ? "Importing…" : "Apply import"}
+                {busy === "apply" ? t("data.importing") : t("data.applyImport")}
               </Button>
               <Button variant="secondary" onClick={reset} disabled={busy !== null}>
-                Cancel
+                {t("common.cancel")}
               </Button>
             </div>
           </div>
@@ -311,13 +281,22 @@ export function DataPage() {
 
         {result && (
           <div className="mt-4 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
-            <p className="font-medium">Import complete</p>
+            <p className="font-medium">{t("data.complete")}</p>
             <p className="mt-0.5">
-              {result.created} created · {result.updated} updated · {result.skipped} skipped
-              {result.kits_spawned > 0 && ` · ${result.kits_spawned} kits created from order lines`}
-              {result.kits_removed > 0 && ` · ${result.kits_removed} kits removed from order lines`}
+              {t("data.result.created", { count: result.created })}
+              {t("common.dotSeparator")}
+              {t("data.result.updated", { count: result.updated })}
+              {t("common.dotSeparator")}
+              {t("data.result.skipped", { count: result.skipped })}
+              {result.kits_spawned > 0 &&
+                t("common.dotSeparator") +
+                  t("data.result.kitsSpawned", { count: result.kits_spawned })}
+              {result.kits_removed > 0 &&
+                t("common.dotSeparator") +
+                  t("data.result.kitsRemoved", { count: result.kits_removed })}
               {result.kits_advanced > 0 &&
-                ` · ${result.kits_advanced} kits moved with shipped/received dates`}
+                t("common.dotSeparator") +
+                  t("data.result.kitsAdvanced", { count: result.kits_advanced })}
             </p>
           </div>
         )}

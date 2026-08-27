@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
+import { useTranslation } from "react-i18next";
 
 import { api, ApiError } from "../api/client";
 import type { PackingQuality, Retailer, ShippingSpeed, WouldOrderAgain } from "../api/types";
@@ -8,28 +9,7 @@ import { PACKING_QUALITIES, SHIPPING_SPEEDS, WOULD_ORDER_AGAIN } from "../api/ty
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
-
-const PACKING_LABELS: Record<PackingQuality, string> = {
-  excellent: "Excellent",
-  good: "Good",
-  average: "Average",
-  below_average: "Below Average",
-  poor: "Poor",
-};
-
-const SPEED_LABELS: Record<ShippingSpeed, string> = {
-  very_fast: "Very Fast",
-  fast: "Fast",
-  average: "Average",
-  slow: "Slow",
-  very_slow: "Very Slow",
-};
-
-const AGAIN_LABELS: Record<WouldOrderAgain, string> = {
-  yes: "Yes",
-  maybe: "Maybe",
-  no: "No",
-};
+import { packingQualityLabel, shippingSpeedLabel, wouldOrderAgainLabel } from "../lib/labels";
 
 const AGAIN_STYLES: Record<WouldOrderAgain, string> = {
   yes: "bg-green-100 text-green-700",
@@ -54,6 +34,7 @@ function RetailerFormModal({
   retailer?: Retailer;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const {
@@ -87,22 +68,25 @@ function RetailerFormModal({
       await queryClient.invalidateQueries({ queryKey: ["retailers"] });
       onClose();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Request failed");
+      setError(err instanceof ApiError ? err.message : t("common.requestFailed"));
     }
   });
 
   return (
-    <Modal title={retailer ? `Edit ${retailer.name}` : "Add retailer"} onClose={onClose}>
+    <Modal
+      title={retailer ? t("retailers.editTitle", { name: retailer.name }) : t("retailers.addTitle")}
+      onClose={onClose}
+    >
       <form onSubmit={onSubmit} className="space-y-3">
         <ErrorBanner message={error} />
-        <Field label="Name" required error={errors.name?.message}>
-          <Input {...register("name", { required: "Name is required" })} />
+        <Field label={t("common.name")} required error={errors.name?.message}>
+          <Input {...register("name", { required: t("validation.nameRequired") })} />
         </Field>
-        <Field label="URL">
-          <Input {...register("url")} placeholder="https://…" />
+        <Field label={t("retailers.url")}>
+          <Input {...register("url")} placeholder={t("retailers.urlPlaceholder")} />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Overall rating (1–5)" error={errors.rating?.message}>
+          <Field label={t("retailers.overallRating")} error={errors.rating?.message}>
             <Input
               type="number"
               min={1}
@@ -110,53 +94,52 @@ function RetailerFormModal({
               placeholder="—"
               {...register("rating", {
                 validate: (value) =>
-                  value === "" || (Number(value) >= 1 && Number(value) <= 5) || "Rating is 1–5",
+                  value === "" ||
+                  (Number(value) >= 1 && Number(value) <= 5) ||
+                  t("validation.rating1to5"),
               })}
             />
           </Field>
-          <Field label="Would order again">
+          <Field label={t("retailers.wouldOrderAgain")}>
             <Select {...register("would_order_again")}>
               <option value="">—</option>
               {WOULD_ORDER_AGAIN.map((value) => (
                 <option key={value} value={value}>
-                  {AGAIN_LABELS[value]}
+                  {wouldOrderAgainLabel(value)}
                 </option>
               ))}
             </Select>
           </Field>
-          <Field label="Packing quality">
+          <Field label={t("retailers.packingQuality")}>
             <Select {...register("packing_quality")}>
               <option value="">—</option>
               {PACKING_QUALITIES.map((value) => (
                 <option key={value} value={value}>
-                  {PACKING_LABELS[value]}
+                  {packingQualityLabel(value)}
                 </option>
               ))}
             </Select>
           </Field>
-          <Field label="Shipping speed">
+          <Field label={t("retailers.shippingSpeed")}>
             <Select {...register("shipping_speed")}>
               <option value="">—</option>
               {SHIPPING_SPEEDS.map((value) => (
                 <option key={value} value={value}>
-                  {SPEED_LABELS[value]}
+                  {shippingSpeedLabel(value)}
                 </option>
               ))}
             </Select>
           </Field>
         </div>
-        <Field label="Notes">
-          <Textarea
-            {...register("notes")}
-            placeholder="Anything else — shipping quirks, coupon codes…"
-          />
+        <Field label={t("retailers.notes")}>
+          <Textarea {...register("notes")} placeholder={t("retailers.notesPlaceholder")} />
         </Field>
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button type="submit" disabled={isSubmitting}>
-            {retailer ? "Save" : "Add"}
+            {retailer ? t("common.save") : t("common.add")}
           </Button>
         </div>
       </form>
@@ -165,6 +148,7 @@ function RetailerFormModal({
 }
 
 export function RetailersPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [modal, setModal] = useState<{ retailer?: Retailer } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -179,41 +163,41 @@ export function RetailersPage() {
   });
 
   const remove = async (retailer: Retailer) => {
-    if (!window.confirm(`Delete "${retailer.name}"?`)) return;
+    if (!window.confirm(t("retailers.confirmDelete", { name: retailer.name }))) return;
     setActionError(null);
     try {
       await api.deleteRetailer(retailer.id);
       await queryClient.invalidateQueries({ queryKey: ["retailers"] });
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : "Delete failed");
+      setActionError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
     }
   };
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">Retailers</h1>
+        <h1 className="text-2xl font-bold">{t("retailers.title")}</h1>
         <div className="flex gap-2">
           <ExportCsvButton table="retailers" />
-          <Button onClick={() => setModal({})}>+ Add retailer</Button>
+          <Button onClick={() => setModal({})}>{t("retailers.addButton")}</Button>
         </div>
       </div>
 
       <ErrorBanner message={actionError} />
 
       {isError ? (
-        <ErrorBanner message={`Failed to load retailers: ${(error as Error).message}`} />
+        <ErrorBanner message={t("retailers.loadFailed", { message: (error as Error).message })} />
       ) : retailers?.length ? (
         <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
-                <th className="px-3 py-2">Name</th>
-                <th className="px-3 py-2">Rating</th>
-                <th className="px-3 py-2">Packing</th>
-                <th className="px-3 py-2">Shipping</th>
-                <th className="px-3 py-2">Again?</th>
-                <th className="px-3 py-2">Notes</th>
+                <th className="px-3 py-2">{t("common.name")}</th>
+                <th className="px-3 py-2">{t("retailers.headerRating")}</th>
+                <th className="px-3 py-2">{t("retailers.headerPacking")}</th>
+                <th className="px-3 py-2">{t("retailers.headerShipping")}</th>
+                <th className="px-3 py-2">{t("retailers.headerAgain")}</th>
+                <th className="px-3 py-2">{t("retailers.notes")}</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -239,17 +223,17 @@ export function RetailersPage() {
                       : "—"}
                   </td>
                   <td className="px-3 py-2">
-                    {retailer.packing_quality ? PACKING_LABELS[retailer.packing_quality] : "—"}
+                    {retailer.packing_quality ? packingQualityLabel(retailer.packing_quality) : "—"}
                   </td>
                   <td className="px-3 py-2">
-                    {retailer.shipping_speed ? SPEED_LABELS[retailer.shipping_speed] : "—"}
+                    {retailer.shipping_speed ? shippingSpeedLabel(retailer.shipping_speed) : "—"}
                   </td>
                   <td className="px-3 py-2">
                     {retailer.would_order_again ? (
                       <span
                         className={`rounded-full px-2 py-0.5 text-xs font-medium ${AGAIN_STYLES[retailer.would_order_again]}`}
                       >
-                        {AGAIN_LABELS[retailer.would_order_again]}
+                        {wouldOrderAgainLabel(retailer.would_order_again)}
                       </span>
                     ) : (
                       "—"
@@ -261,10 +245,10 @@ export function RetailersPage() {
                   <td className="px-3 py-2 text-right">
                     <div className="flex justify-end gap-1">
                       <Button variant="secondary" onClick={() => setModal({ retailer })}>
-                        Edit
+                        {t("common.edit")}
                       </Button>
                       <Button variant="danger" onClick={() => remove(retailer)}>
-                        Delete
+                        {t("common.delete")}
                       </Button>
                     </div>
                   </td>
@@ -274,7 +258,7 @@ export function RetailersPage() {
           </table>
         </div>
       ) : (
-        <EmptyState>{isLoading ? "Loading…" : "No retailers yet — add where you buy."}</EmptyState>
+        <EmptyState>{isLoading ? t("common.loading") : t("retailers.empty")}</EmptyState>
       )}
 
       {modal && <RetailerFormModal retailer={modal.retailer} onClose={() => setModal(null)} />}

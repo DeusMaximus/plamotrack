@@ -14,8 +14,25 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { ITEM_TYPES, KIT_STATUSES } from "../api/types";
-import { itemTypeLabel, itemTypePlural, statusLabel } from "../lib/labels";
+import {
+  IMPORT_MODES,
+  ITEM_TYPES,
+  KIT_STATUSES,
+  PACKING_QUALITIES,
+  ROW_ACTIONS,
+  SHIPPING_SPEEDS,
+  WOULD_ORDER_AGAIN,
+} from "../api/types";
+import {
+  importActionLabel,
+  importTableLabel,
+  itemTypeLabel,
+  itemTypePlural,
+  packingQualityLabel,
+  shippingSpeedLabel,
+  statusLabel,
+  wouldOrderAgainLabel,
+} from "../lib/labels";
 import enAU from "./catalogues/en-AU.json";
 import i18n, { manifest } from "./index";
 import { CATALOGUES as REGISTRY } from "./registry";
@@ -195,6 +212,77 @@ describe("dynamic keys resolve for every runtime enum member", () => {
       expect(label).not.toBe("");
       expect(label).not.toContain("itemType.");
     }
+  });
+
+  it.each(PACKING_QUALITIES)("packing quality %s has a label", (quality) => {
+    expect(packingQualityLabel(quality)).not.toContain(quality);
+  });
+
+  it.each(SHIPPING_SPEEDS)("shipping speed %s has a label", (speed) => {
+    expect(shippingSpeedLabel(speed)).not.toContain(speed);
+  });
+
+  it.each(WOULD_ORDER_AGAIN)("would-order-again %s has a label", (answer) => {
+    expect(wouldOrderAgainLabel(answer)).not.toBe("");
+    expect(wouldOrderAgainLabel(answer)).not.toContain("wouldOrderAgain.");
+  });
+
+  it.each(ROW_ACTIONS)("row action %s has a badge word and both counted phrases", (action) => {
+    expect(importActionLabel(action)).not.toContain("importAction.");
+    for (const count of [1, 5]) {
+      for (const group of ["importCount", "importPill"] as const) {
+        const phrase = i18n.t(`${group}.${action}`, { count });
+        expect(phrase, `${group}.${action}`).toContain(String(count));
+        expect(phrase, `${group}.${action}`).not.toContain(`${group}.`);
+      }
+    }
+  });
+
+  it("the pill and totals phrasings diverge exactly where main's did (#163 P3-1)", () => {
+    // The one action whose two phrasings differ is the standing proof the two
+    // groups are both load-bearing — collapse them and this goes red.
+    expect(i18n.t("importPill.error", { count: 6 })).toBe("6 error");
+    expect(i18n.t("importCount.error", { count: 6 })).toBe("6 with errors");
+  });
+
+  it.each(IMPORT_MODES)("import mode %s has a label and a blurb", (mode) => {
+    for (const leaf of ["label", "blurb"] as const) {
+      const value = i18n.t(`importMode.${mode}.${leaf}`);
+      expect(value).not.toBe("");
+      expect(value).not.toContain("importMode.");
+    }
+  });
+
+  // The portable-table vocabulary is spec.py's key set, restated as a literal
+  // so the subject is independent of the code under test; DataPage's export
+  // list and ImportPreview's headings both resolve through these keys.
+  const PORTABLE_TABLES = [
+    "retailers",
+    "tools",
+    "consumables",
+    "upgrades",
+    "display_items",
+    "orders",
+    "order_items",
+    "kits",
+    "upgrade_applications",
+    "kit_photos",
+    "instance_settings",
+  ];
+
+  it.each(PORTABLE_TABLES)("portable table %s has a display name", (table) => {
+    expect(importTableLabel(table)).not.toContain("importTable.");
+    expect(importTableLabel(table)).not.toBe(table === "kits" ? "" : table);
+  });
+
+  it("an unknown table key falls back to itself, not a dotted key", () => {
+    expect(importTableLabel("not_a_table")).toBe("not_a_table");
+  });
+
+  it.each(["archive", "csv-set", "starter-sheet"])("import source %s has a label", (source) => {
+    const value = i18n.t(`importSource.${source}` as "importSource.archive");
+    expect(value).not.toBe("");
+    expect(value).not.toContain("importSource.");
   });
 });
 

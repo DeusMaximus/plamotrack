@@ -15,7 +15,20 @@
     "loading": "Loading…",
     "exportCsv": "Export CSV",
     "exporting": "Exporting…",
-    "exportFailedShort": "Export failed"
+    "exportFailedShort": "Export failed",
+    "cancel": "Cancel",
+    "save": "Save",
+    "add": "Add",
+    "edit": "Edit",
+    "delete": "Delete",
+    "name": "Name",
+    "requestFailed": "Request failed",
+    "deleteFailed": "Delete failed",
+    "dotSeparator": " · "
+  },
+  "validation": {
+    "nameRequired": "Name is required",
+    "rating1to5": "Rating is 1–5"
   },
   "api": {
     "exportFailed": "Export failed ({{status}})"
@@ -45,5 +58,178 @@
     "consumable": { "singular": "consumable", "plural": "consumables" },
     "upgrade": { "singular": "upgrade", "plural": "upgrades" },
     "display": { "singular": "display item", "plural": "display items" }
+  },
+  "packingQuality": {
+    "excellent": "Excellent",
+    "good": "Good",
+    "average": "Average",
+    "below_average": "Below Average",
+    "poor": "Poor"
+  },
+  "shippingSpeed": {
+    "very_fast": "Very Fast",
+    "fast": "Fast",
+    "average": "Average",
+    "slow": "Slow",
+    "very_slow": "Very Slow"
+  },
+  "wouldOrderAgain": {
+    "yes": "Yes",
+    "maybe": "Maybe",
+    "no": "No"
+  },
+  "importAction": {
+    "create": "new",
+    "update": "updated",
+    "unchanged": "unchanged",
+    "skip": "skipped",
+    "error": "error"
+  },
+  "importPill": {
+    "create_one": "{{count}} new",
+    "create_other": "{{count}} new",
+    "update_one": "{{count}} updated",
+    "update_other": "{{count}} updated",
+    "unchanged_one": "{{count}} unchanged",
+    "unchanged_other": "{{count}} unchanged",
+    "skip_one": "{{count}} skipped",
+    "skip_other": "{{count}} skipped",
+    "error_one": "{{count}} error",
+    "error_other": "{{count}} error"
+  },
+  "importCount": {
+    "create_one": "{{count}} new",
+    "create_other": "{{count}} new",
+    "update_one": "{{count}} updated",
+    "update_other": "{{count}} updated",
+    "unchanged_one": "{{count}} unchanged",
+    "unchanged_other": "{{count}} unchanged",
+    "skip_one": "{{count}} skipped",
+    "skip_other": "{{count}} skipped",
+    "error_one": "{{count}} with errors",
+    "error_other": "{{count}} with errors"
+  },
+  "importTable": {
+    "retailers": "Retailers",
+    "tools": "Tools",
+    "consumables": "Consumables",
+    "upgrades": "Upgrades",
+    "display_items": "Display items",
+    "orders": "Orders",
+    "order_items": "Order lines",
+    "kits": "Kits",
+    "upgrade_applications": "Upgrade applications",
+    "kit_photos": "Photos",
+    "instance_settings": "Instance settings"
+  },
+  "importSource": {
+    "archive": "full archive",
+    "csv-set": "set of CSV files",
+    "starter-sheet": "starter sheet"
+  },
+  "importMode": {
+    "merge": {
+      "label": "Merge",
+      "blurb": "Update anything that matches, add anything new. The usual choice."
+    },
+    "add_only": {
+      "label": "Add only",
+      "blurb": "Add what's new and leave everything you already have untouched."
+    },
+    "replace_all": {
+      "label": "Replace everything",
+      "blurb": "Delete the whole collection first, then restore this file over the top."
+    }
+  },
+  "retailers": {
+    "title": "Retailers",
+    "addButton": "+ Add retailer",
+    "addTitle": "Add retailer",
+    "editTitle": "Edit {{name}}",
+    "loadFailed": "Failed to load retailers: {{message}}",
+    "url": "URL",
+    "urlPlaceholder": "https://…",
+    "overallRating": "Overall rating (1–5)",
+    "wouldOrderAgain": "Would order again",
+    "packingQuality": "Packing quality",
+    "shippingSpeed": "Shipping speed",
+    "notes": "Notes",
+    "notesPlaceholder": "Anything else — shipping quirks, coupon codes…",
+    "headerRating": "Rating",
+    "headerPacking": "Packing",
+    "headerShipping": "Shipping",
+    "headerAgain": "Again?",
+    "confirmDelete": "Delete \"{{name}}\"?",
+    "empty": "No retailers yet — add where you buy."
+  },
+  "data": {
+    "title": "Data",
+    "subtitle": "Back up your collection, move it somewhere else, or bring it in from a spreadsheet.",
+    "exportTitle": "Export",
+    "exportDescription": "Plain CSV — yours to keep, open anywhere, and import straight back.",
+    "archiveButton": "Download full archive (.zip)",
+    "templatesTitle": "Blank templates",
+    "templatesDescription": "Starting points for entering a collection by hand.",
+    "starterSheetButton": "Starter sheet (.csv)",
+    "templatePackButton": "Full template pack (.zip)",
+    "starterBlurb": "The starter sheet is one row per kit — name, grade, where you bought it — and the app works out the retailers, orders, and order lines from that. The template pack is one blank file per table, for when you want to control everything.",
+    "importTitle": "Import",
+    "importDescription": "Nothing is written until you've seen exactly what will change.",
+    "dropHere": "Drop a .csv or .zip here",
+    "browse": "or browse for one",
+    "chooseDifferent": "choose a different file",
+    "modeLabel": "If something already exists",
+    "reading": "Reading…",
+    "previewChanges": "Preview changes",
+    "replaceConfirm": "This deletes your current collection. Type REPLACE to confirm.",
+    "importing": "Importing…",
+    "applyImport": "Apply import",
+    "complete": "Import complete",
+    "result": {
+      "created_one": "{{count}} created",
+      "created_other": "{{count}} created",
+      "updated_one": "{{count}} updated",
+      "updated_other": "{{count}} updated",
+      "skipped_one": "{{count}} skipped",
+      "skipped_other": "{{count}} skipped",
+      "kitsSpawned_one": "{{count}} kits created from order lines",
+      "kitsSpawned_other": "{{count}} kits created from order lines",
+      "kitsRemoved_one": "{{count}} kits removed from order lines",
+      "kitsRemoved_other": "{{count}} kits removed from order lines",
+      "kitsAdvanced_one": "{{count}} kits moved with shipped/received dates",
+      "kitsAdvanced_other": "{{count}} kits moved with shipped/received dates"
+    }
+  },
+  "importPreview": {
+    "blockedTitle": "This import can't run yet",
+    "readAs": "Read as a <src>{{source}}</src>.",
+    "readAsExported": "Read as a <src>{{source}}</src><muted> exported {{exportedAt}}</muted>.",
+    "csvOf": "{{table}} CSV",
+    "nothingToDo": "nothing to do",
+    "matchedOn": "matched on {{field}}",
+    "emptyValue": "(empty)",
+    "recordsDeleted_one": "{{count}} existing record will be deleted first.",
+    "recordsDeleted_other": "{{count}} existing records will be deleted first.",
+    "kitsSpawned_one": "{{count}} kit will be created from order lines that don't bring their own.",
+    "kitsSpawned_other": "{{count}} kits will be created from order lines that don't bring their own.",
+    "kitsRemoved_one": "{{count}} kit will be deleted, from order lines whose quantity went down.",
+    "kitsRemoved_other": "{{count}} kits will be deleted, from order lines whose quantity went down.",
+    "kitsAdvanced_one": "{{count}} kit already on these orders will move with the shipped/received dates.",
+    "kitsAdvanced_other": "{{count}} kits already on these orders will move with the shipped/received dates."
+  },
+  "catalogPicker": {
+    "change": "Change",
+    "newItem": "New {{type}}",
+    "backToSearch": "← back to search",
+    "manufacturerRequired": "Manufacturer (required)",
+    "categoryRequired": "Category (required)",
+    "categoryRequiredDisplay": "Category (required) — stand / scenery",
+    "manufacturer": "Manufacturer",
+    "scalePlaceholder": "Scale, e.g. 1/144",
+    "searchPlaceholder": "Search {{type}}…",
+    "searching": "Searching…",
+    "onHand_one": "{{count}} on hand",
+    "onHand_other": "{{count}} on hand",
+    "createNew": "＋ Create new {{type}} “{{query}}”"
   }
 }

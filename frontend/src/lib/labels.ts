@@ -1,4 +1,11 @@
-import type { ItemType, KitStatus } from "../api/types";
+import type {
+  ItemType,
+  KitStatus,
+  PackingQuality,
+  RowAction,
+  ShippingSpeed,
+  WouldOrderAgain,
+} from "../api/types";
 import i18n from "../i18n";
 
 /** Catalogue-backed labels for canonical wire values (design §6.1): the
@@ -24,4 +31,36 @@ export function itemTypeLabel(type: ItemType): string {
 
 export function itemTypePlural(type: ItemType): string {
   return i18n.t(`itemType.${type}.plural`);
+}
+
+export function packingQualityLabel(quality: PackingQuality): string {
+  return i18n.t(`packingQuality.${quality}`);
+}
+
+export function shippingSpeedLabel(speed: ShippingSpeed): string {
+  return i18n.t(`shippingSpeed.${speed}`);
+}
+
+export function wouldOrderAgainLabel(answer: WouldOrderAgain): string {
+  return i18n.t(`wouldOrderAgain.${answer}`);
+}
+
+/** The bare action word for a row badge; counted phrases ("3 new") come from
+ * the `importCount.*` plural keys instead — a language may inflect the two
+ * grammatical slots differently. */
+export function importActionLabel(action: RowAction): string {
+  return i18n.t(`importAction.${action}`);
+}
+
+/** Portable-table display name, falling back to the raw spec key so a table
+ * the catalogue doesn't know yet still renders something true rather than a
+ * dotted key. Keys are `portability/spec.py` table keys. Note the unified
+ * vocabulary is wider than the preview's old private map: `display_items` and
+ * `instance_settings` headings used to render as raw spec keys and now render
+ * their labels (#163 review, P3-2 — sanctioned visible change). The
+ * `exists`+`t` pattern here is safe only on flat keys — `exists` is false for
+ * a plural base like `importCount.skip` even though `t` resolves it. */
+export function importTableLabel(table: string): string {
+  const key = `importTable.${table}`;
+  return i18n.exists(key) ? i18n.t(key as "importTable.kits") : table;
 }
