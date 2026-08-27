@@ -23,6 +23,7 @@ from app.exceptions import InvalidInputError
 from app.models.enums import DateStyle, HourCycle
 from app.models.settings import SINGLETON_ROW_ID, InstanceSettings
 from app.schemas.settings import InstanceSettingsUpdate
+from app.services.currency import require_currency_code
 from app.services.write_gate import acquire_write_gate
 
 #: Interface languages this build can actually render. `en-AU` is the canonical
@@ -46,18 +47,20 @@ DEFAULTS: dict[str, str] = {
     "hour_cycle": HourCycle.LOCALE.value,
 }
 
-# language(-Script)?(-REGION)?(-variant)* — the BCP 47 subset `Intl` formatters
-# consume. Extension and private-use subtags (-u-…, -x-…) are refused: `-u-hc-`
-# and `-u-ca-` would smuggle in a second hour-cycle or calendar setting that
-# fights the explicit columns beside this one.
+# language(-Script)?(-REGION)?(-variant)* — the shape `Intl` formatters consume
+# (UTS 35 unicode_language_id), which is narrower than raw BCP 47 in two ways
+# that matter (PR #159 review, P3-2): the language subtag is 2–3 letters or a
+# registered 5–8 (four-letter tags are reserved and `Intl` throws on them), and
+# a variant may appear once — the duplicate check lives below, since a regex
+# can't see it. Extension and private-use subtags (-u-…, -x-…) are refused:
+# `-u-hc-` and `-u-ca-` would smuggle in a second hour-cycle or calendar setting
+# that fights the explicit columns beside this one.
 _LOCALE_RE = re.compile(
-    r"^(?P<language>[A-Za-z]{2,8})"
+    r"^(?P<language>[A-Za-z]{2,3}|[A-Za-z]{5,8})"
     r"(?:-(?P<script>[A-Za-z]{4}))?"
     r"(?:-(?P<region>[A-Za-z]{2}|[0-9]{3}))?"
     r"(?P<variants>(?:-(?:[A-Za-z0-9]{5,8}|[0-9][A-Za-z0-9]{3}))*)$"
 )
-
-_CURRENCY_RE = re.compile(r"^[A-Za-z]{3}$")
 
 
 def canonical_locale(raw: str) -> str:
@@ -79,7 +82,16 @@ def canonical_locale(raw: str) -> str:
     if match["region"]:
         parts.append(match["region"].upper())
     if match["variants"]:
-        parts.extend(part.lower() for part in match["variants"].strip("-").split("-"))
+        variants = [part.lower() for part in match["variants"].strip("-").split("-")]
+        if len(set(variants)) != len(variants):
+            # BCP 47 forbids a repeated variant and `Intl` throws on one — a
+            # stored tag the formatter refuses is not a formatting preference.
+            raise ValueError(f"'{raw}' repeats a variant subtag — each may appear once")
+        # Sorted because that is UTS 35's canonical order — `Intl` sorts them, the
+        # order carries no meaning, and 'sl-rozaj-biske' / 'sl-biske-rozaj' must
+        # not be storable as two different settings (found by the shared
+        # locale-cases fixture the review asked for).
+        parts.extend(sorted(variants))
     return "-".join(parts)
 
 
@@ -119,24 +131,17 @@ def validate_time_zone(raw: str) -> str:
     return found
 
 
-def validate_reference_currency(raw: str) -> str:
-    """Shape only (ISO 4217, three letters), uppercased. Deliberately not a
-    membership test against KNOWN_CURRENCIES — see that set's note on why an
-    unrecognised code is accepted everywhere."""
-    value = raw.strip()
-    if not _CURRENCY_RE.fullmatch(value):
-        raise ValueError(f"'{raw}' is not a 3-letter ISO 4217 currency code")
-    return value.upper()
-
-
-#: Field -> canonicaliser, for the string fields. The two enum fields are typed
-#: as their StrEnum in the schema and parsed by `enum_parser` in the CSV spec, so
-#: membership is already settled before a value reaches the row.
+#: Field -> canonicaliser, for the string fields. The currency entry is the
+#: shared §6 shape test itself (`require_currency_code` — ASCII, uppercased, no
+#: membership test; PR #159 review, P2, is why there is exactly one copy). The
+#: two enum fields are typed as their StrEnum in the schema and parsed by
+#: `enum_parser` in the CSV spec, so membership is already settled before a
+#: value reaches the row.
 _VALIDATORS = {
     "interface_language": validate_interface_language,
     "formatting_locale": validate_formatting_locale,
     "time_zone": validate_time_zone,
-    "reference_currency": validate_reference_currency,
+    "reference_currency": require_currency_code,
 }
 
 _MISSING_ROW = (

@@ -8,9 +8,18 @@ would let a mutation of the defaults move the test with it.
 Value axes per the checklist: explicit null (refused — nothing is nullable),
 empty and whitespace-only strings, the stored default restated, and a genuinely
 different value. The state axis is which fields the PATCH carries.
+
+The formatting-locale shape cases come from
+`frontend/src/lib/__fixtures__/locale-cases.json`, which
+`frontend/src/lib/locale-cases.test.ts` also reads against the real `Intl` —
+a tag this backend stores that the consuming formatter throws on is the P3-2
+of the PR #159 review, and the shared fixture is what keeps the two judgements
+from drifting apart. Add locale cases there, not here.
 """
 
 import asyncio
+import json
+from pathlib import Path
 
 import pytest
 from sqlalchemy import text as sa_text
@@ -19,9 +28,14 @@ from app.db import get_sessionmaker, session_scope
 from app.schemas.settings import InstanceSettingsUpdate
 from app.services import instance_settings
 from app.services.write_gate import _COLLECTION_WRITE_LOCK
-from tests.test_portability import _a_writer_is_parked_on_the_gate
 
 pytestmark = pytest.mark.anyio
+
+_LOCALE_CASES = json.loads(
+    (
+        Path(__file__).resolve().parents[2] / "frontend/src/lib/__fixtures__/locale-cases.json"
+    ).read_text(encoding="utf-8")
+)
 
 #: What a fresh instance answers — the migration's seed, restated as literals.
 BOOTSTRAP = {
@@ -91,6 +105,9 @@ async def test_restating_the_stored_value_succeeds_quietly(client):
     [
         ({"formatting_locale": "EN-au"}, {"formatting_locale": "en-AU"}),
         ({"formatting_locale": "zh-hans-tw"}, {"formatting_locale": "zh-Hans-TW"}),
+        # Variants sort into UTS 35's canonical order — Intl sorts them, so the
+        # other spelling must not be storable as a second setting.
+        ({"formatting_locale": "sl-rozaj-biske"}, {"formatting_locale": "sl-biske-rozaj"}),
         ({"time_zone": "australia/sydney"}, {"time_zone": "Australia/Sydney"}),
         ({"time_zone": "utc"}, {"time_zone": "UTC"}),
         ({"reference_currency": "jpy"}, {"reference_currency": "JPY"}),
@@ -119,11 +136,19 @@ async def test_values_are_canonicalised_on_the_way_in(client, payload, canonical
         ("formatting_locale", "   "),
         # Extension subtags would smuggle in a second hour-cycle/calendar setting.
         ("formatting_locale", "en-AU-u-hc-h23"),
+        # `Intl` throws on both of these, so storing either hands the Settings
+        # page a formatter error (PR #159 review, P3-2): a repeated variant, and
+        # a four-letter language subtag (reserved in BCP 47).
+        ("formatting_locale", "en-abcde-abcde"),
+        ("formatting_locale", "abcd"),
         ("time_zone", "Mars/Olympus_Mons"),
         ("time_zone", ""),
         ("reference_currency", "AU$"),
         ("reference_currency", "AUDD"),
         ("reference_currency", ""),
+        # Three Unicode "letters" are not three ASCII letters (PR #159 review,
+        # P2) — isalpha() thought otherwise, on the CSV side.
+        ("reference_currency", "ÅUD"),
         # Enum fields: membership is pydantic's, same 422 either way.
         ("date_style", "sideways"),
         ("hour_cycle", "h25"),
@@ -154,9 +179,33 @@ async def test_unknown_fields_are_refused(http_client):
     assert (await http_client.patch("/settings", json={"timezone": "UTC"})).status_code == 422
 
 
-async def test_concurrent_updates_serialize_rather_than_losing_fields():
-    # Two writers, different fields, separate sessions. The gate + row lock make
-    # them take turns; a stale-copy overwrite would erase whichever landed first.
+@pytest.mark.parametrize("case", _LOCALE_CASES["accepted"], ids=lambda case: repr(case["input"]))
+async def test_locale_shapes_the_frontends_intl_accepts_are_accepted(case):
+    assert instance_settings.canonical_locale(case["input"]) == case["canonical"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    _LOCALE_CASES["refused_everywhere"] + _LOCALE_CASES["refused_by_policy"],
+    ids=lambda case: repr(case["input"]),
+)
+async def test_locale_shapes_this_instance_refuses_are_refused(case):
+    # Both lists refuse here; the frontend suite is what tells them apart
+    # (Intl throws on refused_everywhere and accepts refused_by_policy).
+    with pytest.raises(ValueError):
+        instance_settings.canonical_locale(case["input"])
+
+
+async def test_concurrent_field_updates_land_without_overwriting_each_other():
+    """A final-state control, not a serialization proof (PR #159 review, P3-3):
+    SQLAlchemy only UPDATEs dirty columns, so two per-field writers can't erase
+    each other even unserialized — the review measured exactly that by removing
+    both locks under this test's previous name. What it pins is that write
+    shape: an `update_instance_settings` that ever grew a read-copy-writeback of
+    the whole row would go red here. The serialization claim itself lives in
+    `test_an_update_waits_its_turn_on_the_write_gate`, which observes the
+    blocking edge directly."""
+
     async def set_fields(**fields):
         async with session_scope() as session:
             await instance_settings.update_instance_settings(
@@ -176,28 +225,48 @@ async def test_concurrent_updates_serialize_rather_than_losing_fields():
 async def test_an_update_waits_its_turn_on_the_write_gate():
     """Rule 7.1: the gate comes before the locked read, so a settings change
     serializes against *every* writer — including an apply_import whose plan is
-    reading this row — not merely against another settings PATCH. Held from
-    another transaction, the gate must park the update (observed in
-    pg_stat_activity, never slept for); released, the update completes. The row
-    lock alone cannot pass this test: the holder never touches the row."""
+    reading this row — not merely against another settings PATCH.
+
+    The wait is observed as the exact blocking edge, never slept for and never
+    counted: `pg_blocking_pids(updater)` must contain the holder's own backend
+    pid. Counting advisory waiters database-wide let an unrelated waiter satisfy
+    the assertion with the gate deleted (PR #159 review, P3-3 — Codex parked a
+    decoy on a different key and watched the stg-5 mutant survive five times).
+    The row lock alone cannot pass this test either: the holder never touches
+    the row, so only the gate can put the holder on the updater's blocker list.
+    """
+    loop = asyncio.get_running_loop()
+    updater_pid: asyncio.Future[int] = loop.create_future()
     async with get_sessionmaker()() as holder:
         await holder.execute(
             sa_text("SELECT pg_advisory_xact_lock(:key)"), {"key": _COLLECTION_WRITE_LOCK}
         )
+        holder_pid = await holder.scalar(sa_text("SELECT pg_backend_pid()"))
 
         async def update() -> None:
             async with session_scope() as session:
+                updater_pid.set_result(await session.scalar(sa_text("SELECT pg_backend_pid()")))
                 await instance_settings.update_instance_settings(
                     session, InstanceSettingsUpdate(reference_currency="JPY")
                 )
 
+        async def parked_behind_holder() -> bool:
+            async with session_scope() as probe:
+                return bool(
+                    await probe.scalar(
+                        sa_text("SELECT :holder = ANY(pg_blocking_pids(:waiter))"),
+                        {"holder": holder_pid, "waiter": updater_pid.result()},
+                    )
+                )
+
         task = asyncio.create_task(update())
+        await asyncio.wait_for(asyncio.shield(updater_pid), timeout=5)
         for _ in range(400):
-            if task.done() or await _a_writer_is_parked_on_the_gate():
+            if task.done() or await parked_behind_holder():
                 break
             await asyncio.sleep(0.01)
         assert not task.done(), "the update finished while the gate was held"
-        assert await _a_writer_is_parked_on_the_gate()
+        assert await parked_behind_holder()
         await holder.rollback()  # the gate is transaction-scoped: this releases it
     await task
     async with session_scope() as session:

@@ -1022,3 +1022,36 @@ async def test_preview_says_a_lone_currency_column_is_being_ignored(client):
     assert resp.status_code == 200, resp.text
     row = resp.json()["tables"][0]["rows"][0]
     assert any("unit_cost_reference_currency: ignored" in m for m in row["messages"]), row
+
+
+@pytest.mark.parametrize(
+    ("filename", "column"),
+    [
+        # Literals, one per currency column the CSV shape declares — never
+        # derived from the spec registry, which is the code under test here.
+        ("orders.csv", "currency_code"),
+        ("order_items.csv", "currency_code"),
+        ("order_items.csv", "converted_currency_code"),
+        ("tools.csv", "unit_cost_reference_currency"),
+        ("instance_settings.csv", "reference_currency"),
+    ],
+)
+async def test_a_unicode_letter_code_is_refused_on_every_currency_column(client, filename, column):
+    """'ÅUD' is three letters to `str.isalpha` and no currency to ISO 4217
+    (PR #159 review, P2). The importer judged the shape with `isalpha` while
+    `PATCH /settings` used an ASCII regex, so the code REST refused imported
+    cleanly — and, on the settings table, was then stamped into new conversion
+    snapshots. The shape test is `require_currency_code` now, shared by both
+    writers, and this matrix is the class sweep: every currency column answers,
+    not just the one the review probed."""
+    content = f"{column}\nÅUD\n".encode()
+    resp = await client.post(
+        "/import/preview",
+        files={"file": (filename, content, "text/csv")},
+        data={"mode": "merge"},
+    )
+    assert resp.status_code == 200, resp.text
+    (table,) = [t for t in resp.json()["tables"] if t["rows"]]
+    (row,) = table["rows"]
+    assert row["action"] == "error"
+    assert "not a 3-letter ISO 4217 currency code" in row["error"]

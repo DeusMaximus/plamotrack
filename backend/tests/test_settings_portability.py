@@ -213,6 +213,10 @@ async def test_a_second_row_is_refused(client):
         ({"date_style": "sideways"}, "not valid here"),
         ({"hour_cycle": "h25"}, "not valid here"),
         ({"reference_currency": "AU$"}, "not a 3-letter ISO 4217 currency code"),
+        # Unicode letters are not ISO 4217 letters (PR #159 review, P2): PATCH
+        # refused this while the sheet imported it and new snapshots carried it.
+        ({"reference_currency": "ÅUD"}, "not a 3-letter ISO 4217 currency code"),
+        ({"formatting_locale": "en-abcde-abcde"}, "repeats a variant subtag"),
     ],
 )
 async def test_invalid_cells_are_row_errors_that_block(client, cell, fragment):

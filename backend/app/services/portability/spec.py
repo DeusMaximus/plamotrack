@@ -54,6 +54,7 @@ from app.models.enums import (
     ShippingSpeed,
     WouldOrderAgain,
 )
+from app.services.currency import require_currency_code
 from app.services.instance_settings import (
     validate_formatting_locale,
     validate_interface_language,
@@ -170,12 +171,15 @@ def parse_datetime(raw: str) -> datetime | None:
 
 
 def parse_currency(raw: str) -> str | None:
-    value = raw.strip().upper()
+    value = raw.strip()
     if not value:
         return None
-    if len(value) != 3 or not value.isalpha():
-        raise ValueError(f"'{raw}' is not a 3-letter ISO 4217 currency code")
-    return value
+    # The same ASCII shape test PATCH /settings applies. This used `isalpha()`,
+    # which is Unicode-wide, so 'ÅUD' imported cleanly while REST refused it
+    # (PR #159 review, P2). Still its own function rather than the predicate
+    # directly, because `_warn_unknown_currency` finds currency columns by this
+    # function's identity.
+    return require_currency_code(value)
 
 
 def enum_parser(enum_cls: type[StrEnum], *, aliases: dict[str, str] | None = None) -> Callable:
