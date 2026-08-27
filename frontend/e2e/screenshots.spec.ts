@@ -345,7 +345,7 @@ test("seed the demo collection and capture the README screenshots", async ({
     await expect(page.getByText("Orbit Hobby Depot")).toBeVisible();
   });
 
-  await shot("/data", "data.png", { width: 1440, height: 900 }, async () => {
+  await shot("/settings/data", "data.png", { width: 1440, height: 900 }, async () => {
     await expect(page.getByText(/export/i).first()).toBeVisible();
   });
 });

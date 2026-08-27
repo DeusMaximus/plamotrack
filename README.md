@@ -106,7 +106,7 @@ and plamotrack works out the retailers, orders, and order lines for you.
 
 Full details in [docs/import-export.md](docs/import-export.md).
 
-![The data page — export, templates, and a preview-before-you-commit import](docs/screenshots/data.png)
+![Data management in Settings — export, templates, and a preview-before-you-commit import](docs/screenshots/data.png)
 
 ### An MCP server, so you can stop clicking
 
@@ -139,7 +139,7 @@ Being honest up front beats you finding out at 11pm:
 | CSV import / export | ✅ Built |
 | MCP server | ✅ Built |
 | Bundled `docker compose up` for the whole local stack | ✅ Built |
-| **Internationalisation foundations** | 🔨 Milestone 5.1 — in progress: the instance-settings record (language, region, time zone, date/hour style, reference currency) is in, settable via `PATCH /api/settings` and carried by exports; the `en-AU` catalogue, language manifest and [translation workflow](docs/translating.md) are in and every page's copy is served from them; locale-aware formatting and the Settings page are next |
+| **Internationalisation foundations** | 🔨 Milestone 5.1 — in progress: the instance-settings record (language, region, time zone, date/hour style, reference currency) is in, settable via `PATCH /api/settings` and carried by exports; the `en-AU` catalogue, language manifest and [translation workflow](docs/translating.md) are in and every page's copy is served from them; the Settings page is in (reference currency editable, Data management absorbed from the old Data page, version in About); locale-aware formatting and the language & region controls are next |
 | **Authentication + OAuth-compatible remote MCP** | 🔨 Milestone 6 — yes, really, see the warning above |
 | **MCP `2026-07-28` compatibility** | 🔨 Milestone 6.1 — dual-era, without dropping current clients |
 | **UI redesign** | 🔨 Milestone 6.5 — moving off the stock-component look, so the gallery and showcase get built in the new one; direction still being explored, and opinions are welcome on the tracker |
@@ -161,7 +161,8 @@ docker compose up -d --build --wait
 ```
 
 Open **http://localhost:8080**. That's an empty collection — head to
-**Data → Starter sheet** to pour an existing spreadsheet in, or just add an order.
+**Settings → Data management → Starter sheet** to pour an existing spreadsheet
+in, or just add an order.
 
 The first run builds two images and takes a couple of minutes; after that it's
 seconds. `.env` is the whole configuration: Compose reads it to start the database
