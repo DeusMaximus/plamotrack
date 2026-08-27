@@ -32,7 +32,7 @@ then read the entry that matched.
 Template:
 
 ```markdown
-## 2026-08-27 — Claude Code (Fable 5) — M5.1 opened: #23 implemented, PR #159 awaiting review
+## 2026-08-27 — Claude Code (Fable 5) — M5.1 opened: #23 on PR #159, Codex round 1 answered (amended in place)
 
 - **Done:** **#23 — PR #159 open** (`feat/23-instance-settings`, head `18cfc45`,
   ~1,555 insertions — Codex-sized). The `instance_settings` singleton: model
@@ -60,22 +60,36 @@ Template:
   settings.csv; replace_all updates rather than resets; **no new MCP tools**
   (get_meta stays the MCP read surface — revisit at #24/#27); enum membership
   left to pydantic/enum_parser rather than a third list.
-- **State:** backend **1152** green, vitest 109, e2e 30 (+1 skipped
-  screenshots) verified from-empty and self-cleaning, ruff/build/oxlint clean;
-  CI pending on the PR at hand-off time. **Scratch harness 18/18 killed**
-  (`stg-` — `iset-` was rejected: `-k iset` substring-matches cat-22's
-  "multiset"); tuples in the PR body and untracked
-  `backend/mutation_scratch_23.py`; the fold-in owes TEST_FILES +
+- **Round 1 (Codex): NO-GO — P2 + 2×P3, all accepted, all reproduced at
+  `18cfc45` first, fixed at `fb72dbd`; reply posted.** P2: `parse_currency`
+  judged letters with Unicode `isalpha` while PATCH used ASCII — 'ÅUD' imported
+  and got stamped into snapshots; now ONE shape test, `require_currency_code`
+  in `services/currency.py`, both writers delegate, swept across all five CSV
+  currency columns (literal matrix in test_reference_currency.py). P3:
+  `canonical_locale` narrowed to the UTS 35 shape Intl consumes (language
+  {2,3}|{5,8}, variants unique + stored SORTED — Intl sorts them; the shared
+  `frontend/src/lib/__fixtures__/locale-cases.json` + new frontend Intl suite
+  found that fourth defect on its first run). P3: the gate test now asserts
+  `holder = ANY(pg_blocking_pids(updater))` — Codex proved a decoy advisory
+  waiter false-passed the old count-based check (stg-5 GREEN 5/5); post-fix
+  the same decoy scenario reads RED 5/5. The two-field test renamed to the
+  final-state control it is. Round negative control: 14 red / 130 green in a
+  worktree of `18cfc45`.
+- **State:** `fb72dbd` — backend **1186**, vitest **132** (23 new Intl cases),
+  e2e 30 (+1 skipped) from-empty at `18cfc45` (unaffected by round 1: no
+  route/UI changes), ruff/build/oxlint clean; CI green at `18cfc45`, pending at
+  `fb72dbd` at amend time. **Scratch harness 23/23 killed** (`stg-`; `iset-`
+  rejected — `-k iset` matches cat-22's "multiset"); tuples in the PR body and
+  untracked `backend/mutation_scratch_23.py`; fold-in owes TEST_FILES +
   test_settings.py, test_settings_portability.py, test_reference_currency.py.
   test_reference_currency's env fixture split in two: `bootstrap_currency`
   (monkeypatch, the two config tests) vs the row-writing, awaited
   `reference_currency`. No dev servers running; stale worktrees
   `/private/tmp/plamotrack-pr100` and `-pr108-main` persist (pre-date this).
-- **Next:** owner pastes the **Codex brief** (printed in the session chat;
-  backup at the session scratchpad as `codex-brief-23.md`) — **check Codex's
-  meter first**; Cursor was rate-limited on 26/08 and this PR is past its
-  ceiling anyway. After merge: the stg- fold-in branch (the #117 shape), then
-  the rest of M5.1 — #24 (Settings page; the client methods already exist),
+- **Next:** **round 2** — the reply on the PR names everything to replay;
+  expect Codex to re-probe the decoy scenario and the five-column ÅUD matrix.
+  After a GO + merge: the stg- fold-in branch (the #117 shape, 23 tuples),
+  then the rest of M5.1 — #24 (Settings page; client methods exist),
   #22/#25/#26/#27, #114. LXC is still pre-0.2.8: **back up the LXC database
   before pulling** (real collection).
 
