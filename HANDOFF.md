@@ -41,6 +41,42 @@ Template:
 
 ---
 
+## 2026-08-28 — Claude Code (Fable 5) — bundle-size warning assessed: no splitting; PR #166 open
+
+- **Done:** the 503 kB chunk warning (flagged informational in the previous
+  entry) assessed and dispositioned. Measured at `abb9d7c`: one 506.76 kB
+  chunk, 154.90 kB gzip. Sourcemap attribution: react-dom 175 kB (35%), app
+  code ~102 kB (14 kB of it the en-AU catalogue), the #22 i18n stack ~57 kB,
+  dnd-kit 41 kB, react-router 36 kB, react-hook-form 35 kB, TanStack Query
+  35 kB — nothing accidental; the deliberate #22 addition is what crossed
+  Vite's 500 kB default. **PR #166 open** (`chore/vite-chunk-warning-limit`,
+  `a389c87`): `build.chunkSizeWarningLimit: 600` with the reasoning and the
+  revisit path as a config comment. Built chunk byte-identical; build + lint
+  green. Review skipped per the #40 criterion (small, local; worst failure is
+  a suppressed warning) — merge is the owner's call.
+- **Decisions:** severity by real exposure — a single-owner LAN instance
+  fetches 155 kB gzip once per release, cached thereafter; no user-observable
+  cost. React.lazy declined (index redirects to /board, the dnd-kit consumer,
+  so the heaviest split-able dep loads on first paint anyway; Suspense adds
+  e2e async surface of the #162 class). manualChunks declined (cross-release
+  caching for one repeat visitor; a Vite 8/Rolldown config dialect to carry).
+  600 keeps the tripwire: ~90 kB headroom ≈ six statically imported
+  catalogues (~14 kB each, `src/i18n/registry.ts`) — if shipped languages
+  re-trip it, per-language dynamic import (natural home #27), not another
+  raise. No issue filed — not a defect, no numbered rule violated.
+- **State:** `main` at `abb9d7c` (+ this entry); PR #166 is the only
+  in-flight branch. No code merged this session, no migrations, no mutant
+  queues. Backend 1187, vitest 212, e2e 30 (+1 skipped) — untouched. Stale
+  worktrees `/private/tmp/plamotrack-pr100` and `-pr108-main` persist
+  (pre-date this).
+- **Next:** owner: merge or amend #166. Then M5.1 as before, all unblocked:
+  #24 (Settings page), #25/#26 (structured diagnostics), #27 (language/region
+  UI; `/meta` still doesn't advertise supported languages), #114 (naive CSV
+  dates). #162 (e2e keyboard-select race) remains reproduced-on-`main`,
+  unfixed. Cursor carried three rounds and Codex two on #22 — check both
+  meters before the next buy. LXC: **back up before pulling** (real
+  collection; 0.2.8's settings migration still pending there).
+
 ## 2026-08-28 — Claude Code (Fable 5) — #22 CLOSED: the i18n foundation, four PRs (#161/#163/#164/#165)
 
 - **Done:** **#22 closed** — the en-AU catalogue foundation, four sequential
@@ -291,46 +327,3 @@ Template:
   ~full. #137/#144 still await product calls; #122 rides M6.5. LXC: if
   v0.2.7 hasn't been pulled yet, **back up the LXC database first** (real
   collection).
-
-## 2026-08-25 — Claude Code (Fable 5) — v0.2.7-alpha RELEASED; #119, #77, #87 closed (one Cursor round each); docs + screenshots refreshed; both milestones closed
-
-- **Released: v0.2.7-alpha** at tag `921c4f1` ("the importer keeps its promises"),
-  `--prerelease`, notes owner-approved; gate ran clean (both surfaces 0.2.7,
-  packaged stack healthy, migrate Exited (0), container-exported manifest carries
-  app_version 0.2.7 + schema `2c97a5ced66a`; dev overlay restored). Milestones
-  0.2.6 and 0.2.7 both closed at the tag. **No v0.2.6 tag exists, by design.**
-- **Done this session:** **#119 — PR #139** (`b6c083d`): derived ship/receive
-  advances as hash-bound `_Advance` plan descriptors; Cursor GO + 1 P3 (docs),
-  fixed `7de77bb`. **#77 — PR #141** (`0302c36`): `require_total_fanout` /
-  MAX_TOTAL_FANOUT=10,000 shared by entry, edit (stated totals, pre-lock) and the
-  import planner (actual spawns → blocking error; restore-safe); Cursor GO + 2 P3s
-  fixed `0f16ef8`. **#87 — PR #143** (`d41d7c5`), owner chose option 1: a new
-  catalog line may not join a stored already-received order
-  (`_check_lines_joining_received_orders`; the replace_all return is load-bearing);
-  Cursor clean GO, zero findings. Fold-ins #140/#142/#145 merged — tracked
-  harness **176/176** (`adv-`/`cap-`/`rcv-`), no queues outstanding.
-  **Docs PR #146**: all six screenshots re-shot post-#120/#126 via the new
-  repeatable `frontend/e2e/screenshots.spec.ts` (skipped unless SCREENSHOTS=1;
-  seeds a throwaway `plamotrack_demo` DB, refuses a non-empty one); README gained
-  the order-timeline paragraph + the M6.5 redesign row; operations.md's
-  "before 0.2.6" → 0.2.7. Version bump PR #147 (`921c4f1`).
-- **Notable finds:** the pre-existing currency-fingerprint test seeded the exact
-  #87 defect and asserted it as good — adapted to a pending parent (its subject
-  preserved; disclosed in PR #143, verified by the round). `-k fan-` collides
-  with "fan-out" in strt-7's label (prefix rule matters); cap-/rcv- chosen by
-  grep-first.
-- **Filed:** **#144** — parallel agent sessions collide on `plamotrack_test`,
-  the dev ports and the harness's in-place mutation; sketch: `PLAMOTRACK_TEST_DB`
-  override + per-session ports. **Owner's call: backburner** until parallel
-  sessions ramp up. #137 stays unmilestoned (product call).
-- **State:** `main` at `921c4f1` == the tag (+ this entry), backend **1056**,
-  vitest 109, e2e 24 (+1 skipped screenshot spec), harness 176/176 @ 18m08s,
-  CI green at every head. Dev db container back on the dev overlay; no dev
-  servers running. Codex budget still ~full (unused; all four rounds were
-  Cursor).
-- **Next:** the owner will likely pull the release onto the LXC — **back up the
-  LXC database first** (real collection). Then the 0.2.8 backlog
-  (#104/#53/#54/#61/#63/#67) or M5.1; #122 rides M6.5; #137 and #144 await
-  product calls. The AI-native-SDLC review (owner asked, this session) filed no
-  issues but shortlisted: deterministic hooks for `down -v` / migration edits,
-  a scheduled CI harness run, plan-first for M6, per-worktree test DBs (#144).
