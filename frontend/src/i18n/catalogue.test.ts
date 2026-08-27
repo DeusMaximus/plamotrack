@@ -18,6 +18,7 @@ import { ITEM_TYPES, KIT_STATUSES } from "../api/types";
 import { itemTypeLabel, itemTypePlural, statusLabel } from "../lib/labels";
 import enAU from "./catalogues/en-AU.json";
 import i18n, { manifest } from "./index";
+import { CATALOGUES as REGISTRY } from "./registry";
 import {
   catalogueProblems,
   compareToSource,
@@ -28,13 +29,12 @@ import {
   validateManifest,
 } from "./validate";
 
-/** Every shipped catalogue, imported explicitly — one line per language, which
- * is exactly the shape a language contribution adds (docs/translating.md). A
- * mismatch against the manifest is a test failure below, so neither list can
- * grow without the other. */
-const CATALOGUES: Record<string, unknown> = {
-  "en-AU": enAU,
-};
+/** THE registry — the same map i18next's resources are derived from
+ * (src/i18n/registry.ts), widened for indexing by manifest tag. Validating the
+ * runtime's own source list is the point: a test-only copy of it is how a
+ * language passes every gate while the runtime never loads it (PR #161
+ * review, P2). */
+const CATALOGUES: Record<string, unknown> = REGISTRY;
 
 const flatten = (raw: unknown) => {
   const { entries, problems } = flattenCatalogue(raw);
@@ -43,8 +43,12 @@ const flatten = (raw: unknown) => {
 };
 
 describe("the validators refuse what they must (standing negative controls)", () => {
-  it("an empty value", () => {
-    expect(flattenCatalogue({ a: "" }).problems).toEqual(['"a" is empty']);
+  it("an empty or whitespace-only value", () => {
+    expect(flattenCatalogue({ a: "" }).problems).toEqual(['"a" is blank']);
+    expect(flattenCatalogue({ a: "   " }).problems).toEqual(['"a" is blank']);
+    expect(flattenCatalogue({ a: "\n\t" }).problems).toEqual(['"a" is blank']);
+    // Whitespace *around* content is content — byte-preserved, not judged.
+    expect(flattenCatalogue({ a: " · " }).problems).toEqual([]);
   });
 
   it("a separator inside a key segment", () => {
@@ -149,6 +153,14 @@ describe("the shipped manifest and catalogues pass", () => {
     expect(Object.keys(CATALOGUES).sort()).toEqual(tags);
   });
 
+  it("every registered catalogue is loaded into the runtime", () => {
+    // The registry feeds i18next's resources by derivation; this holds if that
+    // derivation is ever replaced with a hand-written list again.
+    for (const tag of Object.keys(CATALOGUES)) {
+      expect(i18n.hasResourceBundle(tag, "translation"), tag).toBe(true);
+    }
+  });
+
   it("every catalogue is structurally sound for its language", () => {
     for (const [tag, raw] of Object.entries(CATALOGUES)) {
       const { entries, problems } = flattenCatalogue(raw);
@@ -200,12 +212,18 @@ describe("runtime behaviour the app relies on", () => {
   it("selects plural forms by count and falls back to en-AU per key", () => {
     // A probe language registered only here: one plural pair plus a hole where
     // nav.orders should be, so both behaviours are observed on a language that
-    // is not the fallback. en-NZ is a real tag so Intl's plural rules resolve.
-    i18n.addResourceBundle("en-NZ", "translation", {
+    // is not the fallback. The private-use subtag is the collision guard — the
+    // backend refuses `-x-` tags as interface languages, so no shipped
+    // catalogue can ever claim this name (a real en-NZ broke the previous
+    // spelling of this test); Intl still resolves it to English plural rules.
+    i18n.addResourceBundle("en-x-probe", "translation", {
       probe_one: "{{count}} widget",
       probe_other: "{{count}} widgets",
     });
-    const t = i18n.getFixedT("en-NZ") as (key: string, opts?: Record<string, unknown>) => string;
+    const t = i18n.getFixedT("en-x-probe") as (
+      key: string,
+      opts?: Record<string, unknown>,
+    ) => string;
     expect(t("probe", { count: 1 })).toBe("1 widget");
     expect(t("probe", { count: 5 })).toBe("5 widgets");
     expect(t("nav.orders")).toBe("Orders");

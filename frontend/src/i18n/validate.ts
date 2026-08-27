@@ -54,7 +54,11 @@ export function flattenCatalogue(raw: unknown): {
       }
       const key = prefix ? `${prefix}.${segment}` : segment;
       if (typeof value === "string") {
-        if (value === "") problems.push(`"${key}" is empty`);
+        // trim() only for the judgement — stored values keep their bytes. A
+        // whitespace-only value renders as an invisible label and slips past
+        // `returnEmptyString: false`, which sees only the true empty string
+        // (PR #161 review, P3).
+        if (value.trim() === "") problems.push(`"${key}" is blank`);
         entries.set(key, value);
       } else if (isRecord(value)) {
         if (depth >= MAX_DEPTH) {

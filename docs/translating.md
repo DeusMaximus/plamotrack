@@ -19,6 +19,7 @@ application code.
 | --- | --- |
 | `frontend/src/i18n/manifest.json` | The language registry: BCP 47 tag, native display name, text direction, and whether the language is enabled |
 | `frontend/src/i18n/catalogues/<tag>.json` | One catalogue per language; `en-AU.json` is the source of truth for keys |
+| `frontend/src/i18n/registry.ts` | The import map the runtime loads catalogues from — one line per language |
 | `frontend/src/i18n/catalogue.test.ts` | The automated checks (run by `npm test`) |
 | `frontend/scripts/i18n-report.mjs` | Coverage table — `npm run i18n:report` |
 
@@ -48,6 +49,12 @@ that flips `enabled` **and** extends that tuple.
 - `count` is the reserved parameter that drives plural selection. Noun forms
   that aren't count-driven (dictionary singular/plural, like
   `itemType.display.singular`) are ordinary leaves instead.
+- The plural endings themselves are reserved: never name an ordinary key so
+  its last segment ends in `_zero`, `_one`, `_two`, `_few`, `_many` or
+  `_other` — the shape checks would read it as a plural form.
+- Values are never blank: an empty or whitespace-only value renders as an
+  invisible label, so the checks refuse it. Whitespace around content is fine
+  and preserved byte-for-byte.
 
 ## What is never translated
 
@@ -64,8 +71,10 @@ those values; the values themselves are stable on every surface.
    categories.
 2. Add a manifest entry: `tag`, `nativeName` (in the language itself),
    `direction` (`ltr` or `rtl`), and `"enabled": false`.
-3. Register the catalogue import in `catalogue.test.ts`'s `CATALOGUES` map —
-   one line.
+3. Register the catalogue import in `frontend/src/i18n/registry.ts` — one
+   line. That line is what loads your language into the application *and* puts
+   it in front of the validation suite; the tests refuse a manifest entry
+   without it.
 4. Run `npm test` and `npm run i18n:report` from `frontend/`. The tests tell
    you about unknown keys, placeholder drift, and plural-shape problems; the
    report tells you coverage.

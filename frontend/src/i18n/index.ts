@@ -15,12 +15,15 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 
-import enAU from "./catalogues/en-AU.json";
 import manifest from "./manifest.json";
+import { CATALOGUES } from "./registry";
 
-export const resources = {
-  "en-AU": { translation: enAU },
-} as const;
+// Derived, never hand-listed: every catalogue in the registry is a catalogue
+// the runtime serves. A second list here is how a validated language ends up
+// unreachable (PR #161 review, P2).
+export const resources = Object.fromEntries(
+  Object.entries(CATALOGUES).map(([tag, catalogue]) => [tag, { translation: catalogue }]),
+);
 
 void i18n.use(initReactI18next).init({
   lng: "en-AU",

@@ -1,5 +1,5 @@
 {
-  "note": "Language registry for the interface catalogues (design §6.1). Read by src/i18n/index.ts (runtime), src/i18n/catalogue.test.ts (validation + coverage), scripts/i18n-report.mjs (CI coverage table), and backend/tests/test_settings.py, which asserts the enabled tags here equal SUPPORTED_INTERFACE_LANGUAGES in backend/app/services/instance_settings.py — enabling a language means flipping `enabled` AND extending that tuple, in one PR. The contribution contract is docs/translating.md.",
+  "note": "Language registry for the interface catalogues (design §6.1). Read by src/i18n/catalogue.test.ts (validation + coverage), scripts/i18n-report.mjs (CI coverage table), and backend/tests/test_settings.py, which asserts the enabled tags here equal SUPPORTED_INTERFACE_LANGUAGES in backend/app/services/instance_settings.py — enabling a language means flipping `enabled` AND extending that tuple, in one PR. The catalogues the runtime actually loads come from src/i18n/registry.ts, and the tests hold this file and that registry to the same language list. The contribution contract is docs/translating.md.",
   "languages": [
     {
       "tag": "en-AU",
