@@ -37,8 +37,8 @@ silently mangled; a mismatch in the other direction is just a warning.
 
 ## Getting data in
 
-Three ways, all through Data → Import, and **nothing is written until you've seen
-a preview of exactly what will change**.
+Three ways, all through Settings → Data management → Import, and **nothing is
+written until you've seen a preview of exactly what will change**.
 
 ### 1. The starter sheet — one row per kit
 

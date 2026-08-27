@@ -4,7 +4,8 @@ import { useTranslation } from "react-i18next";
 import { ApiError, downloadFile } from "../api/client";
 import { Button } from "./ui";
 
-/** Per-page "get this table out as CSV". The full archive lives on the Data page. */
+/** Per-page "get this table out as CSV". The full archive lives in
+ *  Settings → Data management. */
 export function ExportCsvButton({ table, label }: { table: string; label?: string }) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
