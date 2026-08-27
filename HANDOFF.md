@@ -41,6 +41,48 @@ Template:
 
 ---
 
+## 2026-08-28 — Claude Code (Fable 5) — #25: the REST error envelope; PR #169 open, review not yet bought
+
+- **Done:** **#25 — PR #169 open** (`feat/25-error-codes`, head `152f7cb`,
+  1,188 insertions, **no migrations**): every failed REST response is now
+  `{detail, code, params}` — **additive on the wire**: `detail` byte-identical
+  in both shapes (string = service refused, FastAPI list = schema spoke; the
+  discriminator stays load-bearing), and the pre-existing backend suite passed
+  **untouched** (1187, zero test edits) as the proof. `DomainError(detail, *,
+  code, params)` with code keyword-required; `app/error_codes.py` = 58
+  `<domain>.<condition>` codes for the **81 raise sites**, all migrated (AST
+  audit: none missing). New `RequestValidationError` handler labels the 422
+  list shape `request.validation`; `ErrorEnvelope` on every router via one
+  `include_router(responses=…)` line. Browser: `ApiError` gains
+  code/params/detail, `message` = catalogue rendering via new
+  `src/lib/apiError.ts` (63 `api.*` leaves; wire snake_case params camelized
+  to `{{placeholders}}`), fallback = the exact pre-#25 behaviour; zero
+  consumer churn. Registry ↔ catalogue ↔ params held together by
+  `frontend/src/lib/__fixtures__/api-error-codes.json` (the money-cases
+  device) from both suites. MCP ToolError = the bare sentence, pinned.
+- **Decisions (full list in the PR body):** codes name conditions not sites;
+  fixture declares the params **intersection** (guaranteed, not union);
+  `request.validation` renders as its joined findings (sole code without a
+  catalogue entry, named in the test); existing message-coupled assertions
+  stay (they pin the fallback contract); `import.blocked` carries only
+  `count` — restructuring the blocking diagnostics is #26's.
+- **State:** suites at `152f7cb`: backend **1199** (1187+12
+  `test_error_envelope.py`), vitest **280** (212+68), lint/format/build
+  clean, from-empty e2e **36 + 1 skipped**, tables zero, AUD restored. **Ten
+  measured mutants, all killed** (7 backend — tuples queued `env-` in the PR
+  body for post-merge fold-in — + 3 frontend, one killed three ways). Review
+  **not yet bought**; Codex (GPT 5.6 Sol) is the fit — sub upped 28-08, no
+  meter check needed (procedure + brief template updated on main `639238a`).
+  CI pending at write time. No dev servers running.
+- **Next:** land #169, fold the `env-` tuples into `mutation_test.py`
+  (TEST_FILES + `tests/test_error_envelope.py`), then **#26** (import-preview
+  diagnostics on this contract — row messages, warnings, blocking errors,
+  the stock note; `import.cell_invalid` is already coded and waiting to be
+  threaded through). Then #27 (language/region controls), #114. LXC: **back
+  up before pulling** (real collection; 0.2.8's settings migration still
+  pending there).
+
+
 ## 2026-08-28 — Claude Code (Fable 5) — #24 CLOSED: the Settings page (PR #168, one Codex round)
 
 - **Done:** **#24 closed — PR #168 squash-merged as `db48440`** on the
@@ -261,66 +303,4 @@ Template:
   it needs). Codex carried both #159 rounds — check its meter before the next
   buy. LXC is still pre-0.2.8: **back up the LXC database before pulling**
   (real collection), and this pull adds the settings migration.
-
-## 2026-08-26 — Claude Code (Fable 5) — #104 + #67 + #63 closed; v0.2.8-alpha RELEASED (“the dead ends open”)
-
-- **Done:** **#104 — PR #153** (`e295e7e`, review skipped per the #121 precedent,
-  owner concurred): the catalog picker closes only when focus genuinely leaves
-  it (container `onBlur` + `relatedTarget`; the 150ms timer and its race are
-  gone) and both result buttons select on `onClick`, which keyboard activation
-  shares. The focus-containment test's pre-fix block rewritten (it pinned the
-  timer close); a new e2e drives Tab → Enter through to the stored order's
-  `catalog_ref_id`. Negative control: red on main on exactly that assertion.
-  **#67 — PR #154** (`4d547ef`, Codex round 1 GO + 1 P3, fixed `7ffa587`):
-  an id-bearing kit line may omit `kit` — `OrderItemUpsert` overrides the
-  create-shape check, `_update_line` restates/propagates nothing it wasn't
-  given, a silent quantity increase clones the live first kit (status
-  normalised ordered/pre_ordered). Browser: editor hydrates from a fresh
-  `GET /orders/{id}` (**`isFetchedAfterMount` is the load-bearing gate** —
-  `data` alone serves the stale cache while refetching) and sends kit details
-  only when their fields are dirty. Stated details still restate (REST/MCP
-  posture, in the MCP docstring + design §3.9/§7 with the #36 pricing note).
-  The P3 (Codex measured my own where-I'd-push bullet): a 404'd fresh read sat
-  on Loading… forever — now renders words, skips the retry backoff, and
-  invalidates the list so the stale row goes too; red-first e2e. Negative
-  control 4 red / 1 green (the green: new lines still require details —
-  unchanged rule). **Fold-in PR #155** (`fd606a3`): 5 `o67-` tuples, first
-  schema-file path constant; harness **199/199 @ 19m06s**. No queues out.
-- **Decisions:** quantity growth on a silent line clones rather than refuses —
-  refusing would force details onto every quantity change, re-opening the
-  stale-echo window for #67's own example. Codex endorsed all five deliberate
-  calls, incl. the no-stall e2e pin (it replayed the spec with the omission
-  branch disabled and watched it fail on the persisted value).
-- **Notable:** Cursor was rate-limited all day — Codex took every round this
-  session (#151 ×2, #154 ×1); check its meter before the next buy.
-  `_line_kits` and `OrderRead`'s nested kits both order `(created_at, id)` —
-  Codex probed it; that agreement is what makes "the first kit" one kit.
-- **State:** `main` at `fd606a3` (+ this entry), CI green at every head.
-  Backend **1085**, vitest 109, e2e **29** (+1 skipped screenshots) — both new
-  suites verified from-empty, tables zero after. Harness 199/199 @ 19m06s.
-  No dev servers running; stale worktrees `/private/tmp/plamotrack-pr100` and
-  `-pr108-main` persist (pre-date these sessions).
-- **Released: v0.2.8-alpha** at tag `ee2355d` ("the dead ends open"),
-  `--prerelease`, notes owner-approved; milestone closed at the tag. Gate ran
-  clean: both surfaces 0.2.8, packaged stack four-healthy, migrate Exited (0),
-  container-exported manifest carries app_version 0.2.8 + schema
-  `2c97a5ced66a`; dev overlay restored. **No migrations in this release.**
-  **Also this session: #63 — PR #156** (`ec311c1`, Codex GO + 2 P3s, both
-  evidence gaps, fixed `2a3e2a5`): `_adjust_ref` gains keyword-only
-  `missing_ok`, set ONLY by `delete_order` — a dangling reversal is skipped
-  and logged where the entry is being undone wholesale; receive/retarget/line
-  removal stay strict, their 409 naming the delete-and-re-enter escape. P3-1:
-  my negative control died on main at the logger monkeypatch, not the
-  behavioural assert — patch the logger OBJECT with raising=False; P3-2: the
-  line-removal boundary was unpinned — test + d63-5 added. **Fold-in PR #157**
-  (`a6a0e16`): 5 `d63-` tuples, TEST_FILES + test_integrity.py, harness
-  **204/204 @ 21m21s**. Bump **PR #158** (`ee2355d`). Suite-count note: the
-  session conftest's alembic fileConfig DISABLES pre-imported app loggers —
-  caplog cannot see app-module records anywhere in this suite (measured;
-  production unaffected; recorded in PR #156 deliberate call 3).
-- **Next:** 0.2.8 done — the backlog ahead is **M5.1** (settings +
-  i18n foundation; the #54 harness now exists for its settings migration) or
-  owner's pick. #137/#144 await product calls; #122 rides M6.5. Codex carried
-  every round this session (Cursor rate-limited) — check its meter. LXC:
-  **back up the LXC database before pulling the release** (real collection).
 
