@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-28 — Claude Code (Fable 5) — bundle-size warning assessed: no splitting; PR #166 open
+## 2026-08-28 — Claude Code (Fable 5) — bundle-size warning assessed: no splitting; PR #166 merged
 
 - **Done:** the 503 kB chunk warning (flagged informational in the previous
   entry) assessed and dispositioned. Measured at `abb9d7c`: one 506.76 kB
@@ -49,11 +49,12 @@ Template:
   code ~102 kB (14 kB of it the en-AU catalogue), the #22 i18n stack ~57 kB,
   dnd-kit 41 kB, react-router 36 kB, react-hook-form 35 kB, TanStack Query
   35 kB — nothing accidental; the deliberate #22 addition is what crossed
-  Vite's 500 kB default. **PR #166 open** (`chore/vite-chunk-warning-limit`,
-  `a389c87`): `build.chunkSizeWarningLimit: 600` with the reasoning and the
+  Vite's 500 kB default. **PR #166 squash-merged as `58c174f`** on the
+  owner's call: `build.chunkSizeWarningLimit: 600` with the reasoning and the
   revisit path as a config comment. Built chunk byte-identical; build + lint
-  green. Review skipped per the #40 criterion (small, local; worst failure is
-  a suppressed warning) — merge is the owner's call.
+  green, CI green (all three checks). Review skipped per the #40 criterion
+  (small, local; worst failure is a suppressed warning); owner concurred by
+  merging.
 - **Decisions:** severity by real exposure — a single-owner LAN instance
   fetches 155 kB gzip once per release, cached thereafter; no user-observable
   cost. React.lazy declined (index redirects to /board, the dnd-kit consumer,
@@ -64,12 +65,11 @@ Template:
   catalogues (~14 kB each, `src/i18n/registry.ts`) — if shipped languages
   re-trip it, per-language dynamic import (natural home #27), not another
   raise. No issue filed — not a defect, no numbered rule violated.
-- **State:** `main` at `abb9d7c` (+ this entry); PR #166 is the only
-  in-flight branch. No code merged this session, no migrations, no mutant
-  queues. Backend 1187, vitest 212, e2e 30 (+1 skipped) — untouched. Stale
-  worktrees `/private/tmp/plamotrack-pr100` and `-pr108-main` persist
-  (pre-date this).
-- **Next:** owner: merge or amend #166. Then M5.1 as before, all unblocked:
+- **State:** `main` at `58c174f` (+ this entry), CI green; no in-flight
+  branches. Config-only merge — no migrations, no mutant queues. Backend
+  1187, vitest 212, e2e 30 (+1 skipped) — untouched. Stale worktrees
+  `/private/tmp/plamotrack-pr100` and `-pr108-main` persist (pre-date this).
+- **Next:** M5.1 as before, all unblocked:
   #24 (Settings page), #25/#26 (structured diagnostics), #27 (language/region
   UI; `/meta` still doesn't advertise supported languages), #114 (naive CSV
   dates). #162 (e2e keyboard-select race) remains reproduced-on-`main`,
