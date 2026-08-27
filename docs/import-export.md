@@ -4,7 +4,8 @@ Your collection is yours. plamotrack stores it as plain CSV on the way out, and
 reads the same files back in — so you can back it up, move it to another
 instance, keep it in a spreadsheet, or leave for something else entirely.
 
-Everything here lives on the **Data** page.
+Everything here lives in **Settings → Data management** (formerly the top-level
+**Data** page; its old `/data` address still gets you there).
 
 ---
 
@@ -12,8 +13,8 @@ Everything here lives on the **Data** page.
 
 | What | Where | Use it for |
 |---|---|---|
-| **Full archive** (`.zip`) | Data → Export | Backups, moving instances, keeping a copy |
-| **Single table** (`.csv`) | Data → Export, or the button on any list page | Pulling one table into a spreadsheet |
+| **Full archive** (`.zip`) | Settings → Data management → Export | Backups, moving instances, keeping a copy |
+| **Single table** (`.csv`) | Settings → Data management → Export, or the button on any list page | Pulling one table into a spreadsheet |
 
 The archive holds one CSV per table plus a `manifest.json`:
 
@@ -36,8 +37,8 @@ silently mangled; a mismatch in the other direction is just a warning.
 
 ## Getting data in
 
-Three ways, all through Data → Import, and **nothing is written until you've seen
-a preview of exactly what will change**.
+Three ways, all through Settings → Data management → Import, and **nothing is
+written until you've seen a preview of exactly what will change**.
 
 ### 1. The starter sheet — one row per kit
 

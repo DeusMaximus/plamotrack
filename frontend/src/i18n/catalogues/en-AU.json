@@ -5,7 +5,7 @@
     "orders": "Orders",
     "inventory": "Inventory",
     "retailers": "Retailers",
-    "data": "Data"
+    "settings": "Settings"
   },
   "layout": {
     "tagline": "pre-order → panel-lined masterpiece"
@@ -302,7 +302,6 @@
     }
   },
   "data": {
-    "title": "Data",
     "subtitle": "Back up your collection, move it somewhere else, or bring it in from a spreadsheet.",
     "exportTitle": "Export",
     "exportDescription": "Plain CSV — yours to keep, open anywhere, and import straight back.",
@@ -450,5 +449,38 @@
     "unknownItem": "(unknown item)",
     "confirmDelete": "Delete the {{date}} order from {{retailer}}?\n\nThis undoes the entry: kits it spawned are deleted and any applied stock is reversed. Progressed kits or consumed stock will block it.",
     "empty": "No orders yet — record one and it will spawn your kits."
+  },
+  "settings": {
+    "title": "Settings",
+    "subtitle": "Instance-wide configuration — every browser and agent that connects here sees the same values.",
+    "sections": {
+      "general": "General",
+      "language": "Language & region",
+      "data": "Data management",
+      "about": "About"
+    },
+    "general": {
+      "description": "Collection-wide defaults.",
+      "currencyTitle": "Reference currency",
+      "currencyDescription": "The default currency for new orders, and the currency converted price snapshots are recorded in.",
+      "currencyLabel": "Currency code",
+      "currencyNote": "Changing this affects new entries only. Amounts already recorded keep the currency they were entered with — nothing historical is rewritten or reinterpreted.",
+      "saving": "Saving…",
+      "saved": "Saved"
+    },
+    "language": {
+      "description": "Interface language and regional formatting are stored on the instance, not in the browser.",
+      "currentTitle": "Current values",
+      "currentDescription": "Editing these here is not built yet — they can be changed through the API.",
+      "interfaceLanguage": "Interface language",
+      "formattingLocale": "Formatting locale",
+      "timeZone": "Time zone",
+      "dateStyle": "Date style",
+      "hourCycle": "Hour cycle"
+    },
+    "about": {
+      "description": "The software this instance is running.",
+      "version": "Version"
+    }
   }
 }

@@ -2,30 +2,13 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import { api, ApiError, downloadFile } from "../api/client";
-import type { ImportMode, ImportPlan, ImportResult } from "../api/types";
-import { IMPORT_MODES } from "../api/types";
-import { ImportPreview } from "../components/ImportPreview";
-import { Button, ErrorBanner, Select } from "../components/ui";
-import { importTableLabel } from "../lib/labels";
-
-function Card({
-  title,
-  description,
-  children,
-}: {
-  title: string;
-  description: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-lg border border-zinc-200 bg-white p-4">
-      <h2 className="text-sm font-semibold text-zinc-800">{title}</h2>
-      <p className="mt-0.5 text-xs text-zinc-500">{description}</p>
-      <div className="mt-3">{children}</div>
-    </section>
-  );
-}
+import { api, ApiError, downloadFile } from "../../api/client";
+import type { ImportMode, ImportPlan, ImportResult } from "../../api/types";
+import { IMPORT_MODES } from "../../api/types";
+import { ImportPreview } from "../../components/ImportPreview";
+import { Button, Card, ErrorBanner, Select } from "../../components/ui";
+import { importTableLabel } from "../../lib/labels";
+import { SectionHeader } from "./SectionHeader";
 
 /** Keys are `portability/spec.py` table keys, not REST paths — `/export/{key}.csv`.
  *  Hand-maintained against that registry, which is the trap it fell into: the
@@ -45,7 +28,7 @@ const TABLE_EXPORTS = [
   "instance_settings",
 ];
 
-export function DataPage() {
+export function DataSection() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
@@ -129,11 +112,8 @@ export function DataPage() {
   const needsConfirm = mode === "replace_all" && confirmText.trim().toUpperCase() !== "REPLACE";
 
   return (
-    <div className="max-w-4xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">{t("data.title")}</h1>
-        <p className="mt-0.5 text-sm text-zinc-500">{t("data.subtitle")}</p>
-      </div>
+    <div className="space-y-6">
+      <SectionHeader title={t("settings.sections.data")} description={t("data.subtitle")} />
 
       <ErrorBanner message={error} />
 

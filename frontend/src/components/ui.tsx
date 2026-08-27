@@ -78,9 +78,30 @@ export function Field({
 export function ErrorBanner({ message }: { message: string | null }) {
   if (!message) return null;
   return (
-    <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+    <div role="alert" className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
       {message}
     </div>
+  );
+}
+
+/** A titled panel. The heading is an h3 because every consumer sits under a
+ *  page h1 and a section h2 (the Settings sections); a new consumer at a
+ *  different depth should say so here rather than skip a level silently. */
+export function Card({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="rounded-lg border border-zinc-200 bg-white p-4">
+      <h3 className="text-sm font-semibold text-zinc-800">{title}</h3>
+      <p className="mt-0.5 text-xs text-zinc-500">{description}</p>
+      <div className="mt-3">{children}</div>
+    </section>
   );
 }
 

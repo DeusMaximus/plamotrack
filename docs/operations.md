@@ -40,8 +40,8 @@ docker compose exec -T db sh -c \
 
 **The CSV archive — portable copy.** Readable, diffable, and importable into a
 future version whose schema has moved on. Slower to restore and it won't preserve
-ids exactly, but it survives things a dump doesn't. Grab it from **Data → Export**
-in the UI, or:
+ids exactly, but it survives things a dump doesn't. Grab it from
+**Settings → Data management → Export** in the UI, or:
 
 ```bash
 curl -o plamotrack-archive.zip http://127.0.0.1:8080/api/export/archive
@@ -154,8 +154,10 @@ Changes to `.env` need `docker compose up -d` to take effect.
 Interface language, formatting locale, time zone, date style, hour cycle, and the
 reference currency are **runtime settings**: they live in the database (the
 one-row `instance_settings` table), so every browser and agent sees the same
-values. Read them with `GET /api/settings`, change them with `PATCH /api/settings`
-(the Settings page arrives with M5.1). A fresh install bootstraps them once:
+values. Read them with `GET /api/settings`, change them with `PATCH /api/settings`. The
+Settings page shows them all; its General section changes the reference
+currency, and browser controls for the language and regional settings are still
+to come (they're API-only for now). A fresh install bootstraps them once:
 `en-AU` interface language and formatting locale, `UTC` time zone, locale-default
 date style and hour cycle, and the reference currency from `REFERENCE_CURRENCY`
 in `.env`. After that first migration the env var is inert. The full-archive

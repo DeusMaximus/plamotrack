@@ -105,7 +105,7 @@ def downgrade() -> None:
             steps.append(
                 ("then delete " if lines else "delete ")
                 + f"the {rows} display item(s) — export them first if you want to keep "
-                "them: Data → Export, or GET /export/display_items.csv"
+                "them: Settings → Data management → Export, or GET /export/display_items.csv"
             )
         ordered = "".join(f"\n  {n}. {step}" for n, step in enumerate(steps, 1))
         raise RuntimeError(

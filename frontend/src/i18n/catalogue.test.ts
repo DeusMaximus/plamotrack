@@ -274,7 +274,7 @@ describe("dynamic keys resolve for every runtime enum member", () => {
   });
 
   // The portable-table vocabulary is spec.py's key set, restated as a literal
-  // so the subject is independent of the code under test; DataPage's export
+  // so the subject is independent of the code under test; DataSection's export
   // list and ImportPreview's headings both resolve through these keys.
   const PORTABLE_TABLES = [
     "retailers",

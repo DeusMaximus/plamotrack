@@ -690,7 +690,8 @@ can be changed by editing an env var is not a snapshot. Moving the reference cur
 later therefore changes what *new* entries default to and nothing else.
 
 ✅ **That runtime default now lives in the singleton instance-settings record** (#23):
-the owner changes it through `PATCH /settings` (the Settings page rides #24) and every
+the owner changes it through `PATCH /settings` (or the Settings page's General
+section, #24) and every
 REST, MCP, and browser client sees the same value. The environment value is a
 first-run/upgrade bootstrap — the migration that created the table seeded it and it has
 been inert since. That changed where the default lives, not the historical rule: stored
@@ -825,9 +826,12 @@ code/parameter/detail objects too. Neither wording nor active language participa
 the import `plan_hash`.
 
 The frontend exposes all of this at `/settings`: General, Language & region, Data
-management, and About. The existing import/export workflow moves under Data management
-without weakening preview, confirmation, or destructive-operation warnings; `/data`
-redirects there for compatibility. Shipping this foundation before photos,
+management, and About. ✅ The page shipped with #24 — General edits the reference
+currency, the import/export workflow moved under Data management with its preview,
+confirmation, and destructive-operation warnings intact, About reports the version
+from `/meta`, and `/data` redirects to the section it became. Language & region
+displays the stored values read-only until #27 delivers its controls and the
+presentation plumbing above. Shipping this foundation before photos,
 authentication screens, or the showcase prevents each new surface from creating another
 pile of embedded copy.
 

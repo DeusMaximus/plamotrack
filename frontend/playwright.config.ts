@@ -29,6 +29,16 @@ export default defineConfig({
     // difference between reading that a button stayed visible and seeing why.
     trace: "on-first-retry",
   },
+  // settings.spec.ts flips the instance-settings singleton (the reference
+  // currency) — the one piece of state every spec shares. order-snapshot and
+  // order-lossless read that value in a beforeAll and assert stamps against
+  // it, so the flip must never overlap them; a project dependency is the only
+  // cross-file ordering Playwright offers. The trade: a failure in `app`
+  // skips `settings` for that run.
+  projects: [
+    { name: "app", testIgnore: /settings\.spec\.ts/ },
+    { name: "settings", testMatch: /settings\.spec\.ts/, dependencies: ["app"] },
+  ],
   webServer: [
     {
       command: "uv run uvicorn app.main:app --host 127.0.0.1 --port 8000",
