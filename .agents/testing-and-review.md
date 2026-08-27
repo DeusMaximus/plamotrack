@@ -262,7 +262,7 @@ the release gate instead. State the call and the reason in the hand-off entry.
 | Reviewer | Fits | Notes |
 | --- | --- | --- |
 | **Cursor / Grok 4.6** | ≤ ~1,000 insertions, PR thread ≤ a few K tokens | 256K context. Two rounds on #89 (993 insertions) took 15 and 19 min and ended at 63 % and 68 %. **One round per fresh chat session** — a second review in one session runs out mid-analysis, and a truncated review that still emits a verdict is the worst outcome. Survivable because the PR thread is the session memory. |
-| **Codex (GPT 5.6)** | Anything larger; multi-round | Has absorbed #86 (4,442 insertions) across four rounds. Usage budget is finite and resets on a schedule (the #86 entry recorded a Thursday reset with ~5 % left); check what remains before starting a round. |
+| **Codex (GPT 5.6 Sol)** | Any size; multi-round | Has absorbed #86 (4,442 insertions) across four rounds. Subscription upped on 2026-08-28 (owner's call): capacity is no longer the constraint, so routine rounds don't need a meter check first — glance at what remains only before an unusually large multi-round buy. |
 | **Copilot auto-review** | Off | Disabled by the owner on 2026-08-11 to conserve credits until 1 September. Its useful finds have been API-state semantics readable off a diff, not value-space defects. Don't request one casually. |
 
 Match the tool to the size of the work rather than forcing everything through one
