@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
+import { useTranslation } from "react-i18next";
 
 import { api, ApiError, metaQuery } from "../api/client";
 import type {
@@ -17,25 +18,12 @@ import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
 import { currencyOptions, formatMoney, majorToMinor, minorToMajor, stepFor } from "../lib/format";
+import { itemTypeLabel, itemTypePlural } from "../lib/labels";
 
 type Tab = "tools" | "consumables" | "upgrades" | "display-items";
 type InventoryItem = Tool | Consumable | Upgrade | DisplayItem;
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "tools", label: "Tools" },
-  { id: "consumables", label: "Consumables" },
-  { id: "upgrades", label: "Upgrades" },
-  { id: "display-items", label: "Display" },
-];
-
-/** What one row of each tab is called. `tab.slice(0, -1)` was fine while every tab
- * was a plain plural; "display-item" is neither the label nor the route. */
-const CATEGORY_PLACEHOLDER: Record<Tab, string> = {
-  tools: "cutting / filing / gluing",
-  consumables: "paint / cement / blades",
-  upgrades: "",
-  "display-items": "stand / base / scenery / structure",
-};
+const TABS: Tab[] = ["tools", "consumables", "upgrades", "display-items"];
 
 /** The CSV table key, which is the spec registry's key and not the route segment:
  * `/display-items` is the REST resource, `display_items.csv` is the file. Every
@@ -47,11 +35,15 @@ const EXPORT_TABLE: Record<Tab, string> = {
   "display-items": "display_items",
 };
 
-const SINGULAR: Record<Tab, string> = {
+/** The tab's wire item type, for the shared noun lookups — the tab id is a route
+ * segment ("display-items"), not the `item_type` value ("display"), which is why
+ * this map exists rather than a slice(). What one row of each tab is called
+ * (labels, placeholders, empty states) all resolves through `itemType.*`. */
+const TAB_ITEM_TYPE: Record<Tab, "tool" | "consumable" | "upgrade" | "display"> = {
   tools: "tool",
   consumables: "consumable",
   upgrades: "upgrade",
-  "display-items": "display item",
+  "display-items": "display",
 };
 
 interface ItemFormValues {
@@ -130,12 +122,20 @@ function ItemFormModal({
   item?: InventoryItem;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   const { data: meta } = useQuery(metaQuery);
 
   if (!meta) {
     return (
-      <Modal title={item ? `Edit ${item.name}` : `Add ${SINGULAR[tab]}`} onClose={onClose}>
-        <EmptyState>Loading…</EmptyState>
+      <Modal
+        title={
+          item
+            ? t("inventory.editTitle", { name: item.name })
+            : t("inventory.addTitle", { type: itemTypeLabel(TAB_ITEM_TYPE[tab]) })
+        }
+        onClose={onClose}
+      >
+        <EmptyState>{t("common.loading")}</EmptyState>
       </Modal>
     );
   }
@@ -155,6 +155,7 @@ function ItemForm({
   onClose: () => void;
   referenceCurrency: string;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   // The typeahead half of the category vocabulary (#127) — the same device the kit
@@ -254,26 +255,30 @@ function ItemForm({
       await queryClient.invalidateQueries({ queryKey: [tab] });
       onClose();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Request failed");
+      setError(err instanceof ApiError ? err.message : t("common.requestFailed"));
     }
   });
 
   return (
     <Modal
-      title={item ? `Edit ${item.name}` : `Add ${SINGULAR[tab]}`}
+      title={
+        item
+          ? t("inventory.editTitle", { name: item.name })
+          : t("inventory.addTitle", { type: itemTypeLabel(TAB_ITEM_TYPE[tab]) })
+      }
       onClose={onClose}
     >
       <form onSubmit={onSubmit} className="space-y-3">
         <ErrorBanner message={error} />
-        <Field label="Name" required error={errors.name?.message}>
-          <Input {...register("name", { required: "Name is required" })} />
+        <Field label={t("common.name")} required error={errors.name?.message}>
+          <Input {...register("name", { required: t("validation.nameRequired") })} />
         </Field>
         {tab !== "upgrades" ? (
-          <Field label="Category" required error={errors.category?.message}>
+          <Field label={t("inventory.category")} required error={errors.category?.message}>
             <Input
-              {...register("category", { required: "Category is required" })}
+              {...register("category", { required: t("validation.categoryRequired") })}
               list="inventory-category-values"
-              placeholder={CATEGORY_PLACEHOLDER[tab]}
+              placeholder={t(`inventory.categoryPlaceholder.${tab}`)}
             />
             <datalist id="inventory-category-values">
               {categoryValues?.map((value) => (
@@ -282,34 +287,34 @@ function ItemForm({
             </datalist>
           </Field>
         ) : (
-          <Field label="Manufacturer" required error={errors.manufacturer?.message}>
-            <Input {...register("manufacturer", { required: "Manufacturer is required" })} />
+          <Field label={t("inventory.manufacturer")} required error={errors.manufacturer?.message}>
+            <Input {...register("manufacturer", { required: t("validation.manufacturerRequired") })} />
           </Field>
         )}
         {/* Display items take a manufacturer too, but optional — the required one
             above belongs to upgrades, where the column is NOT NULL. */}
         {tab === "display-items" && (
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Manufacturer">
-              <Input {...register("manufacturer")} placeholder="e.g. Tomytec" />
+            <Field label={t("inventory.manufacturer")}>
+              <Input {...register("manufacturer")} placeholder={t("inventory.manufacturerPlaceholder")} />
             </Field>
-            <Field label="Scale">
-              <Input {...register("scale")} placeholder="e.g. 1/144" />
+            <Field label={t("inventory.scale")}>
+              <Input {...register("scale")} placeholder={t("inventory.scalePlaceholder")} />
             </Field>
           </div>
         )}
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Quantity on hand">
+          <Field label={t("inventory.quantityOnHand")}>
             <Input type="number" min={0} {...register("quantity_on_hand", { min: 0 })} />
           </Field>
           {tab === "consumables" && (
-            <Field label="Low-stock threshold">
+            <Field label={t("inventory.lowStockThreshold")}>
               <Input type="number" min={0} {...register("low_stock_threshold")} placeholder="—" />
             </Field>
           )}
           {tab === "tools" && (
             <>
-              <Field label="Reference cost">
+              <Field label={t("inventory.referenceCost")}>
                 <Input
                   type="number"
                   // Derived from the picked currency, so a yen amount can't be typed
@@ -317,10 +322,10 @@ function ItemForm({
                   step={stepFor(watch("unit_cost_reference_currency"))}
                   min={0}
                   {...register("unit_cost_reference")}
-                  placeholder="informational"
+                  placeholder={t("inventory.referenceCostPlaceholder")}
                 />
               </Field>
-              <Field label="Cost currency">
+              <Field label={t("inventory.costCurrency")}>
                 <Select {...register("unit_cost_reference_currency")}>
                   {currencyOptions(referenceCurrency).map((code) => (
                     <option key={code} value={code}>
@@ -333,21 +338,21 @@ function ItemForm({
           )}
         </div>
         {tab === "tools" && (
-          <Field label="Condition notes">
+          <Field label={t("inventory.conditionNotes")}>
             <Input {...register("condition_notes")} />
           </Field>
         )}
         {tab === "display-items" && (
-          <Field label="Notes">
-            <Input {...register("notes")} placeholder="product code, where it lives, …" />
+          <Field label={t("inventory.notes")}>
+            <Input {...register("notes")} placeholder={t("inventory.notesPlaceholder")} />
           </Field>
         )}
         <div className="flex justify-end gap-2 pt-1">
           <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button type="submit" disabled={isSubmitting}>
-            Add
+            {t("common.add")}
           </Button>
         </div>
       </form>
@@ -356,6 +361,7 @@ function ItemForm({
 }
 
 function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: () => void }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [kitId, setKitId] = useState("");
@@ -365,7 +371,7 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
 
   const apply = async () => {
     if (!kitId) {
-      setError("Pick a kit first");
+      setError(t("inventory.pickKitFirst"));
       return;
     }
     setSubmitting(true);
@@ -374,22 +380,21 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
       await queryClient.invalidateQueries({ queryKey: ["upgrades"] });
       onClose();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Request failed");
+      setError(err instanceof ApiError ? err.message : t("common.requestFailed"));
       setSubmitting(false);
     }
   };
 
   return (
-    <Modal title={`Apply "${upgrade.name}"`} onClose={onClose}>
+    <Modal title={t("inventory.applyTitle", { name: upgrade.name })} onClose={onClose}>
       <div className="space-y-3">
         <ErrorBanner message={error} />
         <p className="text-sm text-zinc-500">
-          {upgrade.quantity_on_hand} on hand — applying decrements stock and records which kit got
-          it.
+          {t("inventory.applyOnHand", { count: upgrade.quantity_on_hand })}
         </p>
-        <Field label="Kit" required>
+        <Field label={t("inventory.kit")} required>
           <Select value={kitId} onChange={(event) => setKitId(event.target.value)}>
-            <option value="">Select a kit…</option>
+            <option value="">{t("inventory.selectKit")}</option>
             {kits?.map((kit) => (
               <option key={kit.id} value={kit.id}>
                 {kit.name} ({kit.grade})
@@ -397,7 +402,7 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
             ))}
           </Select>
         </Field>
-        <Field label="Quantity">
+        <Field label={t("inventory.quantity")}>
           <Input
             type="number"
             min={1}
@@ -407,10 +412,10 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
         </Field>
         <div className="flex justify-end gap-2 pt-1">
           <Button variant="secondary" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button onClick={apply} disabled={submitting}>
-            Apply
+            {t("inventory.apply")}
           </Button>
         </div>
       </div>
@@ -439,6 +444,7 @@ function StockStepper({
   queryKey: Tab;
   onError: (message: string | null) => void;
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [pending, setPending] = useState(false);
 
@@ -448,7 +454,7 @@ function StockStepper({
     try {
       await api.adjustStock(item.id, delta);
     } catch (err) {
-      onError(err instanceof ApiError ? err.message : "Stock adjustment failed");
+      onError(err instanceof ApiError ? err.message : t("inventory.stockAdjustFailed"));
     } finally {
       // Refetch whether it succeeded or not. A refusal means the stored count is
       // not the one this row is showing — that is *why* it was refused — so
@@ -464,7 +470,7 @@ function StockStepper({
       <Button
         variant="secondary"
         className="px-2 py-0.5 leading-none"
-        aria-label={`Remove one ${item.name}`}
+        aria-label={t("inventory.removeOne", { name: item.name })}
         disabled={pending || item.quantity_on_hand === 0}
         onClick={() => void adjust(-1)}
       >
@@ -473,7 +479,7 @@ function StockStepper({
       <Button
         variant="secondary"
         className="px-2 py-0.5 leading-none"
-        aria-label={`Add one ${item.name}`}
+        aria-label={t("inventory.addOne", { name: item.name })}
         disabled={pending}
         onClick={() => void adjust(1)}
       >
@@ -484,6 +490,7 @@ function StockStepper({
 }
 
 export function InventoryPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("tools");
   const [addOpen, setAddOpen] = useState(false);
@@ -493,7 +500,7 @@ export function InventoryPage() {
   const [categoryFilter, setCategoryFilter] = useState("");
 
   const removeItem = async (item: InventoryItem) => {
-    if (!window.confirm(`Delete "${item.name}"?`)) return;
+    if (!window.confirm(t("common.confirmDelete", { name: item.name }))) return;
     setActionError(null);
     try {
       if (tab === "tools") {
@@ -507,7 +514,7 @@ export function InventoryPage() {
       }
       await queryClient.invalidateQueries({ queryKey: [tab] });
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : "Delete failed");
+      setActionError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
     }
   };
 
@@ -555,42 +562,44 @@ export function InventoryPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">Inventory</h1>
+        <h1 className="text-2xl font-bold">{t("inventory.title")}</h1>
         <div className="flex gap-2">
           <ExportCsvButton table={EXPORT_TABLE[tab]} />
-          <Button onClick={() => setAddOpen(true)}>+ Add {SINGULAR[tab]}</Button>
+          <Button onClick={() => setAddOpen(true)}>
+            {t("inventory.addButton", { type: itemTypeLabel(TAB_ITEM_TYPE[tab]) })}
+          </Button>
         </div>
       </div>
 
       <div className="flex gap-1 border-b border-zinc-200">
-        {TABS.map((t) => (
+        {TABS.map((tabOption) => (
           <button
-            key={t.id}
+            key={tabOption}
             onClick={() => {
-              setTab(t.id);
+              setTab(tabOption);
               // Vocabularies are per-table — a tool category filter is
               // meaningless on the consumables tab.
               setCategoryFilter("");
             }}
             className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
-              tab === t.id
+              tab === tabOption
                 ? "border-indigo-600 text-indigo-700"
                 : "border-transparent text-zinc-500 hover:text-zinc-800"
             }`}
           >
-            {t.label}
+            {t(`inventory.tabs.${tabOption}`)}
           </button>
         ))}
       </div>
 
       {tab !== "upgrades" && categoryOptions.length > 0 && (
         <Select
-          aria-label="Filter by category"
+          aria-label={t("inventory.filterByCategory")}
           className="w-auto"
           value={categoryFilter}
           onChange={(event) => setCategoryFilter(event.target.value)}
         >
-          <option value="">All categories</option>
+          <option value="">{t("inventory.allCategories")}</option>
           {categoryOptions.map((value) => (
             <option key={value} value={value}>
               {value}
@@ -603,17 +612,17 @@ export function InventoryPage() {
 
       {tab === "tools" &&
         (tools.isError ? (
-          <ErrorBanner message={`Failed to load tools: ${(tools.error as Error).message}`} />
+          <ErrorBanner message={t("inventory.loadFailed.tools", { message: (tools.error as Error).message })} />
         ) : filteredTools.length ? (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Category</th>
-                  <th className="px-3 py-2">On hand</th>
-                  <th className="px-3 py-2">Ref. cost</th>
-                  <th className="px-3 py-2">Condition</th>
+                  <th className="px-3 py-2">{t("common.name")}</th>
+                  <th className="px-3 py-2">{t("inventory.category")}</th>
+                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2">{t("inventory.headerRefCost")}</th>
+                  <th className="px-3 py-2">{t("inventory.headerCondition")}</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
@@ -641,10 +650,10 @@ export function InventoryPage() {
                     <td className="px-3 py-2 text-right">
                       <div className="flex justify-end gap-1">
                         <Button variant="secondary" onClick={() => setEditing(tool)}>
-                          Edit
+                          {t("common.edit")}
                         </Button>
                         <Button variant="danger" onClick={() => removeItem(tool)}>
-                          Delete
+                          {t("common.delete")}
                         </Button>
                       </div>
                     </td>
@@ -656,27 +665,32 @@ export function InventoryPage() {
         ) : (
           <EmptyState>
             {tools.isLoading
-              ? "Loading…"
+              ? t("common.loading")
               : categoryFilter
-                ? `No tools in “${categoryFilter}”.`
-                : "No tools yet."}
+                ? t("inventory.emptyFiltered", {
+                    type: itemTypePlural("tool"),
+                    category: categoryFilter,
+                  })
+                : t("inventory.emptyNone.tools")}
           </EmptyState>
         ))}
 
       {tab === "consumables" &&
         (consumables.isError ? (
           <ErrorBanner
-            message={`Failed to load consumables: ${(consumables.error as Error).message}`}
+            message={t("inventory.loadFailed.consumables", {
+              message: (consumables.error as Error).message,
+            })}
           />
         ) : filteredConsumables.length ? (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Category</th>
-                  <th className="px-3 py-2">On hand</th>
-                  <th className="px-3 py-2">Low-stock at</th>
+                  <th className="px-3 py-2">{t("common.name")}</th>
+                  <th className="px-3 py-2">{t("inventory.category")}</th>
+                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2">{t("inventory.headerLowStockAt")}</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
@@ -699,7 +713,7 @@ export function InventoryPage() {
                         <StockStepper item={item} queryKey="consumables" onError={setActionError} />
                         {low && (
                           <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
-                            restock
+                            {t("inventory.restock")}
                           </span>
                         )}
                       </td>
@@ -707,10 +721,10 @@ export function InventoryPage() {
                       <td className="px-3 py-2 text-right">
                         <div className="flex justify-end gap-1">
                           <Button variant="secondary" onClick={() => setEditing(item)}>
-                            Edit
+                            {t("common.edit")}
                           </Button>
                           <Button variant="danger" onClick={() => removeItem(item)}>
-                            Delete
+                            {t("common.delete")}
                           </Button>
                         </div>
                       </td>
@@ -723,24 +737,27 @@ export function InventoryPage() {
         ) : (
           <EmptyState>
             {consumables.isLoading
-              ? "Loading…"
+              ? t("common.loading")
               : categoryFilter
-                ? `No consumables in “${categoryFilter}”.`
-                : "No consumables yet."}
+                ? t("inventory.emptyFiltered", {
+                    type: itemTypePlural("consumable"),
+                    category: categoryFilter,
+                  })
+                : t("inventory.emptyNone.consumables")}
           </EmptyState>
         ))}
 
       {tab === "upgrades" &&
         (upgrades.isError ? (
-          <ErrorBanner message={`Failed to load upgrades: ${(upgrades.error as Error).message}`} />
+          <ErrorBanner message={t("inventory.loadFailed.upgrades", { message: (upgrades.error as Error).message })} />
         ) : upgrades.data?.length ? (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Manufacturer</th>
-                  <th className="px-3 py-2">On hand</th>
+                  <th className="px-3 py-2">{t("common.name")}</th>
+                  <th className="px-3 py-2">{t("inventory.manufacturer")}</th>
+                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
@@ -762,13 +779,13 @@ export function InventoryPage() {
                           onClick={() => setApplying(upgrade)}
                           disabled={upgrade.quantity_on_hand === 0}
                         >
-                          Apply to kit
+                          {t("inventory.applyToKit")}
                         </Button>
                         <Button variant="secondary" onClick={() => setEditing(upgrade)}>
-                          Edit
+                          {t("common.edit")}
                         </Button>
                         <Button variant="danger" onClick={() => removeItem(upgrade)}>
-                          Delete
+                          {t("common.delete")}
                         </Button>
                       </div>
                     </td>
@@ -778,25 +795,29 @@ export function InventoryPage() {
             </table>
           </div>
         ) : (
-          <EmptyState>{upgrades.isLoading ? "Loading…" : "No upgrades yet."}</EmptyState>
+          <EmptyState>
+            {upgrades.isLoading ? t("common.loading") : t("inventory.emptyNone.upgrades")}
+          </EmptyState>
         ))}
 
       {tab === "display-items" &&
         (displayItems.isError ? (
           <ErrorBanner
-            message={`Failed to load display items: ${(displayItems.error as Error).message}`}
+            message={t("inventory.loadFailed.display-items", {
+              message: (displayItems.error as Error).message,
+            })}
           />
         ) : filteredDisplayItems.length ? (
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">Name</th>
-                  <th className="px-3 py-2">Category</th>
-                  <th className="px-3 py-2">Scale</th>
-                  <th className="px-3 py-2">Manufacturer</th>
-                  <th className="px-3 py-2">On hand</th>
-                  <th className="px-3 py-2">Notes</th>
+                  <th className="px-3 py-2">{t("common.name")}</th>
+                  <th className="px-3 py-2">{t("inventory.category")}</th>
+                  <th className="px-3 py-2">{t("inventory.scale")}</th>
+                  <th className="px-3 py-2">{t("inventory.manufacturer")}</th>
+                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2">{t("inventory.notes")}</th>
                   <th className="px-3 py-2" />
                 </tr>
               </thead>
@@ -817,10 +838,10 @@ export function InventoryPage() {
                     <td className="px-3 py-2 text-right">
                       <div className="flex justify-end gap-1">
                         <Button variant="secondary" onClick={() => setEditing(row)}>
-                          Edit
+                          {t("common.edit")}
                         </Button>
                         <Button variant="danger" onClick={() => removeItem(row)}>
-                          Delete
+                          {t("common.delete")}
                         </Button>
                       </div>
                     </td>
@@ -832,10 +853,13 @@ export function InventoryPage() {
         ) : (
           <EmptyState>
             {displayItems.isLoading
-              ? "Loading…"
+              ? t("common.loading")
               : categoryFilter
-                ? `No display items in “${categoryFilter}”.`
-                : "No display items yet — stands, bases, diorama scenery."}
+                ? t("inventory.emptyFiltered", {
+                    type: itemTypePlural("display"),
+                    category: categoryFilter,
+                  })
+                : t("inventory.emptyNone.display-items")}
           </EmptyState>
         ))}
 

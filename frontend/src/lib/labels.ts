@@ -33,6 +33,15 @@ export function itemTypePlural(type: ItemType): string {
   return i18n.t(`itemType.${type}.plural`);
 }
 
+/** "{{date}} · same day" / "{{date}} · N d" — the shape KitsPage's completed
+ * column and OrdersPage's received column share (the date is pre-formatted;
+ * only the elapsed phrasing lives in the catalogue). */
+export function dateWithElapsed(date: string, days: number): string {
+  return days <= 0
+    ? i18n.t("common.elapsed.sameDay", { date })
+    : i18n.t("common.elapsed.days", { date, count: days });
+}
+
 export function packingQualityLabel(quality: PackingQuality): string {
   return i18n.t(`packingQuality.${quality}`);
 }
