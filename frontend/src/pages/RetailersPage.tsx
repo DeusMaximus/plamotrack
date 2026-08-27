@@ -163,7 +163,7 @@ export function RetailersPage() {
   });
 
   const remove = async (retailer: Retailer) => {
-    if (!window.confirm(t("retailers.confirmDelete", { name: retailer.name }))) return;
+    if (!window.confirm(t("common.confirmDelete", { name: retailer.name }))) return;
     setActionError(null);
     try {
       await api.deleteRetailer(retailer.id);

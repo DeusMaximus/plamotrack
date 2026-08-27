@@ -24,6 +24,7 @@ import {
   WOULD_ORDER_AGAIN,
 } from "../api/types";
 import {
+  dateWithElapsed,
   importActionLabel,
   importTableLabel,
   itemTypeLabel,
@@ -238,6 +239,13 @@ describe("dynamic keys resolve for every runtime enum member", () => {
     }
   });
 
+  it("the elapsed-day cell keeps its bytes, non-breaking space included", () => {
+    // U+00A0 before the "d" — the source spelling KitsPage carried so "3 d"
+    // never wraps; a plain space here is the transcription defect this pins.
+    expect(dateWithElapsed("8/26/2026", 0)).toBe("8/26/2026 · same day");
+    expect(dateWithElapsed("8/26/2026", 3)).toBe("8/26/2026 · 3 d");
+  });
+
   it("the pill and totals phrasings diverge exactly where main's did (#163 P3-1)", () => {
     // The one action whose two phrasings differ is the standing proof the two
     // groups are both load-bearing — collapse them and this goes red.
@@ -284,6 +292,25 @@ describe("dynamic keys resolve for every runtime enum member", () => {
     expect(value).not.toBe("");
     expect(value).not.toContain("importSource.");
   });
+
+  // The Inventory route segments, restated as a literal — the tab ids are not
+  // wire item types ("display-items" vs "display"), so they get their own row.
+  const INVENTORY_TABS = ["tools", "consumables", "upgrades", "display-items"] as const;
+
+  it.each(INVENTORY_TABS)("inventory tab %s has a label and an empty state", (tab) => {
+    for (const key of [`inventory.tabs.${tab}`, `inventory.emptyNone.${tab}`] as const) {
+      const value = i18n.t(key);
+      expect(value, key).not.toBe("");
+      expect(value, key).not.toContain("inventory.");
+    }
+  });
+
+  it.each(["tools", "consumables", "display-items"] as const)(
+    "inventory tab %s has a category placeholder",
+    (tab) => {
+      expect(i18n.t(`inventory.categoryPlaceholder.${tab}`)).not.toContain("inventory.");
+    },
+  );
 });
 
 describe("runtime behaviour the app relies on", () => {
