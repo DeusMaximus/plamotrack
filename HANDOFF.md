@@ -32,7 +32,7 @@ then read the entry that matched.
 Template:
 
 ```markdown
-## 2026-08-27 — Claude Code (Fable 5) — M5.1 opened: #23 on PR #159, Codex round 1 answered (amended in place)
+## 2026-08-27 — Claude Code (Fable 5) — M5.1 opened: #23 CLOSED (PR #159, two Codex rounds; fold-in PR #160)
 
 - **Done:** **#23 — PR #159 open** (`feat/23-instance-settings`, head `18cfc45`,
   ~1,555 insertions — Codex-sized). The `instance_settings` singleton: model
@@ -75,23 +75,36 @@ Template:
   the same decoy scenario reads RED 5/5. The two-field test renamed to the
   final-state control it is. Round negative control: 14 red / 130 green in a
   worktree of `18cfc45`.
-- **State:** `fb72dbd` — backend **1186**, vitest **132** (23 new Intl cases),
-  e2e 30 (+1 skipped) from-empty at `18cfc45` (unaffected by round 1: no
-  route/UI changes), ruff/build/oxlint clean; CI green at `18cfc45`, pending at
-  `fb72dbd` at amend time. **Scratch harness 23/23 killed** (`stg-`; `iset-`
-  rejected — `-k iset` matches cat-22's "multiset"); tuples in the PR body and
-  untracked `backend/mutation_scratch_23.py`; fold-in owes TEST_FILES +
-  test_settings.py, test_settings_portability.py, test_reference_currency.py.
+- **Round 2 (Codex): clean GO** — it replayed all three remedies against
+  persisted final state (its own decoy scenario included: stg-5 RED 5/5 with
+  an unrelated advisory waiter parked) and re-measured the queue 23/23.
+  **PR #159 squash-merged as `7118f96` on the owner's call; #23 closed;
+  branch deleted; CI green at every head.**
+- **Fold-in PR #160 squash-merged as `ad2da8d`** (owner's call,
+  merge-on-green; review skipped per the #40/#132 precedent, stated in the
+  body): 23 `stg-` tuples + SET/META constants; TEST_FILES + test_settings.py,
+  test_settings_portability.py, test_reference_currency.py; scratch runner
+  deleted, superseded. **Full harness 227/227 @ 22m16s measured**; the
+  procedure doc's runtime + case-count lines refreshed. No queues outstanding —
+  the tracked harness again holds every tuple ever filed.
+- **State:** `main` at `ad2da8d` (+ this entry), CI green at every merged
+  head. Backend **1186**, vitest **132** (the shared
+  `frontend/src/lib/__fixtures__/locale-cases.json` + Intl suite), e2e 30
+  (+1 skipped screenshots) verified from-empty this session. One migration
+  (`f9979ec7b9cb`, additive + seed) — **live instances must run migrations on
+  next pull**; REFERENCE_CURRENCY in .env is bootstrap-only from here on.
   test_reference_currency's env fixture split in two: `bootstrap_currency`
   (monkeypatch, the two config tests) vs the row-writing, awaited
   `reference_currency`. No dev servers running; stale worktrees
   `/private/tmp/plamotrack-pr100` and `-pr108-main` persist (pre-date this).
-- **Next:** **round 2** — the reply on the PR names everything to replay;
-  expect Codex to re-probe the decoy scenario and the five-column ÅUD matrix.
-  After a GO + merge: the stg- fold-in branch (the #117 shape, 23 tuples),
-  then the rest of M5.1 — #24 (Settings page; client methods exist),
-  #22/#25/#26/#27, #114. LXC is still pre-0.2.8: **back up the LXC database
-  before pulling** (real collection).
+- **Next:** the rest of **M5.1** — #24 (Settings page + Data absorption; the
+  frontend client methods and types already exist), #22 (catalogue manifest —
+  unlocks languages beyond en-AU in SUPPORTED_INTERFACE_LANGUAGES),
+  #25/#26 (structured diagnostics), #27 (settings UI for language/region),
+  #114 (naive CSV dates — the settings row now HOLDS the instance time zone
+  it needs). Codex carried both #159 rounds — check its meter before the next
+  buy. LXC is still pre-0.2.8: **back up the LXC database before pulling**
+  (real collection), and this pull adds the settings migration.
 
 ## YYYY-MM-DD — <agent> — <short title>
 - **Done:**
