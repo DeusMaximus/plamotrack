@@ -7,6 +7,17 @@ import { defineConfig } from "vitest/config";
 // do the same (Milestone 5).
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    // One ~507 kB chunk (~155 kB gzip) is deliberate: a single-owner instance
+    // on a trusted network fetches it once per release, and a third of it is
+    // react-dom. Raised from the 500 kB default when the #22 i18n stack
+    // (i18next + react-i18next + the en-AU catalogue, ~71 kB minified) crossed
+    // the line. Kept as a tripwire for an accidentally heavy dependency — each
+    // statically imported language catalogue adds ~14 kB (src/i18n/registry.ts),
+    // so if shipped languages re-trip this, reach for per-language dynamic
+    // import before raising it again.
+    chunkSizeWarningLimit: 600,
+  },
   server: {
     proxy: {
       "/api": {
