@@ -1,8 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { useEffect, useId, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { api } from "../api/client";
 import type { CatalogItemType } from "../api/types";
+import { itemTypeLabel, itemTypePlural } from "../lib/labels";
 import { Button, Input } from "./ui";
 
 /** A line's catalog target: an existing item picked from search, or a new one.
@@ -11,22 +13,6 @@ import { Button, Input } from "./ui";
 export type CatalogSelection =
   | { mode: "existing"; id: string; name: string }
   | { mode: "new"; name: string; category: string; manufacturer: string; scale: string };
-
-/** What the user is shown. `display` is a wire value, not a noun — "display item"
- * is the phrase, and "displays" is not the plural of anything here. */
-const SINGULAR: Record<CatalogItemType, string> = {
-  tool: "tool",
-  consumable: "consumable",
-  upgrade: "upgrade",
-  display: "display item",
-};
-
-const PLURAL: Record<CatalogItemType, string> = {
-  tool: "tools",
-  consumable: "consumables",
-  upgrade: "upgrades",
-  display: "display items",
-};
 
 /** The categories route segment per wire type — upgrades have no category column
  * (#127, decided against), hence no entry rather than a route that would 404. */
@@ -47,6 +33,7 @@ export function CatalogItemPicker({
   value: CatalogSelection | null;
   onChange: (value: CatalogSelection | null) => void;
 }) {
+  const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [debounced, setDebounced] = useState("");
   const [open, setOpen] = useState(false);
@@ -97,7 +84,7 @@ export function CatalogItemPicker({
           {value.name}
         </span>
         <Button type="button" variant="secondary" onClick={() => onChange(null)}>
-          Change
+          {t("catalogPicker.change")}
         </Button>
       </div>
     );
@@ -107,25 +94,27 @@ export function CatalogItemPicker({
     return (
       <div className="space-y-2 rounded-md border border-dashed border-indigo-300 bg-indigo-50/50 p-2">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-indigo-700">New {SINGULAR[itemType]}</span>
+          <span className="text-xs font-medium text-indigo-700">
+            {t("catalogPicker.newItem", { type: itemTypeLabel(itemType) })}
+          </span>
           <button
             type="button"
             className="text-xs text-zinc-500 hover:text-zinc-700"
             onClick={() => onChange(null)}
           >
-            ← back to search
+            {t("catalogPicker.backToSearch")}
           </button>
         </div>
         <Input
           value={value.name}
           onChange={(event) => onChange({ ...value, name: event.target.value })}
-          placeholder="Name"
+          placeholder={t("common.name")}
         />
         {itemType === "upgrade" ? (
           <Input
             value={value.manufacturer}
             onChange={(event) => onChange({ ...value, manufacturer: event.target.value })}
-            placeholder="Manufacturer (required)"
+            placeholder={t("catalogPicker.manufacturerRequired")}
           />
         ) : (
           <>
@@ -135,8 +124,8 @@ export function CatalogItemPicker({
               list={categoryListId}
               placeholder={
                 itemType === "display"
-                  ? "Category (required) — stand / scenery"
-                  : "Category (required)"
+                  ? t("catalogPicker.categoryRequiredDisplay")
+                  : t("catalogPicker.categoryRequired")
               }
             />
             <datalist id={categoryListId}>
@@ -154,12 +143,12 @@ export function CatalogItemPicker({
             <Input
               value={value.manufacturer}
               onChange={(event) => onChange({ ...value, manufacturer: event.target.value })}
-              placeholder="Manufacturer"
+              placeholder={t("catalogPicker.manufacturer")}
             />
             <Input
               value={value.scale}
               onChange={(event) => onChange({ ...value, scale: event.target.value })}
-              placeholder="Scale, e.g. 1/144"
+              placeholder={t("catalogPicker.scalePlaceholder")}
             />
           </div>
         )}
@@ -190,11 +179,13 @@ export function CatalogItemPicker({
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
-        placeholder={`Search ${PLURAL[itemType]}…`}
+        placeholder={t("catalogPicker.searchPlaceholder", { type: itemTypePlural(itemType) })}
       />
       {open && debounced.length > 0 && (
         <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-md border border-zinc-200 bg-white shadow-lg">
-          {isFetching && <div className="px-3 py-2 text-xs text-zinc-400">Searching…</div>}
+          {isFetching && (
+            <div className="px-3 py-2 text-xs text-zinc-400">{t("catalogPicker.searching")}</div>
+          )}
           {matches.map((result) => (
             <button
               key={result.id}
@@ -209,10 +200,14 @@ export function CatalogItemPicker({
               <span>
                 {result.name}
                 <span className="ml-2 text-xs text-zinc-400">
-                  {[result.category ?? result.manufacturer, result.scale].filter(Boolean).join(" · ")}
+                  {[result.category ?? result.manufacturer, result.scale]
+                    .filter(Boolean)
+                    .join(t("common.dotSeparator"))}
                 </span>
               </span>
-              <span className="text-xs text-zinc-400">{result.quantity_on_hand} on hand</span>
+              <span className="text-xs text-zinc-400">
+                {t("catalogPicker.onHand", { count: result.quantity_on_hand })}
+              </span>
             </button>
           ))}
           <button
@@ -228,7 +223,7 @@ export function CatalogItemPicker({
               })
             }
           >
-            ＋ Create new {SINGULAR[itemType]} “{query.trim()}”
+            {t("catalogPicker.createNew", { type: itemTypeLabel(itemType), query: query.trim() })}
           </button>
         </div>
       )}

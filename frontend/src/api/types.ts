@@ -367,11 +367,17 @@ export interface RetailerUpdate {
 }
 
 // --- import / export -----------------------------------------------------------
-// Mirrors app/schemas/portability.py.
+// Mirrors app/schemas/portability.py. The runtime lists exist so the catalogue
+// tests can drive every member through its label lookup (the KIT_STATUSES
+// precedent); ROW_ACTIONS is also the preview's display order.
 
-export type ImportMode = "merge" | "add_only" | "replace_all";
+export const IMPORT_MODES = ["merge", "add_only", "replace_all"] as const;
 
-export type RowAction = "create" | "update" | "unchanged" | "skip" | "error";
+export type ImportMode = (typeof IMPORT_MODES)[number];
+
+export const ROW_ACTIONS = ["create", "update", "unchanged", "skip", "error"] as const;
+
+export type RowAction = (typeof ROW_ACTIONS)[number];
 
 export interface FieldChange {
   field: string;
