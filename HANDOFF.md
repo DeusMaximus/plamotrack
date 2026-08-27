@@ -32,6 +32,69 @@ then read the entry that matched.
 Template:
 
 ```markdown
+## YYYY-MM-DD — <agent> — <short title>
+- **Done:**
+- **Decisions:**
+- **State:** (tests? migrations? anything half-finished?)
+- **Next:**
+```
+
+---
+
+## 2026-08-28 — Claude Code (Fable 5) — #22 CLOSED: the i18n foundation, four PRs (#161/#163/#164/#165)
+
+- **Done:** **#22 closed** — the en-AU catalogue foundation, four sequential
+  PRs, each squash-merged on the owner's call after review. **#161**
+  (`cc91045`, Codex NO-GO→GO; P2: the runtime and the tests kept separate
+  catalogue lists, so an enabled language passed every gate while the browser
+  never loaded it — `src/i18n/registry.ts` is now the single import map both
+  derive from, with a loaded-bundle test; P3: blank values refused): i18next +
+  react-i18next, sync init pinned `en-AU` (#27 wires it to settings),
+  manifest (tag/nativeName/direction/enabled), `catalogue.test.ts` (validators
+  proven on inline bad fixtures first; plural shapes per language's own CLDR
+  categories; 100% coverage bar for enabled languages), backend parity test
+  pinning `SUPPORTED_INTERFACE_LANGUAGES` == enabled manifest tags,
+  `npm run i18n:report` + CI summary step, `docs/translating.md`. **#163**
+  (`fb569f9`, Cursor GO + 2 P3s: CountPills borrowed the totals plural group
+  and reworded the one divergent action — own `importPill.*` group + a
+  divergence pin; the unified `importTable.*` headings disclosed):
+  Retailers/Data/ImportPreview/CatalogItemPicker — first plurals + `<Trans>`,
+  the TABLE_LABELS/TABLE_EXPORTS by-value duplication ended. **#164**
+  (`4f18a04`, Cursor clean GO): Kits/Inventory — `dateWithElapsed` over
+  `common.elapsed.*`; the U+00A0 find (below). **#165** (`a85325f`, Cursor
+  clean GO + two corrections to my brief, owned on the thread): Orders —
+  `itemType.*.title` select nouns, receivedCell's one-byte NBSP normalization
+  (disclosed at #164, endorsed), catalogue machine-formatted (json indent=2).
+- **Decisions:** byte-identical extraction, proven by a from-empty e2e run per
+  PR — wording fixes deliberately out of scope (`data.result` `_one` forms
+  still read "1 kits …", stated in #163). Dynamic keys are the vitest
+  matrix's; flat static keys are `tsc -b`'s (measured on #165: deleted key →
+  vitest green, tsc red naming the call site). No jsdom — i18next core only.
+  Review bought on every PR including the "mechanical" ones, which paid: real
+  P3s in two of three.
+- **Notable:** the NBSP transcription trap and the unverified spec-coverage
+  claims are in `.agents/lessons.md` (→ "The value axis", "Review").
+  **#162 filed**: dialog-keyboard's keyboard-select spec races the catalog
+  search under load (its readiness wait is satisfied by the Create-new
+  button) — reproduced on `main`, remedy sketched, deliberately not fixed on
+  the series. This file repaired: the 27-08 entry had been amended into the
+  template fence; moved out verbatim, skeleton restored.
+- **State:** `main` at `a85325f` (+ this entry), CI green at every merged
+  head. Backend **1187**, vitest **212**, e2e 30 (+1 skipped screenshots),
+  from-empty verified repeatedly, tables zero after. Catalogue **350 keys @
+  100%**. Bundle 503 kB — past Vite's 500 kB chunk warning, informational,
+  unfiled. **No migrations in the series.** No mutant queues; `stg-`
+  re-measured 23/23 at #161. No dev servers running; stale worktrees
+  `/private/tmp/plamotrack-pr100` and `-pr108-main` persist (pre-date this).
+- **Next:** the rest of **M5.1**, all unblocked: **#24** (Settings page —
+  its copy now has a catalogue to land in), #25/#26 (structured diagnostics —
+  the runtime was chosen for `t(code, {defaultValue})`), #27 (language/region
+  UI; `/meta` still doesn't advertise supported languages — that gap is
+  #27's), #114 (naive CSV dates). Cursor carried three rounds this session
+  and Codex two — check both meters. LXC: **back up before pulling** (real
+  collection, several releases behind; no migrations to run this time, but
+  0.2.8's settings migration is still pending there).
+
 ## 2026-08-27 — Claude Code (Fable 5) — M5.1 opened: #23 CLOSED (PR #159, two Codex rounds; fold-in PR #160)
 
 - **Done:** **#23 — PR #159 open** (`feat/23-instance-settings`, head `18cfc45`,
@@ -105,15 +168,6 @@ Template:
   it needs). Codex carried both #159 rounds — check its meter before the next
   buy. LXC is still pre-0.2.8: **back up the LXC database before pulling**
   (real collection), and this pull adds the settings migration.
-
-## YYYY-MM-DD — <agent> — <short title>
-- **Done:**
-- **Decisions:**
-- **State:** (tests? migrations? anything half-finished?)
-- **Next:**
-```
-
----
 
 ## 2026-08-26 — Claude Code (Fable 5) — #104 + #67 + #63 closed; v0.2.8-alpha RELEASED (“the dead ends open”)
 
@@ -280,56 +334,3 @@ Template:
   product calls. The AI-native-SDLC review (owner asked, this session) filed no
   issues but shortlisted: deterministic hooks for `down -v` / migration edits,
   a scheduled CI harness run, plan-first for M6, per-worktree test DBs (#144).
-
-## 2026-08-24 — Claude Code (Fable 5) — #90 + #112 closed (PRs #133, #136, one Cursor round each); both mutant queues folded (#135, #138); #137 filed
-
-- **Done:** **#90 — PR #133** squash-merged as `545f341`, Cursor round 1 GO clean.
-  `_resolve_ref` now dispatches catalog refs through `invariants.effective_item_type`,
-  which gained a `stored` parameter for the one caller that runs before matching
-  binds `row.target` (a typeless row can only match by id, so the lookup equals the
-  future target). Post-#86 the live damage was: dead uuid **written through on
-  stored kit lines**, `catalog_name` mirror silently ignored, upload-remapped id
-  falsely refused — all three red-first; 6 tests in `test_order_invariants.py`
-  (3 red / 3 green worktree control). **#112 — PR #136** squash-merged as
-  `ce59b2b`, Cursor GO + 2 P3s, both answered at `cf19d17`. The starter sheet's
-  retailer branch synthesizes stable line ids and emits full `kits` rows with
-  `order_item_id`, so the §3.9 hybrid dispatch spawns nothing and rating/notes/
-  build dates/series all travel; status + arrival stamp resolved through
-  `initial_kit_status` (made public — rule-1 shared predicate; the receive-advance
-  is UPDATE-only, so this resolution is load-bearing, proven by a mutant).
-  import-export.md's #112 caveat removed. P3-1 (cross-file same-order-key
-  restatement) remedied by documentation, its optional preview banner **declined**
-  (the update diff already shows the price/qty movement); P3-2 pinned as tests
-  (stated in_transit, replace_all). A st-2 count slip Cursor caught was owned and
-  corrected in the PR body.
-- **Decisions:** **line ids are keyed on order key + kit identity + occurrence,
-  overruling #112's "position" sketch** — position ids silently rewrite lines when
-  one order key (shop+date, numberless) spans two separately-imported files;
-  quantity/price deliberately outside the id so fix-and-re-import updates in
-  place. Review-endorsed (PR #136 deliberate calls 1–2). Cursor for both reviews
-  (~200 and ~340 insertions — size table).
-- **Fold-ins:** #133's queue merged as **PR #135** (`25f5b20`), #136's as
-  **PR #138** (`85468c9`); #136's tuples relabelled `st-` → `strt-` (`-k st-`
-  substring-matches "post-write" in old labels; prefix rule sharpened in the
-  procedure doc). Harness **156/156, 16m12s**; runtime + case-count lines
-  refreshed. **No mutant queues outstanding.**
-- **Also:** **#137 filed** — standalone (retailer-free) starter rows duplicate on
-  re-import (verified: one row, two applies, two kits); no synthesized standalone
-  id is safe (any scheme merges distinct physical kits across split files —
-  corruption beats duplication), so the remedy is a product call; unmilestoned.
-  A full-harness run mid-session read as ~15 mass failures: a spawned agent
-  session ran pytest against `plamotrack_test` concurrently — signature now in
-  testing-and-review.md ("a burst of failures that vanish on re-probe").
-- **State:** clean. `main` at `85468c9`, CI green at every merged head, backend
-  **1031**, harness 156/156. Dev servers on :8000/:5173 still run **pre-#133
-  code** — stale, restart before any browser verification. Codex budget ~99%
-  remaining (unused this session; both rounds were Cursor).
-- **Next:** **#119, in a fresh session** (owner's call, context budget) — derived
-  ship/receive kit advances hash-bound as plan descriptors, BOTH siblings in one
-  structural change extending the `_Spawn` precedent. Then #77 (aggregate fan-out
-  cap). **#87 stays blocked on the owner's product call** (refuse vs leave —
-  owner deferred to "discuss when we get there"). Live: **no v0.2.6 tag ever**;
-  one v0.2.7-alpha only when BOTH 0.2.6 (#119, #77, #87) and 0.2.7 are done, and
-  0.2.7 is empty, so **do not run the release gate**. #112 merged means the
-  real-collection starter import is unblocked — **back up the LXC before pulling
-  `main`**. #122 rides M6.5.

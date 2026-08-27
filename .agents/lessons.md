@@ -117,6 +117,18 @@ half that isn't shared is the half that drifts. → 2026-08-15 (#76 round 2)
 
 ---
 
+### An invisible codepoint is a value too
+
+KitsPage's elapsed cell spelled "3 d" with U+00A0 before the *d* — the only
+NBSP in the frontend — and the first catalogue transcription of it flattened
+the byte to a plain space. Every suite was green over the difference; it
+surfaced only because an exact-match edit refused to find the line it was
+aimed at. When extracting strings, byte-compare the value against its source
+(`od -c`), sweep for the class rather than the instance (`grep -rP '\xa0'`),
+and pin the result with explicit `\u00a0` escapes — a literal NBSP typed into
+a test file proved unreliable in authoring, arriving sometimes as a space and
+sometimes not. → PRs #164, #165.
+
 ## The state axis
 
 The row's state decides whether the field is even present to be wrong. Twenty
@@ -386,6 +398,18 @@ re-ran rather than read. The brief now says "re-measure", and the PR-body number
 are written from the run's output, not from memory of it. → 2026-08-19 (#109)
 
 ---
+
+### A claim about what a spec asserts is a measurement, not a memory
+
+PR #165's body and brief said `order-lossless` pinned the expand-row aria
+sentences and that e2e asserted "1 across 1 line". Neither was true: the
+belief came from failure snapshots whose row text *contained* the phrases and
+from an exploration report, repeated without a grep — the only real coupling
+was a `/line items/` regex matching both verbs. The reviewer corrected both
+and established the transcription by rendering the values against `main`'s
+deleted literals instead, which is the stronger control anyway. Write "spec X
+pins string Y" only in the same breath as the grep that proves it.
+→ PR #165 reply.
 
 ## Architecture
 
