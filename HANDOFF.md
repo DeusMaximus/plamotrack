@@ -67,15 +67,19 @@ Template:
   acceptance criterion). This entry was rebuilt once: the parallel #166
   session's hand-off (bundle warning, merged) landed on `main` mid-session and
   had already rotated the entry my first draft rotated — the #144 shape, live.
-- **State:** PR #168 open at `2052c8d`, MERGEABLE against `58c174f`'s main
-  (no overlap with #166's vite.config.ts); Frontend CI green,
-  Backend/Integration pending at write time. Review **not yet bought** — brief
-  printed in the session chat, Cursor-sized (539 insertions); check both
-  meters (Cursor carried three rounds on 27-08, Codex two on the #159
-  session). Suites at the head: backend **1187**, vitest **212**, e2e
-  from-empty **36 passed + 1 skipped** (7 new settings tests), tables zero
+- **State:** PR #168 open at `7eb6567`, MERGEABLE, CI green all three jobs
+  at the reviewed head. **Codex round 1 (GPT 5.6 Sol): GO + 2 P3s**, both
+  reproduced and answered at `7eb6567` — P3-1 dead Data-page directions
+  (fixed, plus one sibling the re-sweep found: the #126 downgrade-guard
+  message; `mutation_test.py -k mig-5` re-measured killed, anchor untouched);
+  P3-2 evidence-record overcounts (PR body amended in place: 6 tests / five
+  green / :138 — this entry carried the same two numbers and is corrected in
+  this commit). Codex's subscription was upped this session — capacity no
+  longer the constraint; its model is GPT 5.6 Sol (procedure + brief template
+  refreshed on main, `639238a`). Suites at the head: backend **1187**, vitest **212**, e2e
+  from-empty **36 passed + 1 skipped** (6 new settings tests), tables zero
   after, currency restored. Two measured e2e negative controls in the PR body
-  (meta-invalidation removed → red at settings.spec.ts:136; role="status"
+  (meta-invalidation removed → red at settings.spec.ts:138; role="status"
   removed → red at the status assert). No mutant queues (frontend-only). No
   dev servers left running; stale worktrees `/private/tmp/plamotrack-pr100`
   and `-pr108-main` persist (pre-date this).
@@ -84,7 +88,7 @@ Template:
   categorised display item (the dev DB did); invisible from empty, so CI and
   the from-empty run can never see it. preorder-toggle flaked once locally
   (#17 contention class), clean on re-run and in the counted run.
-- **Next:** land #168 (review round or owner's call), then the M5.1 rest:
+- **Next:** land #168 (GO standing; merge is the owner's call), then the M5.1 rest:
   #25/#26 (structured diagnostics), #27 (language/region controls — the
   read-only section and `/meta`'s missing language advertising are its), #114
   (naive CSV dates). #162 (e2e keyboard-select race) remains
