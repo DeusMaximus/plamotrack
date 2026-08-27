@@ -41,6 +41,58 @@ Template:
 
 ---
 
+## 2026-08-28 — Claude Code (Fable 5) — #24: Settings page built; PR #168 open, review not yet bought
+
+- **Done:** **#24 — PR #168 open** (`feat/24-settings-page`, head `2052c8d`,
+  539 insertions, frontend-only, **no migrations**): `/settings` with nested
+  section routes. General = the reference-currency form (hydration gated on
+  `settingsQuery`; on save `setQueryData` for settings + **invalidate
+  `metaQuery`** — /meta carries the same reference_currency at staleTime
+  Infinity and the order/inventory forms default from that copy). Language &
+  region = read-only display; **#27 owns the controls**, the page says so.
+  Data management = DataPage git-renamed to `pages/settings/DataSection.tsx`
+  (90 % similar; plan_hash/confirm/global invalidateQueries byte-identical).
+  About = version from `metaQuery`. `/data` → `/settings/data`. `Card` lifted
+  into ui.tsx (h2→h3, reason at the definition), `ErrorBanner` now
+  `role="alert"`, sidebar swaps 💾 Data → ⚙️ Settings, catalogue gains a
+  `settings` group (`nav.data`/`data.title` removed as unused). All six README
+  screenshots re-shot (the sidebar changed in every one); docs swept
+  (README, operations, import-export, design §6 + §6.1).
+- **Decisions:** sections are **routes**, not InventoryPage-style tab state —
+  the redirect criterion needs an addressable Data-management section. The new
+  settings e2e is its own Playwright **project** with `dependencies: ["app"]`:
+  it flips the singleton that order-snapshot/order-lossless beforeAll-read, and
+  local parallel workers would flake *them*; cost disclosed (a red in app skips
+  settings). Language & region deliberately not editable here (#27's first
+  acceptance criterion). This entry was rebuilt once: the parallel #166
+  session's hand-off (bundle warning, merged) landed on `main` mid-session and
+  had already rotated the entry my first draft rotated — the #144 shape, live.
+- **State:** PR #168 open at `2052c8d`, MERGEABLE against `58c174f`'s main
+  (no overlap with #166's vite.config.ts); Frontend CI green,
+  Backend/Integration pending at write time. Review **not yet bought** — brief
+  printed in the session chat, Cursor-sized (539 insertions); check both
+  meters (Cursor carried three rounds on 27-08, Codex two on the #159
+  session). Suites at the head: backend **1187**, vitest **212**, e2e
+  from-empty **36 passed + 1 skipped** (7 new settings tests), tables zero
+  after, currency restored. Two measured e2e negative controls in the PR body
+  (meta-invalidation removed → red at settings.spec.ts:136; role="status"
+  removed → red at the status assert). No mutant queues (frontend-only). No
+  dev servers left running; stale worktrees `/private/tmp/plamotrack-pr100`
+  and `-pr108-main` persist (pre-date this).
+- **Notable:** **#167 filed** — display-items spec's `getByLabel('Category')`
+  collides with Inventory's category filter on any database holding a
+  categorised display item (the dev DB did); invisible from empty, so CI and
+  the from-empty run can never see it. preorder-toggle flaked once locally
+  (#17 contention class), clean on re-run and in the counted run.
+- **Next:** land #168 (review round or owner's call), then the M5.1 rest:
+  #25/#26 (structured diagnostics), #27 (language/region controls — the
+  read-only section and `/meta`'s missing language advertising are its), #114
+  (naive CSV dates). #162 (e2e keyboard-select race) remains
+  reproduced-on-`main`, unfixed. LXC: **back up before pulling** (real
+  collection, several releases behind; 0.2.8's settings migration still
+  pending there).
+
+
 ## 2026-08-28 — Claude Code (Fable 5) — bundle-size warning assessed: no splitting; PR #166 merged
 
 - **Done:** the 503 kB chunk warning (flagged informational in the previous
@@ -267,63 +319,3 @@ Template:
   every round this session (Cursor rate-limited) — check its meter. LXC:
   **back up the LXC database before pulling the release** (real collection).
 
-## 2026-08-25 — Claude Code (Fable 5) — 0.2.8 underway: #53 + #61 + #54 closed (PRs #148–#152), #63 decided
-
-- **Done:** **#53 — PR #148** (`64ac350`, docs-only, review skipped per #40,
-  owner concurred). Decision: **export unescaped, document it** — caveat in the
-  archive's bundled README.txt (the `_README` string in `exporting.py`),
-  import-export.md "Limits and safety", reasoning + both declined alternatives
-  in design §12.8. **#61 — PR #149** (`914fcac`):
-  `withdraw_upgrade_application` — write-gated, upgrade row locked in
-  `apply_upgrade`'s order on BOTH flavours, **`restore_stock` required with no
-  default on any surface**; REST `DELETE
-  /upgrades/{id}/applications/{aid}?restore_stock=` + `GET
-  /kits/{id}/applications`; MCP tool (docstring: ask, don't guess) + `get_kit`
-  embeds applications; kit editor "Applied upgrades" section (two equal-weight
-  buttons, no default); the two dead-end guard messages (#37 kit delete,
-  upgrade delete) now point at withdrawal and release after it. Design §3.6
-  block in the same commit. Cursor round 1 **GO + 1 P3** (order-line release
-  untested) — fixed `def519b`, red-proofed under the wdr-6 mutant.
-  **Fold-in PR #150** (`8d7bde2`, review skipped per the #132 precedent, owner
-  concurred): 11 `wdr-` tuples; TEST_FILES + `test_mcp.py` +
-  `test_order_lifecycle.py`. **#54 — PR #151** (`204e957`, TWO Codex rounds —
-  Cursor was down on high load): `tests/test_migration_data.py`, 7 tests that
-  walk `plamotrack_test` to each data-bearing revision's parent, seed the old
-  shape by textual SQL, and assert both directions — the four #54 revisions
-  plus the #126 display downgrade guard across its four states;
-  operations.md documents the 6cbd legacy state (received order, `ordered`
-  kit — never repaired, by design). Round 1 NO-GO, both findings real and
-  reproduced first: P2 (my walk-teardown fallback swallowed a later
-  migration failing against seeded rows — recovery and verdict now separate
-  in `_restore_head`, re-raise when the body passed) and P3 (the
-  date→timestamptz→date identity is FALSE for a civil date the zone skipped
-  — Pacific/Apia never had 2011-12-30; the contract is exact-instant
-  equality, and the skipped-date policy is pinned under an ALTER DATABASE'd
-  Apia default). Round 2 clean GO, everything replayed. **Fold-in PR #152**
-  (`6ef0d1b`): 7 `mig-` tuples — the first cases that mutate MIGRATIONS;
-  `tree_is_clean` now covers `alembic/`; harness **194/194 @ 19m48s**. No
-  queues outstanding.
-- **Decisions:** **#63 (owner, this session): option 2** — `delete_order`
-  treats a dangling old `catalog_ref_id` as nothing-to-reverse (logged);
-  receive/edit/retarget stay strict 409s. Recorded on the issue; implementation
-  stays open on 0.2.8; reasoning lands in design.md with it.
-- **Notable:** my brief's wdr-7 kill mechanism was wrong (claimed
-  `StaleDataError`; measured: both racers succeed, the empty DELETE is a
-  `SAWarning`, the end-state assert kills) — Cursor corrected it; owned in the
-  PR #149 reply and recorded beside the tuples in `mutation_test.py`. Cursor
-  also reproduced both #44-shaped import interactions under deliberate call 5
-  and endorsed no `invariants.py` change — its paragraph on the PR is the
-  reference if that ever resurfaces.
-- **State:** `main` at `6ef0d1b` (+ this entry), CI green at every head.
-  Backend **1080**, vitest 109, e2e 26 (+1 skipped screenshots spec) verified
-  from-empty, harness 194/194; the procedure doc's drifted suite-count table
-  refreshed (~534 → ~1080). No dev servers running; stale worktrees
-  `/private/tmp/plamotrack-pr100` and `-pr108-main` persist (not this
-  session's). Codex budget untouched — both rounds this session were Cursor.
-- **Next:** the 0.2.8 remainder — **#104**, **#67**, and the **#63
-  implementation** (decision recorded, small strict-scope branch). The
-  migration harness (#54) now exists for M5.1's settings migration to lean
-  on. Codex took both #151 rounds (Cursor down); its budget is dented but was
-  ~full. #137/#144 still await product calls; #122 rides M6.5. LXC: if
-  v0.2.7 hasn't been pulled yet, **back up the LXC database first** (real
-  collection).
