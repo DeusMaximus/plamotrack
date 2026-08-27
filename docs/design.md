@@ -785,6 +785,25 @@ An incomplete catalogue may exist in-tree, but is not offered as finished until 
 the documented review/coverage bar. Adding a language should normally change catalogue
 and manifest data, not application logic. Runtime language uploads are out of scope.
 
+How that landed ✅ (#22, 27/08/2026): `frontend/src/i18n/` holds the runtime
+(i18next + react-i18next — chosen for dynamic key lookup, which the enum labels
+use today and the structured REST/import diagnostics will use later), the
+`manifest.json` registry, and `catalogues/en-AU.json`. Init is synchronous with
+inline resources and the language pinned to `en-AU` until the Settings page can
+change it (#27). Catalogue-backed label helpers in `src/lib/labels.ts` resolve
+canonical wire values (`kitStatus.*`, `itemType.*`) at render time — never at
+module scope, so a language change re-resolves rather than serving frozen
+strings. The automated checks are `src/i18n/catalogue.test.ts` (known keys,
+placeholder parity, plural shapes against each language's own CLDR categories,
+and the 100%-coverage bar for enabled languages — each check proven against
+inline bad fixtures before judging the real files), plus a parity test in
+`backend/tests/test_settings.py` holding `SUPPORTED_INTERFACE_LANGUAGES` to
+exactly the manifest's enabled tags. CI appends `npm run i18n:report`'s
+coverage table to the job summary. The contribution contract — proposing,
+reviewing, and enabling a language — is `docs/translating.md`. Page copy is
+migrating into the catalogue in staged PRs; the extraction keeps every en-AU
+string byte-identical, which the unchanged Playwright suite proves.
+
 The presentation boundary follows from that contract:
 
 - move every user-facing frontend string into semantic catalogue keys with interpolation

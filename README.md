@@ -139,7 +139,7 @@ Being honest up front beats you finding out at 11pm:
 | CSV import / export | ✅ Built |
 | MCP server | ✅ Built |
 | Bundled `docker compose up` for the whole local stack | ✅ Built |
-| **Internationalisation foundations** | 🔨 Milestone 5.1 — in progress: the instance-settings record (language, region, time zone, date/hour style, reference currency) is in, settable via `PATCH /api/settings` and carried by exports; the English catalogue, locale-aware formatting, and the Settings page are next |
+| **Internationalisation foundations** | 🔨 Milestone 5.1 — in progress: the instance-settings record (language, region, time zone, date/hour style, reference currency) is in, settable via `PATCH /api/settings` and carried by exports; the `en-AU` catalogue, language manifest and [translation workflow](docs/translating.md) are in and page copy is migrating into them; locale-aware formatting and the Settings page are next |
 | **Authentication + OAuth-compatible remote MCP** | 🔨 Milestone 6 — yes, really, see the warning above |
 | **MCP `2026-07-28` compatibility** | 🔨 Milestone 6.1 — dual-era, without dropping current clients |
 | **UI redesign** | 🔨 Milestone 6.5 — moving off the stock-component look, so the gallery and showcase get built in the new one; direction still being explored, and opinions are welcome on the tracker |
@@ -361,8 +361,9 @@ Two documents are worth reading before you change anything structural:
 ## Contributing
 
 Issues and PRs welcome, especially: other MCP clients, non-Gunpla model kit
-taxonomies (the schema deliberately hedges — see design notes §9.1), and anyone who has
-opinions about grade-to-scale defaults.
+taxonomies (the schema deliberately hedges — see design notes §9.1), anyone who has
+opinions about grade-to-scale defaults, and interface translations —
+[docs/translating.md](docs/translating.md) is the how-to.
 
 Please run the lint/build/test commands above before opening a PR. A contribution guide
 with more ceremony arrives at Milestone 9.

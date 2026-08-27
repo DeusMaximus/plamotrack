@@ -18,6 +18,7 @@ import type {
 } from "../api/types";
 import type { CatalogSelection } from "../components/CatalogItemPicker";
 import { CatalogItemPicker } from "../components/CatalogItemPicker";
+import { itemTypeLabel } from "../lib/labels";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
@@ -1276,12 +1277,13 @@ export function OrdersPage() {
                           {order.items.map((item) => {
                             const label =
                               item.item_type === "kit"
-                                ? (itemName.get(item.spawned_kit_ids[0] ?? "") ?? "kit")
-                                : (itemName.get(item.catalog_ref_id ?? "") ?? item.item_type);
+                                ? (itemName.get(item.spawned_kit_ids[0] ?? "") ?? itemTypeLabel("kit"))
+                                : (itemName.get(item.catalog_ref_id ?? "") ??
+                                  itemTypeLabel(item.item_type));
                             return (
                               <li key={item.id} className="flex items-center gap-3 text-sm">
                                 <span className="w-24 rounded bg-zinc-200 px-1.5 py-0.5 text-center text-xs text-zinc-600">
-                                  {item.item_type}
+                                  {itemTypeLabel(item.item_type)}
                                 </span>
                                 <span className="font-medium">{label}</span>
                                 <span className="text-zinc-500">

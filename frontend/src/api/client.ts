@@ -34,6 +34,7 @@ import type {
   UpgradeCreate,
   UpgradeUpdate,
 } from "./types";
+import i18n from "../i18n";
 
 const API_BASE: string = import.meta.env.VITE_API_BASE ?? "/api";
 
@@ -105,7 +106,7 @@ async function upload<T>(path: string, form: FormData): Promise<T> {
 export async function downloadFile(path: string, fallbackName: string): Promise<void> {
   const res = await fetch(`${API_BASE}${path}`);
   if (!res.ok) {
-    throw new ApiError(res.status, `Export failed (${res.status})`);
+    throw new ApiError(res.status, i18n.t("api.exportFailed", { status: res.status }));
   }
   const disposition = res.headers.get("Content-Disposition") ?? "";
   const name = /filename="?([^"]+)"?/.exec(disposition)?.[1] ?? fallbackName;

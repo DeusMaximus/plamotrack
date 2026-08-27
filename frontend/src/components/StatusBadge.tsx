@@ -1,5 +1,5 @@
 import type { KitStatus } from "../api/types";
-import { STATUS_LABELS } from "../lib/format";
+import { statusLabel } from "../lib/labels";
 
 const STATUS_STYLES: Record<KitStatus, string> = {
   pre_ordered: "bg-purple-100 text-purple-700",
@@ -15,7 +15,7 @@ export function StatusBadge({ status }: { status: KitStatus }) {
     <span
       className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[status]}`}
     >
-      {STATUS_LABELS[status]}
+      {statusLabel(status)}
     </span>
   );
 }

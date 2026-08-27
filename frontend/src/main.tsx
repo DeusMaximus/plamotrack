@@ -1,3 +1,6 @@
+// First so the catalogue is registered before any module resolves a string.
+import "./i18n";
+
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";

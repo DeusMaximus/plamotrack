@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useTranslation } from "react-i18next";
 
 /** What a keyboard can land on, in DOM order. Deliberately not a library: this
  *  list plus the trap below is the whole of what five dialogs need, and adopting
@@ -38,6 +39,7 @@ export function Modal({
   children: ReactNode;
   wide?: boolean;
 }) {
+  const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -168,7 +170,7 @@ export function Modal({
           <h2 className="text-lg font-semibold">{title}</h2>
           <button
             onClick={onClose}
-            aria-label="Close"
+            aria-label={t("common.close")}
             className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
           >
             ✕

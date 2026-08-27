@@ -20,12 +20,13 @@ import type {
 } from "@dnd-kit/core";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import { api } from "../api/client";
 import type { Kit, KitStatus } from "../api/types";
 import { StatusBadge } from "../components/StatusBadge";
 import { EmptyState, ErrorBanner } from "../components/ui";
-import { STATUS_LABELS } from "../lib/format";
+import { statusLabel } from "../lib/labels";
 import { kitStatusMutationOptions } from "../lib/kitStatusMutation";
 
 // pointerWithin gives the most natural mouse-drag feel but only works for
@@ -151,6 +152,7 @@ function Column({
   kits: Kit[];
   showStatus?: boolean;
 }) {
+  const { t } = useTranslation();
   const { setNodeRef, isOver } = useDroppable({ id });
   return (
     <div className="flex w-full min-w-56 max-w-80 shrink-0 flex-col">
@@ -174,7 +176,7 @@ function Column({
         ))}
         {kits.length === 0 && (
           <div className="px-2 py-6 text-center text-xs text-zinc-400">
-            {isOver ? "Drop here" : "—"}
+            {isOver ? t("board.dropHere") : "—"}
           </div>
         )}
       </div>
@@ -183,6 +185,7 @@ function Column({
 }
 
 export function BoardPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [view, setView] = useState<BoardView>(initialView);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -262,12 +265,10 @@ export function BoardPage() {
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-2xl font-bold">
-          {view === "build" ? "Build Pipeline" : "Orders Pipeline"}
+          {view === "build" ? t("board.buildPipeline") : t("board.ordersPipeline")}
         </h1>
         <div className="flex items-center gap-3">
-          <span className="hidden text-sm text-zinc-500 sm:inline">
-            drag cards to update status
-          </span>
+          <span className="hidden text-sm text-zinc-500 sm:inline">{t("board.dragHint")}</span>
           <div className="flex rounded-lg border border-zinc-300 bg-white p-0.5">
             {(["build", "orders"] as const).map((option) => (
               <button
@@ -279,7 +280,7 @@ export function BoardPage() {
                     : "text-zinc-600 hover:text-zinc-900"
                 }`}
               >
-                {option === "build" ? "Build" : "Orders"}
+                {option === "build" ? t("board.buildView") : t("board.ordersView")}
               </button>
             ))}
           </div>
@@ -289,9 +290,9 @@ export function BoardPage() {
       <ErrorBanner message={actionError} />
 
       {isError ? (
-        <ErrorBanner message={`Failed to load kits: ${(error as Error).message}`} />
+        <ErrorBanner message={t("board.loadFailed", { message: (error as Error).message })} />
       ) : isLoading ? (
-        <EmptyState>Loading…</EmptyState>
+        <EmptyState>{t("common.loading")}</EmptyState>
       ) : (
         <DndContext
           sensors={sensors}
@@ -306,7 +307,7 @@ export function BoardPage() {
                 <Column
                   key={status}
                   id={status}
-                  title={STATUS_LABELS[status]}
+                  title={statusLabel(status)}
                   kits={byStatus.get(status) ?? []}
                 />
               ))
@@ -316,11 +317,11 @@ export function BoardPage() {
                   <Column
                     key={status}
                     id={status}
-                    title={STATUS_LABELS[status]}
+                    title={statusLabel(status)}
                     kits={byStatus.get(status) ?? []}
                   />
                 ))}
-                <Column id={RECEIVED_ID} title="Received" kits={receivedKits} showStatus />
+                <Column id={RECEIVED_ID} title={t("board.received")} kits={receivedKits} showStatus />
               </>
             )}
           </div>
