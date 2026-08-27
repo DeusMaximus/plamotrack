@@ -8,6 +8,7 @@ import type {
   UseFormWatch,
 } from "react-hook-form";
 import { Controller, useFieldArray, useForm } from "react-hook-form";
+import { useTranslation } from "react-i18next";
 
 import { api, ApiError, metaQuery } from "../api/client";
 import type {
@@ -16,9 +17,11 @@ import type {
   OrderItemUpsert,
   OrderUpdate,
 } from "../api/types";
+import { ITEM_TYPES } from "../api/types";
 import type { CatalogSelection } from "../components/CatalogItemPicker";
 import { CatalogItemPicker } from "../components/CatalogItemPicker";
-import { itemTypeLabel } from "../lib/labels";
+import i18n from "../i18n";
+import { dateWithElapsed, itemTypeLabel, itemTypeTitle } from "../lib/labels";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
@@ -168,7 +171,7 @@ function orderToFormValues(order: Order, catalogName: Map<string, string>): Orde
             : {
                 mode: "existing",
                 id: item.catalog_ref_id,
-                name: catalogName.get(item.catalog_ref_id) ?? "(unknown item)",
+                name: catalogName.get(item.catalog_ref_id) ?? i18n.t("orders.unknownItem"),
               },
       };
     }),
@@ -288,6 +291,7 @@ function LineEditor({
   canRemove: boolean;
   referenceCurrency: string;
 }) {
+  const { t } = useTranslation();
   const itemType = watch(`items.${index}.item_type`);
   const lineErrors = errors.items?.[index];
   // This line's own currency, never the order header's. Every amount below is
@@ -317,17 +321,17 @@ function LineEditor({
           })}
           className="!w-32"
         >
-          <option value="kit">Kit</option>
-          <option value="tool">Tool</option>
-          <option value="consumable">Consumable</option>
-          <option value="upgrade">Upgrade</option>
-          <option value="display">Display item</option>
+          {ITEM_TYPES.map((type) => (
+            <option key={type} value={type}>
+              {itemTypeTitle(type)}
+            </option>
+          ))}
         </Select>
         <Field label="" className="!mb-0 w-20">
           <Input
             type="number"
             min={1}
-            aria-label="Quantity"
+            aria-label={t("orders.quantity")}
             {...register(`items.${index}.quantity`, { required: true, min: 1 })}
           />
         </Field>
@@ -335,10 +339,10 @@ function LineEditor({
           type="number"
           step={stepFor(lineCurrency)}
           min={0}
-          aria-label="Unit price"
-          placeholder="Unit price"
+          aria-label={t("orders.unitPrice")}
+          placeholder={t("orders.unitPrice")}
           className="!w-28"
-          {...register(`items.${index}.unit_price`, { required: "required" })}
+          {...register(`items.${index}.unit_price`, { required: t("validation.requiredField") })}
         />
         {/* Stated, not editable: the header picker sets it for new lines, and a
             recorded line keeps what it was bought in. Shown so a mixed-currency
@@ -349,7 +353,7 @@ function LineEditor({
           <button
             type="button"
             onClick={onRemove}
-            aria-label="Remove line"
+            aria-label={t("orders.removeLine")}
             className="rounded p-1 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600"
           >
             ✕
@@ -364,21 +368,21 @@ function LineEditor({
         // line could ship on its own.
         <div className="grid grid-cols-3 gap-2">
           <Input
-            placeholder="Kit name *"
-            {...register(`items.${index}.kit_name`, { required: "Kit name is required" })}
+            placeholder={t("orders.kitNamePlaceholder")}
+            {...register(`items.${index}.kit_name`, { required: t("validation.kitNameRequired") })}
           />
           <div className="col-span-2 grid grid-cols-3 gap-2">
             <Input
-              placeholder="Grade *"
-              {...register(`items.${index}.kit_grade`, { required: "Grade is required" })}
+              placeholder={t("orders.gradePlaceholder")}
+              {...register(`items.${index}.kit_grade`, { required: t("validation.gradeRequired") })}
             />
             <Input
-              aria-label="Scale"
-              placeholder="Scale"
-              title="Blank = derived from the grade"
+              aria-label={t("orders.scalePlaceholder")}
+              placeholder={t("orders.scalePlaceholder")}
+              title={t("orders.scaleTooltip")}
               {...register(`items.${index}.kit_scale`)}
             />
-            <Input placeholder="Kit #" {...register(`items.${index}.kit_number`)} />
+            <Input placeholder={t("orders.kitNumberPlaceholder")} {...register(`items.${index}.kit_number`)} />
           </div>
           {(lineErrors?.kit_name || lineErrors?.kit_grade) && (
             <span className="col-span-3 text-xs text-red-600">
@@ -392,15 +396,15 @@ function LineEditor({
           name={`items.${index}.catalog`}
           rules={{
             validate: (value) => {
-              if (!value) return "Search for an existing item or create a new one";
+              if (!value) return t("validation.catalogSelection");
               if (value.mode === "new") {
-                if (!value.name.trim()) return "New item needs a name";
+                if (!value.name.trim()) return t("validation.newItemName");
                 if (itemType === "upgrade" && !value.manufacturer.trim())
-                  return "New upgrades need a manufacturer";
+                  return t("validation.newUpgradeManufacturer");
                 // Everything else — tools, consumables, display items — needs a
                 // category. Display items alone may leave the manufacturer blank.
                 if (itemType !== "upgrade" && !value.category.trim())
-                  return "New items need a category";
+                  return t("validation.newItemCategory");
               }
               return true;
             },
@@ -428,15 +432,13 @@ function LineEditor({
             // The snapshot's own currency, not the order's — §6 lets them differ.
             step={stepFor(snapshotCode)}
             min={0}
-            aria-label="Converted price"
-            placeholder="Converted price"
+            aria-label={t("orders.convertedPrice")}
+            placeholder={t("orders.convertedPrice")}
             className="!w-28"
             {...register(`items.${index}.converted_price`)}
           />
           <span className="text-sm text-zinc-600">{snapshotCode}</span>
-          <span className="text-xs text-zinc-500">
-            what this cost at entry — recorded once, never recalculated. Blank for none.
-          </span>
+          <span className="text-xs text-zinc-500">{t("orders.snapshotNote")}</span>
         </div>
       )}
     </div>
@@ -460,6 +462,7 @@ function LineEditor({
  * In practice OrdersPage warms all five, so the loading state is rarely seen —
  * "rarely" being exactly why the bug would have survived. */
 function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void }) {
+  const { t } = useTranslation();
   const { data: meta } = useQuery(metaQuery);
   // The order the caller has is the list's cached copy, stale for as long as
   // the page has been open (#67). Refetch it on every open and hydrate from
@@ -516,14 +519,17 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
   // removed the stale row, so there is nothing left to retry against.
   if (order && freshOrderError) {
     return (
-      <Modal title="Edit order" onClose={onClose} wide>
+      <Modal title={t("orders.editTitle")} onClose={onClose} wide>
         <ErrorBanner
           message={
             orderGone
-              ? "This order no longer exists — it was deleted from another window or by an agent."
-              : `Couldn't load this order: ${
-                  freshOrderError instanceof Error ? freshOrderError.message : "request failed"
-                }. Close and reopen to retry.`
+              ? t("orders.orderGone")
+              : t("orders.loadOrderFailed", {
+                  message:
+                    freshOrderError instanceof Error
+                      ? freshOrderError.message
+                      : t("orders.requestFailedFallback"),
+                })
           }
         />
       </Modal>
@@ -533,8 +539,8 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
     !order || (freshOrder && isFetchedAfterMount && tools && consumables && upgrades && displayItems);
   if (!meta || !hydrated) {
     return (
-      <Modal title={order ? "Edit order" : "New order"} onClose={onClose} wide>
-        <EmptyState>Loading…</EmptyState>
+      <Modal title={order ? t("orders.editTitle") : t("orders.newTitle")} onClose={onClose} wide>
+        <EmptyState>{t("common.loading")}</EmptyState>
       </Modal>
     );
   }
@@ -564,6 +570,7 @@ function OrderForm({
   referenceCurrency: string;
   catalog: { id: string; name: string }[];
 }) {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [newRetailerName, setNewRetailerName] = useState<string | null>(null);
@@ -629,7 +636,7 @@ function OrderForm({
       setValue("retailer_id", created.id);
       setNewRetailerName(null);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not add retailer");
+      setError(err instanceof ApiError ? err.message : t("orders.addRetailerFailed"));
     } finally {
       addingRetailer.current = false;
       setRetailerPending(false);
@@ -766,21 +773,21 @@ function OrderForm({
       );
       onClose();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Request failed");
+      setError(err instanceof ApiError ? err.message : t("common.requestFailed"));
     }
   });
 
   return (
-    <Modal title={order ? "Edit order" : "New order"} onClose={onClose} wide>
+    <Modal title={order ? t("orders.editTitle") : t("orders.newTitle")} onClose={onClose} wide>
       <form onSubmit={onSubmit} className="space-y-4">
         <ErrorBanner message={error} />
 
         <div className="grid grid-cols-3 gap-3">
-          <Field label="Retailer" required error={errors.retailer_id?.message}>
+          <Field label={t("orders.retailer")} required error={errors.retailer_id?.message}>
             {newRetailerName === null ? (
               <div className="flex gap-1">
-                <Select {...register("retailer_id", { required: "Pick a retailer" })}>
-                  <option value="">Select…</option>
+                <Select {...register("retailer_id", { required: t("orders.pickRetailer") })}>
+                  <option value="">{t("orders.selectRetailer")}</option>
                   {retailers?.map((retailer) => (
                     <option key={retailer.id} value={retailer.id}>
                       {retailer.name}
@@ -797,10 +804,10 @@ function OrderForm({
                   autoFocus
                   value={newRetailerName}
                   onChange={(event) => setNewRetailerName(event.target.value)}
-                  placeholder="New retailer name"
+                  placeholder={t("orders.newRetailerPlaceholder")}
                 />
                 <Button type="button" onClick={addRetailer} disabled={retailerPending}>
-                  Add
+                  {t("common.add")}
                 </Button>
                 <Button type="button" variant="secondary" onClick={() => setNewRetailerName(null)}>
                   ✕
@@ -808,15 +815,15 @@ function OrderForm({
               </div>
             )}
           </Field>
-          <Field label="Order date" required>
+          <Field label={t("orders.orderDate")} required>
             <Input type="date" {...register("order_date", { required: true })} />
           </Field>
-          <Field label="Currency" required>
+          <Field label={t("orders.currency")} required>
             <Input
               list="currencies"
               {...register("currency_code", {
                 required: true,
-                pattern: { value: /^[A-Z]{3}$/, message: "3-letter ISO code" },
+                pattern: { value: /^[A-Z]{3}$/, message: t("validation.currencyCode") },
                 onChange: (event) => {
                   // Lines being created here follow the picker, so entering an
                   // order in one currency stays a single choice. A line that is
@@ -840,13 +847,13 @@ function OrderForm({
         </div>
 
         <div className="grid grid-cols-3 gap-3">
-          <Field label="Order number">
+          <Field label={t("orders.orderNumber")}>
             <Input
               {...register("order_number")}
-              placeholder="retailer's reference, e.g. #GEA-10482"
+              placeholder={t("orders.orderNumberPlaceholder")}
             />
           </Field>
-          <Field label="Shipping cost">
+          <Field label={t("orders.shippingCost")}>
             <Input
               type="number"
               step={stepFor(watch("currency_code"))}
@@ -854,17 +861,17 @@ function OrderForm({
               {...register("shipping_cost")}
             />
           </Field>
-          <Field label="Delivery service">
-            <Input {...register("delivery_service")} placeholder="blank = local pickup" />
+          <Field label={t("orders.deliveryService")}>
+            <Input {...register("delivery_service")} placeholder={t("orders.deliveryServicePlaceholder")} />
           </Field>
         </div>
 
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Tracking number">
+          <Field label={t("orders.trackingNumber")}>
             <Input {...register("tracking_number")} />
           </Field>
-          <Field label="Tracking URL">
-            <Input {...register("tracking_url")} placeholder="https://…" />
+          <Field label={t("orders.trackingUrl")}>
+            <Input {...register("tracking_url")} placeholder={t("common.urlPlaceholder")} />
           </Field>
         </div>
 
@@ -884,11 +891,11 @@ function OrderForm({
                 })}
                 className="h-4 w-4 accent-indigo-600"
               />
-              Already in hand (store purchase / delivery arrived) — stock counts immediately
+              {t("orders.alreadyInHand")}
             </label>
             {watch("received") && (
               <label className="flex items-center gap-2 text-sm text-zinc-700">
-                on
+                {t("orders.receivedOnPrefix")}
                 <Input
                   type="date"
                   max={todayISO()}
@@ -902,9 +909,7 @@ function OrderForm({
                 status rendered an order-level fact as a line-level choice. */}
             <label
               className={`flex items-center gap-2 text-sm ${watch("received") ? "text-zinc-400" : "text-zinc-700"}`}
-              title={
-                watch("received") ? "An order already in hand cannot be a pre-order" : undefined
-              }
+              title={watch("received") ? t("orders.inHandNotPreOrder") : undefined}
             >
               <input
                 type="checkbox"
@@ -912,7 +917,7 @@ function OrderForm({
                 {...register("pre_order")}
                 className="h-4 w-4 accent-indigo-600"
               />
-              Pre-order — kits wait as Pre-ordered until this order ships or arrives
+              {t("orders.preOrderToggle")}
             </label>
           </div>
         )}
@@ -923,28 +928,19 @@ function OrderForm({
         {order && (
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <Field label="Shipped on">
+              <Field label={t("orders.shippedOn")}>
                 <Input type="date" max={todayISO()} {...register("shipped_date")} />
               </Field>
               <p className="mt-1 text-xs text-zinc-500">
-                {order.shipped_at
-                  ? "Correcting this re-dates kits still marked In Transit by that " +
-                    "shipment; kits moved since keep their own dates."
-                  : "Setting a date marks the order shipped — kits still waiting on " +
-                    "the retailer move to In Transit. Leave blank if it hasn't."}
+                {order.shipped_at ? t("orders.shippedCorrectHelp") : t("orders.shippedSetHelp")}
               </p>
             </div>
             <div>
-              <Field label="Received on">
+              <Field label={t("orders.receivedOn")}>
                 <Input type="date" max={todayISO()} {...register("received_date")} />
               </Field>
               <p className="mt-1 text-xs text-zinc-500">
-                {order.received_at
-                  ? "Correcting this re-dates the kits this delivery brought in — " +
-                    "unless they have been moved since, in which case they keep " +
-                    "their own dates."
-                  : "Setting a date marks the order received — stock is applied and " +
-                    "pipeline kits move to Backlog. Leave blank if it hasn't arrived."}
+                {order.received_at ? t("orders.receivedCorrectHelp") : t("orders.receivedSetHelp")}
               </p>
             </div>
           </div>
@@ -952,7 +948,7 @@ function OrderForm({
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-zinc-700">Items</h3>
+            <h3 className="text-sm font-semibold text-zinc-700">{t("orders.itemsHeading")}</h3>
             <Button
               type="button"
               variant="secondary"
@@ -968,16 +964,11 @@ function OrderForm({
                 )
               }
             >
-              + Add line
+              {t("orders.addLine")}
             </Button>
           </div>
           {order && (
-            <p className="text-xs text-zinc-500">
-              A kit detail you change here is applied to every kit this line spawned; one you
-              leave alone stays as it is on each of them, so kits edited individually keep
-              their own. Removing a line undoes it (kits deleted, stock reversed) — kits that
-              are building/complete, rated, or have photos are protected.
-            </p>
+            <p className="text-xs text-zinc-500">{t("orders.editLinesHelp")}</p>
           )}
           {fields.map((field, index) => (
             <LineEditor
@@ -997,10 +988,10 @@ function OrderForm({
 
         <div className="flex justify-end gap-2">
           <Button type="button" variant="secondary" onClick={onClose}>
-            Cancel
+            {t("common.cancel")}
           </Button>
           <Button type="submit" disabled={isSubmitting}>
-            {order ? "Save changes" : "Record order"}
+            {order ? t("orders.saveChanges") : t("orders.recordOrder")}
           </Button>
         </div>
       </form>
@@ -1028,6 +1019,7 @@ function orderTotal(order: Order): string {
 }
 
 export function OrdersPage() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [modal, setModal] = useState<{ mode: "add" } | { mode: "edit"; order: Order } | null>(
     null,
@@ -1085,12 +1077,10 @@ export function OrdersPage() {
     );
 
   const remove = async (order: Order) => {
-    const label = retailerName.get(order.retailer_id) ?? "this order";
+    const label = retailerName.get(order.retailer_id) ?? t("orders.thisOrder");
     if (
       !window.confirm(
-        `Delete the ${formatDate(order.order_date)} order from ${label}?\n\n` +
-          "This undoes the entry: kits it spawned are deleted and any applied " +
-          "stock is reversed. Progressed kits or consumed stock will block it.",
+        t("orders.confirmDelete", { date: formatDate(order.order_date), retailer: label }),
       )
     ) {
       return;
@@ -1100,7 +1090,7 @@ export function OrdersPage() {
       await api.deleteOrder(order.id);
       await invalidateAll();
     } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : "Delete failed");
+      setActionError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
     }
   };
 
@@ -1118,32 +1108,32 @@ export function OrdersPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">Orders</h1>
+        <h1 className="text-2xl font-bold">{t("orders.title")}</h1>
         <div className="flex gap-2">
           <ExportCsvButton table="orders" />
-          <Button onClick={() => setModal({ mode: "add" })}>+ New order</Button>
+          <Button onClick={() => setModal({ mode: "add" })}>{t("orders.newOrder")}</Button>
         </div>
       </div>
 
       <ErrorBanner message={actionError} />
 
       {isError ? (
-        <ErrorBanner message={`Failed to load orders: ${(error as Error).message}`} />
+        <ErrorBanner message={t("orders.loadFailed", { message: (error as Error).message })} />
       ) : orders?.length ? (
         <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
                 <th className="w-8 px-3 py-2" />
-                <th className="px-3 py-2">Date</th>
-                <th className="px-3 py-2">Retailer</th>
-                <th className="px-3 py-2">Order #</th>
-                <th className="px-3 py-2">Status</th>
-                <th className="px-3 py-2">Shipped</th>
-                <th className="px-3 py-2">Received</th>
-                <th className="px-3 py-2">Items</th>
-                <th className="px-3 py-2">Total</th>
-                <th className="px-3 py-2">Tracking</th>
+                <th className="px-3 py-2">{t("orders.headerDate")}</th>
+                <th className="px-3 py-2">{t("orders.headerRetailer")}</th>
+                <th className="px-3 py-2">{t("orders.headerOrderNumber")}</th>
+                <th className="px-3 py-2">{t("orders.headerStatus")}</th>
+                <th className="px-3 py-2">{t("orders.headerShipped")}</th>
+                <th className="px-3 py-2">{t("orders.headerReceived")}</th>
+                <th className="px-3 py-2">{t("orders.headerItems")}</th>
+                <th className="px-3 py-2">{t("orders.headerTotal")}</th>
+                <th className="px-3 py-2">{t("orders.headerTracking")}</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
@@ -1170,7 +1160,14 @@ export function OrdersPage() {
                         // name, and the date alone just restates the cell beside
                         // it. The receive/delete confirmations already say the
                         // retailer for the same reason.
-                        aria-label={`${expanded.has(order.id) ? "Hide" : "Show"} line items for the ${formatDate(order.order_date)} order from ${retailerName.get(order.retailer_id) ?? "an unknown retailer"}`}
+                        aria-label={t(
+                          expanded.has(order.id) ? "orders.hideLineItems" : "orders.showLineItems",
+                          {
+                            date: formatDate(order.order_date),
+                            retailer:
+                              retailerName.get(order.retailer_id) ?? t("orders.unknownRetailer"),
+                          },
+                        )}
                         // 24x24: WCAG 2.2 target-size minimum. The row click is
                         // an equivalent alternative and would technically exempt
                         // it, but leaning on that inside an accessibility fix is
@@ -1195,11 +1192,11 @@ export function OrdersPage() {
                     <td className="px-3 py-2">
                       {order.received_at ? (
                         <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-                          Received
+                          {t("orders.pillReceived")}
                         </span>
                       ) : order.shipped_at ? (
                         <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700">
-                          Shipped
+                          {t("orders.pillShipped")}
                         </span>
                       ) : isPreOrder(order) ? (
                         // Derived, not stored (#95): a pending order whose kits are
@@ -1207,13 +1204,13 @@ export function OrdersPage() {
                         // cares, so there is nothing to persist.
                         <span
                           className="whitespace-nowrap rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700"
-                          title="All kits on this order are pre-ordered — not due yet"
+                          title={t("orders.preOrderTooltip")}
                         >
-                          Pre-order
+                          {t("orders.pillPreOrder")}
                         </span>
                       ) : (
                         <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-                          Pending
+                          {t("orders.pillPending")}
                         </span>
                       )}
                     </td>
@@ -1221,19 +1218,21 @@ export function OrdersPage() {
                         facts, and the dates never benefit from wrapping. */}
                     <td
                       className="whitespace-nowrap px-3 py-2 text-zinc-500"
-                      title="Shipped by the retailer"
+                      title={t("orders.shippedTooltip")}
                     >
                       {order.shipped_at ? formatDate(order.shipped_at) : "—"}
                     </td>
                     <td
                       className="whitespace-nowrap px-3 py-2 text-zinc-500"
-                      title="Delivered · days in transit"
+                      title={t("orders.receivedTooltip")}
                     >
                       {receivedCell(order)}
                     </td>
                     <td className="px-3 py-2">
-                      {order.items.reduce((total, item) => total + item.quantity, 0)} across{" "}
-                      {order.items.length} line{order.items.length === 1 ? "" : "s"}
+                      {t("orders.acrossLines", {
+                        total: order.items.reduce((total, item) => total + item.quantity, 0),
+                        count: order.items.length,
+                      })}
                     </td>
                     <td className="px-3 py-2">{orderTotal(order)}</td>
                     <td className="px-3 py-2">
@@ -1245,7 +1244,7 @@ export function OrdersPage() {
                           onClick={(event) => event.stopPropagation()}
                           className="text-indigo-600 hover:underline"
                         >
-                          {order.tracking_number ?? "link"}
+                          {order.tracking_number ?? t("orders.trackingLinkFallback")}
                         </a>
                       ) : (
                         (order.tracking_number ?? "—")
@@ -1261,10 +1260,10 @@ export function OrdersPage() {
                           variant="secondary"
                           onClick={() => setModal({ mode: "edit", order })}
                         >
-                          Edit
+                          {t("common.edit")}
                         </Button>
                         <Button variant="danger" onClick={() => remove(order)}>
-                          Delete
+                          {t("common.delete")}
                         </Button>
                       </div>
                     </td>
@@ -1292,8 +1291,7 @@ export function OrdersPage() {
                                 </span>
                                 {item.item_type === "kit" && (
                                   <span className="text-xs text-zinc-400">
-                                    spawned {item.spawned_kit_ids.length} kit
-                                    {item.spawned_kit_ids.length === 1 ? "" : "s"}
+                                    {t("orders.spawnedKits", { count: item.spawned_kit_ids.length })}
                                   </span>
                                 )}
                               </li>
@@ -1310,7 +1308,7 @@ export function OrdersPage() {
         </div>
       ) : (
         <EmptyState>
-          {isLoading ? "Loading…" : "No orders yet — record one and it will spawn your kits."}
+          {isLoading ? t("common.loading") : t("orders.empty")}
         </EmptyState>
       )}
 
@@ -1333,14 +1331,18 @@ function receivedCell(order: Order): string {
   if (!order.received_at) {
     if (!order.shipped_at) return "—";
     const days = Math.round((Date.now() - new Date(order.shipped_at).getTime()) / 86_400_000);
-    return days <= 0 ? "in transit · today" : `in transit · ${days} d`;
+    // Both "N d" phrasings now carry the U+00A0 the Kits column always had —
+    // the one-byte normalization of this cell's plain space (#164, disclosed).
+    return days <= 0
+      ? i18n.t("orders.inTransitToday")
+      : i18n.t("orders.inTransitDays", { count: days });
   }
   const date = formatDate(order.received_at);
   if (!order.shipped_at) return date;
   const days = Math.round(
     (new Date(order.received_at).getTime() - new Date(order.shipped_at).getTime()) / 86_400_000,
   );
-  return days <= 0 ? `${date} · same day` : `${date} · ${days} d`;
+  return dateWithElapsed(date, days);
 }
 
 /** A pending order whose kits are all still pre_ordered is the pre-order (#95).

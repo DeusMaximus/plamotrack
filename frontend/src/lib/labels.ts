@@ -33,6 +33,13 @@ export function itemTypePlural(type: ItemType): string {
   return i18n.t(`itemType.${type}.plural`);
 }
 
+/** The Title-case noun a select option leads with ("Display item") — a third
+ * form, not a code-side capitalisation of `.singular`: casing rules are the
+ * language's business. */
+export function itemTypeTitle(type: ItemType): string {
+  return i18n.t(`itemType.${type}.title`);
+}
+
 /** "{{date}} · same day" / "{{date}} · N d" — the shape KitsPage's completed
  * column and OrdersPage's received column share (the date is pre-formatted;
  * only the elapsed phrasing lives in the catalogue). */

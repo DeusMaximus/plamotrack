@@ -7,11 +7,9 @@ Australian English rather than as a blank or a raw key. Adding or improving a
 language is a normal pull request — catalogue data plus one manifest entry, no
 application code.
 
-> **Status:** the catalogue infrastructure is in place and page copy is still
-> migrating into it (issue #22 tracks the staged extraction). A translation PR
-> is welcome at any point, but until the extraction finishes, new keys will
-> keep arriving — coverage of an in-flight catalogue will drift below 100%
-> until you top it up.
+> **Status:** every page's copy is served from the catalogue (#22). New
+> features add keys as they land, so an existing translation may drift below
+> 100% between releases — the coverage report tells you what to top up.
 
 ## Where things live
 

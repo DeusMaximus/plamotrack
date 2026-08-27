@@ -30,14 +30,22 @@
       "sameDay": "{{date}} · same day",
       "days_one": "{{date}} · {{count}} d",
       "days_other": "{{date}} · {{count}} d"
-    }
+    },
+    "urlPlaceholder": "https://…"
   },
   "validation": {
     "nameRequired": "Name is required",
     "rating1to5": "Rating is 1–5",
     "gradeRequired": "Grade is required",
     "categoryRequired": "Category is required",
-    "manufacturerRequired": "Manufacturer is required"
+    "manufacturerRequired": "Manufacturer is required",
+    "kitNameRequired": "Kit name is required",
+    "currencyCode": "3-letter ISO code",
+    "requiredField": "required",
+    "catalogSelection": "Search for an existing item or create a new one",
+    "newItemName": "New item needs a name",
+    "newUpgradeManufacturer": "New upgrades need a manufacturer",
+    "newItemCategory": "New items need a category"
   },
   "api": {
     "exportFailed": "Export failed ({{status}})"
@@ -62,11 +70,31 @@
     "complete": "Complete"
   },
   "itemType": {
-    "kit": { "singular": "kit", "plural": "kits" },
-    "tool": { "singular": "tool", "plural": "tools" },
-    "consumable": { "singular": "consumable", "plural": "consumables" },
-    "upgrade": { "singular": "upgrade", "plural": "upgrades" },
-    "display": { "singular": "display item", "plural": "display items" }
+    "kit": {
+      "singular": "kit",
+      "plural": "kits",
+      "title": "Kit"
+    },
+    "tool": {
+      "singular": "tool",
+      "plural": "tools",
+      "title": "Tool"
+    },
+    "consumable": {
+      "singular": "consumable",
+      "plural": "consumables",
+      "title": "Consumable"
+    },
+    "upgrade": {
+      "singular": "upgrade",
+      "plural": "upgrades",
+      "title": "Upgrade"
+    },
+    "display": {
+      "singular": "display item",
+      "plural": "display items",
+      "title": "Display item"
+    }
   },
   "packingQuality": {
     "excellent": "Excellent",
@@ -157,7 +185,6 @@
     "editTitle": "Edit {{name}}",
     "loadFailed": "Failed to load retailers: {{message}}",
     "url": "URL",
-    "urlPlaceholder": "https://…",
     "overallRating": "Overall rating (1–5)",
     "wouldOrderAgain": "Would order again",
     "packingQuality": "Packing quality",
@@ -343,5 +370,85 @@
     "onHand_one": "{{count}} on hand",
     "onHand_other": "{{count}} on hand",
     "createNew": "＋ Create new {{type}} “{{query}}”"
+  },
+  "orders": {
+    "title": "Orders",
+    "newOrder": "+ New order",
+    "newTitle": "New order",
+    "editTitle": "Edit order",
+    "loadFailed": "Failed to load orders: {{message}}",
+    "orderGone": "This order no longer exists — it was deleted from another window or by an agent.",
+    "loadOrderFailed": "Couldn't load this order: {{message}}. Close and reopen to retry.",
+    "requestFailedFallback": "request failed",
+    "retailer": "Retailer",
+    "pickRetailer": "Pick a retailer",
+    "selectRetailer": "Select…",
+    "newRetailerPlaceholder": "New retailer name",
+    "addRetailerFailed": "Could not add retailer",
+    "orderDate": "Order date",
+    "currency": "Currency",
+    "orderNumber": "Order number",
+    "orderNumberPlaceholder": "retailer's reference, e.g. #GEA-10482",
+    "shippingCost": "Shipping cost",
+    "deliveryService": "Delivery service",
+    "deliveryServicePlaceholder": "blank = local pickup",
+    "trackingNumber": "Tracking number",
+    "trackingUrl": "Tracking URL",
+    "alreadyInHand": "Already in hand (store purchase / delivery arrived) — stock counts immediately",
+    "receivedOnPrefix": "on",
+    "preOrderToggle": "Pre-order — kits wait as Pre-ordered until this order ships or arrives",
+    "inHandNotPreOrder": "An order already in hand cannot be a pre-order",
+    "shippedOn": "Shipped on",
+    "receivedOn": "Received on",
+    "shippedCorrectHelp": "Correcting this re-dates kits still marked In Transit by that shipment; kits moved since keep their own dates.",
+    "shippedSetHelp": "Setting a date marks the order shipped — kits still waiting on the retailer move to In Transit. Leave blank if it hasn't.",
+    "receivedCorrectHelp": "Correcting this re-dates the kits this delivery brought in — unless they have been moved since, in which case they keep their own dates.",
+    "receivedSetHelp": "Setting a date marks the order received — stock is applied and pipeline kits move to Backlog. Leave blank if it hasn't arrived.",
+    "itemsHeading": "Items",
+    "addLine": "+ Add line",
+    "editLinesHelp": "A kit detail you change here is applied to every kit this line spawned; one you leave alone stays as it is on each of them, so kits edited individually keep their own. Removing a line undoes it (kits deleted, stock reversed) — kits that are building/complete, rated, or have photos are protected.",
+    "quantity": "Quantity",
+    "unitPrice": "Unit price",
+    "removeLine": "Remove line",
+    "kitNamePlaceholder": "Kit name *",
+    "gradePlaceholder": "Grade *",
+    "scalePlaceholder": "Scale",
+    "scaleTooltip": "Blank = derived from the grade",
+    "kitNumberPlaceholder": "Kit #",
+    "convertedPrice": "Converted price",
+    "snapshotNote": "what this cost at entry — recorded once, never recalculated. Blank for none.",
+    "saveChanges": "Save changes",
+    "recordOrder": "Record order",
+    "headerDate": "Date",
+    "headerRetailer": "Retailer",
+    "headerOrderNumber": "Order #",
+    "headerStatus": "Status",
+    "headerShipped": "Shipped",
+    "headerReceived": "Received",
+    "headerItems": "Items",
+    "headerTotal": "Total",
+    "headerTracking": "Tracking",
+    "pillReceived": "Received",
+    "pillShipped": "Shipped",
+    "pillPreOrder": "Pre-order",
+    "pillPending": "Pending",
+    "preOrderTooltip": "All kits on this order are pre-ordered — not due yet",
+    "shippedTooltip": "Shipped by the retailer",
+    "receivedTooltip": "Delivered · days in transit",
+    "showLineItems": "Show line items for the {{date}} order from {{retailer}}",
+    "hideLineItems": "Hide line items for the {{date}} order from {{retailer}}",
+    "unknownRetailer": "an unknown retailer",
+    "acrossLines_one": "{{total}} across {{count}} line",
+    "acrossLines_other": "{{total}} across {{count}} lines",
+    "trackingLinkFallback": "link",
+    "spawnedKits_one": "spawned {{count}} kit",
+    "spawnedKits_other": "spawned {{count}} kits",
+    "inTransitToday": "in transit · today",
+    "inTransitDays_one": "in transit · {{count}} d",
+    "inTransitDays_other": "in transit · {{count}} d",
+    "thisOrder": "this order",
+    "unknownItem": "(unknown item)",
+    "confirmDelete": "Delete the {{date}} order from {{retailer}}?\n\nThis undoes the entry: kits it spawned are deleted and any applied stock is reversed. Progressed kits or consumed stock will block it.",
+    "empty": "No orders yet — record one and it will spawn your kits."
   }
 }
