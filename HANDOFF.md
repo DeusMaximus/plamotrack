@@ -41,9 +41,10 @@ Template:
 
 ---
 
-## 2026-08-28 — Claude Code (Fable 5) — #24: Settings page built; PR #168 open, review not yet bought
+## 2026-08-28 — Claude Code (Fable 5) — #24 CLOSED: the Settings page (PR #168, one Codex round)
 
-- **Done:** **#24 — PR #168 open** (`feat/24-settings-page`, head `2052c8d`,
+- **Done:** **#24 closed — PR #168 squash-merged as `db48440`** on the
+  owner's call, branch deleted (final head `7eb6567`,
   539 insertions, frontend-only, **no migrations**): `/settings` with nested
   section routes. General = the reference-currency form (hydration gated on
   `settingsQuery`; on save `setQueryData` for settings + **invalidate
@@ -67,8 +68,8 @@ Template:
   acceptance criterion). This entry was rebuilt once: the parallel #166
   session's hand-off (bundle warning, merged) landed on `main` mid-session and
   had already rotated the entry my first draft rotated — the #144 shape, live.
-- **State:** PR #168 open at `7eb6567`, MERGEABLE, CI green all three jobs
-  at the reviewed head. **Codex round 1 (GPT 5.6 Sol): GO + 2 P3s**, both
+- **State:** `main` at `db48440` (+ this entry), CI green at every head
+  including the post-review `7eb6567`. **Codex round 1 (GPT 5.6 Sol): GO + 2 P3s**, both
   reproduced and answered at `7eb6567` — P3-1 dead Data-page directions
   (fixed, plus one sibling the re-sweep found: the #126 downgrade-guard
   message; `mutation_test.py -k mig-5` re-measured killed, anchor untouched);
@@ -88,7 +89,7 @@ Template:
   categorised display item (the dev DB did); invisible from empty, so CI and
   the from-empty run can never see it. preorder-toggle flaked once locally
   (#17 contention class), clean on re-run and in the counted run.
-- **Next:** land #168 (GO standing; merge is the owner's call), then the M5.1 rest:
+- **Next:** the M5.1 rest, all unblocked:
   #25/#26 (structured diagnostics), #27 (language/region controls — the
   read-only section and `/meta`'s missing language advertising are its), #114
   (naive CSV dates). #162 (e2e keyboard-select race) remains
