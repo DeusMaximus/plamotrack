@@ -32,6 +32,11 @@ from app.services.write_gate import acquire_write_gate
 #: test where `reference_currency` is only a shape test: an unknown currency is
 #: still money the owner can spend, an unknown language is an interface nothing
 #: can display.
+#:
+#: The catalogues themselves live in `frontend/src/i18n/` (#22), registered in
+#: `manifest.json` there; `backend/tests/test_settings.py` asserts this tuple
+#: equals that manifest's enabled tags, so enabling a language is one PR
+#: touching both.
 SUPPORTED_INTERFACE_LANGUAGES: tuple[str, ...] = ("en-AU",)
 
 #: What a fresh instance's row holds, minus the reference currency — that half of

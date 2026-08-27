@@ -15,6 +15,11 @@ The formatting-locale shape cases come from
 a tag this backend stores that the consuming formatter throws on is the P3-2
 of the PR #159 review, and the shared fixture is what keeps the two judgements
 from drifting apart. Add locale cases there, not here.
+
+`frontend/src/i18n/manifest.json` is the second shared frontend file (#22): the
+interface-language catalogues ship there, and the parity test below holds
+`SUPPORTED_INTERFACE_LANGUAGES` to exactly the manifest's enabled tags —
+enabling a language means flipping `enabled` AND extending the tuple, one PR.
 """
 
 import asyncio
@@ -36,6 +41,27 @@ _LOCALE_CASES = json.loads(
         Path(__file__).resolve().parents[2] / "frontend/src/lib/__fixtures__/locale-cases.json"
     ).read_text(encoding="utf-8")
 )
+
+_I18N_MANIFEST = json.loads(
+    (Path(__file__).resolve().parents[2] / "frontend/src/i18n/manifest.json").read_text(
+        encoding="utf-8"
+    )
+)
+
+
+def test_supported_interface_languages_are_the_manifests_enabled_tags():
+    """The membership test and the shipped catalogues cannot drift (#22).
+
+    `validate_interface_language` admits what this tuple holds; the browser can
+    render what the manifest enables. If either moves alone, an owner can store
+    a language no client can display, or a shipped catalogue no setting can
+    reach — so this asserts equality, not subset, in both directions.
+    """
+    enabled = {entry["tag"] for entry in _I18N_MANIFEST["languages"] if entry["enabled"]}
+    assert set(instance_settings.SUPPORTED_INTERFACE_LANGUAGES) == enabled
+    # The unconditional fallback (§6.1) may never be disabled.
+    assert "en-AU" in enabled
+
 
 #: What a fresh instance answers — the migration's seed, restated as literals.
 BOOTSTRAP = {

@@ -2,6 +2,7 @@ import type { QueryClient, UseMutationOptions } from "@tanstack/react-query";
 
 import { api, ApiError } from "../api/client";
 import type { Kit, KitStatus } from "../api/types";
+import i18n from "../i18n";
 
 export interface KitStatusMove {
   id: string;
@@ -82,7 +83,7 @@ export function kitStatusMutationOptions(
           ),
         );
       }
-      onError(err instanceof ApiError ? err.message : "Move failed");
+      onError(err instanceof ApiError ? err.message : i18n.t("board.moveFailed"));
     },
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["kits"] }),
   };

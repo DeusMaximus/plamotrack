@@ -99,6 +99,10 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   resolver lines — both encode bugs found by testing (§8)
   src/
     api/                # hand-typed API client + types mirroring backend schemas
+    i18n/               # language manifest + en-AU catalogue (§6.1) — manifest.json's
+                        #   enabled tags must equal SUPPORTED_INTERFACE_LANGUAGES
+                        #   (backend/tests/test_settings.py holds the pair together);
+                        #   extraction keeps en-AU strings byte-identical (e2e proves it)
     components/         # Layout, Modal, ui primitives, CatalogItemPicker (§3.9 select-or-create)
     pages/              # BoardPage (Kanban), KitsPage, OrdersPage, InventoryPage,
                         #   RetailersPage, DataPage (import/export)
@@ -106,6 +110,7 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
 docs/design.md          # product intent + architectural decision record (§n targets)
 docs/import-export.md   # user-facing CSV format + matching reference
 docs/operations.md      # backup / restore / upgrade for the container stack
+docs/translating.md     # contributor how-to for proposing/reviewing a language (#22)
 HANDOFF.md              # session hand-off log — the five most recent entries only
 .agents/                # process material for agents, NOT user docs (README inside)
   handoff/YYYY-MM.md    #   archived HANDOFF.md entries, verbatim; grep it, don't read it

@@ -15,7 +15,8 @@ import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
-import { formatDate, isoToLocalDateInput, localMidnightISO, STATUS_LABELS } from "../lib/format";
+import { formatDate, isoToLocalDateInput, localMidnightISO } from "../lib/format";
+import { statusLabel } from "../lib/labels";
 
 const COMMON_GRADES = ["HG", "RG", "EG", "SD", "MG", "MGEX", "RE/100", "FM", "PG"];
 
@@ -162,7 +163,7 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
             <Select {...register("status")}>
               {KIT_STATUSES.map((status) => (
                 <option key={status} value={status}>
-                  {STATUS_LABELS[status]}
+                  {statusLabel(status)}
                 </option>
               ))}
             </Select>
@@ -387,7 +388,7 @@ export function KitsPage() {
           <option value="">All statuses</option>
           {KIT_STATUSES.map((status) => (
             <option key={status} value={status}>
-              {STATUS_LABELS[status]}
+              {statusLabel(status)}
             </option>
           ))}
         </Select>

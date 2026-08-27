@@ -1,23 +1,24 @@
+import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
 
 const NAV = [
-  { to: "/board", label: "Board", icon: "📋" },
-  { to: "/kits", label: "Kits", icon: "🤖" },
-  { to: "/orders", label: "Orders", icon: "📦" },
-  { to: "/inventory", label: "Inventory", icon: "🛠️" },
-  { to: "/retailers", label: "Retailers", icon: "🏪" },
-  { to: "/data", label: "Data", icon: "💾" },
-];
+  { to: "/board", label: "nav.board", icon: "📋" },
+  { to: "/kits", label: "nav.kits", icon: "🤖" },
+  { to: "/orders", label: "nav.orders", icon: "📦" },
+  { to: "/inventory", label: "nav.inventory", icon: "🛠️" },
+  { to: "/retailers", label: "nav.retailers", icon: "🏪" },
+  { to: "/data", label: "nav.data", icon: "💾" },
+] as const;
 
 export function Layout() {
+  const { t } = useTranslation();
   return (
     <div className="flex min-h-screen">
       <aside className="w-52 shrink-0 border-r border-zinc-200 bg-white">
         <div className="px-4 py-5">
+          {/* The wordmark is a brand identifier, not copy — it stays untranslated. */}
           <h1 className="text-xl font-bold tracking-tight text-indigo-600">plamotrack</h1>
-          <p className="mt-0.5 text-[11px] leading-tight text-zinc-400">
-            pre-order → panel-lined masterpiece
-          </p>
+          <p className="mt-0.5 text-[11px] leading-tight text-zinc-400">{t("layout.tagline")}</p>
         </div>
         <nav className="space-y-0.5 px-2">
           {NAV.map((item) => (
@@ -33,7 +34,7 @@ export function Layout() {
               }
             >
               <span aria-hidden>{item.icon}</span>
-              {item.label}
+              {t(item.label)}
             </NavLink>
           ))}
         </nav>

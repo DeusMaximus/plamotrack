@@ -1,0 +1,49 @@
+{
+  "nav": {
+    "board": "Board",
+    "kits": "Kits",
+    "orders": "Orders",
+    "inventory": "Inventory",
+    "retailers": "Retailers",
+    "data": "Data"
+  },
+  "layout": {
+    "tagline": "pre-order → panel-lined masterpiece"
+  },
+  "common": {
+    "close": "Close",
+    "loading": "Loading…",
+    "exportCsv": "Export CSV",
+    "exporting": "Exporting…",
+    "exportFailedShort": "Export failed"
+  },
+  "api": {
+    "exportFailed": "Export failed ({{status}})"
+  },
+  "board": {
+    "buildPipeline": "Build Pipeline",
+    "ordersPipeline": "Orders Pipeline",
+    "buildView": "Build",
+    "ordersView": "Orders",
+    "received": "Received",
+    "dragHint": "drag cards to update status",
+    "dropHere": "Drop here",
+    "loadFailed": "Failed to load kits: {{message}}",
+    "moveFailed": "Move failed"
+  },
+  "kitStatus": {
+    "pre_ordered": "Pre-ordered",
+    "ordered": "Ordered",
+    "in_transit": "In Transit",
+    "backlog": "Backlog",
+    "building": "Building",
+    "complete": "Complete"
+  },
+  "itemType": {
+    "kit": { "singular": "kit", "plural": "kits" },
+    "tool": { "singular": "tool", "plural": "tools" },
+    "consumable": { "singular": "consumable", "plural": "consumables" },
+    "upgrade": { "singular": "upgrade", "plural": "upgrades" },
+    "display": { "singular": "display item", "plural": "display items" }
+  }
+}

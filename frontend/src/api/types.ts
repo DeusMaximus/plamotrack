@@ -11,7 +11,12 @@ export const KIT_STATUSES = [
 
 export type KitStatus = (typeof KIT_STATUSES)[number];
 
-export type ItemType = "kit" | "tool" | "consumable" | "upgrade" | "display";
+/** Wire values; what the user reads comes from the catalogue via
+ * `itemTypeLabel` in lib/labels.ts (the runtime list exists so tests can drive
+ * every member through that lookup). */
+export const ITEM_TYPES = ["kit", "tool", "consumable", "upgrade", "display"] as const;
+
+export type ItemType = (typeof ITEM_TYPES)[number];
 export type CatalogItemType = Exclude<ItemType, "kit">;
 
 export interface Kit {

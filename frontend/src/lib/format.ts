@@ -1,16 +1,6 @@
-import type { KitStatus } from "../api/types";
 import { minorFractionDigits } from "./currency";
 
 export { COMMON_CURRENCIES, currencyOptions, minorFractionDigits, stepFor } from "./currency";
-
-export const STATUS_LABELS: Record<KitStatus, string> = {
-  pre_ordered: "Pre-ordered",
-  ordered: "Ordered",
-  in_transit: "In Transit",
-  backlog: "Backlog",
-  building: "Building",
-  complete: "Complete",
-};
 
 /** "4999 AUD minor" → "$49.99"
  *

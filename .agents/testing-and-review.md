@@ -26,9 +26,10 @@ last edited, so a large jump either way is worth a look.
 | --- | --- | --- |
 | Backend (~1088) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
 | Lint + format | `uv run ruff check --fix . && uv run ruff format .` | Before every commit. CI checks both. |
-| Frontend unit (~109) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. |
-| Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. |
+| Frontend unit (~165) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
+| Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. Also the compile-time check on every static `t("…")` key. |
 | Frontend lint | `npm run lint` | oxlint. |
+| Translation coverage | `npm run i18n:report` (in `frontend/`) | Markdown table, presentation only — the catalogue tests are what gate. CI appends it to the job summary. |
 | E2E (~29) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. |
 | Mutation harness | `uv run python mutation_test.py` | See below. |
 
@@ -232,7 +233,7 @@ no secrets to forks, stale runs cancelled.
 | Job | Runs |
 | --- | --- |
 | Backend | ruff check + format check, pytest against Postgres 16 |
-| Frontend | oxlint, vitest, `tsc -b` + Vite build |
+| Frontend | oxlint, vitest, translation coverage report to the step summary, `tsc -b` + Vite build |
 | Integration | Playwright e2e (one worker, one retry, trace on first retry, HTML report uploaded **only on failure**), then the packaged Compose stack: UI/API/OpenAPI probes and an MCP `tools/list` through nginx |
 
 - **A pass on retry reports as `flaky` with exit 0.** Deliberate: instability is
