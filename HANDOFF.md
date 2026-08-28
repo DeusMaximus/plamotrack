@@ -69,24 +69,24 @@ Template:
   class guard replaced the dead branches. Disproved figures **named, not
   deleted**, so the correction records what the finding was about. #178 filed
   rather than folded in: different root cause, and it reproduces on `4bd98c0`.
-- **State:** Code head `6fa048b` (this hand-off commit sits on top of it, docs
-  only — the branch owns the log, since main has no #176 entry). **PR #177 open,
-  not merged** — the re-review's
-  verdict on the amended body is not yet recorded. Every number in the body is
-  measured at that head on a clean tree: backend 1225, frontend 463, ruff
-  check + format, lint, build, Playwright 40 passed/1 skipped on an isolated
+- **State:** **PR #177 squash-merged `5b4635d`, #176 closed** — merged on the
+  owner's call with the re-review's verdict on the amended body never recorded,
+  so M5.1 shipped one round short of a GO. Nothing was known-broken at merge.
+  Every number in the body is measured at `6fa048b` on a clean tree: backend
+  1225, frontend 463, ruff check + format, lint, build, Playwright 40 passed /
+  1 skipped on an isolated
   empty DB (created, migrated, verified zero, dropped). Six mutations killed
   1/1/4/1/7/2, plus the cold-Board e2e control red without the subscription.
   **Known, not ours:** `display-items.spec.ts:45` fails on any DB holding a
   categorised display item (`getByLabel("Category")` also matches the filter)
   — reproduced with the branch stashed, filed as #167; run e2e on an empty DB.
-- **Next:** await the re-review verdict, then merge with `Closes #176`. **#178**
-  (`import.match_ambiguous`: two emitters share one code, so the orders-side
+- **Next:** M5.1 is done and merged; **M6 is the next milestone** and is not
+  begun. No version bump, tag or release yet — v0.2.8-alpha remains the latest.
+  **#178** (`import.match_ambiguous`: two emitters share one code, so the orders-side
   `(retailer + date + lines)` hint is dropped and `matched_by` is undeclared in
   `api-error-codes.json` and pinned by nothing) is unstarted — the `apiError.ts`
   comment describing that gap predates the number and should gain the `#178`
-  reference when someone next touches the file. M6 not begun; no version, tag
-  or release work.
+  reference when someone next touches the file.
 
 ## 2026-08-28 — GPT-5 Codex (OpenAI) — #176 ready for independent review
 
