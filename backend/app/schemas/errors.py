@@ -46,6 +46,12 @@ class ValidationErrorEnvelope(BaseModel):
 # Attached to every router in main.py — documentation that these statuses share
 # one envelope, not a promise that every route can produce every status.
 ERROR_RESPONSES: dict[int | str, dict[str, Any]] = {
+    400: {
+        "model": ErrorEnvelope,
+        "description": "The request body could not be read before any schema or "
+        "service ran — multipart with no boundary, an unreadable payload "
+        "(code 'request.body_invalid').",
+    },
     404: {"model": ErrorEnvelope, "description": "The addressed record does not exist."},
     409: {"model": ErrorEnvelope, "description": "Stored state refuses the operation."},
     422: {

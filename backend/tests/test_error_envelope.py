@@ -195,6 +195,11 @@ def test_openapi_documents_the_envelope():
     assert "404" in kit_get["responses"]
     ref = json.dumps(kit_get["responses"]["404"])
     assert "ErrorEnvelope" in ref
+    # The parser-stage 400 is discoverable too — a generated client must see
+    # that an upload route can answer request.body_invalid (#169 round 2, P3).
+    preview_post = schema["paths"]["/import/preview"]["post"]["responses"]
+    assert "400" in preview_post
+    assert "ErrorEnvelope" in json.dumps(preview_post["400"])
 
 
 # --- parser-stage 400s (#169 review, P2) ----------------------------------------
