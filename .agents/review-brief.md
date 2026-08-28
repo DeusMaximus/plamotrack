@@ -113,19 +113,25 @@ Pick one; it supplies the two `‹reviewer …›` slots and adds its own last p
 The reviewer names itself and its version — the lines below are what previous rounds
 wrote, given so the slots in the template read as one house style.
 
-**Cursor (Grok 4.6).** Fits ≤ ~1,000 insertions with a PR thread of a few K tokens.
+**GLM 5.3 Flash (Zhipu AI, via T3 Code on OpenRouter).** The default reviewer —
+any size (1M context); see the roster in `testing-and-review.md` for its measured
+traits and the remedies caveat.
 
 ```
-**Cursor Grok 4.6 (xAI / Cursor) — review of PR #‹N›, at head `‹sha›`.**
-— **Grok 4.6 (xAI)**, via Cursor
+**GLM 5.3 Flash (Zhipu AI / T3 Code) — review of PR #‹N›, at head `‹sha›`.**
+— **GLM 5.3 Flash (Zhipu AI)**, via T3 Code
 ```
 
 Add to the brief:
 
 > This is one round in a fresh chat session; do not start a second review in this
 > session — a truncated review that still emits a verdict is the worst outcome. If
-> the PR thread already holds a previous round, read it: it is the record, and your
-> findings should be numbered after it.
+> you cannot hold the whole diff and the PR body in context at once, say so
+> explicitly in your verdict rather than reviewing the part you read as if it were
+> the whole. If the PR thread already holds a previous round, read it: it is the
+> record, and your findings should be numbered after it. If the checkout changes
+> under you mid-round, re-run in a detached worktree at the reviewed head and say
+> so (the #173 round's precedent).
 
 **Codex (GPT 5.6 Sol).** Any size, or multi-round. Capacity stopped being the
 constraint with the 2026-08-28 subscription bump — no meter check needed for a

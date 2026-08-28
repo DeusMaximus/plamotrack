@@ -267,8 +267,8 @@ the release gate instead. State the call and the reason in the hand-off entry.
 
 | Reviewer | Fits | Notes |
 | --- | --- | --- |
-| **Cursor / Grok 4.6** | ≤ ~1,000 insertions, PR thread ≤ a few K tokens | 256K context. Two rounds on #89 (993 insertions) took 15 and 19 min and ended at 63 % and 68 %. **One round per fresh chat session** — a second review in one session runs out mid-analysis, and a truncated review that still emits a verdict is the worst outcome. Survivable because the PR thread is the session memory. |
-| **Codex (GPT 5.6 Sol)** | Any size; multi-round | Has absorbed #86 (4,442 insertions) across four rounds. Subscription upped on 2026-08-28 (owner's call): capacity is no longer the constraint, so routine rounds don't need a meter check first — glance at what remains only before an unusually large multi-round buy. |
+| **GLM 5.3 Flash (Zhipu AI, via T3 Code on OpenRouter)** | **The default** for feature and fix rounds, any size | 1M context — holds a 2,000-insertion PR, its body and the process docs at once. Three rounds on 2026-08-28 (#171 GO+3P3, #173 GO+1P3, #174 GO+4P3): re-measures claims rather than reading them (its negative-control breakdowns have been exact), sweeps systematically (an AST prose-diff caught an author overclaim), probes empirically (injected a mutant to test an audit's pin), and discloses scope honestly. ~20 min and ~$0.07 a round (11.1M tokens ≈ $0.22 across all three, 96 % cache hit, OpenRouter billing). **Calibration: its findings have been reliable; its *remedies* are not pre-verified — measure a suggested fix like any claim** (#174 P3-1's suggested remedy failed measurement; the finding itself was right and subtle). It has not yet caught a hidden P2 on a branch that wasn't already exhaustively self-verified — widen its lane when it does. Replaced Cursor / Grok 4.6 (retired 2026-08-28, owner's call: the 256K context ceiling made large PRs a truncation risk; GLM holds them whole). |
+| **Codex (GPT 5.6 Sol)** | The highest-stakes shared mechanisms; second opinions | Has absorbed #86 (4,442 insertions) across four rounds, and its NO-GO rounds have caught hidden P2s (#159's isalpha currency, #169's parser-stage envelope). Reserve it for anything touching the write gate, money/stock semantics, migrations, and the M6 security work — and as a second opinion when a GO on an unpolished branch feels too easy. Subscription upped 2026-08-28; routine rounds need no meter check. |
 | **Copilot auto-review** | Off | Disabled by the owner on 2026-08-11 to conserve credits until 1 September. Its useful finds have been API-state semantics readable off a diff, not value-space defects. Don't request one casually. |
 
 Match the tool to the size of the work rather than forcing everything through one
@@ -300,8 +300,11 @@ what they say:
   invite it to push there.
 - **Vocabulary:** see the mutation-testing note above.
 - **One reviewer per round, a different model family from the author where you
-  can.** Cursor and Codex are the defaults; Claude is an option with the caveat
-  written into the template's footer.
+  can.** GLM and Codex are the defaults; Claude is an option with the caveat
+  written into the template's footer. Keep the working tree parked (on `main`,
+  or anywhere that will not switch) for the whole review window — a branch
+  changing under the reviewer cost half a round on #173 before it recovered
+  via worktree.
 
 ### Responding to a review
 
