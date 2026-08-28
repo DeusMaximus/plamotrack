@@ -501,7 +501,9 @@ keeps per-line status, which REST, MCP and CSV can still write.
   between them stales the hash. An explicit offset in a cell always wins, exports
   always write `+00:00`, and stored instants are never rewritten — so old archives
   re-import as the same instants and only naive cells parsed after #114 read
-  differently
+  differently. At a DST boundary, a nonexistent gap wall time maps forward and an
+  ambiguous one takes the earlier occurrence (PEP 495 fold-0), so the typed
+  calendar day always lands (#173 review, P3-1)
 
 **One lock order, application-wide.** Every writer that touches catalog stock takes
 its rows through a single locked-read helper, and takes them in one agreed sequence:

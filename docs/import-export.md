@@ -354,7 +354,9 @@ creates them from.
 Dates are `YYYY-MM-DD` (though `14/03/2026` and `03/14/2026` are accepted).
 A timestamp cell that states no offset — a bare date, or `2026-02-08T14:30` —
 is read in the instance's time zone (Settings → Language & region), so the day
-you wrote is the day that lands. A cell with an explicit offset means exactly
+you wrote is the day that lands — including across daylight-saving switches,
+where a wall time that doesn't exist that day rolls forward and one that occurs
+twice takes its first occurrence. A cell with an explicit offset means exactly
 that instant; exports always write one, which is why re-importing an archive
 never shifts anything. Leave `id` blank on rows you add by hand.
 
