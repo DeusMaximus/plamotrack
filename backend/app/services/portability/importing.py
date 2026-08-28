@@ -33,6 +33,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 from sqlalchemy import select, text
@@ -830,15 +831,27 @@ def _dangling_optional_diagnostic(column: str, table: str, missing: uuid.UUID) -
 
 class _Planner:
     def __init__(
-        self, session: AsyncSession, upload: ParsedUpload, mode: ImportMode, reference_currency: str
+        self,
+        session: AsyncSession,
+        upload: ParsedUpload,
+        mode: ImportMode,
+        reference_currency: str,
+        naive_zone: ZoneInfo,
     ) -> None:
         self.session = session
         self.upload = upload
         self.mode = mode
-        # The settings-row value (#23), read once by `plan_import` before parsing
+        # The settings-row values (#23), read once by `plan_import` before parsing
         # began, so the fill below and the starter expansion that may have produced
         # this upload agree on what "the instance default" was.
         self.reference_currency = reference_currency
+        # The instance's zone, for a datetime cell that states no offset (#114):
+        # a bare `2026-02-08` means midnight where the collection lives, not
+        # midnight UTC — which put the stored instant on the previous calendar
+        # day for every viewer west of Greenwich. Attached in `_parse_row`, so
+        # the plan, the diff and the fingerprint all see the instant that will
+        # actually land.
+        self.naive_zone = naive_zone
         self.remap: dict[tuple[str, uuid.UUID], uuid.UUID] = {}
         self.existing: dict[str, list[Any]] = {}
         self.by_id: dict[str, dict[uuid.UUID, Any]] = {}
@@ -941,7 +954,13 @@ class _Planner:
             if column.role is ColumnRole.ALT_MONEY and is_lone_group(cell):
                 lone_grouped.add(column.name)
             try:
-                values[column.name] = column.parse(cell)
+                value = column.parse(cell)
+                if isinstance(value, datetime) and value.tzinfo is None:
+                    # The cell stated a wall-clock time with no offset: it reads
+                    # in the instance's zone (#114). An explicit offset was kept
+                    # by the parser and never lands here.
+                    value = value.replace(tzinfo=self.naive_zone)
+                values[column.name] = value
             except (ArithmeticError, ValueError) as exc:
                 # ArithmeticError as well as ValueError: a cell is data, and no
                 # arrangement of it should be able to leave here as a 500. `inf` in
@@ -3187,9 +3206,15 @@ async def plan_import(
     session: AsyncSession, filename: str, content: bytes, mode: ImportMode
 ) -> ExecutionPlan:
     # One read, before parsing: the starter expansion and the planner's money
-    # fill both spend this value, and reading it twice would let a concurrent
-    # settings change hand the two halves of one plan different defaults.
-    reference = await instance_settings.reference_currency(session)
+    # fill both spend the currency, the planner's naive-datetime localisation
+    # spends the time zone (#114), and reading the row twice would let a
+    # concurrent settings change hand the two halves of one plan different
+    # defaults. Both values reach the hash through the values they shape, so a
+    # settings change landing between preview and apply stales the hash (409)
+    # instead of silently changing what the approved plan means.
+    settings = await instance_settings.get_instance_settings(session)
+    reference = settings.reference_currency
+    naive_zone = ZoneInfo(settings.time_zone)
     upload = read_upload(filename, content, reference_currency=reference)
     total = sum(len(rows) for rows in upload.tables.values())
     if total > MAX_ROWS:
@@ -3199,7 +3224,7 @@ async def plan_import(
             params={"maximum": MAX_ROWS},
         )
     upload.warnings.extend(await check_compatibility(session, upload))
-    planner = _Planner(session, upload, mode, reference)
+    planner = _Planner(session, upload, mode, reference, naive_zone)
     return await planner.build()
 
 
