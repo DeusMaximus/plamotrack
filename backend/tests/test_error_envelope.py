@@ -359,7 +359,13 @@ def test_every_diagnostic_site_supplies_its_codes_declared_params():
     app/ names a fixture code and sends at least its guaranteed params. The two
     bridge helpers are the sanctioned exception — they forward an audited
     raise's own code and params — and are counted, so a new unauditable
-    construction can't hide among them."""
+    construction can't hide among them.
+
+    The walker matches the bare name, so the assumed discipline is: construct
+    diagnostics only as `Diagnostic(...)` with a literal params dict — an
+    aliased import or `model_construct`/`model_validate` would be invisible
+    here (#171 review, P3-2). Nothing in app/ does either today.
+    """
     sites = _diagnostic_sites()
     assert len(sites) >= 50, f"only {len(sites)} Diagnostic sites found — the walker broke"
     bridged = [site for site in sites if site[3]]

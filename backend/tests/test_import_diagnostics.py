@@ -22,6 +22,10 @@ decides shape (merge vs add_only for the row surface, replace_all confirm on
 the blocked apply).
 """
 
+import io
+import json
+import zipfile
+
 import pytest
 
 from app import error_codes
@@ -157,6 +161,22 @@ async def test_plan_surfaces_carry_diagnostics_and_the_stray_column_dedups_by_va
         "Stock levels come from the catalog files. "
         "Importing orders never changes what you have on hand."
     )
+
+
+async def test_manifest_metadata_fields_arrive_sorted_deduped_and_structured(client):
+    """The one site where `detail` deliberately differs from main's rendering
+    (#171 review, P3-1): two unreadable manifest-metadata fields list sorted
+    and deduplicated, and `params.fields` carries the structured list. Pinned
+    so the PR body's carve-out stays a decision rather than drift — the
+    pre-#26 rendering followed pydantic's error order."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("manifest.json", json.dumps({"format": 123, "export_version": "abc"}))
+        archive.writestr("kits.csv", "name,grade\nZaku II,HG\n")
+    plan = await preview(client, buffer.getvalue())
+    [warning] = [d for d in plan["warnings"] if d["code"] == "import.manifest_metadata_unreadable"]
+    assert warning["params"] == {"fields": ["export_version", "format"]}
+    assert "(export_version, format)" in warning["detail"]
 
 
 async def test_a_blocked_apply_is_a_structured_conflict(http_client):
