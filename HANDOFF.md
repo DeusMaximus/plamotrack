@@ -41,9 +41,10 @@ Template:
 
 ---
 
-## 2026-08-28 — Claude Code (Fable 5) — #25: the REST error envelope; PR #169 at GO (two Codex rounds), merge pending
+## 2026-08-28 — Claude Code (Fable 5) — #25 CLOSED: the REST error envelope (PR #169, two Codex rounds)
 
-- **Done:** **#25 — PR #169 open** (`feat/25-error-codes`, head `152f7cb`,
+- **Done:** **#25 closed — PR #169 squash-merged as `28e32f7`** on the
+  owner's call, branch deleted (final head `d76a20d`,
   1,188 insertions, **no migrations**): every failed REST response is now
   `{detail, code, params}` — **additive on the wire**: `detail` byte-identical
   in both shapes (string = service refused, FastAPI list = schema spoke; the
@@ -85,8 +86,7 @@ Template:
   vitest **281**, from-empty e2e 36+1, zero leftovers. **Twelve measured
   mutants killed** (env-1..9 queued in the PR body for the post-merge
   fold-in + 3 frontend). No dev servers running.
-- **Next:** land #169 (GO standing; merge is the owner's call), then
-  fold the `env-` tuples into `mutation_test.py`
+- **Next:** fold the `env-` tuples into `mutation_test.py`
   (TEST_FILES + `tests/test_error_envelope.py`), then **#26** (import-preview
   diagnostics on this contract — row messages, warnings, blocking errors,
   the stock note; `import.cell_invalid` is already coded and waiting to be
