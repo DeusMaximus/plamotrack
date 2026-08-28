@@ -7,6 +7,7 @@ import i18n from "../i18n";
 import { resolveDiagnostic } from "../lib/apiError";
 import { formatDateTime } from "../lib/format";
 import { importActionLabel, importTableLabel, matchedByLabel } from "../lib/labels";
+import { usePresentationVersion } from "../lib/presentation";
 
 const ACTION_STYLES: Record<RowAction, string> = {
   create: "bg-green-100 text-green-700",
@@ -145,6 +146,9 @@ function TableSection({ table }: { table: TablePlan }) {
 }
 
 export function ImportPreview({ plan }: { plan: ImportPlan }) {
+  // Re-render when the instance's presentation settings arrive or change —
+  // the plain format helpers below read them per call (#174 review, P3-1).
+  usePresentationVersion();
   const { t } = useTranslation();
   const totals = plan.tables.reduce<Record<string, number>>((acc, table) => {
     for (const action of ROW_ACTIONS) {

@@ -140,8 +140,11 @@ export function formatDateWith(prefs: FormatPreferences, iso: string): string {
       timeZone: renderZone(iso, prefs),
     }).format(value);
   } catch {
-    // A locale or zone this browser can't serve must degrade, not white-screen.
-    return value.toLocaleDateString();
+    // A locale or zone this browser can't serve must degrade, not white-screen —
+    // and the degrade keeps the verbatim-day rule: a calendar date stays the day
+    // it names even here (#174 review, P3-2); only instants fall to the browser
+    // zone.
+    return value.toLocaleDateString(undefined, DATE_ONLY.test(iso) ? { timeZone: "UTC" } : undefined);
   }
 }
 

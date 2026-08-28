@@ -1,16 +1,16 @@
 /** The interface-language runtime (design §6.1). `en-AU` is the canonical
  * source catalogue and unconditional fallback; every other language ships from
  * the repository through `manifest.json` and a `catalogues/<tag>.json`, reviewed
- * per docs/translating.md. The language is pinned to `en-AU` here until the
- * Settings page can change it (#27) — wiring it to `GET /settings` belongs to
- * that issue, not this module.
+ * per docs/translating.md. `en-AU` is the boot language only: once the settings
+ * row arrives, the Layout effect applies the stored interface language through
+ * `src/lib/presentation.ts` (#27) — this module stays settings-unaware.
  *
  * Init is synchronous by construction: resources are inline imports, no backend
  * or detector plugins, so `t` is usable the moment this module is evaluated.
  * Keep it that way — a loading state for the app's own words helps nobody.
  * Nothing may call `t()` at module scope (a frozen string is an init-order
- * hazard now and a stale-language bug once #27 lands); label lookups live in
- * functions, see src/lib/labels.ts.
+ * hazard and, now that #27 switches the language at runtime, a stale-language
+ * bug); label lookups live in functions, see src/lib/labels.ts.
  */
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";

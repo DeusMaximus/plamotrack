@@ -207,3 +207,44 @@ test("saving regional settings re-renders visible dates in the same session (#27
     await api.dispose();
   }
 });
+
+test("a cold page load re-renders once the settings row arrives (#174 review, P3-1)", async ({
+  page,
+}) => {
+  // The prior test saved Sydney/long/h23; restate it so this test stands alone.
+  const api = await request.newContext({ baseURL: API });
+  await api.patch("/settings", {
+    data: { time_zone: "Australia/Sydney", date_style: "long", hour_cycle: "h23" },
+  });
+  const kit = (await (
+    await api.post("/kits", {
+      data: {
+        name: `e2e-27-coldload-${Date.now()}`,
+        grade: "HG",
+        status: "complete",
+        build_completed_at: "2026-03-14T04:00:00+00:00",
+      },
+    })
+  ).json()) as { id: string };
+
+  try {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/api/settings", async (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      await gate; // the kits list resolves first — the window under test
+      await route.continue();
+    });
+    await page.goto("/kits");
+    // Rendered under the boot defaults while the settings row is held.
+    await expect(page.getByText("14/03/2026").first()).toBeVisible();
+    release();
+    // No focus cycle, no navigation, no interaction: the row's arrival alone
+    // must re-render what is already on screen with the applied preferences.
+    await expect(page.getByText("14 March 2026").first()).toBeVisible();
+    await page.unroute("**/api/settings");
+  } finally {
+    await api.delete(`/kits/${kit.id}`);
+    await api.dispose();
+  }
+});

@@ -18,6 +18,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
 import { formatDate, isoToLocalDateInput, localMidnightISO } from "../lib/format";
 import { dateWithElapsed, statusLabel } from "../lib/labels";
+import { usePresentationVersion } from "../lib/presentation";
 
 const COMMON_GRADES = ["HG", "RG", "EG", "SD", "MG", "MGEX", "RE/100", "FM", "PG"];
 
@@ -333,6 +334,9 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
 }
 
 export function KitsPage() {
+  // Re-render when the instance's presentation settings arrive or change —
+  // the plain format helpers below read them per call (#174 review, P3-1).
+  usePresentationVersion();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<KitStatus | "">("");

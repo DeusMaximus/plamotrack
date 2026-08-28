@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from "react";
+
 import type { InstanceSettings } from "../api/types";
 import i18n, { manifest } from "../i18n";
 
@@ -62,8 +64,33 @@ const DEFAULTS: FormatPreferences = {
 
 let preferences: FormatPreferences = DEFAULTS;
 
+//: Bumped on every preference change and observable through
+//: `usePresentationVersion` — the subscription that actually reaches the
+//: pages. A Layout-level re-render cannot: React Router's Outlet hands back
+//: the same element reference from route context, so the page subtree bails
+//: out of parent-driven renders entirely (#174 review, P3-1 — the reviewed
+//: remedy, a state bump in Layout, was measured insufficient for exactly
+//: that reason).
+let version = 0;
+const listeners = new Set<() => void>();
+
 export function formatPreferences(): FormatPreferences {
   return preferences;
+}
+
+/** Subscribe the calling component to presentation changes (#27). Pages that
+ *  render dates, times, numbers or money call this once; when the settings
+ *  row arrives or changes, they re-render and the plain format helpers read
+ *  the new preferences. Returns the version so the call is not dead code to
+ *  a linter; callers may ignore it. */
+export function usePresentationVersion(): number {
+  return useSyncExternalStore(
+    (onChange) => {
+      listeners.add(onChange);
+      return () => listeners.delete(onChange);
+    },
+    () => version,
+  );
 }
 
 /** Presentation state from a settings row, without side effects beyond this
@@ -76,18 +103,30 @@ export function setFormatPreferences(settings: {
   date_style: string;
   hour_cycle: string;
 }): void {
-  preferences = {
+  const next = {
     locale: settings.formatting_locale,
     timeZone: settings.time_zone,
     dateStyle: settings.date_style,
     hourCycle: settings.hour_cycle,
   };
+  const changed =
+    next.locale !== preferences.locale ||
+    next.timeZone !== preferences.timeZone ||
+    next.dateStyle !== preferences.dateStyle ||
+    next.hourCycle !== preferences.hourCycle;
+  preferences = next;
+  if (changed) {
+    version += 1;
+    for (const listener of listeners) listener();
+  }
 }
 
 /** Test-only escape hatch — the module is a singleton and vitest cases must not
  *  leak preferences into each other. */
 export function resetFormatPreferences(): void {
   preferences = DEFAULTS;
+  version = 0;
+  listeners.clear();
 }
 
 /** Everything a settings row implies for this browser: formatting preferences,

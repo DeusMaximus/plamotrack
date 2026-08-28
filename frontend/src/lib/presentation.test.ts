@@ -10,7 +10,7 @@
  * U+202F and a byte pin would break on a Node upgrade for no behavioural
  * reason.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   formatDateTimeWith,
@@ -104,6 +104,21 @@ describe("dates and times under instance settings", () => {
     expect(() =>
       formatDateWith({ ...AU_DEFAULTS, timeZone: "Not/A_Zone" }, "2026-03-14T02:00:00+00:00"),
     ).not.toThrow();
+  });
+
+  it("the degrade keeps a calendar date on the day it names (#174 review, P3-2)", () => {
+    // West of UTC, where the unfixed degrade rendered the previous day — set
+    // for this test only via vitest's typed stub (the suite has no node types);
+    // Node re-reads TZ per formatter, so the degrade's default-zone rendering
+    // observes it. Restored in the finally.
+    vi.stubEnv("TZ", "America/New_York");
+    try {
+      const rendered = formatDateWith({ ...AU_DEFAULTS, locale: "not a locale!!" }, "2026-03-14");
+      expect(rendered).toContain("14");
+      expect(rendered).not.toContain("13");
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 
   it("the module-level helpers read the applied preferences", () => {

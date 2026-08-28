@@ -17,8 +17,9 @@ import type {
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
-import { currencyOptions, formatMoney, majorToMinor, minorToMajor, stepFor } from "../lib/format";
+import { currencyOptions, formatMoney, formatNumber, majorToMinor, minorToMajor, stepFor } from "../lib/format";
 import { itemTypeLabel, itemTypePlural } from "../lib/labels";
+import { usePresentationVersion } from "../lib/presentation";
 
 type Tab = "tools" | "consumables" | "upgrades" | "display-items";
 type InventoryItem = Tool | Consumable | Upgrade | DisplayItem;
@@ -490,6 +491,9 @@ function StockStepper({
 }
 
 export function InventoryPage() {
+  // Re-render when the instance's presentation settings arrive or change —
+  // the plain format helpers below read them per call (#174 review, P3-1).
+  usePresentationVersion();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("tools");
@@ -633,7 +637,7 @@ export function InventoryPage() {
                     <td className="px-3 py-2">{tool.category}</td>
                     <td className="px-3 py-2">
                       <span className="me-2 tabular-nums" data-testid="stock-count">
-                        {tool.quantity_on_hand}
+                        {formatNumber(tool.quantity_on_hand)}
                       </span>
                       <StockStepper item={tool} queryKey="tools" onError={setActionError} />
                     </td>
@@ -708,7 +712,7 @@ export function InventoryPage() {
                           className={`me-2 tabular-nums ${low ? "font-semibold text-red-600" : ""}`}
                           data-testid="stock-count"
                         >
-                          {item.quantity_on_hand}
+                          {formatNumber(item.quantity_on_hand)}
                         </span>
                         <StockStepper item={item} queryKey="consumables" onError={setActionError} />
                         {low && (
@@ -768,7 +772,7 @@ export function InventoryPage() {
                     <td className="px-3 py-2">{upgrade.manufacturer}</td>
                     <td className="px-3 py-2">
                       <span className="me-2 tabular-nums" data-testid="stock-count">
-                        {upgrade.quantity_on_hand}
+                        {formatNumber(upgrade.quantity_on_hand)}
                       </span>
                       <StockStepper item={upgrade} queryKey="upgrades" onError={setActionError} />
                     </td>
@@ -830,7 +834,7 @@ export function InventoryPage() {
                     <td className="px-3 py-2">{row.manufacturer ?? "—"}</td>
                     <td className="px-3 py-2">
                       <span className="me-2 tabular-nums" data-testid="stock-count">
-                        {row.quantity_on_hand}
+                        {formatNumber(row.quantity_on_hand)}
                       </span>
                       <StockStepper item={row} queryKey="display-items" onError={setActionError} />
                     </td>

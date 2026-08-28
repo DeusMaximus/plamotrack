@@ -23,6 +23,12 @@ export function Layout() {
   // effect off the same shared query, so there is no per-browser preference —
   // and a save (which writes through settingsQuery's cache) re-runs it.
   const { data: settings } = useQuery(settingsQuery);
+  // The apply notifies `usePresentationVersion` subscribers itself (#174
+  // review, P3-1): the render that delivers the settings data happens BEFORE
+  // this effect applies them, so the pages have already formatted with the
+  // previous preferences — and a re-render scheduled *here* cannot reach
+  // them, because Outlet hands back the same element reference and the page
+  // subtree bails out. The formatting pages subscribe directly instead.
   useEffect(() => {
     if (settings) applyInstanceSettings(settings);
   }, [settings]);

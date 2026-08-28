@@ -22,6 +22,7 @@ import type { CatalogSelection } from "../components/CatalogItemPicker";
 import { CatalogItemPicker } from "../components/CatalogItemPicker";
 import i18n from "../i18n";
 import { dateWithElapsed, itemTypeLabel, itemTypeTitle } from "../lib/labels";
+import { usePresentationVersion } from "../lib/presentation";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
@@ -1019,6 +1020,9 @@ function orderTotal(order: Order): string {
 }
 
 export function OrdersPage() {
+  // Re-render when the instance's presentation settings arrive or change —
+  // the plain format helpers below read them per call (#174 review, P3-1).
+  usePresentationVersion();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [modal, setModal] = useState<{ mode: "add" } | { mode: "edit"; order: Order } | null>(
