@@ -39,6 +39,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app import error_codes
 from app.exceptions import ConflictError, DomainError, InvalidInputError
 from app.models import ItemType, Kit, Order, OrderItem
 from app.models.enums import KitStatus
@@ -166,7 +167,9 @@ def _read_csv_text(raw: bytes, source: str) -> tuple[list[str], list[dict[str, s
         raise InvalidInputError(
             f"{source}: line {line} isn't valid UTF-8 (byte {exc.start}, "
             f"{bytes(raw[exc.start : exc.end])!r}). Re-save the file as UTF-8 "
-            "— in Excel, 'CSV UTF-8' — and import it again."
+            "— in Excel, 'CSV UTF-8' — and import it again.",
+            code=error_codes.IMPORT_ENCODING_INVALID,
+            params={"source": source, "line": line},
         ) from exc
     reader = csv.DictReader(io.StringIO(text_content))
     header = [name.strip() for name in (reader.fieldnames or [])]
@@ -208,14 +211,19 @@ def read_upload(filename: str, content: bytes, *, reference_currency: str) -> Pa
     if len(content) > MAX_UPLOAD_BYTES:
         raise InvalidInputError(
             f"that file is {len(content) // 1024 // 1024} MB — the import limit is "
-            f"{MAX_UPLOAD_BYTES // 1024 // 1024} MB. Split it into separate files."
+            f"{MAX_UPLOAD_BYTES // 1024 // 1024} MB. Split it into separate files.",
+            code=error_codes.IMPORT_FILE_TOO_LARGE,
+            params={"limit_mb": MAX_UPLOAD_BYTES // 1024 // 1024},
         )
     name = (filename or "upload").lower()
     if name.endswith(".zip") or content[:2] == b"PK":
         return _read_zip(content, reference_currency)
     if name.endswith(".csv") or b"," in content[:4096]:
         return _read_single_csv(filename, content, reference_currency)
-    raise InvalidInputError("unsupported file — import a .csv or a .zip archive")
+    raise InvalidInputError(
+        "unsupported file — import a .csv or a .zip archive",
+        code=error_codes.IMPORT_FILE_UNSUPPORTED,
+    )
 
 
 class _ExpansionBudget:
@@ -243,7 +251,9 @@ class _ExpansionBudget:
                         raise InvalidInputError(
                             f"that archive unpacks to more than "
                             f"{self.limit // 1024 // 1024} MB, which is the import "
-                            "limit. Split it into separate files."
+                            "limit. Split it into separate files.",
+                            code=error_codes.IMPORT_ARCHIVE_TOO_LARGE,
+                            params={"limit_mb": self.limit // 1024 // 1024},
                         )
                     chunks.append(chunk)
         except DomainError:
@@ -267,7 +277,9 @@ class _ExpansionBudget:
             raise InvalidInputError(
                 f"{entry} could not be unpacked ({exc}) — the archive may be damaged, "
                 "encrypted, or written with a compression method plamotrack can't "
-                "read. Export it again."
+                "read. Export it again.",
+                code=error_codes.IMPORT_ARCHIVE_DAMAGED,
+                params={"entry": entry},
             ) from exc
         return b"".join(chunks)
 
@@ -428,7 +440,10 @@ def _read_zip(content: bytes, reference_currency: str) -> ParsedUpload:
     try:
         archive = zipfile.ZipFile(io.BytesIO(content))
     except zipfile.BadZipFile as exc:
-        raise InvalidInputError("that zip file is corrupt or not a zip archive") from exc
+        raise InvalidInputError(
+            "that zip file is corrupt or not a zip archive",
+            code=error_codes.IMPORT_ARCHIVE_INVALID,
+        ) from exc
 
     with archive:
         names = [n for n in archive.namelist() if not n.endswith("/") and "__MACOSX" not in n]
@@ -555,7 +570,9 @@ def _read_single_csv(filename: str, content: bytes, reference_currency: str) -> 
         known = ", ".join(spec.filename for spec in TABLE_SPECS)
         raise InvalidInputError(
             f"couldn't tell which table '{filename}' holds. Name it after the table "
-            f"({known}), or use the starter sheet template."
+            f"({known}), or use the starter sheet template.",
+            code=error_codes.IMPORT_TABLE_UNKNOWN,
+            params={"filename": filename},
         )
     return ParsedUpload(source=f"csv:{table_key}", tables={table_key: rows})
 
@@ -2789,7 +2806,12 @@ async def check_compatibility(session: AsyncSession, upload: ParsedUpload) -> li
         raise InvalidInputError(
             f"this archive was written by a newer version of plamotrack "
             f"(export format {manifest.export_version}, this instance reads "
-            f"{EXPORT_VERSION}). Update before importing it."
+            f"{EXPORT_VERSION}). Update before importing it.",
+            code=error_codes.IMPORT_VERSION_NEWER,
+            params={
+                "export_version": manifest.export_version,
+                "supported_version": EXPORT_VERSION,
+            },
         )
     current = await schema_version(session)
     if manifest.schema_version and current and manifest.schema_version != current:
@@ -2811,7 +2833,9 @@ async def plan_import(
     total = sum(len(rows) for rows in upload.tables.values())
     if total > MAX_ROWS:
         raise InvalidInputError(
-            f"that import holds {total:,} rows — the limit is {MAX_ROWS:,}. Split it up."
+            f"that import holds {total:,} rows — the limit is {MAX_ROWS:,}. Split it up.",
+            code=error_codes.IMPORT_TOO_MANY_ROWS,
+            params={"maximum": MAX_ROWS},
         )
     upload.warnings.extend(await check_compatibility(session, upload))
     planner = _Planner(session, upload, mode, reference)
@@ -2894,7 +2918,8 @@ async def apply_import(
     if mode is ImportMode.REPLACE_ALL and (confirm or "").strip().upper() != "REPLACE":
         raise InvalidInputError(
             "replacing everything wipes the current collection first — "
-            "send confirm='REPLACE' to go ahead"
+            "send confirm='REPLACE' to go ahead",
+            code=error_codes.IMPORT_CONFIRM_REQUIRED,
         )
     # Before parsing anything: an apply with no hash is an apply nobody reviewed.
     # This used to short-circuit on falsy further down, which meant *omitting* the
@@ -2903,7 +2928,8 @@ async def apply_import(
     if not plan_hash:
         raise InvalidInputError(
             "preview this import first and send back the plan_hash it returned — "
-            "an apply is only allowed to do what a preview showed"
+            "an apply is only allowed to do what a preview showed",
+            code=error_codes.IMPORT_PREVIEW_REQUIRED,
         )
 
     # Before the re-plan, not merely before the writes. Everything this function
@@ -2920,11 +2946,16 @@ async def apply_import(
     plan = execution.plan
 
     if plan.blocking_errors:
-        raise ConflictError("; ".join(plan.blocking_errors))
+        raise ConflictError(
+            "; ".join(plan.blocking_errors),
+            code=error_codes.IMPORT_BLOCKED,
+            params={"count": len(plan.blocking_errors)},
+        )
     if plan_hash != plan.plan_hash:
         raise ConflictError(
             "the collection changed since you previewed this import, so the preview "
-            "no longer matches what would happen — run the preview again"
+            "no longer matches what would happen — run the preview again",
+            code=error_codes.IMPORT_PLAN_STALE,
         )
 
     if mode is ImportMode.REPLACE_ALL:

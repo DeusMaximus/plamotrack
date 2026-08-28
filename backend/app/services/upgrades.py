@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app import error_codes
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import Kit, Upgrade, UpgradeApplication
 from app.services.catalog import guard_stock_ceiling, lock_catalog_row
@@ -21,7 +22,11 @@ async def apply_upgrade(
     """Record an upgrade being used on a kit and decrement stock atomically.
     Row-locked so concurrent writers (UI, REST, MCP agents) can't oversell stock."""
     if quantity <= 0:
-        raise InvalidInputError("quantity must be a positive integer")
+        raise InvalidInputError(
+            "quantity must be a positive integer",
+            code=error_codes.UPGRADE_APPLICATION_QUANTITY_INVALID,
+            params={"quantity": quantity},
+        )
     # Both bounds here rather than only the floor, and for the same reason the floor
     # is here rather than in the schema: `UpgradeApplyRequest` binds the REST caller,
     # and the MCP tool passes a bare int to this function (rule 1 — the invariant
@@ -33,7 +38,11 @@ async def apply_upgrade(
     try:
         require_int4(quantity, f"quantity '{quantity:,}'")
     except ValueError as exc:
-        raise InvalidInputError(str(exc)) from exc
+        raise InvalidInputError(
+            str(exc),
+            code=error_codes.VALUE_OUT_OF_RANGE,
+            params={"value": quantity},
+        ) from exc
 
     await acquire_write_gate(session)
     # Catalog row first, then the kit — the order every writer takes (see
@@ -41,15 +50,29 @@ async def apply_upgrade(
     # order edits, which lock catalog targets and then the kits a line spawned.
     upgrade = await lock_catalog_row(session, Upgrade, upgrade_id)
     if upgrade is None:
-        raise NotFoundError(f"upgrade {upgrade_id} not found")
+        raise NotFoundError(
+            f"upgrade {upgrade_id} not found",
+            code=error_codes.CATALOG_ITEM_NOT_FOUND,
+            params={"item_type": "upgrade", "item_id": upgrade_id},
+        )
     kit = await session.get(Kit, kit_id)
     if kit is None:
-        raise NotFoundError(f"kit {kit_id} not found")
+        raise NotFoundError(
+            f"kit {kit_id} not found",
+            code=error_codes.KIT_NOT_FOUND,
+            params={"kit_id": kit_id},
+        )
 
     if upgrade.quantity_on_hand < quantity:
         raise ConflictError(
             f"insufficient stock for '{upgrade.name}': "
-            f"{upgrade.quantity_on_hand} on hand, {quantity} requested"
+            f"{upgrade.quantity_on_hand} on hand, {quantity} requested",
+            code=error_codes.STOCK_INSUFFICIENT,
+            params={
+                "name": upgrade.name,
+                "on_hand": upgrade.quantity_on_hand,
+                "requested": quantity,
+            },
         )
 
     upgrade.quantity_on_hand -= quantity
@@ -72,7 +95,11 @@ async def list_kit_applications(
     """
     kit = await session.get(Kit, kit_id)
     if kit is None:
-        raise NotFoundError(f"kit {kit_id} not found")
+        raise NotFoundError(
+            f"kit {kit_id} not found",
+            code=error_codes.KIT_NOT_FOUND,
+            params={"kit_id": kit_id},
+        )
     stmt = (
         select(UpgradeApplication)
         .where(UpgradeApplication.kit_id == kit_id)
@@ -120,9 +147,17 @@ async def withdraw_upgrade_application(
     await acquire_write_gate(session)
     application = await session.get(UpgradeApplication, application_id)
     if application is None:
-        raise NotFoundError(f"upgrade application {application_id} not found")
+        raise NotFoundError(
+            f"upgrade application {application_id} not found",
+            code=error_codes.UPGRADE_APPLICATION_NOT_FOUND,
+            params={"application_id": application_id},
+        )
     if upgrade_id is not None and application.upgrade_id != upgrade_id:
-        raise NotFoundError(f"application {application_id} does not belong to upgrade {upgrade_id}")
+        raise NotFoundError(
+            f"application {application_id} does not belong to upgrade {upgrade_id}",
+            code=error_codes.UPGRADE_APPLICATION_NOT_FOUND,
+            params={"application_id": application_id},
+        )
     # Same lock, same ordering, as apply_upgrade: the catalog row serializes every
     # stock writer (rule 7), and it is taken whether or not stock moves so the two
     # withdrawal flavours hold identical ground against a concurrent apply/delete.
@@ -130,7 +165,11 @@ async def withdraw_upgrade_application(
     if upgrade is None:
         # Unreachable while delete_catalog_item refuses applied upgrades and the FK
         # cascades — kept so this function refuses rather than shrugs if that changes.
-        raise NotFoundError(f"upgrade {application.upgrade_id} not found")
+        raise NotFoundError(
+            f"upgrade {application.upgrade_id} not found",
+            code=error_codes.CATALOG_ITEM_NOT_FOUND,
+            params={"item_type": "upgrade", "item_id": application.upgrade_id},
+        )
     if restore_stock:
         upgrade.quantity_on_hand = guard_stock_ceiling(
             upgrade.name, upgrade.quantity_on_hand + application.quantity_used

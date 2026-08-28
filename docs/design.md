@@ -818,12 +818,20 @@ The presentation boundary follows from that contract:
 - keep API enum values, MCP tool names, database values, canonical CSV headers, and
   user-entered kit names, notes, retailers, and categories stable and untranslated
 
-REST errors gain stable codes and parameters alongside useful English `detail`, so the
-browser can translate known conditions without making an English sentence the API
-contract. Import preview is a separate case because its warnings, row failures, and
-blocking diagnostics live inside successful responses; those become structured
-code/parameter/detail objects too. Neither wording nor active language participates in
-the import `plan_hash`.
+✅ REST errors carry stable codes and parameters alongside useful English `detail`
+(#25): every failed response is the envelope `{detail, code, params}` — `detail`
+byte-identical to the pre-#25 body (a string when the service refused, FastAPI's
+findings list when the schema spoke — that shape distinction is load-bearing and
+kept), `code` a `<domain>.<condition>` identifier from `backend/app/error_codes.py`,
+`params` the values it involves. The browser renders known codes through the
+catalogue (`api.<code>`, wire params camelized into `{{placeholders}}`) and falls
+back to `detail` for anything it doesn't know; MCP `ToolError` text stays the bare
+English sentence. The registry, the catalogue, and the guaranteed params are held
+together by a shared fixture (`frontend/src/lib/__fixtures__/api-error-codes.json`),
+the same device as the money cases. Import preview is a separate case because its
+warnings, row failures, and blocking diagnostics live inside successful responses;
+those become structured code/parameter/detail objects with #26. Neither wording nor
+active language participates in the import `plan_hash`.
 
 The frontend exposes all of this at `/settings`: General, Language & region, Data
 management, and About. ✅ The page shipped with #24 — General edits the reference

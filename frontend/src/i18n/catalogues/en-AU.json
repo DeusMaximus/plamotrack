@@ -48,7 +48,99 @@
     "newItemCategory": "New items need a category"
   },
   "api": {
-    "exportFailed": "Export failed ({{status}})"
+    "exportFailed": "Export failed ({{status}})",
+    "catalog_item": {
+      "category_required": "New items in this catalog need a category.",
+      "category_unsupported": "These items don't have categories.",
+      "cost_pair_mismatch": "Cost and cost currency go together — set both or clear both.",
+      "has_applications_one": "'{{name}}' is applied to {{count}} kit — build history is kept, so it can't be deleted. Withdraw the application first if it's wrongly recorded.",
+      "has_applications_other": "'{{name}}' is applied to {{count}} kits — build history is kept, so it can't be deleted. Withdraw the applications first if they're wrongly recorded.",
+      "manufacturer_required": "New upgrades need a manufacturer.",
+      "not_found": "That catalog item no longer exists.",
+      "on_order_history_one": "'{{name}}' appears on {{count}} order line — order history is kept, so it can't be deleted.",
+      "on_order_history_other": "'{{name}}' appears on {{count}} order lines — order history is kept, so it can't be deleted."
+    },
+    "export": {
+      "table_unknown": "There's no exportable table called '{{table}}'."
+    },
+    "field": {
+      "blank": "{{field}} can't be blank.",
+      "not_nullable": "{{field}} can't be empty."
+    },
+    "import": {
+      "archive_damaged": "'{{entry}}' couldn't be unpacked — the archive may be damaged, encrypted, or compressed in a way plamotrack can't read. Export it again.",
+      "archive_invalid": "That file isn't a zip archive.",
+      "archive_too_large": "That archive unpacks past the {{limitMb}} MB import limit. Split it into separate files.",
+      "blocked_one": "The preview found {{count}} problem that blocks this import.",
+      "blocked_other": "The preview found {{count}} problems that block this import.",
+      "cell_invalid": "{{field}} couldn't be read.",
+      "confirm_required": "Replacing everything wipes the current collection first — type REPLACE to confirm.",
+      "encoding_invalid": "{{source}} isn't valid UTF-8 (line {{line}}). Re-save it as UTF-8 — in Excel, 'CSV UTF-8' — and import it again.",
+      "file_too_large": "That file is over the {{limitMb}} MB import limit. Split it into separate files.",
+      "file_unsupported": "Import a .csv or a .zip archive.",
+      "plan_stale": "The collection changed since this preview, so it no longer matches what would happen — run the preview again.",
+      "preview_required": "Preview the import first — an apply is only allowed to do what a preview showed.",
+      "table_unknown": "Couldn't tell which table '{{filename}}' holds. Name the file after its table, or use the starter sheet template.",
+      "too_many_rows": "That import is over the {{maximum}}-row limit. Split it up.",
+      "version_newer": "This archive was written by a newer version of plamotrack (format {{exportVersion}}; this instance reads {{supportedVersion}}). Update before importing it."
+    },
+    "kit": {
+      "has_applications_one": "'{{name}}' has {{count}} upgrade applied — that record explains the stock it used, so the kit is kept. Withdraw the application first; withdrawal asks whether its stock returns.",
+      "has_applications_other": "'{{name}}' has {{count}} upgrades applied — those records explain the stock they used, so the kit is kept. Withdraw the applications first; each withdrawal asks whether its stock returns.",
+      "not_found": "That kit no longer exists.",
+      "order_spawned": "'{{name}}' came from an order line — edit that order (reduce the line quantity or remove the line) instead, so the purchase record and the collection stay consistent."
+    },
+    "name": {
+      "blank": "The name can't be blank.",
+      "duplicate": "Something named '{{name}}' already exists — names match case-insensitively, so reuse it or pick a different name."
+    },
+    "order": {
+      "already_received": "This order is already marked received.",
+      "already_shipped": "This order is already marked shipped.",
+      "fanout_limit": "That would create {{total}} kits at once — the limit is {{maximum}}. Split it up.",
+      "lines_omitted_one": "{{count}} stored line is missing from this edit — an omitted line is deleted. Restate every line you're keeping, or allow removal explicitly.",
+      "lines_omitted_other": "{{count}} stored lines are missing from this edit — omitted lines are deleted. Restate every line you're keeping, or allow removal explicitly.",
+      "not_found": "That order no longer exists.",
+      "not_received": "This order isn't received yet — record the arrival first; an edit only corrects a date already set.",
+      "not_shipped": "This order isn't marked shipped yet — record the shipment first; an edit only corrects a date already set.",
+      "receipt_in_future": "That arrival date is in the future — an arrival can be backdated, not predicted.",
+      "shipment_in_future": "That ship date is in the future — a shipment can be backdated, not predicted.",
+      "unreceive_unsupported": "An order can't be un-received — delete and re-enter it instead.",
+      "unship_unsupported": "An order can't be un-shipped."
+    },
+    "order_line": {
+      "catalog_ref_dangling": "This line points at a catalog item that no longer exists, so its stock can't be adjusted. Deleting the order undoes the entry wholesale.",
+      "duplicated": "One of the order's lines appears twice.",
+      "item_type_immutable": "A line's item type can't change — remove the line and add a new one.",
+      "kits_protected": "Only {{deletable}} of the {{requested}} kits on this line can be removed safely — the rest are building, complete, rated, photographed, or have upgrades applied. Move or edit those kits first.",
+      "no_kit_to_clone": "This line has no kits to copy details from — restate the kit details to add more.",
+      "not_on_order": "One of the lines doesn't belong to this order.",
+      "quantity_too_large": "Quantity is {{quantity}} — a line holds at most {{maximum}}. Split it across several lines.",
+      "quantity_too_small": "Quantity is {{quantity}} — it has to be at least 1. To record nothing, leave the line out."
+    },
+    "request": {
+      "body_invalid": "The request couldn't be read — if this was a file upload, try it again."
+    },
+    "retailer": {
+      "has_orders_one": "'{{name}}' has {{count}} order — order history is kept, so the retailer can't be deleted.",
+      "has_orders_other": "'{{name}}' has {{count}} orders — order history is kept, so the retailer can't be deleted.",
+      "not_found": "That retailer no longer exists."
+    },
+    "settings": {
+      "field_required": "{{field}} always has a value — leave it out to keep the current one.",
+      "value_invalid": "That's not a valid value for {{field}}."
+    },
+    "stock": {
+      "insufficient": "Can't remove {{requested}} × '{{name}}' — only {{onHand}} on hand. Adjust its stock first.",
+      "limit_exceeded": "'{{name}}' can't hold that many — stock counts max out at 2,147,483,647."
+    },
+    "upgrade_application": {
+      "not_found": "That upgrade application no longer exists.",
+      "quantity_invalid": "Quantity must be a positive whole number."
+    },
+    "value": {
+      "out_of_range": "{{value}} is out of range — whole numbers here go from −2,147,483,648 to 2,147,483,647."
+    }
   },
   "board": {
     "buildPipeline": "Build Pipeline",

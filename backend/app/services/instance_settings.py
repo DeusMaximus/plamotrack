@@ -19,6 +19,7 @@ from functools import lru_cache
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import error_codes
 from app.exceptions import InvalidInputError
 from app.models.enums import DateStyle, HourCycle
 from app.models.settings import SINGLETON_ROW_ID, InstanceSettings
@@ -187,14 +188,20 @@ async def update_instance_settings(
             # row cannot hold, not shorthand for "reset" or "leave alone".
             raise InvalidInputError(
                 f"{field} can't be cleared — every instance setting always has a value. "
-                "Leave the field out to keep the current one."
+                "Leave the field out to keep the current one.",
+                code=error_codes.SETTINGS_FIELD_REQUIRED,
+                params={"field": field},
             )
         validator = _VALIDATORS.get(field)
         if validator is not None:
             try:
                 value = validator(value)
             except ValueError as exc:
-                raise InvalidInputError(str(exc)) from exc
+                raise InvalidInputError(
+                    str(exc),
+                    code=error_codes.SETTINGS_VALUE_INVALID,
+                    params={"field": field},
+                ) from exc
         setattr(row, field, value)
     await session.flush()
     # The UPDATE's server-side onupdate expires `updated_at`; load it here, while

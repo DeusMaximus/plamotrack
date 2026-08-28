@@ -35,17 +35,46 @@ import type {
   UpgradeUpdate,
 } from "./types";
 import i18n from "../i18n";
+import type { ApiErrorBody, ResolvedApiError } from "../lib/apiError";
+import { resolveApiError } from "../lib/apiError";
 
 const API_BASE: string = import.meta.env.VITE_API_BASE ?? "/api";
 
 export class ApiError extends Error {
   status: number;
+  /** Stable semantic code (`order.already_received`), or null when the body
+   *  carried none — a proxy page, a non-JSON body, an older server. */
+  code: string | null;
+  /** The code's structured values, snake_case keys as sent on the wire. */
+  params: Record<string, unknown>;
+  /** The server's English fallback. `message` is the catalogue rendering when
+   *  the code is known, so banners localise for free; this stays the raw text. */
+  detail: string;
 
-  constructor(status: number, message: string) {
-    super(message);
+  constructor(status: number, resolved: string | ResolvedApiError) {
+    const full: ResolvedApiError =
+      typeof resolved === "string"
+        ? { message: resolved, detail: resolved, code: null, params: {} }
+        : resolved;
+    super(full.message);
     this.name = "ApiError";
     this.status = status;
+    this.code = full.code;
+    this.params = full.params;
+    this.detail = full.detail;
   }
+}
+
+/** One resolution for every failed response (#25) — request() and upload()
+ *  must not grow separate opinions about the envelope. */
+async function throwApiError(res: Response): Promise<never> {
+  let body: ApiErrorBody | null = null;
+  try {
+    body = (await res.json()) as ApiErrorBody;
+  } catch {
+    // non-JSON error body — resolveApiError falls back to statusText
+  }
+  throw new ApiError(res.status, resolveApiError(res.statusText, body));
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -54,22 +83,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
   });
   if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = (await res.json()) as { detail?: unknown };
-      if (typeof body.detail === "string") {
-        detail = body.detail;
-      } else if (Array.isArray(body.detail)) {
-        detail = body.detail
-          .map((d: { loc?: unknown[]; msg?: string }) =>
-            [d.loc?.slice(1).join("."), d.msg].filter(Boolean).join(": "),
-          )
-          .join("; ");
-      }
-    } catch {
-      // non-JSON error body — keep statusText
-    }
-    throw new ApiError(res.status, detail);
+    await throwApiError(res);
   }
   if (res.status === 204) {
     return undefined as T;
@@ -89,14 +103,7 @@ function patch(body: unknown): RequestInit {
 async function upload<T>(path: string, form: FormData): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, { method: "POST", body: form });
   if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const body = (await res.json()) as { detail?: unknown };
-      if (typeof body.detail === "string") detail = body.detail;
-    } catch {
-      // non-JSON error body — keep statusText
-    }
-    throw new ApiError(res.status, detail);
+    await throwApiError(res);
   }
   return (await res.json()) as T;
 }

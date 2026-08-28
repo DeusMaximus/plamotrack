@@ -1,0 +1,281 @@
+{
+  "note": "The stable REST error codes (#25), shared by both sides the way money-cases.json is: backend/tests/test_error_envelope.py pins backend/app/error_codes.py to exactly this list, and src/i18n/catalogue.test.ts pins the en-AU catalogue to it (every code has an api.* entry, and no entry interpolates a placeholder outside that code's declared params). `params` lists the keys GUARANTEED present on every raise of the code — a site may send more, a translation may use less, never the reverse. Adding a code touches all three files; renaming one is a breaking API change.",
+  "codes": {
+    "catalog_item.category_required": {
+      "params": [
+        "item_type"
+      ]
+    },
+    "catalog_item.category_unsupported": {
+      "params": [
+        "table"
+      ]
+    },
+    "catalog_item.cost_pair_mismatch": {
+      "params": []
+    },
+    "catalog_item.has_applications": {
+      "params": [
+        "name",
+        "count"
+      ]
+    },
+    "catalog_item.manufacturer_required": {
+      "params": []
+    },
+    "catalog_item.not_found": {
+      "params": [
+        "item_id"
+      ]
+    },
+    "catalog_item.on_order_history": {
+      "params": [
+        "name",
+        "count"
+      ]
+    },
+    "export.table_unknown": {
+      "params": [
+        "table"
+      ]
+    },
+    "field.blank": {
+      "params": [
+        "field"
+      ]
+    },
+    "field.not_nullable": {
+      "params": [
+        "field"
+      ]
+    },
+    "import.archive_damaged": {
+      "params": [
+        "entry"
+      ]
+    },
+    "import.archive_invalid": {
+      "params": []
+    },
+    "import.archive_too_large": {
+      "params": [
+        "limit_mb"
+      ]
+    },
+    "import.blocked": {
+      "params": [
+        "count"
+      ]
+    },
+    "import.cell_invalid": {
+      "params": [
+        "field"
+      ]
+    },
+    "import.confirm_required": {
+      "params": []
+    },
+    "import.encoding_invalid": {
+      "params": [
+        "source",
+        "line"
+      ]
+    },
+    "import.file_too_large": {
+      "params": [
+        "limit_mb"
+      ]
+    },
+    "import.file_unsupported": {
+      "params": []
+    },
+    "import.plan_stale": {
+      "params": []
+    },
+    "import.preview_required": {
+      "params": []
+    },
+    "import.table_unknown": {
+      "params": [
+        "filename"
+      ]
+    },
+    "import.too_many_rows": {
+      "params": [
+        "maximum"
+      ]
+    },
+    "import.version_newer": {
+      "params": [
+        "export_version",
+        "supported_version"
+      ]
+    },
+    "kit.has_applications": {
+      "params": [
+        "name",
+        "count"
+      ]
+    },
+    "kit.not_found": {
+      "params": [
+        "kit_id"
+      ]
+    },
+    "kit.order_spawned": {
+      "params": [
+        "name"
+      ]
+    },
+    "name.blank": {
+      "params": []
+    },
+    "name.duplicate": {
+      "params": [
+        "kind",
+        "name",
+        "existing_id"
+      ]
+    },
+    "order.already_received": {
+      "params": []
+    },
+    "order.already_shipped": {
+      "params": []
+    },
+    "order.fanout_limit": {
+      "params": [
+        "total",
+        "maximum"
+      ]
+    },
+    "order.lines_omitted": {
+      "params": [
+        "count"
+      ]
+    },
+    "order.not_found": {
+      "params": [
+        "order_id"
+      ]
+    },
+    "order.not_received": {
+      "params": []
+    },
+    "order.not_shipped": {
+      "params": []
+    },
+    "order.receipt_in_future": {
+      "params": [
+        "received_at"
+      ]
+    },
+    "order.shipment_in_future": {
+      "params": [
+        "shipped_at"
+      ]
+    },
+    "order.unreceive_unsupported": {
+      "params": []
+    },
+    "order.unship_unsupported": {
+      "params": []
+    },
+    "order_line.catalog_ref_dangling": {
+      "params": [
+        "item_type",
+        "item_id"
+      ]
+    },
+    "order_line.duplicated": {
+      "params": [
+        "line_id"
+      ]
+    },
+    "order_line.item_type_immutable": {
+      "params": []
+    },
+    "order_line.kits_protected": {
+      "params": [
+        "requested",
+        "deletable"
+      ]
+    },
+    "order_line.no_kit_to_clone": {
+      "params": []
+    },
+    "order_line.not_on_order": {
+      "params": [
+        "line_id"
+      ]
+    },
+    "order_line.quantity_too_large": {
+      "params": [
+        "quantity",
+        "maximum"
+      ]
+    },
+    "order_line.quantity_too_small": {
+      "params": [
+        "quantity"
+      ]
+    },
+    "request.body_invalid": {
+      "params": []
+    },
+    "request.validation": {
+      "params": [
+        "errors"
+      ]
+    },
+    "retailer.has_orders": {
+      "params": [
+        "name",
+        "count"
+      ]
+    },
+    "retailer.not_found": {
+      "params": [
+        "retailer_id"
+      ]
+    },
+    "settings.field_required": {
+      "params": [
+        "field"
+      ]
+    },
+    "settings.value_invalid": {
+      "params": [
+        "field"
+      ]
+    },
+    "stock.insufficient": {
+      "params": [
+        "name",
+        "on_hand",
+        "requested"
+      ]
+    },
+    "stock.limit_exceeded": {
+      "params": [
+        "name",
+        "quantity"
+      ]
+    },
+    "upgrade_application.not_found": {
+      "params": [
+        "application_id"
+      ]
+    },
+    "upgrade_application.quantity_invalid": {
+      "params": [
+        "quantity"
+      ]
+    },
+    "value.out_of_range": {
+      "params": [
+        "value"
+      ]
+    }
+  }
+}

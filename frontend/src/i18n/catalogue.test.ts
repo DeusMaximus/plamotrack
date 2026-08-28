@@ -35,6 +35,8 @@ import {
   statusLabel,
   wouldOrderAgainLabel,
 } from "../lib/labels";
+import apiErrorCodes from "../lib/__fixtures__/api-error-codes.json";
+import { camelizeKey } from "../lib/apiError";
 import enAU from "./catalogues/en-AU.json";
 import i18n, { manifest } from "./index";
 import { CATALOGUES as REGISTRY } from "./registry";
@@ -363,5 +365,57 @@ describe("runtime behaviour the app relies on", () => {
   it("carries direction metadata for the resolved language", () => {
     const entry = manifest.languages.find((language) => language.tag === i18n.language);
     expect(entry?.direction).toBe("ltr");
+  });
+});
+
+describe("REST error codes (#25) — the registry, the catalogue, and the params agree", () => {
+  // The shared fixture is the subject (rule: never derive the enumeration from
+  // the code under test); backend/tests/test_error_envelope.py pins
+  // app/error_codes.py to the same file from the other side.
+  const CODES = Object.entries(apiErrorCodes.codes) as [string, { params: string[] }][];
+
+  // request.validation deliberately renders as its joined findings list — the
+  // field-by-field specifics beat a generic sentence until #26-style structure
+  // exists for it — so it is the one wire code without an api.* entry.
+  const RENDERED = CODES.filter(([code]) => code !== "request.validation");
+
+  it("covers every wire code, and request.validation is the only exception", () => {
+    expect(CODES.length).toBeGreaterThan(50);
+    expect(RENDERED.length).toBe(CODES.length - 1);
+  });
+
+  it.each(RENDERED)("api.%s resolves with its declared params", (code, entry) => {
+    const counts = entry.params.includes("count") ? [1, 4] : [undefined];
+    for (const count of counts) {
+      const options: Record<string, unknown> = {};
+      for (const param of entry.params) {
+        options[camelizeKey(param)] = param === "count" ? count : `‹${param}›`;
+      }
+      expect(i18n.exists(`api.${code}`, options), `api.${code}`).toBe(true);
+      const text = (i18n.t as (key: string, options?: Record<string, unknown>) => string)(
+        `api.${code}`,
+        options,
+      );
+      expect(text, `api.${code}`).not.toBe("");
+      expect(text, `api.${code}`).not.toContain("api.");
+    }
+  });
+
+  it("no api.* entry interpolates a placeholder outside its code's declared params", () => {
+    const PLURAL_SUFFIX = /_(zero|one|two|few|many|other)$/;
+    const entries = [...flatten(enAU)].filter(([key]) => key.startsWith("api."));
+    expect(entries.length).toBeGreaterThan(RENDERED.length);
+    for (const [key, value] of entries) {
+      if (key === "api.exportFailed") continue; // downloadFile's own key, not a wire code
+      const code = key.slice("api.".length).replace(PLURAL_SUFFIX, "");
+      const declared = apiErrorCodes.codes[code as keyof typeof apiErrorCodes.codes];
+      expect(declared, `${key} maps to no wire code in api-error-codes.json`).toBeDefined();
+      const allowed = new Set(declared.params.map(camelizeKey));
+      for (const name of placeholderNames(value).names) {
+        expect(allowed.has(name), `${key} interpolates {{${name}}}, not declared for ${code}`).toBe(
+          true,
+        );
+      }
+    }
   });
 });

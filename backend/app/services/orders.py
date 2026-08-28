@@ -7,6 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app import error_codes
 from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import (
     Consumable,
@@ -80,12 +81,16 @@ def require_line_quantity(quantity: int, *, label: str = "quantity") -> int:
     if quantity < 1:
         raise InvalidInputError(
             f"{label} is {quantity:,} — that has to be at least 1. "
-            "To record nothing, leave the line out."
+            "To record nothing, leave the line out.",
+            code=error_codes.ORDER_LINE_QUANTITY_TOO_SMALL,
+            params={"quantity": quantity},
         )
     if quantity > MAX_LINE_QUANTITY:
         raise InvalidInputError(
             f"{label} is {quantity:,} — an order line holds at most "
-            f"{MAX_LINE_QUANTITY:,}. Split it across several lines."
+            f"{MAX_LINE_QUANTITY:,}. Split it across several lines.",
+            code=error_codes.ORDER_LINE_QUANTITY_TOO_LARGE,
+            params={"quantity": quantity, "maximum": MAX_LINE_QUANTITY},
         )
     return quantity
 
@@ -119,7 +124,9 @@ def require_total_fanout(total: int, *, label: str = "the kit lines on this orde
     if total > MAX_TOTAL_FANOUT:
         raise InvalidInputError(
             f"{label} add up to {total:,} kits — at most {MAX_TOTAL_FANOUT:,} can be "
-            "created in one go. Split it up."
+            "created in one go. Split it up.",
+            code=error_codes.ORDER_FANOUT_LIMIT,
+            params={"total": total, "maximum": MAX_TOTAL_FANOUT},
         )
     return total
 
@@ -233,7 +240,9 @@ def _refuse_future_receipt(received_at: datetime) -> None:
     if receipt_is_future(received_at):
         raise InvalidInputError(
             f"received_at {received_at.isoformat()} is in the future — "
-            "an arrival can be backdated, not predicted"
+            "an arrival can be backdated, not predicted",
+            code=error_codes.ORDER_RECEIPT_IN_FUTURE,
+            params={"received_at": received_at},
         )
 
 
@@ -243,7 +252,9 @@ def _refuse_future_ship(shipped_at: datetime) -> None:
     if receipt_is_future(shipped_at):
         raise InvalidInputError(
             f"shipped_at {shipped_at.isoformat()} is in the future — "
-            "a shipment can be backdated, not predicted"
+            "a shipment can be backdated, not predicted",
+            code=error_codes.ORDER_SHIPMENT_IN_FUTURE,
+            params={"shipped_at": shipped_at},
         )
 
 
@@ -303,10 +314,18 @@ async def update_retailer(
     await acquire_write_gate(session)
     retailer = await session.get(Retailer, retailer_id)
     if retailer is None:
-        raise NotFoundError(f"retailer {retailer_id} not found")
+        raise NotFoundError(
+            f"retailer {retailer_id} not found",
+            code=error_codes.RETAILER_NOT_FOUND,
+            params={"retailer_id": retailer_id},
+        )
     fields = data.model_dump(exclude_unset=True)
     if fields.get("name") is None and "name" in fields:
-        raise InvalidInputError("name cannot be null")
+        raise InvalidInputError(
+            "name cannot be null",
+            code=error_codes.FIELD_NOT_NULLABLE,
+            params={"field": "name"},
+        )
     if fields.get("name") is not None:
         # `exclude_id`: a row may keep or re-case its own name; only *another* row
         # already holding it is a conflict (#107).
@@ -324,14 +343,20 @@ async def delete_retailer(session: AsyncSession, retailer_id: uuid.UUID) -> None
     await acquire_write_gate(session)
     retailer = await session.get(Retailer, retailer_id)
     if retailer is None:
-        raise NotFoundError(f"retailer {retailer_id} not found")
+        raise NotFoundError(
+            f"retailer {retailer_id} not found",
+            code=error_codes.RETAILER_NOT_FOUND,
+            params={"retailer_id": retailer_id},
+        )
     order_count = await session.scalar(
         select(func.count()).select_from(Order).where(Order.retailer_id == retailer_id)
     )
     if order_count:
         raise ConflictError(
             f"retailer '{retailer.name}' has {order_count} order(s) — "
-            "order history is kept, so the retailer cannot be deleted"
+            "order history is kept, so the retailer cannot be deleted",
+            code=error_codes.RETAILER_HAS_ORDERS,
+            params={"name": retailer.name, "count": order_count},
         )
     await session.delete(retailer)
     await session.flush()
@@ -364,7 +389,11 @@ async def _build_catalog_row(
     category = clean_optional_text(new_item.category)
     manufacturer = clean_optional_text(new_item.manufacturer)
     if item_type in (ItemType.TOOL, ItemType.CONSUMABLE, ItemType.DISPLAY) and not category:
-        raise InvalidInputError(f"new {item_type} items require a category")
+        raise InvalidInputError(
+            f"new {item_type} items require a category",
+            code=error_codes.CATALOG_ITEM_CATEGORY_REQUIRED,
+            params={"item_type": item_type},
+        )
     if category is not None and item_type in CATEGORISED_MODELS:
         # Same rule as the direct create/update paths (#127): a category matching an
         # existing one case-insensitively reuses that spelling. Three live writers
@@ -407,7 +436,10 @@ async def _build_catalog_row(
             notes=clean_optional_text(new_item.notes),
         )
     if not manufacturer:
-        raise InvalidInputError("new upgrade items require a manufacturer")
+        raise InvalidInputError(
+            "new upgrade items require a manufacturer",
+            code=error_codes.CATALOG_ITEM_MANUFACTURER_REQUIRED,
+        )
     return Upgrade(
         name=name,
         manufacturer=manufacturer,
@@ -496,13 +528,17 @@ async def _adjust_ref(
             "the catalog, so its stock cannot be adjusted. A pre-0.2.4 catalog delete "
             "could race an order and leave a line behind like this. Deleting the "
             "order undoes the entry wholesale and skips this reversal (#63) — "
-            "delete it and re-enter what the order should say"
+            "delete it and re-enter what the order should say",
+            code=error_codes.ORDER_LINE_REF_DANGLING,
+            params={"item_type": item_type, "item_id": ref_id},
         )
     new_quantity = row.quantity_on_hand + delta
     if new_quantity < 0:
         raise ConflictError(
             f"cannot remove {-delta}× '{row.name}': only {row.quantity_on_hand} on hand "
-            "(already consumed?) — adjust its stock first"
+            "(already consumed?) — adjust its stock first",
+            code=error_codes.STOCK_INSUFFICIENT,
+            params={"name": row.name, "on_hand": row.quantity_on_hand, "requested": -delta},
         )
     row.quantity_on_hand = guard_stock_ceiling(row.name, new_quantity)
     await session.flush()
@@ -661,7 +697,9 @@ async def _delete_line_kits(session: AsyncSession, item: OrderItem, count: int |
         raise ConflictError(
             f"cannot remove {needed} kit(s) from this line: only {len(safe)} can be "
             "deleted safely — the rest are building/complete, rated, have photos, or "
-            "have upgrades applied to them. Move or edit those kits first."
+            "have upgrades applied to them. Move or edit those kits first.",
+            code=error_codes.ORDER_LINE_KITS_PROTECTED,
+            params={"requested": needed, "deletable": len(safe)},
         )
     targets = safe if count is None else list(reversed(safe))[:count]  # newest first
     for kit in targets:
@@ -715,7 +753,11 @@ async def _add_line(
             model = CATALOG_MODELS[line.item_type]
             row = await lock_catalog_row(session, model, line.catalog_ref_id)
             if row is None:
-                raise NotFoundError(f"{line.item_type} {line.catalog_ref_id} not found")
+                raise NotFoundError(
+                    f"{line.item_type} {line.catalog_ref_id} not found",
+                    code=error_codes.CATALOG_ITEM_NOT_FOUND,
+                    params={"item_type": line.item_type, "item_id": line.catalog_ref_id},
+                )
         item.catalog_ref_id = row.id
         if received:
             row.quantity_on_hand = guard_stock_ceiling(
@@ -761,7 +803,8 @@ async def _update_line(
 ) -> None:
     if line.item_type != item.item_type:
         raise InvalidInputError(
-            "a line's item_type cannot change — remove the line and add a new one"
+            "a line's item_type cannot change — remove the line and add a new one",
+            code=error_codes.ORDER_LINE_TYPE_IMMUTABLE,
         )
 
     if item.item_type is ItemType.KIT:
@@ -830,7 +873,8 @@ async def _update_line(
                 if not line_kits:
                     raise InvalidInputError(
                         "this line has no kits to copy details from — restate the "
-                        "kit details to add more"
+                        "kit details to add more",
+                        code=error_codes.ORDER_LINE_NO_KIT_TO_CLONE,
                     )
                 reference = line_kits[0]
                 details = OrderKitDetails(
@@ -866,7 +910,11 @@ async def _update_line(
                 # moves — the reference is the thing being protected, not the count.
                 model = CATALOG_MODELS[line.item_type]
                 if await lock_catalog_row(session, model, new_ref) is None:
-                    raise NotFoundError(f"{line.item_type} {new_ref} not found")
+                    raise NotFoundError(
+                        f"{line.item_type} {new_ref} not found",
+                        code=error_codes.CATALOG_ITEM_NOT_FOUND,
+                        params={"item_type": line.item_type, "item_id": new_ref},
+                    )
         if received:
             if new_ref == old_ref:
                 delta = line.quantity - item.quantity
@@ -899,7 +947,11 @@ async def create_order(session: AsyncSession, data: OrderCreate) -> Order:
 
     retailer = await session.get(Retailer, data.retailer_id)
     if retailer is None:
-        raise NotFoundError(f"retailer {data.retailer_id} not found")
+        raise NotFoundError(
+            f"retailer {data.retailer_id} not found",
+            code=error_codes.RETAILER_NOT_FOUND,
+            params={"retailer_id": data.retailer_id},
+        )
 
     order = Order(**data.model_dump(exclude={"items", "received", "received_at", "shipped_at"}))
     received_at: datetime | None = None
@@ -947,7 +999,11 @@ async def _get_order_for_write(session: AsyncSession, order_id: uuid.UUID) -> Or
         .with_for_update()
     )
     if order is None:
-        raise NotFoundError(f"order {order_id} not found")
+        raise NotFoundError(
+            f"order {order_id} not found",
+            code=error_codes.ORDER_NOT_FOUND,
+            params={"order_id": order_id},
+        )
     return order
 
 
@@ -981,12 +1037,24 @@ async def update_order(
     header = data.model_dump(exclude_unset=True, exclude={"items"})
     if "retailer_id" in header:
         if header["retailer_id"] is None:
-            raise InvalidInputError("retailer_id cannot be null")
+            raise InvalidInputError(
+                "retailer_id cannot be null",
+                code=error_codes.FIELD_NOT_NULLABLE,
+                params={"field": "retailer_id"},
+            )
         if await session.get(Retailer, header["retailer_id"]) is None:
-            raise NotFoundError(f"retailer {header['retailer_id']} not found")
+            raise NotFoundError(
+                f"retailer {header['retailer_id']} not found",
+                code=error_codes.RETAILER_NOT_FOUND,
+                params={"retailer_id": header["retailer_id"]},
+            )
     for non_nullable in ("order_date", "currency_code"):
         if non_nullable in header and header[non_nullable] is None:
-            raise InvalidInputError(f"{non_nullable} cannot be null")
+            raise InvalidInputError(
+                f"{non_nullable} cannot be null",
+                code=error_codes.FIELD_NOT_NULLABLE,
+                params={"field": non_nullable},
+            )
     if "received_at" in header:
         # Correction only (#93): a receipt date can be adjusted once it exists.
         # The pending → received transition stays in receive_order, where the
@@ -996,12 +1064,14 @@ async def update_order(
         if new_receipt is None:
             raise InvalidInputError(
                 "received_at cannot be cleared — un-receiving an order is not "
-                "supported; delete and re-enter the order instead"
+                "supported; delete and re-enter the order instead",
+                code=error_codes.ORDER_UNRECEIVE_UNSUPPORTED,
             )
         if order.received_at is None:
             raise ConflictError(
                 "order is not received yet — record the arrival through the "
-                "receive endpoint; an edit only corrects a date already set"
+                "receive endpoint; an edit only corrects a date already set",
+                code=error_codes.ORDER_NOT_RECEIVED,
             )
         _refuse_future_receipt(new_receipt)
         if new_receipt != order.received_at:
@@ -1013,12 +1083,14 @@ async def update_order(
         new_ship = header.pop("shipped_at")
         if new_ship is None:
             raise InvalidInputError(
-                "shipped_at cannot be cleared — un-shipping an order is not supported"
+                "shipped_at cannot be cleared — un-shipping an order is not supported",
+                code=error_codes.ORDER_UNSHIP_UNSUPPORTED,
             )
         if order.shipped_at is None:
             raise ConflictError(
                 "order is not marked shipped yet — record the shipment through the "
-                "ship endpoint; an edit only corrects a date already set"
+                "ship endpoint; an edit only corrects a date already set",
+                code=error_codes.ORDER_NOT_SHIPPED,
             )
         _refuse_future_ship(new_ship)
         if new_ship != order.shipped_at:
@@ -1046,16 +1118,26 @@ async def update_order(
                     f"the items list omits {len(omitted)} stored line(s): {labels} — an "
                     "omitted line is deleted (its kits removed, applied stock reversed). "
                     "Restate every line you are not changing, or pass "
-                    "remove_missing_lines=true to delete the omitted ones"
+                    "remove_missing_lines=true to delete the omitted ones",
+                    code=error_codes.ORDER_LINES_OMITTED,
+                    params={"count": len(omitted)},
                 )
         seen: set[uuid.UUID] = set()
         reference = await settings_service.reference_currency(session)
         for line in data.items:
             if line.id is not None:
                 if line.id not in existing:
-                    raise InvalidInputError(f"order item {line.id} does not belong to this order")
+                    raise InvalidInputError(
+                        f"order item {line.id} does not belong to this order",
+                        code=error_codes.ORDER_LINE_NOT_ON_ORDER,
+                        params={"line_id": line.id},
+                    )
                 if line.id in seen:
-                    raise InvalidInputError(f"order item {line.id} appears twice")
+                    raise InvalidInputError(
+                        f"order item {line.id} appears twice",
+                        code=error_codes.ORDER_LINE_DUPLICATED,
+                        params={"line_id": line.id},
+                    )
                 seen.add(line.id)
                 await _update_line(
                     session,
@@ -1141,7 +1223,10 @@ async def mark_order_shipped(
     await acquire_write_gate(session)
     order = await _get_order_for_write(session, order_id)
     if order.shipped_at is not None:
-        raise ConflictError("order is already marked shipped")
+        raise ConflictError(
+            "order is already marked shipped",
+            code=error_codes.ORDER_ALREADY_SHIPPED,
+        )
     if shipped_at is not None:
         _refuse_future_ship(shipped_at)
     now = shipped_at or datetime.now(UTC)
@@ -1175,7 +1260,10 @@ async def receive_order(
     await acquire_write_gate(session)
     order = await _get_order_for_write(session, order_id)
     if order.received_at is not None:
-        raise ConflictError("order is already marked received")
+        raise ConflictError(
+            "order is already marked received",
+            code=error_codes.ORDER_ALREADY_RECEIVED,
+        )
     await _lock_catalog_targets(session, items=order.items)
 
     if received_at is not None:
@@ -1230,7 +1318,11 @@ async def get_order(session: AsyncSession, order_id: uuid.UUID) -> Order:
         .execution_options(populate_existing=True)
     )
     if order is None:
-        raise NotFoundError(f"order {order_id} not found")
+        raise NotFoundError(
+            f"order {order_id} not found",
+            code=error_codes.ORDER_NOT_FOUND,
+            params={"order_id": order_id},
+        )
     return order
 
 

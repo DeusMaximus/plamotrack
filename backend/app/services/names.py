@@ -49,6 +49,7 @@ import uuid
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app import error_codes
 from app.exceptions import ConflictError, InvalidInputError
 from app.models import Consumable, DisplayItem, Retailer, Tool, Upgrade
 
@@ -79,7 +80,7 @@ def clean_name(name: str) -> str:
     """The name as it is stored. Trims; refuses blank."""
     cleaned = name.strip()
     if not cleaned:
-        raise InvalidInputError("name cannot be blank")
+        raise InvalidInputError("name cannot be blank", code=error_codes.NAME_BLANK)
     return cleaned
 
 
@@ -100,7 +101,11 @@ def clean_required_text(value: str, field: str) -> str:
     """
     cleaned = value.strip()
     if not cleaned:
-        raise InvalidInputError(f"{field} cannot be blank")
+        raise InvalidInputError(
+            f"{field} cannot be blank",
+            code=error_codes.FIELD_BLANK,
+            params={"field": field},
+        )
     return cleaned
 
 
@@ -159,6 +164,12 @@ async def require_unique_name[R: NamedRow](
         noun = _NOUN[model]
         raise ConflictError(
             f"{noun} named '{existing.name}' already exists ({existing.id}) — names "
-            f"are matched case-insensitively, so reuse it or choose a different name"
+            f"are matched case-insensitively, so reuse it or choose a different name",
+            code=error_codes.NAME_DUPLICATE,
+            params={
+                "kind": model.__tablename__,
+                "name": existing.name,
+                "existing_id": existing.id,
+            },
         )
     return cleaned
