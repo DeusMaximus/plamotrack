@@ -41,6 +41,53 @@ Template:
 
 ---
 
+## 2026-08-28 — Claude Code (Opus 5) — PR #177 review rounds actioned; #178 filed
+
+- **Done:** Actioned the Codex review of #177 (five P3s, NO-GO) in `6fa048b` on
+  `codex/176-m51-localisation-gaps`. Every finding reproduced at `0f77635`
+  first, then fixed: **P3-1** `BoardPage`/`RetailersPage` now take
+  `usePresentationVersion` (a `formatting_locale` change that is not also a
+  language change never reached them), and the four raw visible numbers an
+  independent re-sweep confirmed — both rating tooltips, `low_stock_threshold`,
+  `row_number` — go through the formatter, the tooltips via a new
+  `ratingTooltip` over `common.ratingOutOf`; **P3-2** `renderRequestValidation`
+  is path-aware, translating an item only where its structured `field`/`type`
+  both equal the English finding beside it (`field` vs `loc[1:]` dot-joined),
+  degrading per item, never re-pairing; **P3-3** `importActionLabel` gains the
+  `exists ? label : raw` fallback; **P3-4** the `action` and `matched_by`
+  presentation branches were *unreachable* — which is why their mutants
+  survived 449/449 — so both are deleted and `presentationValue` is now a
+  table (`LABELLED_PARAMS`) held against the shipped catalogue; **P3-5** the
+  `design.md` hardening paragraph is historical, stale open-issue inventory
+  gone. Re-review confirmed all five fixed and re-measured the mutants
+  independently, leaving one P3: the **PR body still carried the disproved
+  evidence**. Body amended in place (banner + attribution), naming the invalid
+  `7/240` control, the real `79/238` with 72 import failures, the withdrawn
+  five-and-three mutant claims, and measured final-head totals.
+- **Decisions:** Finding 4 answered at the root rather than by its suggested
+  remedy — a `matched_by` consumer control **cannot** be written today, so a
+  class guard replaced the dead branches. Disproved figures **named, not
+  deleted**, so the correction records what the finding was about. #178 filed
+  rather than folded in: different root cause, and it reproduces on `4bd98c0`.
+- **State:** Code head `6fa048b` (this hand-off commit sits on top of it, docs
+  only — the branch owns the log, since main has no #176 entry). **PR #177 open,
+  not merged** — the re-review's
+  verdict on the amended body is not yet recorded. Every number in the body is
+  measured at that head on a clean tree: backend 1225, frontend 463, ruff
+  check + format, lint, build, Playwright 40 passed/1 skipped on an isolated
+  empty DB (created, migrated, verified zero, dropped). Six mutations killed
+  1/1/4/1/7/2, plus the cold-Board e2e control red without the subscription.
+  **Known, not ours:** `display-items.spec.ts:45` fails on any DB holding a
+  categorised display item (`getByLabel("Category")` also matches the filter)
+  — reproduced with the branch stashed, filed as #167; run e2e on an empty DB.
+- **Next:** await the re-review verdict, then merge with `Closes #176`. **#178**
+  (`import.match_ambiguous`: two emitters share one code, so the orders-side
+  `(retailer + date + lines)` hint is dropped and `matched_by` is undeclared in
+  `api-error-codes.json` and pinned by nothing) is unstarted — the `apiError.ts`
+  comment describing that gap predates the number and should gain the `#178`
+  reference when someone next touches the file. M6 not begun; no version, tag
+  or release work.
+
 ## 2026-08-28 — GPT-5 Codex (OpenAI) — #176 ready for independent review
 
 - **Done:** Branch `codex/176-m51-localisation-gaps` implements #176 without
@@ -231,40 +278,3 @@ Template:
   reproduced-on-`main`, unfixed. LXC: **back up before pulling** (real
   collection, several releases behind; 0.2.8's settings migration still
   pending there).
-
-
-## 2026-08-28 — Claude Code (Fable 5) — bundle-size warning assessed: no splitting; PR #166 merged
-
-- **Done:** the 503 kB chunk warning (flagged informational in the previous
-  entry) assessed and dispositioned. Measured at `abb9d7c`: one 506.76 kB
-  chunk, 154.90 kB gzip. Sourcemap attribution: react-dom 175 kB (35%), app
-  code ~102 kB (14 kB of it the en-AU catalogue), the #22 i18n stack ~57 kB,
-  dnd-kit 41 kB, react-router 36 kB, react-hook-form 35 kB, TanStack Query
-  35 kB — nothing accidental; the deliberate #22 addition is what crossed
-  Vite's 500 kB default. **PR #166 squash-merged as `58c174f`** on the
-  owner's call: `build.chunkSizeWarningLimit: 600` with the reasoning and the
-  revisit path as a config comment. Built chunk byte-identical; build + lint
-  green, CI green (all three checks). Review skipped per the #40 criterion
-  (small, local; worst failure is a suppressed warning); owner concurred by
-  merging.
-- **Decisions:** severity by real exposure — a single-owner LAN instance
-  fetches 155 kB gzip once per release, cached thereafter; no user-observable
-  cost. React.lazy declined (index redirects to /board, the dnd-kit consumer,
-  so the heaviest split-able dep loads on first paint anyway; Suspense adds
-  e2e async surface of the #162 class). manualChunks declined (cross-release
-  caching for one repeat visitor; a Vite 8/Rolldown config dialect to carry).
-  600 keeps the tripwire: ~90 kB headroom ≈ six statically imported
-  catalogues (~14 kB each, `src/i18n/registry.ts`) — if shipped languages
-  re-trip it, per-language dynamic import (natural home #27), not another
-  raise. No issue filed — not a defect, no numbered rule violated.
-- **State:** `main` at `58c174f` (+ this entry), CI green; no in-flight
-  branches. Config-only merge — no migrations, no mutant queues. Backend
-  1187, vitest 212, e2e 30 (+1 skipped) — untouched. Stale worktrees
-  `/private/tmp/plamotrack-pr100` and `-pr108-main` persist (pre-date this).
-- **Next:** M5.1 as before, all unblocked:
-  #24 (Settings page), #25/#26 (structured diagnostics), #27 (language/region
-  UI; `/meta` still doesn't advertise supported languages), #114 (naive CSV
-  dates). #162 (e2e keyboard-select race) remains reproduced-on-`main`,
-  unfixed. Cursor carried three rounds and Codex two on #22 — check both
-  meters before the next buy. LXC: **back up before pulling** (real
-  collection; 0.2.8's settings migration still pending there).
