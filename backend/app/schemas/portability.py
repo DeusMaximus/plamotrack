@@ -1,7 +1,32 @@
 import enum
 import uuid
+from typing import Any
 
 from pydantic import BaseModel, Field
+
+
+class Diagnostic(BaseModel):
+    """One import-preview finding, on the #25 contract (#26).
+
+    The same three members as the REST error envelope, because it is the same
+    idea landing inside a successful payload: `code` a stable
+    `<domain>.<condition>` from `app/error_codes.py`, `params` the structured
+    values a translation may interpolate (snake_case, JSON-serialisable),
+    `detail` the useful English fallback an API client or an unknown-code
+    browser reads. The browser renders known codes through the catalogue
+    (`api.<code>`), exactly as `resolveApiError` does for a failed response.
+
+    Wording lives only in `detail`, which the plan fingerprint never covers —
+    translating or rewording a diagnostic can't invalidate an outstanding
+    preview (§6.1).
+    """
+
+    # All three required, matching the envelope (#169 review, P3): every
+    # construction site supplies all three — the params audit depends on the
+    # literal dict being there — so a generated client may rely on them too.
+    code: str
+    params: dict[str, Any]
+    detail: str
 
 
 class ImportMode(enum.StrEnum):
@@ -39,8 +64,11 @@ class PlannedRow(BaseModel):
     #: How it was matched — "id", "name", "retailer + order number", ...
     matched_by: str | None = None
     changes: list[FieldChange] = Field(default_factory=list)
-    messages: list[str] = Field(default_factory=list)
-    error: str | None = None
+    messages: list[Diagnostic] = Field(default_factory=list)
+    #: Each problem stands alone (#26) — a row that fails to parse in three cells
+    #: carries three diagnostics, not one semicolon-joined sentence. Empty means
+    #: the row is clean; non-empty implies `action == ERROR`.
+    errors: list[Diagnostic] = Field(default_factory=list)
 
 
 class TablePlan(BaseModel):
@@ -62,7 +90,10 @@ class DerivedEffects(BaseModel):
     #: and named by no row — the per-order messages say which way each moves.
     kits_advanced: int = 0
     stock_changes: int = 0
-    stock_note: str = ""
+    #: The rule-10 note ("stock comes from the catalog files"), as a diagnostic
+    #: so the browser can translate it. None only in the model default; `_finish`
+    #: always supplies it.
+    stock_note: Diagnostic | None = None
     rows_deleted: dict[str, int] = Field(default_factory=dict)
 
 
@@ -83,9 +114,9 @@ class ImportPlan(BaseModel):
     manifest: ManifestInfo | None = None
     tables: list[TablePlan] = Field(default_factory=list)
     derived: DerivedEffects = Field(default_factory=DerivedEffects)
-    warnings: list[str] = Field(default_factory=list)
+    warnings: list[Diagnostic] = Field(default_factory=list)
     #: Non-empty means apply will refuse.
-    blocking_errors: list[str] = Field(default_factory=list)
+    blocking_errors: list[Diagnostic] = Field(default_factory=list)
 
 
 class ImportResult(BaseModel):
@@ -98,4 +129,4 @@ class ImportResult(BaseModel):
     kits_removed: int = 0
     kits_advanced: int = 0
     rows_deleted: dict[str, int] = Field(default_factory=dict)
-    warnings: list[str] = Field(default_factory=list)
+    warnings: list[Diagnostic] = Field(default_factory=list)

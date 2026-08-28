@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from app import error_codes
 from app.exceptions import InvalidInputError
 from app.models.enums import KitStatus
+from app.schemas.portability import Diagnostic
 from app.services.orders import initial_kit_status, require_line_quantity
 from app.services.portability.spec import (
     ColumnSpec,
@@ -303,12 +304,28 @@ def _received(cell: str) -> bool | None:
         ) from exc
 
 
+def _row_problem(exc: InvalidInputError, source_row: str) -> Diagnostic:
+    """A blocking diagnostic for a sheet row this expansion could not honour.
+
+    Borrows the refusal's own code and params — `import.cell_invalid` from the
+    cell parsers here, `order_line.quantity_too_*` from `require_line_quantity`
+    — and adds the source row, since a retailer-free row has no planned row for
+    the importer to hang the error on. The raise sites already answer to the
+    #25 params audit; the wording ("row N: ...") is detail only.
+    """
+    return Diagnostic(
+        code=exc.code,
+        params={"row": source_row, **exc.params},
+        detail=f"row {source_row}: {exc}",
+    )
+
+
 def expand(
     rows: list[dict[str, str]],
     *,
     row_budget: int,
     reference_currency: str,
-) -> tuple[dict[str, list[dict[str, str]]], list[str]]:
+) -> tuple[dict[str, list[dict[str, str]]], list[Diagnostic]]:
     """Flat sheet rows -> normalized {table_key: [row, ...]}, plus what wouldn't go.
 
     Cells stay strings: the output is fed straight back through the normal parsing
@@ -334,7 +351,7 @@ def expand(
     #: How many lines each (order key, kit identity) pair has produced, so a
     #: genuinely repeated row gets its own line id (`_line_id`).
     line_occurrence: dict[tuple[str, str], int] = {}
-    problems: list[str] = []
+    problems: list[Diagnostic] = []
     produced = 0
 
     def spend(count: int) -> None:
@@ -374,7 +391,7 @@ def expand(
             try:
                 count = _kit_count(quantity)
             except InvalidInputError as exc:
-                problems.append(f"row {source_row}: {exc}")
+                problems.append(_row_problem(exc, source_row))
                 continue
             spend(count)
             for _ in range(count):
@@ -406,7 +423,7 @@ def expand(
         try:
             stated = _received(row.get("received") or "")
         except InvalidInputError as exc:
-            problems.append(f"row {source_row}: {exc}")
+            problems.append(_row_problem(exc, source_row))
             continue
 
         if retailer_name.lower() not in retailers:
@@ -427,11 +444,17 @@ def expand(
             settled = receipts.get(key)
             if settled is not None and settled.stated != stated:
                 problems.append(
-                    f"row {source_row}: received is '{_YES_NO[stated]}', but row "
-                    f"{settled.row} of the same order ({retailer_name}"
-                    f"{', ' + order_number if order_number else ''}) says "
-                    f"'{_YES_NO[settled.stated]}' — an order either arrived or it "
-                    "didn't, so every row of one order has to agree"
+                    Diagnostic(
+                        code=error_codes.IMPORT_RECEIPT_CONFLICT,
+                        params={"row": source_row, "other_row": settled.row},
+                        detail=(
+                            f"row {source_row}: received is '{_YES_NO[stated]}', but row "
+                            f"{settled.row} of the same order ({retailer_name}"
+                            f"{', ' + order_number if order_number else ''}) says "
+                            f"'{_YES_NO[settled.stated]}' — an order either arrived or it "
+                            "didn't, so every row of one order has to agree"
+                        ),
+                    )
                 )
                 continue
             receipts[key] = _Receipt(stated=stated, row=source_row)

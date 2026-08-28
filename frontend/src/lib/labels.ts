@@ -80,3 +80,13 @@ export function importTableLabel(table: string): string {
   const key = `importTable.${table}`;
   return i18n.exists(key) ? i18n.t(key as "importTable.kits") : table;
 }
+
+/** The preview's `matched_by` identifier ("id", "name",
+ * "retailer_order_number", ...) as a display phrase, falling back to the raw
+ * identifier — the wire value is canonical and never translated (#26). The
+ * natural-key values double as column names, which the rest of the preview
+ * renders raw, so the fallback is already true rather than merely safe. */
+export function matchedByLabel(matchedBy: string): string {
+  const key = `matchedBy.${matchedBy}`;
+  return i18n.exists(key) ? i18n.t(key as "matchedBy.id") : matchedBy;
+}

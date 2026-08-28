@@ -22,6 +22,7 @@ from fastmcp.exceptions import ToolError
 
 from app.mcp import mcp
 from app.services.portability import spec
+from tests.diag import row_messages
 from tests.test_portability import apply, make_csv
 
 
@@ -352,7 +353,7 @@ async def test_the_fold_is_stated_in_the_preview(client):
     )
     table = next(t for t in plan["tables"] if t["table"] == "tools")
     (row,) = [r for r in table["rows"] if r["label"] == "Glass file"]
-    assert any("stored as 'Cutting'" in message for message in row["messages"])
+    assert any("stored as 'Cutting'" in message for message in row_messages(row))
 
 
 async def test_a_vocabulary_change_between_preview_and_apply_stales_the_hash(client):

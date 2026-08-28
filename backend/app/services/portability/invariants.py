@@ -44,8 +44,9 @@ corrected from one non-null value to another is not a transition either.
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from app import error_codes
 from app.models import ItemType
-from app.schemas.portability import RowAction
+from app.schemas.portability import Diagnostic, RowAction
 from app.services.orders import IMMUTABLE_LINE_COLUMNS, receipt_is_future
 from app.services.portability.spec import CATALOG_TABLE_BY_ITEM_TYPE
 
@@ -103,24 +104,33 @@ def _check_immutable_line_columns(rows: dict[str, list["_Row"]]) -> None:
             change = _change(row, column)
             if change is None:
                 continue
-            row.action = RowAction.ERROR
-            row.error = _immutable_message(column, change.before, change.after)
+            row.refuse(_immutable_diagnostic(column, change.before, change.after))
             break
 
 
-def _immutable_message(column: str, before: str, after: str) -> str:
+def _immutable_diagnostic(column: str, before: str, after: str) -> Diagnostic:
     if column == "item_type":
-        return (
-            f"item_type: this row would turn a stored {before} line into a {after} one, and a "
-            f"line's item_type cannot change — the two dispatch differently ({before} lines "
-            f"and {after} lines already had their side effects). Remove the line and add a "
-            "new one, the same as the app requires"
+        # The live writers' own code (rule 1): the condition is the same one
+        # `update_order` 422s, reached through a sheet instead of a payload.
+        return Diagnostic(
+            code=error_codes.ORDER_LINE_TYPE_IMMUTABLE,
+            params={"before": before, "after": after},
+            detail=(
+                f"item_type: this row would turn a stored {before} line into a {after} one, "
+                f"and a line's item_type cannot change — the two dispatch differently "
+                f"({before} lines and {after} lines already had their side effects). Remove "
+                "the line and add a new one, the same as the app requires"
+            ),
         )
-    return (
-        f"order_id: this row would move the line from order {before} to order {after}, and a "
-        "line cannot change orders — that is the purchase record, and its kits would follow "
-        "it across with no stock or lifecycle effect. Leave order_id as it is, and add a new "
-        "line to the other order if that is what you meant"
+    return Diagnostic(
+        code=error_codes.ORDER_LINE_ORDER_IMMUTABLE,
+        params={"before": before, "after": after},
+        detail=(
+            f"order_id: this row would move the line from order {before} to order {after}, "
+            "and a line cannot change orders — that is the purchase record, and its kits "
+            "would follow it across with no stock or lifecycle effect. Leave order_id as it "
+            "is, and add a new line to the other order if that is what you meant"
+        ),
     )
 
 
@@ -188,13 +198,18 @@ def _check_catalog_targets(
         )
         if resolved:
             continue
-        row.action = RowAction.ERROR
-        row.error = (
-            f"catalog_ref_id: a {item_type} line has to point at a row in {table}.csv, and "
-            f"this one points at "
-            + (f"{ref_id}, which no {table} row has" if ref_id else "nothing")
-            + f". Give it a catalog_ref_id, or name the item in catalog_name and one will be "
-            f"created in {table}.csv at 0 on hand"
+        row.refuse(
+            Diagnostic(
+                code=error_codes.IMPORT_CATALOG_REF_UNRESOLVED,
+                params={"item_type": str(item_type), "table": table},
+                detail=(
+                    f"catalog_ref_id: a {item_type} line has to point at a row in {table}.csv, "
+                    f"and this one points at "
+                    + (f"{ref_id}, which no {table} row has" if ref_id else "nothing")
+                    + f". Give it a catalog_ref_id, or name the item in catalog_name and one "
+                    f"will be created in {table}.csv at 0 on hand"
+                ),
+            )
         )
 
 
@@ -278,18 +293,21 @@ def _check_lines_joining_received_orders(
         parent = by_id["orders"].get(row.values.get("order_id"))
         if parent is None or parent.received_at is None:
             continue
-        row.action = RowAction.ERROR
-        row.error = _joining_received_message(str(item_type))
+        row.refuse(_joining_received_diagnostic(str(item_type)))
 
 
-def _joining_received_message(item_type: str) -> str:
-    return (
-        f"order_id: this {item_type} line would join an order that's already received, "
-        f"and an import never changes what you have on hand (rule 10) — the units would "
-        f"read as bought but never counted, and deleting or editing the order later "
-        f"would move stock that was never applied. Add the line in the app instead, "
-        f"which applies the stock as it saves, or restore a full archive with "
-        f"replace_all"
+def _joining_received_diagnostic(item_type: str) -> Diagnostic:
+    return Diagnostic(
+        code=error_codes.IMPORT_LINE_JOINS_RECEIVED,
+        params={"item_type": item_type},
+        detail=(
+            f"order_id: this {item_type} line would join an order that's already received, "
+            f"and an import never changes what you have on hand (rule 10) — the units would "
+            f"read as bought but never counted, and deleting or editing the order later "
+            f"would move stock that was never applied. Add the line in the app instead, "
+            f"which applies the stock as it saves, or restore a full archive with "
+            f"replace_all"
+        ),
     )
 
 
@@ -342,8 +360,7 @@ def _check_receipt_transitions(rows: dict[str, list["_Row"]]) -> None:
             # starter sheet's normal case. Nothing on this order moved stock, so
             # nothing about the flip can leave stock unaccounted for.
             continue
-        row.action = RowAction.ERROR
-        row.error = _receipt_message(arriving, types)
+        row.refuse(_receipt_diagnostic(arriving, types))
 
 
 def _check_future_receipts(rows: dict[str, list["_Row"]]) -> None:
@@ -376,11 +393,19 @@ def _check_future_receipts(rows: dict[str, list["_Row"]]) -> None:
             continue
         value = row.values.get("received_at")
         if value is not None and receipt_is_future(value):
-            row.action = RowAction.ERROR
-            row.error = (
-                f"received_at: {value.isoformat()} is in the future — an arrival can be "
-                f"backdated, not predicted (the same refusal the app gives). State the day "
-                f"the order actually arrived, or take received_at out of this sheet"
+            # The live writers' code again: the same calendar refusal REST and
+            # MCP give, with the same guaranteed param.
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.ORDER_RECEIPT_IN_FUTURE,
+                    params={"received_at": value.isoformat()},
+                    detail=(
+                        f"received_at: {value.isoformat()} is in the future — an arrival can "
+                        f"be backdated, not predicted (the same refusal the app gives). State "
+                        f"the day the order actually arrived, or take received_at out of "
+                        f"this sheet"
+                    ),
+                )
             )
 
 
@@ -405,25 +430,36 @@ def _check_ship_dates(rows: dict[str, list["_Row"]]) -> None:
         if change is None:
             continue
         if change.before and not change.after:
-            row.action = RowAction.ERROR
-            row.error = (
-                "shipped_at: clearing it would un-ship the order, and un-shipping isn't "
-                "supported anywhere in plamotrack, by import or otherwise. To correct the "
-                "date, state the actual one; to leave it alone, take shipped_at out of "
-                "this sheet"
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.ORDER_UNSHIP_UNSUPPORTED,
+                    params={},
+                    detail=(
+                        "shipped_at: clearing it would un-ship the order, and un-shipping "
+                        "isn't supported anywhere in plamotrack, by import or otherwise. To "
+                        "correct the date, state the actual one; to leave it alone, take "
+                        "shipped_at out of this sheet"
+                    ),
+                )
             )
             continue
         value = row.values.get("shipped_at")
         if value is not None and change.after and receipt_is_future(value):
-            row.action = RowAction.ERROR
-            row.error = (
-                f"shipped_at: {value.isoformat()} is in the future — a shipment can be "
-                f"backdated, not predicted (the same refusal the app gives). State the day "
-                f"it actually shipped, or take shipped_at out of this sheet"
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.ORDER_SHIPMENT_IN_FUTURE,
+                    params={"shipped_at": value.isoformat()},
+                    detail=(
+                        f"shipped_at: {value.isoformat()} is in the future — a shipment can "
+                        f"be backdated, not predicted (the same refusal the app gives). "
+                        f"State the day it actually shipped, or take shipped_at out of "
+                        f"this sheet"
+                    ),
+                )
             )
 
 
-def _receipt_message(arriving: bool, types: set[str]) -> str:
+def _receipt_diagnostic(arriving: bool, types: set[str]) -> Diagnostic:
     files = _catalog_files(types)
     listed = ", ".join(sorted(types))
     if arriving:
@@ -435,21 +471,29 @@ def _receipt_message(arriving: bool, types: set[str]) -> str:
         # stated on its own is the *clearing* message's remedy, where the order is
         # left alone; here the order is being flipped, and only the app can do
         # that with the stock accounted for.
-        return (
-            f"received_at: marking this order received would leave the stock its {listed} "
-            f"line(s) bought unaccounted for — an import never changes what you have on hand "
-            f"(rule 10), and the app couldn't apply it afterwards either, because the order "
-            f"would already read as received. Take received_at out of this sheet and receive "
-            f"the order in the app, which applies the stock. A count stated in {files} "
-            f"doesn't stand in for that: it corrects a number, and this receipt is still "
-            f"refused"
+        return Diagnostic(
+            code=error_codes.IMPORT_RECEIPT_UNACCOUNTED,
+            params={"item_types": sorted(types)},
+            detail=(
+                f"received_at: marking this order received would leave the stock its "
+                f"{listed} line(s) bought unaccounted for — an import never changes what you "
+                f"have on hand (rule 10), and the app couldn't apply it afterwards either, "
+                f"because the order would already read as received. Take received_at out of "
+                f"this sheet and receive the order in the app, which applies the stock. A "
+                f"count stated in {files} doesn't stand in for that: it corrects a number, "
+                f"and this receipt is still refused"
+            ),
         )
-    return (
-        f"received_at: clearing it would leave the stock this order's {listed} line(s) "
-        f"already added to your on-hand counts exactly where it is, while making the order "
-        f"receivable again — the next receive would add it a second time. Un-receiving an "
-        f"order isn't supported anywhere in plamotrack, by import or otherwise: if the "
-        f"receipt was a mistake, delete the order — that reverses the stock it applied — "
-        f"and enter it again as pending. To correct the count on its own and leave the "
-        f"order alone, state it in {files}"
+    return Diagnostic(
+        code=error_codes.IMPORT_UNRECEIVE_UNACCOUNTED,
+        params={"item_types": sorted(types)},
+        detail=(
+            f"received_at: clearing it would leave the stock this order's {listed} line(s) "
+            f"already added to your on-hand counts exactly where it is, while making the "
+            f"order receivable again — the next receive would add it a second time. "
+            f"Un-receiving an order isn't supported anywhere in plamotrack, by import or "
+            f"otherwise: if the receipt was a mistake, delete the order — that reverses the "
+            f"stock it applied — and enter it again as pending. To correct the count on its "
+            f"own and leave the order alone, state it in {files}"
+        ),
     )

@@ -22,6 +22,7 @@ from app.db import session_scope
 from app.models import Retailer
 from app.services import orders
 from app.services.portability import exporting, importing, spec, starter_sheet
+from tests.diag import details, row_error, row_messages
 
 # --- helpers --------------------------------------------------------------------
 
@@ -373,7 +374,7 @@ async def test_order_matched_by_retailer_and_order_number(client):
 
     plan = await preview(client, make_archive(archive))
     order_row = next(r for r in plan["tables"] if r["table"] == "orders")["rows"][0]
-    assert order_row["matched_by"] == "retailer + order number"
+    assert order_row["matched_by"] == "retailer_order_number"
     assert order_row["matched_id"] == seeded["order"]["id"]
 
     assert (await apply(client, make_archive(archive))).status_code == 200
@@ -437,7 +438,7 @@ async def test_order_matched_by_fingerprint_when_no_order_number(client):
 
     plan = await preview(client, archive)
     order_row = next(r for r in plan["tables"] if r["table"] == "orders")["rows"][0]
-    assert order_row["matched_by"] == "retailer + date + lines"
+    assert order_row["matched_by"] == "retailer_date_lines"
     assert order_row["matched_id"] == existing["id"]
     assert plan["derived"]["kits_spawned"] == 0  # the kit is already here
 
@@ -458,7 +459,7 @@ async def test_kits_are_never_matched_by_name(client):
     row = plan["tables"][0]["rows"][0]
     assert row["action"] == "create"
     assert row["matched_id"] is None
-    assert any("already have 1 kit" in message for message in row["messages"])
+    assert any("already have 1 kit" in message for message in row_messages(row))
 
     assert (await apply(client, content, filename="kits.csv")).status_code == 200
     assert len((await client.get("/kits")).json()) == 2
@@ -518,7 +519,7 @@ async def test_kit_line_does_not_spawn_when_kits_are_in_the_archive(client):
     # Replace-all deletes the existing kits first, so "you already have one of
     # these" would be actively misleading here.
     kit_rows = next(t for t in plan["tables"] if t["table"] == "kits")["rows"]
-    assert all(row["messages"] == [] for row in kit_rows)
+    assert all(row_messages(row) == [] for row in kit_rows)
 
     resp = await apply(client, archive, mode="replace_all", confirm="REPLACE")
     assert resp.status_code == 200, resp.text
@@ -713,7 +714,7 @@ async def test_a_retailer_row_carries_every_kit_field(client, received, expected
     sheet = starter_sheet_csv([kit_fields_row(received=received)])
 
     plan = await preview(client, sheet, filename="starter-sheet.csv")
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
 
     assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
     [kit] = (await client.get("/kits")).json()
@@ -764,7 +765,7 @@ async def test_reimporting_a_kit_carrying_sheet_is_a_noop(client):
     assert len(first) == 2
 
     plan = await preview(client, sheet, filename="starter-sheet.csv")
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert plan["derived"]["kits_spawned"] == 0
     assert plan["derived"]["kits_removed"] == 0
     for table in plan["tables"]:
@@ -782,7 +783,7 @@ async def test_two_identical_rows_of_one_order_are_two_lines_and_two_kits(client
     sheet = starter_sheet_csv([row, dict(row)])
 
     plan = await preview(client, sheet, filename="starter-sheet.csv")
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
     [order] = (await client.get("/orders")).json()
     assert len(order["items"]) == 2
@@ -799,12 +800,12 @@ async def test_a_bad_cell_on_a_retailer_row_is_reported_once(client):
     sheet's own line, not that error plus one copy per kit unit."""
     sheet = starter_sheet_csv([kit_fields_row(status="definitely-not-a-status")])
     plan = await preview(client, sheet, filename="starter-sheet.csv")
-    assert plan["blocking_errors"], plan
+    assert details(plan["blocking_errors"]), plan
     flagged = [
         row
         for table in plan["tables"]
         for row in table["rows"]
-        if row["action"] == "error" and "not valid here" in (row["error"] or "")
+        if row["action"] == "error" and "not valid here" in (row_error(row) or "")
     ]
     assert len(flagged) == 1, flagged
     assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 409
@@ -838,7 +839,7 @@ async def test_replace_all_of_a_kit_carrying_sheet_lands_everything(client):
     sheet = starter_sheet_csv([kit_fields_row(quantity="2")])
 
     plan = await preview(client, sheet, filename="starter-sheet.csv", mode="replace_all")
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert plan["derived"]["kits_spawned"] == 0
     assert actions(plan, "kits") == ["create"] * 2
 
@@ -887,7 +888,7 @@ async def test_one_bad_row_blocks_the_whole_import(client):
         ],
     )
     plan = await preview(client, content, filename="kits.csv")
-    assert plan["blocking_errors"]
+    assert details(plan["blocking_errors"])
     assert actions(plan, "kits") == ["create", "error"]
 
     resp = await apply(client, content, filename="kits.csv")
@@ -1037,7 +1038,7 @@ async def test_unknown_currency_is_accepted_with_a_warning(client, retailer):
     plan = await preview(client, content, filename="orders.csv")
     row = plan["tables"][0]["rows"][0]
     assert row["action"] == "create"
-    assert any("isn't a currency code we recognise" in message for message in row["messages"])
+    assert any("isn't a currency code we recognise" in message for message in row_messages(row))
 
     assert (await apply(client, content, filename="orders.csv")).status_code == 200
     order = (await client.get("/orders")).json()[0]
@@ -1051,7 +1052,7 @@ async def test_known_currency_import_is_not_warned_about(client, retailer):
         [_order_row(retailer, "KWD")],
     )
     plan = await preview(client, content, filename="orders.csv")
-    assert plan["tables"][0]["rows"][0]["messages"] == []
+    assert row_messages(plan["tables"][0]["rows"][0]) == []
 
 
 # --- the preview is binding (#41) ------------------------------------------------
@@ -1489,8 +1490,8 @@ async def test_a_fractional_quantity_is_refused_and_blocks_the_import(client):
 
     plan = await preview(client, content, filename="orders.csv")
     assert actions(plan, "orders") == ["error"]
-    assert "shipping_cost_minor" in plan["tables"][0]["rows"][0]["error"]
-    assert plan["blocking_errors"]
+    assert "shipping_cost_minor" in row_error(plan["tables"][0]["rows"][0])
+    assert details(plan["blocking_errors"])
 
     resp = await apply(client, content, filename="orders.csv")
     assert resp.status_code == 409, resp.text
@@ -1528,7 +1529,7 @@ async def test_a_bad_cell_errors_an_update_row_too(client):
 
     plan = await preview(client, content, filename="tools.csv")
     assert actions(plan, "tools") == ["error"]
-    assert "quantity_on_hand" in plan["tables"][0]["rows"][0]["error"]
+    assert "quantity_on_hand" in row_error(plan["tables"][0]["rows"][0])
 
     resp = await apply(client, content, filename="tools.csv")
     assert resp.status_code == 409, resp.text
@@ -1543,7 +1544,7 @@ async def test_infinity_in_an_integer_column_is_a_row_error_not_a_500(client):
     )
     plan = await preview(client, content, filename="consumables.csv")
     assert actions(plan, "consumables") == ["error"]
-    assert "quantity_on_hand" in plan["tables"][0]["rows"][0]["error"]
+    assert "quantity_on_hand" in row_error(plan["tables"][0]["rows"][0])
     assert (await apply(client, content, filename="consumables.csv")).status_code == 409
 
 
@@ -1565,7 +1566,7 @@ async def test_an_ambiguous_comma_in_a_money_column_is_refused(client):
     )
     plan = await preview(client, content, filename="orders.csv")
     assert actions(plan, "orders") == ["error"]
-    assert "shipping_cost" in plan["tables"][0]["rows"][0]["error"]
+    assert "shipping_cost" in row_error(plan["tables"][0]["rows"][0])
     assert (await client.get("/orders")).json() == []
 
 
@@ -1618,7 +1619,7 @@ async def test_a_major_amount_that_scales_out_of_int4_is_a_row_error(client):
     )
     plan = await preview(client, content, filename="order_items.csv")
     assert actions(plan, "order_items") == ["error"]
-    assert "unit_price" in plan["tables"][0]["rows"][0]["error"]
+    assert "unit_price" in row_error(plan["tables"][0]["rows"][0])
     assert (await apply(client, content, filename="order_items.csv")).status_code == 409
 
 
@@ -1754,7 +1755,7 @@ async def test_alt_money_scaling_respects_the_int4_bound(
     )
     plan = await preview(client, content, filename=filename)
     assert actions(plan, table) == ["error"], plan["tables"][0]["rows"][0]
-    assert major_col in plan["tables"][0]["rows"][0]["error"]
+    assert major_col in row_error(plan["tables"][0]["rows"][0])
 
 
 @pytest.mark.parametrize(
@@ -1786,7 +1787,7 @@ async def test_a_lone_grouped_amount_is_settled_by_the_currency(client, code, re
 
     if refused:
         assert actions(plan, "orders") == ["error"]
-        assert "shipping_cost" in plan["tables"][0]["rows"][0]["error"]
+        assert "shipping_cost" in row_error(plan["tables"][0]["rows"][0])
     else:
         assert actions(plan, "orders") == ["create"], plan["tables"][0]["rows"][0]
         assert (await apply(client, content, filename="orders.csv")).status_code == 200
@@ -1852,9 +1853,9 @@ async def test_a_sheet_cannot_spawn_past_the_ceiling(client, quantity, refused):
     plan = await preview(client, content, filename="order_items.csv")
     if refused:
         assert actions(plan, "order_items") == ["error"]
-        error = plan["tables"][0]["rows"][0]["error"]
+        error = row_error(plan["tables"][0]["rows"][0])
         assert "quantity" in error and "at most" in error, error
-        assert plan["blocking_errors"]
+        assert details(plan["blocking_errors"])
         assert (await apply(client, content, filename="order_items.csv")).status_code == 409
     else:
         assert actions(plan, "order_items") == ["create"], plan["tables"][0]["rows"][0]
@@ -1882,7 +1883,7 @@ async def test_a_catalog_line_in_a_sheet_is_held_to_the_ceiling_too(client):
 
     plan = await preview(client, content, filename="order_items.csv")
     assert actions(plan, "order_items") == ["error"]
-    assert "quantity" in plan["tables"][0]["rows"][0]["error"]
+    assert "quantity" in row_error(plan["tables"][0]["rows"][0])
 
 
 async def test_an_update_row_is_held_to_the_ceiling_as_well(client):
@@ -1902,7 +1903,7 @@ async def test_an_update_row_is_held_to_the_ceiling_as_well(client):
     plan = await preview(client, content, filename="order_items.csv")
 
     assert actions(plan, "order_items") == ["error"]
-    assert "quantity" in plan["tables"][0]["rows"][0]["error"]
+    assert "quantity" in row_error(plan["tables"][0]["rows"][0])
     assert (await apply(client, content, filename="order_items.csv")).status_code == 409
     # The stored line is untouched, and no kits were spawned against it.
     assert (await client.get(f"/orders/{order['id']}")).json()["items"][0]["quantity"] == 1
@@ -1932,7 +1933,7 @@ async def test_an_import_cannot_spawn_past_the_aggregate_ceiling(client):
 
     plan = await preview(client, content, filename="order_items.csv")
     assert set(actions(plan, "order_items")) == {"create", "update"}, "no row is itself wrong"
-    assert any("add up to 10,001" in error for error in plan["blocking_errors"]), plan[
+    assert any("add up to 10,001" in error for error in details(plan["blocking_errors"])), plan[
         "blocking_errors"
     ]
     assert (await apply(client, content, filename="order_items.csv")).status_code == 409
@@ -1948,7 +1949,7 @@ async def test_an_import_at_the_aggregate_ceiling_plans_clean(client):
     content = make_csv(spec.ORDER_ITEMS.header, rows)
 
     plan = await preview(client, content, filename="order_items.csv")
-    assert plan["blocking_errors"] == [], plan["blocking_errors"]
+    assert details(plan["blocking_errors"]) == [], details(plan["blocking_errors"])
     assert plan["derived"]["kits_spawned"] == 10_000
 
 
@@ -2004,8 +2005,8 @@ async def test_an_intact_export_reconciles_against_its_own_manifest(client):
     archive = (await client.get("/export/archive")).content
 
     plan = await preview(client, archive)
-    assert plan["blocking_errors"] == []
-    assert [w for w in plan["warnings"] if "manifest" in w or "isn't intact" in w] == []
+    assert details(plan["blocking_errors"]) == []
+    assert [w for w in details(plan["warnings"]) if "manifest" in w or "isn't intact" in w] == []
 
 
 async def test_kit_photos_is_exported_empty_on_purpose(client):
@@ -2025,8 +2026,8 @@ async def test_a_file_the_manifest_names_but_the_zip_lacks_blocks_the_import(cli
 
     plan = await preview(client, truncated)
     assert any(
-        "orders.csv" in error and "truncated" in error for error in plan["blocking_errors"]
-    ), plan["blocking_errors"]
+        "orders.csv" in error and "truncated" in error for error in details(plan["blocking_errors"])
+    ), details(plan["blocking_errors"])
 
     resp = await apply(client, truncated)
     assert resp.status_code == 409
@@ -2043,9 +2044,10 @@ async def test_a_short_file_is_reported_against_the_manifest_count(client):
 
     plan = await preview(client, rebuild_archive(archive, edit={"kits.csv": short}))
     assert any(
-        "kits.csv" in warning and "says 2 row(s) but 1" in warning for warning in plan["warnings"]
-    ), plan["warnings"]
-    assert plan["blocking_errors"] == []
+        "kits.csv" in warning and "says 2 row(s) but 1" in warning
+        for warning in details(plan["warnings"])
+    ), details(plan["warnings"])
+    assert details(plan["blocking_errors"]) == []
 
 
 @pytest.mark.parametrize(
@@ -2069,7 +2071,7 @@ async def test_an_unreconcilable_manifest_is_read_as_far_as_it_goes(client, bloc
     archive = make_archive({"retailers": [{"id": "", "name": "Gundam Base"}]}, manifest=manifest)
 
     plan = await preview(client, archive)
-    assert plan["blocking_errors"] == []
+    assert details(plan["blocking_errors"]) == []
     assert actions(plan, "retailers") == ["create"]
 
 
@@ -2274,10 +2276,11 @@ async def test_a_member_the_manifest_never_mentions_is_reported(client):
 
     plan = await preview(client, archive)
     assert any(
-        "extra.csv" in warning and "isn't listed" in warning for warning in plan["warnings"]
-    ), plan["warnings"]
+        "extra.csv" in warning and "isn't listed" in warning
+        for warning in details(plan["warnings"])
+    ), details(plan["warnings"])
     # Reported, not blocked: the rows are there, and the preview lists them.
-    assert plan["blocking_errors"] == []
+    assert details(plan["blocking_errors"]) == []
     assert sum(len(table["rows"]) for table in plan["tables"]) == 2
 
 
@@ -2292,8 +2295,8 @@ async def test_one_basename_from_two_directories_blocks(client):
     plan = await preview(client, archive)
     assert any(
         "a/retailers.csv" in error and "b/retailers.csv" in error
-        for error in plan["blocking_errors"]
-    ), plan["blocking_errors"]
+        for error in details(plan["blocking_errors"])
+    ), details(plan["blocking_errors"])
     assert (await apply(client, archive)).status_code == 409
     assert (await client.get("/retailers")).json() == []
 
@@ -2320,8 +2323,8 @@ async def test_two_members_under_one_name_block(client, manifest):
     plan = await preview(client, buffer.getvalue())
     assert any(
         "more than one member" in error and "retailers.csv" in error
-        for error in plan["blocking_errors"]
-    ), plan["blocking_errors"]
+        for error in details(plan["blocking_errors"])
+    ), details(plan["blocking_errors"])
     assert (await apply(client, buffer.getvalue())).status_code == 409
     assert (await client.get("/retailers")).json() == []
 
@@ -2335,9 +2338,9 @@ async def test_a_declaration_filed_under_the_wrong_table_is_reported(client):
     )
 
     plan = await preview(client, archive)
-    assert any("retailers.csv" in warning and "kits" in warning for warning in plan["warnings"]), (
-        plan["warnings"]
-    )
+    assert any(
+        "retailers.csv" in warning and "kits" in warning for warning in details(plan["warnings"])
+    ), details(plan["warnings"])
     assert actions(plan, "retailers") == ["create"]  # imported as what it actually is
 
 
@@ -2350,7 +2353,9 @@ async def test_a_short_declared_file_still_warns_when_another_shares_its_basenam
     )
 
     plan = await preview(client, archive)
-    assert any("says 4 row(s) but 0" in warning for warning in plan["warnings"]), plan["warnings"]
+    assert any("says 4 row(s) but 0" in warning for warning in details(plan["warnings"])), details(
+        plan["warnings"]
+    )
 
 
 # --- a malformed archive is a diagnosis, never a 500 (external review of #75) -----
@@ -2391,14 +2396,14 @@ async def test_a_manifest_of_any_json_shape_is_read_as_far_as_it_goes(http_clien
     )
     assert resp.status_code == 200, resp.text
     plan = resp.json()
-    assert plan["blocking_errors"] == []
+    assert details(plan["blocking_errors"]) == []
     assert actions(plan, "retailers") == ["create"]
 
-    said = [w for w in plan["warnings"] if "not an object" in w]
+    said = [w for w in details(plan["warnings"]) if "not an object" in w]
     if shape is None:
         assert said == [], said  # an object, however empty, is a manifest
     else:
-        assert len(said) == 1, plan["warnings"]
+        assert len(said) == 1, details(plan["warnings"])
         assert f"manifest.json is {shape}, not an object" in said[0]
 
 
@@ -2491,8 +2496,8 @@ async def test_two_competing_manifests_block(client, order):
     plan = await preview(client, buffer.getvalue())
     assert any(
         "2 manifests" in error and "a/manifest.json" in error and "b/manifest.json" in error
-        for error in plan["blocking_errors"]
-    ), plan["blocking_errors"]
+        for error in details(plan["blocking_errors"])
+    ), details(plan["blocking_errors"])
     assert (await apply(client, buffer.getvalue())).status_code == 409
     assert (await client.get("/retailers")).json() == []
 
@@ -2579,11 +2584,11 @@ async def test_unreadable_manifest_metadata_warns_rather_than_500s(http_client, 
     )
     assert resp.status_code == 200, resp.text
     plan = resp.json()
-    assert plan["blocking_errors"] == []
+    assert details(plan["blocking_errors"]) == []
     assert actions(plan, "retailers") == ["create"]
 
-    said = [w for w in plan["warnings"] if "metadata this instance can't read" in w]
-    assert len(said) == 1, plan["warnings"]
+    said = [w for w in details(plan["warnings"]) if "metadata this instance can't read" in w]
+    assert len(said) == 1, details(plan["warnings"])
     assert field in said[0], said[0]
     # The report itself stays out of the preview panel — the field name is the part
     # a person can act on.
@@ -2603,7 +2608,7 @@ async def test_valid_metadata_is_not_warned_about(http_client):
         data={"mode": "merge"},
     )
     assert resp.status_code == 200, resp.text
-    assert [w for w in resp.json()["warnings"] if "manifest" in w] == []
+    assert [w for w in details(resp.json()["warnings"]) if "manifest" in w] == []
 
 
 async def test_bad_metadata_does_not_discard_a_good_tables_block(client):
@@ -2617,11 +2622,13 @@ async def test_bad_metadata_does_not_discard_a_good_tables_block(client):
     )
 
     plan = await preview(client, archive)
-    assert any("exported_at" in warning for warning in plan["warnings"]), plan["warnings"]
-    # The declaration was still read, and still held the archive to it.
-    assert any("kits.csv" in error and "truncated" in error for error in plan["blocking_errors"]), (
-        plan["blocking_errors"]
+    assert any("exported_at" in warning for warning in details(plan["warnings"])), details(
+        plan["warnings"]
     )
+    # The declaration was still read, and still held the archive to it.
+    assert any(
+        "kits.csv" in error and "truncated" in error for error in details(plan["blocking_errors"])
+    ), details(plan["blocking_errors"])
 
 
 # --- the starter sheet's retailer-free branch (review of #76) ---------------------
@@ -2675,7 +2682,7 @@ async def test_a_retailer_free_row_still_defaults_to_a_single_kit(client, quanti
     sheet = starter_sheet_csv([sheet_row(quantity)])
 
     plan = await preview(client, sheet, filename="starter-sheet.csv")
-    assert plan["blocking_errors"] == []
+    assert details(plan["blocking_errors"]) == []
     assert actions(plan, "kits") == ["create"]
 
 
@@ -2706,16 +2713,14 @@ async def test_the_ceiling_covers_both_starter_sheet_shapes(client, retailer, qu
 
     plan = await preview(client, sheet, filename="starter-sheet.csv")
     if accepted:
-        assert plan["blocking_errors"] == []
+        assert details(plan["blocking_errors"]) == []
         expected = int(quantity)
         spawned = len(actions(plan, "kits")) + plan["derived"]["kits_spawned"]
         assert spawned == expected, f"{spawned} kits planned, expected {expected}"
     else:
-        assert plan["blocking_errors"], plan
-        assert any("at most" in str(error) for error in plan["blocking_errors"]) or any(
-            "at most" in (row.get("error") or "")
-            for table in plan["tables"]
-            for row in table["rows"]
+        assert details(plan["blocking_errors"]), plan
+        assert any("at most" in str(error) for error in details(plan["blocking_errors"])) or any(
+            "at most" in (row_error(row) or "") for table in plan["tables"] for row in table["rows"]
         ), plan
         assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 409
         assert (await client.get("/kits")).json() == []
@@ -2762,8 +2767,8 @@ async def test_a_quantity_that_cannot_be_honoured_is_refused_in_both_shapes(
     assert resp.status_code == 200, resp.text
     plan = resp.json()
 
-    reported = plan["blocking_errors"] + [
-        row["error"] for table in plan["tables"] for row in table["rows"] if row["error"]
+    reported = details(plan["blocking_errors"]) + [
+        row_error(row) for table in plan["tables"] for row in table["rows"] if row_error(row)
     ]
     assert any("quantity" in str(said) for said in reported), plan
 
@@ -2830,7 +2835,7 @@ async def test_a_normalized_order_line_is_held_to_the_lower_bound(http_client, q
     assert resp.status_code == 200, resp.text
     plan = resp.json()
     assert actions(plan, "order_items") == ["error"], plan["tables"]
-    assert "quantity" in plan["tables"][0]["rows"][0]["error"]
+    assert "quantity" in row_error(plan["tables"][0]["rows"][0])
 
     applied = await http_client.post(
         "/import/apply",
@@ -2974,8 +2979,8 @@ async def test_received_is_resolved_across_every_row_of_one_order(client, first,
     plan = await preview(client, sheet, filename="starter-sheet.csv")
 
     if outcome in {"conflict", "error"}:
-        reported = plan["blocking_errors"] + [
-            r["error"] for t in plan["tables"] for r in t["rows"] if r["error"]
+        reported = details(plan["blocking_errors"]) + [
+            row_error(r) for t in plan["tables"] for r in t["rows"] if row_error(r)
         ]
         assert any("received" in str(said) for said in reported), plan
         if outcome == "conflict":
@@ -2984,7 +2989,7 @@ async def test_received_is_resolved_across_every_row_of_one_order(client, first,
         assert (await client.get("/orders")).json() == []
         return
 
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
 
     orders = (await client.get("/orders")).json()
@@ -3062,13 +3067,13 @@ async def test_received_cell_is_parsed_as_a_boolean(client, cell, outcome):
     plan = await preview(client, sheet, filename="starter-sheet.csv")
 
     if outcome == "error":
-        reported = plan["blocking_errors"] + [
-            r["error"] for t in plan["tables"] for r in t["rows"] if r["error"]
+        reported = details(plan["blocking_errors"]) + [
+            row_error(r) for t in plan["tables"] for r in t["rows"] if row_error(r)
         ]
         assert any("received" in str(said) for said in reported), plan
         return
 
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert (await apply(client, sheet, filename="starter-sheet.csv")).status_code == 200
     order = (await client.get("/orders")).json()[0]
     if outcome == "received":
@@ -3292,7 +3297,7 @@ async def test_a_spawn_free_import_that_edits_a_line_and_receives_its_order_succ
     archive = make_archive({"orders": [orders_row], "order_items": [line]})
 
     plan = await preview(client, archive, mode="merge")
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert actions(plan, "orders") == ["update"], plan
     assert actions(plan, "order_items") == ["update"], plan
     assert plan["derived"]["kits_spawned"] == 0
@@ -3364,7 +3369,7 @@ async def test_an_import_that_both_receives_an_order_and_adds_a_line_succeeds(cl
     archive = make_archive({"orders": [orders_row], "order_items": [line]})
 
     plan = await preview(client, archive, mode="merge")
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert actions(plan, "orders") == ["update"], plan
     assert plan["derived"]["kits_spawned"] == 1
 
@@ -3551,7 +3556,7 @@ async def test_an_import_does_not_revert_a_kit_someone_moved_on_during_it(client
     archive = make_archive({"orders": [orders_row]})
 
     plan = await preview(client, archive, mode="merge")
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     plan_hash = plan["plan_hash"]
 
     original_plan_import = importing.plan_import
@@ -3715,14 +3720,14 @@ async def test_replace_all_blocks_a_reference_the_upload_does_not_contain(
 
     plan = await preview(client, archive, mode="replace_all")
 
-    assert plan["blocking_errors"], (
+    assert details(plan["blocking_errors"]), (
         f"{referrer}.{column} named a {omit} row this upload deletes, and the preview "
         "raised nothing"
     )
     assert "error" in actions(plan, referrer), actions(plan, referrer)
     errored = [row for row in _rows_of(plan, referrer) if row["action"] == "error"]
-    assert all(column in row["error"] for row in errored), errored
-    assert all(omit in row["error"] for row in errored), errored
+    assert all(column in row_error(row) for row in errored), errored
+    assert all(omit in row_error(row) for row in errored), errored
 
     resp = await apply(client, archive, mode="replace_all", confirm="REPLACE")
     assert resp.status_code == 409, resp.text
@@ -3778,7 +3783,7 @@ async def test_replace_all_still_creates_what_a_readable_name_asks_for(
             assert row[mirror] == name, row
 
     plan = await preview(client, make_archive(tables), mode="replace_all")
-    assert not plan["blocking_errors"], plan["blocking_errors"]
+    assert not details(plan["blocking_errors"]), details(plan["blocking_errors"])
 
     resp = await apply(client, make_archive(tables), mode="replace_all", confirm="REPLACE")
     assert resp.status_code == 200, resp.text
@@ -3827,7 +3832,7 @@ async def test_merge_still_resolves_a_reference_to_a_row_it_is_keeping(client):
     before = await snapshot(client)
 
     plan = await preview(client, archive, mode="merge")
-    assert not plan["blocking_errors"], plan["blocking_errors"]
+    assert not details(plan["blocking_errors"]), details(plan["blocking_errors"])
 
     resp = await apply(client, archive, mode="merge")
     assert resp.status_code == 200, resp.text
@@ -4034,9 +4039,9 @@ async def test_two_rows_cannot_claim_one_id(http_client, mode, seed_it):
     before = [r["name"] for r in (await http_client.get("/retailers")).json()]
 
     plan = await preview(http_client, content, filename="retailers.csv", mode=mode)
-    assert plan["blocking_errors"], "two rows carrying one id previewed as clean"
+    assert details(plan["blocking_errors"]), "two rows carrying one id previewed as clean"
     assert actions(plan, "retailers")[1] == "error", actions(plan, "retailers")
-    assert "row 2" in _rows_of(plan, "retailers")[1]["error"]
+    assert "row 2" in row_error(_rows_of(plan, "retailers")[1])
 
     extra = {"confirm": "REPLACE"} if mode == "replace_all" else {}
     resp = await apply(http_client, content, filename="retailers.csv", mode=mode, **extra)
@@ -4080,12 +4085,12 @@ async def test_one_file_id_cannot_mean_two_different_rows(http_client):
     )
 
     plan = await preview(http_client, archive)
-    assert plan["blocking_errors"], (
+    assert details(plan["blocking_errors"]), (
         "two rows claiming one file id resolved to different targets and previewed "
         "as clean — the order below would have been written against the wrong shop"
     )
     assert actions(plan, "retailers") == ["unchanged", "error"], actions(plan, "retailers")
-    error = _rows_of(plan, "retailers")[1]["error"]
+    error = row_error(_rows_of(plan, "retailers")[1])
     assert "row 2" in error and claimed in error, error
 
     resp = await apply(http_client, archive)
@@ -4115,9 +4120,11 @@ async def test_two_file_ids_cannot_land_on_one_existing_row(client):
     )
 
     plan = await preview(client, content, filename="retailers.csv")
-    assert plan["blocking_errors"], "two rows both updating one retailer previewed as clean"
+    assert details(plan["blocking_errors"]), (
+        "two rows both updating one retailer previewed as clean"
+    )
     assert actions(plan, "retailers")[1] == "error", actions(plan, "retailers")
-    assert "already claims this row" in _rows_of(plan, "retailers")[1]["error"]
+    assert "already claims this row" in row_error(_rows_of(plan, "retailers")[1])
 
     assert (await apply(client, content, filename="retailers.csv")).status_code == 409
     assert [r["url"] for r in (await client.get("/retailers")).json()] == [None]
@@ -4134,9 +4141,9 @@ async def test_two_new_rows_cannot_describe_one_retailer(client):
     )
 
     plan = await preview(client, content, filename="retailers.csv")
-    assert plan["blocking_errors"], "one upload created the same retailer twice"
+    assert details(plan["blocking_errors"]), "one upload created the same retailer twice"
     assert actions(plan, "retailers") == ["create", "error"]
-    assert "name" in _rows_of(plan, "retailers")[1]["error"]
+    assert "name" in row_error(_rows_of(plan, "retailers")[1])
 
     assert (await apply(client, content, filename="retailers.csv")).status_code == 409
     assert (await client.get("/retailers")).json() == []
@@ -4160,7 +4167,7 @@ async def test_two_retailers_with_one_name_still_round_trip(client, mode):
     archive = (await client.get("/export/archive")).content
 
     plan = await preview(client, archive, mode=mode)
-    assert not plan["blocking_errors"], plan["blocking_errors"]
+    assert not details(plan["blocking_errors"]), details(plan["blocking_errors"])
 
     extra = {"confirm": "REPLACE"} if mode == "replace_all" else {}
     resp = await apply(client, archive, mode=mode, **extra)
@@ -4304,7 +4311,7 @@ async def test_a_name_only_catalog_line_creates_a_stub_rather_than_500ing(
     )
 
     plan = await preview(http_client, archive)
-    assert not plan["blocking_errors"], plan["blocking_errors"]
+    assert not details(plan["blocking_errors"]), details(plan["blocking_errors"])
     assert actions(plan, table) == ["create"]
 
     resp = await apply(http_client, archive)

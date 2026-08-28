@@ -4,8 +4,9 @@ import { Trans, useTranslation } from "react-i18next";
 import type { ImportPlan, PlannedRow, RowAction, TablePlan } from "../api/types";
 import { ROW_ACTIONS } from "../api/types";
 import i18n from "../i18n";
+import { resolveDiagnostic } from "../lib/apiError";
 import { formatDateTime } from "../lib/format";
-import { importActionLabel, importTableLabel } from "../lib/labels";
+import { importActionLabel, importTableLabel, matchedByLabel } from "../lib/labels";
 
 const ACTION_STYLES: Record<RowAction, string> = {
   create: "bg-green-100 text-green-700",
@@ -74,13 +75,17 @@ function RowDetail({ row }: { row: PlannedRow }) {
         <div className="text-zinc-800">{row.label}</div>
         {row.matched_by && (
           <div className="text-[11px] text-zinc-400">
-            {t("importPreview.matchedOn", { field: row.matched_by })}
+            {t("importPreview.matchedOn", { field: matchedByLabel(row.matched_by) })}
           </div>
         )}
-        {row.error && <div className="text-xs text-red-600">{row.error}</div>}
-        {row.messages.map((message) => (
-          <div key={message} className="text-[11px] text-amber-700">
-            {message}
+        {row.errors.map((diagnostic, index) => (
+          <div key={`${diagnostic.code}-${index}`} className="text-xs text-red-600">
+            {resolveDiagnostic(diagnostic)}
+          </div>
+        ))}
+        {row.messages.map((diagnostic, index) => (
+          <div key={`${diagnostic.code}-${index}`} className="text-[11px] text-amber-700">
+            {resolveDiagnostic(diagnostic)}
           </div>
         ))}
         {row.changes.length > 0 && (
@@ -155,8 +160,8 @@ export function ImportPreview({ plan }: { plan: ImportPlan }) {
         <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
           <p className="font-medium">{t("importPreview.blockedTitle")}</p>
           <ul className="mt-1 list-inside list-disc space-y-0.5">
-            {plan.blocking_errors.map((message) => (
-              <li key={message}>{message}</li>
+            {plan.blocking_errors.map((diagnostic, index) => (
+              <li key={`${diagnostic.code}-${index}`}>{resolveDiagnostic(diagnostic)}</li>
             ))}
           </ul>
         </div>
@@ -221,14 +226,18 @@ export function ImportPreview({ plan }: { plan: ImportPlan }) {
             {t("importPreview.kitsAdvanced", { count: plan.derived.kits_advanced })}
           </p>
         )}
-        <p className="mt-1 text-xs text-zinc-500">{plan.derived.stock_note}</p>
+        {plan.derived.stock_note && (
+          <p className="mt-1 text-xs text-zinc-500">
+            {resolveDiagnostic(plan.derived.stock_note)}
+          </p>
+        )}
       </div>
 
       {plan.warnings.length > 0 && (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
           <ul className="list-inside list-disc space-y-0.5">
-            {plan.warnings.map((message) => (
-              <li key={message}>{message}</li>
+            {plan.warnings.map((diagnostic, index) => (
+              <li key={`${diagnostic.code}-${index}`}>{resolveDiagnostic(diagnostic)}</li>
             ))}
           </ul>
         </div>

@@ -231,8 +231,9 @@ CASES = [
     (
         "inv-7. the clearing refusal offers only the catalog file",
         INV,
-        '        f"receipt was a mistake, delete the order — that reverses the stock it applied — "',
-        '        f"receipt was a mistake, ask someone — "',
+        '            f"otherwise: if the receipt was a mistake, delete the order — that reverses the "\n'
+        '            f"stock it applied — and enter it again as pending. To correct the count on its "',
+        '            f"otherwise: if the receipt was a mistake, ask someone. To correct the count on its "',
         "cannot_un_receive",
     ),
     (
@@ -332,14 +333,13 @@ CASES = [
         "inv-21. refusal writes a message but does not error the row before fan-out",
         IMP,
         "    @staticmethod\n"
-        "    def _error_rows(rows: list[_Row], message: str) -> None:\n"
+        "    def _error_rows(rows: list[_Row], diagnostic: Diagnostic) -> None:\n"
         "        for row in rows:\n"
-        "            row.action = RowAction.ERROR\n"
-        "            row.error = message",
+        "            row.refuse(diagnostic)",
         "    @staticmethod\n"
-        "    def _error_rows(rows: list[_Row], message: str) -> None:\n"
+        "    def _error_rows(rows: list[_Row], diagnostic: Diagnostic) -> None:\n"
         "        for row in rows:\n"
-        "            row.error = message",
+        "            row.errors.append(diagnostic)",
         "review_refused_move_does_not_leave_a_removal_in_the_plan",
     ),
     (
@@ -745,22 +745,26 @@ CASES = [
     (
         "n5. blank not refused",
         NAMES,
-        '    if not cleaned:\n        raise InvalidInputError("name cannot be blank")',
+        "    if not cleaned:\n"
+        '        raise InvalidInputError("name cannot be blank", code=error_codes.NAME_BLANK)',
         "    pass",
         "whitespace_only or rename_to_blank or blank_retailer",
     ),
     (
         "n6a. clean_name stops stripping",
         NAMES,
-        '        raise InvalidInputError("name cannot be blank")\n    return cleaned\n',
-        '        raise InvalidInputError("name cannot be blank")\n    return name\n',
+        '        raise InvalidInputError("name cannot be blank", code=error_codes.NAME_BLANK)\n'
+        "    return cleaned\n",
+        '        raise InvalidInputError("name cannot be blank", code=error_codes.NAME_BLANK)\n'
+        "    return name\n",
         "different-padded or Gundam_Base or creates_it_stripped or padded-input",
     ),
     (
         "n6b. require_unique_name hands back the raw name",
         NAMES,
-        "        )\n    return cleaned\n",
-        "        )\n    return name\n",
+        '                "existing_id": existing.id,\n'
+        "            },\n        )\n    return cleaned\n",
+        '                "existing_id": existing.id,\n            },\n        )\n    return name\n',
         "different-padded or Gundam_Base or creates_it_stripped",
     ),
     (
@@ -1111,7 +1115,9 @@ CASES = [
         "cat-13. filter's no-column refusal off",
         CAT,
         "            raise InvalidInputError(\n"
-        '                f"{model.__tablename__} have no category column, so they cannot be filtered by one"\n'
+        '                f"{model.__tablename__} have no category column, so they cannot be filtered by one",\n'
+        "                code=error_codes.CATALOG_ITEM_CATEGORY_UNSUPPORTED,\n"
+        '                params={"table": model.__tablename__},\n'
         "            )",
         "            pass  # neutered",
         "refuses_category_asks_that_have_no_answer",
@@ -1121,7 +1127,9 @@ CASES = [
         CAT,
         "        raise InvalidInputError(\n"
         '            f"{model.__tablename__} have no category column, so there is no "\n'
-        '            "category vocabulary to list"\n'
+        '            "category vocabulary to list",\n'
+        "            code=error_codes.CATALOG_ITEM_CATEGORY_UNSUPPORTED,\n"
+        '            params={"table": model.__tablename__},\n'
         "        )",
         "        pass  # neutered",
         "refuses_category_asks_that_have_no_answer",
@@ -1197,8 +1205,14 @@ CASES = [
         "cat-23. the fold stops announcing itself in the preview (#130 round 1, P2-3)",
         IMP,
         "                    row.messages.append(\n"
-        "                        f\"category '{value}' will be stored as '{vocab[key]}', \"\n"
-        '                        "matching the spelling already in use"\n'
+        "                        Diagnostic(\n"
+        "                            code=error_codes.IMPORT_CATEGORY_FOLDED,\n"
+        '                            params={"stated": value, "stored": vocab[key]},\n'
+        "                            detail=(\n"
+        "                                f\"category '{value}' will be stored as '{vocab[key]}', \"\n"
+        '                                "matching the spelling already in use"\n'
+        "                            ),\n"
+        "                        )\n"
         "                    )",
         "                    pass",
         "fold_is_stated_in_the_preview",
@@ -1395,7 +1409,11 @@ CASES = [
         '                label="the kits this import would create from order lines",\n'
         "            )\n"
         "        except InvalidInputError as exc:\n"
-        "            self.blocking.append(str(exc))",
+        "            # The service that owns the ceiling also owns the condition: the\n"
+        "            # diagnostic borrows the raise's own code and params\n"
+        "            # (`order.fanout_limit`), which the #25 raise-site audit already\n"
+        "            # holds to the fixture.\n"
+        "            self.blocking.append(_borrowed_diagnostic(exc))",
         "        pass",
         "import_cannot_spawn_past",
     ),
@@ -1525,9 +1543,17 @@ CASES = [
         "wdr-8. missing-application guard off",
         UPG,
         """    if application is None:
-        raise NotFoundError(f"upgrade application {application_id} not found")""",
+        raise NotFoundError(
+            f"upgrade application {application_id} not found",
+            code=error_codes.UPGRADE_APPLICATION_NOT_FOUND,
+            params={"application_id": application_id},
+        )""",
         """    if False:
-        raise NotFoundError(f"upgrade application {application_id} not found")""",
+        raise NotFoundError(
+            f"upgrade application {application_id} not found",
+            code=error_codes.UPGRADE_APPLICATION_NOT_FOUND,
+            params={"application_id": application_id},
+        )""",
         "withdraw_unknown_application_is_404",
     ),
     (
@@ -2099,14 +2125,18 @@ async def test_review_replace_all_result_does_not_depend_on_stored_line(client):
 
     def kit_errors(plan):
         table = next(table for table in plan["tables"] if table["table"] == "kits")
-        return [row["error"] for row in table["rows"]]
+        # Whole diagnostics, codes and params included — the point is the two
+        # plans agree, so compare everything the wire carries (#26).
+        return [row["errors"] for row in table["rows"]]
 
     assert kit_errors(with_stored) == kit_errors(without_stored), {
         "with_stored": kit_errors(with_stored),
         "without_stored": kit_errors(without_stored),
     }
     assert with_stored["blocking_errors"] == without_stored["blocking_errors"]
-    assert all(error and "is a tool line" in error for error in kit_errors(without_stored))
+    assert all(
+        errors and "is a tool line" in errors[0]["detail"] for errors in kit_errors(without_stored)
+    )
 
 
 async def test_review_partial_line_without_quantity_does_not_authorize_a_kit_move(client):
@@ -2586,7 +2616,7 @@ async def test_review_rating_this_upload_writes_protects_provenance(client):
     moved_row = next(r for r in kits_plan["rows"] if r["matched_id"] == moved["id"])
     observed = (
         moved_row["action"],
-        "building or complete, rated" in (moved_row["error"] or ""),
+        any("building or complete, rated" in d["detail"] for d in moved_row["errors"]),
         response.status_code,
         stored["rating"],
         stored["order_item_id"],

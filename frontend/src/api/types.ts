@@ -385,16 +385,30 @@ export interface FieldChange {
   after: string;
 }
 
+/** One import-preview finding on the #25 envelope shape (#26): a stable
+ * `<domain>.<condition>` code, the structured params a translation may
+ * interpolate, and the English fallback `detail`. Rendered through
+ * `resolveDiagnostic` — catalogue for a known code, `detail` otherwise. */
+export interface Diagnostic {
+  code: string;
+  params: Record<string, unknown>;
+  detail: string;
+}
+
 export interface PlannedRow {
   row_number: number;
   action: RowAction;
   label: string;
   /** uuid of the matched row; the number 1 for the instance_settings singleton. */
   matched_id: string | number | null;
+  /** Canonical matching identifier ("id", "name", "retailer_order_number", ...)
+   * — mapped to a display phrase by `matchedByLabel`, never translated on the
+   * wire. */
   matched_by: string | null;
   changes: FieldChange[];
-  messages: string[];
-  error: string | null;
+  messages: Diagnostic[];
+  /** Each problem stands alone; non-empty implies action === "error". */
+  errors: Diagnostic[];
 }
 
 export interface TablePlan {
@@ -410,7 +424,7 @@ export interface DerivedEffects {
   /** Pre-existing kits moved by an order this upload ships/receives (#119). */
   kits_advanced: number;
   stock_changes: number;
-  stock_note: string;
+  stock_note: Diagnostic | null;
   rows_deleted: Record<string, number>;
 }
 
@@ -429,8 +443,8 @@ export interface ImportPlan {
   manifest: ManifestInfo | null;
   tables: TablePlan[];
   derived: DerivedEffects;
-  warnings: string[];
-  blocking_errors: string[];
+  warnings: Diagnostic[];
+  blocking_errors: Diagnostic[];
 }
 
 export interface ImportResult {
@@ -443,7 +457,7 @@ export interface ImportResult {
   kits_removed: number;
   kits_advanced: number;
   rows_deleted: Record<string, number>;
-  warnings: string[];
+  warnings: Diagnostic[];
 }
 
 /** Instance-level settings the UI needs before it can render a form. */

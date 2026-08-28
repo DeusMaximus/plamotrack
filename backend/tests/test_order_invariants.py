@@ -25,6 +25,7 @@ from sqlalchemy import text as sa_text
 
 from app.db import session_scope
 from app.services.portability import exporting, spec
+from tests.diag import details, row_error, row_messages
 from tests.test_portability import actions, apply, preview, read_archive
 
 pytestmark = pytest.mark.anyio
@@ -308,11 +309,11 @@ async def test_a_merge_import_answers_the_same_invariant_matrix(client, case):
 
     if case["refused"]:
         assert actions(plan, "order_items") == ["error"], f"{case['id']}: {plan['tables']}"
-        assert plan["blocking_errors"], case["id"]
+        assert details(plan["blocking_errors"]), case["id"]
         assert resp.status_code == 409, f"{case['id']}: {resp.text}"
         assert await kit_states(client) == before, case["id"]
     else:
-        assert plan["blocking_errors"] == [], f"{case['id']}: {plan}"
+        assert details(plan["blocking_errors"]) == [], f"{case['id']}: {plan}"
         assert resp.status_code == 200, f"{case['id']}: {resp.text}"
         assert len(await kit_states(client)) == case["kits_after"] + 1, case["id"]
 
@@ -333,11 +334,11 @@ async def test_the_refusal_names_the_column_it_is_about(client):
     moved = await preview(
         client, archive(order_items=[line_row(order, item, order_id=other["id"])])
     )
-    assert typed["tables"][0]["rows"][0]["error"].startswith("item_type:")
-    assert moved["tables"][0]["rows"][0]["error"].startswith("order_id:")
+    assert row_error(typed["tables"][0]["rows"][0]).startswith("item_type:")
+    assert row_error(moved["tables"][0]["rows"][0]).startswith("order_id:")
     # And the fix, not merely the refusal.
-    assert "Remove the line and add a new one" in typed["tables"][0]["rows"][0]["error"]
-    assert "add a new line to the other order" in moved["tables"][0]["rows"][0]["error"]
+    assert "Remove the line and add a new one" in row_error(typed["tables"][0]["rows"][0])
+    assert "add a new line to the other order" in row_error(moved["tables"][0]["rows"][0])
 
 
 async def test_restating_item_type_and_order_id_unchanged_is_not_a_change(client):
@@ -350,7 +351,7 @@ async def test_restating_item_type_and_order_id_unchanged_is_not_a_change(client
 
     plan = await preview(client, archive(order_items=[line_row(order, item)]))
     assert actions(plan, "order_items") == ["unchanged"], plan["tables"]
-    assert plan["blocking_errors"] == []
+    assert details(plan["blocking_errors"]) == []
 
 
 async def test_kit_details_propagate_through_rest_and_not_through_a_sheet(client):
@@ -395,7 +396,7 @@ async def test_a_reduced_line_removes_the_newest_kit_and_says_so_first(client):
     content = archive(order_items=[line_row(order, item, quantity="1")])
     plan = await preview(client, content)
     assert plan["derived"]["kits_removed"] == 2, plan["derived"]
-    assert "will remove 2 kit(s) from this line" in plan["tables"][0]["rows"][0]["messages"]
+    assert "will remove 2 kit(s) from this line" in row_messages(plan["tables"][0]["rows"][0])
 
     resp = await apply(client, content)
     assert resp.status_code == 200, resp.text
@@ -423,7 +424,7 @@ async def test_a_reduced_line_will_not_remove_a_kit_the_same_upload_describes(cl
     )
     plan = await preview(client, content)
     assert actions(plan, "order_items") == ["error"], plan["tables"]
-    assert "described by this upload" in plan["tables"][0]["rows"][0]["error"]
+    assert "described by this upload" in row_error(plan["tables"][0]["rows"][0])
 
     resp = await apply(client, content)
     assert resp.status_code == 409
@@ -452,9 +453,9 @@ async def test_a_line_cannot_be_over_supplied_by_the_uploads_own_kits(client):
     assert actions(plan, "order_items") == ["unchanged"], plan["tables"]
     assert actions(plan, "kits") == ["error", "error"], plan["tables"]
     kits_plan = next(t for t in plan["tables"] if t["table"] == "kits")
-    assert "leaves that quantity as it is" in kits_plan["rows"][0]["error"]
-    assert "holding 3 kit(s) while the line says it bought 1" in kits_plan["rows"][0]["error"]
-    assert plan["blocking_errors"]
+    assert "leaves that quantity as it is" in row_error(kits_plan["rows"][0])
+    assert "holding 3 kit(s) while the line says it bought 1" in row_error(kits_plan["rows"][0])
+    assert details(plan["blocking_errors"])
     assert (await apply(client, content)).status_code == 409
     assert len(await kit_states(client)) == 1
 
@@ -584,7 +585,7 @@ async def test_the_fan_out_counts_the_kits_the_line_will_hold_not_the_ones_it_ho
         ],
     )
     plan = await preview(client, content)
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert plan["derived"]["kits_spawned"] == expect_spawned, plan["derived"]
     assert plan["derived"]["kits_removed"] == expect_removed, plan["derived"]
 
@@ -626,7 +627,7 @@ async def test_one_mistyped_order_item_id_in_a_full_archive_cannot_spawn_a_dupli
     plan = await preview(client, content)
     assert actions(plan, "kits") == ["error"], plan["tables"]
     kits_plan = next(t for t in plan["tables"] if t["table"] == "kits")
-    assert "can't be what clears that link" in kits_plan["rows"][0]["error"]
+    assert "can't be what clears that link" in row_error(kits_plan["rows"][0])
     assert plan["derived"]["kits_spawned"] == 0, plan["derived"]
     assert plan["derived"]["kits_removed"] == 0, plan["derived"]
     assert (await apply(client, content)).status_code == 409
@@ -687,7 +688,7 @@ async def test_a_line_whose_quantity_this_upload_leaves_alone_authorises_no_reco
     assert actions(plan, "order_items") == [expected_line], plan["tables"]
     assert actions(plan, "kits") == ["error"], plan["tables"]
     kits_plan = next(t for t in plan["tables"] if t["table"] == "kits")
-    error = kits_plan["rows"][0]["error"]
+    error = row_error(kits_plan["rows"][0])
     holding = 2 if direction == "attach" else 0
     assert f"holding {holding} kit(s) while the line says it bought 1" in error, error
     assert "leaves that quantity as it is" in error, error
@@ -739,7 +740,7 @@ async def test_re_importing_an_archive_of_a_drifted_line_is_a_no_op(client, drif
     export = (await client.get("/export/archive")).content
 
     plan = await preview(client, export)
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert plan["derived"]["kits_spawned"] == 0, plan["derived"]
     assert plan["derived"]["kits_removed"] == 0, plan["derived"]
     resp = await apply(client, export)
@@ -751,7 +752,7 @@ async def test_re_importing_an_archive_of_a_drifted_line_is_a_no_op(client, drif
         restore = await preview(client, export, mode="replace_all")
         assert actions(restore, "order_items") == ["error"], restore["tables"]
         error = next(t for t in restore["tables"] if t["table"] == "order_items")["rows"][0]
-        assert "this upload supplies 3 kit(s)" in error["error"], error
+        assert "this upload supplies 3 kit(s)" in row_error(error), error
 
 
 @pytest.mark.parametrize(
@@ -801,7 +802,7 @@ async def test_a_kits_sheet_that_never_mentions_order_item_id_moves_nothing(
         ],
     )
     plan = await preview(client, content)
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert plan["derived"]["kits_spawned"] == expect_spawned, plan["derived"]
     assert plan["derived"]["kits_removed"] == 0, plan["derived"]
 
@@ -878,9 +879,9 @@ async def test_a_kit_line_update_omitting_item_type_does_not_write_a_catalog_ref
         [{"id": item["id"], "order_id": order["id"], "catalog_ref_id": DEAD_REF}],
     )
     plan = await preview(client, content, filename="order_items.csv")
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     [row] = plan["tables"][0]["rows"]
-    assert any("doesn't reference the catalog" in message for message in row["messages"]), row
+    assert any("doesn't reference the catalog" in message for message in row_messages(row)), row
 
     resp = await apply(client, content, filename="order_items.csv")
     assert resp.status_code == 200, resp.text
@@ -906,10 +907,10 @@ async def test_a_catalog_line_update_omitting_item_type_still_refuses_a_dead_ref
         [{"id": item["id"], "order_id": order["id"], "catalog_ref_id": DEAD_REF}],
     )
     plan = await preview(client, content, filename="order_items.csv")
-    assert plan["blocking_errors"], plan
+    assert details(plan["blocking_errors"]), plan
     [row] = plan["tables"][0]["rows"]
     assert row["action"] == "error"
-    assert row["error"].startswith("catalog_ref_id:"), row["error"]
+    assert row_error(row).startswith("catalog_ref_id:"), row_error(row)
 
     resp = await apply(client, content, filename="order_items.csv")
     assert resp.status_code == 409, resp.text
@@ -933,7 +934,7 @@ async def test_a_catalog_line_update_omitting_item_type_repoints_at_a_local_id(c
         [{"id": item["id"], "order_id": order["id"], "catalog_ref_id": topcoat["id"]}],
     )
     plan = await preview(client, content, filename="order_items.csv")
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
 
     resp = await apply(client, content, filename="order_items.csv")
     assert resp.status_code == 200, resp.text
@@ -956,7 +957,7 @@ async def test_a_catalog_line_update_omitting_item_type_resolves_the_readable_mi
         [{"id": item["id"], "order_id": order["id"], "catalog_name": "Top coat"}],
     )
     plan = await preview(client, content, filename="order_items.csv")
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
 
     resp = await apply(client, content, filename="order_items.csv")
     assert resp.status_code == 200, resp.text
@@ -986,7 +987,7 @@ async def test_a_catalog_line_update_omitting_item_type_follows_the_uploads_rema
         order_items=[{"id": item["id"], "order_id": order["id"], "catalog_ref_id": foreign}],
     )
     plan = await preview(client, content)
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
 
     resp = await apply(client, content)
     assert resp.status_code == 200, resp.text
@@ -1022,7 +1023,7 @@ async def test_replace_all_does_not_type_the_line_from_the_doomed_database(clien
     plan = await preview(client, content, mode="replace_all")
     line_rows = next(entry["rows"] for entry in plan["tables"] if entry["table"] == "order_items")
     assert line_rows[0]["action"] == "error"
-    assert line_rows[0]["error"].startswith("item_type:"), line_rows[0]["error"]
+    assert row_error(line_rows[0]).startswith("item_type:"), row_error(line_rows[0])
     assert actions(plan, "consumables") == [], "no stub conjured from the mirror"
 
 
@@ -1112,7 +1113,7 @@ async def test_a_kit_move_the_upload_cannot_reconcile_is_refused(client, mode, s
     kwargs = {"mode": mode} if shape == "oversupply" else {"mode": mode, "filename": "kits.csv"}
     plan = await preview(client, content, **kwargs)
     assert actions(plan, "kits") == ["error"], plan["tables"]
-    error = next(r for r in plan["tables"][-1]["rows"] if r["error"])["error"]
+    error = row_error(next(r for r in plan["tables"][-1]["rows"] if row_error(r)))
     assert error.startswith("order_item_id:")
     assert "add an order_items.csv row" in error, "the refusal has to name the fix"
 
@@ -1175,7 +1176,7 @@ async def test_a_line_row_carrying_no_quantity_authorises_no_reconciliation(
     assert actions(plan, "kits") == ["error"], plan["tables"]
     # The stored quantity is what the line still says, so the refusal reports both
     # numbers rather than pleading ignorance — the sheet's silence doesn't erase it.
-    error = plan["tables"][-1]["rows"][0]["error"]
+    error = row_error(plan["tables"][-1]["rows"][0])
     assert "while the line says it bought 1" in error, error
     assert (await apply(client, content)).status_code == 409
 
@@ -1225,7 +1226,7 @@ async def test_a_kit_moved_onto_a_new_line_that_states_no_quantity_is_refused(cl
     # reconciliation`, where the line is an update and the stored quantity applies.
     lines_plan = next(t for t in plan["tables"] if t["table"] == "order_items")
     assert [r["action"] for r in lines_plan["rows"]] == ["error"], plan["tables"]
-    assert lines_plan["rows"][0]["error"].startswith("quantity:")
+    assert row_error(lines_plan["rows"][0]).startswith("quantity:")
     assert (await apply(client, content)).status_code == 409
     assert (await client.get(f"/kits/{loose['id']}")).json()["order_item_id"] is None
 
@@ -1318,7 +1319,9 @@ async def test_a_replace_all_plan_does_not_depend_on_rows_it_will_truncate(
     # The whole row diagnosis, not just the action: a stored row can change *which*
     # error is reported while leaving the count of them the same.
     def kit_errors(plan):
-        return [r["error"] for r in next(t for t in plan["tables"] if t["table"] == "kits")["rows"]]
+        return [
+            row_error(r) for r in next(t for t in plan["tables"] if t["table"] == "kits")["rows"]
+        ]
 
     assert kit_errors(with_stored) == kit_errors(without_stored), (
         "the plan changed with rows this mode is about to truncate"
@@ -1359,7 +1362,7 @@ async def test_a_kit_cannot_take_its_provenance_from_a_catalog_line(client):
     )
     plan = await preview(client, content, filename="kits.csv")
     assert actions(plan, "kits") == ["error", "error"], plan["tables"]
-    error = plan["tables"][0]["rows"][0]["error"]
+    error = row_error(plan["tables"][0]["rows"][0])
     assert "is a consumable line" in error
     assert "Point these kits at a kit line" in error, "the refusal has to name the fix"
 
@@ -1405,7 +1408,7 @@ async def test_a_refused_move_contributes_no_planned_removal(client):
         ],
     )
     plan = await preview(client, content)
-    assert plan["blocking_errors"], "the source line would be left empty"
+    assert details(plan["blocking_errors"]), "the source line would be left empty"
     assert plan["derived"]["kits_removed"] == 0, "a refused move deletes nothing"
 
     assert (await apply(client, content)).status_code == 409
@@ -1437,7 +1440,7 @@ async def test_a_move_onto_a_reconciled_line_may_still_leave_a_shortfall_to_spaw
         kits=[{"id": loose["id"], "name": "Gouf", "grade": "HG", "order_item_id": item["id"]}],
     )
     plan = await preview(client, content)
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert plan["derived"]["kits_spawned"] == 1, plan["derived"]
     assert plan["derived"]["kits_removed"] == 0, plan["derived"]
 
@@ -1510,8 +1513,8 @@ async def test_a_count_preserving_swap_cannot_strip_protected_provenance(
         ],
     )
     plan = await preview(client, content, filename="kits.csv")
-    assert plan["blocking_errors"], plan["tables"]
-    assert plan["tables"][0]["rows"][0]["error"].startswith("order_item_id:")
+    assert details(plan["blocking_errors"]), plan["tables"]
+    assert row_error(plan["tables"][0]["rows"][0]).startswith("order_item_id:")
     assert (await apply(client, content, filename="kits.csv")).status_code == 409
 
     stored = (await client.get(f"/kits/{kit['id']}")).json()
@@ -1568,7 +1571,7 @@ async def test_a_protected_kit_cannot_be_moved_even_when_both_counts_work_out(cl
     kits_plan = next(t for t in plan["tables"] if t["table"] == "kits")
     moved_row = next(r for r in kits_plan["rows"] if r["matched_id"] == kit["id"])
     assert moved_row["action"] == "error", plan["tables"]
-    assert "building or complete" in moved_row["error"], moved_row["error"]
+    assert "building or complete" in row_error(moved_row), row_error(moved_row)
     assert (await apply(client, content)).status_code == 409
 
     assert (await client.get(f"/kits/{kit['id']}")).json()["order_item_id"] == src_line["id"]
@@ -1604,7 +1607,7 @@ async def test_an_unprotected_kit_can_still_be_swapped(client):
         ],
     )
     plan = await preview(client, content, filename="kits.csv")
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert (await apply(client, content, filename="kits.csv")).status_code == 200
 
     stored = (await client.get(f"/kits/{kit['id']}")).json()
@@ -1650,7 +1653,7 @@ async def test_a_child_this_upload_creates_protects_its_kit_from_removal(client,
 
     content = archive(**tables)
     plan = await preview(client, content)
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert plan["derived"]["kits_removed"] == 1, plan["derived"]
     assert (await apply(client, content)).status_code == 200
 
@@ -1726,7 +1729,7 @@ async def test_a_child_this_upload_moves_protects_the_kit_it_arrives_on(client, 
         **{table: [{**child, "kit_id": newest}]},
     )
     plan = await preview(client, content)
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert actions(plan, table) == ["update"], plan["tables"]
     assert plan["derived"]["kits_removed"] == 1, plan["derived"]
     assert (await apply(client, content)).status_code == 200
@@ -1763,7 +1766,7 @@ async def test_a_child_this_upload_moves_also_protects_that_kits_provenance(clie
         ],
     )
     plan = await preview(client, content)
-    assert plan["blocking_errors"], plan["tables"]
+    assert details(plan["blocking_errors"]), plan["tables"]
     assert (await apply(client, content)).status_code == 409
     assert (await client.get(f"/kits/{kit}")).json()["order_item_id"] == item["id"]
 
@@ -1817,7 +1820,7 @@ async def test_a_line_this_upload_creates_cannot_be_over_supplied_either(client,
     plan = await preview(client, content, mode=mode)
     assert actions(plan, "order_items") == ["error"], plan["tables"]
     lines_plan = next(t for t in plan["tables"] if t["table"] == "order_items")
-    error = next(r for r in lines_plan["rows"] if r["error"])["error"]
+    error = row_error(next(r for r in lines_plan["rows"] if row_error(r)))
     assert "this upload supplies 2 kit(s)" in error, error
 
     extra = {"confirm": "REPLACE"} if mode == "replace_all" else {}
@@ -1842,7 +1845,7 @@ async def test_a_reduction_is_refused_when_every_candidate_gains_a_child(client)
     )
     plan = await preview(client, content)
     assert actions(plan, "order_items") == ["error"], plan["tables"]
-    assert "can be removed safely" in plan["tables"][0]["rows"][0]["error"]
+    assert "can be removed safely" in row_error(plan["tables"][0]["rows"][0])
     assert (await apply(client, content)).status_code == 409
     assert len((await client.get("/kits")).json()) == 2
 
@@ -1861,7 +1864,7 @@ async def test_a_kit_move_the_upload_does_reconcile_is_still_allowed(client):
         kits=[{"name": "Extra", "grade": "HG", "order_item_id": item["id"]}],
     )
     plan = await preview(client, content)
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert (await apply(client, content)).status_code == 200
 
     stored = (await client.get(f"/orders/{order['id']}")).json()["items"][0]
@@ -1914,7 +1917,7 @@ async def test_a_replace_all_import_reconciles_nothing_downward(client):
     )
     plan = await preview(client, content, mode="replace_all")
     assert plan["derived"]["kits_removed"] == 0, plan["derived"]
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
 
     resp = await apply(client, content, mode="replace_all", confirm="REPLACE")
     assert resp.status_code == 200, resp.text
@@ -2005,7 +2008,7 @@ async def test_an_import_cannot_receive_an_order_that_would_have_moved_stock(cli
 
     plan = await preview(client, content)
     assert actions(plan, "orders") == ["error"], plan["tables"]
-    error = plan["tables"][0]["rows"][0]["error"]
+    error = row_error(plan["tables"][0]["rows"][0])
     assert error.startswith("received_at:")
     # The refusal has to name a fix that works. It once offered "state the on-hand
     # quantity in consumables.csv" as one, and that is not a fix for *this*
@@ -2065,7 +2068,7 @@ async def test_an_import_cannot_un_receive_an_order_whose_stock_was_applied(clie
 
     plan = await preview(client, content)
     assert actions(plan, "orders") == ["error"], plan["tables"]
-    error = plan["tables"][0]["rows"][0]["error"]
+    error = row_error(plan["tables"][0]["rows"][0])
     assert "add it a second time" in error
     # The remedy has to be one that exists. There is no un-receive anywhere —
     # `OrderUpdate` has no `received_at` — so this refusal removes the only route
@@ -2094,7 +2097,7 @@ async def test_a_correction_between_two_timestamps_is_not_a_transition(client, c
     )
     plan = await preview(client, content)
     assert actions(plan, "orders") == ["update"], plan["tables"]
-    assert plan["blocking_errors"] == []
+    assert details(plan["blocking_errors"]) == []
     assert (await apply(client, content)).status_code == 200
 
     stored = (await client.get(f"/orders/{order['id']}")).json()
@@ -2115,7 +2118,7 @@ async def test_a_kit_only_order_still_moves_in_both_directions(client, kit_order
 
     content = archive(orders=[order_row(order, kit_order["retailer"], received_at=received_at)])
     plan = await preview(client, content)
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert actions(plan, "orders") == ["update"], plan["tables"]
 
     resp = await apply(client, content)
@@ -2169,7 +2172,7 @@ async def test_a_received_order_with_catalog_lines_still_restores_from_an_archiv
     exported = (await client.get("/export/archive")).content
     for mode, extra in (("replace_all", {"confirm": "REPLACE"}), ("merge", {})):
         plan = await preview(client, exported, mode=mode)
-        assert plan["blocking_errors"] == [], f"{mode}: {plan}"
+        assert details(plan["blocking_errors"]) == [], f"{mode}: {plan}"
         resp = await apply(client, exported, mode=mode, **extra)
         assert resp.status_code == 200, f"{mode}: {resp.text}"
         assert await stock_of(client, consumable["id"]) == 3, mode
@@ -2234,7 +2237,7 @@ async def test_a_catalog_line_cannot_join_a_received_order_by_import(
     content = archive(order_items=[joining_line(order["id"], target["id"], item_type)])
     plan = await preview(client, content)
     assert actions(plan, "order_items") == ["error"], plan["tables"]
-    error = plan["tables"][0]["rows"][0]["error"]
+    error = row_error(plan["tables"][0]["rows"][0])
     assert error.startswith("order_id:") and "already received" in error
     assert "in the app" in error and "replace_all" in error
     assert (await apply(client, content)).status_code == 409
@@ -2342,7 +2345,7 @@ async def test_a_created_received_order_with_a_catalog_line_still_imports(client
         order_items=[joining_line(order_id, consumable["id"])],
     )
     plan = await preview(client, content)
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert (await apply(client, content)).status_code == 200
     assert await stock_of(client, consumable["id"]) == 0, "restored, not applied (rule 10)"
 
@@ -2558,7 +2561,7 @@ async def test_an_import_cannot_receive_an_order_in_the_future(client, kit_order
     content = archive(orders=[order_row(order, kit_order["retailer"], received_at=FUTURE)])
     plan = await preview(client, content)
     assert actions(plan, "orders") == ["error"], plan["tables"]
-    error = plan["tables"][0]["rows"][0]["error"]
+    error = row_error(plan["tables"][0]["rows"][0])
     assert error.startswith("received_at:")
     assert "future" in error
     assert (await apply(client, content)).status_code == 409
@@ -2580,7 +2583,7 @@ async def test_an_import_cannot_correct_a_receipt_into_the_future(client, kit_or
     content = archive(orders=[order_row(stored, kit_order["retailer"], received_at=FUTURE)])
     plan = await preview(client, content)
     assert actions(plan, "orders") == ["error"], plan["tables"]
-    assert "future" in plan["tables"][0]["rows"][0]["error"]
+    assert "future" in row_error(plan["tables"][0]["rows"][0])
     assert (await apply(client, content)).status_code == 409
     assert instant((await client.get(f"/orders/{order['id']}")).json()["received_at"]) == instant(
         RECEIPT
@@ -2603,7 +2606,7 @@ async def test_a_stored_future_receipt_restated_is_still_a_no_op(client, kit_ord
     stored = (await client.get(f"/orders/{order['id']}")).json()
     content = archive(orders=[order_row(stored, kit_order["retailer"])])
     plan = await preview(client, content)
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert (await apply(client, content)).status_code == 200
     assert instant((await client.get(f"/orders/{order['id']}")).json()["received_at"]) == instant(
         FUTURE
@@ -2755,14 +2758,14 @@ async def test_a_catalog_line_must_resolve_for_its_own_item_type(
     resp = await apply(client, content)
 
     if accepted:
-        assert plan["blocking_errors"] == [], plan
+        assert details(plan["blocking_errors"]) == [], plan
         assert resp.status_code == 200, resp.text
         lines = (await client.get(f"/orders/{order['id']}")).json()["items"]
         added = next(line for line in lines if line["item_type"] == "consumable")
         assert added["catalog_ref_id"] is not None
     else:
         assert actions(plan, "order_items") == ["error"], plan["tables"]
-        assert "catalog_ref_id:" in plan["tables"][0]["rows"][0]["error"]
+        assert "catalog_ref_id:" in row_error(plan["tables"][0]["rows"][0])
         assert resp.status_code == 409
         assert len((await client.get(f"/orders/{order['id']}")).json()["items"]) == 1
 
@@ -2792,7 +2795,7 @@ async def test_an_update_that_says_nothing_about_the_reference_keeps_it(client):
         ],
     )
     plan = await preview(client, content, filename="order_items.csv")
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     resp = await apply(client, content, filename="order_items.csv")
     assert resp.status_code == 200, resp.text
 
@@ -2817,7 +2820,7 @@ async def test_a_mistyped_reference_on_a_stored_catalog_line_keeps_the_stored_on
     content = archive(order_items=[line_row(order, line, catalog_ref_id=dead)])
     plan = await preview(client, content)
     assert actions(plan, "order_items") == ["error"], plan["tables"]
-    error = plan["tables"][0]["rows"][0]["error"]
+    error = row_error(plan["tables"][0]["rows"][0])
     assert error.startswith("catalog_ref_id:"), error
     assert dead in error and consumable["id"] in error, error
     assert "leave the column out" in error, error
@@ -2854,7 +2857,7 @@ async def test_a_kit_line_carrying_a_stray_catalog_reference_is_still_fine(clien
 
     content = archive(order_items=[line_row(order, item, catalog_ref_id=consumable["id"])])
     plan = await preview(client, content)
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert (await apply(client, content)).status_code == 200
     assert (await client.get(f"/orders/{order['id']}")).json()["items"][0]["catalog_ref_id"] is None
 
@@ -2942,7 +2945,7 @@ async def test_a_deferred_stamp_and_a_kept_blank_do_not_both_claim_the_column(cl
     """
     content = kit_sheet(spawned_kit["id"], "building", with_stamp_column=True)
     plan = await preview(client, content, filename="kits.csv")
-    messages = plan["tables"][0]["rows"][0]["messages"]
+    messages = row_messages(plan["tables"][0]["rows"][0])
 
     assert any("will be set to the time of this import" in m for m in messages), messages
     assert not any("left as it was" in m for m in messages), (
@@ -2968,7 +2971,7 @@ async def test_a_blank_stamp_with_no_status_change_is_kept_not_generated(client,
     """
     content = kit_sheet(spawned_kit["id"], "ordered", with_stamp_column=True)
     plan = await preview(client, content, filename="kits.csv")
-    messages = plan["tables"][0]["rows"][0]["messages"]
+    messages = row_messages(plan["tables"][0]["rows"][0])
 
     assert any("left as it was" in m for m in messages), messages
     assert not any("will be set to the time of this import" in m for m in messages), messages
@@ -3000,7 +3003,7 @@ async def test_a_generated_status_stamp_does_not_move_the_plan_hash(
     first = await preview(client, content, filename="kits.csv")
     second = await preview(client, content, filename="kits.csv")
     assert first["plan_hash"] == second["plan_hash"], "a generated timestamp moved the hash"
-    assert "status_updated_at" in " ".join(first["tables"][0]["rows"][0]["messages"])
+    assert "status_updated_at" in " ".join(row_messages(first["tables"][0]["rows"][0]))
 
     resp = await apply(client, content, filename="kits.csv", plan_hash=first["plan_hash"])
     assert resp.status_code == 200, resp.text

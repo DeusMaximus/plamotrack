@@ -1,9 +1,15 @@
-"""Stable semantic error codes for the REST envelope (#25).
+"""Stable semantic error codes for the REST envelope (#25) and the
+import-preview diagnostics (#26).
 
-The contract: every `DomainError` raise names one of these. A code is
-`<domain>.<condition>`, both segments snake_case — it describes the condition,
-not the raise site or the Python class, so three "insufficient stock" raises
-share one code. Codes are wire contract: renaming one is a breaking API change.
+The contract: every code below reaches the wire one of two ways — a
+`DomainError` raise (the failed-response envelope) or a `Diagnostic`
+construction (`schemas/portability.py`, inside a successful preview payload).
+A code is `<domain>.<condition>`, both segments snake_case — it describes the
+condition, not the emission site or the Python class, so three "insufficient
+stock" raises share one code, and an invariant the importer mirrors from a live
+writer reuses that writer's code (`order.receipt_in_future` is the same
+condition whether it 422s an edit or errors a CSV row). Codes are wire
+contract: renaming one is a breaking API change.
 
 The browser renders known codes through the i18n catalogue (`api.<domain>.
 <condition>` — always exactly that depth, so keep codes to two segments) and
@@ -77,6 +83,85 @@ IMPORT_TOO_MANY_ROWS = "import.too_many_rows"
 IMPORT_CONFIRM_REQUIRED = "import.confirm_required"
 IMPORT_PREVIEW_REQUIRED = "import.preview_required"
 IMPORT_CELL_INVALID = "import.cell_invalid"
+
+# --- import-preview diagnostics (#26) ---------------------------------------
+# Emitted as `Diagnostic` objects inside the 200 preview payload rather than
+# raised, except where noted. Row errors, row messages, plan warnings, blocking
+# errors and the stock note all draw from here; codes the importer shares with
+# a live writer (quantity bounds, future dates, un-ship) are listed above and
+# not repeated.
+
+# archive/upload stage — how the zip and its manifest read
+IMPORT_MEMBER_DUPLICATED = "import.member_duplicated"
+IMPORT_MANIFEST_AMBIGUOUS = "import.manifest_ambiguous"
+IMPORT_MANIFEST_UNREADABLE = "import.manifest_unreadable"
+IMPORT_MANIFEST_METADATA_UNREADABLE = "import.manifest_metadata_unreadable"
+IMPORT_MANIFEST_NOT_OBJECT = "import.manifest_not_object"
+IMPORT_MANIFEST_MISSING = "import.manifest_missing"
+IMPORT_MEMBER_UNRECOGNISED = "import.member_unrecognised"
+IMPORT_NO_TABLE_DATA = "import.no_table_data"
+IMPORT_MANIFEST_FILE_ABSENT = "import.manifest_file_absent"
+IMPORT_MANIFEST_FILE_AMBIGUOUS = "import.manifest_file_ambiguous"
+IMPORT_MANIFEST_TABLE_MISMATCH = "import.manifest_table_mismatch"
+IMPORT_MANIFEST_ROWS_MISMATCH = "import.manifest_rows_mismatch"
+IMPORT_MEMBER_UNDECLARED = "import.member_undeclared"
+IMPORT_FORMAT_FOREIGN = "import.format_foreign"
+IMPORT_SCHEMA_DRIFT = "import.schema_drift"
+
+# row parsing and identity
+IMPORT_COLUMN_UNKNOWN = "import.column_unknown"
+IMPORT_CELL_REQUIRED = "import.cell_required"
+IMPORT_MATCH_AMBIGUOUS = "import.match_ambiguous"
+IMPORT_ID_DUPLICATED = "import.id_duplicated"
+IMPORT_TARGET_DUPLICATED = "import.target_duplicated"
+IMPORT_NATURAL_KEY_DUPLICATED = "import.natural_key_duplicated"
+IMPORT_VALUE_REQUIRED_FOR_CREATE = "import.value_required_for_create"
+IMPORT_SINGLETON_MISSING = "import.singleton_missing"
+
+# references
+IMPORT_REF_OVERWRITE_UNRESOLVED = "import.ref_overwrite_unresolved"
+IMPORT_REF_NOT_IN_UPLOAD = "import.ref_not_in_upload"
+IMPORT_REF_UNMATCHED = "import.ref_unmatched"
+IMPORT_REF_DANGLING = "import.ref_dangling"
+IMPORT_REF_IGNORED_KIT_LINE = "import.ref_ignored_kit_line"
+IMPORT_STUB_CREATED = "import.stub_created"
+IMPORT_STUB_CREATED_UNSTOCKED = "import.stub_created_unstocked"
+
+# cell semantics
+IMPORT_KEPT_STORED = "import.kept_stored"
+IMPORT_STATUS_STAMP_GENERATED = "import.status_stamp_generated"
+IMPORT_CURRENCY_UNKNOWN = "import.currency_unknown"
+IMPORT_CURRENCY_WITHOUT_AMOUNT = "import.currency_without_amount"
+IMPORT_MONEY_AMBIGUOUS = "import.money_ambiguous"
+IMPORT_KIT_NAME_EXISTS = "import.kit_name_exists"
+IMPORT_CATEGORY_FOLDED = "import.category_folded"
+
+# the §3.9 dispatch — spawns, removals, advances, and their refusals
+IMPORT_SPAWN_SOURCE_MISSING = "import.spawn_source_missing"
+IMPORT_KIT_MOVE_TO_CATALOG_LINE = "import.kit_move_to_catalog_line"
+IMPORT_KIT_MOVE_QUANTITY_UNSTATED = "import.kit_move_quantity_unstated"
+IMPORT_KIT_MOVE_UNRECONCILED = "import.kit_move_unreconciled"
+IMPORT_KITS_OVERSUPPLIED = "import.kits_oversupplied"
+IMPORT_KITS_NOT_REMOVABLE = "import.kits_not_removable"
+IMPORT_KITS_SPAWN_PLANNED = "import.kits_spawn_planned"
+IMPORT_KITS_REMOVAL_PLANNED = "import.kits_removal_planned"
+IMPORT_KITS_SHIP_ADVANCE = "import.kits_ship_advance"
+IMPORT_KITS_RECEIVE_ADVANCE = "import.kits_receive_advance"
+IMPORT_PROVENANCE_PROTECTED = "import.provenance_protected"
+
+# order invariants (#44) surfaced as row diagnostics
+ORDER_LINE_ORDER_IMMUTABLE = "order_line.order_immutable"
+IMPORT_CATALOG_REF_UNRESOLVED = "import.catalog_ref_unresolved"
+IMPORT_LINE_JOINS_RECEIVED = "import.line_joins_received"
+IMPORT_RECEIPT_UNACCOUNTED = "import.receipt_unaccounted"
+IMPORT_UNRECEIVE_UNACCOUNTED = "import.unreceive_unaccounted"
+
+# plan-level
+IMPORT_ROWS_UNREADABLE = "import.rows_unreadable"
+IMPORT_STOCK_NOTE = "import.stock_note"
+
+# starter sheet
+IMPORT_RECEIPT_CONFLICT = "import.receipt_conflict"
 
 # --- request validation (FastAPI's 422 list shape) -------------------------
 REQUEST_VALIDATION = "request.validation"

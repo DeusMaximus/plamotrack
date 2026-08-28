@@ -30,6 +30,7 @@ import {
   itemTypeLabel,
   itemTypePlural,
   itemTypeTitle,
+  matchedByLabel,
   packingQualityLabel,
   shippingSpeedLabel,
   statusLabel,
@@ -305,6 +306,29 @@ describe("dynamic keys resolve for every runtime enum member", () => {
     const value = i18n.t(`importSource.${source}` as "importSource.archive");
     expect(value).not.toBe("");
     expect(value).not.toContain("importSource.");
+  });
+
+  // The wire `matched_by` identifiers (#26), restated as a literal: "id",
+  // matching natural keys from spec.py, and the importer's three order phrases
+  // canonicalised to snake_case.
+  const MATCHED_BY = [
+    "id",
+    "name",
+    "application",
+    "photo",
+    "instance_settings",
+    "retailer_order_number",
+    "retailer_date_lines",
+    "order_line",
+  ];
+
+  it.each(MATCHED_BY)("matched-by %s has a display phrase", (value) => {
+    expect(matchedByLabel(value)).not.toBe("");
+    expect(matchedByLabel(value)).not.toContain("matchedBy.");
+  });
+
+  it("an unknown matched-by value falls back to itself — a column name is already true", () => {
+    expect(matchedByLabel("kit_number")).toBe("kit_number");
   });
 
   // The Inventory route segments, restated as a literal — the tab ids are not

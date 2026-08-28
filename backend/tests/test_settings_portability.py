@@ -10,6 +10,7 @@ partial upload that quietly reset it, is the defect class under test.
 import pytest
 
 from app.services.portability import spec, starter_sheet
+from tests.diag import details, row_error, row_messages
 from tests.test_portability import (
     actions,
     apply,
@@ -117,7 +118,7 @@ async def test_a_partial_header_touches_only_its_own_column(client):
     plan = await preview(client, sheet, filename="instance_settings.csv")
     (row,) = table_rows(plan, "instance_settings")
     assert [change["field"] for change in row["changes"]] == ["time_zone"]
-    assert row["messages"] == []
+    assert row_messages(row) == []
     assert (await apply(client, sheet, filename="instance_settings.csv")).status_code == 200
     assert await read_settings(client) == BOOTSTRAP | {"time_zone": "Australia/Sydney"}
 
@@ -129,7 +130,7 @@ async def test_a_blank_cell_keeps_the_stored_value_and_says_so(client):
     sheet = settings_csv({"reference_currency": "JPY", "time_zone": ""})
     plan = await preview(client, sheet, filename="instance_settings.csv")
     (row,) = table_rows(plan, "instance_settings")
-    assert any("time_zone: left as it was" in message for message in row["messages"])
+    assert any("time_zone: left as it was" in message for message in row_messages(row))
     assert (await apply(client, sheet, filename="instance_settings.csv")).status_code == 200
     assert await read_settings(client) == BOOTSTRAP | {
         "time_zone": "Australia/Sydney",
@@ -141,7 +142,7 @@ async def test_an_unknown_currency_warns_and_still_imports(client):
     sheet = settings_csv({"reference_currency": "ZZZ"})
     plan = await preview(client, sheet, filename="instance_settings.csv")
     (row,) = table_rows(plan, "instance_settings")
-    assert any("isn't a currency code we recognise" in message for message in row["messages"])
+    assert any("isn't a currency code we recognise" in message for message in row_messages(row))
     assert (await apply(client, sheet, filename="instance_settings.csv")).status_code == 200
     assert (await read_settings(client))["reference_currency"] == "ZZZ"
 
@@ -197,8 +198,8 @@ async def test_a_second_row_is_refused(client):
     first, second = table_rows(plan, "instance_settings")
     assert first["action"] != "error"
     assert second["action"] == "error"
-    assert "two rows in one upload cannot describe the same record" in second["error"]
-    assert plan["blocking_errors"]
+    assert "two rows in one upload cannot describe the same record" in row_error(second)
+    assert details(plan["blocking_errors"])
     assert (await apply(client, sheet, filename="instance_settings.csv")).status_code == 409
     assert await read_settings(client) == BOOTSTRAP
 
@@ -224,8 +225,8 @@ async def test_invalid_cells_are_row_errors_that_block(client, cell, fragment):
     plan = await preview(client, sheet, filename="instance_settings.csv")
     (row,) = table_rows(plan, "instance_settings")
     assert row["action"] == "error"
-    assert fragment in row["error"]
-    assert plan["blocking_errors"]
+    assert fragment in row_error(row)
+    assert details(plan["blocking_errors"])
     assert (await apply(client, sheet, filename="instance_settings.csv")).status_code == 409
     assert await read_settings(client) == BOOTSTRAP
 
