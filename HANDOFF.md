@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-28 — Claude Code (Fable 5) — #25: the REST error envelope; PR #169 open, review not yet bought
+## 2026-08-28 — Claude Code (Fable 5) — #25: the REST error envelope; PR #169 — Codex round 1 NO-GO answered, round 2 pending
 
 - **Done:** **#25 — PR #169 open** (`feat/25-error-codes`, head `152f7cb`,
   1,188 insertions, **no migrations**): every failed REST response is now
@@ -66,15 +66,23 @@ Template:
   catalogue entry, named in the test); existing message-coupled assertions
   stay (they pin the fallback contract); `import.blocked` carries only
   `count` — restructuring the blocking diagnostics is #26's.
-- **State:** suites at `152f7cb`: backend **1199** (1187+12
-  `test_error_envelope.py`), vitest **280** (212+68), lint/format/build
-  clean, from-empty e2e **36 + 1 skipped**, tables zero, AUD restored. **Ten
-  measured mutants, all killed** (7 backend — tuples queued `env-` in the PR
-  body for post-merge fold-in — + 3 frontend, one killed three ways). Review
-  **not yet bought**; Codex (GPT 5.6 Sol) is the fit — sub upped 28-08, no
-  meter check needed (procedure + brief template updated on main `639238a`).
-  CI pending at write time. No dev servers running.
-- **Next:** land #169, fold the `env-` tuples into `mutation_test.py`
+- **State:** **Codex round 1 (GPT 5.6 Sol): NO-GO — P2 + 2×P3, all real,
+  all reproduced at `152f7cb` first, fixed at `23d9cf4`, reply posted.** P2:
+  parser-stage multipart 400s escaped the envelope — now `request.body_invalid`
+  via a StarletteHTTPException handler that envelopes 400s ONLY and delegates
+  the rest (unrouted 404/405 keep the stock body, pinned). P3: OpenAPI marked
+  `params` optional — default_factory removed, `required` == all three on both
+  envelopes. P3: the declared-params invariant was inventory, not audit — a
+  fixture-driven AST walk now asserts every raise site's literal params ⊇ its
+  code's declared keys + every code raised-or-handler-emitted (≥81-site
+  vacuity guard); Codex's surviving orders-writer mutant dies on it, upgrades
+  writer measured too. Suites at `23d9cf4`: backend **1204** (17 in the
+  envelope file), vitest **281**, from-empty e2e 36+1, zero leftovers.
+  **Twelve measured mutants killed** (env-1..9 queued in the PR body for the
+  post-merge fold-in + 3 frontend). Round 2 not yet requested. No dev
+  servers running.
+- **Next:** Codex round 2 (replay the three remedies), then land #169;
+  fold the `env-` tuples into `mutation_test.py`
   (TEST_FILES + `tests/test_error_envelope.py`), then **#26** (import-preview
   diagnostics on this contract — row messages, warnings, blocking errors,
   the stock note; `import.cell_invalid` is already coded and waiting to be
