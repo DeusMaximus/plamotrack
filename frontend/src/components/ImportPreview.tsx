@@ -5,8 +5,8 @@ import type { ImportPlan, PlannedRow, RowAction, TablePlan } from "../api/types"
 import { ROW_ACTIONS } from "../api/types";
 import i18n from "../i18n";
 import { resolveDiagnostic } from "../lib/apiError";
-import { formatDateTime } from "../lib/format";
-import { importActionLabel, importTableLabel, matchedByLabel } from "../lib/labels";
+import { formatDateTime, formatNumber } from "../lib/format";
+import { counted, countedPhrase, importActionLabel, importFieldLabel, importTableLabel, matchedByLabel } from "../lib/labels";
 import { usePresentationVersion } from "../lib/presentation";
 
 const ACTION_STYLES: Record<RowAction, string> = {
@@ -28,7 +28,7 @@ function sourceLabel(source: string): string {
 
 /** The totals line's counted phrase — "3 new", "6 with errors". */
 function actionCount(action: RowAction, count: number): string {
-  return i18n.t(`importCount.${action}`, { count });
+  return countedPhrase(`importCount.${action}`, count);
 }
 
 /** A table-header pill — "3 new", "6 error". A third grammatical slot, not a
@@ -36,7 +36,7 @@ function actionCount(action: RowAction, count: number): string {
  * line says "with errors" (#163 review, P3-1 — the pills borrowed the totals
  * group and silently reworded the one action whose two phrasings differ). */
 function pillCount(action: RowAction, count: number): string {
-  return i18n.t(`importPill.${action}`, { count });
+  return countedPhrase(`importPill.${action}`, count);
 }
 
 function CountPills({ counts }: { counts: Record<RowAction, number> }) {
@@ -63,7 +63,7 @@ function RowDetail({ row }: { row: PlannedRow }) {
   return (
     <tr className={row.action === "error" ? "bg-red-50/50" : undefined}>
       <td className="px-3 py-1.5 text-end align-top text-xs text-zinc-400 tabular-nums">
-        {row.row_number || "—"}
+        {row.row_number ? formatNumber(row.row_number) : "—"}
       </td>
       <td className="px-3 py-1.5 align-top">
         <span
@@ -93,7 +93,7 @@ function RowDetail({ row }: { row: PlannedRow }) {
           <ul className="mt-1 space-y-0.5">
             {row.changes.map((change) => (
               <li key={change.field} className="text-[11px] text-zinc-500">
-                <span className="font-medium text-zinc-600">{change.field}</span>{" "}
+                <span className="font-medium text-zinc-600">{importFieldLabel(change.field)}</span>{" "}
                 <span className="line-through">
                   {change.before || t("importPreview.emptyValue")}
                 </span>
@@ -209,25 +209,25 @@ export function ImportPreview({ plan }: { plan: ImportPlan }) {
         </p>
         {deleted > 0 && (
           <p className="mt-1 font-medium text-red-700">
-            {t("importPreview.recordsDeleted", { count: deleted })}
+            {t("importPreview.recordsDeleted", counted({}, deleted))}
           </p>
         )}
         {plan.derived.kits_spawned > 0 && (
           <p className="mt-1 text-zinc-600">
-            {t("importPreview.kitsSpawned", { count: plan.derived.kits_spawned })}
+            {t("importPreview.kitsSpawned", counted({}, plan.derived.kits_spawned))}
           </p>
         )}
         {/* Red, alongside the deletion count: no row in the table below names these
             kits, so this line is the only warning the operator gets. */}
         {plan.derived.kits_removed > 0 && (
           <p className="mt-1 font-medium text-red-700">
-            {t("importPreview.kitsRemoved", { count: plan.derived.kits_removed })}
+            {t("importPreview.kitsRemoved", counted({}, plan.derived.kits_removed))}
           </p>
         )}
         {/* Also named by no row — the per-order messages below say which way. */}
         {plan.derived.kits_advanced > 0 && (
           <p className="mt-1 text-zinc-600">
-            {t("importPreview.kitsAdvanced", { count: plan.derived.kits_advanced })}
+            {t("importPreview.kitsAdvanced", counted({}, plan.derived.kits_advanced))}
           </p>
         )}
         {plan.derived.stock_note && (

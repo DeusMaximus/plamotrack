@@ -41,6 +41,82 @@ Template:
 
 ---
 
+## 2026-08-28 — Claude Code (Opus 5) — PR #177 review rounds actioned; #178 filed
+
+- **Done:** Actioned the Codex review of #177 (five P3s, NO-GO) in `6fa048b` on
+  `codex/176-m51-localisation-gaps`. Every finding reproduced at `0f77635`
+  first, then fixed: **P3-1** `BoardPage`/`RetailersPage` now take
+  `usePresentationVersion` (a `formatting_locale` change that is not also a
+  language change never reached them), and the four raw visible numbers an
+  independent re-sweep confirmed — both rating tooltips, `low_stock_threshold`,
+  `row_number` — go through the formatter, the tooltips via a new
+  `ratingTooltip` over `common.ratingOutOf`; **P3-2** `renderRequestValidation`
+  is path-aware, translating an item only where its structured `field`/`type`
+  both equal the English finding beside it (`field` vs `loc[1:]` dot-joined),
+  degrading per item, never re-pairing; **P3-3** `importActionLabel` gains the
+  `exists ? label : raw` fallback; **P3-4** the `action` and `matched_by`
+  presentation branches were *unreachable* — which is why their mutants
+  survived 449/449 — so both are deleted and `presentationValue` is now a
+  table (`LABELLED_PARAMS`) held against the shipped catalogue; **P3-5** the
+  `design.md` hardening paragraph is historical, stale open-issue inventory
+  gone. Re-review confirmed all five fixed and re-measured the mutants
+  independently, leaving one P3: the **PR body still carried the disproved
+  evidence**. Body amended in place (banner + attribution), naming the invalid
+  `7/240` control, the real `79/238` with 72 import failures, the withdrawn
+  five-and-three mutant claims, and measured final-head totals.
+- **Decisions:** Finding 4 answered at the root rather than by its suggested
+  remedy — a `matched_by` consumer control **cannot** be written today, so a
+  class guard replaced the dead branches. Disproved figures **named, not
+  deleted**, so the correction records what the finding was about. #178 filed
+  rather than folded in: different root cause, and it reproduces on `4bd98c0`.
+- **State:** Code head `6fa048b` (this hand-off commit sits on top of it, docs
+  only — the branch owns the log, since main has no #176 entry). **PR #177 open,
+  not merged** — the re-review's
+  verdict on the amended body is not yet recorded. Every number in the body is
+  measured at that head on a clean tree: backend 1225, frontend 463, ruff
+  check + format, lint, build, Playwright 40 passed/1 skipped on an isolated
+  empty DB (created, migrated, verified zero, dropped). Six mutations killed
+  1/1/4/1/7/2, plus the cold-Board e2e control red without the subscription.
+  **Known, not ours:** `display-items.spec.ts:45` fails on any DB holding a
+  categorised display item (`getByLabel("Category")` also matches the filter)
+  — reproduced with the branch stashed, filed as #167; run e2e on an empty DB.
+- **Next:** await the re-review verdict, then merge with `Closes #176`. **#178**
+  (`import.match_ambiguous`: two emitters share one code, so the orders-side
+  `(retailer + date + lines)` hint is dropped and `matched_by` is undeclared in
+  `api-error-codes.json` and pinned by nothing) is unstarted — the `apiError.ts`
+  comment describing that gap predates the number and should gain the `#178`
+  reference when someone next touches the file. M6 not begun; no version, tag
+  or release work.
+
+## 2026-08-28 — GPT-5 Codex (OpenAI) — #176 ready for independent review
+
+- **Done:** Branch `codex/176-m51-localisation-gaps` implements #176 without
+  migrations or API/CSV/data-model changes. Known portable field/table/action/
+  matching values render through catalogue labels with unknown raw fallbacks;
+  change rows use the same field helper. `request.validation` renders known
+  `{field,type}` findings from `validation.request.*` and retains each unknown
+  type's English `detail`. Counts keep raw `count` for plural selection while
+  `countDisplay` uses the instance locale; the sweep covers import previews and
+  results, diagnostics, order/kit/stock summaries, Board pills, and file size.
+  `border-r` is now logical `border-e`; whitespace-only manifest native names
+  are invalid; README/design/operations and nearby comments describe shipped
+  M5.1 and its real limits/upgrade effects.
+- **Decisions:** Preserve canonical API/MCP/database/CSV values, user-entered
+  data, and English error detail on the wire; localisation is browser-boundary
+  presentation only. One cohesive PR: all changes share that boundary.
+- **State:** Direct pre-fix controls: 7 failures across the target frontend
+  tests. Final: backend `1225 passed` (2 known zipfile duplicate-name warnings),
+  frontend `449 passed`, lint/build green, and fresh-DB Playwright `39 passed,
+  1 skipped`, tables zero; test DB removed. Mutations killed: count display,
+  field/table/item/action/matching labels, request validation, RTL, manifest
+  trim, and file-size formatter. No full backend mutation harness run: no
+  backend emission sites changed. Working tree is ready to commit/push/open PR.
+- **Next:** independent GLM 5.3 Flash review from the PR brief, re-measuring
+  negative controls and mutation claims before any merge/release. Do not begin
+  M6, version/tag/release work, or merge this PR before that gate.
+
+---
+
 ## 2026-08-28 — Claude Code (Fable 5) — M5.1 CODE-COMPLETE: #26/#114/#27 closed; GLM 5.3 Flash is the new default reviewer
 
 - **Done:** **#26 — PR #171 merged `359c8fe`** (2,087 ins, no migrations):
@@ -202,94 +278,3 @@ Template:
   reproduced-on-`main`, unfixed. LXC: **back up before pulling** (real
   collection, several releases behind; 0.2.8's settings migration still
   pending there).
-
-
-## 2026-08-28 — Claude Code (Fable 5) — bundle-size warning assessed: no splitting; PR #166 merged
-
-- **Done:** the 503 kB chunk warning (flagged informational in the previous
-  entry) assessed and dispositioned. Measured at `abb9d7c`: one 506.76 kB
-  chunk, 154.90 kB gzip. Sourcemap attribution: react-dom 175 kB (35%), app
-  code ~102 kB (14 kB of it the en-AU catalogue), the #22 i18n stack ~57 kB,
-  dnd-kit 41 kB, react-router 36 kB, react-hook-form 35 kB, TanStack Query
-  35 kB — nothing accidental; the deliberate #22 addition is what crossed
-  Vite's 500 kB default. **PR #166 squash-merged as `58c174f`** on the
-  owner's call: `build.chunkSizeWarningLimit: 600` with the reasoning and the
-  revisit path as a config comment. Built chunk byte-identical; build + lint
-  green, CI green (all three checks). Review skipped per the #40 criterion
-  (small, local; worst failure is a suppressed warning); owner concurred by
-  merging.
-- **Decisions:** severity by real exposure — a single-owner LAN instance
-  fetches 155 kB gzip once per release, cached thereafter; no user-observable
-  cost. React.lazy declined (index redirects to /board, the dnd-kit consumer,
-  so the heaviest split-able dep loads on first paint anyway; Suspense adds
-  e2e async surface of the #162 class). manualChunks declined (cross-release
-  caching for one repeat visitor; a Vite 8/Rolldown config dialect to carry).
-  600 keeps the tripwire: ~90 kB headroom ≈ six statically imported
-  catalogues (~14 kB each, `src/i18n/registry.ts`) — if shipped languages
-  re-trip it, per-language dynamic import (natural home #27), not another
-  raise. No issue filed — not a defect, no numbered rule violated.
-- **State:** `main` at `58c174f` (+ this entry), CI green; no in-flight
-  branches. Config-only merge — no migrations, no mutant queues. Backend
-  1187, vitest 212, e2e 30 (+1 skipped) — untouched. Stale worktrees
-  `/private/tmp/plamotrack-pr100` and `-pr108-main` persist (pre-date this).
-- **Next:** M5.1 as before, all unblocked:
-  #24 (Settings page), #25/#26 (structured diagnostics), #27 (language/region
-  UI; `/meta` still doesn't advertise supported languages), #114 (naive CSV
-  dates). #162 (e2e keyboard-select race) remains reproduced-on-`main`,
-  unfixed. Cursor carried three rounds and Codex two on #22 — check both
-  meters before the next buy. LXC: **back up before pulling** (real
-  collection; 0.2.8's settings migration still pending there).
-
-## 2026-08-28 — Claude Code (Fable 5) — #22 CLOSED: the i18n foundation, four PRs (#161/#163/#164/#165)
-
-- **Done:** **#22 closed** — the en-AU catalogue foundation, four sequential
-  PRs, each squash-merged on the owner's call after review. **#161**
-  (`cc91045`, Codex NO-GO→GO; P2: the runtime and the tests kept separate
-  catalogue lists, so an enabled language passed every gate while the browser
-  never loaded it — `src/i18n/registry.ts` is now the single import map both
-  derive from, with a loaded-bundle test; P3: blank values refused): i18next +
-  react-i18next, sync init pinned `en-AU` (#27 wires it to settings),
-  manifest (tag/nativeName/direction/enabled), `catalogue.test.ts` (validators
-  proven on inline bad fixtures first; plural shapes per language's own CLDR
-  categories; 100% coverage bar for enabled languages), backend parity test
-  pinning `SUPPORTED_INTERFACE_LANGUAGES` == enabled manifest tags,
-  `npm run i18n:report` + CI summary step, `docs/translating.md`. **#163**
-  (`fb569f9`, Cursor GO + 2 P3s: CountPills borrowed the totals plural group
-  and reworded the one divergent action — own `importPill.*` group + a
-  divergence pin; the unified `importTable.*` headings disclosed):
-  Retailers/Data/ImportPreview/CatalogItemPicker — first plurals + `<Trans>`,
-  the TABLE_LABELS/TABLE_EXPORTS by-value duplication ended. **#164**
-  (`4f18a04`, Cursor clean GO): Kits/Inventory — `dateWithElapsed` over
-  `common.elapsed.*`; the U+00A0 find (below). **#165** (`a85325f`, Cursor
-  clean GO + two corrections to my brief, owned on the thread): Orders —
-  `itemType.*.title` select nouns, receivedCell's one-byte NBSP normalization
-  (disclosed at #164, endorsed), catalogue machine-formatted (json indent=2).
-- **Decisions:** byte-identical extraction, proven by a from-empty e2e run per
-  PR — wording fixes deliberately out of scope (`data.result` `_one` forms
-  still read "1 kits …", stated in #163). Dynamic keys are the vitest
-  matrix's; flat static keys are `tsc -b`'s (measured on #165: deleted key →
-  vitest green, tsc red naming the call site). No jsdom — i18next core only.
-  Review bought on every PR including the "mechanical" ones, which paid: real
-  P3s in two of three.
-- **Notable:** the NBSP transcription trap and the unverified spec-coverage
-  claims are in `.agents/lessons.md` (→ "The value axis", "Review").
-  **#162 filed**: dialog-keyboard's keyboard-select spec races the catalog
-  search under load (its readiness wait is satisfied by the Create-new
-  button) — reproduced on `main`, remedy sketched, deliberately not fixed on
-  the series. This file repaired: the 27-08 entry had been amended into the
-  template fence; moved out verbatim, skeleton restored.
-- **State:** `main` at `a85325f` (+ this entry), CI green at every merged
-  head. Backend **1187**, vitest **212**, e2e 30 (+1 skipped screenshots),
-  from-empty verified repeatedly, tables zero after. Catalogue **350 keys @
-  100%**. Bundle 503 kB — past Vite's 500 kB chunk warning, informational,
-  unfiled. **No migrations in the series.** No mutant queues; `stg-`
-  re-measured 23/23 at #161. No dev servers running; stale worktrees
-  `/private/tmp/plamotrack-pr100` and `-pr108-main` persist (pre-date this).
-- **Next:** the rest of **M5.1**, all unblocked: **#24** (Settings page —
-  its copy now has a catalogue to land in), #25/#26 (structured diagnostics —
-  the runtime was chosen for `t(code, {defaultValue})`), #27 (language/region
-  UI; `/meta` still doesn't advertise supported languages — that gap is
-  #27's), #114 (naive CSV dates). Cursor carried three rounds this session
-  and Codex two — check both meters. LXC: **back up before pulling** (real
-  collection, several releases behind; no migrations to run this time, but
-  0.2.8's settings migration is still pending there).

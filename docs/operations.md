@@ -155,14 +155,20 @@ Interface language, formatting locale, time zone, date style, hour cycle, and th
 reference currency are **runtime settings**: they live in the database (the
 one-row `instance_settings` table), so every browser and agent sees the same
 values. Read them with `GET /api/settings`, change them with `PATCH /api/settings`. The
-Settings page shows them all; its General section changes the reference
-currency, and browser controls for the language and regional settings are still
-to come (they're API-only for now). A fresh install bootstraps them once:
+Settings page shows them all: General changes the reference currency, while
+Language & region changes the interface language, formatting locale, time zone,
+date style, and hour cycle. A fresh install bootstraps them once:
 `en-AU` interface language and formatting locale, `UTC` time zone, locale-default
 date style and hour cycle, and the reference currency from `REFERENCE_CURRENCY`
 in `.env`. After that first migration the env var is inert. The full-archive
 export includes the settings row and a restore updates it in place — details in
 `docs/import-export.md`.
+
+Existing instances upgrade to the same `en-AU`/UTC defaults. The configured time
+zone applies prospectively when an import reads a naive CSV timestamp; existing
+stored instants, dates, currency snapshots, and CSV identifiers are never
+reinterpreted. Downgrading past the settings migration removes the settings row,
+so record any changed values before a rollback and set them again after upgrading.
 
 ## Reaching it from another machine
 

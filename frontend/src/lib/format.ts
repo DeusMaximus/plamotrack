@@ -48,6 +48,20 @@ export function formatNumber(value: number): string {
   return formatNumberWith(formatPreferences().locale, value);
 }
 
+/** A selected import's size: decimal punctuation follows the instance locale,
+ * while KB remains an intentionally stable, compact unit label. */
+export function formatFileSizeWith(locale: string, bytes: number): string {
+  try {
+    return `${new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(bytes / 1024)} KB`;
+  } catch {
+    return `${(bytes / 1024).toFixed(1)} KB`;
+  }
+}
+
+export function formatFileSize(bytes: number): string {
+  return formatFileSizeWith(formatPreferences().locale, bytes);
+}
+
 /** Integer minor units (4999) → major-unit string for form inputs ("49.99"). */
 export function minorToMajor(minor: number, currency: string): string {
   const digits = minorFractionDigits(currency);

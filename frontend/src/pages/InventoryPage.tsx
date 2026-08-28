@@ -18,7 +18,7 @@ import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
 import { currencyOptions, formatMoney, formatNumber, majorToMinor, minorToMajor, stepFor } from "../lib/format";
-import { itemTypeLabel, itemTypePlural } from "../lib/labels";
+import { counted, itemTypeLabel, itemTypePlural } from "../lib/labels";
 import { usePresentationVersion } from "../lib/presentation";
 
 type Tab = "tools" | "consumables" | "upgrades" | "display-items";
@@ -391,7 +391,7 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
       <div className="space-y-3">
         <ErrorBanner message={error} />
         <p className="text-sm text-zinc-500">
-          {t("inventory.applyOnHand", { count: upgrade.quantity_on_hand })}
+          {t("inventory.applyOnHand", counted({}, upgrade.quantity_on_hand))}
         </p>
         <Field label={t("inventory.kit")} required>
           <Select value={kitId} onChange={(event) => setKitId(event.target.value)}>
@@ -721,7 +721,11 @@ export function InventoryPage() {
                           </span>
                         )}
                       </td>
-                      <td className="px-3 py-2">{item.low_stock_threshold ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        {item.low_stock_threshold === null
+                          ? "—"
+                          : formatNumber(item.low_stock_threshold)}
+                      </td>
                       <td className="px-3 py-2 text-end">
                         <div className="flex justify-end gap-1">
                           <Button variant="secondary" onClick={() => setEditing(item)}>

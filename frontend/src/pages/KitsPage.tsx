@@ -16,7 +16,7 @@ import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { StatusBadge } from "../components/StatusBadge";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
-import { formatDate, isoToLocalDateInput, localMidnightISO } from "../lib/format";
+import { formatDate, formatNumber, isoToLocalDateInput, localMidnightISO } from "../lib/format";
 import { dateWithElapsed, statusLabel } from "../lib/labels";
 import { usePresentationVersion } from "../lib/presentation";
 
@@ -272,7 +272,7 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
           <li key={application.id} className="flex items-center justify-between gap-2 text-sm">
             <span>
               {application.upgrade.name}
-              {application.quantity_used > 1 && ` ×${application.quantity_used}`}
+              {application.quantity_used > 1 && ` ×${formatNumber(application.quantity_used)}`}
               <span className="text-xs text-zinc-400">
                 {t("common.dotSeparator")}
                 {formatDate(application.applied_at)}
@@ -298,7 +298,7 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
               name: withdrawing.upgrade.name,
               // "(×N)" is numeric notation composed here, not copy — the prompt
               // key interpolates it whole so the sentence stays one value.
-              qty: withdrawing.quantity_used > 1 ? ` (×${withdrawing.quantity_used})` : "",
+              qty: withdrawing.quantity_used > 1 ? ` (×${formatNumber(withdrawing.quantity_used)})` : "",
             })}
           </p>
           <div className="flex flex-wrap justify-end gap-2">

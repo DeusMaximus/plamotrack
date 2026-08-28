@@ -207,7 +207,7 @@ export function validateManifest(manifest: unknown): string[] {
     } catch {
       problems.push(`"${tag}" is not a valid BCP 47 tag`);
     }
-    if (typeof entry.nativeName !== "string" || entry.nativeName === "") {
+    if (typeof entry.nativeName !== "string" || entry.nativeName.trim() === "") {
       problems.push(`"${tag}" has no native name`);
     }
     if (entry.direction !== "ltr" && entry.direction !== "rtl") {

@@ -248,3 +248,48 @@ test("a cold page load re-renders once the settings row arrives (#174 review, P3
     await api.dispose();
   }
 });
+
+
+test("a cold Board load re-renders its counts once the settings row arrives (#177 review, P3-1)", async ({
+  page,
+}) => {
+  // The locale axis, not the zone axis: `interface_language` stays en-AU, so
+  // `useTranslation`'s languageChanged re-render cannot be what makes this
+  // pass — only a presentation subscription can. ar-EG because its digits are
+  // visibly not the boot locale's, so the assertion reads the rendering rather
+  // than a value that happens to agree.
+  const api = await request.newContext({ baseURL: API });
+  await api.patch("/settings", { data: { formatting_locale: "ar-EG" } });
+  const kit = (await (
+    await api.post("/kits", {
+      data: { name: `e2e-177-boardcount-${Date.now()}`, grade: "HG", status: "backlog" },
+    })
+  ).json()) as { id: string };
+
+  try {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/api/settings", async (route) => {
+      if (route.request().method() !== "GET") return route.fallback();
+      await gate; // the kits list resolves first — the window under test
+      await route.continue();
+    });
+    await page.goto("/board");
+    const count = page.getByTestId("column-count-backlog");
+    // Boot defaults while the row is held: Western digits, and at least the
+    // kit just created, so this is not asserting an empty column.
+    await expect(count).toHaveText(/^[0-9]+$/);
+    const western = await count.textContent();
+    expect(Number(western)).toBeGreaterThan(0);
+
+    release();
+    // No navigation, no interaction: the row's arrival alone must re-render a
+    // count already on screen.
+    await expect(count).toHaveText(/^[\u0660-\u0669]+$/);
+    await page.unroute("**/api/settings");
+  } finally {
+    await api.delete(`/kits/${kit.id}`);
+    await api.patch("/settings", { data: { formatting_locale: original.formatting_locale } });
+    await api.dispose();
+  }
+});

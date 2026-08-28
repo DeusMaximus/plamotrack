@@ -7,7 +7,8 @@ import type { ImportMode, ImportPlan, ImportResult } from "../../api/types";
 import { IMPORT_MODES } from "../../api/types";
 import { ImportPreview } from "../../components/ImportPreview";
 import { Button, Card, ErrorBanner, Select } from "../../components/ui";
-import { importTableLabel } from "../../lib/labels";
+import { formatFileSize } from "../../lib/format";
+import { counted, importTableLabel } from "../../lib/labels";
 import { SectionHeader } from "./SectionHeader";
 
 /** Keys are `portability/spec.py` table keys, not REST paths — `/export/{key}.csv`.
@@ -181,7 +182,7 @@ export function DataSection() {
           {file ? (
             <div className="space-y-1">
               <p className="text-sm font-medium text-zinc-800">{file.name}</p>
-              <p className="text-xs text-zinc-500">{(file.size / 1024).toFixed(1)} KB</p>
+              <p className="text-xs text-zinc-500">{formatFileSize(file.size)}</p>
               <button
                 type="button"
                 onClick={reset}
@@ -263,20 +264,20 @@ export function DataSection() {
           <div className="mt-4 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
             <p className="font-medium">{t("data.complete")}</p>
             <p className="mt-0.5">
-              {t("data.result.created", { count: result.created })}
+              {t("data.result.created", counted({}, result.created))}
               {t("common.dotSeparator")}
-              {t("data.result.updated", { count: result.updated })}
+              {t("data.result.updated", counted({}, result.updated))}
               {t("common.dotSeparator")}
-              {t("data.result.skipped", { count: result.skipped })}
+              {t("data.result.skipped", counted({}, result.skipped))}
               {result.kits_spawned > 0 &&
                 t("common.dotSeparator") +
-                  t("data.result.kitsSpawned", { count: result.kits_spawned })}
+                  t("data.result.kitsSpawned", counted({}, result.kits_spawned))}
               {result.kits_removed > 0 &&
                 t("common.dotSeparator") +
-                  t("data.result.kitsRemoved", { count: result.kits_removed })}
+                  t("data.result.kitsRemoved", counted({}, result.kits_removed))}
               {result.kits_advanced > 0 &&
                 t("common.dotSeparator") +
-                  t("data.result.kitsAdvanced", { count: result.kits_advanced })}
+                  t("data.result.kitsAdvanced", counted({}, result.kits_advanced))}
             </p>
           </div>
         )}
