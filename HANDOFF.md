@@ -86,7 +86,9 @@ Template:
   vitest **281**, from-empty e2e 36+1, zero leftovers. **Twelve measured
   mutants killed** (env-1..9 queued in the PR body for the post-merge
   fold-in + 3 frontend). No dev servers running.
-- **Next:** fold the `env-` tuples into `mutation_test.py`
+- **Next:** merge fold-in **PR #170** (env-1..9 in the tracked harness,
+  measured 9/9 killed; review skipped per #132/#160, owner concurs by
+  merging)
   (TEST_FILES + `tests/test_error_envelope.py`), then **#26** (import-preview
   diagnostics on this contract — row messages, warnings, blocking errors,
   the stock note; `import.cell_invalid` is already coded and waiting to be
