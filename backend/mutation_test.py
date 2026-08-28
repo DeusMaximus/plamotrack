@@ -1969,6 +1969,52 @@ CASES = [
         "code=error_codes.STOCK_INSUFFICIENT,",
         "every_raise_site_supplies_its_codes_declared_params",
     ),
+    # --- #26: the import-preview diagnostics (queued on PR #171, measured 5/5
+    # --- killed there with a scratch runner; anchors re-checked at fold-in) --------
+    (
+        "nd-1. refuse() records the diagnostic but not the ERROR action",
+        IMP,
+        "        self.action = RowAction.ERROR\n        self.errors.append(diagnostic)",
+        "        self.errors.append(diagnostic)",
+        "test_a_borrowed_code_is_the_live_writers_own",
+    ),
+    (
+        "nd-2. the blocked apply drops the structured diagnostics from params",
+        IMP,
+        '            params={\n                "count": len(plan.blocking_errors),\n'
+        '                "diagnostics": [\n'
+        '                    diagnostic.model_dump(mode="json") for diagnostic in plan.blocking_errors\n'
+        "                ],\n            },",
+        '            params={"count": len(plan.blocking_errors)},',
+        "test_a_blocked_apply_is_a_structured_conflict",
+    ),
+    (
+        "nd-3. the fingerprint starts reading diagnostic wording",
+        IMP,
+        '                        "changes": [\n'
+        "                            [c.field, c.before, canon(row.values.get(c.field))] for c in row.changes\n"
+        "                        ],",
+        '                        "changes": [\n'
+        "                            [c.field, c.before, canon(row.values.get(c.field))] for c in row.changes\n"
+        "                        ],\n"
+        '                        "diagnostics": [d.detail for d in [*row.errors, *row.messages]],',
+        "test_rewording_every_diagnostic_leaves_the_plan_hash_alone",
+    ),
+    (
+        "nd-4. the stray-column warning stops deduplicating",
+        IMP,
+        "                if diagnostic not in self.warnings:\n"
+        "                    self.warnings.append(diagnostic)",
+        "                self.warnings.append(diagnostic)",
+        "test_plan_surfaces_carry_diagnostics_and_the_stray_column_dedups_by_value",
+    ),
+    (
+        "nd-5. the starter-sheet problem loses its source row",
+        STARTER,
+        '        params={"row": source_row, **exc.params},',
+        "        params={**exc.params},",
+        "test_a_starter_row_problem_borrows_the_code_and_names_the_row",
+    ),
 ]
 
 
@@ -2935,6 +2981,8 @@ TEST_FILES = [
     "tests/test_settings.py",
     "tests/test_settings_portability.py",
     "tests/test_reference_currency.py",
+    # The #26 (nd-) fold-in: every nd- kill lives here.
+    "tests/test_import_diagnostics.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
