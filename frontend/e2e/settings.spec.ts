@@ -14,7 +14,14 @@ const API = "http://127.0.0.1:8000";
 
 test.describe.configure({ mode: "serial" });
 
-let original: { reference_currency: string; time_zone: string };
+let original: {
+  reference_currency: string;
+  interface_language: string;
+  formatting_locale: string;
+  time_zone: string;
+  date_style: string;
+  hour_cycle: string;
+};
 let version: string;
 let target: string; // a valid code that differs from the stored one
 
@@ -26,10 +33,17 @@ test.beforeAll("read the instance settings and version", async () => {
   await api.dispose();
 });
 
-test.afterAll("restore the instance currency", async () => {
+test.afterAll("restore the instance settings", async () => {
   const api = await request.newContext({ baseURL: API });
   await api.patch("/settings", {
-    data: { reference_currency: original.reference_currency },
+    data: {
+      reference_currency: original.reference_currency,
+      interface_language: original.interface_language,
+      formatting_locale: original.formatting_locale,
+      time_zone: original.time_zone,
+      date_style: original.date_style,
+      hour_cycle: original.hour_cycle,
+    },
   });
   await api.dispose();
 });
@@ -46,8 +60,8 @@ test("Settings replaces Data in the sidebar and the sections navigate", async ({
 
   await page.getByRole("link", { name: "Language & region" }).click();
   await expect(page).toHaveURL(/\/settings\/language$/);
-  await expect(page.getByText("Time zone")).toBeVisible();
-  await expect(page.getByText(original.time_zone, { exact: true })).toBeVisible();
+  // A form since #27 — the stored zone hydrates the input, no longer a read-only row.
+  await expect(page.getByLabel("Time zone")).toHaveValue(original.time_zone);
 
   await page.getByRole("link", { name: "About" }).click();
   await expect(page).toHaveURL(/\/settings\/about$/);
@@ -136,4 +150,60 @@ test("saving the currency persists it and refreshes the order form's default", a
   await page.getByRole("link", { name: "Orders" }).click();
   await page.getByRole("button", { name: "+ New order" }).click();
   await expect(page.getByLabel("Currency").first()).toHaveValue(target);
+});
+
+test("the language form hydrates from the row and the document carries its metadata (#27)", async ({
+  page,
+}) => {
+  await page.goto("/settings/language");
+  await expect(page.getByLabel("Interface language")).toHaveValue(original.interface_language);
+  await expect(page.getByLabel("Formatting locale")).toHaveValue(original.formatting_locale);
+  await expect(page.getByLabel("Time zone")).toHaveValue(original.time_zone);
+  await expect(page.getByLabel("Date style")).toHaveValue(original.date_style);
+  await expect(page.getByLabel("Hour cycle")).toHaveValue(original.hour_cycle);
+  // The Layout effect stamped the resolved language onto the document itself.
+  await expect(page.locator("html")).toHaveAttribute("lang", "en-AU");
+  await expect(page.locator("html")).toHaveAttribute("dir", "ltr");
+  // Pristine form: nothing to save yet.
+  await expect(page.getByRole("button", { name: "Save" })).toBeDisabled();
+});
+
+test("saving regional settings re-renders visible dates in the same session (#27)", async ({
+  page,
+}) => {
+  // A kit whose completion instant is unambiguous across the zones involved:
+  // 04:00Z is 14/03 in UTC and 15:00 on 14/03 in Sydney.
+  const api = await request.newContext({ baseURL: API });
+  const kit = (await (
+    await api.post("/kits", {
+      data: {
+        name: `e2e-27-format-${Date.now()}`,
+        grade: "HG",
+        status: "complete",
+        build_completed_at: "2026-03-14T04:00:00+00:00",
+      },
+    })
+  ).json()) as { id: string };
+
+  try {
+    await page.goto("/kits");
+    await expect(page.getByText("14/03/2026").first()).toBeVisible();
+
+    await page.goto("/settings/language");
+    await page.getByLabel("Time zone").fill("Australia/Sydney");
+    await page.getByLabel("Date style").selectOption("long");
+    await page.getByLabel("Hour cycle").selectOption("h23");
+    // The live draft preview re-renders before anything is saved.
+    await expect(page.getByTestId("format-preview")).toContainText("14 March 2026");
+    await expect(page.getByTestId("format-preview")).toContainText("15:00");
+    await page.getByRole("button", { name: "Save" }).click();
+    await expect(page.getByRole("status")).toHaveText("Saved");
+
+    // Same SPA session, no reload: the Kits page renders the new shape.
+    await page.getByRole("link", { name: "Kits" }).click();
+    await expect(page.getByText("14 March 2026").first()).toBeVisible();
+  } finally {
+    await api.delete(`/kits/${kit.id}`);
+    await api.dispose();
+  }
 });

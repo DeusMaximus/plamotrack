@@ -1,17 +1,25 @@
 import { minorFractionDigits } from "./currency";
+import { formatPreferences } from "./presentation";
+import type { FormatPreferences } from "./presentation";
 
 export { COMMON_CURRENCIES, currencyOptions, minorFractionDigits, stepFor } from "./currency";
 
 /** "4999 AUD minor" → "$49.99"
  *
- * Intl still picks the symbol, grouping and placement, but the decimals are ours:
- * left to itself it would render a 1234-minor IQD line as "IQD 1,234" rather than
- * the 1.234 dinar it stands for. */
-export function formatMoney(minor: number, currency: string): string {
+ * The instance's formatting locale (#27) picks the symbol, grouping and
+ * placement, but the decimals are ours — plamotrack's own ISO 4217 exponent
+ * table (§6): left to itself Intl would render a 1234-minor IQD line as
+ * "IQD 1,234" rather than the 1.234 dinar it stands for, and a locale is never
+ * allowed to change what an amount means.
+ *
+ * Each helper has a `…With` twin taking explicit preferences — the Language
+ * section's live preview drives drafts through them before anything is saved,
+ * and the unit suite drives them without touching module state. */
+export function formatMoneyWith(locale: string, minor: number, currency: string): string {
   const digits = minorFractionDigits(currency);
   const value = minor / 10 ** digits;
   try {
-    return new Intl.NumberFormat(undefined, {
+    return new Intl.NumberFormat(locale, {
       style: "currency",
       currency,
       minimumFractionDigits: digits,
@@ -20,6 +28,24 @@ export function formatMoney(minor: number, currency: string): string {
   } catch {
     return `${value.toFixed(digits)} ${currency}`;
   }
+}
+
+export function formatMoney(minor: number, currency: string): string {
+  return formatMoneyWith(formatPreferences().locale, minor, currency);
+}
+
+/** A plain count or quantity under the instance's formatting locale — grouping
+ *  and digit punctuation only; the value itself is canonical. */
+export function formatNumberWith(locale: string, value: number): string {
+  try {
+    return new Intl.NumberFormat(locale).format(value);
+  } catch {
+    return String(value);
+  }
+}
+
+export function formatNumber(value: number): string {
+  return formatNumberWith(formatPreferences().locale, value);
 }
 
 /** Integer minor units (4999) → major-unit string for form inputs ("49.99"). */
@@ -90,16 +116,71 @@ export function majorToMinor(major: string | number, currency: string): number {
   return sign === "-" ? -magnitude : magnitude;
 }
 
+/** A bare `YYYY-MM-DD` — a calendar date with no time attached. */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/** The zone a value renders in. A plain calendar date names a day, not an
+ *  instant: it renders as that day verbatim (via UTC, the zone its midnight
+ *  parse landed in), never shifted into the instance zone — the presentation
+ *  twin of #114's import rule. An instant renders in the instance's zone. */
+function renderZone(iso: string, prefs: FormatPreferences): string | undefined {
+  return DATE_ONLY.test(iso) ? "UTC" : prefs.timeZone;
+}
+
+export function formatDateWith(prefs: FormatPreferences, iso: string): string {
+  const value = new Date(iso);
+  try {
+    if (prefs.dateStyle === "locale") {
+      // The locale's own default rendering — what `toLocaleDateString()` gave
+      // before #27, now pinned to the instance locale and zone.
+      return value.toLocaleDateString(prefs.locale, { timeZone: renderZone(iso, prefs) });
+    }
+    return new Intl.DateTimeFormat(prefs.locale, {
+      dateStyle: prefs.dateStyle as Intl.DateTimeFormatOptions["dateStyle"],
+      timeZone: renderZone(iso, prefs),
+    }).format(value);
+  } catch {
+    // A locale or zone this browser can't serve must degrade, not white-screen.
+    return value.toLocaleDateString();
+  }
+}
+
 export function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString();
+  return formatDateWith(formatPreferences(), iso);
+}
+
+export function formatDateTimeWith(prefs: FormatPreferences, iso: string): string {
+  const value = new Date(iso);
+  const hourCycle =
+    prefs.hourCycle === "locale"
+      ? undefined
+      : (prefs.hourCycle as Intl.DateTimeFormatOptions["hourCycle"]);
+  try {
+    if (prefs.dateStyle === "locale") {
+      return value.toLocaleString(prefs.locale, { timeZone: renderZone(iso, prefs), hourCycle });
+    }
+    return new Intl.DateTimeFormat(prefs.locale, {
+      dateStyle: prefs.dateStyle as Intl.DateTimeFormatOptions["dateStyle"],
+      // The setting names a date style; the time part stays compact beside it.
+      timeStyle: "short",
+      timeZone: renderZone(iso, prefs),
+      hourCycle,
+    }).format(value);
+  } catch {
+    return value.toLocaleString();
+  }
 }
 
 export function formatDateTime(iso: string): string {
-  return new Date(iso).toLocaleString();
+  return formatDateTimeWith(formatPreferences(), iso);
 }
 
 export function todayISO(): string {
   // Local date, not UTC — an evening order in AEST is not "yesterday".
+  // Deliberately the *browser's* calendar, not the instance zone (#27): these
+  // entry-side helpers feed the #93 contract, where a picked date travels as
+  // midnight in the browser's own offset. Presentation reads instance settings;
+  // data entry keeps meaning what the person at the keyboard sees.
   const now = new Date();
   now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
   return now.toISOString().slice(0, 10);

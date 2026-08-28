@@ -1,5 +1,10 @@
+import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
+
+import { settingsQuery } from "../api/client";
+import { applyInstanceSettings } from "../lib/presentation";
 
 const NAV = [
   { to: "/board", label: "nav.board", icon: "📋" },
@@ -12,6 +17,15 @@ const NAV = [
 
 export function Layout() {
   const { t } = useTranslation();
+  // The one place the persisted settings row becomes this browser's
+  // presentation (#27): language, document lang/dir, and the formatting
+  // preferences the date/number helpers read. Every browser runs the same
+  // effect off the same shared query, so there is no per-browser preference —
+  // and a save (which writes through settingsQuery's cache) re-runs it.
+  const { data: settings } = useQuery(settingsQuery);
+  useEffect(() => {
+    if (settings) applyInstanceSettings(settings);
+  }, [settings]);
   return (
     <div className="flex min-h-screen">
       <aside className="w-52 shrink-0 border-r border-zinc-200 bg-white">

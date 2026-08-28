@@ -15,6 +15,8 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  DATE_STYLES,
+  HOUR_CYCLES,
   IMPORT_MODES,
   ITEM_TYPES,
   KIT_STATUSES,
@@ -300,6 +302,18 @@ describe("dynamic keys resolve for every runtime enum member", () => {
 
   it("an unknown table key falls back to itself, not a dotted key", () => {
     expect(importTableLabel("not_a_table")).toBe("not_a_table");
+  });
+
+  it.each(DATE_STYLES)("date style %s has an option label (#27)", (style) => {
+    const label = i18n.t(`dateStyle.${style}`);
+    expect(label).not.toBe("");
+    expect(label).not.toContain("dateStyle.");
+  });
+
+  it.each(HOUR_CYCLES)("hour cycle %s has an option label (#27)", (cycle) => {
+    const label = i18n.t(`hourCycle.${cycle}`);
+    expect(label).not.toBe("");
+    expect(label).not.toContain("hourCycle.");
   });
 
   it.each(["archive", "csv-set", "starter-sheet"])("import source %s has a label", (source) => {

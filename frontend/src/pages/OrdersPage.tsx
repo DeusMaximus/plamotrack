@@ -1123,7 +1123,7 @@ export function OrdersPage() {
         <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
+              <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
                 <th className="w-8 px-3 py-2" />
                 <th className="px-3 py-2">{t("orders.headerDate")}</th>
                 <th className="px-3 py-2">{t("orders.headerRetailer")}</th>

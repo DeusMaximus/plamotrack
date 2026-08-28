@@ -191,7 +191,7 @@ export function RetailersPage() {
         <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
+              <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
                 <th className="px-3 py-2">{t("common.name")}</th>
                 <th className="px-3 py-2">{t("retailers.headerRating")}</th>
                 <th className="px-3 py-2">{t("retailers.headerPacking")}</th>
@@ -242,7 +242,7 @@ export function RetailersPage() {
                   <td className="max-w-48 truncate px-3 py-2 text-zinc-500" title={retailer.notes ?? ""}>
                     {retailer.notes ?? "—"}
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-3 py-2 text-end">
                     <div className="flex justify-end gap-1">
                       <Button variant="secondary" onClick={() => setModal({ retailer })}>
                         {t("common.edit")}

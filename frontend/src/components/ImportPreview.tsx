@@ -61,7 +61,7 @@ function RowDetail({ row }: { row: PlannedRow }) {
   const { t } = useTranslation();
   return (
     <tr className={row.action === "error" ? "bg-red-50/50" : undefined}>
-      <td className="px-3 py-1.5 text-right align-top text-xs text-zinc-400 tabular-nums">
+      <td className="px-3 py-1.5 text-end align-top text-xs text-zinc-400 tabular-nums">
         {row.row_number || "—"}
       </td>
       <td className="px-3 py-1.5 align-top">
@@ -120,12 +120,12 @@ function TableSection({ table }: { table: TablePlan }) {
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-zinc-50"
+        className="flex w-full items-center gap-2 px-3 py-2 text-start hover:bg-zinc-50"
         aria-expanded={open}
       >
         <span className="w-3 text-xs text-zinc-400">{open ? "▾" : "▸"}</span>
         <span className="text-sm font-medium">{importTableLabel(table.table)}</span>
-        <span className="ml-auto">
+        <span className="ms-auto">
           <CountPills counts={table.counts} />
         </span>
       </button>
