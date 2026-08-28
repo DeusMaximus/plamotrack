@@ -830,8 +830,11 @@ English sentence. The registry, the catalogue, and the guaranteed params are hel
 together by a shared fixture (`frontend/src/lib/__fixtures__/api-error-codes.json`),
 the same device as the money cases. Import preview is a separate case because its
 warnings, row failures, and blocking diagnostics live inside successful responses;
-those become structured code/parameter/detail objects with #26. Neither wording nor
-active language participates in the import `plan_hash`.
+with #26 those are the same code/params/detail shape (`Diagnostic`), drawn from the
+same registry and rendered through the same `api.<code>` catalogue path — a row may
+carry several, one per problem, and the blocked apply's 409 carries them verbatim in
+its params. Neither wording nor active language participates in the import
+`plan_hash`.
 
 The frontend exposes all of this at `/settings`: General, Language & region, Data
 management, and About. ✅ The page shipped with #24 — General edits the reference
@@ -1226,8 +1229,11 @@ doesn't supply the kits itself.
 
 `POST /import/preview` returns an `ImportPlan`: per-row action (create / update /
 unchanged / skip / error), what it matched and how, field-level diffs, warnings, and
-derived effects. `POST /import/apply` **re-parses and re-plans**, then compares a
-`plan_hash` against the one previewed — a mismatch is a 409.
+derived effects. Row problems, plan warnings, blocking errors and the stock note are
+`{code, params, detail}` diagnostics (#26, §6.1) — stable codes for clients and the
+catalogue, English `detail` as the fallback. `POST /import/apply` **re-parses and
+re-plans**, then compares a `plan_hash` against the one previewed — a mismatch is a
+409.
 
 The hash is **required**: applying without one is a 422, not an unchecked apply. It
 covers the resolved value set of every row, the spawn, removal and advance

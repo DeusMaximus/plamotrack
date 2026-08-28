@@ -45,6 +45,7 @@ from app.models import ItemType, Kit, Order, OrderItem
 from app.models.enums import KitStatus
 from app.schemas.portability import (
     DerivedEffects,
+    Diagnostic,
     FieldChange,
     ImportMode,
     ImportPlan,
@@ -151,8 +152,8 @@ class ParsedUpload:
     source: str
     tables: dict[str, list[dict[str, str]]]
     manifest: ManifestInfo | None = None
-    warnings: list[str] = field(default_factory=list)
-    errors: list[str] = field(default_factory=list)
+    warnings: list[Diagnostic] = field(default_factory=list)
+    errors: list[Diagnostic] = field(default_factory=list)
 
 
 def _read_csv_text(raw: bytes, source: str) -> tuple[list[str], list[dict[str, str]]]:
@@ -348,8 +349,8 @@ def _declared_tables(data: dict) -> list[_Declaration]:
 def _reconcile_manifest(
     declared: list[_Declaration],
     members: list[_Member],
-    warnings: list[str],
-    errors: list[str],
+    warnings: list[Diagnostic],
+    errors: list[Diagnostic],
 ) -> None:
     """Hold the archive to what its own manifest claims (#42).
 
@@ -385,8 +386,14 @@ def _reconcile_manifest(
         matches = by_filename.get(declaration.filename, [])
         if not matches:
             errors.append(
-                f"the manifest lists {declaration.filename}, but it isn't in this "
-                "archive — the zip is truncated or was only partly extracted"
+                Diagnostic(
+                    code=error_codes.IMPORT_MANIFEST_FILE_ABSENT,
+                    params={"filename": declaration.filename},
+                    detail=(
+                        f"the manifest lists {declaration.filename}, but it isn't in this "
+                        "archive — the zip is truncated or was only partly extracted"
+                    ),
+                )
             )
             continue
         if len(matches) > 1:
@@ -397,10 +404,20 @@ def _reconcile_manifest(
                 # members under one *path* is a different fault and has already been
                 # reported against the path itself; saying it twice helps nobody.
                 errors.append(
-                    f"this archive holds {len(paths)} files named "
-                    f"{declaration.filename} ({', '.join(paths)}) — which one the "
-                    "manifest describes can't be told, so the row counts can't be "
-                    "trusted"
+                    Diagnostic(
+                        code=error_codes.IMPORT_MANIFEST_FILE_AMBIGUOUS,
+                        params={
+                            "filename": declaration.filename,
+                            "count": len(paths),
+                            "paths": paths,
+                        },
+                        detail=(
+                            f"this archive holds {len(paths)} files named "
+                            f"{declaration.filename} ({', '.join(paths)}) — which one the "
+                            "manifest describes can't be told, so the row counts can't be "
+                            "trusted"
+                        ),
+                    )
                 )
             continue
 
@@ -408,13 +425,33 @@ def _reconcile_manifest(
         claimed.add(member.path)
         if member.routed is not None and member.routed != declaration.table:
             warnings.append(
-                f"the manifest files {member.filename} under '{declaration.table}', "
-                f"but its columns are {member.routed} — importing it as {member.routed}"
+                Diagnostic(
+                    code=error_codes.IMPORT_MANIFEST_TABLE_MISMATCH,
+                    params={
+                        "filename": member.filename,
+                        "declared": declaration.table,
+                        "routed": member.routed,
+                    },
+                    detail=(
+                        f"the manifest files {member.filename} under '{declaration.table}', "
+                        f"but its columns are {member.routed} — importing it as {member.routed}"
+                    ),
+                )
             )
         if member.rows != declaration.rows:
             warnings.append(
-                f"{member.filename}: the manifest says {declaration.rows:,} row(s) but "
-                f"{member.rows:,} could be read — this archive isn't intact"
+                Diagnostic(
+                    code=error_codes.IMPORT_MANIFEST_ROWS_MISMATCH,
+                    params={
+                        "filename": member.filename,
+                        "declared": declaration.rows,
+                        "read": member.rows,
+                    },
+                    detail=(
+                        f"{member.filename}: the manifest says {declaration.rows:,} row(s) but "
+                        f"{member.rows:,} could be read — this archive isn't intact"
+                    ),
+                )
             )
 
     for member in members:
@@ -422,16 +459,22 @@ def _reconcile_manifest(
         # already warned on its own account and contributed no data to be surprised by.
         if member.path not in claimed and member.routed is not None:
             warnings.append(
-                f"{member.path} isn't listed in this archive's manifest, but "
-                f"{member.rows:,} row(s) were read from it as {member.routed} — "
-                "the manifest doesn't describe everything in this zip"
+                Diagnostic(
+                    code=error_codes.IMPORT_MEMBER_UNDECLARED,
+                    params={"path": member.path, "rows": member.rows, "table": member.routed},
+                    detail=(
+                        f"{member.path} isn't listed in this archive's manifest, but "
+                        f"{member.rows:,} row(s) were read from it as {member.routed} — "
+                        "the manifest doesn't describe everything in this zip"
+                    ),
+                )
             )
 
 
 def _read_zip(content: bytes, reference_currency: str) -> ParsedUpload:
     tables: dict[str, list[dict[str, str]]] = {}
-    warnings: list[str] = []
-    errors: list[str] = []
+    warnings: list[Diagnostic] = []
+    errors: list[Diagnostic] = []
     manifest: ManifestInfo | None = None
     declared: list[_Declaration] = []
     members: list[_Member] = []
@@ -459,8 +502,14 @@ def _read_zip(content: bytes, reference_currency: str) -> ParsedUpload:
         for path, count in sorted(Counter(names).items()):
             if count > 1:
                 errors.append(
-                    f"this archive holds more than one member called {path} — it "
-                    "can't be read reliably, so nothing will be imported from it"
+                    Diagnostic(
+                        code=error_codes.IMPORT_MEMBER_DUPLICATED,
+                        params={"path": path},
+                        detail=(
+                            f"this archive holds more than one member called {path} — it "
+                            "can't be read reliably, so nothing will be imported from it"
+                        ),
+                    )
                 )
 
         manifest_names = [n for n in names if n.rsplit("/", 1)[-1] == MANIFEST_NAME]
@@ -470,15 +519,27 @@ def _read_zip(content: bytes, reference_currency: str) -> ParsedUpload:
             # archive claimed. By the rule above, a zip that cannot say what it holds
             # blocks rather than picking one.
             errors.append(
-                f"this archive holds {len(manifest_names)} manifests "
-                f"({', '.join(sorted(manifest_names))}) — there is no telling which "
-                "one describes it, so nothing will be imported from it"
+                Diagnostic(
+                    code=error_codes.IMPORT_MANIFEST_AMBIGUOUS,
+                    params={"count": len(manifest_names)},
+                    detail=(
+                        f"this archive holds {len(manifest_names)} manifests "
+                        f"({', '.join(sorted(manifest_names))}) — there is no telling which "
+                        "one describes it, so nothing will be imported from it"
+                    ),
+                )
             )
         elif manifest_names:
             try:
                 data = json.loads(budget.read(archive, manifest_names[0]))
             except (json.JSONDecodeError, ValueError) as exc:
-                warnings.append(f"manifest.json could not be read ({exc}) — continuing without it")
+                warnings.append(
+                    Diagnostic(
+                        code=error_codes.IMPORT_MANIFEST_UNREADABLE,
+                        params={},
+                        detail=f"manifest.json could not be read ({exc}) — continuing without it",
+                    )
+                )
             else:
                 # `else`, not a `data is None` sentinel: `null` is valid JSON that
                 # parses to None, so a sentinel of None made a null manifest
@@ -505,21 +566,40 @@ def _read_zip(content: bytes, reference_currency: str) -> ParsedUpload:
                         # Named fields, not `{exc}`: a Pydantic report runs to
                         # several lines and a docs URL, and this lands in a preview
                         # panel someone is reading to decide whether to import.
-                        fields = ", ".join(
-                            str(error["loc"][0]) for error in exc.errors() if error.get("loc")
+                        fields = sorted(
+                            {str(error["loc"][0]) for error in exc.errors() if error.get("loc")}
                         )
                         warnings.append(
-                            f"manifest.json has metadata this instance can't read "
-                            f"({fields or 'unknown field'}) — continuing without it"
+                            Diagnostic(
+                                code=error_codes.IMPORT_MANIFEST_METADATA_UNREADABLE,
+                                params={"fields": fields},
+                                detail=(
+                                    f"manifest.json has metadata this instance can't read "
+                                    f"({', '.join(fields) or 'unknown field'}) — continuing "
+                                    "without it"
+                                ),
+                            )
                         )
                 else:
                     warnings.append(
-                        f"manifest.json is {_json_shape(data)}, not an object, so it "
-                        "says nothing about this archive — continuing without it"
+                        Diagnostic(
+                            code=error_codes.IMPORT_MANIFEST_NOT_OBJECT,
+                            params={},
+                            detail=(
+                                f"manifest.json is {_json_shape(data)}, not an object, so it "
+                                "says nothing about this archive — continuing without it"
+                            ),
+                        )
                     )
         else:
             warnings.append(
-                "no manifest.json in this zip, so it's being read as a loose set of CSVs"
+                Diagnostic(
+                    code=error_codes.IMPORT_MANIFEST_MISSING,
+                    params={},
+                    detail=(
+                        "no manifest.json in this zip, so it's being read as a loose set of CSVs"
+                    ),
+                )
             )
 
         for entry in names:
@@ -541,14 +621,26 @@ def _read_zip(content: bytes, reference_currency: str) -> ParsedUpload:
             table_key = _detect_table(entry, header)
             members.append(_Member(entry, table_key, len(rows)))
             if table_key is None:
-                warnings.append(f"{entry}: not recognised as any known table — skipped")
+                warnings.append(
+                    Diagnostic(
+                        code=error_codes.IMPORT_MEMBER_UNRECOGNISED,
+                        params={"path": entry},
+                        detail=f"{entry}: not recognised as any known table — skipped",
+                    )
+                )
                 continue
             tables.setdefault(table_key, []).extend(rows)
 
         _reconcile_manifest(declared, members, warnings, errors)
 
     if not tables:
-        errors.append("that archive contained no readable table data")
+        errors.append(
+            Diagnostic(
+                code=error_codes.IMPORT_NO_TABLE_DATA,
+                params={},
+                detail="that archive contained no readable table data",
+            )
+        )
     return ParsedUpload(
         source="archive" if manifest else "csv-set",
         tables=tables,
@@ -608,8 +700,8 @@ class _Row:
     matched_by: str | None = None
     target: Any = None
     changes: list[FieldChange] = field(default_factory=list)
-    messages: list[str] = field(default_factory=list)
-    error: str | None = None
+    messages: list[Diagnostic] = field(default_factory=list)
+    errors: list[Diagnostic] = field(default_factory=list)
     new_id: uuid.UUID | None = None
     #: ALT_MONEY columns whose cell was grouped in a way a decimal separator could
     #: equally explain (`1,234`). Valid grammar, but only the currency settles which
@@ -627,6 +719,14 @@ class _Row:
     #: the two are different instructions once there is a stored link to lose
     #: (`_refuse_unresolved_overwrite`).
     unresolved: dict[str, tuple[str, uuid.UUID]] = field(default_factory=dict)
+
+    def refuse(self, diagnostic: Diagnostic) -> None:
+        """Mark this row ERROR, carrying `diagnostic`. Appends rather than
+        replaces — a row may hold several problems, each its own diagnostic
+        (#26); callers that must not stack a second diagnosis on an already
+        refused row keep their own `action is ERROR` guards, as before."""
+        self.action = RowAction.ERROR
+        self.errors.append(diagnostic)
 
 
 @dataclass
@@ -697,13 +797,34 @@ def _norm_name(value: Any) -> str:
     return str(value or "").strip().lower()
 
 
-def _dangling_optional_message(column: str, table: str, missing: uuid.UUID) -> str:
-    """#82's wording for an optional reference that named nothing, in one place so
-    `_refuse_unresolved_overwrite` can withdraw it precisely when it turns out to
-    be untrue for the row."""
-    return (
-        f"{column}: no {table} here has id {missing}, so this row imports "
-        f"without it. Add that {table} row, or fill it in afterwards"
+def _borrowed_diagnostic(exc: DomainError, **extra: Any) -> Diagnostic:
+    """A diagnostic that borrows a `DomainError`'s code, params and sentence.
+
+    For the places the importer asks a shared service predicate
+    (`require_line_quantity`, `require_total_fanout`) and reports the refusal as
+    a row or plan diagnostic instead of letting the exception fly: the condition
+    already has a wire code at the raise site, and the raise-site audit in
+    `tests/test_error_envelope.py` already holds that site's params to the
+    fixture — so this bridge sends exactly what the raise would have.
+    `extra` (a starter-sheet row number) never overrides what the raise said.
+    The audit can't see through this call, so the codes that reach the wire only
+    this way are named in the test's `_BORROWED` list.
+    """
+    return Diagnostic(code=exc.code, params={**extra, **exc.params}, detail=str(exc))
+
+
+def _dangling_optional_diagnostic(column: str, table: str, missing: uuid.UUID) -> Diagnostic:
+    """#82's diagnostic for an optional reference that named nothing, in one place
+    so `_refuse_unresolved_overwrite` can withdraw it precisely when it turns out
+    to be untrue for the row — pydantic models compare by value, so building the
+    same diagnostic again is the removal key."""
+    return Diagnostic(
+        code=error_codes.IMPORT_REF_DANGLING,
+        params={"field": column, "table": table, "id": str(missing)},
+        detail=(
+            f"{column}: no {table} here has id {missing}, so this row imports "
+            f"without it. Add that {table} row, or fill it in afterwards"
+        ),
     )
 
 
@@ -727,8 +848,8 @@ class _Planner:
         self.spawns: list[_Spawn] = []
         self.removals: list[_Removal] = []
         self.advances: list[_Advance] = []
-        self.warnings: list[str] = list(upload.warnings)
-        self.blocking: list[str] = list(upload.errors)
+        self.warnings: list[Diagnostic] = list(upload.warnings)
+        self.blocking: list[Diagnostic] = list(upload.errors)
         self.catalog_names: dict[uuid.UUID, str] = {}
         self.claimed_lines: set[uuid.UUID] = set()
         # Upload-local identity, which `by_id`/`by_natural` cannot supply: those are
@@ -795,15 +916,21 @@ class _Planner:
         row_number = int(raw.get(_ROW_MARKER, 0) or 0)
         values: dict[str, Any] = {}
         present: set[str] = set()
-        errors: list[str] = []
+        errors: list[Diagnostic] = []
 
         for key in raw:
             if key == _ROW_MARKER:
                 continue
             if spec.column(key) is None and key.strip():
-                message = f"column '{key}' isn't a {spec.key} column and was ignored"
-                if message not in self.warnings:
-                    self.warnings.append(message)
+                diagnostic = Diagnostic(
+                    code=error_codes.IMPORT_COLUMN_UNKNOWN,
+                    params={"column": key, "table": spec.key},
+                    detail=f"column '{key}' isn't a {spec.key} column and was ignored",
+                )
+                # By value, which pydantic equality gives for free — the same
+                # stray column warns once per upload, not once per row.
+                if diagnostic not in self.warnings:
+                    self.warnings.append(diagnostic)
 
         lone_grouped: set[str] = set()
         for column in spec.columns:
@@ -819,12 +946,24 @@ class _Planner:
                 # ArithmeticError as well as ValueError: a cell is data, and no
                 # arrangement of it should be able to leave here as a 500. `inf` in
                 # an integer column used to raise OverflowError straight past this.
-                errors.append(f"{column.name}: {exc}")
+                errors.append(
+                    Diagnostic(
+                        code=error_codes.IMPORT_CELL_INVALID,
+                        params={"field": column.name},
+                        detail=f"{column.name}: {exc}",
+                    )
+                )
                 values[column.name] = None
 
         for column in spec.columns:
             if column.required and column.name in present and values.get(column.name) is None:
-                errors.append(f"{column.name} is required")
+                errors.append(
+                    Diagnostic(
+                        code=error_codes.IMPORT_CELL_REQUIRED,
+                        params={"field": column.name},
+                        detail=f"{column.name} is required",
+                    )
+                )
 
         filled: set[str] = set()
         _default_money_currency(spec, values, present, filled, self.reference_currency)
@@ -839,8 +978,7 @@ class _Planner:
             lone_grouped=lone_grouped,
         )
         row.label = spec.label(values)
-        if errors:
-            row.error = "; ".join(errors)
+        row.errors = errors
         return row
 
     # -- reference resolution --------------------------------------------------
@@ -899,8 +1037,14 @@ class _Planner:
                 row.values[column.name] = None
                 if discarded is not None:
                     row.messages.append(
-                        f"{column.name}: a kit line doesn't reference the catalog — its kits "
-                        f"are spawned fresh, so {discarded} was ignored"
+                        Diagnostic(
+                            code=error_codes.IMPORT_REF_IGNORED_KIT_LINE,
+                            params={"field": column.name},
+                            detail=(
+                                f"{column.name}: a kit line doesn't reference the catalog — "
+                                f"its kits are spawned fresh, so {discarded} was ignored"
+                            ),
+                        )
                     )
                 return None
 
@@ -982,6 +1126,24 @@ class _Planner:
             values["quantity_on_hand"] = 0
             present.add("quantity_on_hand")
 
+        # Two codes, not a suffix param: "at 0 on hand" is stock semantics only a
+        # catalog stub carries, and a translation needs to know which sentence it
+        # is rendering rather than gluing a clause on.
+        if table != "retailers":
+            told = Diagnostic(
+                code=error_codes.IMPORT_STUB_CREATED_UNSTOCKED,
+                params={"table": source.table, "row": source.row_number},
+                detail=(
+                    f"created from a reference on {source.table} row {source.row_number}"
+                    " at 0 on hand"
+                ),
+            )
+        else:
+            told = Diagnostic(
+                code=error_codes.IMPORT_STUB_CREATED,
+                params={"table": source.table, "row": source.row_number},
+                detail=f"created from a reference on {source.table} row {source.row_number}",
+            )
         stub = _Row(
             table=table,
             row_number=source.row_number,
@@ -991,10 +1153,7 @@ class _Planner:
             label=spec.label(values),
             new_id=new_id,
             synthetic_id=True,
-            messages=[
-                f"created from a reference on {source.table} row {source.row_number}"
-                + (" at 0 on hand" if table != "retailers" else "")
-            ],
+            messages=[told],
         )
         self.rows.setdefault(table, []).append(stub)
         self.created_ids[table].add(new_id)
@@ -1020,10 +1179,15 @@ class _Planner:
             row.matched_by = key[0]
             row.target = candidates[0]
         elif len(candidates) > 1:
-            row.action = RowAction.ERROR
-            row.error = (
-                f"{len(candidates)} existing {spec.key} rows match this one — "
-                "set the id column to say which one you mean"
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.IMPORT_MATCH_AMBIGUOUS,
+                    params={"count": len(candidates), "table": spec.key},
+                    detail=(
+                        f"{len(candidates)} existing {spec.key} rows match this one — "
+                        "set the id column to say which one you mean"
+                    ),
+                )
             )
 
     def _line_fingerprint(
@@ -1089,7 +1253,11 @@ class _Planner:
         number = _norm_name(row.values.get("order_number"))
         if number:
             matches = [o for o in candidates if _norm_name(o.order_number) == number]
-            label = "retailer + order number"
+            # Canonical identifiers, not phrases (#26): `matched_by` travels the
+            # wire, so the browser maps it to a label and the value itself stays
+            # stable and untranslated. `worded` is the same fact for the English
+            # detail below.
+            label, worded = "retailer_order_number", "retailer + order number"
         else:
             wanted = sorted(
                 self._incoming_line_fingerprint(line) for line in incoming_lines.get(row_id, [])
@@ -1101,15 +1269,20 @@ class _Planner:
                 if o.order_date == order_date
                 and sorted(self._existing_line_fingerprint(i) for i in o.items) == wanted
             ]
-            label = "retailer + date + lines"
+            label, worded = "retailer_date_lines", "retailer + date + lines"
 
         if len(matches) == 1:
             row.matched_id, row.matched_by, row.target = matches[0].id, label, matches[0]
         elif len(matches) > 1:
-            row.action = RowAction.ERROR
-            row.error = (
-                f"{len(matches)} existing orders match this one ({label}) — "
-                "set the id column to say which one you mean"
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.IMPORT_MATCH_AMBIGUOUS,
+                    params={"count": len(matches), "table": "orders", "matched_by": label},
+                    detail=(
+                        f"{len(matches)} existing orders match this one ({worded}) — "
+                        "set the id column to say which one you mean"
+                    ),
+                )
             )
 
     def _match_order_item(self, row: _Row) -> None:
@@ -1129,7 +1302,7 @@ class _Planner:
                 continue
             if self._existing_line_fingerprint(item) == wanted:
                 self.claimed_lines.add(item.id)
-                row.matched_id, row.matched_by, row.target = item.id, "order + line", item
+                row.matched_id, row.matched_by, row.target = item.id, "order_line", item
                 return
 
     def _claim_source_id(self, spec: TableSpec, row: _Row) -> None:
@@ -1163,10 +1336,15 @@ class _Planner:
             return
         first = self.claimed_source_ids[spec.key].get(source_id)
         if first is not None:
-            row.action = RowAction.ERROR
-            row.error = (
-                f"row {first} of {spec.key}.csv already uses id {source_id} — "
-                "two rows in one upload cannot carry the same id"
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.IMPORT_ID_DUPLICATED,
+                    params={"row": first, "id": str(source_id)},
+                    detail=(
+                        f"row {first} of {spec.key}.csv already uses id {source_id} — "
+                        "two rows in one upload cannot carry the same id"
+                    ),
+                )
             )
             return
         self.claimed_source_ids[spec.key][source_id] = row.row_number
@@ -1208,10 +1386,15 @@ class _Planner:
         if target is not None:
             first = self.claimed_targets[spec.key].get(target)
             if first is not None:
-                row.action = RowAction.ERROR
-                row.error = (
-                    f"row {first} of {spec.key}.csv already claims this row — "
-                    "two rows in one upload cannot describe the same record"
+                row.refuse(
+                    Diagnostic(
+                        code=error_codes.IMPORT_TARGET_DUPLICATED,
+                        params={"row": first},
+                        detail=(
+                            f"row {first} of {spec.key}.csv already claims this row — "
+                            "two rows in one upload cannot describe the same record"
+                        ),
+                    )
                 )
                 return
             self.claimed_targets[spec.key][target] = row.row_number
@@ -1223,10 +1406,15 @@ class _Planner:
             return
         first = self.claimed_natural[spec.key].get(key)
         if first is not None:
-            row.action = RowAction.ERROR
-            row.error = (
-                f"row {first} of {spec.key}.csv already describes this "
-                f"{key[0]} — give one of them an id if they are meant to be different"
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.IMPORT_NATURAL_KEY_DUPLICATED,
+                    params={"row": first, "field": key[0]},
+                    detail=(
+                        f"row {first} of {spec.key}.csv already describes this "
+                        f"{key[0]} — give one of them an id if they are meant to be different"
+                    ),
+                )
             )
             return
         self.claimed_natural[spec.key][key] = row.row_number
@@ -1269,8 +1457,14 @@ class _Planner:
                 continue
             row.present.discard(column.name)
             row.messages.append(
-                f"{column.name}: left as it was — this column can't be emptied, and nothing "
-                "in this row supplies a new value"
+                Diagnostic(
+                    code=error_codes.IMPORT_KEPT_STORED,
+                    params={"field": column.name},
+                    detail=(
+                        f"{column.name}: left as it was — this column can't be emptied, "
+                        "and nothing in this row supplies a new value"
+                    ),
+                )
             )
 
     def _refuse_unresolved_overwrite(self, spec: TableSpec, row: _Row) -> bool:
@@ -1306,18 +1500,23 @@ class _Planner:
                 continue
             # The "imports without it" line was true when it was written and is
             # not any more; the error below is what the operator should read.
-            told = _dangling_optional_message(column_name, table, missing)
+            told = _dangling_optional_diagnostic(column_name, table, missing)
             row.messages = [message for message in row.messages if message != told]
-            row.action = RowAction.ERROR
             # "Leave the column out" rather than "leave the cell blank": omitting a
             # column always means "leave it as it is", while a blank means detach
             # for `order_item_id` and is itself refused for `catalog_ref_id`
             # (`_check_catalog_targets`), so only the first is a remedy for both.
-            row.error = (
-                f"{column_name}: no {table} here has id {missing}, and this row currently "
-                f"points at {table} {column.get(row.target)} — an id that names nothing "
-                "can't be what clears that link. Fix the id, or leave the column out of "
-                "this sheet to keep the link as it is"
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.IMPORT_REF_OVERWRITE_UNRESOLVED,
+                    params={"field": column_name, "table": table, "id": str(missing)},
+                    detail=(
+                        f"{column_name}: no {table} here has id {missing}, and this row "
+                        f"currently points at {table} {column.get(row.target)} — an id that "
+                        "names nothing can't be what clears that link. Fix the id, or leave "
+                        "the column out of this sheet to keep the link as it is"
+                    ),
+                )
             )
             return True
         return False
@@ -1349,10 +1548,15 @@ class _Planner:
                 continue
             if _column_has_own_default(spec, column.name):
                 continue
-            row.action = RowAction.ERROR
-            row.error = (
-                f"{column.name}: a new {spec.key} row needs this, and this one has no value "
-                "for it. Fill the column in"
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.IMPORT_VALUE_REQUIRED_FOR_CREATE,
+                    params={"field": column.name, "table": spec.key},
+                    detail=(
+                        f"{column.name}: a new {spec.key} row needs this, and this one has "
+                        "no value for it. Fill the column in"
+                    ),
+                )
             )
             # Take the id back. `_classify` mints `new_id` into `created_ids` before
             # this runs, and every later table resolves references through that set —
@@ -1434,10 +1638,15 @@ class _Planner:
         if row.action is RowAction.ERROR:
             return
         if row.target is None:
-            row.action = RowAction.ERROR
-            row.error = (
-                f"this instance holds no {spec.key} row to update — migrations "
-                "create it; run `alembic upgrade head` before importing"
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.IMPORT_SINGLETON_MISSING,
+                    params={"table": spec.key},
+                    detail=(
+                        f"this instance holds no {spec.key} row to update — migrations "
+                        "create it; run `alembic upgrade head` before importing"
+                    ),
+                )
             )
             return
         self._classify(spec, row)
@@ -1481,8 +1690,14 @@ class _Planner:
             return
         row.present.discard("status_updated_at")
         row.messages.append(
-            "status_updated_at will be set to the time of this import — this row moves "
-            "the status without saying when it moved"
+            Diagnostic(
+                code=error_codes.IMPORT_STATUS_STAMP_GENERATED,
+                params={},
+                detail=(
+                    "status_updated_at will be set to the time of this import — this row "
+                    "moves the status without saying when it moved"
+                ),
+            )
         )
 
     # -- the main pass ---------------------------------------------------------
@@ -1582,7 +1797,11 @@ class _Planner:
                 label="the kits this import would create from order lines",
             )
         except InvalidInputError as exc:
-            self.blocking.append(str(exc))
+            # The service that owns the ceiling also owns the condition: the
+            # diagnostic borrows the raise's own code and params
+            # (`order.fanout_limit`), which the #25 raise-site audit already
+            # holds to the fixture.
+            self.blocking.append(_borrowed_diagnostic(exc))
         self._plan_advances()
         return self._finish()
 
@@ -1603,8 +1822,10 @@ class _Planner:
         try:
             require_line_quantity(quantity)
         except InvalidInputError as exc:
-            row.action = RowAction.ERROR
-            row.error = str(exc)
+            # Borrowed code + params (`order_line.quantity_too_small`/`_too_large`)
+            # — the same condition the live writers refuse, from the raise the
+            # audit already covers.
+            row.refuse(_borrowed_diagnostic(exc))
 
     def _resolve_all_refs(self, spec: TableSpec, row: _Row, replace_all: bool) -> None:
         if row.action is RowAction.ERROR:
@@ -1625,18 +1846,28 @@ class _Planner:
                 alt = self._alt_for(spec, column)
                 if alt is not None:
                     fix += f", or name it in {alt.name} and one will be created"
-                row.action = RowAction.ERROR
-                row.error = (
-                    f"{column.name}: no {target} row with id {missing} in this upload — "
-                    f"a replace-all import deletes everything the upload doesn't "
-                    f"contain, so {fix}"
+                row.refuse(
+                    Diagnostic(
+                        code=error_codes.IMPORT_REF_NOT_IN_UPLOAD,
+                        params={"field": column.name, "table": target, "id": str(missing)},
+                        detail=(
+                            f"{column.name}: no {target} row with id {missing} in this upload "
+                            f"— a replace-all import deletes everything the upload doesn't "
+                            f"contain, so {fix}"
+                        ),
+                    )
                 )
             elif column.required:
-                row.action = RowAction.ERROR
                 target = column.ref_table
-                row.error = (
-                    f"{column.name}: no matching {target} found — "
-                    "add it to the import or fix the reference"
+                row.refuse(
+                    Diagnostic(
+                        code=error_codes.IMPORT_REF_UNMATCHED,
+                        params={"field": column.name, "table": target},
+                        detail=(
+                            f"{column.name}: no matching {target} found — "
+                            "add it to the import or fix the reference"
+                        ),
+                    )
                 )
             elif dangling is not None and _column_is_nullable(spec, column.name):
                 # Optional, **and able to hold null** — the id named nothing here or
@@ -1658,7 +1889,7 @@ class _Planner:
                 # rows lost their link is the part a count cannot give back.
                 target, missing = dangling
                 row.unresolved[column.name] = dangling
-                row.messages.append(_dangling_optional_message(column.name, target, missing))
+                row.messages.append(_dangling_optional_diagnostic(column.name, target, missing))
 
     def _apply_money_alternates(self, spec: TableSpec, row: _Row) -> None:
         """Major units fill in only where the canonical minor-unit column is absent
@@ -1691,12 +1922,17 @@ class _Planner:
                 continue
             code = row.values.get(column.currency_column)
             if column.name in row.lone_grouped and minor_fraction_digits(code) != 0:
-                row.action = RowAction.ERROR
-                row.error = (
-                    f"{column.name}: a comma is ambiguous in {code or 'this currency'} — "
-                    f"this cell reads as {render(major)} if the comma groups thousands, "
-                    f"or {major / 1000} if it is a decimal point. Write it with a decimal "
-                    "point, or with no separator at all."
+                row.refuse(
+                    Diagnostic(
+                        code=error_codes.IMPORT_MONEY_AMBIGUOUS,
+                        params={"field": column.name},
+                        detail=(
+                            f"{column.name}: a comma is ambiguous in {code or 'this currency'} "
+                            f"— this cell reads as {render(major)} if the comma groups "
+                            f"thousands, or {major / 1000} if it is a decimal point. Write it "
+                            "with a decimal point, or with no separator at all."
+                        ),
+                    )
                 )
                 continue
             try:
@@ -1704,8 +1940,13 @@ class _Planner:
                 row.values[column.mirrors] = minor
                 row.present.add(column.mirrors)
             except (ArithmeticError, ValueError) as exc:
-                row.action = RowAction.ERROR
-                row.error = f"{column.name}: {exc}"
+                row.refuse(
+                    Diagnostic(
+                        code=error_codes.IMPORT_CELL_INVALID,
+                        params={"field": column.name},
+                        detail=f"{column.name}: {exc}",
+                    )
+                )
 
     def _warn_unknown_currency(self, spec: TableSpec, row: _Row) -> None:
         """A code outside ISO 4217 is stored as typed, with its decimals guessed.
@@ -1722,8 +1963,15 @@ class _Planner:
             code = row.values.get(column.name)
             if code and not is_known_currency(code):
                 row.messages.append(
-                    f"{column.name}: '{code}' isn't a currency code we recognise — it will be "
-                    "stored as typed, and its amounts read as having 2 decimal places"
+                    Diagnostic(
+                        code=error_codes.IMPORT_CURRENCY_UNKNOWN,
+                        params={"field": column.name, "currency": code},
+                        detail=(
+                            f"{column.name}: '{code}' isn't a currency code we recognise — it "
+                            "will be stored as typed, and its amounts read as having 2 "
+                            "decimal places"
+                        ),
+                    )
                 )
 
     def _annotate(self, spec: TableSpec, row: _Row, replace_all: bool) -> None:
@@ -1744,8 +1992,14 @@ class _Planner:
             same = sum(1 for kit in self.existing["kits"] if _norm_name(kit.name) == name)
             if same:
                 row.messages.append(
-                    f"you already have {same} kit(s) called '{row.values.get('name')}' — "
-                    "importing adds another, since two of the same kit are two kits"
+                    Diagnostic(
+                        code=error_codes.IMPORT_KIT_NAME_EXISTS,
+                        params={"count": same, "name": str(row.values.get("name"))},
+                        detail=(
+                            f"you already have {same} kit(s) called '{row.values.get('name')}' "
+                            "— importing adds another, since two of the same kit are two kits"
+                        ),
+                    )
                 )
 
     def _fold_new_categories(self, replace_all: bool) -> None:
@@ -1848,8 +2102,14 @@ class _Planner:
                 elif vocab[key] != value:
                     row.values["category"] = vocab[key]
                     row.messages.append(
-                        f"category '{value}' will be stored as '{vocab[key]}', "
-                        "matching the spelling already in use"
+                        Diagnostic(
+                            code=error_codes.IMPORT_CATEGORY_FOLDED,
+                            params={"stated": value, "stored": vocab[key]},
+                            detail=(
+                                f"category '{value}' will be stored as '{vocab[key]}', "
+                                "matching the spelling already in use"
+                            ),
+                        )
                     )
 
     def _order_instant(self, order_id: uuid.UUID, column: str) -> datetime | None:
@@ -2108,12 +2368,17 @@ class _Planner:
                 continue
             if row.matched_id not in protected:
                 continue
-            row.action = RowAction.ERROR
-            row.error = (
-                "order_item_id: this kit is building or complete, rated, photographed, or has "
-                "upgrades applied to it, so the order line that bought it is what stops that "
-                "order being deleted out from under it. An import can't take that link away — "
-                "leave order_item_id as it is"
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.IMPORT_PROVENANCE_PROTECTED,
+                    params={},
+                    detail=(
+                        "order_item_id: this kit is building or complete, rated, "
+                        "photographed, or has upgrades applied to it, so the order line that "
+                        "bought it is what stops that order being deleted out from under it. "
+                        "An import can't take that link away — leave order_item_id as it is"
+                    ),
+                )
             )
 
     def _planned_line(self, line_id: uuid.UUID) -> _Row | None:
@@ -2176,10 +2441,16 @@ class _Planner:
             name = row.values.get("kit_name")
             grade = row.values.get("kit_grade")
             if not name or not grade:
-                row.action = RowAction.ERROR
-                row.error = (
-                    f"this kit line needs {missing} more kit(s), but has no kit_name/kit_grade "
-                    "to create them from — fill those in, or supply the kits in kits.csv"
+                row.refuse(
+                    Diagnostic(
+                        code=error_codes.IMPORT_SPAWN_SOURCE_MISSING,
+                        params={"count": missing},
+                        detail=(
+                            f"this kit line needs {missing} more kit(s), but has no "
+                            "kit_name/kit_grade to create them from — fill those in, or "
+                            "supply the kits in kits.csv"
+                        ),
+                    )
                 )
                 continue
             status = row.values.get("kit_status")
@@ -2203,7 +2474,13 @@ class _Planner:
                     shipped_at=self._order_shipment(order_id),
                 )
             )
-            row.messages.append(f"will create {missing} kit(s) from this line")
+            row.messages.append(
+                Diagnostic(
+                    code=error_codes.IMPORT_KITS_SPAWN_PLANNED,
+                    params={"count": missing},
+                    detail=f"will create {missing} kit(s) from this line",
+                )
+            )
 
     def _refuse_unreconciled_kit_moves(
         self, kit_rows: list[_Row], reconciled: set[uuid.UUID], replace_all: bool
@@ -2314,9 +2591,16 @@ class _Planner:
             if item_type is not ItemType.KIT:
                 self._error_rows(
                     rows,
-                    f"order_item_id: order line {line_id} is a {item_type} line, and a kit's "
-                    "order_item_id records which line bought it — a catalog line buys stock, "
-                    "not kits. Point these kits at a kit line, or leave the column blank",
+                    Diagnostic(
+                        code=error_codes.IMPORT_KIT_MOVE_TO_CATALOG_LINE,
+                        params={"line_id": str(line_id), "item_type": str(item_type)},
+                        detail=(
+                            f"order_item_id: order line {line_id} is a {item_type} line, and "
+                            "a kit's order_item_id records which line bought it — a catalog "
+                            "line buys stock, not kits. Point these kits at a kit line, or "
+                            "leave the column blank"
+                        ),
+                    ),
                 )
                 continue
 
@@ -2334,10 +2618,16 @@ class _Planner:
             if quantity is None:
                 self._error_rows(
                     rows,
-                    f"order_item_id: this would leave order line {line_id} holding {after} "
-                    "kit(s), and nothing in this upload says how many that line bought — its "
-                    "order_items.csv row has no quantity column. State the quantity there, or "
-                    "leave order_item_id as it is",
+                    Diagnostic(
+                        code=error_codes.IMPORT_KIT_MOVE_QUANTITY_UNSTATED,
+                        params={"line_id": str(line_id), "after": after},
+                        detail=(
+                            f"order_item_id: this would leave order line {line_id} holding "
+                            f"{after} kit(s), and nothing in this upload says how many that "
+                            "line bought — its order_items.csv row has no quantity column. "
+                            "State the quantity there, or leave order_item_id as it is"
+                        ),
+                    ),
                 )
             elif after != quantity and planned is not None:
                 # The line's row is here and leaves its quantity as it is — a
@@ -2346,27 +2636,40 @@ class _Planner:
                 # spawning kits to make the move fit, so the operator says which.
                 self._error_rows(
                     rows,
-                    f"order_item_id: this would leave order line {line_id} holding {after} "
-                    f"kit(s) while the line says it bought {quantity}, and its "
-                    "order_items.csv row leaves that quantity as it is — a line is reconciled "
-                    "only where this upload changes its quantity. Set the quantity there to "
-                    "what the line should hold, or leave order_item_id as it is",
+                    Diagnostic(
+                        code=error_codes.IMPORT_KIT_MOVE_UNRECONCILED,
+                        params={"line_id": str(line_id), "after": after, "quantity": quantity},
+                        detail=(
+                            f"order_item_id: this would leave order line {line_id} holding "
+                            f"{after} kit(s) while the line says it bought {quantity}, and "
+                            "its order_items.csv row leaves that quantity as it is — a line "
+                            "is reconciled only where this upload changes its quantity. Set "
+                            "the quantity there to what the line should hold, or leave "
+                            "order_item_id as it is"
+                        ),
+                    ),
                 )
             elif after != quantity:
                 self._error_rows(
                     rows,
-                    f"order_item_id: this would leave order line {line_id} holding {after} "
-                    f"kit(s) while the line says it bought {quantity}. Nothing in this upload "
-                    "restates that line's quantity, so there is no way to tell which of the "
-                    "two you mean — add an order_items.csv row for it stating the quantity, "
-                    "or leave order_item_id as it is",
+                    Diagnostic(
+                        code=error_codes.IMPORT_KIT_MOVE_UNRECONCILED,
+                        params={"line_id": str(line_id), "after": after, "quantity": quantity},
+                        detail=(
+                            f"order_item_id: this would leave order line {line_id} holding "
+                            f"{after} kit(s) while the line says it bought {quantity}. "
+                            "Nothing in this upload restates that line's quantity, so there "
+                            "is no way to tell which of the two you mean — add an "
+                            "order_items.csv row for it stating the quantity, or leave "
+                            "order_item_id as it is"
+                        ),
+                    ),
                 )
 
     @staticmethod
-    def _error_rows(rows: list[_Row], message: str) -> None:
+    def _error_rows(rows: list[_Row], diagnostic: Diagnostic) -> None:
         for row in rows:
-            row.action = RowAction.ERROR
-            row.error = message
+            row.refuse(diagnostic)
 
     def _plan_removals(
         self,
@@ -2437,20 +2740,36 @@ class _Planner:
                 # guard returned before saying anything at all and the line landed
                 # holding more kits than it claimed, in every mode (external review
                 # of #86, round four).
-                row.action = RowAction.ERROR
-                row.error = (
-                    f"this line says quantity {stated}, but this upload supplies "
-                    f"{surplus + stated} kit(s) for it in kits.csv. Take out the extra kit "
-                    "rows, or raise the quantity to match them"
+                row.refuse(
+                    Diagnostic(
+                        code=error_codes.IMPORT_KITS_OVERSUPPLIED,
+                        params={"stated": stated, "supplied": surplus + stated},
+                        detail=(
+                            f"this line says quantity {stated}, but this upload supplies "
+                            f"{surplus + stated} kit(s) for it in kits.csv. Take out the "
+                            "extra kit rows, or raise the quantity to match them"
+                        ),
+                    )
                 )
                 return
-            row.action = RowAction.ERROR
-            row.error = (
-                f"this line says quantity {stated}, which is {surplus} fewer "
-                f"than the {len(attached)} kit(s) attached to it, but only {len(candidates)} "
-                "can be removed safely — the rest are building/complete, rated, have photos, "
-                "have upgrades applied, or are described by this upload. Move or edit those "
-                "kits first, or leave the quantity as it was"
+            row.refuse(
+                Diagnostic(
+                    code=error_codes.IMPORT_KITS_NOT_REMOVABLE,
+                    params={
+                        "stated": stated,
+                        "surplus": surplus,
+                        "attached": len(attached),
+                        "removable": len(candidates),
+                    },
+                    detail=(
+                        f"this line says quantity {stated}, which is {surplus} fewer "
+                        f"than the {len(attached)} kit(s) attached to it, but only "
+                        f"{len(candidates)} can be removed safely — the rest are "
+                        "building/complete, rated, have photos, have upgrades applied, or "
+                        "are described by this upload. Move or edit those kits first, or "
+                        "leave the quantity as it was"
+                    ),
+                )
             )
             return
 
@@ -2458,7 +2777,13 @@ class _Planner:
             self.removals.append(
                 _Removal(kit_id=kit.id, order_item_id=row.target.id, row_number=row.row_number)
             )
-        row.messages.append(f"will remove {surplus} kit(s) from this line")
+        row.messages.append(
+            Diagnostic(
+                code=error_codes.IMPORT_KITS_REMOVAL_PLANNED,
+                params={"count": surplus},
+                detail=f"will remove {surplus} kit(s) from this line",
+            )
+        )
 
     @staticmethod
     def _newly_set(row: _Row, column: str) -> datetime | None:
@@ -2548,13 +2873,25 @@ class _Planner:
                     moved[after] = moved.get(after, 0) + 1
             if moved.get(KitStatus.IN_TRANSIT):
                 row.messages.append(
-                    f"marking this order shipped moves "
-                    f"{moved[KitStatus.IN_TRANSIT]} kit(s) to in transit"
+                    Diagnostic(
+                        code=error_codes.IMPORT_KITS_SHIP_ADVANCE,
+                        params={"count": moved[KitStatus.IN_TRANSIT]},
+                        detail=(
+                            f"marking this order shipped moves "
+                            f"{moved[KitStatus.IN_TRANSIT]} kit(s) to in transit"
+                        ),
+                    )
                 )
             if moved.get(KitStatus.BACKLOG):
                 row.messages.append(
-                    f"marking this order received moves "
-                    f"{moved[KitStatus.BACKLOG]} kit(s) to backlog"
+                    Diagnostic(
+                        code=error_codes.IMPORT_KITS_RECEIVE_ADVANCE,
+                        params={"count": moved[KitStatus.BACKLOG]},
+                        detail=(
+                            f"marking this order received moves "
+                            f"{moved[KitStatus.BACKLOG]} kit(s) to backlog"
+                        ),
+                    )
                 )
 
     def _finish(self) -> ExecutionPlan:
@@ -2581,7 +2918,7 @@ class _Planner:
                             matched_by=row.matched_by,
                             changes=row.changes,
                             messages=row.messages,
-                            error=row.error,
+                            errors=row.errors,
                         )
                         for row in rows
                     ],
@@ -2590,8 +2927,14 @@ class _Planner:
 
         if error_count:
             self.blocking.append(
-                f"{error_count} row(s) couldn't be read — nothing will be imported "
-                "until they're fixed or removed"
+                Diagnostic(
+                    code=error_codes.IMPORT_ROWS_UNREADABLE,
+                    params={"count": error_count},
+                    detail=(
+                        f"{error_count} row(s) couldn't be read — nothing will be imported "
+                        "until they're fixed or removed"
+                    ),
+                )
             )
 
         replace_all = self.mode is ImportMode.REPLACE_ALL
@@ -2622,9 +2965,13 @@ class _Planner:
             kits_removed=len(self.removals),
             kits_advanced=len(self.advances),
             stock_changes=0,
-            stock_note=(
-                "Stock levels come from the catalog files. "
-                "Importing orders never changes what you have on hand."
+            stock_note=Diagnostic(
+                code=error_codes.IMPORT_STOCK_NOTE,
+                params={},
+                detail=(
+                    "Stock levels come from the catalog files. "
+                    "Importing orders never changes what you have on hand."
+                ),
             ),
             rows_deleted=deletes,
         )
@@ -2691,14 +3038,16 @@ def _plan_fingerprint(
       row's values — if that ever moves into planning, it has to be excluded
       here explicitly.
 
-    Rendered English stays out as well, and deliberately: `row.label` and
-    `row.error` are both wording (`"(unnamed retailer)"`, `"upgrade application
-    × 2"`), and §6.1 holds that neither wording nor the active language may
-    participate in the hash — otherwise translating a diagnostic silently
-    invalidates every outstanding preview. Nothing is lost by omitting them. A
-    label is derived from values that are hashed here in full, and an error is
-    already carried by the row's action, which cannot reach the comparison
-    anyway: `apply_import` rejects a plan holding blocking errors first.
+    Diagnostics stay out as well, and deliberately: `row.label`, every
+    `row.messages`/`row.errors` entry and the plan's warnings are wording plus
+    presentation params (`"(unnamed retailer)"`, `"upgrade application × 2"`),
+    and §6.1 holds that neither wording nor the active language may participate
+    in the hash — otherwise translating or rewording a diagnostic silently
+    invalidates every outstanding preview (#26 pins this with a test). Nothing
+    is lost by omitting them. A label and a diagnostic's params are derived from
+    values that are hashed here in full, and an error is already carried by the
+    row's action, which cannot reach the comparison anyway: `apply_import`
+    rejects a plan holding blocking errors first.
     """
     synthetic: dict[uuid.UUID, str] = {}
     for spec in TABLE_SPECS:
@@ -2795,13 +3144,19 @@ def _plan_fingerprint(
 # --- public service API ---------------------------------------------------------
 
 
-async def check_compatibility(session: AsyncSession, upload: ParsedUpload) -> list[str]:
-    warnings: list[str] = []
+async def check_compatibility(session: AsyncSession, upload: ParsedUpload) -> list[Diagnostic]:
+    warnings: list[Diagnostic] = []
     manifest = upload.manifest
     if manifest is None:
         return warnings
     if manifest.format and manifest.format != ARCHIVE_FORMAT:
-        warnings.append(f"this archive says it's '{manifest.format}', not a plamotrack export")
+        warnings.append(
+            Diagnostic(
+                code=error_codes.IMPORT_FORMAT_FOREIGN,
+                params={"format": manifest.format},
+                detail=f"this archive says it's '{manifest.format}', not a plamotrack export",
+            )
+        )
     if manifest.export_version and manifest.export_version > EXPORT_VERSION:
         raise InvalidInputError(
             f"this archive was written by a newer version of plamotrack "
@@ -2816,8 +3171,14 @@ async def check_compatibility(session: AsyncSession, upload: ParsedUpload) -> li
     current = await schema_version(session)
     if manifest.schema_version and current and manifest.schema_version != current:
         warnings.append(
-            f"the archive was exported from schema {manifest.schema_version} and this "
-            f"instance is on {current} — importing anyway, but check the result"
+            Diagnostic(
+                code=error_codes.IMPORT_SCHEMA_DRIFT,
+                params={"archive_schema": manifest.schema_version, "instance_schema": current},
+                detail=(
+                    f"the archive was exported from schema {manifest.schema_version} and this "
+                    f"instance is on {current} — importing anyway, but check the result"
+                ),
+            )
         )
     return warnings
 
@@ -2946,10 +3307,19 @@ async def apply_import(
     plan = execution.plan
 
     if plan.blocking_errors:
+        # The structured half rides in params (#26): each blocking diagnostic,
+        # verbatim, so a client can render the refusal without re-running the
+        # preview. `detail` stays the pre-#26 joined sentence — the fallback
+        # contract — and `count` stays the code's one guaranteed param.
         raise ConflictError(
-            "; ".join(plan.blocking_errors),
+            "; ".join(diagnostic.detail for diagnostic in plan.blocking_errors),
             code=error_codes.IMPORT_BLOCKED,
-            params={"count": len(plan.blocking_errors)},
+            params={
+                "count": len(plan.blocking_errors),
+                "diagnostics": [
+                    diagnostic.model_dump(mode="json") for diagnostic in plan.blocking_errors
+                ],
+            },
         )
     if plan_hash != plan.plan_hash:
         raise ConflictError(
@@ -3102,9 +3472,15 @@ def _clear_orphan_money_currency(spec: TableSpec, row: _Row) -> None:
             row.values.pop(currency_column, None)
             if supplied:
                 row.messages.append(
-                    f"{currency_column}: ignored — this file has no {amount_column} "
-                    "column, and a currency can't be changed without restating the "
-                    "amount it applies to"
+                    Diagnostic(
+                        code=error_codes.IMPORT_CURRENCY_WITHOUT_AMOUNT,
+                        params={"field": currency_column, "amount_field": amount_column},
+                        detail=(
+                            f"{currency_column}: ignored — this file has no {amount_column} "
+                            "column, and a currency can't be changed without restating the "
+                            "amount it applies to"
+                        ),
+                    )
                 )
             continue
         if row.values.get(amount_column) is None:

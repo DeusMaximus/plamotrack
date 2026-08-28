@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 
-import { camelizeKey, resolveApiError } from "./apiError";
+import { camelizeKey, resolveApiError, resolveDiagnostic } from "./apiError";
 
 // Deliberately nothing like any catalogue string: a test that sees this text in
 // `message` is seeing the fallback path.
@@ -103,5 +103,51 @@ describe("resolveApiError", () => {
     });
     expect(resolved.params).toEqual({});
     expect(resolved.message).toBe("This order is already marked shipped.");
+  });
+});
+
+describe("resolveDiagnostic (#26)", () => {
+  it("renders a known code through the catalogue, not the detail", () => {
+    const message = resolveDiagnostic({
+      code: "import.cell_required",
+      params: { field: "grade" },
+      detail: SENTINEL,
+    });
+    expect(message).toBe("grade is required.");
+  });
+
+  it("camelizes wire params into the rendering", () => {
+    const message = resolveDiagnostic({
+      code: "import.currency_without_amount",
+      params: { field: "currency_code", amount_field: "unit_price_minor" },
+      detail: SENTINEL,
+    });
+    expect(message).toBe(
+      "currency_code: ignored — this file has no unit_price_minor column, and a currency " +
+        "can't be changed without restating the amount it applies to.",
+    );
+  });
+
+  it("selects the plural form by count", () => {
+    const diagnostic = (count: number) => ({
+      code: "import.rows_unreadable",
+      params: { count },
+      detail: SENTINEL,
+    });
+    expect(resolveDiagnostic(diagnostic(1))).toBe(
+      "1 row couldn't be read — nothing will be imported until it's fixed or removed.",
+    );
+    expect(resolveDiagnostic(diagnostic(4))).toBe(
+      "4 rows couldn't be read — nothing will be imported until they're fixed or removed.",
+    );
+  });
+
+  it("falls back to the detail for a code it doesn't know", () => {
+    const message = resolveDiagnostic({
+      code: "future.condition",
+      params: { anything: 1 },
+      detail: SENTINEL,
+    });
+    expect(message).toBe(SENTINEL);
   });
 });

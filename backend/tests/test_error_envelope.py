@@ -243,16 +243,61 @@ async def test_unrouted_paths_keep_the_stock_body(http_client):
 # Codes emitted by handlers in main.py rather than raised by a service.
 _HANDLER_CODES = {"request.validation", "request.body_invalid"}
 
+# The two bridge helpers whose `Diagnostic(code=exc.code, params={**...})` the
+# AST cannot see through. Each borrows a `DomainError`'s own code and params, so
+# the raise site it borrows from is already audited above — the allowlist is
+# named, not inferred, and counted so a third bridge can't slip in unaudited.
+_DIAGNOSTIC_BRIDGES = {"_borrowed_diagnostic", "_row_problem"}
+
+
+def _extract_code_and_params(call) -> tuple[str | None, set[str] | None]:
+    """The resolved `code=` and the keys of a literal `params=` dict (None when
+    params isn't a literal dict) from one Call node."""
+    import ast
+
+    code: str | None = None
+    params_keys: set[str] | None = set()
+    for keyword in call.keywords:
+        if keyword.arg == "code":
+            value = keyword.value
+            if isinstance(value, ast.Attribute):
+                code = getattr(error_codes, value.attr, None)
+            elif isinstance(value, ast.Constant):
+                code = value.value
+        elif keyword.arg == "params":
+            if isinstance(keyword.value, ast.Dict) and all(
+                isinstance(key, ast.Constant) for key in keyword.value.keys
+            ):
+                params_keys = {key.value for key in keyword.value.keys}
+            else:
+                params_keys = None
+    return code, params_keys
+
+
+def _walk_app():
+    import ast
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    for path in sorted(app_dir.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        # Which bridge helper encloses each line, so a bridge's own internal
+        # Diagnostic() construction is recognised as the one sanctioned
+        # non-literal site rather than a violation.
+        bridge_spans = [
+            (node.lineno, max(child.lineno for child in ast.walk(node) if hasattr(child, "lineno")))
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name in _DIAGNOSTIC_BRIDGES
+        ]
+        yield path, app_dir, tree, bridge_spans
+
 
 def _raise_sites() -> list[tuple[str, str | None, set[str] | None]]:
     """Every domain-error raise in app/, with its resolved code and the keys of
     its literal params dict (None when params isn't a literal dict)."""
     import ast
 
-    app_dir = Path(__file__).resolve().parents[1] / "app"
     sites: list[tuple[str, str | None, set[str] | None]] = []
-    for path in sorted(app_dir.rglob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
+    for path, app_dir, tree, _ in _walk_app():
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)):
                 continue
@@ -260,23 +305,31 @@ def _raise_sites() -> list[tuple[str, str | None, set[str] | None]]:
             name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
             if name not in ("NotFoundError", "ConflictError", "InvalidInputError", "DomainError"):
                 continue
-            code: str | None = None
-            params_keys: set[str] | None = set()
-            for keyword in node.exc.keywords:
-                if keyword.arg == "code":
-                    value = keyword.value
-                    if isinstance(value, ast.Attribute):
-                        code = getattr(error_codes, value.attr, None)
-                    elif isinstance(value, ast.Constant):
-                        code = value.value
-                elif keyword.arg == "params":
-                    if isinstance(keyword.value, ast.Dict) and all(
-                        isinstance(key, ast.Constant) for key in keyword.value.keys
-                    ):
-                        params_keys = {key.value for key in keyword.value.keys}
-                    else:
-                        params_keys = None
+            code, params_keys = _extract_code_and_params(node.exc)
             sites.append((f"{path.relative_to(app_dir)}:{node.lineno}", code, params_keys))
+    return sites
+
+
+def _diagnostic_sites() -> list[tuple[str, str | None, set[str] | None, bool]]:
+    """Every `Diagnostic(...)` construction in app/ (#26): location, resolved
+    code, literal params keys, and whether the site sits inside a named bridge
+    helper (where code and params are the borrowed exception's own)."""
+    import ast
+
+    sites: list[tuple[str, str | None, set[str] | None, bool]] = []
+    for path, app_dir, tree, bridge_spans in _walk_app():
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name != "Diagnostic":
+                continue
+            code, params_keys = _extract_code_and_params(node)
+            in_bridge = any(start <= node.lineno <= end for start, end in bridge_spans)
+            sites.append(
+                (f"{path.relative_to(app_dir)}:{node.lineno}", code, params_keys, in_bridge)
+            )
     return sites
 
 
@@ -301,9 +354,39 @@ def test_every_raise_site_supplies_its_codes_declared_params():
         )
 
 
+def test_every_diagnostic_site_supplies_its_codes_declared_params():
+    """The #26 mirror of the raise-site audit: every `Diagnostic(...)` built in
+    app/ names a fixture code and sends at least its guaranteed params. The two
+    bridge helpers are the sanctioned exception — they forward an audited
+    raise's own code and params — and are counted, so a new unauditable
+    construction can't hide among them."""
+    sites = _diagnostic_sites()
+    assert len(sites) >= 50, f"only {len(sites)} Diagnostic sites found — the walker broke"
+    bridged = [site for site in sites if site[3]]
+    assert len(bridged) == len(_DIAGNOSTIC_BRIDGES), (
+        f"expected exactly one construction per bridge helper, found {bridged}"
+    )
+    for where, code, params_keys, in_bridge in sites:
+        if in_bridge:
+            continue
+        assert code in _FIXTURE, f"{where}: code {code!r} is not in api-error-codes.json"
+        assert params_keys is not None, (
+            f"{where}: params must be a literal dict with constant keys — "
+            "the audit cannot see through anything else (bridges are named)"
+        )
+        declared = set(_FIXTURE[code]["params"])
+        assert declared <= params_keys, (
+            f"{where}: {code} guarantees {sorted(declared)} but sends {sorted(params_keys)}"
+        )
+
+
 def test_every_wire_code_is_raised_or_handler_emitted():
-    """The other direction: a fixture code nothing raises is either dead or a
-    handler's — and the handler set is named, not inferred."""
+    """The other direction: a fixture code nothing emits is either dead or a
+    handler's — and the handler set is named, not inferred. Since #26 a code
+    reaches the wire two ways, so diagnostic constructions count alongside
+    raises; the bridge helpers add nothing here because every code they borrow
+    has the raise site it borrows from."""
     raised = {code for _, code, _ in _raise_sites()}
-    assert raised | _HANDLER_CODES == set(_FIXTURE)
-    assert raised & _HANDLER_CODES == set()
+    emitted = {code for _, code, _, in_bridge in _diagnostic_sites() if not in_bridge}
+    assert raised | emitted | _HANDLER_CODES == set(_FIXTURE)
+    assert (raised | emitted) & _HANDLER_CODES == set()

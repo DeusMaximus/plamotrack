@@ -63,19 +63,34 @@ export function resolveApiError(statusText: string, body: ApiErrorBody | null): 
 
   let message = detail;
   if (code !== null && !Array.isArray(body?.detail)) {
-    const key = `api.${code}`;
-    const options: Record<string, unknown> = {};
-    for (const [param, value] of Object.entries(params)) {
-      options[camelizeKey(param)] = value;
-    }
-    // Options passed to `exists` too, so a plural entry (`…_one`/`…_other`)
-    // resolves by its `count`. The key is dynamic by design — unknown codes are
-    // the fallback path — so the typed-t compile check cannot apply here; the
-    // catalogue suite pins every registry code to an entry instead.
-    const t = i18n.t as (key: string, options?: Record<string, unknown>) => string;
-    if (i18n.exists(key, options)) {
-      message = t(key, options);
-    }
+    message = renderCode(code, params) ?? detail;
   }
   return { message, detail, code, params };
+}
+
+/** Catalogue rendering for one wire code (`api.<code>`, params camelized), or
+ *  null when the catalogue doesn't know it. Options are passed to `exists` too,
+ *  so a plural entry (`…_one`/`…_other`) resolves by its `count`. The key is
+ *  dynamic by design — unknown codes are the fallback path — so the typed-t
+ *  compile check cannot apply here; the catalogue suite pins every registry
+ *  code to an entry instead. */
+function renderCode(code: string, params: Record<string, unknown>): string | null {
+  const key = `api.${code}`;
+  const options: Record<string, unknown> = {};
+  for (const [param, value] of Object.entries(params)) {
+    options[camelizeKey(param)] = value;
+  }
+  const t = i18n.t as (key: string, options?: Record<string, unknown>) => string;
+  return i18n.exists(key, options) ? t(key, options) : null;
+}
+
+/** The #26 half of the same contract: an import-preview diagnostic renders
+ *  through the catalogue exactly like a failed response's code, and an unknown
+ *  future code falls back to the English `detail` the server sent. */
+export function resolveDiagnostic(diagnostic: {
+  code: string;
+  params: Record<string, unknown>;
+  detail: string;
+}): string {
+  return renderCode(diagnostic.code, diagnostic.params) ?? diagnostic.detail;
 }

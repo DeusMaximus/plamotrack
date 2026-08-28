@@ -26,6 +26,7 @@ from fastmcp import Client
 from fastmcp.exceptions import ToolError
 
 from app.mcp import mcp
+from tests.diag import details, row_error, row_messages
 from tests.test_order_invariants import archive, consumable_line, make_consumable, order_row
 from tests.test_order_lifecycle import kit_line, make_order
 from tests.test_portability import actions, apply, preview
@@ -444,7 +445,7 @@ async def test_unship_by_import_is_refused(client, retailer):
     content = archive(orders=[order_row(stored, retailer)])
     plan = await preview(client, content)
     assert actions(plan, "orders") == ["error"], plan["tables"]
-    error = plan["tables"][0]["rows"][0]["error"]
+    error = row_error(plan["tables"][0]["rows"][0])
     assert error.startswith("shipped_at:") and "un-shipping" in error
     assert (await apply(client, content)).status_code == 409
     assert (
@@ -466,7 +467,7 @@ async def test_a_future_ship_date_by_import_is_refused(client, retailer, state):
     content = archive(orders=[order_row(stored, retailer, shipped_at="2099-01-02T09:00:00Z")])
     plan = await preview(client, content)
     assert actions(plan, "orders") == ["error"], plan["tables"]
-    error = plan["tables"][0]["rows"][0]["error"]
+    error = row_error(plan["tables"][0]["rows"][0])
     assert error.startswith("shipped_at:") and "future" in error
     assert (await apply(client, content)).status_code == 409
     stored_after = (await client.get(f"/orders/{order['id']}")).json()
@@ -489,7 +490,7 @@ async def test_a_restated_ship_date_is_a_no_op_and_restamps_nothing(client, reta
 
     content = archive(orders=[order_row(stored, retailer, shipped_at=stored["shipped_at"])])
     plan = await preview(client, content)
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert (await apply(client, content)).status_code == 200
     assert (await client.get(f"/kits/{kit['id']}")).json()["status_updated_at"] == stamp_before
 
@@ -670,7 +671,7 @@ async def test_the_preview_names_the_ship_advance_and_the_result_counts_it(clien
     plan = await preview(client, content)
     assert plan["derived"]["kits_advanced"] == 2
     (row,) = plan["tables"][0]["rows"]
-    assert "marking this order shipped moves 2 kit(s) to in transit" in row["messages"]
+    assert "marking this order shipped moves 2 kit(s) to in transit" in row_messages(row)
 
     resp = await apply(client, content)
     assert resp.status_code == 200, resp.text
@@ -689,8 +690,8 @@ async def test_a_combined_flip_previews_one_advance_per_kit_landing_in_backlog(c
     plan = await preview(client, content)
     assert plan["derived"]["kits_advanced"] == 1
     (row,) = plan["tables"][0]["rows"]
-    assert "marking this order received moves 1 kit(s) to backlog" in row["messages"]
-    assert not any("in transit" in message for message in row["messages"])
+    assert "marking this order received moves 1 kit(s) to backlog" in row_messages(row)
+    assert not any("in transit" in message for message in row_messages(row))
     resp = await apply(client, content)
     assert resp.status_code == 200, resp.text
     assert resp.json()["kits_advanced"] == 1

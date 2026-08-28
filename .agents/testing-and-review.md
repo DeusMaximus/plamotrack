@@ -24,13 +24,13 @@ last edited, so a large jump either way is worth a look.
 
 | What | Command | Notes |
 | --- | --- | --- |
-| Backend (~1088) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
+| Backend (~1216) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
 | Lint + format | `uv run ruff check --fix . && uv run ruff format .` | Before every commit. CI checks both. |
-| Frontend unit (~212) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
+| Frontend unit (~350) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. Also the compile-time check on every static `t("…")` key. |
 | Frontend lint | `npm run lint` | oxlint. |
 | Translation coverage | `npm run i18n:report` (in `frontend/`) | Markdown table, presentation only — the catalogue tests are what gate. CI appends it to the job summary. |
-| E2E (~29) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. |
+| E2E (~36) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. |
 | Mutation harness | `uv run python mutation_test.py` | See below. |
 
 **One pytest session at a time.** Two runs against `plamotrack_test` interfere —
@@ -157,9 +157,9 @@ named tests, restores from a backup in a `finally`, and reports killed vs
 surviving.
 
 ```bash
-cd backend && uv run python mutation_test.py          # every case — ~22 min at 227 cases on
-                                                      # the primary dev Mac (22m16s measured
-                                                      # at the #159 fold-in, 27/08/2026;
+cd backend && uv run python mutation_test.py          # every case — ~26 min at 236 cases on
+                                                      # the primary dev Mac (25m19s measured
+                                                      # on the #26 branch, 28/08/2026;
                                                       # hardware-dependent — each case runs
                                                       # its selection twice: baseline + mutant)
 uv run python mutation_test.py -k rcpt-                # cases whose label contains "rcpt-"
@@ -190,7 +190,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 227 cases over twenty files** — #86's
+- **On `main` at the time of writing: 236 cases over twenty-one files** — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
   #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
   #118 (`ship-`), #129 (`dsp-`), #130 (`cat-`), #133 (`ref-`), #136
@@ -211,7 +211,12 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   `pg_blocking_pids` holder→updater edge, never a count of advisory waiters —
   that round-1 finding is the standing example of an observation a decoy can
   satisfy; stg-17 mutates the settings migration's seed under the mig- set's
-  clean-tree cover).
+  clean-tree cover) and #169 (`env-` — the error envelope, folded by PR #170).
+  **A message-restructuring change rots anchors silently**: #25 rewrote 81
+  raise sites and six anchors (n5, n6a, n6b, cat-13, cat-14, wdr-8) sat
+  SKIP-broken until #26's full run — a fold-in that runs only its own `-k`
+  prefix cannot see that, so a branch that touches emission sites owes the
+  *full* harness, not its own labels.
   A branch that runs mutants ahead of the harness (a scratch copy, a hand run)
   queues its tuples in the PR body for folding in after merge — anchors get
   re-checked at fold-in, since the code may have moved under them. Labels are

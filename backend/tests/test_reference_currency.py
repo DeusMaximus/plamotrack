@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.db import session_scope
 from app.schemas.settings import InstanceSettingsUpdate
 from app.services import instance_settings
+from tests.diag import details, row_error, row_messages
 
 
 @pytest.fixture
@@ -364,7 +365,7 @@ async def test_legacy_column_does_not_warn_as_unknown(client, retailer):
         data={"mode": "merge"},
     )
     assert resp.status_code == 200, resp.text
-    assert not [w for w in resp.json()["warnings"] if "converted_price_aud_minor" in w]
+    assert not [w for w in details(resp.json()["warnings"]) if "converted_price_aud_minor" in w]
 
 
 async def test_current_column_wins_when_both_are_present(client, retailer):
@@ -1021,7 +1022,7 @@ async def test_preview_says_a_lone_currency_column_is_being_ignored(client):
     resp = await client.post("/import/preview", files={"file": ("tools.csv", content, "text/csv")})
     assert resp.status_code == 200, resp.text
     row = resp.json()["tables"][0]["rows"][0]
-    assert any("unit_cost_reference_currency: ignored" in m for m in row["messages"]), row
+    assert any("unit_cost_reference_currency: ignored" in m for m in row_messages(row)), row
 
 
 @pytest.mark.parametrize(
@@ -1054,4 +1055,4 @@ async def test_a_unicode_letter_code_is_refused_on_every_currency_column(client,
     (table,) = [t for t in resp.json()["tables"] if t["rows"]]
     (row,) = table["rows"]
     assert row["action"] == "error"
-    assert "not a 3-letter ISO 4217 currency code" in row["error"]
+    assert "not a 3-letter ISO 4217 currency code" in row_error(row)

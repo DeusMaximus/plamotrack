@@ -22,6 +22,7 @@ from sqlalchemy import inspect
 from app.services.portability import spec
 from app.services.portability.importing import _COLUMN_DEFAULTS
 from app.services.portability.spec import ColumnRole
+from tests.diag import details, row_error, row_messages
 from tests.test_order_invariants import archive, kit_line, line_row, make_order
 from tests.test_portability import actions, apply, make_csv, preview
 
@@ -268,8 +269,8 @@ async def test_a_blank_cell_in_a_required_column_keeps_the_stored_value(
     content = make_csv(header, [row])
 
     plan = await preview(client, content, filename=f"{table_key}.csv")
-    assert plan["blocking_errors"] == [], plan
-    messages = " ".join(plan["tables"][0]["rows"][0]["messages"])
+    assert details(plan["blocking_errors"]) == [], plan
+    messages = " ".join(row_messages(plan["tables"][0]["rows"][0]))
     assert f"{column}: left as it was" in messages, messages
     # And no change is planned for it — the preview must not promise an edit that
     # is not going to happen.
@@ -302,8 +303,8 @@ async def test_a_readable_mirror_still_wins_over_a_blank(
     )
 
     plan = await preview(client, content, filename=f"{table_key}.csv")
-    assert plan["blocking_errors"] == [], plan
-    messages = " ".join(plan["tables"][0]["rows"][0]["messages"])
+    assert details(plan["blocking_errors"]) == [], plan
+    messages = " ".join(row_messages(plan["tables"][0]["rows"][0]))
     assert f"{column}: left as it was" not in messages, "the mirror should have supplied it"
     assert (await apply(client, content, filename=f"{table_key}.csv")).status_code == 200
 
@@ -328,7 +329,7 @@ async def test_a_new_row_missing_a_required_value_is_named_not_a_500(client, htt
     )
     plan = await preview(http_client, content, filename="orders.csv")
     assert actions(plan, "orders") == ["error"], plan["tables"]
-    assert plan["tables"][0]["rows"][0]["error"].startswith("retailer_id:")
+    assert row_error(plan["tables"][0]["rows"][0]).startswith("retailer_id:")
 
     resp = await apply(http_client, content, filename="orders.csv")
     assert resp.status_code == 409, "a named row, not the IntegrityError this used to be"
@@ -353,7 +354,7 @@ async def test_a_new_row_takes_the_schema_default_it_leaves_blank(client):
         ],
     )
     plan = await preview(client, content, filename="kits.csv")
-    assert plan["blocking_errors"] == [], plan
+    assert details(plan["blocking_errors"]) == [], plan
     assert (await apply(client, content, filename="kits.csv")).status_code == 200
 
     kit = (await client.get("/kits")).json()[0]
@@ -389,7 +390,7 @@ async def test_a_dangling_reference_the_row_keeps_anyway_says_only_that(client, 
         ],
     )
     plan = await preview(client, content, filename="orders.csv")
-    messages = plan["tables"][0]["rows"][0]["messages"]
+    messages = row_messages(plan["tables"][0]["rows"][0])
     assert any("left as it was" in m for m in messages), messages
     assert not any("imports without it" in m for m in messages), messages
 
@@ -408,8 +409,8 @@ async def test_a_refused_create_carries_no_message_about_what_it_dropped(client)
     )
     plan = await preview(client, content, filename="orders.csv")
     row = plan["tables"][0]["rows"][0]
-    assert row["error"].startswith("retailer_id:")
-    assert row["messages"] == [], row["messages"]
+    assert row_error(row).startswith("retailer_id:")
+    assert row_messages(row) == [], row_messages(row)
 
 
 async def test_a_refused_create_takes_back_the_id_it_minted(client):
@@ -475,7 +476,7 @@ async def test_a_kit_line_says_so_when_it_ignores_a_catalog_reference(client, co
         ],
     )
     plan = await preview(client, content, filename="order_items.csv")
-    messages = plan["tables"][0]["rows"][0]["messages"]
+    messages = row_messages(plan["tables"][0]["rows"][0])
     joined = " ".join(messages)
     assert "catalog_ref_id" in joined and MISSING in joined, messages
     # And *only* that one. If `_resolve_ref`'s kit branch ever returned a dangling
@@ -517,7 +518,7 @@ async def test_a_kit_line_with_no_catalog_reference_says_nothing_about_one(clien
         ],
     )
     plan = await preview(client, content, filename="order_items.csv")
-    messages = plan["tables"][0]["rows"][0]["messages"]
+    messages = row_messages(plan["tables"][0]["rows"][0])
     assert not any("catalog_ref_id" in m for m in messages), messages
     assert (await apply(client, content, filename="order_items.csv")).status_code == 200
 
@@ -581,7 +582,7 @@ async def test_add_only_leaves_a_matched_row_alone_blank_cells_and_all(client, c
     )
     plan = await preview(client, content, mode="add_only", filename="retailers.csv")
     assert actions(plan, "retailers") == ["skip"], plan["tables"]
-    assert plan["tables"][0]["rows"][0]["messages"] == []
+    assert row_messages(plan["tables"][0]["rows"][0]) == []
     assert (
         await apply(client, content, mode="add_only", filename="retailers.csv")
     ).status_code == 200
@@ -597,7 +598,7 @@ async def test_replace_all_still_blocks_a_dangling_reference_rather_than_noting_
     )
     plan = await preview(client, content, mode="replace_all", filename="kits.csv")
     assert actions(plan, "kits") == ["error"], plan["tables"]
-    assert "a replace-all import deletes everything" in plan["tables"][0]["rows"][0]["error"]
+    assert "a replace-all import deletes everything" in row_error(plan["tables"][0]["rows"][0])
 
 
 # --- an optional reference that resolves to nothing (#82) -----------------------
@@ -617,8 +618,8 @@ async def test_a_dangling_optional_reference_is_reported_not_silently_dropped(cl
         [{"name": "Gouf", "grade": "HG", "order_item_id": MISSING}],
     )
     plan = await preview(client, content, filename="kits.csv")
-    assert plan["blocking_errors"] == [], plan
-    messages = " ".join(plan["tables"][0]["rows"][0]["messages"])
+    assert details(plan["blocking_errors"]) == [], plan
+    messages = " ".join(row_messages(plan["tables"][0]["rows"][0]))
     assert "order_item_id" in messages and MISSING in messages, messages
 
     assert (await apply(client, content, filename="kits.csv")).status_code == 200
@@ -667,19 +668,19 @@ async def test_a_dangling_optional_reference_may_not_clear_a_stored_link(client,
         assert row["action"] == "error", plan["tables"]
         # The named control, not "a refusal happened": this error is the one that
         # says an unreadable id can't clear a link, and it names both ids.
-        assert "can't be what clears that link" in row["error"], row["error"]
-        assert MISSING in row["error"] and item["id"] in row["error"], row["error"]
+        assert "can't be what clears that link" in row_error(row), row_error(row)
+        assert MISSING in row_error(row) and item["id"] in row_error(row), row_error(row)
         # #82's "imports without it" was written before the row was refused and
         # is withdrawn — a preview must not say a row lands and then refuse it.
-        assert not any("imports without it" in m for m in row["messages"]), row["messages"]
+        assert not any("imports without it" in m for m in row_messages(row)), row_messages(row)
         assert plan["derived"]["kits_spawned"] == 0, plan["derived"]
         assert (await apply(client, content)).status_code == 409
     else:
         # No link to lose, so nulling the cell changes nothing: the row is
         # `unchanged`, and #82's message is the whole story.
         assert row["action"] == "unchanged", plan["tables"]
-        assert any("imports without it" in m for m in row["messages"]), row["messages"]
-        assert row["error"] is None
+        assert any("imports without it" in m for m in row_messages(row)), row_messages(row)
+        assert row_error(row) is None
         assert (await apply(client, content)).status_code == 200
 
     after = (await client.get(f"/kits/{kit['id']}")).json()["order_item_id"]
@@ -707,7 +708,7 @@ async def test_a_dangling_reference_in_a_required_column_still_blocks(client, co
     # refuse this row — order_id is NOT NULL and nothing fills it — so asserting
     # only the action proves nothing about which rule decided, and the reference
     # error is the one that can say what to do about it. Found by mutation testing.
-    error = plan["tables"][0]["rows"][0]["error"]
+    error = row_error(plan["tables"][0]["rows"][0])
     assert "no matching orders found" in error, error
     assert (await apply(client, content, filename="order_items.csv")).status_code == 409
 
@@ -738,8 +739,8 @@ async def test_a_reference_that_resolves_says_nothing(client, collection):
     )
     plan = await preview(client, content)
     kits_plan = next(t for t in plan["tables"] if t["table"] == "kits")
-    assert kits_plan["rows"][0]["messages"] == [], kits_plan["rows"][0]["messages"]
-    assert plan["blocking_errors"] == [], plan
+    assert row_messages(kits_plan["rows"][0]) == [], row_messages(kits_plan["rows"][0])
+    assert details(plan["blocking_errors"]) == [], plan
     assert (await apply(client, content)).status_code == 200
     gouf = next(k for k in (await client.get("/kits")).json() if k["name"] == "Gouf")
     assert gouf["order_item_id"] == line["id"]

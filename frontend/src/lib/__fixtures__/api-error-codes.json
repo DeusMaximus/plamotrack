@@ -1,5 +1,5 @@
 {
-  "note": "The stable REST error codes (#25), shared by both sides the way money-cases.json is: backend/tests/test_error_envelope.py pins backend/app/error_codes.py to exactly this list, and src/i18n/catalogue.test.ts pins the en-AU catalogue to it (every code has an api.* entry, and no entry interpolates a placeholder outside that code's declared params). `params` lists the keys GUARANTEED present on every raise of the code — a site may send more, a translation may use less, never the reverse. Adding a code touches all three files; renaming one is a breaking API change.",
+  "note": "The stable wire codes (#25, #26), shared by both sides the way money-cases.json is: backend/tests/test_error_envelope.py pins backend/app/error_codes.py to exactly this list, and src/i18n/catalogue.test.ts pins the en-AU catalogue to it (every code has an api.* entry, and no entry interpolates a placeholder outside that code's declared params). A code reaches the wire as a raised error envelope or as an import-preview Diagnostic — same contract either way. `params` lists the keys GUARANTEED present on every emission of the code — a site may send more, a translation may use less, never the reverse. Adding a code touches all three files; renaming one is a breaking API change.",
   "codes": {
     "catalog_item.category_required": {
       "params": [
@@ -67,13 +67,48 @@
         "count"
       ]
     },
+    "import.catalog_ref_unresolved": {
+      "params": [
+        "item_type",
+        "table"
+      ]
+    },
+    "import.category_folded": {
+      "params": [
+        "stated",
+        "stored"
+      ]
+    },
     "import.cell_invalid": {
       "params": [
         "field"
       ]
     },
+    "import.cell_required": {
+      "params": [
+        "field"
+      ]
+    },
+    "import.column_unknown": {
+      "params": [
+        "column",
+        "table"
+      ]
+    },
     "import.confirm_required": {
       "params": []
+    },
+    "import.currency_unknown": {
+      "params": [
+        "field",
+        "currency"
+      ]
+    },
+    "import.currency_without_amount": {
+      "params": [
+        "field",
+        "amount_field"
+      ]
     },
     "import.encoding_invalid": {
       "params": [
@@ -89,20 +124,283 @@
     "import.file_unsupported": {
       "params": []
     },
+    "import.format_foreign": {
+      "params": [
+        "format"
+      ]
+    },
+    "import.id_duplicated": {
+      "params": [
+        "row",
+        "id"
+      ]
+    },
+    "import.kept_stored": {
+      "params": [
+        "field"
+      ]
+    },
+    "import.kit_move_quantity_unstated": {
+      "params": [
+        "line_id",
+        "after"
+      ]
+    },
+    "import.kit_move_to_catalog_line": {
+      "params": [
+        "line_id",
+        "item_type"
+      ]
+    },
+    "import.kit_move_unreconciled": {
+      "params": [
+        "line_id",
+        "after",
+        "quantity"
+      ]
+    },
+    "import.kit_name_exists": {
+      "params": [
+        "count",
+        "name"
+      ]
+    },
+    "import.kits_not_removable": {
+      "params": [
+        "stated",
+        "surplus",
+        "attached",
+        "removable"
+      ]
+    },
+    "import.kits_oversupplied": {
+      "params": [
+        "stated",
+        "supplied"
+      ]
+    },
+    "import.kits_receive_advance": {
+      "params": [
+        "count"
+      ]
+    },
+    "import.kits_removal_planned": {
+      "params": [
+        "count"
+      ]
+    },
+    "import.kits_ship_advance": {
+      "params": [
+        "count"
+      ]
+    },
+    "import.kits_spawn_planned": {
+      "params": [
+        "count"
+      ]
+    },
+    "import.line_joins_received": {
+      "params": [
+        "item_type"
+      ]
+    },
+    "import.manifest_ambiguous": {
+      "params": [
+        "count"
+      ]
+    },
+    "import.manifest_file_absent": {
+      "params": [
+        "filename"
+      ]
+    },
+    "import.manifest_file_ambiguous": {
+      "params": [
+        "filename",
+        "count",
+        "paths"
+      ]
+    },
+    "import.manifest_metadata_unreadable": {
+      "params": [
+        "fields"
+      ]
+    },
+    "import.manifest_missing": {
+      "params": []
+    },
+    "import.manifest_not_object": {
+      "params": []
+    },
+    "import.manifest_rows_mismatch": {
+      "params": [
+        "filename",
+        "declared",
+        "read"
+      ]
+    },
+    "import.manifest_table_mismatch": {
+      "params": [
+        "filename",
+        "declared",
+        "routed"
+      ]
+    },
+    "import.manifest_unreadable": {
+      "params": []
+    },
+    "import.match_ambiguous": {
+      "params": [
+        "count",
+        "table"
+      ]
+    },
+    "import.member_duplicated": {
+      "params": [
+        "path"
+      ]
+    },
+    "import.member_undeclared": {
+      "params": [
+        "path",
+        "rows",
+        "table"
+      ]
+    },
+    "import.member_unrecognised": {
+      "params": [
+        "path"
+      ]
+    },
+    "import.money_ambiguous": {
+      "params": [
+        "field"
+      ]
+    },
+    "import.natural_key_duplicated": {
+      "params": [
+        "row",
+        "field"
+      ]
+    },
+    "import.no_table_data": {
+      "params": []
+    },
     "import.plan_stale": {
       "params": []
     },
     "import.preview_required": {
       "params": []
     },
+    "import.provenance_protected": {
+      "params": []
+    },
+    "import.receipt_conflict": {
+      "params": [
+        "row",
+        "other_row"
+      ]
+    },
+    "import.receipt_unaccounted": {
+      "params": [
+        "item_types"
+      ]
+    },
+    "import.ref_dangling": {
+      "params": [
+        "field",
+        "table",
+        "id"
+      ]
+    },
+    "import.ref_ignored_kit_line": {
+      "params": [
+        "field"
+      ]
+    },
+    "import.ref_not_in_upload": {
+      "params": [
+        "field",
+        "table",
+        "id"
+      ]
+    },
+    "import.ref_overwrite_unresolved": {
+      "params": [
+        "field",
+        "table",
+        "id"
+      ]
+    },
+    "import.ref_unmatched": {
+      "params": [
+        "field",
+        "table"
+      ]
+    },
+    "import.rows_unreadable": {
+      "params": [
+        "count"
+      ]
+    },
+    "import.schema_drift": {
+      "params": [
+        "archive_schema",
+        "instance_schema"
+      ]
+    },
+    "import.singleton_missing": {
+      "params": [
+        "table"
+      ]
+    },
+    "import.spawn_source_missing": {
+      "params": [
+        "count"
+      ]
+    },
+    "import.status_stamp_generated": {
+      "params": []
+    },
+    "import.stock_note": {
+      "params": []
+    },
+    "import.stub_created": {
+      "params": [
+        "table",
+        "row"
+      ]
+    },
+    "import.stub_created_unstocked": {
+      "params": [
+        "table",
+        "row"
+      ]
+    },
     "import.table_unknown": {
       "params": [
         "filename"
       ]
     },
+    "import.target_duplicated": {
+      "params": [
+        "row"
+      ]
+    },
     "import.too_many_rows": {
       "params": [
         "maximum"
+      ]
+    },
+    "import.unreceive_unaccounted": {
+      "params": [
+        "item_types"
+      ]
+    },
+    "import.value_required_for_create": {
+      "params": [
+        "field",
+        "table"
       ]
     },
     "import.version_newer": {
@@ -207,6 +505,12 @@
     "order_line.not_on_order": {
       "params": [
         "line_id"
+      ]
+    },
+    "order_line.order_immutable": {
+      "params": [
+        "before",
+        "after"
       ]
     },
     "order_line.quantity_too_large": {
