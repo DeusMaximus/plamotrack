@@ -273,6 +273,18 @@
     "maybe": "Maybe",
     "no": "No"
   },
+  "dateStyle": {
+    "locale": "Locale default",
+    "short": "Short",
+    "medium": "Medium",
+    "long": "Long",
+    "full": "Full"
+  },
+  "hourCycle": {
+    "locale": "Locale default",
+    "h12": "12-hour",
+    "h23": "24-hour"
+  },
   "importAction": {
     "create": "new",
     "update": "updated",
@@ -637,14 +649,22 @@
       "saved": "Saved"
     },
     "language": {
-      "description": "Interface language and regional formatting are stored on the instance, not in the browser.",
-      "currentTitle": "Current values",
-      "currentDescription": "Editing these here is not built yet — they can be changed through the API.",
+      "description": "Interface language and regional formatting are stored on the instance, not in the browser — every client renders from the same values.",
+      "currentTitle": "Language & formatting",
+      "currentDescription": "Saved instance-wide. Dates, times and numbers everywhere re-render with what you choose here.",
       "interfaceLanguage": "Interface language",
       "formattingLocale": "Formatting locale",
       "timeZone": "Time zone",
       "dateStyle": "Date style",
-      "hourCycle": "Hour cycle"
+      "hourCycle": "Hour cycle",
+      "fallbackWarning": "This instance is set to '{{tag}}', which this build doesn't ship — showing English (Australia) until a shipped language is saved.",
+      "unavailableOption": "{{tag}} (not shipped in this build)",
+      "localeHint": "{{language}} usually formats as {{tag}}.",
+      "localeUse": "Use {{tag}}",
+      "timeZoneHint": "IANA zone name, e.g. Australia/Sydney — used wherever a stored moment renders as local time.",
+      "preview": "Renders as:",
+      "saving": "Saving…",
+      "saved": "Saved"
     },
     "about": {
       "description": "The software this instance is running.",

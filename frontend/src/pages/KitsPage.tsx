@@ -18,6 +18,7 @@ import { StatusBadge } from "../components/StatusBadge";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
 import { formatDate, isoToLocalDateInput, localMidnightISO } from "../lib/format";
 import { dateWithElapsed, statusLabel } from "../lib/labels";
+import { usePresentationVersion } from "../lib/presentation";
 
 const COMMON_GRADES = ["HG", "RG", "EG", "SD", "MG", "MGEX", "RE/100", "FM", "PG"];
 
@@ -333,6 +334,9 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
 }
 
 export function KitsPage() {
+  // Re-render when the instance's presentation settings arrive or change —
+  // the plain format helpers below read them per call (#174 review, P3-1).
+  usePresentationVersion();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<KitStatus | "">("");
@@ -437,7 +441,7 @@ export function KitsPage() {
         <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
+              <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
                 <th className="px-3 py-2">{t("kits.headerKit")}</th>
                 <th className="px-3 py-2">{t("kits.grade")}</th>
                 <th className="px-3 py-2">{t("kits.scale")}</th>
@@ -478,7 +482,7 @@ export function KitsPage() {
                   <td className="px-3 py-2 text-zinc-500" title={t("kits.completedTitle")}>
                     {completedCell(kit)}
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-3 py-2 text-end">
                     <div className="flex justify-end gap-1">
                       <Button variant="secondary" onClick={() => setModal({ mode: "edit", kit })}>
                         {t("common.edit")}

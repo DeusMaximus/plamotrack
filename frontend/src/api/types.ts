@@ -465,13 +465,21 @@ export interface Meta {
   version: string;
   /** Default currency for new entries; each snapshot stores its own code. */
   reference_currency: string;
+  /** The catalogue tags a PATCH /settings accepts for interface_language (#27).
+   *  The browser's own manifest is held to the same set by the parity test. */
+  supported_interface_languages: string[];
 }
 
-/** Intl.DateTimeFormat dateStyle values, plus "locale" = the locale's default. */
-export type DateStyle = "locale" | "short" | "medium" | "long" | "full";
+/** Intl.DateTimeFormat dateStyle values, plus "locale" = the locale's default.
+ *  Runtime list so the catalogue tests can drive every member's option label. */
+export const DATE_STYLES = ["locale", "short", "medium", "long", "full"] as const;
+
+export type DateStyle = (typeof DATE_STYLES)[number];
 
 /** Intl.DateTimeFormat hourCycle values in real-world use; "locale" defers. */
-export type HourCycle = "locale" | "h12" | "h23";
+export const HOUR_CYCLES = ["locale", "h12", "h23"] as const;
+
+export type HourCycle = (typeof HOUR_CYCLES)[number];
 
 /** The instance-settings singleton (§6.1, #23) — one row, shared by every
  *  browser and agent. Mirrors backend/app/schemas/settings.py. */

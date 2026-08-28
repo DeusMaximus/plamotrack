@@ -63,6 +63,17 @@ def test_supported_interface_languages_are_the_manifests_enabled_tags():
     assert "en-AU" in enabled
 
 
+async def test_meta_advertises_the_supported_interface_languages(client):
+    """`GET /meta` names what a PATCH will accept (#27), so a client can build a
+    language selector without hardcoding the list. Held to the manifest — the
+    same cross-layer fixture the parity test above reads — not to the tuple, so
+    the wire claim and the shipped catalogues cannot drift apart either."""
+    advertised = (await client.get("/meta")).json()["supported_interface_languages"]
+    assert advertised == ["en-AU"]
+    enabled = {entry["tag"] for entry in _I18N_MANIFEST["languages"] if entry["enabled"]}
+    assert set(advertised) == enabled
+
+
 #: What a fresh instance answers — the migration's seed, restated as literals.
 BOOTSTRAP = {
     "interface_language": "en-AU",

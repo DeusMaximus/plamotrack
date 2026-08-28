@@ -1,5 +1,10 @@
+import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
+
+import { settingsQuery } from "../api/client";
+import { applyInstanceSettings } from "../lib/presentation";
 
 const NAV = [
   { to: "/board", label: "nav.board", icon: "📋" },
@@ -12,6 +17,21 @@ const NAV = [
 
 export function Layout() {
   const { t } = useTranslation();
+  // The one place the persisted settings row becomes this browser's
+  // presentation (#27): language, document lang/dir, and the formatting
+  // preferences the date/number helpers read. Every browser runs the same
+  // effect off the same shared query, so there is no per-browser preference —
+  // and a save (which writes through settingsQuery's cache) re-runs it.
+  const { data: settings } = useQuery(settingsQuery);
+  // The apply notifies `usePresentationVersion` subscribers itself (#174
+  // review, P3-1): the render that delivers the settings data happens BEFORE
+  // this effect applies them, so the pages have already formatted with the
+  // previous preferences — and a re-render scheduled *here* cannot reach
+  // them, because Outlet hands back the same element reference and the page
+  // subtree bails out. The formatting pages subscribe directly instead.
+  useEffect(() => {
+    if (settings) applyInstanceSettings(settings);
+  }, [settings]);
   return (
     <div className="flex min-h-screen">
       <aside className="w-52 shrink-0 border-r border-zinc-200 bg-white">

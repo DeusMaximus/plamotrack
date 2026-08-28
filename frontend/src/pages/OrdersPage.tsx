@@ -22,6 +22,7 @@ import type { CatalogSelection } from "../components/CatalogItemPicker";
 import { CatalogItemPicker } from "../components/CatalogItemPicker";
 import i18n from "../i18n";
 import { dateWithElapsed, itemTypeLabel, itemTypeTitle } from "../lib/labels";
+import { usePresentationVersion } from "../lib/presentation";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
@@ -1019,6 +1020,9 @@ function orderTotal(order: Order): string {
 }
 
 export function OrdersPage() {
+  // Re-render when the instance's presentation settings arrive or change —
+  // the plain format helpers below read them per call (#174 review, P3-1).
+  usePresentationVersion();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [modal, setModal] = useState<{ mode: "add" } | { mode: "edit"; order: Order } | null>(
@@ -1123,7 +1127,7 @@ export function OrdersPage() {
         <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
+              <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
                 <th className="w-8 px-3 py-2" />
                 <th className="px-3 py-2">{t("orders.headerDate")}</th>
                 <th className="px-3 py-2">{t("orders.headerRetailer")}</th>

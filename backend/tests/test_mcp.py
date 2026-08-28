@@ -51,7 +51,7 @@ async def test_get_meta_matches_rest(client):
     async with Client(mcp) as mcp_client:
         meta = (await mcp_client.call_tool("get_meta", {})).data
     assert meta == (await client.get("/meta")).json()
-    assert set(meta) == {"version", "reference_currency"}
+    assert set(meta) == {"version", "reference_currency", "supported_interface_languages"}
 
 
 async def test_create_order_fans_out_like_rest():

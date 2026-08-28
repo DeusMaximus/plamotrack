@@ -160,7 +160,7 @@ function Column({
         className={`rounded-t-lg border-t-4 bg-white px-3 py-2 ${COLUMN_ACCENTS[id]} border-x border-zinc-200`}
       >
         <span className="text-sm font-semibold">{title}</span>
-        <span className="ml-2 rounded-full bg-zinc-100 px-1.5 text-xs text-zinc-500">
+        <span className="ms-2 rounded-full bg-zinc-100 px-1.5 text-xs text-zinc-500">
           {kits.length}
         </span>
       </div>

@@ -17,8 +17,9 @@ import type {
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
-import { currencyOptions, formatMoney, majorToMinor, minorToMajor, stepFor } from "../lib/format";
+import { currencyOptions, formatMoney, formatNumber, majorToMinor, minorToMajor, stepFor } from "../lib/format";
 import { itemTypeLabel, itemTypePlural } from "../lib/labels";
+import { usePresentationVersion } from "../lib/presentation";
 
 type Tab = "tools" | "consumables" | "upgrades" | "display-items";
 type InventoryItem = Tool | Consumable | Upgrade | DisplayItem;
@@ -490,6 +491,9 @@ function StockStepper({
 }
 
 export function InventoryPage() {
+  // Re-render when the instance's presentation settings arrive or change —
+  // the plain format helpers below read them per call (#174 review, P3-1).
+  usePresentationVersion();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [tab, setTab] = useState<Tab>("tools");
@@ -617,7 +621,7 @@ export function InventoryPage() {
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
+                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
                   <th className="px-3 py-2">{t("common.name")}</th>
                   <th className="px-3 py-2">{t("inventory.category")}</th>
                   <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
@@ -632,8 +636,8 @@ export function InventoryPage() {
                     <td className="px-3 py-2 font-medium">{tool.name}</td>
                     <td className="px-3 py-2">{tool.category}</td>
                     <td className="px-3 py-2">
-                      <span className="mr-2 tabular-nums" data-testid="stock-count">
-                        {tool.quantity_on_hand}
+                      <span className="me-2 tabular-nums" data-testid="stock-count">
+                        {formatNumber(tool.quantity_on_hand)}
                       </span>
                       <StockStepper item={tool} queryKey="tools" onError={setActionError} />
                     </td>
@@ -647,7 +651,7 @@ export function InventoryPage() {
                           )}
                     </td>
                     <td className="px-3 py-2 text-zinc-500">{tool.condition_notes ?? "—"}</td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-3 py-2 text-end">
                       <div className="flex justify-end gap-1">
                         <Button variant="secondary" onClick={() => setEditing(tool)}>
                           {t("common.edit")}
@@ -686,7 +690,7 @@ export function InventoryPage() {
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
+                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
                   <th className="px-3 py-2">{t("common.name")}</th>
                   <th className="px-3 py-2">{t("inventory.category")}</th>
                   <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
@@ -705,20 +709,20 @@ export function InventoryPage() {
                       <td className="px-3 py-2">{item.category}</td>
                       <td className="px-3 py-2">
                         <span
-                          className={`mr-2 tabular-nums ${low ? "font-semibold text-red-600" : ""}`}
+                          className={`me-2 tabular-nums ${low ? "font-semibold text-red-600" : ""}`}
                           data-testid="stock-count"
                         >
-                          {item.quantity_on_hand}
+                          {formatNumber(item.quantity_on_hand)}
                         </span>
                         <StockStepper item={item} queryKey="consumables" onError={setActionError} />
                         {low && (
-                          <span className="ml-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                          <span className="ms-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
                             {t("inventory.restock")}
                           </span>
                         )}
                       </td>
                       <td className="px-3 py-2">{item.low_stock_threshold ?? "—"}</td>
-                      <td className="px-3 py-2 text-right">
+                      <td className="px-3 py-2 text-end">
                         <div className="flex justify-end gap-1">
                           <Button variant="secondary" onClick={() => setEditing(item)}>
                             {t("common.edit")}
@@ -754,7 +758,7 @@ export function InventoryPage() {
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
+                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
                   <th className="px-3 py-2">{t("common.name")}</th>
                   <th className="px-3 py-2">{t("inventory.manufacturer")}</th>
                   <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
@@ -767,12 +771,12 @@ export function InventoryPage() {
                     <td className="px-3 py-2 font-medium">{upgrade.name}</td>
                     <td className="px-3 py-2">{upgrade.manufacturer}</td>
                     <td className="px-3 py-2">
-                      <span className="mr-2 tabular-nums" data-testid="stock-count">
-                        {upgrade.quantity_on_hand}
+                      <span className="me-2 tabular-nums" data-testid="stock-count">
+                        {formatNumber(upgrade.quantity_on_hand)}
                       </span>
                       <StockStepper item={upgrade} queryKey="upgrades" onError={setActionError} />
                     </td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-3 py-2 text-end">
                       <div className="flex justify-end gap-1">
                         <Button
                           variant="secondary"
@@ -811,7 +815,7 @@ export function InventoryPage() {
           <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-left text-xs uppercase tracking-wide text-zinc-500">
+                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
                   <th className="px-3 py-2">{t("common.name")}</th>
                   <th className="px-3 py-2">{t("inventory.category")}</th>
                   <th className="px-3 py-2">{t("inventory.scale")}</th>
@@ -829,13 +833,13 @@ export function InventoryPage() {
                     <td className="px-3 py-2">{row.scale ?? "—"}</td>
                     <td className="px-3 py-2">{row.manufacturer ?? "—"}</td>
                     <td className="px-3 py-2">
-                      <span className="mr-2 tabular-nums" data-testid="stock-count">
-                        {row.quantity_on_hand}
+                      <span className="me-2 tabular-nums" data-testid="stock-count">
+                        {formatNumber(row.quantity_on_hand)}
                       </span>
                       <StockStepper item={row} queryKey="display-items" onError={setActionError} />
                     </td>
                     <td className="px-3 py-2 text-zinc-500">{row.notes ?? "—"}</td>
-                    <td className="px-3 py-2 text-right">
+                    <td className="px-3 py-2 text-end">
                       <div className="flex justify-end gap-1">
                         <Button variant="secondary" onClick={() => setEditing(row)}>
                           {t("common.edit")}

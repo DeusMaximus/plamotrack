@@ -7,6 +7,7 @@ import i18n from "../i18n";
 import { resolveDiagnostic } from "../lib/apiError";
 import { formatDateTime } from "../lib/format";
 import { importActionLabel, importTableLabel, matchedByLabel } from "../lib/labels";
+import { usePresentationVersion } from "../lib/presentation";
 
 const ACTION_STYLES: Record<RowAction, string> = {
   create: "bg-green-100 text-green-700",
@@ -61,7 +62,7 @@ function RowDetail({ row }: { row: PlannedRow }) {
   const { t } = useTranslation();
   return (
     <tr className={row.action === "error" ? "bg-red-50/50" : undefined}>
-      <td className="px-3 py-1.5 text-right align-top text-xs text-zinc-400 tabular-nums">
+      <td className="px-3 py-1.5 text-end align-top text-xs text-zinc-400 tabular-nums">
         {row.row_number || "—"}
       </td>
       <td className="px-3 py-1.5 align-top">
@@ -120,12 +121,12 @@ function TableSection({ table }: { table: TablePlan }) {
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left hover:bg-zinc-50"
+        className="flex w-full items-center gap-2 px-3 py-2 text-start hover:bg-zinc-50"
         aria-expanded={open}
       >
         <span className="w-3 text-xs text-zinc-400">{open ? "▾" : "▸"}</span>
         <span className="text-sm font-medium">{importTableLabel(table.table)}</span>
-        <span className="ml-auto">
+        <span className="ms-auto">
           <CountPills counts={table.counts} />
         </span>
       </button>
@@ -145,6 +146,9 @@ function TableSection({ table }: { table: TablePlan }) {
 }
 
 export function ImportPreview({ plan }: { plan: ImportPlan }) {
+  // Re-render when the instance's presentation settings arrive or change —
+  // the plain format helpers below read them per call (#174 review, P3-1).
+  usePresentationVersion();
   const { t } = useTranslation();
   const totals = plan.tables.reduce<Record<string, number>>((acc, table) => {
     for (const action of ROW_ACTIONS) {

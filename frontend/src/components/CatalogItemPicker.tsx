@@ -190,7 +190,7 @@ export function CatalogItemPicker({
             <button
               key={result.id}
               type="button"
-              className="flex w-full items-center justify-between px-3 py-2 text-left text-sm hover:bg-indigo-50"
+              className="flex w-full items-center justify-between px-3 py-2 text-start text-sm hover:bg-indigo-50"
               // onClick, not onMouseDown: a keyboard's Enter/Space activates a
               // button through click and never fires mousedown (#104). The
               // mousedown-first ordering the old handler relied on is covered
@@ -199,7 +199,7 @@ export function CatalogItemPicker({
             >
               <span>
                 {result.name}
-                <span className="ml-2 text-xs text-zinc-400">
+                <span className="ms-2 text-xs text-zinc-400">
                   {[result.category ?? result.manufacturer, result.scale]
                     .filter(Boolean)
                     .join(t("common.dotSeparator"))}
@@ -212,7 +212,7 @@ export function CatalogItemPicker({
           ))}
           <button
             type="button"
-            className="w-full border-t border-zinc-100 px-3 py-2 text-left text-sm font-medium text-indigo-600 hover:bg-indigo-50"
+            className="w-full border-t border-zinc-100 px-3 py-2 text-start text-sm font-medium text-indigo-600 hover:bg-indigo-50"
             onClick={() =>
               onChange({
                 mode: "new",

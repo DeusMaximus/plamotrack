@@ -796,8 +796,10 @@ How that landed ✅ (#22, 27/08/2026): `frontend/src/i18n/` holds the runtime
 (i18next + react-i18next — chosen for dynamic key lookup, which the enum labels
 use today and the structured REST/import diagnostics will use later), the
 `manifest.json` registry, and `catalogues/en-AU.json`. Init is synchronous with
-inline resources and the language pinned to `en-AU` until the Settings page can
-change it (#27). Catalogue-backed label helpers in `src/lib/labels.ts` resolve
+inline resources; `en-AU` is the boot language, and once the settings row
+arrives the Layout effect applies the stored interface language — falling back
+to `en-AU`, visibly, when the saved tag isn't shipped (#27). Catalogue-backed
+label helpers in `src/lib/labels.ts` resolve
 canonical wire values (`kitStatus.*`, `itemType.*`) at render time — never at
 module scope, so a language change re-resolves rather than serving frozen
 strings. The automated checks are `src/i18n/catalogue.test.ts` (known keys,
@@ -846,9 +848,15 @@ The frontend exposes all of this at `/settings`: General, Language & region, Dat
 management, and About. ✅ The page shipped with #24 — General edits the reference
 currency, the import/export workflow moved under Data management with its preview,
 confirmation, and destructive-operation warnings intact, About reports the version
-from `/meta`, and `/data` redirects to the section it became. Language & region
-displays the stored values read-only until #27 delivers its controls and the
-presentation plumbing above. Shipping this foundation before photos,
+from `/meta`, and `/data` redirects to the section it became. ✅ #27 delivered
+the Language & region controls and the presentation plumbing: the five regional
+settings edit through one form (a language's usual locale is offered, never
+imposed), `src/lib/presentation.ts` holds the resolved preferences the
+date/number/money helpers in `src/lib/format.ts` read, the document carries
+`lang`/`dir` from the manifest's language metadata, `/meta` advertises the
+supported interface languages, and a save re-renders the visible UI in place. A
+plain calendar date always renders as the day it names; only instants render in
+the instance zone (#114's presentation twin). Shipping this foundation before photos,
 authentication screens, or the showcase prevents each new surface from creating another
 pile of embedded copy.
 

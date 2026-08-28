@@ -80,11 +80,11 @@ test("step is the currency's smallest unit", () => {
 test("formatMoney shows the currency's own decimals, not the locale's", () => {
   // Compared against a formatter *told* the digit count, rather than against a
   // literal: how many decimals appear is ours to get right, but the separators and
-  // the symbol's position belong to whatever locale the reader is in. Asserting on
-  // "1.234" would pass here and fail in de-DE, where the same amount is "1,234 IQD"
-  // and 1200 JPY is "1.200 ¥" — a full stop in a number with no decimals at all.
+  // the symbol's position belong to the locale. Since #27 that locale is the
+  // instance's formatting setting (default en-AU), not the environment's — which
+  // also makes this test render the same on every machine.
   const withDigits = (major: number, currency: string, digits: number) =>
-    new Intl.NumberFormat(undefined, {
+    new Intl.NumberFormat("en-AU", {
       style: "currency",
       currency,
       minimumFractionDigits: digits,
@@ -100,6 +100,6 @@ test("formatMoney shows the currency's own decimals, not the locale's", () => {
   // renders that same IQD line as the locale's "1", because CLDR reports the dinar
   // as having no minor unit. Going back to it has to fail a test.
   expect(formatMoney(1234, "IQD")).not.toBe(
-    new Intl.NumberFormat(undefined, { style: "currency", currency: "IQD" }).format(1.234),
+    new Intl.NumberFormat("en-AU", { style: "currency", currency: "IQD" }).format(1.234),
   );
 });

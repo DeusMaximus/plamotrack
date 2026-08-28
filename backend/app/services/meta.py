@@ -19,4 +19,5 @@ async def instance_meta(session: AsyncSession) -> MetaRead:
     return MetaRead(
         version=__version__,
         reference_currency=await instance_settings.reference_currency(session),
+        supported_interface_languages=list(instance_settings.SUPPORTED_INTERFACE_LANGUAGES),
     )
