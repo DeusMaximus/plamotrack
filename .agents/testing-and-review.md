@@ -157,7 +157,7 @@ named tests, restores from a backup in a `finally`, and reports killed vs
 surviving.
 
 ```bash
-cd backend && uv run python mutation_test.py          # every case — ~26 min at 241 cases on
+cd backend && uv run python mutation_test.py          # every case — ~27 min at 244 cases on
                                                       # the primary dev Mac (25m19s measured
                                                       # on the #26 branch, 28/08/2026;
                                                       # hardware-dependent — each case runs
@@ -190,7 +190,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 241 cases over twenty-two files** — #86's
+- **On `main` at the time of writing: 244 cases over twenty-three files** — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
   #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
   #118 (`ship-`), #129 (`dsp-`), #130 (`cat-`), #133 (`ref-`), #136
@@ -212,7 +212,8 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   that round-1 finding is the standing example of an observation a decoy can
   satisfy; stg-17 mutates the settings migration's seed under the mig- set's
   clean-tree cover) and #169 (`env-` — the error envelope, folded by PR #170) and #26 (`nd-` — the
-  import-preview diagnostics).
+  import-preview diagnostics) and #114 (`tz-` — naive datetimes in the
+  instance zone).
   **A message-restructuring change rots anchors silently**: #25 rewrote 81
   raise sites and six anchors (n5, n6a, n6b, cat-13, cat-14, wdr-8) sat
   SKIP-broken until #26's full run — a fold-in that runs only its own `-k`

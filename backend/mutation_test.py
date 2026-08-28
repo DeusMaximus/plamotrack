@@ -2015,6 +2015,34 @@ CASES = [
         "        params={**exc.params},",
         "test_a_starter_row_problem_borrows_the_code_and_names_the_row",
     ),
+    # --- #114: naive CSV datetimes in the instance zone (queued on PR #173,
+    # --- measured 3/3 killed there with a scratch runner; anchors re-checked
+    # --- at fold-in) -----------------------------------------------------------
+    (
+        "tz-1. the planner attaches UTC instead of the instance zone",
+        IMP,
+        "                    value = value.replace(tzinfo=self.naive_zone)",
+        "                    value = value.replace(tzinfo=UTC)",
+        "test_a_naive_date_reads_as_midnight_in_the_instance_zone",
+    ),
+    (
+        "tz-2. the parser resumes folding naive input to UTC",
+        SPEC,
+        "    # nothing downstream of parsing sees a naive value. An explicit offset in\n"
+        "    # the cell always wins — it is never reinterpreted.\n"
+        "    return parsed",
+        "    # nothing downstream of parsing sees a naive value. An explicit offset in\n"
+        "    # the cell always wins — it is never reinterpreted.\n"
+        "    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)",
+        "test_a_naive_date_reads_as_midnight_in_the_instance_zone",
+    ),
+    (
+        "tz-3. the guard stops sparing explicit offsets",
+        IMP,
+        "                if isinstance(value, datetime) and value.tzinfo is None:",
+        "                if isinstance(value, datetime):",
+        "test_an_explicit_offset_is_never_reinterpreted",
+    ),
 ]
 
 
@@ -2983,6 +3011,8 @@ TEST_FILES = [
     "tests/test_reference_currency.py",
     # The #26 (nd-) fold-in: every nd- kill lives here.
     "tests/test_import_diagnostics.py",
+    # The #114 (tz-) fold-in.
+    "tests/test_naive_csv_dates.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
