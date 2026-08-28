@@ -79,6 +79,9 @@ INVR = ROOT / "app/routers/inventory.py"
 VERS = ROOT / "alembic/versions"
 SCH = ROOT / "app/schemas/orders.py"
 SET = ROOT / "app/services/instance_settings.py"
+MAIN = ROOT / "app/main.py"
+EXC = ROOT / "app/exceptions.py"
+EC = ROOT / "app/error_codes.py"
 META = ROOT / "app/services/meta.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
@@ -1871,6 +1874,75 @@ CASES = [
         "        parts.extend(variants)",
         "values_are_canonicalised or locale_shapes",
     ),
+    # --- #25 / PR #169: the error envelope (env-). env-1..7 rode the branch;
+    # env-8/env-9 are the round-1 remedies (the parser-stage 400 handler and
+    # the raise-site params audit — env-9 is the exact mutant Codex ran and
+    # watched survive before the audit existed). Kills live in
+    # tests/test_error_envelope.py; the -k names the assertion that names
+    # the defect. ---
+    (
+        "env-1. a site's code names the wrong condition",
+        KITS,
+        'kit = await session.get(Kit, kit_id)\n    if kit is None:\n        raise NotFoundError(\n            f"kit {kit_id} not found",\n            code=error_codes.KIT_NOT_FOUND,',
+        'kit = await session.get(Kit, kit_id)\n    if kit is None:\n        raise NotFoundError(\n            f"kit {kit_id} not found",\n            code=error_codes.ORDER_NOT_FOUND,',
+        "404_carries_the_full_envelope",
+    ),
+    (
+        "env-2. the handler drops the code key",
+        MAIN,
+        'content={"detail": exc.detail, "code": exc.code, "params": jsonable_encoder(exc.params)},',
+        'content={"detail": exc.detail, "params": jsonable_encoder(exc.params)},',
+        "404_carries_the_full_envelope",
+    ),
+    (
+        "env-3. request validation mislabels itself",
+        MAIN,
+        '"code": error_codes.REQUEST_VALIDATION,',
+        '"code": "request.invalid",',
+        "422_from_request_validation",
+    ),
+    (
+        "env-4. the catalog stock writer drops its params",
+        CAT,
+        'code=error_codes.STOCK_INSUFFICIENT,\n                params={\n                    "name": row.name,\n                    "on_hand": row.quantity_on_hand,\n                    "requested": -delta,\n                },',
+        "code=error_codes.STOCK_INSUFFICIENT,",
+        "409_with_params_names_the_stock or every_raise_site_supplies",
+    ),
+    (
+        "env-5. DomainError swallows params",
+        EXC,
+        "self.params: dict[str, object] = dict(params or {})",
+        "self.params: dict[str, object] = {}",
+        "404_carries_the_full_envelope or 409_with_params_names_the_stock",
+    ),
+    (
+        "env-6. MCP leaks the code into the sentence",
+        MCP,
+        "raise ToolError(str(exc)) from exc",
+        'raise ToolError(f"{exc.code}: {exc}") from exc',
+        "tool_error_is_the_bare_sentence",
+    ),
+    (
+        "env-7. a registry constant drifts from the fixture",
+        EC,
+        'KIT_NOT_FOUND = "kit.not_found"',
+        'KIT_NOT_FOUND = "kit.missing"',
+        "fixture_and_module_hold_the_same_codes or 404_carries_the_full_envelope",
+    ),
+    (
+        "env-8. parser-stage 400s lose the envelope",
+        MAIN,
+        "    if exc.status_code == 400:",
+        "    if False:",
+        "multipart_with_no_boundary or unreadable_multipart_body",
+    ),
+    (
+        "env-9. a shared-code writer drops its declared params",
+        ORD,
+        'code=error_codes.STOCK_INSUFFICIENT,\n            params={"name": row.name, "on_hand": row.quantity_on_hand, "requested": -delta},',
+        "code=error_codes.STOCK_INSUFFICIENT,",
+        "every_raise_site_supplies_its_codes_declared_params",
+    ),
 ]
 
 
@@ -2821,6 +2893,8 @@ TEST_FILES = [
     # names a second kill site in test_order_lifecycle.py (review P3-1).
     "tests/test_mcp.py",
     "tests/test_order_lifecycle.py",
+    # The #169 (env-) fold-in: every env- kill lives here.
+    "tests/test_error_envelope.py",
     # The #151 (mig-) fold-in.
     "tests/test_migration_data.py",
     # The #156 (d63-) fold-in.
