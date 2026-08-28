@@ -1,8 +1,11 @@
 from fastapi import FastAPI, Request
 from fastapi.encoders import jsonable_encoder
+from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
 
 from app import __version__, error_codes
 from app.db import SessionDep
@@ -64,6 +67,28 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
         status_code=status_code,
         content={"detail": exc.detail, "code": exc.code, "params": jsonable_encoder(exc.params)},
     )
+
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_envelope(request: Request, exc: StarletteHTTPException) -> Response:
+    """Parser-stage 400s enter the envelope (#169 review, P2): the framework
+    raises `HTTPException(400)` for a body it cannot read — multipart with no
+    boundary, a malformed multipart payload — before any schema or service
+    runs, so they escaped both handlers above. Every other HTTPException —
+    Starlette's own 404/405 for unrouted paths and bad verbs — keeps the stock
+    `{"detail": ...}` body by delegating to FastAPI's default handler: unrouted
+    paths are deliberately outside the API's machine contract."""
+    if exc.status_code == 400:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "detail": str(exc.detail),
+                "code": error_codes.REQUEST_BODY_INVALID,
+                "params": {},
+            },
+            headers=getattr(exc, "headers", None),
+        )
+    return await http_exception_handler(request, exc)
 
 
 @app.exception_handler(RequestValidationError)

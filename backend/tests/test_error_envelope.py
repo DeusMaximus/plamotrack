@@ -186,12 +186,119 @@ async def test_tool_error_is_the_bare_sentence():
 def test_openapi_documents_the_envelope():
     schema = app.openapi()
     components = schema["components"]["schemas"]
-    assert "ErrorEnvelope" in components
-    assert "ValidationErrorEnvelope" in components
-    envelope = components["ErrorEnvelope"]
-    assert set(envelope["required"]) >= {"detail", "code"}
+    # All three members required, both envelopes: the handlers always emit all
+    # three, and a weaker generated client is a contract drift (#169 review, P3).
+    assert set(components["ErrorEnvelope"]["required"]) == {"detail", "code", "params"}
+    assert set(components["ValidationErrorEnvelope"]["required"]) == {"detail", "code", "params"}
     # Sampled route: the shared responses actually landed on the routers.
     kit_get = schema["paths"]["/kits/{kit_id}"]["get"]
     assert "404" in kit_get["responses"]
     ref = json.dumps(kit_get["responses"]["404"])
     assert "ErrorEnvelope" in ref
+
+
+# --- parser-stage 400s (#169 review, P2) ----------------------------------------
+
+
+async def test_multipart_with_no_boundary_gets_the_envelope(http_client):
+    resp = await http_client.post(
+        "/import/preview", content=b"broken", headers={"content-type": "multipart/form-data"}
+    )
+    assert resp.status_code == 400
+    body = resp.json()
+    assert set(body) == {"detail", "code", "params"}
+    assert body["code"] == "request.body_invalid"
+    assert body["params"] == {}
+    # The wording belongs to the framework — assert its presence, not its bytes.
+    assert isinstance(body["detail"], str) and body["detail"]
+
+
+async def test_unreadable_multipart_body_gets_the_envelope(http_client):
+    resp = await http_client.post(
+        "/import/preview",
+        content=b"broken",
+        headers={"content-type": "multipart/form-data; boundary=foo"},
+    )
+    assert resp.status_code == 400
+    body = resp.json()
+    assert set(body) == {"detail", "code", "params"}
+    assert body["code"] == "request.body_invalid"
+
+
+async def test_unrouted_paths_keep_the_stock_body(http_client):
+    """The delegation half of the 400 branch: Starlette's own 404/405 for paths
+    that aren't the API stay deliberately outside the machine contract."""
+    resp = await http_client.get("/no/such/route")
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "Not Found"}
+
+
+# --- the raise-site audit (#169 review, P3) -------------------------------------
+
+# Codes emitted by handlers in main.py rather than raised by a service.
+_HANDLER_CODES = {"request.validation", "request.body_invalid"}
+
+
+def _raise_sites() -> list[tuple[str, str | None, set[str] | None]]:
+    """Every domain-error raise in app/, with its resolved code and the keys of
+    its literal params dict (None when params isn't a literal dict)."""
+    import ast
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    sites: list[tuple[str, str | None, set[str] | None]] = []
+    for path in sorted(app_dir.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Raise) and isinstance(node.exc, ast.Call)):
+                continue
+            func = node.exc.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name not in ("NotFoundError", "ConflictError", "InvalidInputError", "DomainError"):
+                continue
+            code: str | None = None
+            params_keys: set[str] | None = set()
+            for keyword in node.exc.keywords:
+                if keyword.arg == "code":
+                    value = keyword.value
+                    if isinstance(value, ast.Attribute):
+                        code = getattr(error_codes, value.attr, None)
+                    elif isinstance(value, ast.Constant):
+                        code = value.value
+                elif keyword.arg == "params":
+                    if isinstance(keyword.value, ast.Dict) and all(
+                        isinstance(key, ast.Constant) for key in keyword.value.keys
+                    ):
+                        params_keys = {key.value for key in keyword.value.keys}
+                    else:
+                        params_keys = None
+            sites.append((f"{path.relative_to(app_dir)}:{node.lineno}", code, params_keys))
+    return sites
+
+
+def test_every_raise_site_supplies_its_codes_declared_params():
+    """The runtime matrix above exercises a handful of codes; this audits all of
+    them: each site's literal params dict must carry at least the fixture's
+    guaranteed keys, so no writer of a shared code can quietly stop sending
+    what a translation is allowed to interpolate (#169 review, P3 — the order
+    writer's stock.insufficient raise could drop its params undetected)."""
+    sites = _raise_sites()
+    # Vacuity guard: an audit that finds nothing must fail, not pass (rule 8).
+    assert len(sites) >= 81, f"only {len(sites)} raise sites found — the walker broke"
+    for where, code, params_keys in sites:
+        assert code in _FIXTURE, f"{where}: code {code!r} is not in api-error-codes.json"
+        assert params_keys is not None, (
+            f"{where}: params must be a literal dict with constant keys — "
+            "the audit cannot see through anything else"
+        )
+        declared = set(_FIXTURE[code]["params"])
+        assert declared <= params_keys, (
+            f"{where}: {code} guarantees {sorted(declared)} but sends {sorted(params_keys)}"
+        )
+
+
+def test_every_wire_code_is_raised_or_handler_emitted():
+    """The other direction: a fixture code nothing raises is either dead or a
+    handler's — and the handler set is named, not inferred."""
+    raised = {code for _, code, _ in _raise_sites()}
+    assert raised | _HANDLER_CODES == set(_FIXTURE)
+    assert raised & _HANDLER_CODES == set()

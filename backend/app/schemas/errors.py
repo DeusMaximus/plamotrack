@@ -23,8 +23,10 @@ class ErrorEnvelope(BaseModel):
         description="Stable semantic condition, `<domain>.<condition>`, e.g. "
         "'order.already_received'. Never derived from wording.",
     )
+    # No default: the handler always emits all three members, and a default here
+    # marked `params` optional in OpenAPI — generated clients read a weaker
+    # contract than the wire keeps (#169 review, P3).
     params: dict[str, Any] = Field(
-        default_factory=dict,
         description="Values the condition involves — snake_case keys, JSON scalars.",
     )
 

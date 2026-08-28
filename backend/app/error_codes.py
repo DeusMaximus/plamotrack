@@ -81,6 +81,10 @@ IMPORT_CELL_INVALID = "import.cell_invalid"
 # --- request validation (FastAPI's 422 list shape) -------------------------
 REQUEST_VALIDATION = "request.validation"
 
+# --- parser-stage failures (the 400 the framework raises before any schema
+# --- or service runs: multipart with no boundary, an unreadable body) -------
+REQUEST_BODY_INVALID = "request.body_invalid"
+
 
 def all_codes() -> tuple[str, ...]:
     """Every code constant in this module, for the fixture-parity test."""

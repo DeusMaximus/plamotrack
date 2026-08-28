@@ -118,6 +118,9 @@
       "quantity_too_large": "Quantity is {{quantity}} — a line holds at most {{maximum}}. Split it across several lines.",
       "quantity_too_small": "Quantity is {{quantity}} — it has to be at least 1. To record nothing, leave the line out."
     },
+    "request": {
+      "body_invalid": "The request couldn't be read — if this was a file upload, try it again."
+    },
     "retailer": {
       "has_orders_one": "'{{name}}' has {{count}} order — order history is kept, so the retailer can't be deleted.",
       "has_orders_other": "'{{name}}' has {{count}} orders — order history is kept, so the retailer can't be deleted.",
