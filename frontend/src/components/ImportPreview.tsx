@@ -5,7 +5,7 @@ import type { ImportPlan, PlannedRow, RowAction, TablePlan } from "../api/types"
 import { ROW_ACTIONS } from "../api/types";
 import i18n from "../i18n";
 import { resolveDiagnostic } from "../lib/apiError";
-import { formatDateTime } from "../lib/format";
+import { formatDateTime, formatNumber } from "../lib/format";
 import { counted, countedPhrase, importActionLabel, importFieldLabel, importTableLabel, matchedByLabel } from "../lib/labels";
 import { usePresentationVersion } from "../lib/presentation";
 
@@ -63,7 +63,7 @@ function RowDetail({ row }: { row: PlannedRow }) {
   return (
     <tr className={row.action === "error" ? "bg-red-50/50" : undefined}>
       <td className="px-3 py-1.5 text-end align-top text-xs text-zinc-400 tabular-nums">
-        {row.row_number || "—"}
+        {row.row_number ? formatNumber(row.row_number) : "—"}
       </td>
       <td className="px-3 py-1.5 align-top">
         <span

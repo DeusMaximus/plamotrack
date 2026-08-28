@@ -13,6 +13,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SIDEBAR_DIVIDER_CLASS } from "../components/Layout";
+import { ratingTooltip } from "./labels";
 import {
   formatDateTimeWith,
   formatDateWith,
@@ -143,6 +144,22 @@ describe("numbers and money under instance settings", () => {
   it("grouping follows the formatting locale", () => {
     expect(formatNumberWith("en-AU", 1234567)).toBe("1,234,567");
     expect(formatNumberWith("de-DE", 1234567)).toBe("1.234.567");
+  });
+
+  /** The rating tooltips both star renderings carry. Driven through the
+   *  module-level helper (not a `…With` twin) because the defect being held
+   *  here was a raw `${rating}/5` template that read no preferences at all
+   *  (#177 review, P3-1) — ar-EG so the digits themselves move, not just the
+   *  punctuation. */
+  it("renders a rating tooltip in the instance locale, both numbers", () => {
+    expect(ratingTooltip(4)).toBe("4/5");
+    setFormatPreferences({
+      formatting_locale: "ar-EG",
+      time_zone: "UTC",
+      date_style: "locale",
+      hour_cycle: "locale",
+    });
+    expect(ratingTooltip(4)).toBe("\u0664/\u0665");
   });
 
   it("formats a selected file's decimal size in the instance locale", () => {

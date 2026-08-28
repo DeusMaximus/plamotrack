@@ -5,7 +5,8 @@
  */
 import { afterEach, describe, expect, it } from "vitest";
 
-import { camelizeKey, resolveApiError, resolveDiagnostic } from "./apiError";
+import { LABELLED_PARAMS, camelizeKey, resolveApiError, resolveDiagnostic } from "./apiError";
+import enAU from "../i18n/catalogues/en-AU.json";
 import { resetFormatPreferences, setFormatPreferences } from "./presentation";
 
 // Deliberately nothing like any catalogue string: a test that sees this text in
@@ -121,6 +122,69 @@ describe("resolveApiError", () => {
     expect(resolved.message).toBe("Name is required.; grade: Unrecognised future rule");
   });
 
+  /** Equal length is not correspondence. The two arrays are parallel by the
+   *  handler's construction; these drive the cases where that construction is
+   *  wrong, and each asserts the *other* field's message is not what renders
+   *  (#177 review, P3-2). */
+  it("keeps the English finding when the structured field names a different one", () => {
+    const resolved = resolveApiError("Unprocessable Entity", {
+      detail: [{ loc: ["body", "name"], msg: "Field required", type: "missing" }],
+      code: "request.validation",
+      params: { errors: [{ field: "grade", type: "missing" }] },
+    });
+    expect(resolved.message).toBe("name: Field required");
+    expect(resolved.message).not.toContain("Grade");
+  });
+
+  it("keeps the English finding when the structured type contradicts it", () => {
+    const resolved = resolveApiError("Unprocessable Entity", {
+      detail: [{ loc: ["body", "name"], msg: "Input should be a valid string", type: "string_type" }],
+      code: "request.validation",
+      params: { errors: [{ field: "name", type: "missing" }] },
+    });
+    expect(resolved.message).toBe("name: Input should be a valid string");
+    expect(resolved.message).not.toContain("required");
+  });
+
+  it("degrades only the reordered item, not its correctly paired neighbour", () => {
+    const resolved = resolveApiError("Unprocessable Entity", {
+      detail: [
+        { loc: ["body", "name"], msg: "Field required", type: "missing" },
+        { loc: ["body", "grade"], msg: "Field required", type: "missing" },
+      ],
+      code: "request.validation",
+      params: {
+        errors: [
+          { field: "name", type: "missing" },
+          { field: "scale", type: "missing" },
+        ],
+      },
+    });
+    expect(resolved.message).toBe("Name is required.; grade: Field required");
+  });
+
+  /** A real FastAPI body path, not a bare field: the server spells
+   *  `loc[1:]` dot-joined into `field`, so this is what correspondence has to
+   *  compare. `importField.items.0.quantity` is not a catalogue key, so the
+   *  label falls back to the canonical path. */
+  it("matches a nested body path the way the server spells it", () => {
+    const resolved = resolveApiError("Unprocessable Entity", {
+      detail: [{ loc: ["body", "items", 0, "quantity"], msg: "Field required", type: "missing" }],
+      code: "request.validation",
+      params: { errors: [{ field: "items.0.quantity", type: "missing" }] },
+    });
+    expect(resolved.message).toBe("items.0.quantity is required.");
+  });
+
+  it("keeps the English finding when a nested path disagrees on its index", () => {
+    const resolved = resolveApiError("Unprocessable Entity", {
+      detail: [{ loc: ["body", "items", 0, "quantity"], msg: "Field required", type: "missing" }],
+      code: "request.validation",
+      params: { errors: [{ field: "items.1.quantity", type: "missing" }] },
+    });
+    expect(resolved.message).toBe("items.0.quantity: Field required");
+  });
+
   it("survives a params payload that isn't an object", () => {
     const resolved = resolveApiError("Conflict", {
       detail: SENTINEL,
@@ -129,6 +193,49 @@ describe("resolveApiError", () => {
     });
     expect(resolved.params).toEqual({});
     expect(resolved.message).toBe("This order is already marked shipped.");
+  });
+});
+
+/** Every labelled param must be one some `api.*` entry actually interpolates.
+ *  A branch for a placeholder no entry names computes a label nothing renders:
+ *  its mutant survives the whole suite, which is how `action` and `matched_by`
+ *  passed for kills that never happened (#177 review, P3-4). Derived from the
+ *  shipped catalogue rather than a second hand-written list, so the two cannot
+ *  drift. */
+describe("presentation labelling reaches the catalogue", () => {
+  const placeholders = (() => {
+    const found = new Set<string>();
+    const walk = (node: unknown): void => {
+      if (typeof node === "string") {
+        for (const [, name] of node.matchAll(/\{\{(\w+)\}\}/g)) found.add(name);
+      } else if (node && typeof node === "object") {
+        for (const value of Object.values(node)) walk(value);
+      }
+    };
+    walk((enAU as Record<string, unknown>).api);
+    return found;
+  })();
+
+  it("finds placeholders at all — the walk itself is not vacuous", () => {
+    expect(placeholders.has("countDisplay")).toBe(true);
+    expect(placeholders.size).toBeGreaterThan(10);
+    expect(Object.keys(LABELLED_PARAMS).length).toBeGreaterThan(0);
+  });
+
+  it.each(Object.keys(LABELLED_PARAMS))(
+    "%s is interpolated by at least one api.* entry",
+    (param) => {
+      expect(placeholders).toContain(camelizeKey(param));
+    },
+  );
+
+  it("does not label a param no entry interpolates", () => {
+    // The two that were removed. Restoring either without a catalogue entry
+    // that names it puts an unreachable branch back.
+    expect(LABELLED_PARAMS.action).toBeUndefined();
+    expect(LABELLED_PARAMS.matched_by).toBeUndefined();
+    expect(placeholders.has("action")).toBe(false);
+    expect(placeholders.has("matchedBy")).toBe(false);
   });
 });
 

@@ -721,7 +721,11 @@ export function InventoryPage() {
                           </span>
                         )}
                       </td>
-                      <td className="px-3 py-2">{item.low_stock_threshold ?? "—"}</td>
+                      <td className="px-3 py-2">
+                        {item.low_stock_threshold === null
+                          ? "—"
+                          : formatNumber(item.low_stock_threshold)}
+                      </td>
                       <td className="px-3 py-2 text-end">
                         <div className="flex justify-end gap-1">
                           <Button variant="secondary" onClick={() => setEditing(item)}>

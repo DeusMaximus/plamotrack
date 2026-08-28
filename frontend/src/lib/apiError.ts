@@ -1,6 +1,6 @@
 import i18n from "../i18n";
 import { formatNumber } from "./format";
-import { importActionLabel, importFieldLabel, importTableLabel, itemTypeLabel, matchedByLabel } from "./labels";
+import { importFieldLabel, importTableLabel, itemTypeLabel } from "./labels";
 
 /** Resolution of a failed response body into what the user reads (#25).
  *
@@ -41,13 +41,38 @@ export function camelizeKey(key: string): string {
   return key.replace(/_([a-z0-9])/g, (_, first: string) => first.toUpperCase());
 }
 
+/** One of FastAPI's 422 findings, as it arrives in `detail`. */
+interface DetailFinding {
+  loc?: unknown[];
+  msg?: string;
+  type?: unknown;
+}
+
+function detailFindings(body: ApiErrorBody): DetailFinding[] | null {
+  return Array.isArray(body.detail) ? (body.detail as DetailFinding[]) : null;
+}
+
+/** The field path a finding names, spelled exactly the way the server spells it
+ *  into `params.errors[].field`: `loc` minus its source element ("body",
+ *  "query", "path"), dot-joined — so a nested `["body","items",0,"quantity"]`
+ *  reads `items.0.quantity` on both sides (`app/main.py`'s handler).
+ *
+ *  `Array.isArray` rather than `?.`, because this module's whole contract is
+ *  surviving bodies it did not expect: a `loc` that arrived as a string would
+ *  slice happily and then throw on `join`. */
+function findingPath(finding: DetailFinding): string | undefined {
+  return Array.isArray(finding.loc) ? finding.loc.slice(1).join(".") : undefined;
+}
+
+/** One finding as the pre-#25 client wrote it: "field.path: message". */
+function fallbackText(finding: DetailFinding): string {
+  return [findingPath(finding), finding.msg].filter(Boolean).join(": ");
+}
+
 /** The pre-#25 fallback text, unchanged: string detail verbatim, a validation
  *  findings list joined field-by-field, anything else the HTTP status text. */
 function fallbackFindings(body: ApiErrorBody): string[] | null {
-  if (!Array.isArray(body.detail)) return null;
-  return body.detail.map((finding: { loc?: unknown[]; msg?: string }) =>
-    [finding.loc?.slice(1).join("."), finding.msg].filter(Boolean).join(": "),
-  );
+  return detailFindings(body)?.map(fallbackText) ?? null;
 }
 
 function fallbackDetail(statusText: string, body: ApiErrorBody | null): string {
@@ -66,7 +91,7 @@ export function resolveApiError(statusText: string, body: ApiErrorBody | null): 
 
   let message = detail;
   if (code === "request.validation" && body) {
-    message = renderRequestValidation(params, fallbackFindings(body)) ?? detail;
+    message = renderRequestValidation(params, detailFindings(body)) ?? detail;
   } else if (code !== null && !Array.isArray(body?.detail)) {
     message = renderCode(code, params) ?? detail;
   }
@@ -94,18 +119,35 @@ function renderCode(code: string, params: Record<string, unknown>): string | nul
   return i18n.exists(key, options) ? t(key, options) : null;
 }
 
+/** The wire params that render as display labels, each with its labeller —
+ * snake_case, because `renderCode` hands this the raw wire name.
+ *
+ * A table rather than a branch chain so it can be *held against the catalogue*:
+ * a param whose camelized name no `api.*` entry interpolates is a branch
+ * nothing can reach, and `apiError.test.ts` fails on one. That is what the
+ * removed `action` and `matched_by` branches were — `action` is never a
+ * diagnostic param at all, and `matched_by` is emitted but dropped by the one
+ * catalogue entry it reaches, because `import.match_ambiguous` has two backend
+ * emitters and only one of them sends it, so the shared entry can name no such
+ * placeholder. Both mutants survived the entire suite while the PR body claimed
+ * eight kills between them (#177 review, P3-4). */
+export const LABELLED_PARAMS: Record<string, (value: string) => unknown> = {
+  field: importFieldLabel,
+  column: importFieldLabel,
+  amount_field: importFieldLabel,
+  table: importTableLabel,
+  item_type: (value) => {
+    const key = `itemType.${value}.singular`;
+    return i18n.exists(key) ? itemTypeLabel(value as never) : value;
+  },
+};
+
 /** Known identifiers are display labels only at the browser boundary. The
  * values in `params`, the API body and CSV data remain canonical. */
 function presentationValue(param: string, value: unknown): unknown {
   if (typeof value === "string") {
-    if (["field", "column", "amount_field"].includes(param)) return importFieldLabel(value);
-    if (param === "table") return importTableLabel(value);
-    if (param === "action") return importActionLabel(value as never);
-    if (["matched_by", "matchedBy"].includes(param)) return matchedByLabel(value);
-    if (["item_type", "itemType"].includes(param)) {
-      const key = `itemType.${value}.singular`;
-      return i18n.exists(key) ? itemTypeLabel(value as never) : value;
-    }
+    const label = LABELLED_PARAMS[param];
+    if (label) return label(value);
   }
   // Keep version/schema/id values and user-entered strings canonical. Other
   // numeric diagnostics are presentation quantities, so grouping follows the
@@ -124,20 +166,34 @@ interface RequestValidationFinding {
 /** The server preserves FastAPI's English findings in `detail` for API
  * compatibility. Where its structured `{field, type}` companion names a known
  * type, render that finding through the active catalogue; a future type keeps
- * its matching English detail instead of being hidden behind a generic error. */
+ * its matching English detail instead of being hidden behind a generic error.
+ *
+ * The two arrays are parallel by the handler's construction, and this refuses
+ * to assume it: equal length is not correspondence (#177 review, P3-2). Each
+ * structured item is trusted only where its `field` and `type` both equal what
+ * the English finding beside it actually says — the same path spelling on both
+ * sides — so a reordered, truncated or malformed companion degrades per item to
+ * that item's English text rather than captioning it with another field's
+ * message. Deliberately no sorting or re-pairing: which finding a structured
+ * item belongs to is the server's to state, not this function's to guess. */
 function renderRequestValidation(
   params: Record<string, unknown>,
-  fallback: string[] | null,
+  findings: DetailFinding[] | null,
 ): string | null {
   const errors = params.errors;
-  if (!Array.isArray(errors) || !fallback || errors.length !== fallback.length) return null;
-  const rendered = errors.map((error, index) => {
-    if (!error || typeof error !== "object") return fallback[index];
-    const finding = error as RequestValidationFinding;
-    if (typeof finding.field !== "string" || typeof finding.type !== "string") return fallback[index];
-    const key = `validation.request.${finding.type}`;
-    const t = i18n.t as (key: string, options?: Record<string, unknown>) => string;
-    return i18n.exists(key) ? t(key, { field: importFieldLabel(finding.field) }) : fallback[index];
+  if (!Array.isArray(errors) || !findings || errors.length !== findings.length) return null;
+  const t = i18n.t as (key: string, options?: Record<string, unknown>) => string;
+  const rendered = findings.map((finding, index) => {
+    const fallback = fallbackText(finding);
+    const error = errors[index];
+    if (!error || typeof error !== "object") return fallback;
+    const structured = error as RequestValidationFinding;
+    if (typeof structured.field !== "string" || typeof structured.type !== "string") return fallback;
+    if (structured.field !== (findingPath(finding) ?? "") || structured.type !== finding.type) {
+      return fallback;
+    }
+    const key = `validation.request.${structured.type}`;
+    return i18n.exists(key) ? t(key, { field: importFieldLabel(structured.field) }) : fallback;
   });
   return rendered.join("; ");
 }

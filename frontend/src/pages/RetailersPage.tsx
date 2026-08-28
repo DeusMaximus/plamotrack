@@ -9,7 +9,13 @@ import { PACKING_QUALITIES, SHIPPING_SPEEDS, WOULD_ORDER_AGAIN } from "../api/ty
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
-import { packingQualityLabel, shippingSpeedLabel, wouldOrderAgainLabel } from "../lib/labels";
+import {
+  packingQualityLabel,
+  ratingTooltip,
+  shippingSpeedLabel,
+  wouldOrderAgainLabel,
+} from "../lib/labels";
+import { usePresentationVersion } from "../lib/presentation";
 
 const AGAIN_STYLES: Record<WouldOrderAgain, string> = {
   yes: "bg-green-100 text-green-700",
@@ -149,6 +155,8 @@ function RetailerFormModal({
 
 export function RetailersPage() {
   const { t } = useTranslation();
+  // Rating tooltips are locale-formatted; see the note on `BoardPage`.
+  usePresentationVersion();
   const queryClient = useQueryClient();
   const [modal, setModal] = useState<{ retailer?: Retailer } | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -217,7 +225,10 @@ export function RetailersPage() {
                       </a>
                     )}
                   </td>
-                  <td className="px-3 py-2" title={retailer.rating ? `${retailer.rating}/5` : ""}>
+                  <td
+                    className="px-3 py-2"
+                    title={retailer.rating ? ratingTooltip(retailer.rating) : ""}
+                  >
                     {retailer.rating
                       ? "★".repeat(retailer.rating) + "☆".repeat(5 - retailer.rating)
                       : "—"}

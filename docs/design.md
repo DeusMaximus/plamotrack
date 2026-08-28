@@ -1173,19 +1173,19 @@ Unchanged from the original plan:
 **Between M5 and M5.1 — the hardening passes (complete).** An external review of
 v0.2.3-alpha (11/08/2026) was triaged into a run of small GitHub milestones named
 `M5 hardening — v0.2.N-alpha`, each its own release, all inside M5 so the numbering
-above stands. Shipped: **v0.2.4** — a write changes only what it was asked to change;
-**v0.2.5** — the importer reads what it is given (apply bound to the previewed plan,
-numeric grammar, archive integrity, budgets). Open: **v0.2.6** — the importer is
-*stable and usable*, defined as "no bug corrupts data silently", not "the importer is
-finished" (#77, #87, #90, #112, #119 open; #44 shipped); **v0.2.7** — the workflow
-release (MCP write parity, board-move ordering, keyboard-operable dialogs,
+above stands, and all of them have shipped. What they were, in order: **v0.2.4** —
+a write changes only what it was asked to change; **v0.2.5** — the importer reads
+what it is given (apply bound to the previewed plan, numeric grammar, archive
+integrity, budgets); **v0.2.6** — the importer *stable and usable*, defined as "no
+bug corrupts data silently" rather than "the importer is finished"; **v0.2.7** — the
+workflow release (MCP write parity, board-move ordering, keyboard-operable dialogs,
 backdatable receipt and ship dates, build dates and series, retailer matching, the
-#120 status-editing consolidation) — is code-complete but deliberately untagged: it
-ships as the single **v0.2.7-alpha** release once v0.2.6's remainder lands, and
-there will be no v0.2.6 tag (owner's call, 21/08/2026 — most of the 0.2.7 work
-merged first, so a separate v0.2.6 release would be fiction); **v0.2.8** —
-everything that is neither a corruption path nor coupled to the workflow work. M5.1
-starts after them. The live issue list is on GitHub.
+#120 status-editing consolidation); **v0.2.8** — everything that was neither a
+corruption path nor coupled to the workflow work. **No v0.2.6 tag exists and none
+will:** most of the 0.2.7 work merged first, so a separate v0.2.6 release would have
+been fiction, and the two milestones shipped together as the single **v0.2.7-alpha**
+(owner's call, 21/08/2026). M5.1 followed them and is itself complete; the open work
+now starts at M6. This paragraph is history — the live issue list is on GitHub.
 
 ---
 

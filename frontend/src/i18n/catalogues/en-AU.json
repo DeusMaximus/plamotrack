@@ -26,6 +26,7 @@
     "deleteFailed": "Delete failed",
     "dotSeparator": " · ",
     "confirmDelete": "Delete \"{{name}}\"?",
+    "ratingOutOf": "{{ratingDisplay}}/{{maximumDisplay}}",
     "elapsed": {
       "sameDay": "{{date}} · same day",
       "days_one": "{{date}} · {{countDisplay}} d",

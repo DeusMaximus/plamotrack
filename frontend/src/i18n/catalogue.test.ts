@@ -24,6 +24,7 @@ import {
   SHIPPING_SPEEDS,
   WOULD_ORDER_AGAIN,
 } from "../api/types";
+import type { RowAction } from "../api/types";
 import {
   dateWithElapsed,
   countedPhrase,
@@ -387,6 +388,15 @@ describe("dynamic keys resolve for every runtime enum member", () => {
 
   it("an unknown matched-by value falls back to itself — a column name is already true", () => {
     expect(matchedByLabel("kit_number")).toBe("kit_number");
+  });
+
+  /** The same contract for row actions, which used to render the dotted key
+   *  instead. `RowAction` binds this repo's callers, not the JSON a newer
+   *  backend sends, so the cast is the point of the test: it stands in for a
+   *  preview payload naming an action this build has never heard of
+   *  (#177 review, P3-3). `ImportPreview`'s badge is the shipped consumer. */
+  it("an unknown row action falls back to its canonical wire value", () => {
+    expect(importActionLabel("future_action" as RowAction)).toBe("future_action");
   });
 
   // The Inventory route segments, restated as a literal — the tab ids are not

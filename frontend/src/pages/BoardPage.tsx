@@ -27,7 +27,8 @@ import type { Kit, KitStatus } from "../api/types";
 import { StatusBadge } from "../components/StatusBadge";
 import { EmptyState, ErrorBanner } from "../components/ui";
 import { formatNumber } from "../lib/format";
-import { statusLabel } from "../lib/labels";
+import { ratingTooltip, statusLabel } from "../lib/labels";
+import { usePresentationVersion } from "../lib/presentation";
 import { kitStatusMutationOptions } from "../lib/kitStatusMutation";
 
 // pointerWithin gives the most natural mouse-drag feel but only works for
@@ -119,7 +120,7 @@ function KitCard({
         {showStatus && <StatusBadge status={kit.status} />}
       </div>
       {kit.rating != null && (
-        <div className="mt-1 text-xs text-amber-500" title={`${kit.rating}/5`}>
+        <div className="mt-1 text-xs text-amber-500" title={ratingTooltip(kit.rating)}>
           {"★".repeat(kit.rating)}
           <span className="text-zinc-300">{"★".repeat(5 - kit.rating)}</span>
         </div>
@@ -161,7 +162,10 @@ function Column({
         className={`rounded-t-lg border-t-4 bg-white px-3 py-2 ${COLUMN_ACCENTS[id]} border-x border-zinc-200`}
       >
         <span className="text-sm font-semibold">{title}</span>
-        <span className="ms-2 rounded-full bg-zinc-100 px-1.5 text-xs text-zinc-500">
+        <span
+          className="ms-2 rounded-full bg-zinc-100 px-1.5 text-xs text-zinc-500"
+          data-testid={`column-count-${id}`}
+        >
           {formatNumber(kits.length)}
         </span>
       </div>
@@ -187,6 +191,12 @@ function Column({
 
 export function BoardPage() {
   const { t } = useTranslation();
+  // Column counts and rating tooltips render through the instance's formatting
+  // locale, so this subtree has to hear a settings change that isn't also a
+  // language change — `useTranslation` only re-renders on `languageChanged`,
+  // and the Outlet element identity keeps a Layout render from reaching here
+  // (#177 review, P3-1; the same trap as #174's P3-1).
+  usePresentationVersion();
   const queryClient = useQueryClient();
   const [view, setView] = useState<BoardView>(initialView);
   const [activeId, setActiveId] = useState<string | null>(null);
