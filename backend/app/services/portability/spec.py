@@ -166,8 +166,13 @@ def parse_datetime(raw: str) -> datetime | None:
         if parsed_date is None:
             raise ValueError(f"'{raw}' is not a timestamp") from None
         parsed = datetime.combine(parsed_date, datetime.min.time())
-    # Naive input is read as UTC — every timestamp column in the schema is tz-aware.
-    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+    # Naive input stays naive here: which wall clock it belongs to is the
+    # instance's time-zone setting (#114), and a sessionless parser cannot know
+    # it. `_Planner._parse_row` attaches the zone the moment the cell is read,
+    # so every schema column still only ever stores tz-aware instants and
+    # nothing downstream of parsing sees a naive value. An explicit offset in
+    # the cell always wins — it is never reinterpreted.
+    return parsed
 
 
 def parse_currency(raw: str) -> str | None:

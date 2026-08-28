@@ -493,11 +493,17 @@ keeps per-line status, which REST, MCP and CSV can still write.
   `status_updated_at` descending, so such a kit sits at the top of Backlog until
   the wall clock catches up. Harmless for a single-owner collection; recorded so
   the cost sits next to the rule
-- **interim time-zone decision, for M5.1 to revisit (#23, #27):** the instance has no
-  time zone, so REST/MCP accept a full ISO 8601 datetime *with offset* (naive is
-  refused), and the browser sends midnight local in its own offset for a picked date.
-  When instance-wide time zone settings arrive, this is the seam they replace —
-  a stated intent, not an accident
+- **time-zone decision, revisited at M5.1 (#23, #114):** REST/MCP accept a full
+  ISO 8601 datetime *with offset* (naive is refused), and the browser sends midnight
+  local in its own offset for a picked date. The CSV side, which has no offset to
+  borrow, reads a naive cell in the **instance's** time-zone setting — attached once
+  per plan by the import planner, so preview and apply agree and a settings change
+  between them stales the hash. An explicit offset in a cell always wins, exports
+  always write `+00:00`, and stored instants are never rewritten — so old archives
+  re-import as the same instants and only naive cells parsed after #114 read
+  differently. At a DST boundary, a nonexistent gap wall time maps forward and an
+  ambiguous one takes the earlier occurrence (PEP 495 fold-0), so the typed
+  calendar day always lands (#173 review, P3-1)
 
 **One lock order, application-wide.** Every writer that touches catalog stock takes
 its rows through a single locked-read helper, and takes them in one agreed sequence:
