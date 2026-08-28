@@ -41,6 +41,56 @@ Template:
 
 ---
 
+## 2026-08-28 — Claude Code (Fable 5) — M5.1 CODE-COMPLETE: #26/#114/#27 closed; GLM 5.3 Flash is the new default reviewer
+
+- **Done:** **#26 — PR #171 merged `359c8fe`** (2,087 ins, no migrations):
+  every string in a successful preview payload is a `{code, params, detail}`
+  Diagnostic on the #25 registry, rendered at `api.<code>` via
+  `resolveDiagnostic`; per-problem `errors` list replaces `error`; 56 new
+  codes; `matched_by` canonicalised; blocked apply carries its diagnostics in
+  `params.diagnostics`; `tests/diag.py` kept ~150 old assertions meaningful.
+  Fold-in **#172 merged `e7758a9`** (nd-1..5). **#114 — PR #173 merged
+  `ac6788c`**: naive CSV datetimes read in the instance zone, attached once
+  per plan in `_parse_row`; explicit offsets win; exports write `+00:00` so
+  old archives re-import unchanged; zone change between preview/apply = stale
+  409. Fold-in **#175 merged `825898b`** (tz-1..3; harness **244 cases**).
+  **#27 — PR #174 merged `fedcc08`**: Language & region form (5 settings),
+  `src/lib/presentation.ts` + `usePresentationVersion`
+  (useSyncExternalStore) subscribing KitsPage/OrdersPage/InventoryPage/
+  ImportPreview, Layout applies the row → i18next + document lang/dir,
+  format helpers instance-aware (**plain dates render as the day they name in
+  every zone**), `/meta` advertises `supported_interface_languages`, physical
+  LR utilities → logical. **M5.1 has no open issues.**
+- **Decisions:** #26 reuses the #25 registry/namespace (no `diag.*` fork);
+  full per-PR lists in each PR body. **GLM 5.3 Flash (Zhipu, via T3 Code on
+  OpenRouter) replaced Cursor as the default reviewer** (`13eff54` — roster
+  table + brief footer updated; ~$0.07/round, 1M context; four rounds today,
+  all substantive). Its #174 P3-1 *diagnosis* (cold-load staleness) was
+  right; its *remedy* failed measurement — React Router's Outlet returns the
+  same element reference, so page subtrees bail out of Layout re-renders; the
+  shipped fix is the subscription store, pinned red/green both ways. Measure
+  a reviewer's remedies like any claim. Codex reserved for write-gate/money/
+  migrations/M6-security rounds.
+- **State:** `main` at `825898b` (+ this entry), CI green at every merged
+  head. Backend **1218–1224** per pre-merge branch (merged union unmeasured —
+  CI's Backend job on `main` is the check), vitest **374**, e2e from-empty
+  **39 + 1 skipped** (tables zero). Harness **244/244**; a #26 full run also
+  fixed **six anchors rotted since #25** (n5/n6a/n6b/cat-13/14/wdr-8) — rule
+  in `testing-and-review.md`: emission-site rewrites owe a FULL harness run.
+  Known e2e: #162/#167 dev-DB-only; preorder-toggle #17-class flake fires
+  under concurrent local load, clean quiet. Two process slips, owned on PR
+  threads: a scratch runner restored uncommitted `Layout.tsx` via
+  `git checkout` (the recorded trap — re-applied, re-verified), and branch
+  switches ran under GLM's #173 round (park the tree during reviews — now in
+  the procedure doc). No dev servers left running.
+- **Next:** **release** (0.2.9-alpha — the M5.1 theme) via the gate in
+  `testing-and-review.md`; then M6 (secure remote access — Codex-lane
+  reviews). LXC: **back up before pulling** (real collection; 0.2.8's
+  settings migration still pending there, and after this pull the instance
+  time zone/locale start mattering — set them in Settings → Language & region
+  after upgrade, or naive CSV imports and all rendering stay UTC/en-AU).
+
+
 ## 2026-08-28 — Claude Code (Fable 5) — #25 CLOSED: the REST error envelope (PR #169, two Codex rounds)
 
 - **Done:** **#25 closed — PR #169 squash-merged as `28e32f7`** on the
@@ -243,78 +293,3 @@ Template:
   and Codex two — check both meters. LXC: **back up before pulling** (real
   collection, several releases behind; no migrations to run this time, but
   0.2.8's settings migration is still pending there).
-
-## 2026-08-27 — Claude Code (Fable 5) — M5.1 opened: #23 CLOSED (PR #159, two Codex rounds; fold-in PR #160)
-
-- **Done:** **#23 — PR #159 open** (`feat/23-instance-settings`, head `18cfc45`,
-  ~1,555 insertions — Codex-sized). The `instance_settings` singleton: model
-  (int PK, CHECK id=1; DateStyle/HourCycle text enums on the Intl vocabularies),
-  migration `f9979ec7b9cb` seeding en-AU/en-AU/UTC/locale/locale plus the
-  env-configured REFERENCE_CURRENCY (bootstrap-only from here on),
-  `services/instance_settings.py` (gate → FOR UPDATE → per-field validation;
-  validators are ValueError-raising module functions the CSV spec parsers
-  share), `GET/PATCH /settings`, DB-backed `/meta` (both wrappers async now).
-  Every `get_settings().reference_currency` read site rewired: orders snapshots
-  (reference threaded per mutation), MCP create_order, the importer's
-  `_default_money_currency` (read ONCE in `plan_import` before parsing,
-  hash-bound), the starter sheet (examples + expansion take the value).
-  Portability: `TableSpec.singleton` — exported, update-only on import, outside
-  `_PORTABLE_TABLES`, excluded from replace_all's rows_deleted, absent sheet =
-  untouched, a second row dies on the target claim. conftest RESETS (never
-  truncates) the row between tests. `tzdata` dependency added. Frontend: client
-  types + getSettings/updateSettings, DataPage export row, `matched_id` widened
-  (the singleton matches by the int 1). Docs: design §3.10 + §6.1,
-  import-export.md ("the one exception"), operations.md ("Bootstrap vs
-  runtime"), .env.example, README's M5.1 row.
-- **Decisions (deliberate calls, the full numbered list is in the PR body):**
-  UTC constant tz bootstrap; interface language membership-tested vs formatting
-  locale shape-only; BCP 47 extension subtags refused; no id column in
-  settings.csv; replace_all updates rather than resets; **no new MCP tools**
-  (get_meta stays the MCP read surface — revisit at #24/#27); enum membership
-  left to pydantic/enum_parser rather than a third list.
-- **Round 1 (Codex): NO-GO — P2 + 2×P3, all accepted, all reproduced at
-  `18cfc45` first, fixed at `fb72dbd`; reply posted.** P2: `parse_currency`
-  judged letters with Unicode `isalpha` while PATCH used ASCII — 'ÅUD' imported
-  and got stamped into snapshots; now ONE shape test, `require_currency_code`
-  in `services/currency.py`, both writers delegate, swept across all five CSV
-  currency columns (literal matrix in test_reference_currency.py). P3:
-  `canonical_locale` narrowed to the UTS 35 shape Intl consumes (language
-  {2,3}|{5,8}, variants unique + stored SORTED — Intl sorts them; the shared
-  `frontend/src/lib/__fixtures__/locale-cases.json` + new frontend Intl suite
-  found that fourth defect on its first run). P3: the gate test now asserts
-  `holder = ANY(pg_blocking_pids(updater))` — Codex proved a decoy advisory
-  waiter false-passed the old count-based check (stg-5 GREEN 5/5); post-fix
-  the same decoy scenario reads RED 5/5. The two-field test renamed to the
-  final-state control it is. Round negative control: 14 red / 130 green in a
-  worktree of `18cfc45`.
-- **Round 2 (Codex): clean GO** — it replayed all three remedies against
-  persisted final state (its own decoy scenario included: stg-5 RED 5/5 with
-  an unrelated advisory waiter parked) and re-measured the queue 23/23.
-  **PR #159 squash-merged as `7118f96` on the owner's call; #23 closed;
-  branch deleted; CI green at every head.**
-- **Fold-in PR #160 squash-merged as `ad2da8d`** (owner's call,
-  merge-on-green; review skipped per the #40/#132 precedent, stated in the
-  body): 23 `stg-` tuples + SET/META constants; TEST_FILES + test_settings.py,
-  test_settings_portability.py, test_reference_currency.py; scratch runner
-  deleted, superseded. **Full harness 227/227 @ 22m16s measured**; the
-  procedure doc's runtime + case-count lines refreshed. No queues outstanding —
-  the tracked harness again holds every tuple ever filed.
-- **State:** `main` at `ad2da8d` (+ this entry), CI green at every merged
-  head. Backend **1186**, vitest **132** (the shared
-  `frontend/src/lib/__fixtures__/locale-cases.json` + Intl suite), e2e 30
-  (+1 skipped screenshots) verified from-empty this session. One migration
-  (`f9979ec7b9cb`, additive + seed) — **live instances must run migrations on
-  next pull**; REFERENCE_CURRENCY in .env is bootstrap-only from here on.
-  test_reference_currency's env fixture split in two: `bootstrap_currency`
-  (monkeypatch, the two config tests) vs the row-writing, awaited
-  `reference_currency`. No dev servers running; stale worktrees
-  `/private/tmp/plamotrack-pr100` and `-pr108-main` persist (pre-date this).
-- **Next:** the rest of **M5.1** — #24 (Settings page + Data absorption; the
-  frontend client methods and types already exist), #22 (catalogue manifest —
-  unlocks languages beyond en-AU in SUPPORTED_INTERFACE_LANGUAGES),
-  #25/#26 (structured diagnostics), #27 (settings UI for language/region),
-  #114 (naive CSV dates — the settings row now HOLDS the instance time zone
-  it needs). Codex carried both #159 rounds — check its meter before the next
-  buy. LXC is still pre-0.2.8: **back up the LXC database before pulling**
-  (real collection), and this pull adds the settings migration.
-
