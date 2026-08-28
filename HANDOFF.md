@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-28 — Claude Code (Fable 5) — #25: the REST error envelope; PR #169 — Codex round 1 NO-GO answered, round 2 pending
+## 2026-08-28 — Claude Code (Fable 5) — #25: the REST error envelope; PR #169 at GO (two Codex rounds), merge pending
 
 - **Done:** **#25 — PR #169 open** (`feat/25-error-codes`, head `152f7cb`,
   1,188 insertions, **no migrations**): every failed REST response is now
@@ -76,12 +76,16 @@ Template:
   fixture-driven AST walk now asserts every raise site's literal params ⊇ its
   code's declared keys + every code raised-or-handler-emitted (≥81-site
   vacuity guard); Codex's surviving orders-writer mutant dies on it, upgrades
-  writer measured too. Suites at `23d9cf4`: backend **1204** (17 in the
-  envelope file), vitest **281**, from-empty e2e 36+1, zero leftovers.
-  **Twelve measured mutants killed** (env-1..9 queued in the PR body for the
-  post-merge fold-in + 3 frontend). Round 2 not yet requested. No dev
-  servers running.
-- **Next:** Codex round 2 (replay the three remedies), then land #169;
+  writer measured too. **Round 2: GO + 2 P3s, both answered at `d76a20d`** —
+  P3-4: the 400 was invisible to OpenAPI path responses (ERROR_RESPONSES
+  gains 400 → ErrorEnvelope; /import/preview's 400 asserted); P3-5: stale
+  counts in the amended PR body (fixed in place; **second count-correction a
+  review caught this session** — re-measure from the final head, never carry
+  forward). Suites at `d76a20d`: backend **1204** (17 in the envelope file),
+  vitest **281**, from-empty e2e 36+1, zero leftovers. **Twelve measured
+  mutants killed** (env-1..9 queued in the PR body for the post-merge
+  fold-in + 3 frontend). No dev servers running.
+- **Next:** land #169 (GO standing; merge is the owner's call), then
   fold the `env-` tuples into `mutation_test.py`
   (TEST_FILES + `tests/test_error_envelope.py`), then **#26** (import-preview
   diagnostics on this contract — row messages, warnings, blocking errors,
