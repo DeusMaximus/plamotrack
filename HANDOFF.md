@@ -41,6 +41,35 @@ Template:
 
 ---
 
+## 2026-08-28 — GPT-5 Codex (OpenAI) — #176 ready for independent review
+
+- **Done:** Branch `codex/176-m51-localisation-gaps` implements #176 without
+  migrations or API/CSV/data-model changes. Known portable field/table/action/
+  matching values render through catalogue labels with unknown raw fallbacks;
+  change rows use the same field helper. `request.validation` renders known
+  `{field,type}` findings from `validation.request.*` and retains each unknown
+  type's English `detail`. Counts keep raw `count` for plural selection while
+  `countDisplay` uses the instance locale; the sweep covers import previews and
+  results, diagnostics, order/kit/stock summaries, Board pills, and file size.
+  `border-r` is now logical `border-e`; whitespace-only manifest native names
+  are invalid; README/design/operations and nearby comments describe shipped
+  M5.1 and its real limits/upgrade effects.
+- **Decisions:** Preserve canonical API/MCP/database/CSV values, user-entered
+  data, and English error detail on the wire; localisation is browser-boundary
+  presentation only. One cohesive PR: all changes share that boundary.
+- **State:** Direct pre-fix controls: 7 failures across the target frontend
+  tests. Final: backend `1225 passed` (2 known zipfile duplicate-name warnings),
+  frontend `449 passed`, lint/build green, and fresh-DB Playwright `39 passed,
+  1 skipped`, tables zero; test DB removed. Mutations killed: count display,
+  field/table/item/action/matching labels, request validation, RTL, manifest
+  trim, and file-size formatter. No full backend mutation harness run: no
+  backend emission sites changed. Working tree is ready to commit/push/open PR.
+- **Next:** independent GLM 5.3 Flash review from the PR brief, re-measuring
+  negative controls and mutation claims before any merge/release. Do not begin
+  M6, version/tag/release work, or merge this PR before that gate.
+
+---
+
 ## 2026-08-28 — Claude Code (Fable 5) — M5.1 CODE-COMPLETE: #26/#114/#27 closed; GLM 5.3 Flash is the new default reviewer
 
 - **Done:** **#26 — PR #171 merged `359c8fe`** (2,087 ins, no migrations):
@@ -239,57 +268,3 @@ Template:
   unfixed. Cursor carried three rounds and Codex two on #22 — check both
   meters before the next buy. LXC: **back up before pulling** (real
   collection; 0.2.8's settings migration still pending there).
-
-## 2026-08-28 — Claude Code (Fable 5) — #22 CLOSED: the i18n foundation, four PRs (#161/#163/#164/#165)
-
-- **Done:** **#22 closed** — the en-AU catalogue foundation, four sequential
-  PRs, each squash-merged on the owner's call after review. **#161**
-  (`cc91045`, Codex NO-GO→GO; P2: the runtime and the tests kept separate
-  catalogue lists, so an enabled language passed every gate while the browser
-  never loaded it — `src/i18n/registry.ts` is now the single import map both
-  derive from, with a loaded-bundle test; P3: blank values refused): i18next +
-  react-i18next, sync init pinned `en-AU` (#27 wires it to settings),
-  manifest (tag/nativeName/direction/enabled), `catalogue.test.ts` (validators
-  proven on inline bad fixtures first; plural shapes per language's own CLDR
-  categories; 100% coverage bar for enabled languages), backend parity test
-  pinning `SUPPORTED_INTERFACE_LANGUAGES` == enabled manifest tags,
-  `npm run i18n:report` + CI summary step, `docs/translating.md`. **#163**
-  (`fb569f9`, Cursor GO + 2 P3s: CountPills borrowed the totals plural group
-  and reworded the one divergent action — own `importPill.*` group + a
-  divergence pin; the unified `importTable.*` headings disclosed):
-  Retailers/Data/ImportPreview/CatalogItemPicker — first plurals + `<Trans>`,
-  the TABLE_LABELS/TABLE_EXPORTS by-value duplication ended. **#164**
-  (`4f18a04`, Cursor clean GO): Kits/Inventory — `dateWithElapsed` over
-  `common.elapsed.*`; the U+00A0 find (below). **#165** (`a85325f`, Cursor
-  clean GO + two corrections to my brief, owned on the thread): Orders —
-  `itemType.*.title` select nouns, receivedCell's one-byte NBSP normalization
-  (disclosed at #164, endorsed), catalogue machine-formatted (json indent=2).
-- **Decisions:** byte-identical extraction, proven by a from-empty e2e run per
-  PR — wording fixes deliberately out of scope (`data.result` `_one` forms
-  still read "1 kits …", stated in #163). Dynamic keys are the vitest
-  matrix's; flat static keys are `tsc -b`'s (measured on #165: deleted key →
-  vitest green, tsc red naming the call site). No jsdom — i18next core only.
-  Review bought on every PR including the "mechanical" ones, which paid: real
-  P3s in two of three.
-- **Notable:** the NBSP transcription trap and the unverified spec-coverage
-  claims are in `.agents/lessons.md` (→ "The value axis", "Review").
-  **#162 filed**: dialog-keyboard's keyboard-select spec races the catalog
-  search under load (its readiness wait is satisfied by the Create-new
-  button) — reproduced on `main`, remedy sketched, deliberately not fixed on
-  the series. This file repaired: the 27-08 entry had been amended into the
-  template fence; moved out verbatim, skeleton restored.
-- **State:** `main` at `a85325f` (+ this entry), CI green at every merged
-  head. Backend **1187**, vitest **212**, e2e 30 (+1 skipped screenshots),
-  from-empty verified repeatedly, tables zero after. Catalogue **350 keys @
-  100%**. Bundle 503 kB — past Vite's 500 kB chunk warning, informational,
-  unfiled. **No migrations in the series.** No mutant queues; `stg-`
-  re-measured 23/23 at #161. No dev servers running; stale worktrees
-  `/private/tmp/plamotrack-pr100` and `-pr108-main` persist (pre-date this).
-- **Next:** the rest of **M5.1**, all unblocked: **#24** (Settings page —
-  its copy now has a catalogue to land in), #25/#26 (structured diagnostics —
-  the runtime was chosen for `t(code, {defaultValue})`), #27 (language/region
-  UI; `/meta` still doesn't advertise supported languages — that gap is
-  #27's), #114 (naive CSV dates). Cursor carried three rounds this session
-  and Codex two — check both meters. LXC: **back up before pulling** (real
-  collection, several releases behind; no migrations to run this time, but
-  0.2.8's settings migration is still pending there).

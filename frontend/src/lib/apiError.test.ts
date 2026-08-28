@@ -3,13 +3,16 @@
  *  against the en-AU entries, with a sentinel detail so a pass can only come
  *  from the catalogue path, never from echoing the fallback.
  */
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { camelizeKey, resolveApiError, resolveDiagnostic } from "./apiError";
+import { resetFormatPreferences, setFormatPreferences } from "./presentation";
 
 // Deliberately nothing like any catalogue string: a test that sees this text in
 // `message` is seeing the fallback path.
 const SENTINEL = "backend english sentence — not catalogue copy";
+
+afterEach(resetFormatPreferences);
 
 describe("camelizeKey", () => {
   it("bridges snake_case wire params to camelCase placeholders", () => {
@@ -82,17 +85,40 @@ describe("resolveApiError", () => {
     expect(resolved.code).toBeNull();
   });
 
-  it("keeps the joined findings for request validation — specifics beat a generic line", () => {
+  it("renders known request-validation findings through the catalogue while keeping detail", () => {
     const resolved = resolveApiError("Unprocessable Entity", {
       detail: [
         { loc: ["body", "name"], msg: "Field required", type: "missing" },
         { loc: ["body", "grade"], msg: "Field required", type: "missing" },
       ],
       code: "request.validation",
-      params: { errors: [{ field: "name", type: "missing" }] },
+      params: {
+        errors: [
+          { field: "name", type: "missing" },
+          { field: "grade", type: "missing" },
+        ],
+      },
     });
-    expect(resolved.message).toBe("name: Field required; grade: Field required");
+    expect(resolved.message).toBe("Name is required.; Grade is required.");
+    expect(resolved.detail).toBe("name: Field required; grade: Field required");
     expect(resolved.code).toBe("request.validation");
+  });
+
+  it("keeps each original English finding when its future validation type is unknown", () => {
+    const resolved = resolveApiError("Unprocessable Entity", {
+      detail: [
+        { loc: ["body", "name"], msg: "Field required", type: "missing" },
+        { loc: ["body", "grade"], msg: "Unrecognised future rule", type: "future.rule" },
+      ],
+      code: "request.validation",
+      params: {
+        errors: [
+          { field: "name", type: "missing" },
+          { field: "grade", type: "future.rule" },
+        ],
+      },
+    });
+    expect(resolved.message).toBe("Name is required.; grade: Unrecognised future rule");
   });
 
   it("survives a params payload that isn't an object", () => {
@@ -113,7 +139,7 @@ describe("resolveDiagnostic (#26)", () => {
       params: { field: "grade" },
       detail: SENTINEL,
     });
-    expect(message).toBe("grade is required.");
+    expect(message).toBe("Grade is required.");
   });
 
   it("camelizes wire params into the rendering", () => {
@@ -123,9 +149,43 @@ describe("resolveDiagnostic (#26)", () => {
       detail: SENTINEL,
     });
     expect(message).toBe(
-      "currency_code: ignored — this file has no unit_price_minor column, and a currency " +
+      "Currency: ignored — this file has no Unit price (minor units) column, and a currency " +
         "can't be changed without restating the amount it applies to.",
     );
+  });
+
+  it("presents known import fields and tables while retaining canonical unknown values", () => {
+    expect(
+      resolveDiagnostic({
+        code: "import.cell_required",
+        params: { field: "build_completed_at" },
+        detail: SENTINEL,
+      }),
+    ).toBe("Build completed is required.");
+    expect(
+      resolveDiagnostic({
+        code: "import.match_ambiguous",
+        params: { count: 2, table: "display_items" },
+        detail: SENTINEL,
+      }),
+    ).toBe("2 existing Display items rows match this one — set the id column to say which one you mean.");
+    expect(
+      resolveDiagnostic({
+        code: "import.catalog_ref_unresolved",
+        params: { item_type: "display", table: "display_items" },
+        detail: SENTINEL,
+      }),
+    ).toBe(
+      "Catalog item: a display item line has to point at a row in Display items.csv — give it a Catalog item, " +
+        "or name the item in Catalog item name and one will be created at 0 on hand.",
+    );
+    expect(
+      resolveDiagnostic({
+        code: "import.cell_required",
+        params: { field: "future_field" },
+        detail: SENTINEL,
+      }),
+    ).toBe("future_field is required.");
   });
 
   it("selects the plural form by count", () => {
@@ -140,6 +200,22 @@ describe("resolveDiagnostic (#26)", () => {
     expect(resolveDiagnostic(diagnostic(4))).toBe(
       "4 rows couldn't be read — nothing will be imported until they're fixed or removed.",
     );
+  });
+
+  it("keeps plural selection numeric while rendering diagnostic counts in the formatting locale", () => {
+    setFormatPreferences({
+      formatting_locale: "de-DE",
+      time_zone: "UTC",
+      date_style: "locale",
+      hour_cycle: "locale",
+    });
+    expect(
+      resolveDiagnostic({
+        code: "import.rows_unreadable",
+        params: { count: 1234 },
+        detail: SENTINEL,
+      }),
+    ).toBe("1.234 rows couldn't be read — nothing will be imported until they're fixed or removed.");
   });
 
   it("falls back to the detail for a code it doesn't know", () => {

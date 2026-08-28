@@ -29,8 +29,8 @@ export default function App() {
           <Route path="data" element={<DataSection />} />
           <Route path="about" element={<AboutSection />} />
         </Route>
-        {/* The pre-M5.1 home of Data management — old links and bookmarks land
-            on the section it became. */}
+        {/* The former Data-management route; old links and bookmarks land on
+            the Settings section that superseded it. */}
         <Route path="/data" element={<Navigate to="/settings/data" replace />} />
       </Route>
     </Routes>

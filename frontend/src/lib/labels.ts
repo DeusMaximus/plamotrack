@@ -7,6 +7,7 @@ import type {
   WouldOrderAgain,
 } from "../api/types";
 import i18n from "../i18n";
+import { formatNumber } from "./format";
 
 /** Catalogue-backed labels for canonical wire values (design §6.1): the
  * API/database value stays untranslated everywhere it travels; only what the
@@ -46,7 +47,7 @@ export function itemTypeTitle(type: ItemType): string {
 export function dateWithElapsed(date: string, days: number): string {
   return days <= 0
     ? i18n.t("common.elapsed.sameDay", { date })
-    : i18n.t("common.elapsed.days", { date, count: days });
+    : countedPhrase("common.elapsed.days", days, { date });
 }
 
 export function packingQualityLabel(quality: PackingQuality): string {
@@ -89,4 +90,25 @@ export function importTableLabel(table: string): string {
 export function matchedByLabel(matchedBy: string): string {
   const key = `matchedBy.${matchedBy}`;
   return i18n.exists(key) ? i18n.t(key as "matchedBy.id") : matchedBy;
+}
+
+/** A portable column or API field as a user-facing label. The canonical name
+ * remains the wire and CSV value; an unknown future field deliberately falls
+ * back to that value rather than producing a misleading invented label. */
+export function importFieldLabel(field: string): string {
+  const key = `importField.${field}`;
+  return i18n.exists(key) ? i18n.t(key as "importField.name") : field;
+}
+
+/** Count interpolation always carries both forms: raw `count` remains the
+ * i18next plural selector, while `countDisplay` is the locale-formatted text
+ * rendered into the catalogue. Keeping those values separate prevents a locale
+ * digit string from ever changing grammar. */
+export function counted(values: Record<string, unknown>, count: number): Record<string, unknown> {
+  return { ...values, count, countDisplay: formatNumber(count) };
+}
+
+export function countedPhrase(key: string, count: number, values: Record<string, unknown> = {}): string {
+  const t = i18n.t as (key: string, options?: Record<string, unknown>) => string;
+  return t(key, counted(values, count));
 }

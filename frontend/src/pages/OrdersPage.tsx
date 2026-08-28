@@ -21,7 +21,7 @@ import { ITEM_TYPES } from "../api/types";
 import type { CatalogSelection } from "../components/CatalogItemPicker";
 import { CatalogItemPicker } from "../components/CatalogItemPicker";
 import i18n from "../i18n";
-import { dateWithElapsed, itemTypeLabel, itemTypeTitle } from "../lib/labels";
+import { counted, countedPhrase, dateWithElapsed, itemTypeLabel, itemTypeTitle } from "../lib/labels";
 import { usePresentationVersion } from "../lib/presentation";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
@@ -30,6 +30,7 @@ import {
   currencyOptions,
   formatDate,
   formatMoney,
+  formatNumber,
   isoToLocalDateInput,
   localMidnightISO,
   majorToMinor,
@@ -1233,10 +1234,17 @@ export function OrdersPage() {
                       {receivedCell(order)}
                     </td>
                     <td className="px-3 py-2">
-                      {t("orders.acrossLines", {
-                        total: order.items.reduce((total, item) => total + item.quantity, 0),
-                        count: order.items.length,
-                      })}
+                      {t(
+                        "orders.acrossLines",
+                        counted(
+                          {
+                            total: formatNumber(
+                              order.items.reduce((total, item) => total + item.quantity, 0),
+                            ),
+                          },
+                          order.items.length,
+                        ),
+                      )}
                     </td>
                     <td className="px-3 py-2">{orderTotal(order)}</td>
                     <td className="px-3 py-2">
@@ -1290,12 +1298,12 @@ export function OrdersPage() {
                                 </span>
                                 <span className="font-medium">{label}</span>
                                 <span className="text-zinc-500">
-                                  {item.quantity} ×{" "}
+                                  {formatNumber(item.quantity)} ×{" "}
                                   {formatMoney(item.unit_price_minor, item.currency_code)}
                                 </span>
                                 {item.item_type === "kit" && (
                                   <span className="text-xs text-zinc-400">
-                                    {t("orders.spawnedKits", { count: item.spawned_kit_ids.length })}
+                                    {t("orders.spawnedKits", counted({}, item.spawned_kit_ids.length))}
                                   </span>
                                 )}
                               </li>
@@ -1339,7 +1347,7 @@ function receivedCell(order: Order): string {
     // the one-byte normalization of this cell's plain space (#164, disclosed).
     return days <= 0
       ? i18n.t("orders.inTransitToday")
-      : i18n.t("orders.inTransitDays", { count: days });
+      : countedPhrase("orders.inTransitDays", days);
   }
   const date = formatDate(order.received_at);
   if (!order.shipped_at) return date;

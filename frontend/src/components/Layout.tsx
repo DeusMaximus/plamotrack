@@ -15,6 +15,8 @@ const NAV = [
   { to: "/settings", label: "nav.settings", icon: "⚙️" },
 ] as const;
 
+export const SIDEBAR_DIVIDER_CLASS = "border-e";
+
 export function Layout() {
   const { t } = useTranslation();
   // The one place the persisted settings row becomes this browser's
@@ -34,7 +36,7 @@ export function Layout() {
   }, [settings]);
   return (
     <div className="flex min-h-screen">
-      <aside className="w-52 shrink-0 border-r border-zinc-200 bg-white">
+      <aside className={`w-52 shrink-0 ${SIDEBAR_DIVIDER_CLASS} border-zinc-200 bg-white`}>
         <div className="px-4 py-5">
           {/* The wordmark is a brand identifier, not copy — it stays untranslated. */}
           <h1 className="text-xl font-bold tracking-tight text-indigo-600">plamotrack</h1>

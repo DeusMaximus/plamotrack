@@ -21,13 +21,14 @@ import {
   ITEM_TYPES,
   KIT_STATUSES,
   PACKING_QUALITIES,
-  ROW_ACTIONS,
   SHIPPING_SPEEDS,
   WOULD_ORDER_AGAIN,
 } from "../api/types";
 import {
   dateWithElapsed,
+  countedPhrase,
   importActionLabel,
+  importFieldLabel,
   importTableLabel,
   itemTypeLabel,
   itemTypePlural,
@@ -38,6 +39,8 @@ import {
   statusLabel,
   wouldOrderAgainLabel,
 } from "../lib/labels";
+import { formatNumber } from "../lib/format";
+import { resetFormatPreferences, setFormatPreferences } from "../lib/presentation";
 import apiErrorCodes from "../lib/__fixtures__/api-error-codes.json";
 import { camelizeKey } from "../lib/apiError";
 import enAU from "./catalogues/en-AU.json";
@@ -164,6 +167,9 @@ describe("the validators refuse what they must (standing negative controls)", ()
       '"en-AU" direction must be "ltr" or "rtl"',
     );
     expect(validateManifest({ languages: [entry, entry] })).toContain('"en-AU" is listed twice');
+    expect(validateManifest({ languages: [{ ...entry, nativeName: " \t " }] })).toContain(
+      '"en-AU" has no native name',
+    );
   });
 });
 
@@ -234,11 +240,17 @@ describe("dynamic keys resolve for every runtime enum member", () => {
     expect(wouldOrderAgainLabel(answer)).not.toContain("wouldOrderAgain.");
   });
 
-  it.each(ROW_ACTIONS)("row action %s has a badge word and both counted phrases", (action) => {
-    expect(importActionLabel(action)).not.toContain("importAction.");
+  it.each([
+    ["create", "new"],
+    ["update", "updated"],
+    ["unchanged", "unchanged"],
+    ["skip", "skipped"],
+    ["error", "error"],
+  ] as const)("row action %s has its catalogue badge word and both counted phrases", (action, label) => {
+    expect(importActionLabel(action)).toBe(label);
     for (const count of [1, 5]) {
       for (const group of ["importCount", "importPill"] as const) {
-        const phrase = i18n.t(`${group}.${action}`, { count });
+        const phrase = i18n.t(`${group}.${action}`, { count, countDisplay: String(count) });
         expect(phrase, `${group}.${action}`).toContain(String(count));
         expect(phrase, `${group}.${action}`).not.toContain(`${group}.`);
       }
@@ -253,21 +265,27 @@ describe("dynamic keys resolve for every runtime enum member", () => {
   });
 
   it("the orders counted phrases keep their bytes", () => {
-    expect(i18n.t("orders.acrossLines", { total: 1, count: 1 })).toBe("1 across 1 line");
-    expect(i18n.t("orders.acrossLines", { total: 7, count: 3 })).toBe("7 across 3 lines");
-    expect(i18n.t("orders.spawnedKits", { count: 1 })).toBe("spawned 1 kit");
-    expect(i18n.t("orders.spawnedKits", { count: 4 })).toBe("spawned 4 kits");
+    expect(i18n.t("orders.acrossLines", { total: 1, count: 1, countDisplay: "1" })).toBe(
+      "1 across 1 line",
+    );
+    expect(i18n.t("orders.acrossLines", { total: 7, count: 3, countDisplay: "3" })).toBe(
+      "7 across 3 lines",
+    );
+    expect(i18n.t("orders.spawnedKits", { count: 1, countDisplay: "1" })).toBe("spawned 1 kit");
+    expect(i18n.t("orders.spawnedKits", { count: 4, countDisplay: "4" })).toBe("spawned 4 kits");
     // NBSP before the "d", matching the Kits column — the disclosed one-byte
     // normalization of the received cell's plain space (#164 → PR 4).
-    expect(i18n.t("orders.inTransitDays", { count: 3 })).toBe("in transit · 3\u00a0d");
+    expect(i18n.t("orders.inTransitDays", { count: 3, countDisplay: "3" })).toBe(
+      "in transit · 3\u00a0d",
+    );
     expect(i18n.t("orders.inTransitToday")).toBe("in transit · today");
   });
 
   it("the pill and totals phrasings diverge exactly where main's did (#163 P3-1)", () => {
     // The one action whose two phrasings differ is the standing proof the two
     // groups are both load-bearing — collapse them and this goes red.
-    expect(i18n.t("importPill.error", { count: 6 })).toBe("6 error");
-    expect(i18n.t("importCount.error", { count: 6 })).toBe("6 with errors");
+    expect(i18n.t("importPill.error", { count: 6, countDisplay: "6" })).toBe("6 error");
+    expect(i18n.t("importCount.error", { count: 6, countDisplay: "6" })).toBe("6 with errors");
   });
 
   it.each(IMPORT_MODES)("import mode %s has a label and a blurb", (mode) => {
@@ -300,6 +318,33 @@ describe("dynamic keys resolve for every runtime enum member", () => {
     expect(importTableLabel(table)).not.toBe(table === "kits" ? "" : table);
   });
 
+  // All portable column names plus the legacy imported alias, restated from
+  // spec.py rather than from the label helper: known diagnostic parameters and
+  // ImportPreview change rows must never expose these canonical identifiers.
+  const PORTABLE_FIELDS = [
+    "id", "interface_language", "formatting_locale", "time_zone", "date_style", "hour_cycle",
+    "reference_currency", "name", "url", "rating", "packing_quality", "shipping_speed",
+    "would_order_again", "notes", "category", "quantity_on_hand", "unit_cost_reference_minor",
+    "unit_cost_reference", "unit_cost_reference_currency", "condition_notes", "manufacturer",
+    "low_stock_threshold", "retailer_id", "retailer_name", "order_date", "order_number",
+    "delivery_service", "tracking_number", "tracking_url", "shipping_cost_minor", "shipping_cost",
+    "currency_code", "shipped_at", "received_at", "order_id", "item_type", "catalog_ref_id",
+    "catalog_name", "quantity", "unit_price_minor", "unit_price", "converted_price_minor",
+    "converted_price_aud_minor", "converted_currency_code", "kit_name", "kit_grade", "kit_scale",
+    "kit_number", "kit_status", "grade", "scale", "series", "status", "status_updated_at",
+    "build_started_at", "build_completed_at", "build_notes", "order_item_id", "created_at",
+    "updated_at", "upgrade_id", "upgrade_name", "kit_id", "quantity_used", "applied_at",
+    "file_path", "caption", "taken_at",
+  ];
+
+  it.each(PORTABLE_FIELDS)("portable field %s has a display label", (field) => {
+    expect(importFieldLabel(field)).not.toBe(field);
+  });
+
+  it("an unknown field falls back to the canonical identifier", () => {
+    expect(importFieldLabel("future_column")).toBe("future_column");
+  });
+
   it("an unknown table key falls back to itself, not a dotted key", () => {
     expect(importTableLabel("not_a_table")).toBe("not_a_table");
   });
@@ -326,19 +371,18 @@ describe("dynamic keys resolve for every runtime enum member", () => {
   // matching natural keys from spec.py, and the importer's three order phrases
   // canonicalised to snake_case.
   const MATCHED_BY = [
-    "id",
-    "name",
-    "application",
-    "photo",
-    "instance_settings",
-    "retailer_order_number",
-    "retailer_date_lines",
-    "order_line",
-  ];
+    ["id", "id"],
+    ["name", "name"],
+    ["application", "upgrade application"],
+    ["photo", "photo"],
+    ["instance_settings", "the settings row"],
+    ["retailer_order_number", "retailer + order number"],
+    ["retailer_date_lines", "retailer + date + lines"],
+    ["order_line", "order + line"],
+  ] as const;
 
-  it.each(MATCHED_BY)("matched-by %s has a display phrase", (value) => {
-    expect(matchedByLabel(value)).not.toBe("");
-    expect(matchedByLabel(value)).not.toContain("matchedBy.");
+  it.each(MATCHED_BY)("matched-by %s has its catalogue display phrase", (value, label) => {
+    expect(matchedByLabel(value)).toBe(label);
   });
 
   it("an unknown matched-by value falls back to itself — a column name is already true", () => {
@@ -374,6 +418,42 @@ describe("runtime behaviour the app relies on", () => {
   it("interpolates byte-exactly, escaping nothing", () => {
     expect(i18n.t("api.exportFailed", { status: 404 })).toBe("Export failed (404)");
     expect(i18n.t("board.loadFailed", { message: "<oops>" })).toBe("Failed to load kits: <oops>");
+  });
+
+  it("uses the formatting locale for every shared counted phrase without changing plural selection", () => {
+    // Literal keys, not a source-derived list: this is the cross-page count
+    // matrix for import pills/totals/results, inventory, the picker, elapsed
+    // time and order-line summaries. Each keeps the raw `count` for grammar
+    // while the separately supplied display value gets the locale's digits.
+    const COUNTED_PHRASES = [
+      "importPill.error",
+      "importCount.error",
+      "data.result.created",
+      "importPreview.recordsDeleted",
+      "inventory.applyOnHand",
+      "catalogPicker.onHand",
+      "orders.acrossLines",
+      "orders.spawnedKits",
+      "orders.inTransitDays",
+      "common.elapsed.days",
+    ];
+    setFormatPreferences({
+      formatting_locale: "de-DE",
+      time_zone: "UTC",
+      date_style: "locale",
+      hour_cycle: "locale",
+    });
+    for (const key of COUNTED_PHRASES) {
+      const value = countedPhrase(key, 1234, {
+        date: "14.3.2026",
+        total: formatNumber(4567),
+      });
+      expect(value, key).toContain("1.234");
+    }
+    expect(i18n.t("importCount.error", { count: 1, countDisplay: formatNumber(1) })).toBe(
+      "1 with errors",
+    );
+    resetFormatPreferences();
   });
 
   it("selects plural forms by count and falls back to en-AU per key", () => {
@@ -412,9 +492,8 @@ describe("REST error codes (#25) — the registry, the catalogue, and the params
   // app/error_codes.py to the same file from the other side.
   const CODES = Object.entries(apiErrorCodes.codes) as [string, { params: string[] }][];
 
-  // request.validation deliberately renders as its joined findings list — the
-  // field-by-field specifics beat a generic sentence until #26-style structure
-  // exists for it — so it is the one wire code without an api.* entry.
+  // request.validation has a structured per-finding renderer under
+  // `validation.request.*`, rather than a generic api.* sentence.
   const RENDERED = CODES.filter(([code]) => code !== "request.validation");
 
   it("covers every wire code, and request.validation is the only exception", () => {
@@ -429,6 +508,7 @@ describe("REST error codes (#25) — the registry, the catalogue, and the params
       for (const param of entry.params) {
         options[camelizeKey(param)] = param === "count" ? count : `‹${param}›`;
       }
+      if (count !== undefined) options.countDisplay = String(count);
       expect(i18n.exists(`api.${code}`, options), `api.${code}`).toBe(true);
       const text = (i18n.t as (key: string, options?: Record<string, unknown>) => string)(
         `api.${code}`,
@@ -449,6 +529,7 @@ describe("REST error codes (#25) — the registry, the catalogue, and the params
       const declared = apiErrorCodes.codes[code as keyof typeof apiErrorCodes.codes];
       expect(declared, `${key} maps to no wire code in api-error-codes.json`).toBeDefined();
       const allowed = new Set(declared.params.map(camelizeKey));
+      if ((declared.params as readonly string[]).includes("count")) allowed.add("countDisplay");
       for (const name of placeholderNames(value).names) {
         expect(allowed.has(name), `${key} interpolates {{${name}}}, not declared for ${code}`).toBe(
           true,

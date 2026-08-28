@@ -66,10 +66,10 @@ else's UI. This is the same app, owned outright.
 - ✅ **M5** `docker compose up` → ready-to-use local instance, no manual runtime or
   schema setup; reference currency is configurable, and every historical conversion
   stores the currency code it was captured under
-- 🔨 **Planned (M5.1)** Instance-wide settings and internationalisation foundations:
-  `en-AU` source catalogue and fallback, reviewed language contributions, locale-aware
-  presentation, a Settings page, and structured REST/import diagnostics — no
-  non-English translation is required to complete the foundation
+- ✅ **M5.1** Instance-wide settings and internationalisation foundations: `en-AU`
+  source catalogue and fallback, reviewed language contributions, locale-aware
+  presentation, a Settings page, structured REST/import diagnostics, and logical RTL
+  layout utilities. No non-English translation is required to complete the foundation
 - 🔨 **Planned (M6)** Authenticated remote access for the web UI, REST API, and MCP,
   including OAuth-compatible MCP clients and a tested VPS deployment path
 - 🔨 **Planned (M6.1)** Dual-era MCP compatibility, adding `2026-07-28` without
@@ -745,7 +745,7 @@ restamped as yen, which is precisely the drift this section exists to prevent. N
 is a record, not a rounding error. Correcting or removing a snapshot is a thing the
 operator does on purpose, in a field put there for it.
 
-### 6.1 Instance settings & internationalisation 🔨 **In progress (M5.1 — the settings record shipped with #23)**
+### 6.1 Instance settings & internationalisation ✅ **Complete (M5.1)**
 
 The first localisation milestone is infrastructure, not a promise to ship a particular
 translation. It also supplies the settings surface the localisation controls need.
@@ -1099,12 +1099,10 @@ the remaining gaps become things to disclose rather than things to hide.
   brings up the whole thing, but that default is a convenience, not a security
   boundary — moving the published port does not make an unauthenticated instance
   safe to expose.
-- **No localisation infrastructure yet** (M5.1). English is embedded in the UI, and
-  amounts are shown with the number of decimals ISO 4217 gives the currency rather than
-  the number a particular locale conventionally displays — so a Hungarian reader gets
-  `HUF 1,200.00` where they would write `1 200 Ft`. What the stored numbers *mean* is
-  settled, though: minor units follow the ISO exponent throughout, in the database, the
-  CSV layer and the web form alike (#6), and `REFERENCE_CURRENCY` is configurable.
+- **Only `en-AU` ships today** (M5.1). The interface, diagnostics, direction metadata,
+  and locale-aware presentation are ready for reviewed catalogues, but no non-English
+  catalogue has been contributed. Amounts still use plamotrack's ISO 4217 exponent,
+  independent of locale, so formatting never changes what stored minor units mean.
 - **No photos** (M7) and **no public showcase page** (M8).
 - **The schema will still move.** Migrations are provided and tested in both directions,
   but breaking changes are possible while it's alpha. Export an archive before upgrading
@@ -1151,7 +1149,7 @@ Unchanged from the original plan:
    stack is internet-safe. The configurable reference currency was pulled forward from
    M5.1 and shipped here — it is a schema migration, not translation work, and its
    compatibility cost grows with every archive exported under the old column name
-8. 🔨 **M5.1 — Instance settings & internationalisation foundation:** singleton
+8. ✅ **M5.1 — Instance settings & internationalisation foundation:** singleton
    instance-wide preferences, `en-AU` source catalogue and fallback, reviewed language
    contributions, locale-aware presentation, a Settings page that absorbs Data, and
    structured REST/import diagnostics. No non-English translation is required
@@ -1172,7 +1170,7 @@ Unchanged from the original plan:
 14. 🔨 **M9 — Open-source operations:** contribution guide, release automation,
     compatibility/support matrix, and deployment documentation polish
 
-**Between M5 and M5.1 — the hardening passes (in progress).** An external review of
+**Between M5 and M5.1 — the hardening passes (complete).** An external review of
 v0.2.3-alpha (11/08/2026) was triaged into a run of small GitHub milestones named
 `M5 hardening — v0.2.N-alpha`, each its own release, all inside M5 so the numbering
 above stands. Shipped: **v0.2.4** — a write changes only what it was asked to change;

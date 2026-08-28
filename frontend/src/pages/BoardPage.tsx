@@ -26,6 +26,7 @@ import { api } from "../api/client";
 import type { Kit, KitStatus } from "../api/types";
 import { StatusBadge } from "../components/StatusBadge";
 import { EmptyState, ErrorBanner } from "../components/ui";
+import { formatNumber } from "../lib/format";
 import { statusLabel } from "../lib/labels";
 import { kitStatusMutationOptions } from "../lib/kitStatusMutation";
 
@@ -161,7 +162,7 @@ function Column({
       >
         <span className="text-sm font-semibold">{title}</span>
         <span className="ms-2 rounded-full bg-zinc-100 px-1.5 text-xs text-zinc-500">
-          {kits.length}
+          {formatNumber(kits.length)}
         </span>
       </div>
       <div

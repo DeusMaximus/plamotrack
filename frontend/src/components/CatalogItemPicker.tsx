@@ -4,7 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import { api } from "../api/client";
 import type { CatalogItemType } from "../api/types";
-import { itemTypeLabel, itemTypePlural } from "../lib/labels";
+import { counted, itemTypeLabel, itemTypePlural } from "../lib/labels";
 import { Button, Input } from "./ui";
 
 /** A line's catalog target: an existing item picked from search, or a new one.
@@ -206,7 +206,7 @@ export function CatalogItemPicker({
                 </span>
               </span>
               <span className="text-xs text-zinc-400">
-                {t("catalogPicker.onHand", { count: result.quantity_on_hand })}
+                {t("catalogPicker.onHand", counted({}, result.quantity_on_hand))}
               </span>
             </button>
           ))}

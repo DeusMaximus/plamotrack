@@ -12,9 +12,11 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { SIDEBAR_DIVIDER_CLASS } from "../components/Layout";
 import {
   formatDateTimeWith,
   formatDateWith,
+  formatFileSizeWith,
   formatMoneyWith,
   formatNumberWith,
   formatDate,
@@ -60,6 +62,11 @@ describe("document direction metadata", () => {
 
   it("the fallback language is ltr", () => {
     expect(documentDirection(resolveLanguage("nonsense").entry.direction)).toBe("ltr");
+  });
+
+  it("keeps the sidebar divider on its logical content edge", () => {
+    expect(SIDEBAR_DIVIDER_CLASS).toBe("border-e");
+    expect(SIDEBAR_DIVIDER_CLASS).not.toMatch(/\bborder-[lr]\b/);
   });
 });
 
@@ -136,6 +143,11 @@ describe("numbers and money under instance settings", () => {
   it("grouping follows the formatting locale", () => {
     expect(formatNumberWith("en-AU", 1234567)).toBe("1,234,567");
     expect(formatNumberWith("de-DE", 1234567)).toBe("1.234.567");
+  });
+
+  it("formats a selected file's decimal size in the instance locale", () => {
+    expect(formatFileSizeWith("en-AU", 1280)).toBe("1.3 KB");
+    expect(formatFileSizeWith("de-DE", 1280)).toBe("1,3 KB");
   });
 
   it("the locale styles money; the ISO 4217 exponent stays plamotrack's (§6)", () => {

@@ -1,4 +1,6 @@
 import i18n from "../i18n";
+import { formatNumber } from "./format";
+import { importActionLabel, importFieldLabel, importTableLabel, itemTypeLabel, matchedByLabel } from "./labels";
 
 /** Resolution of a failed response body into what the user reads (#25).
  *
@@ -9,8 +11,8 @@ import i18n from "../i18n";
  * camelized to match the `{{placeholder}}` convention); everything else — an
  * unknown future code, a pre-#25 body, a proxy error page, a non-JSON body —
  * falls back exactly the way the client always did. The findings-list shape
- * keeps its joined field-by-field text even though its code is known: the
- * specifics beat a generic sentence until #26-style structure exists for it.
+ * findings list remains the English compatibility detail; structured findings
+ * render through the active catalogue where their type is known.
  *
  * Pure and DOM-free on purpose: `apiError.test.ts` drives it under vitest's
  * node environment, and `client.ts` is the runtime caller.
@@ -41,15 +43,16 @@ export function camelizeKey(key: string): string {
 
 /** The pre-#25 fallback text, unchanged: string detail verbatim, a validation
  *  findings list joined field-by-field, anything else the HTTP status text. */
+function fallbackFindings(body: ApiErrorBody): string[] | null {
+  if (!Array.isArray(body.detail)) return null;
+  return body.detail.map((finding: { loc?: unknown[]; msg?: string }) =>
+    [finding.loc?.slice(1).join("."), finding.msg].filter(Boolean).join(": "),
+  );
+}
+
 function fallbackDetail(statusText: string, body: ApiErrorBody | null): string {
   if (body && typeof body.detail === "string") return body.detail;
-  if (body && Array.isArray(body.detail)) {
-    return body.detail
-      .map((finding: { loc?: unknown[]; msg?: string }) =>
-        [finding.loc?.slice(1).join("."), finding.msg].filter(Boolean).join(": "),
-      )
-      .join("; ");
-  }
+  if (body) return fallbackFindings(body)?.join("; ") ?? statusText;
   return statusText;
 }
 
@@ -62,7 +65,9 @@ export function resolveApiError(statusText: string, body: ApiErrorBody | null): 
       : {};
 
   let message = detail;
-  if (code !== null && !Array.isArray(body?.detail)) {
+  if (code === "request.validation" && body) {
+    message = renderRequestValidation(params, fallbackFindings(body)) ?? detail;
+  } else if (code !== null && !Array.isArray(body?.detail)) {
     message = renderCode(code, params) ?? detail;
   }
   return { message, detail, code, params };
@@ -78,10 +83,63 @@ function renderCode(code: string, params: Record<string, unknown>): string | nul
   const key = `api.${code}`;
   const options: Record<string, unknown> = {};
   for (const [param, value] of Object.entries(params)) {
-    options[camelizeKey(param)] = value;
+    const key = camelizeKey(param);
+    // i18next reads raw `count` to select its plural form. Only its rendered
+    // companion is locale-formatted; turning count into text here would make
+    // every plural catalogue entry appear absent.
+    options[key] = param === "count" ? value : presentationValue(param, value);
+    if (param === "count" && typeof value === "number") options.countDisplay = formatNumber(value);
   }
   const t = i18n.t as (key: string, options?: Record<string, unknown>) => string;
   return i18n.exists(key, options) ? t(key, options) : null;
+}
+
+/** Known identifiers are display labels only at the browser boundary. The
+ * values in `params`, the API body and CSV data remain canonical. */
+function presentationValue(param: string, value: unknown): unknown {
+  if (typeof value === "string") {
+    if (["field", "column", "amount_field"].includes(param)) return importFieldLabel(value);
+    if (param === "table") return importTableLabel(value);
+    if (param === "action") return importActionLabel(value as never);
+    if (["matched_by", "matchedBy"].includes(param)) return matchedByLabel(value);
+    if (["item_type", "itemType"].includes(param)) {
+      const key = `itemType.${value}.singular`;
+      return i18n.exists(key) ? itemTypeLabel(value as never) : value;
+    }
+  }
+  // Keep version/schema/id values and user-entered strings canonical. Other
+  // numeric diagnostics are presentation quantities, so grouping follows the
+  // instance locale just as it does in visible count phrases.
+  if (typeof value === "number" && !["id", "schema", "version"].includes(param)) {
+    return formatNumber(value);
+  }
+  return value;
+}
+
+interface RequestValidationFinding {
+  field?: unknown;
+  type?: unknown;
+}
+
+/** The server preserves FastAPI's English findings in `detail` for API
+ * compatibility. Where its structured `{field, type}` companion names a known
+ * type, render that finding through the active catalogue; a future type keeps
+ * its matching English detail instead of being hidden behind a generic error. */
+function renderRequestValidation(
+  params: Record<string, unknown>,
+  fallback: string[] | null,
+): string | null {
+  const errors = params.errors;
+  if (!Array.isArray(errors) || !fallback || errors.length !== fallback.length) return null;
+  const rendered = errors.map((error, index) => {
+    if (!error || typeof error !== "object") return fallback[index];
+    const finding = error as RequestValidationFinding;
+    if (typeof finding.field !== "string" || typeof finding.type !== "string") return fallback[index];
+    const key = `validation.request.${finding.type}`;
+    const t = i18n.t as (key: string, options?: Record<string, unknown>) => string;
+    return i18n.exists(key) ? t(key, { field: importFieldLabel(finding.field) }) : fallback[index];
+  });
+  return rendered.join("; ");
 }
 
 /** The #26 half of the same contract: an import-preview diagnostic renders
