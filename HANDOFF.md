@@ -41,6 +41,50 @@ Template:
 
 ---
 
+## 2026-08-29 — Claude Code (Fable 5) — #178 implemented: order ambiguity split to its own code; PR #180 awaiting review
+
+- **Done:** Branch `claude/178-order-match-ambiguous` → **PR #180** (`Closes
+  #178`, **unmerged** — awaiting independent review). The order matcher now
+  speaks `import.order_match_ambiguous`, declared `{count, matched_by}`
+  exactly; generic `import.match_ambiguous` keeps `{count, table}`. The en-AU
+  entry renders `{{matchedBy}}` via `matchedByLabel` (unknown values raw,
+  singular/plural pinned); `LABELLED_PARAMS.matched_by` restored legitimately
+  (#177 P3-4's guard now holds it reachable); the stale `apiError.ts` comment
+  rewritten. Class sweep: `order_line.item_type_immutable` fixed in-branch
+  (REST raise now sends `{before, after}`; registry declares the pair) and
+  **#179 filed** for the raise-side siblings (`catalog_item.not_found`
+  item_type, `_row_problem`'s undeclared row; `import.blocked`'s structural
+  diagnostics named there as deliberate). The diagnostic-site audit is
+  tightened to **exact equality** with the registry, extracted pure
+  (`_diagnostic_param_violations`) with synthetic per-class negative controls;
+  the two bridges are pinned by a runtime matrix in
+  `test_import_diagnostics.py`. Fixture note updated to state both regimes.
+- **Decisions:** issue option 1 (split the code) over optional registry params
+  or a fabricated generic `matched_by`; no `table` param on the order code
+  (the code names the table — retires "orders rows" phrasing); raise sites
+  keep the superset audit deliberately (#179 owns the rest).
+- **State:** evidence measured at `fb34b79` (later commits are comment/docs
+  only): backend **1229**, vitest **469**, ruff + oxlint + build clean,
+  from-empty e2e **40 + 1 skipped** (tables zero, e2e DB dropped). Pre-fix
+  controls in the PR body: backend 3 red (both order emitters observed on the
+  old code; the audit naming exactly importing.py:1297 + invariants.py:115),
+  frontend 4 red. Seven hand-run mutations killed (1/1/1/3/5/1/1 failing
+  tests), byte-identical restores verified; **`oma-` tuples queued in the PR
+  body** for post-merge fold-in (two frontend mutants stay manually measured —
+  no tracked frontend harness). Full harness at `20d0687`: **244/244 killed**,
+  no anchor rot. Two aborted e2e runs were the owner's omlx-server holding
+  `*:8000` (owner confirmed, stopped it) — environmental, not a defect. #167
+  can't fire from-empty; not seen. No dev servers left running.
+- **Next:** independent review of PR #180 (GLM 5.3 Flash default lane; brief
+  from `.agents/review-brief.md`); do not merge on a NO-GO. After merge: fold
+  the `oma-` set into the harness (re-check anchors, and whether the
+  clean-tree/restore cover reaches the fixture and test files it mutates the
+  way #151 extended it to `alembic/`). Then the 0.2.9-alpha release gate
+  (M5.1 theme) from `testing-and-review.md`; M6 not begun. LXC: **back up
+  before pulling** (real collection; 0.2.8's settings migration still pending
+  there, and the instance zone/locale need setting after the M5.1 upgrade —
+  see the `4bd98c0` entry).
+
 ## 2026-08-28 — Claude Code (Opus 5) — PR #177 review rounds actioned; #178 filed
 
 - **Done:** Actioned the Codex review of #177 (five P3s, NO-GO) in `6fa048b` on
@@ -220,61 +264,4 @@ Template:
   the stock note; `import.cell_invalid` is already coded and waiting to be
   threaded through). Then #27 (language/region controls), #114. LXC: **back
   up before pulling** (real collection; 0.2.8's settings migration still
-  pending there).
-
-
-## 2026-08-28 — Claude Code (Fable 5) — #24 CLOSED: the Settings page (PR #168, one Codex round)
-
-- **Done:** **#24 closed — PR #168 squash-merged as `db48440`** on the
-  owner's call, branch deleted (final head `7eb6567`,
-  539 insertions, frontend-only, **no migrations**): `/settings` with nested
-  section routes. General = the reference-currency form (hydration gated on
-  `settingsQuery`; on save `setQueryData` for settings + **invalidate
-  `metaQuery`** — /meta carries the same reference_currency at staleTime
-  Infinity and the order/inventory forms default from that copy). Language &
-  region = read-only display; **#27 owns the controls**, the page says so.
-  Data management = DataPage git-renamed to `pages/settings/DataSection.tsx`
-  (90 % similar; plan_hash/confirm/global invalidateQueries byte-identical).
-  About = version from `metaQuery`. `/data` → `/settings/data`. `Card` lifted
-  into ui.tsx (h2→h3, reason at the definition), `ErrorBanner` now
-  `role="alert"`, sidebar swaps 💾 Data → ⚙️ Settings, catalogue gains a
-  `settings` group (`nav.data`/`data.title` removed as unused). All six README
-  screenshots re-shot (the sidebar changed in every one); docs swept
-  (README, operations, import-export, design §6 + §6.1).
-- **Decisions:** sections are **routes**, not InventoryPage-style tab state —
-  the redirect criterion needs an addressable Data-management section. The new
-  settings e2e is its own Playwright **project** with `dependencies: ["app"]`:
-  it flips the singleton that order-snapshot/order-lossless beforeAll-read, and
-  local parallel workers would flake *them*; cost disclosed (a red in app skips
-  settings). Language & region deliberately not editable here (#27's first
-  acceptance criterion). This entry was rebuilt once: the parallel #166
-  session's hand-off (bundle warning, merged) landed on `main` mid-session and
-  had already rotated the entry my first draft rotated — the #144 shape, live.
-- **State:** `main` at `db48440` (+ this entry), CI green at every head
-  including the post-review `7eb6567`. **Codex round 1 (GPT 5.6 Sol): GO + 2 P3s**, both
-  reproduced and answered at `7eb6567` — P3-1 dead Data-page directions
-  (fixed, plus one sibling the re-sweep found: the #126 downgrade-guard
-  message; `mutation_test.py -k mig-5` re-measured killed, anchor untouched);
-  P3-2 evidence-record overcounts (PR body amended in place: 6 tests / five
-  green / :138 — this entry carried the same two numbers and is corrected in
-  this commit). Codex's subscription was upped this session — capacity no
-  longer the constraint; its model is GPT 5.6 Sol (procedure + brief template
-  refreshed on main, `639238a`). Suites at the head: backend **1187**, vitest **212**, e2e
-  from-empty **36 passed + 1 skipped** (6 new settings tests), tables zero
-  after, currency restored. Two measured e2e negative controls in the PR body
-  (meta-invalidation removed → red at settings.spec.ts:138; role="status"
-  removed → red at the status assert). No mutant queues (frontend-only). No
-  dev servers left running; stale worktrees `/private/tmp/plamotrack-pr100`
-  and `-pr108-main` persist (pre-date this).
-- **Notable:** **#167 filed** — display-items spec's `getByLabel('Category')`
-  collides with Inventory's category filter on any database holding a
-  categorised display item (the dev DB did); invisible from empty, so CI and
-  the from-empty run can never see it. preorder-toggle flaked once locally
-  (#17 contention class), clean on re-run and in the counted run.
-- **Next:** the M5.1 rest, all unblocked:
-  #25/#26 (structured diagnostics), #27 (language/region controls — the
-  read-only section and `/meta`'s missing language advertising are its), #114
-  (naive CSV dates). #162 (e2e keyboard-select race) remains
-  reproduced-on-`main`, unfixed. LXC: **back up before pulling** (real
-  collection, several releases behind; 0.2.8's settings migration still
   pending there).
