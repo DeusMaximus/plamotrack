@@ -808,8 +808,9 @@ def _borrowed_diagnostic(exc: DomainError, **extra: Any) -> Diagnostic:
     `tests/test_error_envelope.py` already holds that site's params to the
     fixture — so this bridge sends exactly what the raise would have.
     `extra` (a starter-sheet row number) never overrides what the raise said.
-    The audit can't see through this call, so the codes that reach the wire only
-    this way are named in the test's `_BORROWED` list.
+    The audit can't see through this call — bridges are exempted by name — so
+    every code that can reach the wire this way is pinned instead by the
+    runtime matrix in `tests/test_import_diagnostics.py` (#180 review, P3-1).
     """
     return Diagnostic(code=exc.code, params={**extra, **exc.params}, detail=str(exc))
 

@@ -144,6 +144,90 @@ async def test_a_borrowed_code_is_the_live_writers_own(client):
     assert set(borrowed["params"]) == set(_REGISTRY["order_line.quantity_too_small"]["params"])
 
 
+async def test_the_borrowed_bridge_matrix_covers_the_large_quantity_and_fanout_codes(client):
+    """The other two codes `_borrowed_diagnostic` can carry (#180 review, P3-1):
+    the matrix is the ONLY control on a bridge's output — the static audit
+    exempts bridges by name — so a raise-side extra on any borrowed code
+    becomes an undeclared Diagnostic param the moment the matrix doesn't
+    exercise that code. The small-quantity case above proved nothing about
+    these two: a probe param added to the `quantity_too_large` raise sailed
+    through 34/34 green at `7fc20d6`."""
+    too_large = make_csv(
+        ["order_id", "item_type", "quantity", "kit_name", "kit_grade"],
+        [
+            {
+                "order_id": "0be04b6e-2ff5-4ab6-9c33-000000000001",
+                "item_type": "kit",
+                "quantity": "2000",
+                "kit_name": "Zaku II",
+                "kit_grade": "HG",
+            }
+        ],
+    )
+    plan = await preview(client, too_large, filename="order_items.csv")
+    row = _rows(plan, "order_items")[0]
+    assert row["action"] == "error"
+    borrowed = next(
+        d for d in row["errors"] if d["code"] == error_codes.ORDER_LINE_QUANTITY_TOO_LARGE
+    )
+    assert borrowed["params"]["quantity"] == 2000
+    assert set(borrowed["params"]) == set(_REGISTRY["order_line.quantity_too_large"]["params"])
+
+    # The aggregate ceiling: every line individually legal, the plan's spawn
+    # total over MAX_TOTAL_FANOUT — a blocking diagnostic, not a row error.
+    # The lines must join a real order: a dangling order_id refuses the row
+    # as ref_unmatched before any kit is ever counted as a spawn.
+    retailer = (await client.post("/retailers", json={"name": "Bulk Base"})).json()
+    order = (
+        await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-04-01",
+                "currency_code": "AUD",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 5500,
+                        "currency_code": "AUD",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+    ).json()
+    fanout = make_csv(
+        [
+            "order_id",
+            "item_type",
+            "quantity",
+            "unit_price_minor",
+            "currency_code",
+            "kit_name",
+            "kit_grade",
+        ],
+        [
+            {
+                "order_id": order["id"],
+                "item_type": "kit",
+                "quantity": "1000",
+                "unit_price_minor": "5500",
+                "currency_code": "AUD",
+                "kit_name": f"Zaku II unit {index}",
+                "kit_grade": "HG",
+            }
+            for index in range(11)
+        ],
+    )
+    plan = await preview(client, fanout, filename="order_items.csv")
+    blocked = next(
+        d for d in plan["blocking_errors"] if d["code"] == error_codes.ORDER_FANOUT_LIMIT
+    )
+    assert blocked["params"]["total"] == 11_000
+    assert set(blocked["params"]) == set(_REGISTRY["order.fanout_limit"]["params"])
+
+
 # --- ambiguous matches (#178) ----------------------------------------------------
 #
 # Two emitter shapes, two codes. The generic natural-key matcher speaks
@@ -442,6 +526,13 @@ async def test_a_starter_row_problem_borrows_the_code_and_names_the_row(client):
                 "order_date": "",
             },
             {"kit_name": "Gouf", "grade": "HG", "quantity": "0", "retailer": "", "order_date": ""},
+            {
+                "kit_name": "Dom",
+                "grade": "HG",
+                "quantity": "2000",
+                "retailer": "",
+                "order_date": "",
+            },
         ],
     )
     plan = await preview(client, content, filename="starter-sheet.csv")
@@ -453,14 +544,22 @@ async def test_a_starter_row_problem_borrows_the_code_and_names_the_row(client):
     out_of_range = by_row["3"]
     assert out_of_range["code"] == error_codes.ORDER_LINE_QUANTITY_TOO_SMALL
     assert out_of_range["params"]["quantity"] == 0
+    over_ceiling = by_row["4"]
+    assert over_ceiling["code"] == error_codes.ORDER_LINE_QUANTITY_TOO_LARGE
+    assert over_ceiling["params"]["quantity"] == 2000
     # Runtime matrix for the audit-exempt `_row_problem` bridge (#178): the
     # borrowed code's declared params exactly, plus the source `row` it adds —
     # deliberately undeclared, since the borrowed codes are shared with sites
     # that have no source row. The catalogue consequently cannot render the
     # row context (it lives in `detail` only) — #178's class, filed as #179.
+    # Every code this bridge can carry is driven (#180 review, P3-1): the cell
+    # parsers' `cell_invalid` and both ends of the quantity range.
     assert set(unreadable["params"]) == set(_REGISTRY["import.cell_invalid"]["params"]) | {"row"}
     assert set(out_of_range["params"]) == (
         set(_REGISTRY["order_line.quantity_too_small"]["params"]) | {"row"}
+    )
+    assert set(over_ceiling["params"]) == (
+        set(_REGISTRY["order_line.quantity_too_large"]["params"]) | {"row"}
     )
 
 
