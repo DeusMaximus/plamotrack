@@ -802,9 +802,14 @@ async def _update_line(
     reference: str,
 ) -> None:
     if line.item_type != item.item_type:
+        # `before`/`after` unconditional: the importer reports this same
+        # condition as a row diagnostic carrying both (#44, invariants.py), and
+        # one code cannot declare two parameter shapes (#178) — so the raise
+        # sends what the diagnostic sends and the registry declares the pair.
         raise InvalidInputError(
             "a line's item_type cannot change — remove the line and add a new one",
             code=error_codes.ORDER_LINE_TYPE_IMMUTABLE,
+            params={"before": item.item_type.value, "after": line.item_type.value},
         )
 
     if item.item_type is ItemType.KIT:

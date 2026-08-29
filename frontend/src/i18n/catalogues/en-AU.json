@@ -149,6 +149,8 @@
       "money_ambiguous": "{{field}}: a comma here is ambiguous in this currency — write the amount with a decimal point, or with no separator at all.",
       "natural_key_duplicated": "Row {{row}} already describes this {{field}} — give one of them an id if they're meant to be different.",
       "no_table_data": "That archive contained no readable table data.",
+      "order_match_ambiguous_one": "{{countDisplay}} existing order matches this one ({{matchedBy}}) — set the id column to say which one you mean.",
+      "order_match_ambiguous_other": "{{countDisplay}} existing orders match this one ({{matchedBy}}) — set the id column to say which one you mean.",
       "plan_stale": "The collection changed since this preview, so it no longer matches what would happen — run the preview again.",
       "preview_required": "Preview the import first — an apply is only allowed to do what a preview showed.",
       "provenance_protected": "$t(importField.order_item_id): this kit is building or complete, rated, photographed, or has upgrades applied, so the order line that bought it can't be taken away — leave $t(importField.order_item_id) as it is.",

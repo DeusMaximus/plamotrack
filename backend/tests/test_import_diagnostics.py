@@ -25,14 +25,26 @@ the blocked apply).
 import io
 import json
 import zipfile
+from pathlib import Path
 
 import pytest
 
 from app import error_codes
 from app.db import session_scope
+from app.models.orders import Retailer
 from app.schemas.portability import ImportMode
 from app.services.portability.importing import _plan_fingerprint, plan_import
-from tests.test_portability import make_csv, preview
+from tests.test_portability import make_archive, make_csv, preview
+
+# The shared registry, for the bridge runtime matrix below: the two bridge
+# helpers build their params dynamically, so the static exact-params audit in
+# test_error_envelope.py exempts them by name — which makes runtime the only
+# place their emitted keys can be held against the declaration (#178).
+_REGISTRY = json.loads(
+    (
+        Path(__file__).resolve().parents[2] / "frontend/src/lib/__fixtures__/api-error-codes.json"
+    ).read_text(encoding="utf-8")
+)["codes"]
 
 
 def _rows(plan: dict, table: str) -> list[dict]:
@@ -126,6 +138,162 @@ async def test_a_borrowed_code_is_the_live_writers_own(client):
         d for d in row["errors"] if d["code"] == error_codes.ORDER_LINE_QUANTITY_TOO_SMALL
     )
     assert borrowed["params"]["quantity"] == 0
+    # Runtime matrix for the audit-exempt `_borrowed_diagnostic` bridge (#178):
+    # it forwards the refusing raise's params verbatim and adds nothing, so its
+    # output equals the borrowed code's declaration exactly.
+    assert set(borrowed["params"]) == set(_REGISTRY["order_line.quantity_too_small"]["params"])
+
+
+# --- ambiguous matches (#178) ----------------------------------------------------
+#
+# Two emitter shapes, two codes. The generic natural-key matcher speaks
+# `import.match_ambiguous` with exactly {count, table}; the order matcher knows
+# *which* natural key was ambiguous and speaks `import.order_match_ambiguous`
+# with exactly {count, matched_by}, so the catalogue can render the hint the
+# English detail carries. Codes and params are asserted as literals, never via
+# the constants the fix introduces (checklist rule 10 — a missing symbol masks
+# the file against the unfixed tree).
+
+
+async def test_generic_natural_key_ambiguity_keeps_the_generic_code(client):
+    """Two stored rows sharing a normalised name are unreachable through the
+    services (name.duplicate refuses), but this is the importer, and the third
+    writer plans against whatever Postgres actually holds — so the state is
+    seeded directly, the way any external writer could leave it."""
+    async with session_scope() as session:
+        session.add_all([Retailer(name="Gundam Base"), Retailer(name="GUNDAM BASE")])
+
+    content = make_csv(["id", "name"], [{"id": "", "name": "gundam base"}])
+    plan = await preview(client, content, filename="retailers.csv")
+    row = _rows(plan, "retailers")[0]
+    assert row["action"] == "error"
+    assert row["matched_id"] is None
+    codes = [d["code"] for d in row["errors"]]
+    assert "import.match_ambiguous" in codes, codes
+    ambiguous = next(d for d in row["errors"] if d["code"] == "import.match_ambiguous")
+    assert _shape_ok(ambiguous)
+    assert ambiguous["params"] == {"count": 2, "table": "retailers"}
+    assert ambiguous["detail"] == (
+        "2 existing retailers rows match this one — set the id column to say which one you mean"
+    )
+
+
+async def test_order_ambiguity_by_retailer_and_order_number(client):
+    """Order numbers are deliberately not unique (models/orders.py), so two
+    orders sharing retailer + number are ordinary API-reachable state."""
+    retailer = (await client.post("/retailers", json={"name": "Gundam Base"})).json()
+    for order_date in ("2026-03-01", "2026-04-01"):
+        resp = await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": order_date,
+                "order_number": "INV-7",
+                "currency_code": "AUD",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 5500,
+                        "currency_code": "AUD",
+                        "kit": {"name": "Zaku II", "grade": "HG"},
+                    }
+                ],
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+    content = make_csv(
+        ["id", "retailer_name", "order_date", "order_number", "currency_code"],
+        [
+            {
+                "id": "",
+                "retailer_name": "Gundam Base",
+                "order_date": "2026-05-01",
+                "order_number": "inv-7",  # numbers match normalised, like names
+                "currency_code": "AUD",
+            }
+        ],
+    )
+    plan = await preview(client, content, filename="orders.csv")
+    row = _rows(plan, "orders")[0]
+    assert row["action"] == "error"
+    assert row["matched_id"] is None
+    codes = [d["code"] for d in row["errors"]]
+    assert "import.order_match_ambiguous" in codes, codes
+    ambiguous = next(d for d in row["errors"] if d["code"] == "import.order_match_ambiguous")
+    assert _shape_ok(ambiguous)
+    assert ambiguous["params"] == {"count": 2, "matched_by": "retailer_order_number"}
+    assert ambiguous["detail"] == (
+        "2 existing orders match this one (retailer + order number) — "
+        "set the id column to say which one you mean"
+    )
+
+
+async def test_order_ambiguity_by_date_and_line_fingerprint(client):
+    """Three identical purchases, and an incoming description with no order
+    number: the fingerprint route must be named, and the count is 3 so the
+    value axis is not stuck at the smallest ambiguous case."""
+    retailer = (await client.post("/retailers", json={"name": "Gundam Base"})).json()
+    for _ in range(3):
+        resp = await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2026-04-01",
+                "currency_code": "AUD",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 5500,
+                        "currency_code": "AUD",
+                        "kit": {"name": "Zaku II", "grade": "MG"},
+                    }
+                ],
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+    foreign_order = "33333333-3333-4333-8333-333333333333"
+    archive = make_archive(
+        {
+            "orders": [
+                {
+                    "id": foreign_order,
+                    "retailer_name": "Gundam Base",
+                    "order_date": "2026-04-01",
+                    "order_number": "",
+                    "currency_code": "AUD",
+                }
+            ],
+            "order_items": [
+                {
+                    "id": "44444444-4444-4444-8444-444444444444",
+                    "order_id": foreign_order,
+                    "item_type": "kit",
+                    "quantity": "1",
+                    "unit_price_minor": "5500",
+                    "currency_code": "AUD",
+                    "kit_name": "Zaku II",
+                    "kit_grade": "MG",
+                }
+            ],
+        }
+    )
+    plan = await preview(client, archive)
+    row = _rows(plan, "orders")[0]
+    assert row["action"] == "error"
+    assert row["matched_id"] is None
+    codes = [d["code"] for d in row["errors"]]
+    assert "import.order_match_ambiguous" in codes, codes
+    ambiguous = next(d for d in row["errors"] if d["code"] == "import.order_match_ambiguous")
+    assert _shape_ok(ambiguous)
+    assert ambiguous["params"] == {"count": 3, "matched_by": "retailer_date_lines"}
+    assert ambiguous["detail"] == (
+        "3 existing orders match this one (retailer + date + lines) — "
+        "set the id column to say which one you mean"
+    )
 
 
 # --- the plan surface ------------------------------------------------------------
@@ -285,6 +453,15 @@ async def test_a_starter_row_problem_borrows_the_code_and_names_the_row(client):
     out_of_range = by_row["3"]
     assert out_of_range["code"] == error_codes.ORDER_LINE_QUANTITY_TOO_SMALL
     assert out_of_range["params"]["quantity"] == 0
+    # Runtime matrix for the audit-exempt `_row_problem` bridge (#178): the
+    # borrowed code's declared params exactly, plus the source `row` it adds —
+    # deliberately undeclared, since the borrowed codes are shared with sites
+    # that have no source row. The catalogue consequently cannot render the
+    # row context (it lives in `detail` only), a known sibling of #178's class.
+    assert set(unreadable["params"]) == set(_REGISTRY["import.cell_invalid"]["params"]) | {"row"}
+    assert set(out_of_range["params"]) == (
+        set(_REGISTRY["order_line.quantity_too_small"]["params"]) | {"row"}
+    )
 
 
 # --- OpenAPI ---------------------------------------------------------------------

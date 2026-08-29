@@ -1,6 +1,6 @@
 import i18n from "../i18n";
 import { formatNumber } from "./format";
-import { importFieldLabel, importTableLabel, itemTypeLabel } from "./labels";
+import { importFieldLabel, importTableLabel, itemTypeLabel, matchedByLabel } from "./labels";
 
 /** Resolution of a failed response body into what the user reads (#25).
  *
@@ -125,17 +125,19 @@ function renderCode(code: string, params: Record<string, unknown>): string | nul
  * A table rather than a branch chain so it can be *held against the catalogue*:
  * a param whose camelized name no `api.*` entry interpolates is a branch
  * nothing can reach, and `apiError.test.ts` fails on one. That is what the
- * removed `action` and `matched_by` branches were — `action` is never a
- * diagnostic param at all, and `matched_by` is emitted but dropped by the one
- * catalogue entry it reaches, because `import.match_ambiguous` has two backend
- * emitters and only one of them sends it, so the shared entry can name no such
- * placeholder. Both mutants survived the entire suite while the PR body claimed
- * eight kills between them (#177 review, P3-4). */
+ * removed `action` and `matched_by` branches were (#177 review, P3-4 — both
+ * mutants survived the entire suite): `action` is never a diagnostic param at
+ * all and stays out, while `matched_by` was emitted on a code whose shared
+ * catalogue entry could not name it. #178 split that code — the order
+ * matcher's `import.order_match_ambiguous` declares `matched_by` and its entry
+ * interpolates {{matchedBy}}, so the labeller is reachable and earns its row
+ * back. */
 export const LABELLED_PARAMS: Record<string, (value: string) => unknown> = {
   field: importFieldLabel,
   column: importFieldLabel,
   amount_field: importFieldLabel,
   table: importTableLabel,
+  matched_by: matchedByLabel,
   item_type: (value) => {
     const key = `itemType.${value}.singular`;
     return i18n.exists(key) ? itemTypeLabel(value as never) : value;

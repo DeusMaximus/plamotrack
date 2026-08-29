@@ -354,12 +354,50 @@ def test_every_raise_site_supplies_its_codes_declared_params():
         )
 
 
-def test_every_diagnostic_site_supplies_its_codes_declared_params():
-    """The #26 mirror of the raise-site audit: every `Diagnostic(...)` built in
-    app/ names a fixture code and sends at least its guaranteed params. The two
-    bridge helpers are the sanctioned exception — they forward an audited
-    raise's own code and params — and are counted, so a new unauditable
-    construction can't hide among them.
+def _diagnostic_param_violations(
+    sites: list[tuple[str, str | None, set[str] | None, bool]],
+    declared_by_code: dict[str, list[str]],
+) -> list[tuple[str, str]]:
+    """Exact-set comparison of Diagnostic sites against the registry — pure, so
+    the checks themselves have negative controls on synthetic sites below.
+
+    Exactness, not the raise-site audit's superset: an import diagnostic's
+    params are what the catalogue is allowed to interpolate, so a param emitted
+    beyond the declaration is a message the browser silently drops — that is
+    how `matched_by` rode `import.match_ambiguous` undeclared and the order
+    matcher's disambiguation hint never rendered (#178). It also makes one code
+    shared by emitters with incompatible param sets impossible: at most one of
+    them can equal the declaration.
+
+    A bridge site is exempt (its params are dynamic); each bridge's output is
+    pinned by a runtime matrix in `test_import_diagnostics.py` instead.
+    """
+    violations: list[tuple[str, str]] = []
+    for where, code, params_keys, in_bridge in sites:
+        if in_bridge:
+            continue
+        if code not in declared_by_code:
+            violations.append((where, f"code {code!r} is not in api-error-codes.json"))
+            continue
+        if params_keys is None:
+            violations.append((where, "params is not a literal dict with constant keys"))
+            continue
+        declared = set(declared_by_code[code])
+        missing = declared - params_keys
+        extra = params_keys - declared
+        if missing:
+            violations.append((where, f"{code} omits declared params {sorted(missing)}"))
+        if extra:
+            violations.append((where, f"{code} emits undeclared params {sorted(extra)}"))
+    return violations
+
+
+def test_import_diagnostic_sites_send_exactly_their_declared_params():
+    """The #26 mirror of the raise-site audit, tightened to exact equality by
+    #178: every `Diagnostic(...)` built in app/ names a fixture code and sends
+    exactly its declared params. The two bridge helpers are the sanctioned
+    exception — they forward an audited raise's own code and params, and are
+    counted, so a new unauditable construction can't hide among them.
 
     The walker matches the bare name, so the assumed discipline is: construct
     diagnostics only as `Diagnostic(...)` with a literal params dict — an
@@ -367,23 +405,61 @@ def test_every_diagnostic_site_supplies_its_codes_declared_params():
     here (#171 review, P3-2). Nothing in app/ does either today.
     """
     sites = _diagnostic_sites()
+    # Vacuity guards: an audit that inspected nothing must fail, not pass
+    # (rule 8) — and it has to have seen a meaningful spread of codes, not one.
     assert len(sites) >= 50, f"only {len(sites)} Diagnostic sites found — the walker broke"
+    distinct = {code for _, code, _, in_bridge in sites if not in_bridge}
+    assert len(distinct) >= 30, f"only {len(distinct)} distinct codes audited — the walker broke"
     bridged = [site for site in sites if site[3]]
     assert len(bridged) == len(_DIAGNOSTIC_BRIDGES), (
         f"expected exactly one construction per bridge helper, found {bridged}"
     )
-    for where, code, params_keys, in_bridge in sites:
-        if in_bridge:
-            continue
-        assert code in _FIXTURE, f"{where}: code {code!r} is not in api-error-codes.json"
-        assert params_keys is not None, (
-            f"{where}: params must be a literal dict with constant keys — "
-            "the audit cannot see through anything else (bridges are named)"
-        )
-        declared = set(_FIXTURE[code]["params"])
-        assert declared <= params_keys, (
-            f"{where}: {code} guarantees {sorted(declared)} but sends {sorted(params_keys)}"
-        )
+    declared_by_code = {code: entry["params"] for code, entry in _FIXTURE.items()}
+    assert _diagnostic_param_violations(sites, declared_by_code) == []
+
+
+def test_the_diagnostic_audit_detects_each_violation_class():
+    """The audit's own negative controls, on synthetic sites — every expected
+    set here is a literal, never derived from the walker or the fixture (rule
+    8). Each violation class #178 names must be caught, and the exact-match
+    site must not be."""
+    declared = {"import.probe": ["count", "table"]}
+
+    exact = [("a.py:1", "import.probe", {"count", "table"}, False)]
+    assert _diagnostic_param_violations(exact, declared) == []
+
+    bridge = [("a.py:2", None, None, True)]
+    assert _diagnostic_param_violations(bridge, declared) == []
+
+    undeclared = [("a.py:3", "import.probe", {"count", "table", "matched_by"}, False)]
+    assert _diagnostic_param_violations(undeclared, declared) == [
+        ("a.py:3", "import.probe emits undeclared params ['matched_by']"),
+    ]
+
+    omitted = [("a.py:4", "import.probe", {"count"}, False)]
+    assert _diagnostic_param_violations(omitted, declared) == [
+        ("a.py:4", "import.probe omits declared params ['table']"),
+    ]
+
+    unknown = [("a.py:5", "import.mystery", {"count"}, False)]
+    assert _diagnostic_param_violations(unknown, declared) == [
+        ("a.py:5", "code 'import.mystery' is not in api-error-codes.json"),
+    ]
+
+    unauditable = [("a.py:6", "import.probe", None, False)]
+    assert _diagnostic_param_violations(unauditable, declared) == [
+        ("a.py:6", "params is not a literal dict with constant keys"),
+    ]
+
+    # One code, two emitters, incompatible param sets — the #178 shape. At
+    # most one emitter can equal the declaration, so the drift is always named.
+    reused = [
+        ("a.py:7", "import.probe", {"count", "table"}, False),
+        ("a.py:8", "import.probe", {"count", "table", "matched_by"}, False),
+    ]
+    assert _diagnostic_param_violations(reused, declared) == [
+        ("a.py:8", "import.probe emits undeclared params ['matched_by']"),
+    ]
 
 
 def test_every_wire_code_is_raised_or_handler_emitted():

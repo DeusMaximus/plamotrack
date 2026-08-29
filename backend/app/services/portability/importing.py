@@ -1293,10 +1293,15 @@ class _Planner:
         if len(matches) == 1:
             row.matched_id, row.matched_by, row.target = matches[0].id, label, matches[0]
         elif len(matches) > 1:
+            # Not the generic IMPORT_MATCH_AMBIGUOUS: this emitter knows *which*
+            # natural key was ambiguous, and one code cannot honestly declare
+            # two parameter shapes — the shared registry pins each code's params
+            # exactly, so the order condition carries its own code and the
+            # browser can render the `matched_by` hint the detail names (#178).
             row.refuse(
                 Diagnostic(
-                    code=error_codes.IMPORT_MATCH_AMBIGUOUS,
-                    params={"count": len(matches), "table": "orders", "matched_by": label},
+                    code=error_codes.IMPORT_ORDER_MATCH_AMBIGUOUS,
+                    params={"count": len(matches), "matched_by": label},
                     detail=(
                         f"{len(matches)} existing orders match this one ({worded}) — "
                         "set the id column to say which one you mean"
