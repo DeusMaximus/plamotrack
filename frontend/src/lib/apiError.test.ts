@@ -230,12 +230,15 @@ describe("presentation labelling reaches the catalogue", () => {
   );
 
   it("does not label a param no entry interpolates", () => {
-    // The two that were removed. Restoring either without a catalogue entry
-    // that names it puts an unreachable branch back.
+    // `action` was removed as unreachable (#177 review, P3-4) and stays out —
+    // it is never a diagnostic param at all; restoring it without a catalogue
+    // entry that names it puts an unreachable branch back. `matched_by` left
+    // this list when #178 gave the order matcher its own code, whose entry
+    // interpolates {{matchedBy}} — the guard above holds it reachable now.
     expect(LABELLED_PARAMS.action).toBeUndefined();
-    expect(LABELLED_PARAMS.matched_by).toBeUndefined();
     expect(placeholders.has("action")).toBe(false);
-    expect(placeholders.has("matchedBy")).toBe(false);
+    expect(LABELLED_PARAMS.matched_by).toBeDefined();
+    expect(placeholders.has("matchedBy")).toBe(true);
   });
 });
 
@@ -332,5 +335,75 @@ describe("resolveDiagnostic (#26)", () => {
       detail: SENTINEL,
     });
     expect(message).toBe(SENTINEL);
+  });
+});
+
+/** #178: the order matcher's ambiguity carries its own code, so the catalogue
+ *  can name the matching strategy the shared `import.match_ambiguous` entry
+ *  never could — two emitters on one code meant the orders-side hint was
+ *  dropped from what the user read while the English `detail` carried it. */
+describe("import.order_match_ambiguous (#178)", () => {
+  it("renders the translated matching strategy for both order routes", () => {
+    expect(
+      resolveDiagnostic({
+        code: "import.order_match_ambiguous",
+        params: { count: 2, matched_by: "retailer_order_number" },
+        detail: SENTINEL,
+      }),
+    ).toBe(
+      "2 existing orders match this one (retailer + order number) — " +
+        "set the id column to say which one you mean.",
+    );
+    expect(
+      resolveDiagnostic({
+        code: "import.order_match_ambiguous",
+        params: { count: 3, matched_by: "retailer_date_lines" },
+        detail: SENTINEL,
+      }),
+    ).toBe(
+      "3 existing orders match this one (retailer + date + lines) — " +
+        "set the id column to say which one you mean.",
+    );
+  });
+
+  it("selects the singular form by count", () => {
+    expect(
+      resolveDiagnostic({
+        code: "import.order_match_ambiguous",
+        params: { count: 1, matched_by: "retailer_order_number" },
+        detail: SENTINEL,
+      }),
+    ).toBe(
+      "1 existing order matches this one (retailer + order number) — " +
+        "set the id column to say which one you mean.",
+    );
+  });
+
+  it("keeps an unknown canonical matching value raw", () => {
+    expect(
+      resolveDiagnostic({
+        code: "import.order_match_ambiguous",
+        params: { count: 2, matched_by: "warp_field" },
+        detail: SENTINEL,
+      }),
+    ).toBe(
+      "2 existing orders match this one (warp_field) — " +
+        "set the id column to say which one you mean.",
+    );
+  });
+
+  it("never leaks a stray matched_by into the generic entry", () => {
+    // The pre-#178 wire shape, kept as the mechanism record: the generic
+    // entry declares no {{matchedBy}}, so a param sent beyond a code's
+    // declaration is silently dropped in rendering — which is why the order
+    // route needed its own code, and what the backend's exact-params
+    // diagnostic audit now refuses at the emitter.
+    expect(
+      resolveDiagnostic({
+        code: "import.match_ambiguous",
+        params: { count: 2, table: "orders", matched_by: "retailer_date_lines" },
+        detail: SENTINEL,
+      }),
+    ).toBe("2 existing Orders rows match this one — set the id column to say which one you mean.");
   });
 });

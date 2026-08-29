@@ -808,8 +808,9 @@ def _borrowed_diagnostic(exc: DomainError, **extra: Any) -> Diagnostic:
     `tests/test_error_envelope.py` already holds that site's params to the
     fixture — so this bridge sends exactly what the raise would have.
     `extra` (a starter-sheet row number) never overrides what the raise said.
-    The audit can't see through this call, so the codes that reach the wire only
-    this way are named in the test's `_BORROWED` list.
+    The audit can't see through this call — bridges are exempted by name — so
+    every code that can reach the wire this way is pinned instead by the
+    runtime matrix in `tests/test_import_diagnostics.py` (#180 review, P3-1).
     """
     return Diagnostic(code=exc.code, params={**extra, **exc.params}, detail=str(exc))
 
@@ -1293,10 +1294,15 @@ class _Planner:
         if len(matches) == 1:
             row.matched_id, row.matched_by, row.target = matches[0].id, label, matches[0]
         elif len(matches) > 1:
+            # Not the generic IMPORT_MATCH_AMBIGUOUS: this emitter knows *which*
+            # natural key was ambiguous, and one code cannot honestly declare
+            # two parameter shapes — the shared registry pins each code's params
+            # exactly, so the order condition carries its own code and the
+            # browser can render the `matched_by` hint the detail names (#178).
             row.refuse(
                 Diagnostic(
-                    code=error_codes.IMPORT_MATCH_AMBIGUOUS,
-                    params={"count": len(matches), "table": "orders", "matched_by": label},
+                    code=error_codes.IMPORT_ORDER_MATCH_AMBIGUOUS,
+                    params={"count": len(matches), "matched_by": label},
                     detail=(
                         f"{len(matches)} existing orders match this one ({worded}) — "
                         "set the id column to say which one you mean"

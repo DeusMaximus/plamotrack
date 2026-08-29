@@ -61,7 +61,8 @@ class PlannedRow(BaseModel):
     #: keys on a uuid; the int is the instance_settings singleton (#23), whose key
     #: is the constant 1.
     matched_id: uuid.UUID | int | None = None
-    #: How it was matched — "id", "name", "retailer + order number", ...
+    #: How it was matched — canonical identifiers (#26): "id", "name",
+    #: "retailer_order_number", ... — the browser maps them to labels.
     matched_by: str | None = None
     changes: list[FieldChange] = Field(default_factory=list)
     messages: list[Diagnostic] = Field(default_factory=list)
