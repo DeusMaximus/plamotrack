@@ -41,6 +41,42 @@ Template:
 
 ---
 
+## 2026-08-29 — Claude Code (Fable 5) — v0.2.9-alpha RELEASED (the M5.1 theme); oma- set folded (#181)
+
+- **Done:** **#181 merged `df2702a`** — oma-1..7 in the tracked harness (7/7
+  killed at fold-in; first targets outside `app/`, so the clean-tree check now
+  covers the registry fixture — a dirtied fixture refusing the run was
+  controlled before the counted run; `testing-and-review.md` corrected to the
+  measured **251 cases over twenty-six target files**). **Bump PR #182 merged
+  `f509c60`**; the release gate ran clean: M5.1 milestone 0 open / 8 closed
+  (#179 unscheduled by design, no milestone); `GET /meta` **and** the MCP
+  handshake's `serverInfo.version` both report 0.2.9; packaged stack built
+  from `f509c60` — four services healthy, `migrate` Exited (0), `/api/meta`
+  right, container-side export manifest carries `app_version 0.2.9` +
+  `schema_version f9979ec7b9cb`; dev overlay restored after. **Tag
+  `v0.2.9-alpha` pushed, release published `--prerelease`** (owner authorised
+  this release explicitly). Notes lead with the data-facing changes: set
+  Settings → Language & region right after upgrading; #114's naive-CSV
+  time-zone change; the #178 `import.match_ambiguous` →
+  `import.order_match_ambiguous` compatibility line.
+- **Decisions:** packaged-stack `migrate` was a **no-op** — the compose volume
+  was already at `f9979ec7b9cb` from this session's dev use — and I did not
+  `down -v` to force a from-empty run: the volume holds the (throwaway but in
+  use) dev collection, and from-empty coverage of the migration exists in
+  every pytest session (downgrade base → upgrade head), the from-empty e2e
+  DB, and the `mig-` harness cases.
+- **State:** `main` at `f509c60` (+ this entry), CI green at every head
+  including the merge and the bump. Suites at the tag: backend **1230**,
+  vitest **469**, from-empty e2e **40 + 1 skipped**. No dev servers running
+  (the session's preview pair was stopped for the packaged-stack step).
+- **Next:** **M6 — secure remote access** (Codex-lane reviews per the
+  roster) is the next milestone; M6.5/M7/M8 queue behind it. **LXC: BACK UP
+  FIRST**, then pull/upgrade — it has **two migrations pending**
+  (`2c97a5ced66a` display-items and `f9979ec7b9cb` settings; the old
+  hand-off phrase "0.2.8's settings migration" was wrong — the settings
+  singleton ships in 0.2.9), then **set Settings → Language & region
+  immediately** or rendering and naive CSV imports stay UTC/en-AU.
+
 ## 2026-08-29 — Claude Code (Fable 5) — #178 CLOSED: order ambiguity split to its own code (PR #180, two Codex rounds)
 
 - **Done:** **#178 closed — PR #180 squash-merged as `783a1a7`** on the
@@ -236,59 +272,3 @@ Template:
   settings migration still pending there, and after this pull the instance
   time zone/locale start mattering — set them in Settings → Language & region
   after upgrade, or naive CSV imports and all rendering stay UTC/en-AU).
-
-
-## 2026-08-28 — Claude Code (Fable 5) — #25 CLOSED: the REST error envelope (PR #169, two Codex rounds)
-
-- **Done:** **#25 closed — PR #169 squash-merged as `28e32f7`** on the
-  owner's call, branch deleted (final head `d76a20d`,
-  1,188 insertions, **no migrations**): every failed REST response is now
-  `{detail, code, params}` — **additive on the wire**: `detail` byte-identical
-  in both shapes (string = service refused, FastAPI list = schema spoke; the
-  discriminator stays load-bearing), and the pre-existing backend suite passed
-  **untouched** (1187, zero test edits) as the proof. `DomainError(detail, *,
-  code, params)` with code keyword-required; `app/error_codes.py` = 58
-  `<domain>.<condition>` codes for the **81 raise sites**, all migrated (AST
-  audit: none missing). New `RequestValidationError` handler labels the 422
-  list shape `request.validation`; `ErrorEnvelope` on every router via one
-  `include_router(responses=…)` line. Browser: `ApiError` gains
-  code/params/detail, `message` = catalogue rendering via new
-  `src/lib/apiError.ts` (63 `api.*` leaves; wire snake_case params camelized
-  to `{{placeholders}}`), fallback = the exact pre-#25 behaviour; zero
-  consumer churn. Registry ↔ catalogue ↔ params held together by
-  `frontend/src/lib/__fixtures__/api-error-codes.json` (the money-cases
-  device) from both suites. MCP ToolError = the bare sentence, pinned.
-- **Decisions (full list in the PR body):** codes name conditions not sites;
-  fixture declares the params **intersection** (guaranteed, not union);
-  `request.validation` renders as its joined findings (sole code without a
-  catalogue entry, named in the test); existing message-coupled assertions
-  stay (they pin the fallback contract); `import.blocked` carries only
-  `count` — restructuring the blocking diagnostics is #26's.
-- **State:** **Codex round 1 (GPT 5.6 Sol): NO-GO — P2 + 2×P3, all real,
-  all reproduced at `152f7cb` first, fixed at `23d9cf4`, reply posted.** P2:
-  parser-stage multipart 400s escaped the envelope — now `request.body_invalid`
-  via a StarletteHTTPException handler that envelopes 400s ONLY and delegates
-  the rest (unrouted 404/405 keep the stock body, pinned). P3: OpenAPI marked
-  `params` optional — default_factory removed, `required` == all three on both
-  envelopes. P3: the declared-params invariant was inventory, not audit — a
-  fixture-driven AST walk now asserts every raise site's literal params ⊇ its
-  code's declared keys + every code raised-or-handler-emitted (≥81-site
-  vacuity guard); Codex's surviving orders-writer mutant dies on it, upgrades
-  writer measured too. **Round 2: GO + 2 P3s, both answered at `d76a20d`** —
-  P3-4: the 400 was invisible to OpenAPI path responses (ERROR_RESPONSES
-  gains 400 → ErrorEnvelope; /import/preview's 400 asserted); P3-5: stale
-  counts in the amended PR body (fixed in place; **second count-correction a
-  review caught this session** — re-measure from the final head, never carry
-  forward). Suites at `d76a20d`: backend **1204** (17 in the envelope file),
-  vitest **281**, from-empty e2e 36+1, zero leftovers. **Twelve measured
-  mutants killed** (env-1..9 queued in the PR body for the post-merge
-  fold-in + 3 frontend). No dev servers running.
-- **Next:** merge fold-in **PR #170** (env-1..9 in the tracked harness,
-  measured 9/9 killed; review skipped per #132/#160, owner concurs by
-  merging)
-  (TEST_FILES + `tests/test_error_envelope.py`), then **#26** (import-preview
-  diagnostics on this contract — row messages, warnings, blocking errors,
-  the stock note; `import.cell_invalid` is already coded and waiting to be
-  threaded through). Then #27 (language/region controls), #114. LXC: **back
-  up before pulling** (real collection; 0.2.8's settings migration still
-  pending there).
