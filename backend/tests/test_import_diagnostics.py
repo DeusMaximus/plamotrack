@@ -457,7 +457,7 @@ async def test_a_starter_row_problem_borrows_the_code_and_names_the_row(client):
     # borrowed code's declared params exactly, plus the source `row` it adds —
     # deliberately undeclared, since the borrowed codes are shared with sites
     # that have no source row. The catalogue consequently cannot render the
-    # row context (it lives in `detail` only), a known sibling of #178's class.
+    # row context (it lives in `detail` only) — #178's class, filed as #179.
     assert set(unreadable["params"]) == set(_REGISTRY["import.cell_invalid"]["params"]) | {"row"}
     assert set(out_of_range["params"]) == (
         set(_REGISTRY["order_line.quantity_too_small"]["params"]) | {"row"}
