@@ -83,6 +83,12 @@ MAIN = ROOT / "app/main.py"
 EXC = ROOT / "app/exceptions.py"
 EC = ROOT / "app/error_codes.py"
 META = ROOT / "app/services/meta.py"
+#: The shared #25/#26 registry fixture and the audit that reads it — the first
+#: targets outside app/ (oma-2/4/5): the #178 class is registry drift, so the
+#: mutants that matter break the declaration and the audit, not just emitters.
+#: Both paths are in the clean-tree check below, the way #151 added alembic/.
+FIX = ROOT.parent / "frontend/src/lib/__fixtures__/api-error-codes.json"
+TEE = ROOT / "tests/test_error_envelope.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -2043,6 +2049,74 @@ CASES = [
         "                if isinstance(value, datetime):",
         "test_an_explicit_offset_is_never_reinterpreted",
     ),
+    # --- #178: the order-ambiguity code split and the exact-params diagnostic
+    # --- audit (queued on PR #180, measured 5/5 killed there by hand, plus the
+    # --- two review-round bridge probes; anchors re-checked at fold-in). oma-2
+    # --- mutates the shared registry FIXTURE and oma-4/5 the audit itself —
+    # --- the clean-tree check covers both paths since this fold-in. -----------
+    (
+        "oma-1. order ambiguity wears the generic code",
+        IMP,
+        "code=error_codes.IMPORT_ORDER_MATCH_AMBIGUOUS,",
+        "code=error_codes.IMPORT_MATCH_AMBIGUOUS,",
+        "test_order_ambiguity_by_retailer_and_order_number",
+    ),
+    (
+        "oma-2. registry declaration loses matched_by",
+        FIX,
+        '    "import.order_match_ambiguous": {\n'
+        '      "params": [\n'
+        '        "count",\n'
+        '        "matched_by"\n'
+        "      ]\n"
+        "    },",
+        '    "import.order_match_ambiguous": {\n'
+        '      "params": [\n'
+        '        "count"\n'
+        "      ]\n"
+        "    },",
+        "test_import_diagnostic_sites_send_exactly_their_declared_params",
+    ),
+    (
+        "oma-3. order ambiguity drops matched_by",
+        IMP,
+        'params={"count": len(matches), "matched_by": label},',
+        'params={"count": len(matches)},',
+        "test_order_ambiguity_by_date_and_line_fingerprint",
+    ),
+    (
+        "oma-4. audit blind to undeclared params",
+        TEE,
+        "        extra = params_keys - declared",
+        "        extra = set()",
+        "test_the_diagnostic_audit_detects_each_violation_class",
+    ),
+    (
+        "oma-5. audit blind to omitted params",
+        TEE,
+        "        missing = declared - params_keys",
+        "        missing = set()",
+        "test_the_diagnostic_audit_detects_each_violation_class",
+    ),
+    # The two #180 review-round probes (round-1 P3-1's negative controls),
+    # promoted to tracked cases: a raise-side extra on a borrowed code must die
+    # on the bridge runtime matrix, which is the only control on the two
+    # audit-exempt bridges.
+    (
+        "oma-6. borrowed large-quantity raise grows an undeclared extra",
+        ORD,
+        '            params={"quantity": quantity, "maximum": MAX_LINE_QUANTITY},',
+        '            params={"quantity": quantity, "maximum": MAX_LINE_QUANTITY, "unrendered": "probe"},',
+        "test_the_borrowed_bridge_matrix_covers_the_large_quantity_and_fanout_codes"
+        " or test_a_starter_row_problem_borrows_the_code_and_names_the_row",
+    ),
+    (
+        "oma-7. borrowed fan-out raise grows an undeclared extra",
+        ORD,
+        '            params={"total": total, "maximum": MAX_TOTAL_FANOUT},',
+        '            params={"total": total, "maximum": MAX_TOTAL_FANOUT, "unrendered": "probe"},',
+        "test_the_borrowed_bridge_matrix_covers_the_large_quantity_and_fanout_codes",
+    ),
 ]
 
 
@@ -3048,7 +3122,10 @@ def run(expr: str) -> tuple[int, str]:
 
 def tree_is_clean() -> bool:
     proc = subprocess.run(
-        ["git", "status", "--porcelain", "app", "tests", "alembic"],
+        # str(FIX): oma-2 mutates the shared registry fixture over in
+        # frontend/, which "app tests alembic" never covered — a failed restore
+        # there was invisible before this fold-in.
+        ["git", "status", "--porcelain", "app", "tests", "alembic", str(FIX)],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -3062,8 +3139,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if not tree_is_clean():
-        print("app/, tests/ or alembic/ has uncommitted changes — commit or stash first, so that a")
-        print("restore that doesn't happen is visible rather than mixed in with your edits.")
+        print("app/, tests/, alembic/ or the shared error-codes fixture has uncommitted")
+        print("changes — commit or stash first, so that a restore that doesn't happen is")
+        print("visible rather than mixed in with your edits.")
         return 2
 
     failures = []
