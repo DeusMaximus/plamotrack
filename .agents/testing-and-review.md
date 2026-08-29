@@ -190,7 +190,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 244 cases over twenty-three files** — #86's
+- **On `main` at the time of writing: 251 cases over twenty-six target files** — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
   #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
   #118 (`ship-`), #129 (`dsp-`), #130 (`cat-`), #133 (`ref-`), #136
@@ -213,7 +213,12 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   satisfy; stg-17 mutates the settings migration's seed under the mig- set's
   clean-tree cover) and #169 (`env-` — the error envelope, folded by PR #170) and #26 (`nd-` — the
   import-preview diagnostics) and #114 (`tz-` — naive datetimes in the
-  instance zone).
+  instance zone) and #178 (`oma-` — the order-ambiguity code split and the
+  exact-params diagnostic audit; the first cases whose targets sit outside
+  `app/`: oma-2 mutates the shared registry fixture in `frontend/` and
+  oma-4/5 mutate `tests/test_error_envelope.py`'s audit comparator, so the
+  clean-tree check covers the fixture path since that fold-in — a dirtied
+  fixture refuses the run, measured at fold-in time).
   **A message-restructuring change rots anchors silently**: #25 rewrote 81
   raise sites and six anchors (n5, n6a, n6b, cat-13, cat-14, wdr-8) sat
   SKIP-broken until #26's full run — a fold-in that runs only its own `-k`
