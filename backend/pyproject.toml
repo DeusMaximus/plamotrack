@@ -2,7 +2,7 @@
 name = "plamotrack-backend"
 # Keep in step with app/__init__.py — that one is what /meta and the MCP
 # handshake report, so a mismatch is visible to clients.
-version = "0.2.8"
+version = "0.2.9"
 description = "plamotrack API + MCP server"
 requires-python = ">=3.12"
 dependencies = [
