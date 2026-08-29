@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-08-29 — Claude Code (Fable 5) — #178 implemented: order ambiguity split to its own code; PR #180 awaiting review
+## 2026-08-29 — Claude Code (Fable 5) — #178 implemented: order ambiguity split to its own code; PR #180 through Codex round 1
 
 - **Done:** Branch `claude/178-order-match-ambiguous` → **PR #180** (`Closes
   #178`, **unmerged** — awaiting independent review). The order matcher now
@@ -75,8 +75,20 @@ Template:
   no anchor rot. Two aborted e2e runs were the owner's omlx-server holding
   `*:8000` (owner confirmed, stopped it) — environmental, not a defect. #167
   can't fire from-empty; not seen. No dev servers left running.
-- **Next:** independent review of PR #180 (GLM 5.3 Flash default lane; brief
-  from `.agents/review-brief.md`); do not merge on a NO-GO. After merge: fold
+- **Round 1 (Codex, GPT 5.6 Sol): NO-GO, 2×P3 — both actioned at `d356ef1`.**
+  P3-1: the bridge runtime matrix covered one of three reachable codes per
+  bridge; a probe param on the `quantity_too_large` raise rode through 34/34
+  green (reproduced at `7fc20d6` first). Matrix now drives every reachable
+  outcome (small/large quantity, aggregate fan-out against a real order,
+  starter-sheet cell + both quantity ends); both probe mutations
+  (`quantity_too_large`, `order.fanout_limit`) re-measured killed; stale
+  `_BORROWED` docstring fixed. Backend **1230** at `d356ef1`. P3-2: the PR
+  body's "additive wire change" claim overruled and amended in place —
+  **the 0.2.9 release notes owe one compatibility line**: order-match
+  ambiguity moved from `import.match_ambiguous` to
+  `import.order_match_ambiguous`.
+- **Next:** owner's call on merging after the reply (round 2 if Codex
+  re-reviews); do not merge on a standing NO-GO. After merge: fold
   the `oma-` set into the harness (re-check anchors, and whether the
   clean-tree/restore cover reaches the fixture and test files it mutates the
   way #151 extended it to `alembic/`). Then the 0.2.9-alpha release gate
