@@ -63,9 +63,10 @@ Receive.
 
 ### Tools, consumables, upgrades and display gear, counted
 
-Four quantity-tracked catalogs, with an optional low-stock threshold so you find out
-you're nearly out of Extra Thin *before* the hobby shop closes. Upgrade parts can be
-applied to a specific kit, which decrements stock and records what went where.
+Four quantity-tracked catalogs. Consumables can also carry an optional low-stock
+threshold, so you find out you're nearly out of Extra Thin *before* the hobby shop
+closes. Upgrade parts can be applied to a specific kit, which decrements stock and
+records what went where.
 
 **Display gear** — action bases, system stands, diorama scenery, backdrop panels — is
 counted and categorised but deliberately *not* linked to particular kits. A stand under

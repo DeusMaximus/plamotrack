@@ -22,16 +22,17 @@ The archive holds one CSV per table plus a `manifest.json`:
 {
   "format": "plamotrack-archive",
   "export_version": 1,
-  "schema_version": "9d78b6148c30",
-  "app_version": "0.1.0",
-  "exported_at": "2026-08-06T04:09:31+00:00",
+  "schema_version": "f9979ec7b9cb",
+  "app_version": "0.2.9",
+  "exported_at": "2026-08-29T04:09:31+00:00",
   "tables": { "kits": { "file": "kits.csv", "rows": 8 } }
 }
 ```
 
-`schema_version` is the live database migration revision. Importing an archive
-written by a **newer** version of plamotrack is refused outright rather than
-silently mangled; a mismatch in the other direction is just a warning.
+These values are illustrative; every export writes its live app version, database
+migration revision, timestamp, tables, and row counts. Importing an archive written
+by a **newer** version of plamotrack is refused outright rather than silently
+mangled; a mismatch in the other direction is just a warning.
 
 ---
 
@@ -58,7 +59,7 @@ Download `starter-sheet.csv`, fill it in, import it.
 | `retailer` | Where you bought it. **Blank = no order recorded**, just a kit in the collection. |
 | `order_date`, `order_number` | The purchase. Rows sharing a retailer + date + number collapse into **one order** — across separate imports too, so **fill in `order_number` whenever a shop + date pair isn't unique**. A row that reaches an existing order and names a kit already on it *restates that purchase line* (its price and quantity included) rather than adding a second one; a second copy of the same kit on one order is a second row in the **same** sheet. |
 | `unit_price`, `currency` | Major units (`49.99`). Currency blank = your instance's reference currency setting (`AUD` unless you changed it). The example rows in the downloaded sheet are already filled in with yours. |
-| `received` | `yes`/`no`. Blank = yes. Received-on defaults to the order date, not today. When several rows collapse into one order you only need to say it once — but if two rows of the same order say *different* things, that's an error rather than a guess. Re-importing with `no` un-marks an order you'd previously imported as received. |
+| `received` | `yes`/`no`. Blank = yes. Received-on defaults to the order date, not today. When several rows collapse into one order you only need to say it once — but if two rows of the same order say *different* things, that's an error rather than a guess. Re-importing with `no` un-marks an order you'd previously imported as received **while it still holds only kit lines**; an import cannot flip receipt state once the order has a stock-bearing catalog line (see below). |
 
 You write kits; plamotrack works out the retailers, orders, and order lines. Every
 kit column travels whether or not the row names a retailer — `rating`,
@@ -230,8 +231,9 @@ creates the item for you at 0 on hand, with a placeholder in any column it can't
 know (category, manufacturer). A line pointing at nothing can never move stock in either direction, so
 it's refused rather than stored.
 
-**A received order can't become pending, and a pending order with a catalog line
-can't be marked received.** This is the one that surprises people, so:
+**A received order with a catalog line can't become pending, and a pending order
+with a catalog line can't be marked received.** This is the one that surprises
+people, so:
 
 Importing never changes `quantity_on_hand` (the rule above). Marking a pending
 order received through `orders.csv` would therefore leave the paint and tools it
@@ -261,9 +263,9 @@ do instead:
   app — an order edit applies the stock as it saves. A full-archive `replace_all`
   restore also carries such lines fine, because the archive brings the
   post-receipt counts with it.
-- If you marked an order received **by mistake**: un-receiving isn't supported
-  anywhere in plamotrack, by import or otherwise. Delete the order — that reverses
-  the stock it applied — and enter it again as pending.
+- If you marked a catalog-bearing order received **by mistake**: un-receiving that
+  order isn't supported by import or any other interface. Delete the order — that
+  reverses the stock it applied — and enter it again as pending.
 
 Everything else about receipt still imports:
 

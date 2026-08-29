@@ -1,6 +1,6 @@
 # plamotrack — Design Notes
 
-**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 09/08/2026
+**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 29/08/2026
 
 ---
 
@@ -388,7 +388,8 @@ The dispatch point between orders and the catalog tables.
 | quantity | int | **semantics differ by item_type** — see below |
 | unit_price_minor | int | |
 | currency_code | text | ISO 4217 |
-| converted_price_aud_minor | int | snapshot at entry time, see §6 |
+| converted_price_minor | int (nullable) | snapshot amount at entry time, see §6 |
+| converted_currency_code | text (nullable) | ISO 4217 code for the snapshot; null-or-present with `converted_price_minor` |
 
 **Quantity semantics.** These differ by item type, which is the kind of thing that has
 to be explicit in code and not merely documented:
@@ -591,6 +592,8 @@ Standard CRUD plus a few purpose-built endpoints.
 - `GET/POST /kits`, `GET/PATCH/DELETE /kits/{id}` — PATCH handles Kanban drag (status
   change). Order-spawned kits refuse direct deletion (409) — undo happens at the order
   line, so purchase records and the collection can't drift apart
+- `GET /kits/series` — distinct series spellings, most frequent first, for the
+  select-or-create control
 - `GET/POST /tools|/consumables|/upgrades|/display-items` + `PATCH/DELETE /{id}` on each — deletes are
   blocked (409) when the item appears in order history or upgrade applications; edit
   instead, history is fact. The list routes (upgrades aside — no category column, §3.5)
@@ -610,7 +613,8 @@ Standard CRUD plus a few purpose-built endpoints.
 - `PATCH /orders/{id}` — header fields and/or full line-set replacement (dispatch diff
   per §3.9; the `converted_*` snapshot is the one field pair an omission preserves
   rather than clears — see §6)
-- `POST /orders/{id}/receive`, `DELETE /orders/{id}` — receive/undo per §3.9
+- `POST /orders/{id}/receive`, `POST /orders/{id}/ship`, `DELETE /orders/{id}` —
+  receive, ship, and undo per §3.9
 - `GET /catalog/search?q=` — powers the typeahead, searches every catalog table
 - `POST /catalog/{id}/adjust` — body: signed `delta`, optional `reason` → resolves the
   id across every catalog table and moves stock by that much. The delta form
@@ -624,7 +628,10 @@ Standard CRUD plus a few purpose-built endpoints.
   language, region, time zone, date style, hour cycle, reference currency. PATCH
   updates only the supplied fields, refuses nulls (nothing is nullable), and
   serializes on the write gate
-- `GET /healthz`
+- `GET /meta` — app version, reference currency, and the interface languages this
+  build supports; shared with the MCP `get_meta` tool
+- `GET /healthz` — process liveness; `GET /readyz` — readiness including a database
+  query (the Compose healthcheck)
 
 **Planned 🔨**
 - `GET /kits/{id}/photos`, `POST /kits/{id}/photos` (multipart upload) — **M7**, blocked

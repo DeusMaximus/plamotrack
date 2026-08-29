@@ -41,6 +41,25 @@ Template:
 
 ---
 
+## 2026-08-29 — GPT-5.6 Sol (OpenAI) — Documentation drift corrected
+
+- **Done:** Corrected the verified documentation drift at `392172d`: the README
+  now scopes low-stock thresholds to consumables; `docs/design.md` has the current
+  order-item conversion pair, a 29/08 revision date, and the four missing built
+  routes in §4; `docs/import-export.md` now distinguishes kit-only receipt flips
+  from catalog-bearing orders and uses an explicitly illustrative 0.2.9/current-head
+  manifest; `AGENTS.md` names Settings/DataSection instead of the removed DataPage.
+- **Decisions:** Kept every remaining `converted_price_aud_minor` reference because
+  each describes the legacy CSV alias or rename history. Kept the separate
+  “un-shipping isn't supported anywhere” statement because that claim is true on
+  every writer. The manifest example carries current values but explicitly says
+  exports write live metadata, preventing future example/version drift.
+- **State:** Uncommitted documentation-only changes on clean-starting `main` at
+  `392172d`. Focused backend verification: **6 passed** (exact MCP tool set, both
+  kit-only receipt directions, archive manifest shape/version, and `/meta`
+  language advertisement). `git diff --check` clean; no application code changed.
+- **Next:** Review and commit the documentation update when the owner is satisfied.
+
 ## 2026-08-29 — Claude Code (Fable 5) — v0.2.9-alpha RELEASED (the M5.1 theme); oma- set folded (#181)
 
 - **Done:** **#181 merged `df2702a`** — oma-1..7 in the tracked harness (7/7
@@ -223,52 +242,3 @@ Template:
   M6, version/tag/release work, or merge this PR before that gate.
 
 ---
-
-## 2026-08-28 — Claude Code (Fable 5) — M5.1 CODE-COMPLETE: #26/#114/#27 closed; GLM 5.3 Flash is the new default reviewer
-
-- **Done:** **#26 — PR #171 merged `359c8fe`** (2,087 ins, no migrations):
-  every string in a successful preview payload is a `{code, params, detail}`
-  Diagnostic on the #25 registry, rendered at `api.<code>` via
-  `resolveDiagnostic`; per-problem `errors` list replaces `error`; 56 new
-  codes; `matched_by` canonicalised; blocked apply carries its diagnostics in
-  `params.diagnostics`; `tests/diag.py` kept ~150 old assertions meaningful.
-  Fold-in **#172 merged `e7758a9`** (nd-1..5). **#114 — PR #173 merged
-  `ac6788c`**: naive CSV datetimes read in the instance zone, attached once
-  per plan in `_parse_row`; explicit offsets win; exports write `+00:00` so
-  old archives re-import unchanged; zone change between preview/apply = stale
-  409. Fold-in **#175 merged `825898b`** (tz-1..3; harness **244 cases**).
-  **#27 — PR #174 merged `fedcc08`**: Language & region form (5 settings),
-  `src/lib/presentation.ts` + `usePresentationVersion`
-  (useSyncExternalStore) subscribing KitsPage/OrdersPage/InventoryPage/
-  ImportPreview, Layout applies the row → i18next + document lang/dir,
-  format helpers instance-aware (**plain dates render as the day they name in
-  every zone**), `/meta` advertises `supported_interface_languages`, physical
-  LR utilities → logical. **M5.1 has no open issues.**
-- **Decisions:** #26 reuses the #25 registry/namespace (no `diag.*` fork);
-  full per-PR lists in each PR body. **GLM 5.3 Flash (Zhipu, via T3 Code on
-  OpenRouter) replaced Cursor as the default reviewer** (`13eff54` — roster
-  table + brief footer updated; ~$0.07/round, 1M context; four rounds today,
-  all substantive). Its #174 P3-1 *diagnosis* (cold-load staleness) was
-  right; its *remedy* failed measurement — React Router's Outlet returns the
-  same element reference, so page subtrees bail out of Layout re-renders; the
-  shipped fix is the subscription store, pinned red/green both ways. Measure
-  a reviewer's remedies like any claim. Codex reserved for write-gate/money/
-  migrations/M6-security rounds.
-- **State:** `main` at `825898b` (+ this entry), CI green at every merged
-  head. Backend **1218–1224** per pre-merge branch (merged union unmeasured —
-  CI's Backend job on `main` is the check), vitest **374**, e2e from-empty
-  **39 + 1 skipped** (tables zero). Harness **244/244**; a #26 full run also
-  fixed **six anchors rotted since #25** (n5/n6a/n6b/cat-13/14/wdr-8) — rule
-  in `testing-and-review.md`: emission-site rewrites owe a FULL harness run.
-  Known e2e: #162/#167 dev-DB-only; preorder-toggle #17-class flake fires
-  under concurrent local load, clean quiet. Two process slips, owned on PR
-  threads: a scratch runner restored uncommitted `Layout.tsx` via
-  `git checkout` (the recorded trap — re-applied, re-verified), and branch
-  switches ran under GLM's #173 round (park the tree during reviews — now in
-  the procedure doc). No dev servers left running.
-- **Next:** **release** (0.2.9-alpha — the M5.1 theme) via the gate in
-  `testing-and-review.md`; then M6 (secure remote access — Codex-lane
-  reviews). LXC: **back up before pulling** (real collection; 0.2.8's
-  settings migration still pending there, and after this pull the instance
-  time zone/locale start mattering — set them in Settings → Language & region
-  after upgrade, or naive CSV imports and all rendering stay UTC/en-AU).

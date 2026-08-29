@@ -105,7 +105,8 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   extraction keeps en-AU strings byte-identical (e2e proves it)
     components/         # Layout, Modal, ui primitives, CatalogItemPicker (§3.9 select-or-create)
     pages/              # BoardPage (Kanban), KitsPage, OrdersPage, InventoryPage,
-                        #   RetailersPage, DataPage (import/export)
+                        #   RetailersPage, and settings/ (SettingsPage + sections,
+                        #   including Data management at /settings/data)
   e2e/                  # Playwright happy-path (runs against the dev stack, self-cleaning)
 docs/design.md          # product intent + architectural decision record (§n targets)
 docs/import-export.md   # user-facing CSV format + matching reference
