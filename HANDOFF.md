@@ -41,10 +41,10 @@ Template:
 
 ---
 
-## 2026-08-29 — Claude Code (Fable 5) — #178 implemented: order ambiguity split to its own code; PR #180 through Codex round 1
+## 2026-08-29 — Claude Code (Fable 5) — #178 CLOSED: order ambiguity split to its own code (PR #180, two Codex rounds)
 
-- **Done:** Branch `claude/178-order-match-ambiguous` → **PR #180** (`Closes
-  #178`, **unmerged** — awaiting independent review). The order matcher now
+- **Done:** **#178 closed — PR #180 squash-merged as `783a1a7`** on the
+  owner's call after a Codex round-2 GO; branch deleted. The order matcher now
   speaks `import.order_match_ambiguous`, declared `{count, matched_by}`
   exactly; generic `import.match_ambiguous` keeps `{count, table}`. The en-AU
   entry renders `{{matchedBy}}` via `matchedByLabel` (unknown values raw,
@@ -87,8 +87,23 @@ Template:
   **the 0.2.9 release notes owe one compatibility line**: order-match
   ambiguity moved from `import.match_ambiguous` to
   `import.order_match_ambiguous`.
-- **Next:** owner's call on merging after the reply (round 2 if Codex
-  re-reviews); do not merge on a standing NO-GO. After merge: fold
+- **Round 2 (Codex): GO, no new findings** — replayed both probe mutations
+  at `cfeb9ee` (exact undeclared-key failures, byte-identical restores, 16/16
+  then 1230/1230 green) and independently re-derived the bridge-code
+  enumeration: `_borrowed_diagnostic` ⊇ {quantity_too_small, quantity_too_large,
+  order.fanout_limit}, `_row_problem` ⊇ {cell_invalid, both quantity codes} —
+  the matrix drives every member. P3-2's amendment judged durable.
+- **Next:** fold the **`oma-` mutant set** (queued in the PR #180 body) into
+  `mutation_test.py` — re-check anchors, and whether the clean-tree/restore
+  cover reaches the fixture and test files it mutates the way #151 extended it
+  to `alembic/`. Then the **0.2.9-alpha release gate** (`testing-and-review.md`)
+  — **the release notes owe one compatibility line**: order-match ambiguity
+  moved from `import.match_ambiguous` to `import.order_match_ambiguous` (a
+  client switching on the old code over order rows loses that branch). #179
+  (raise-side catalogue-drop siblings) is filed, unscheduled. M6 not begun.
+  LXC: **back up before pulling** (real collection; 0.2.8's settings migration
+  still pending there, and zone/locale need setting after the M5.1 upgrade —
+  see the `4bd98c0` entry). After merge: fold
   the `oma-` set into the harness (re-check anchors, and whether the
   clean-tree/restore cover reaches the fixture and test files it mutates the
   way #151 extended it to `alembic/`). Then the 0.2.9-alpha release gate
