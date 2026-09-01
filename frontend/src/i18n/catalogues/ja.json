@@ -8,7 +8,7 @@
     "settings": "設定"
   },
   "layout": {
-    "tagline": "予約からスミ入れの傑作まで"
+    "tagline": "積みから完成まで、ひと目で追える。"
   },
   "common": {
     "close": "閉じる",
@@ -42,25 +42,25 @@
     "kitNameRequired": "キット名は必須です",
     "currencyCode": "3文字のISOコード",
     "requiredField": "必須",
-    "catalogSelection": "既存のアイテムを検索するか、新しく作成してください",
+    "catalogSelection": "既存のアイテムを選ぶか、新しく作成してください",
     "newItemName": "新しいアイテムには名前が必要です",
-    "newUpgradeManufacturer": "新しいアップグレードパーツにはメーカーが必要です",
+    "newUpgradeManufacturer": "新しい追加パーツにはメーカーが必要です",
     "newItemCategory": "新しいアイテムにはカテゴリが必要です",
     "request": {
       "missing": "{{field}}は必須です。",
-      "string_type": "{{field}}はテキストである必要があります。",
-      "int_type": "{{field}}は整数である必要があります。",
-      "int_parsing": "{{field}}は整数である必要があります。",
-      "float_type": "{{field}}は数値である必要があります。",
-      "float_parsing": "{{field}}は数値である必要があります。",
-      "bool_type": "{{field}}は「はい」または「いいえ」である必要があります。",
-      "bool_parsing": "{{field}}は「はい」または「いいえ」である必要があります。",
-      "date_from_datetime_parsing": "{{field}}は日付である必要があります。",
-      "datetime_from_date_parsing": "{{field}}は日時である必要があります。",
-      "datetime_parsing": "{{field}}は日時である必要があります。",
-      "uuid_parsing": "{{field}}は有効なIDである必要があります。",
-      "uuid_type": "{{field}}は有効なIDである必要があります。",
-      "enum": "{{field}}は有効な選択肢である必要があります。",
+      "string_type": "{{field}}は文字列で入力してください。",
+      "int_type": "{{field}}は整数で入力してください。",
+      "int_parsing": "{{field}}は整数で入力してください。",
+      "float_type": "{{field}}は数値で入力してください。",
+      "float_parsing": "{{field}}は数値で入力してください。",
+      "bool_type": "{{field}}は「はい」または「いいえ」で入力してください。",
+      "bool_parsing": "{{field}}は「はい」または「いいえ」で入力してください。",
+      "date_from_datetime_parsing": "{{field}}は日付で入力してください。",
+      "datetime_from_date_parsing": "{{field}}は日時で入力してください。",
+      "datetime_parsing": "{{field}}は日時で入力してください。",
+      "uuid_parsing": "{{field}}には有効なIDを入力してください。",
+      "uuid_type": "{{field}}には有効なIDを入力してください。",
+      "enum": "{{field}}は選択肢の中から指定してください。",
       "literal_error": "{{field}}は無効な値です。",
       "greater_than": "{{field}}の値が小さすぎます。",
       "greater_than_equal": "{{field}}の値が小さすぎます。",
@@ -69,18 +69,18 @@
       "string_too_short": "{{field}}が短すぎます。",
       "string_too_long": "{{field}}が長すぎます。",
       "string_pattern_mismatch": "{{field}}は無効な形式です。",
-      "list_type": "{{field}}はリストである必要があります。",
-      "dict_type": "{{field}}はオブジェクトである必要があります。"
+      "list_type": "{{field}}はリスト形式で指定してください。",
+      "dict_type": "{{field}}はオブジェクト形式で指定してください。"
     }
   },
   "api": {
     "exportFailed": "エクスポートに失敗しました ({{status}})",
     "catalog_item": {
       "category_required": "カタログの新しいアイテムにはカテゴリが必要です。",
-      "category_unsupported": "これらのアイテムにはカテゴリがありません。",
+      "category_unsupported": "これらのアイテム種別ではカテゴリは使えません。",
       "cost_pair_mismatch": "コストと通貨はセットです。両方を設定するか、両方を空にしてください。",
-      "has_applications_other": "「{{name}}」は{{countDisplay}}個のキットに適用されています。組み立て履歴は保持されるため、削除できません。誤って記録された場合は、まず適用を取り消してください。",
-      "manufacturer_required": "新しいアップグレードパーツにはメーカーが必要です。",
+      "has_applications_other": "「{{name}}」は{{countDisplay}}個のキットで使用されています。組み立て履歴は保持されるため、削除できません。誤って記録された場合は、先に使用記録を取り消してください。",
+      "manufacturer_required": "新しい追加パーツにはメーカーが必要です。",
       "not_found": "そのカタログアイテムは存在しません。",
       "on_order_history_other": "「{{name}}」は{{countDisplay}}行の注文履歴に含まれています。注文履歴は保持されるため、削除できません。"
     },
@@ -97,12 +97,12 @@
       "archive_too_large": "そのアーカイブは展開後のサイズが{{limitMb}} MBのインポート制限を超えています。ファイルを分割してください。",
       "blocked_other": "プレビューでインポートを妨げる問題が{{countDisplay}}件見つかりました。",
       "catalog_ref_unresolved": "$t(importField.catalog_ref_id): {{itemType}}の行は{{table}}.csvの行を指している必要があります。$t(importField.catalog_ref_id)を指定するか、$t(importField.catalog_name)でアイテム名を指定してください（在庫0で作成されます）。",
-      "category_folded": "カテゴリ「{{stated}}」は、すでに使用されているスペルに合わせて「{{stored}}」として保存されます。",
+      "category_folded": "カテゴリ「{{stated}}」は、既存の表記に合わせて「{{stored}}」として保存されます。",
       "cell_invalid": "{{field}}を読み込めませんでした。",
       "cell_required": "{{field}}は必須です。",
       "column_unknown": "列「{{column}}」は{{table}}の列ではないため、無視されました。",
       "confirm_required": "すべてを置き換えると、現在のコレクションが消去されます。確認のために REPLACE と入力してください。",
-      "currency_unknown": "{{field}}: 「{{currency}}」は認識できない通貨コードです。入力された通りに保存され、金額は小数点以下2桁として読み込まれます。",
+      "currency_unknown": "{{field}}: 「{{currency}}」は認識できない通貨コードです。入力値はそのまま保存され、金額は小数点以下2桁として読み込まれます。",
       "currency_without_amount": "{{field}}: 無視されました。このファイルには{{amountField}}列がなく、対象の金額なしに通貨を変更することはできません。",
       "encoding_invalid": "{{source}}は有効なUTF-8ではありません（{{line}}行目）。UTF-8（Excelの場合は「CSV UTF-8」）として保存し直し、再度インポートしてください。",
       "file_too_large": "そのファイルは{{limitMb}} MBのインポート制限を超えています。ファイルを分割してください。",
@@ -111,7 +111,7 @@
       "id_duplicated": "{{row}}行目ですでにこのIDが使用されています。1回のアップロードで2つの行に同じIDを指定することはできません。",
       "kept_stored": "{{field}}: 変更されませんでした。この列は空にできず、この行には新しい値が指定されていません。",
       "kit_move_quantity_unstated": "$t(importField.order_item_id): 注文行{{lineId}}のキットが{{after}}個になりますが、このアップロードには購入数が記載されていません。$t(importTable.order_items).csv行で数量を指定するか、$t(importField.order_item_id)をそのままにしてください。",
-      "kit_move_to_catalog_line": "$t(importField.order_item_id): 注文行{{lineId}}は{{itemType}}の行です。カタログの行はキットではなく在庫を購入するものです。これらのキットをキットの行に向けるか、列を空白にしてください。",
+      "kit_move_to_catalog_line": "$t(importField.order_item_id): 注文明細{{lineId}}は{{itemType}}の明細です。カタログ商品の明細で購入されるのはキットではなく在庫です。これらのキットをキットの注文明細に紐づけるか、この列を空欄にしてください。",
       "kit_move_unreconciled": "$t(importField.order_item_id): 購入数は{{quantity}}ですが、注文行{{lineId}}のキットが{{after}}個になります。行の数量を保持する数に合わせるか、$t(importField.order_item_id)をそのままにしてください。",
       "kit_name_exists_other": "「{{name}}」というキットはすでに{{countDisplay}}個あります。同じキットが2つある場合は2つのキットとして扱われるため、インポートするとさらに追加されます。",
       "kits_not_removable": "この行の数量により{{surplus}}個のキットを削除する必要がありますが、安全に削除できるのは{{removable}}個のみです。残りは進行中か、このアップロードで記述されています。先にそれらのキットを移動・編集するか、数量をそのままにしてください。",
@@ -120,30 +120,30 @@
       "kits_removal_planned_other": "この行から{{countDisplay}}個のキットを削除します。",
       "kits_ship_advance_other": "この注文を発送済みにすると、{{countDisplay}}個のキットが配送中に移動します。",
       "kits_spawn_planned_other": "この行から{{countDisplay}}個のキットを作成します。",
-      "line_joins_received": "$t(importField.order_id): この{{itemType}}行はすでに受領済みの注文に追加されますが、インポートによって手持ちの在庫が変更されることはありません。代わりにアプリ内で追加すると、保存時に在庫が反映されます。",
+      "line_joins_received": "$t(importField.order_id): この{{itemType}}の明細を追加しようとしている注文は、すでに受領済みです。インポートでは手持ち在庫は増えないため、このままでは在庫に反映されません。追加する場合はアプリ内で行ってください。保存時に在庫が反映されます。",
       "manifest_ambiguous_other": "アーカイブに{{countDisplay}}個のマニフェストファイルが含まれています。どれが適用されるか不明なため、何もインポートされません。",
       "manifest_file_absent": "マニフェストには{{filename}}が記載されていますが、アーカイブ内にありません。ZIPファイルが不完全か、一部しか展開されていません。",
       "manifest_file_ambiguous_other": "アーカイブ内に{{filename}}というファイルが{{countDisplay}}個あります。マニフェストがどれを指しているか不明なため、行数は信頼できません。",
-      "manifest_metadata_unreadable": "manifest.jsonに読み取れないメタデータが含まれています。このまま続行します。",
-      "manifest_missing": "ZIP内にmanifest.jsonがないため、単独のCSVの集まりとして読み込みます。",
-      "manifest_not_object": "manifest.jsonがオブジェクトではないため、このアーカイブに関する情報がありません。このまま続行します。",
+      "manifest_metadata_unreadable": "manifest.jsonにこのインスタンスで読めないメタデータがあります。無視して続行します。",
+      "manifest_missing": "ZIP内にmanifest.jsonがないため、独立したCSVファイルの集まりとして扱います。",
+      "manifest_not_object": "manifest.jsonがオブジェクトではないため、このアーカイブの情報として扱えません。無視して続行します。",
       "manifest_rows_mismatch": "{{filename}}: マニフェストには{{declared}}行と記載されていますが、{{read}}行が読み込まれました。このアーカイブは完全ではありません。",
       "manifest_table_mismatch": "マニフェストでは{{filename}}は「{{declared}}」となっていますが、列は{{routed}}です。{{routed}}としてインポートします。",
-      "manifest_unreadable": "manifest.jsonを読み込めませんでした。このまま続行します。",
+      "manifest_unreadable": "manifest.jsonを読み込めませんでした。無視して続行します。",
       "match_ambiguous_other": "既存の{{table}}の{{countDisplay}}行がこれと一致します。どれを指しているかID列で指定してください。",
-      "member_duplicated": "アーカイブに「{{path}}」という名前のファイルが複数あります。正しく読み込めないため、何もインポートされません。",
+      "member_duplicated": "アーカイブ内に「{{path}}」という名前のファイルが複数あるため、正しく読み込めません。このアーカイブからは何もインポートされません。",
       "member_undeclared": "「{{path}}」はアーカイブのマニフェストに記載されていませんが、{{rows}}行読み込まれました。マニフェストはこのZIPのすべてを記述していません。",
       "member_unrecognised": "「{{path}}」は既知のテーブルとして認識されないためスキップされました。",
-      "money_ambiguous": "{{field}}: この通貨でのカンマの使用は曖昧です。金額は小数点を使用するか、区切り文字なしで入力してください。",
+      "money_ambiguous": "{{field}}: この通貨ではカンマの意味が曖昧です。金額は小数点を使うか、区切り記号なしで入力してください。",
       "natural_key_duplicated": "{{row}}行目がすでにこの{{field}}を説明しています。異なる場合はどちらかにIDを指定してください。",
       "no_table_data": "そのアーカイブには読み取り可能なテーブルデータが含まれていませんでした。",
       "order_match_ambiguous_other": "既存の{{countDisplay}}件の注文がこれと一致します（{{matchedBy}}）。どれを指しているかID列で指定してください。",
       "plan_stale": "プレビュー後にコレクションが変更されたため、実行される内容と一致しなくなりました。もう一度プレビューを実行してください。",
       "preview_required": "先にインポートをプレビューしてください。適用はプレビューに表示された内容のみ許可されます。",
-      "provenance_protected": "$t(importField.order_item_id): このキットは組み立て中/完了、評価済み、写真あり、またはアップグレードが適用されているため、購入先の注文行を削除することはできません。$t(importField.order_item_id)はそのままにしてください。",
+      "provenance_protected": "$t(importField.order_item_id): このキットは組み立て中/完了、評価済み、写真あり、または追加パーツが使用されているため、購入先の注文明細を削除できません。$t(importField.order_item_id)はそのままにしてください。",
       "receipt_conflict": "{{row}}行目：受領状態が同じ注文の{{otherRow}}行目と矛盾しています。注文は届いたか届いていないかのどちらかであるため、一つの注文のすべての行が一致している必要があります。",
       "receipt_unaccounted": "$t(importField.received_at): この注文を受領済みにすると、カタログ行で購入した在庫が未反映のままになります。このシートから$t(importField.received_at)を削除し、アプリ内で注文を受領済みにすると在庫が反映されます。",
-      "ref_dangling": "{{field}}: ここにはID{{id}}の{{table}}がないため、この行はそれなしでインポートされます。その{{table}}の行を追加するか、後で入力してください。",
+      "ref_dangling": "{{field}}: ID{{id}}の{{table}}が見つからないため、この行はその参照なしでインポートされます。{{table}}の行を追加するか、後で設定してください。",
       "ref_ignored_kit_line": "{{field}}: キットの行はカタログを参照しません。キットは新しく作成されるため、値は無視されました。",
       "ref_not_in_upload": "{{field}}: ID{{id}}を持つ{{table}}の行がこのアップロードにありません。すべてを置き換えるインポートでは、アップロードに含まれないものはすべて削除されるため、その行を追加するか、読み取り可能な列で指定してください。",
       "ref_overwrite_unresolved": "{{field}}: ID{{id}}はここには存在せず、この行は現在保存されている{{table}}を指しています。存在しないIDでそのリンクを解除することはできません。IDを修正するか、このシートから列を削除してください。",
@@ -153,7 +153,7 @@
       "singleton_missing": "このインスタンスには更新する{{table}}の行がありません。インポートする前にマイグレーションを実行してください。",
       "spawn_source_missing_other": "このキットの行にはさらに{{countDisplay}}個のキットが必要ですが、作成元の$t(importField.kit_name)/$t(importField.kit_grade)がありません。それらを入力するか、$t(importTable.kits).csvでキットを提供してください。",
       "status_stamp_generated": "$t(importField.status_updated_at)はこのインポートの時間に設定されます。この行は移動時間を指定せずにステータスを移動させています。",
-      "stock_note": "在庫レベルはカタログファイルから取得されます。注文をインポートしても手持ちの在庫は変更されません。",
+      "stock_note": "手持ち在庫はカタログファイルの内容で決まります。注文をインポートしても在庫数は変わりません。",
       "stub_created": "{{table}}の{{row}}行目の参照から作成されました。",
       "stub_created_unstocked": "{{table}}の{{row}}行目の参照から、在庫0で作成されました。",
       "table_unknown": "「{{filename}}」がどのテーブルを保持しているか判断できませんでした。ファイル名にテーブル名を付けるか、スターターシートのテンプレートを使用してください。",
@@ -164,7 +164,7 @@
       "version_newer": "このアーカイブは新しいバージョンのplamotrack（フォーマット{{exportVersion}}、このインスタンスは{{supportedVersion}}）で作成されました。インポートする前にアップデートしてください。"
     },
     "kit": {
-      "has_applications_other": "「{{name}}」には{{countDisplay}}個のアップグレードパーツが適用されています。それらの記録には使用した在庫が含まれているため、キットは保持されます。まずは適用を取り消してください。取り消す際に在庫を戻すか確認されます。",
+      "has_applications_other": "「{{name}}」には{{countDisplay}}件の追加パーツ使用記録があります。これらの記録は使用した在庫の根拠となるため、キットは保持されます。先に使用記録を取り消してください。取り消す際に在庫を戻すか確認されます。",
       "not_found": "そのキットは存在しません。",
       "order_spawned": "「{{name}}」は注文行から作成されました。購入履歴とコレクションの整合性を保つため、代わりにその注文を編集（行の数量を減らすか、行を削除）してください。"
     },
@@ -178,18 +178,18 @@
       "fanout_limit": "一度に{{total}}個のキットが作成されますが、上限は{{maximum}}個です。分割してください。",
       "lines_omitted_other": "保存されている{{countDisplay}}行がこの編集から欠落しています。欠落した行は削除されます。保持するすべての行を再入力するか、削除を明示的に許可してください。",
       "not_found": "その注文は存在しません。",
-      "not_received": "この注文はまだ受領されていません。先に到着を記録してください。編集ではすでに設定された日付の修正のみ可能です。",
-      "not_shipped": "この注文はまだ発送済みになっていません。先に発送を記録してください。編集ではすでに設定された日付の修正のみ可能です。",
+      "not_received": "この注文はまだ受領されていません。先に到着を記録してください。編集では、すでに記録された日付の修正のみ行えます。",
+      "not_shipped": "この注文はまだ発送済みではありません。先に発送を記録してください。編集では、すでに記録された日付の修正のみ行えます。",
       "receipt_in_future": "その到着日は未来の日付です。到着は過去の日付で記録する必要があります。",
       "shipment_in_future": "その発送日は未来の日付です。発送は過去の日付で記録する必要があります。",
       "unreceive_unsupported": "注文の受領を取り消すことはできません。代わりに削除して再入力してください。",
-      "unship_unsupported": "注文の発送を取り消すことはできません。"
+      "unship_unsupported": "注文を未発送に戻すことはできません。"
     },
     "order_line": {
       "catalog_ref_dangling": "この行は存在しないカタログアイテムを指しているため、在庫の調整ができません。注文を削除するとエントリー全体が元に戻ります。",
       "duplicated": "注文内で同じ明細が重複しています。",
       "item_type_immutable": "行のアイテムタイプは変更できません。行を削除して新しく追加してください。",
-      "kits_protected": "この行で要求された{{requested}}個のキットのうち、安全に削除できるのは{{deletable}}個のみです。残りは組み立て中か完了、評価済み、写真あり、またはアップグレードが適用されています。先にそれらのキットを移動または編集してください。",
+      "kits_protected": "この行で要求された{{requested}}個のキットのうち、安全に削除できるのは{{deletable}}個のみです。残りは組み立て中か完了、評価済み、写真あり、または追加パーツが使用されています。先にそれらのキットを移動または編集してください。",
       "no_kit_to_clone": "この行には詳細をコピーできるキットがありません。キットの詳細を入力して追加してください。",
       "not_on_order": "行の一つがこの注文のものではありません。",
       "order_immutable": "この行が属する注文は変更できません（購入履歴になります）。order_idはそのままにし、別の注文に意図した行を追加してください。",
@@ -212,7 +212,7 @@
       "limit_exceeded": "「{{name}}」はそれほど多く保持できません。在庫数の上限は2,147,483,647です。"
     },
     "upgrade_application": {
-      "not_found": "そのアップグレードパーツの適用記録は存在しません。",
+      "not_found": "その追加パーツの使用記録は存在しません。",
       "quantity_invalid": "数量は正の整数である必要があります。"
     },
     "value": {
@@ -225,7 +225,7 @@
     "buildView": "組み立て",
     "ordersView": "注文",
     "received": "受領済み",
-    "dragHint": "カードをドラッグしてステータスを更新",
+    "dragHint": "カードをドラッグして状態を変更",
     "dropHere": "ここにドロップ",
     "loadFailed": "キットの読み込みに失敗しました: {{message}}",
     "moveFailed": "移動に失敗しました"
@@ -255,14 +255,14 @@
       "title": "消耗品"
     },
     "upgrade": {
-      "singular": "アップグレード",
-      "plural": "アップグレードパーツ",
-      "title": "アップグレード"
+      "singular": "追加パーツ",
+      "plural": "追加パーツ",
+      "title": "追加パーツ"
     },
     "display": {
-      "singular": "ディスプレイアイテム",
-      "plural": "ディスプレイアイテム",
-      "title": "ディスプレイアイテム"
+      "singular": "ディスプレイ用品",
+      "plural": "ディスプレイ用品",
+      "title": "ディスプレイ用品"
     }
   },
   "packingQuality": {
@@ -321,12 +321,12 @@
     "retailers": "購入先",
     "tools": "ツール",
     "consumables": "消耗品",
-    "upgrades": "アップグレードパーツ",
-    "display_items": "ディスプレイアイテム",
+    "upgrades": "追加パーツ",
+    "display_items": "ディスプレイ用品",
     "orders": "注文",
     "order_items": "注文明細",
     "kits": "キット",
-    "upgrade_applications": "アップグレードパーツの適用",
+    "upgrade_applications": "追加パーツの使用記録",
     "kit_photos": "写真",
     "instance_settings": "インスタンス設定"
   },
@@ -338,7 +338,7 @@
   "matchedBy": {
     "id": "ID",
     "name": "名前",
-    "application": "アップグレードパーツの適用",
+    "application": "追加パーツの使用記録",
     "photo": "写真",
     "instance_settings": "設定の行",
     "retailer_order_number": "購入先 + 注文番号",
@@ -406,11 +406,11 @@
     "order_item_id": "注文行",
     "created_at": "作成日",
     "updated_at": "更新日",
-    "upgrade_id": "アップグレード",
-    "upgrade_name": "アップグレード名",
+    "upgrade_id": "追加パーツ",
+    "upgrade_name": "追加パーツ名",
     "kit_id": "キット",
     "quantity_used": "使用数量",
-    "applied_at": "適用日",
+    "applied_at": "使用日",
     "file_path": "ファイルパス",
     "caption": "キャプション",
     "taken_at": "撮影日"
@@ -471,9 +471,9 @@
     "autoFillNote": "キットを組み立て中や完了に移動すると、日付が空の場合のみ自動的に日付が入ります。ここで設定した日付が上書きされることはありません。",
     "buildNotes": "組み立てメモ",
     "buildNotesPlaceholder": "ゲート処理、スミ入れ…",
-    "appliedUpgrades": "適用されたアップグレード",
+    "appliedUpgrades": "使用した追加パーツ",
     "withdrawButton": "取り消し…",
-    "withdrawPrompt": "「{{name}}」の適用を{{qty}}個取り消しますか？ 在庫を戻すかどうかを選んでください。物理的に部品が残っている場合のみ在庫に戻してください。使用済みまたは破損している場合はなくなります。",
+    "withdrawPrompt": "「{{name}}」の使用記録を{{qty}}個取り消しますか？ 在庫に戻すかどうかを選んでください。部品が物理的に残っている場合のみ在庫に戻してください。使用済みまたは破損している場合は在庫に戻せません。",
     "withdrawSpent": "取り消し — 在庫は消費済みのまま",
     "withdrawReturn": "取り消し — 在庫に戻す",
     "withdrawalFailed": "取り消しに失敗しました",
@@ -498,19 +498,19 @@
     "tabs": {
       "tools": "ツール",
       "consumables": "消耗品",
-      "upgrades": "アップグレード",
-      "display-items": "ディスプレイ"
+      "upgrades": "追加パーツ",
+      "display-items": "ディスプレイ用品"
     },
     "categoryPlaceholder": {
       "tools": "切断 / ヤスリ / 接着",
       "consumables": "塗料 / セメント / 刃",
-      "display-items": "スタンド / ベース / 情景 / 建造物"
+      "display-items": "スタンド / ベース / 情景 / 背景"
     },
     "loadFailed": {
       "tools": "ツールの読み込みに失敗しました: {{message}}",
       "consumables": "消耗品の読み込みに失敗しました: {{message}}",
-      "upgrades": "アップグレードパーツの読み込みに失敗しました: {{message}}",
-      "display-items": "ディスプレイアイテムの読み込みに失敗しました: {{message}}"
+      "upgrades": "追加パーツの読み込みに失敗しました: {{message}}",
+      "display-items": "ディスプレイ用品の読み込みに失敗しました: {{message}}"
     },
     "category": "カテゴリ",
     "manufacturer": "メーカー",
@@ -525,14 +525,14 @@
     "referenceCostPlaceholder": "情報として",
     "costCurrency": "コストの通貨",
     "conditionNotes": "状態のメモ",
-    "applyTitle": "「{{name}}」の適用",
-    "applyOnHand_other": "手持ち{{countDisplay}}個 — 適用すると在庫が減少し、どのキットに適用したかが記録されます。",
+    "applyTitle": "「{{name}}」を使用",
+    "applyOnHand_other": "手持ち{{countDisplay}}個 — 使用すると在庫が減り、どのキットに使ったかが記録されます。",
     "pickKitFirst": "先にキットを選択してください",
     "kit": "キット",
     "selectKit": "キットを選択…",
     "quantity": "数量",
-    "apply": "適用",
-    "applyToKit": "キットに適用",
+    "apply": "使用する",
+    "applyToKit": "キットに使用",
     "removeOne": "{{name}}を1つ減らす",
     "addOne": "{{name}}を1つ増やす",
     "stockAdjustFailed": "在庫の調整に失敗しました",
@@ -547,8 +547,8 @@
     "emptyNone": {
       "tools": "ツールはまだありません。",
       "consumables": "消耗品はまだありません。",
-      "upgrades": "アップグレードパーツはまだありません。",
-      "display-items": "ディスプレイアイテムはまだありません — スタンド、ベース、ジオラマの情景など。"
+      "upgrades": "追加パーツはまだありません。",
+      "display-items": "ディスプレイ用品はまだありません — スタンド、ベース、情景、小物、背景パネルなど。"
     }
   },
   "data": {
@@ -601,7 +601,7 @@
     "backToSearch": "← 検索に戻る",
     "manufacturerRequired": "メーカー (必須)",
     "categoryRequired": "カテゴリ (必須)",
-    "categoryRequiredDisplay": "カテゴリ (必須) — スタンド / 情景",
+    "categoryRequiredDisplay": "カテゴリ (必須) — スタンド / 情景 / 背景",
     "manufacturer": "メーカー",
     "scalePlaceholder": "スケール、例: 1/144",
     "searchPlaceholder": "{{type}}を検索…",
@@ -673,8 +673,8 @@
     "preOrderTooltip": "この注文のすべてのキットは予約注文です（まだ到着していません）",
     "shippedTooltip": "購入先から発送済み",
     "receivedTooltip": "配達済み・輸送日数",
-    "showLineItems": "{{date}}の注文（{{retailer}}）の明細を表示",
-    "hideLineItems": "{{date}}の注文（{{retailer}}）の明細を非表示",
+    "showLineItems": "{{date}}の{{retailer}}の注文明細を表示",
+    "hideLineItems": "{{date}}の{{retailer}}の注文明細を非表示",
     "unknownRetailer": "不明な購入先",
     "acrossLines_other": "{{countDisplay}}行で合計{{total}}",
     "trackingLinkFallback": "リンク",
@@ -688,7 +688,7 @@
   },
   "settings": {
     "title": "設定",
-    "subtitle": "インスタンス全体の設定 — ここに接続するすべてのブラウザやエージェントに同じ値が適用されます。",
+    "subtitle": "インスタンス全体で共通の設定です。ここに接続するすべてのブラウザとエージェントに同じ値が適用されます。",
     "sections": {
       "general": "一般",
       "language": "言語と地域",
@@ -705,9 +705,9 @@
       "saved": "保存しました"
     },
     "language": {
-      "description": "インターフェース言語と地域のフォーマットはブラウザではなくインスタンスに保存され、すべてのクライアントで同じ値からレンダリングされます。",
+      "description": "インターフェース言語と地域の表示形式は、ブラウザごとではなくインスタンスに保存されます。ここに接続するすべてのブラウザとエージェントで同じ設定が使われます。",
       "currentTitle": "言語とフォーマット",
-      "currentDescription": "インスタンス全体に保存されます。すべての場所の日付、時刻、数値はここで選択したものに従って再レンダリングされます。",
+      "currentDescription": "この設定はインスタンス全体に保存されます。日付・時刻・数値の表示は、アプリ内のすべての画面でここで選んだ形式に切り替わります。",
       "interfaceLanguage": "インターフェース言語",
       "formattingLocale": "地域フォーマット",
       "timeZone": "タイムゾーン",
@@ -718,12 +718,12 @@
       "localeHint": "{{language}}は通常{{tag}}としてフォーマットされます。",
       "localeUse": "{{tag}}を使用",
       "timeZoneHint": "IANAゾーン名、例: Asia/Tokyo — 保存された時刻をローカルタイムで表示するすべての場所で使用されます。",
-      "preview": "表示例:",
+      "preview": "表示例：",
       "saving": "保存中…",
       "saved": "保存しました"
     },
     "about": {
-      "description": "このインスタンスで実行されているソフトウェア。",
+      "description": "このインスタンスで動作しているソフトウェアです。",
       "version": "バージョン"
     }
   }
