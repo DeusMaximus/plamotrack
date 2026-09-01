@@ -187,7 +187,7 @@
     },
     "order_line": {
       "catalog_ref_dangling": "この行は存在しないカタログアイテムを指しているため、在庫の調整ができません。注文を削除するとエントリー全体が元に戻ります。",
-      "duplicated": "注文の行の一つが重複しています。",
+      "duplicated": "注文内で同じ明細が重複しています。",
       "item_type_immutable": "行のアイテムタイプは変更できません。行を削除して新しく追加してください。",
       "kits_protected": "この行で要求された{{requested}}個のキットのうち、安全に削除できるのは{{deletable}}個のみです。残りは組み立て中か完了、評価済み、写真あり、またはアップグレードが適用されています。先にそれらのキットを移動または編集してください。",
       "no_kit_to_clone": "この行には詳細をコピーできるキットがありません。キットの詳細を入力して追加してください。",
@@ -286,10 +286,10 @@
   },
   "dateStyle": {
     "locale": "ロケールのデフォルト",
-    "short": "短",
-    "medium": "中",
-    "long": "長",
-    "full": "フル"
+    "short": "短い形式",
+    "medium": "標準形式",
+    "long": "長い形式",
+    "full": "完全な形式"
   },
   "hourCycle": {
     "locale": "ロケールのデフォルト",
@@ -560,7 +560,7 @@
     "templatesDescription": "手動でコレクションを入力するためのベースです。",
     "starterSheetButton": "スターターシート (.csv)",
     "templatePackButton": "テンプレートパック全体 (.zip)",
-    "starterBlurb": "スターターシートは1キットにつき1行（名前、グレード、購入場所など）で構成され、購入元や注文、注文の行などはアプリが自動で割り出します。テンプレートパックは各テーブルごとに空のファイルがあり、すべてを自分で管理したい場合に使用します。",
+    "starterBlurb": "スターターシートは1キットにつき1行（名前、グレード、購入場所など）で構成され、購入元、注文、注文明細などはアプリが自動で割り出します。テンプレートパックは各テーブルごとに空のファイルがあり、すべてを自分で管理したい場合に使用します。",
     "importTitle": "インポート",
     "importDescription": "何が変更されるかをプレビューで正確に確認するまで、何も書き込まれません。",
     "dropHere": ".csvまたは.zipをここにドロップ",
@@ -673,8 +673,8 @@
     "preOrderTooltip": "この注文のすべてのキットは予約注文です（まだ到着していません）",
     "shippedTooltip": "購入元から発送済み",
     "receivedTooltip": "配達済み・輸送日数",
-    "showLineItems": "{{retailer}}の{{date}}の注文の行アイテムを表示",
-    "hideLineItems": "{{retailer}}の{{date}}の注文の行アイテムを非表示",
+    "showLineItems": "{{date}}の注文（{{retailer}}）の明細を表示",
+    "hideLineItems": "{{date}}の注文（{{retailer}}）の明細を非表示",
     "unknownRetailer": "不明な購入元",
     "acrossLines_other": "{{countDisplay}}行で合計{{total}}",
     "trackingLinkFallback": "リンク",
