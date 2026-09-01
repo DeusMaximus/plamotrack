@@ -41,19 +41,33 @@ Template:
 
 ---
 
+## 2026-09-02 — GPT-5 Codex (OpenAI) — PR #184 Japanese editorial review completed
+
+- **Done:** Finalised the disabled Japanese catalogue on PR #184 at `0470285`.
+  Corrected the value-dependent withdrawal prompt for both the empty and
+  preformatted `(×N)` suffixes; completed the 注文明細/CSV 行 terminology
+  distinction; and applied Fable 5's remaining high-confidence wording fixes.
+  Added a value-level catalogue regression test and pushed the commit to
+  `feature/ja-localisation`.
+- **Decisions:** Keep `ja` disabled until a native Japanese hobbyist reviews the
+  rendered application. Settled terms remain: インベントリ, 購入先, 追加パーツ,
+  ディスプレイ用品 and 受領済み. Further LLM-wide rewrites would be churn.
+- **State:** PR #184 remains open as a draft at exact head `0470285`. Frontend
+  **470 passed**, focused catalogue **286 passed**, lint and production build
+  green, and coverage **604/604** for both catalogues. The old withdrawal copy
+  failed the new control on the empty suffix; byte-identical restoration was
+  verified. Rendered Japanese checks passed for quantity 1/2 withdrawal,
+  expanded order details/totals, and a blocking import diagnostic. Japanese was
+  restored to disabled; disposable DB, preview hook and servers were removed.
+- **Next:** Native Japanese hobbyist review. Do not enable or merge the language
+  solely on the LLM reviews; action any human findings on this same PR first.
+
+
 ## 2026-09-01 — Gemini 3.1 Pro (High) (Google) — Initial Japanese localisation (disabled)
 
 - **Done:** Created an initial Japanese translation catalogue `ja.json` mapped from `en-AU.json`, registered it as a disabled language in `manifest.json`, and exposed it in `registry.ts`. Validated the changes using the contributor checks. Pushed to `feature/ja-localisation` and opened draft PR #184. Fixed NO-GO review findings from GPT 5.6 Sol (P3-1 through P3-6) at head `0d3dbf9`.
 - **Decisions:** Followed all translator documentation guidelines: kept all identifier variables exactly intact, translated to natural polite Japanese (Desu/Masu), strictly used `_other` for plurals according to CLDR rules, and left no English text purely for coverage padding.
 - **State:** PR #184 is open as a draft. `ja` is currently disabled pending a native language and rendered view review. All checks (`npm test`, `lint`, `build`, `git diff --check`) passed locally. Head is `0d3dbf9`.
-- **Next:** Await independent structural and Japanese-language review of PR #184 before any enablement.
-
-
-## 2026-09-01 — Gemini 3.1 Pro (High) (Google) — Initial Japanese localisation (disabled)
-
-- **Done:** Created an initial Japanese translation catalogue `ja.json` mapped from `en-AU.json`, registered it as a disabled language in `manifest.json`, and exposed it in `registry.ts`. Validated the changes using the contributor checks. Pushed to `feature/ja-localisation` and opened draft PR #184.
-- **Decisions:** Followed all translator documentation guidelines: kept all identifier variables exactly intact, translated to natural polite Japanese (Desu/Masu), strictly used `_other` for plurals according to CLDR rules, and left no English text purely for coverage padding.
-- **State:** PR #184 is open as a draft. `ja` is currently disabled pending a native language and rendered view review. All checks (`npm test`, `lint`, `build`, `git diff --check`) passed locally. Base: `e817e02`.
 - **Next:** Await independent structural and Japanese-language review of PR #184 before any enablement.
 
 
@@ -139,76 +153,4 @@ Template:
   singleton ships in 0.2.9), then **set Settings → Language & region
   immediately** or rendering and naive CSV imports stay UTC/en-AU.
 
-## 2026-08-29 — Claude Code (Fable 5) — #178 CLOSED: order ambiguity split to its own code (PR #180, two Codex rounds)
-
-- **Done:** **#178 closed — PR #180 squash-merged as `783a1a7`** on the
-  owner's call after a Codex round-2 GO; branch deleted. The order matcher now
-  speaks `import.order_match_ambiguous`, declared `{count, matched_by}`
-  exactly; generic `import.match_ambiguous` keeps `{count, table}`. The en-AU
-  entry renders `{{matchedBy}}` via `matchedByLabel` (unknown values raw,
-  singular/plural pinned); `LABELLED_PARAMS.matched_by` restored legitimately
-  (#177 P3-4's guard now holds it reachable); the stale `apiError.ts` comment
-  rewritten. Class sweep: `order_line.item_type_immutable` fixed in-branch
-  (REST raise now sends `{before, after}`; registry declares the pair) and
-  **#179 filed** for the raise-side siblings (`catalog_item.not_found`
-  item_type, `_row_problem`'s undeclared row; `import.blocked`'s structural
-  diagnostics named there as deliberate). The diagnostic-site audit is
-  tightened to **exact equality** with the registry, extracted pure
-  (`_diagnostic_param_violations`) with synthetic per-class negative controls;
-  the two bridges are pinned by a runtime matrix in
-  `test_import_diagnostics.py`. Fixture note updated to state both regimes.
-- **Decisions:** issue option 1 (split the code) over optional registry params
-  or a fabricated generic `matched_by`; no `table` param on the order code
-  (the code names the table — retires "orders rows" phrasing); raise sites
-  keep the superset audit deliberately (#179 owns the rest).
-- **State:** evidence measured at `fb34b79` (later commits are comment/docs
-  only): backend **1229**, vitest **469**, ruff + oxlint + build clean,
-  from-empty e2e **40 + 1 skipped** (tables zero, e2e DB dropped). Pre-fix
-  controls in the PR body: backend 3 red (both order emitters observed on the
-  old code; the audit naming exactly importing.py:1297 + invariants.py:115),
-  frontend 4 red. Seven hand-run mutations killed (1/1/1/3/5/1/1 failing
-  tests), byte-identical restores verified; **`oma-` tuples queued in the PR
-  body** for post-merge fold-in (two frontend mutants stay manually measured —
-  no tracked frontend harness). Full harness at `20d0687`: **244/244 killed**,
-  no anchor rot. Two aborted e2e runs were the owner's omlx-server holding
-  `*:8000` (owner confirmed, stopped it) — environmental, not a defect. #167
-  can't fire from-empty; not seen. No dev servers left running.
-- **Round 1 (Codex, GPT 5.6 Sol): NO-GO, 2×P3 — both actioned at `d356ef1`.**
-  P3-1: the bridge runtime matrix covered one of three reachable codes per
-  bridge; a probe param on the `quantity_too_large` raise rode through 34/34
-  green (reproduced at `7fc20d6` first). Matrix now drives every reachable
-  outcome (small/large quantity, aggregate fan-out against a real order,
-  starter-sheet cell + both quantity ends); both probe mutations
-  (`quantity_too_large`, `order.fanout_limit`) re-measured killed; stale
-  `_BORROWED` docstring fixed. Backend **1230** at `d356ef1`. P3-2: the PR
-  body's "additive wire change" claim overruled and amended in place —
-  **the 0.2.9 release notes owe one compatibility line**: order-match
-  ambiguity moved from `import.match_ambiguous` to
-  `import.order_match_ambiguous`.
-- **Round 2 (Codex): GO, no new findings** — replayed both probe mutations
-  at `cfeb9ee` (exact undeclared-key failures, byte-identical restores, 16/16
-  then 1230/1230 green) and independently re-derived the bridge-code
-  enumeration: `_borrowed_diagnostic` ⊇ {quantity_too_small, quantity_too_large,
-  order.fanout_limit}, `_row_problem` ⊇ {cell_invalid, both quantity codes} —
-  the matrix drives every member. P3-2's amendment judged durable.
-- **Next:** fold the **`oma-` mutant set** (queued in the PR #180 body) into
-  `mutation_test.py` — re-check anchors, and whether the clean-tree/restore
-  cover reaches the fixture and test files it mutates the way #151 extended it
-  to `alembic/`. Then the **0.2.9-alpha release gate** (`testing-and-review.md`)
-  — **the release notes owe one compatibility line**: order-match ambiguity
-  moved from `import.match_ambiguous` to `import.order_match_ambiguous` (a
-  client switching on the old code over order rows loses that branch). #179
-  (raise-side catalogue-drop siblings) is filed, unscheduled. M6 not begun.
-  LXC: **back up before pulling** (real collection; 0.2.8's settings migration
-  still pending there, and zone/locale need setting after the M5.1 upgrade —
-  see the `4bd98c0` entry). After merge: fold
-  the `oma-` set into the harness (re-check anchors, and whether the
-  clean-tree/restore cover reaches the fixture and test files it mutates the
-  way #151 extended it to `alembic/`). Then the 0.2.9-alpha release gate
-  (M5.1 theme) from `testing-and-review.md`; M6 not begun. LXC: **back up
-  before pulling** (real collection; 0.2.8's settings migration still pending
-  there, and the instance zone/locale need setting after the M5.1 upgrade —
-  see the `4bd98c0` entry).
-
 ---
-
