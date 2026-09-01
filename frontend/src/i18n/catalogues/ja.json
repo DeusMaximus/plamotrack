@@ -116,7 +116,7 @@
       "kit_name_exists_other": "「{{name}}」というキットはすでに{{countDisplay}}個あります。同じキットが2つある場合は2つのキットとして扱われるため、インポートするとさらに追加されます。",
       "kits_not_removable": "この行の数量により{{surplus}}個のキットを削除する必要がありますが、安全に削除できるのは{{removable}}個のみです。残りは進行中か、このアップロードで記述されています。先にそれらのキットを移動・編集するか、数量をそのままにしてください。",
       "kits_oversupplied": "この行の数量は{{stated}}ですが、このアップロードではkits.csvに{{supplied}}個のキットが含まれています。余分なキットの行を削除するか、それに合わせて数量を増やしてください。",
-      "kits_receive_advance_other": "この注文を受領済みにすると、{{countDisplay}}個のキットがバックログに移動します。",
+      "kits_receive_advance_other": "この注文を受領済みにすると、{{countDisplay}}個のキットが未組立に移動します。",
       "kits_removal_planned_other": "この行から{{countDisplay}}個のキットを削除します。",
       "kits_ship_advance_other": "この注文を発送済みにすると、{{countDisplay}}個のキットが配送中に移動します。",
       "kits_spawn_planned_other": "この行から{{countDisplay}}個のキットを作成します。",
@@ -192,7 +192,7 @@
       "kits_protected": "この行で要求された{{requested}}個のキットのうち、安全に削除できるのは{{deletable}}個のみです。残りは組み立て中か完了、評価済み、写真あり、またはアップグレードが適用されています。先にそれらのキットを移動または編集してください。",
       "no_kit_to_clone": "この行には詳細をコピーできるキットがありません。キットの詳細を入力して追加してください。",
       "not_on_order": "行の一つがこの注文のものではありません。",
-      "order_immutable": "行の注文先は変更できません（購入履歴になります）。order_idはそのままにし、別の注文に意図した行を追加してください。",
+      "order_immutable": "この行が属する注文は変更できません（購入履歴になります）。order_idはそのままにし、別の注文に意図した行を追加してください。",
       "quantity_too_large": "数量が{{quantity}}です。1行につき最大{{maximum}}個までです。複数の行に分割してください。",
       "quantity_too_small": "数量が{{quantity}}です。少なくとも1以上である必要があります。記録しない場合は行を削除してください。"
     },
@@ -204,7 +204,7 @@
       "not_found": "その購入先は存在しません。"
     },
     "settings": {
-      "field_required": "{{field}}には常に値が必要です。現在の値を維持する場合は空白にしてください。",
+      "field_required": "{{field}}には常に値が必要です。現在の値を維持する場合は、この項目を指定しないでください。",
       "value_invalid": "それは{{field}}の有効な値ではありません。"
     },
     "stock": {
@@ -220,8 +220,8 @@
     }
   },
   "board": {
-    "buildPipeline": "組み立ての進行",
-    "ordersPipeline": "注文の進行",
+    "buildPipeline": "組み立て状況",
+    "ordersPipeline": "注文状況",
     "buildView": "組み立て",
     "ordersView": "注文",
     "received": "受領済み",
@@ -234,7 +234,7 @@
     "pre_ordered": "予約済み",
     "ordered": "注文済み",
     "in_transit": "配送中",
-    "backlog": "バックログ",
+    "backlog": "未組立",
     "building": "組み立て中",
     "complete": "完了"
   },
@@ -281,15 +281,15 @@
   },
   "wouldOrderAgain": {
     "yes": "はい",
-    "maybe": "おそらく",
+    "maybe": "場合による",
     "no": "いいえ"
   },
   "dateStyle": {
     "locale": "ロケールのデフォルト",
-    "short": "短い",
+    "short": "短",
     "medium": "中",
-    "long": "長い",
-    "full": "完全"
+    "long": "長",
+    "full": "フル"
   },
   "hourCycle": {
     "locale": "ロケールのデフォルト",
@@ -324,7 +324,7 @@
     "upgrades": "アップグレードパーツ",
     "display_items": "ディスプレイアイテム",
     "orders": "注文",
-    "order_items": "注文行",
+    "order_items": "注文明細",
     "kits": "キット",
     "upgrade_applications": "アップグレードパーツの適用",
     "kit_photos": "写真",
@@ -348,7 +348,7 @@
   "importField": {
     "id": "ID",
     "interface_language": "インターフェース言語",
-    "formatting_locale": "フォーマットのロケール",
+    "formatting_locale": "地域フォーマット",
     "time_zone": "タイムゾーン",
     "date_style": "日付のスタイル",
     "hour_cycle": "時間制",
@@ -358,7 +358,7 @@
     "rating": "評価",
     "packing_quality": "梱包の質",
     "shipping_speed": "配送の速さ",
-    "would_order_again": "再び注文するか",
+    "would_order_again": "次回も利用したいか",
     "notes": "メモ",
     "category": "カテゴリ",
     "quantity_on_hand": "手持ちの数量",
@@ -437,7 +437,7 @@
     "loadFailed": "購入元の読み込みに失敗しました: {{message}}",
     "url": "URL",
     "overallRating": "総合評価 (1–5)",
-    "wouldOrderAgain": "再び注文するか",
+    "wouldOrderAgain": "次回も利用したいか",
     "packingQuality": "梱包の質",
     "shippingSpeed": "配送の速さ",
     "notes": "メモ",
@@ -445,7 +445,7 @@
     "headerRating": "評価",
     "headerPacking": "梱包",
     "headerShipping": "配送",
-    "headerAgain": "また買う？",
+    "headerAgain": "次回も？",
     "empty": "購入元はまだありません。購入場所を追加してください。"
   },
   "kits": {
@@ -641,7 +641,7 @@
     "shippedCorrectHelp": "これを修正すると、その発送でまだ配送中のキットの日付も修正されます。すでに移動されたキットはそれぞれの日付を保持します。",
     "shippedSetHelp": "日付を設定すると注文が発送済みになり、購入元を待っているキットが配送中に移動します。まだ発送されていない場合は空白にしてください。",
     "receivedCorrectHelp": "これを修正すると、この配送で届いたキットの日付も修正されます。ただし、その後移動されたキットはそれぞれの日付を保持します。",
-    "receivedSetHelp": "日付を設定すると注文が受領済みになり、在庫が追加され、進行中のキットがバックログに移動します。まだ到着していない場合は空白にしてください。",
+    "receivedSetHelp": "日付を設定すると注文が受領済みになり、在庫が追加され、予約済み・注文済み・配送中のキットが未組立に移動します。まだ到着していない場合は空白にしてください。",
     "itemsHeading": "アイテム",
     "addLine": "+ 行を追加",
     "editLinesHelp": "ここで変更したキットの詳細は、この行から作成されたすべてのキットに適用されます。変更しなかった項目は各キットの現在の状態を維持します。行を削除するとその操作が取り消されます（キットが削除され、在庫が戻ります）。組み立て中/完了、評価済み、または写真のあるキットは保護されます。",
@@ -709,7 +709,7 @@
       "currentTitle": "言語とフォーマット",
       "currentDescription": "インスタンス全体に保存されます。すべての場所の日付、時刻、数値はここで選択したものに従って再レンダリングされます。",
       "interfaceLanguage": "インターフェース言語",
-      "formattingLocale": "フォーマットのロケール",
+      "formattingLocale": "地域フォーマット",
       "timeZone": "タイムゾーン",
       "dateStyle": "日付のスタイル",
       "hourCycle": "時間制",
