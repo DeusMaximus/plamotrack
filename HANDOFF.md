@@ -41,6 +41,31 @@ Template:
 
 ---
 
+## 2026-08-31 — GPT-5.6 Sol (OpenAI) — Translation contribution guide expanded
+
+- **Done:** Expanded `docs/translating.md` into a self-contained contributor
+  guide for the shipped M5.1 design: interface language versus independent
+  regional formatting; the synchronous manifest → registry → i18next →
+  settings runtime path; catalogue structure, placeholders, CLDR plurals and
+  untranslated identifiers; exact disabled and enabled language changes;
+  local checks; and enablement, update and human-review expectations. Named the
+  coverage trap where copied-but-untranslated English values look complete.
+  GLM 5.3 Flash reviewed PR #183 at `1e53a12`: **GO with three wording-level
+  P3s**. All reproduced and corrected — value/placeholder terminology, the
+  validator's group-wide plural-placeholder contract, and enabled-versus-disabled
+  coverage drift; its locale-extension carve-out was documented too.
+- **Decisions:** Documentation only — no application or catalogue changes.
+  Partial translations remain welcome but disabled, omit untranslated leaves
+  or whole plural groups, and use the `en-AU` fallback. A new formatting locale
+  requires no registry entry; `Intl` consumes the stored canonical locale.
+- **State:** Documentation-only PR **#183** is open from
+  `codex/translation-contribution-guide`, based on `main` at `378d736`.
+  Verification: frontend **469 passed**, i18n report **604/604** `en-AU`, lint
+  and production build green; backend settings **69 passed**; `git diff
+  --check` clean. No application code changed.
+- **Next:** Await the owner's merge call after the review corrections and
+  attributed PR reply; M6 remains the next product milestone.
+
 ## 2026-08-29 — GPT-5.6 Sol (OpenAI) — Documentation drift corrected
 
 - **Done:** Corrected the verified documentation drift at `392172d`: the README
@@ -213,32 +238,5 @@ Template:
   `api-error-codes.json` and pinned by nothing) is unstarted — the `apiError.ts`
   comment describing that gap predates the number and should gain the `#178`
   reference when someone next touches the file.
-
-## 2026-08-28 — GPT-5 Codex (OpenAI) — #176 ready for independent review
-
-- **Done:** Branch `codex/176-m51-localisation-gaps` implements #176 without
-  migrations or API/CSV/data-model changes. Known portable field/table/action/
-  matching values render through catalogue labels with unknown raw fallbacks;
-  change rows use the same field helper. `request.validation` renders known
-  `{field,type}` findings from `validation.request.*` and retains each unknown
-  type's English `detail`. Counts keep raw `count` for plural selection while
-  `countDisplay` uses the instance locale; the sweep covers import previews and
-  results, diagnostics, order/kit/stock summaries, Board pills, and file size.
-  `border-r` is now logical `border-e`; whitespace-only manifest native names
-  are invalid; README/design/operations and nearby comments describe shipped
-  M5.1 and its real limits/upgrade effects.
-- **Decisions:** Preserve canonical API/MCP/database/CSV values, user-entered
-  data, and English error detail on the wire; localisation is browser-boundary
-  presentation only. One cohesive PR: all changes share that boundary.
-- **State:** Direct pre-fix controls: 7 failures across the target frontend
-  tests. Final: backend `1225 passed` (2 known zipfile duplicate-name warnings),
-  frontend `449 passed`, lint/build green, and fresh-DB Playwright `39 passed,
-  1 skipped`, tables zero; test DB removed. Mutations killed: count display,
-  field/table/item/action/matching labels, request validation, RTL, manifest
-  trim, and file-size formatter. No full backend mutation harness run: no
-  backend emission sites changed. Working tree is ready to commit/push/open PR.
-- **Next:** independent GLM 5.3 Flash review from the PR brief, re-measuring
-  negative controls and mutation claims before any merge/release. Do not begin
-  M6, version/tag/release work, or merge this PR before that gate.
 
 ---
