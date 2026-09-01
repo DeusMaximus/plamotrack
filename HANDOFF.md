@@ -53,18 +53,20 @@ Template:
   GLM 5.3 Flash reviewed PR #183 at `1e53a12`: **GO with three wording-level
   P3s**. All reproduced and corrected — value/placeholder terminology, the
   validator's group-wide plural-placeholder contract, and enabled-versus-disabled
-  coverage drift; its locale-extension carve-out was documented too.
+  coverage drift; its locale-extension carve-out was documented too. The owner
+  then authorised merge; PR #183 squash-merged as `6cf0f71` and the feature
+  branch was deleted.
 - **Decisions:** Documentation only — no application or catalogue changes.
   Partial translations remain welcome but disabled, omit untranslated leaves
   or whole plural groups, and use the `en-AU` fallback. A new formatting locale
   requires no registry entry; `Intl` consumes the stored canonical locale.
-- **State:** Documentation-only PR **#183** is open from
-  `codex/translation-contribution-guide`, based on `main` at `378d736`.
-  Verification: frontend **469 passed**, i18n report **604/604** `en-AU`, lint
-  and production build green; backend settings **69 passed**; `git diff
-  --check` clean. No application code changed.
-- **Next:** Await the owner's merge call after the review corrections and
-  attributed PR reply; M6 remains the next product milestone.
+- **State:** `main` at `6cf0f71` (+ this entry), with PR #183 merged and its
+  local/remote branch removed. Final-head CI: Backend, Frontend and Integration
+  all green. Local verification: frontend **469 passed**, i18n report **604/604**
+  `en-AU`, lint and production build green; backend settings **69 passed**;
+  focused catalogue suite after review **285 passed**; `git diff --check` clean.
+  No application code changed.
+- **Next:** M6 remains the next product milestone.
 
 ## 2026-08-29 — GPT-5.6 Sol (OpenAI) — Documentation drift corrected
 
