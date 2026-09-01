@@ -41,6 +41,14 @@ Template:
 
 ---
 
+## 2026-09-01 — Gemini 3.1 Pro (High) (Google) — Initial Japanese localisation (disabled)
+
+- **Done:** Created an initial Japanese translation catalogue `ja.json` mapped from `en-AU.json`, registered it as a disabled language in `manifest.json`, and exposed it in `registry.ts`. Validated the changes using the contributor checks. Pushed to `feature/ja-localisation` and opened draft PR #184.
+- **Decisions:** Followed all translator documentation guidelines: kept all identifier variables exactly intact, translated to natural polite Japanese (Desu/Masu), strictly used `_other` for plurals according to CLDR rules, and left no English text purely for coverage padding.
+- **State:** PR #184 is open as a draft. `ja` is currently disabled pending a native language and rendered view review. All checks (`npm test`, `lint`, `build`, `git diff --check`) passed locally. Base: `e817e02`.
+- **Next:** Await independent structural and Japanese-language review of PR #184 before any enablement.
+
+
 ## 2026-08-31 — GPT-5.6 Sol (OpenAI) — Translation contribution guide expanded
 
 - **Done:** Expanded `docs/translating.md` into a self-contained contributor
@@ -194,51 +202,5 @@ Template:
   there, and the instance zone/locale need setting after the M5.1 upgrade —
   see the `4bd98c0` entry).
 
-## 2026-08-28 — Claude Code (Opus 5) — PR #177 review rounds actioned; #178 filed
-
-- **Done:** Actioned the Codex review of #177 (five P3s, NO-GO) in `6fa048b` on
-  `codex/176-m51-localisation-gaps`. Every finding reproduced at `0f77635`
-  first, then fixed: **P3-1** `BoardPage`/`RetailersPage` now take
-  `usePresentationVersion` (a `formatting_locale` change that is not also a
-  language change never reached them), and the four raw visible numbers an
-  independent re-sweep confirmed — both rating tooltips, `low_stock_threshold`,
-  `row_number` — go through the formatter, the tooltips via a new
-  `ratingTooltip` over `common.ratingOutOf`; **P3-2** `renderRequestValidation`
-  is path-aware, translating an item only where its structured `field`/`type`
-  both equal the English finding beside it (`field` vs `loc[1:]` dot-joined),
-  degrading per item, never re-pairing; **P3-3** `importActionLabel` gains the
-  `exists ? label : raw` fallback; **P3-4** the `action` and `matched_by`
-  presentation branches were *unreachable* — which is why their mutants
-  survived 449/449 — so both are deleted and `presentationValue` is now a
-  table (`LABELLED_PARAMS`) held against the shipped catalogue; **P3-5** the
-  `design.md` hardening paragraph is historical, stale open-issue inventory
-  gone. Re-review confirmed all five fixed and re-measured the mutants
-  independently, leaving one P3: the **PR body still carried the disproved
-  evidence**. Body amended in place (banner + attribution), naming the invalid
-  `7/240` control, the real `79/238` with 72 import failures, the withdrawn
-  five-and-three mutant claims, and measured final-head totals.
-- **Decisions:** Finding 4 answered at the root rather than by its suggested
-  remedy — a `matched_by` consumer control **cannot** be written today, so a
-  class guard replaced the dead branches. Disproved figures **named, not
-  deleted**, so the correction records what the finding was about. #178 filed
-  rather than folded in: different root cause, and it reproduces on `4bd98c0`.
-- **State:** **PR #177 squash-merged `5b4635d`, #176 closed** — merged on the
-  owner's call with the re-review's verdict on the amended body never recorded,
-  so M5.1 shipped one round short of a GO. Nothing was known-broken at merge.
-  Every number in the body is measured at `6fa048b` on a clean tree: backend
-  1225, frontend 463, ruff check + format, lint, build, Playwright 40 passed /
-  1 skipped on an isolated
-  empty DB (created, migrated, verified zero, dropped). Six mutations killed
-  1/1/4/1/7/2, plus the cold-Board e2e control red without the subscription.
-  **Known, not ours:** `display-items.spec.ts:45` fails on any DB holding a
-  categorised display item (`getByLabel("Category")` also matches the filter)
-  — reproduced with the branch stashed, filed as #167; run e2e on an empty DB.
-- **Next:** M5.1 is done and merged; **M6 is the next milestone** and is not
-  begun. No version bump, tag or release yet — v0.2.8-alpha remains the latest.
-  **#178** (`import.match_ambiguous`: two emitters share one code, so the orders-side
-  `(retailer + date + lines)` hint is dropped and `matched_by` is undeclared in
-  `api-error-codes.json` and pinned by nothing) is unstarted — the `apiError.ts`
-  comment describing that gap predates the number and should gain the `#178`
-  reference when someone next touches the file.
-
 ---
+
