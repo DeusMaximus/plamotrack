@@ -54,8 +54,8 @@ Template:
   Partial translations remain welcome but disabled, omit untranslated leaves
   or whole plural groups, and use the `en-AU` fallback. A new formatting locale
   requires no registry entry; `Intl` consumes the stored canonical locale.
-- **State:** Documentation-only branch `codex/translation-contribution-guide`,
-  based on clean `main` at `378d736`; the owner authorised commit, push and PR.
+- **State:** Documentation-only PR **#183** is open from
+  `codex/translation-contribution-guide`, based on `main` at `378d736`.
   Verification: frontend **469 passed**, i18n report **604/604** `en-AU`, lint
   and production build green; backend settings **69 passed**; `git diff
   --check` clean. No application code changed.
