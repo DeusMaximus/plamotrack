@@ -9,8 +9,9 @@ translated catalogue does not contain a key, the interface renders that key in
 Australian English rather than showing a blank label or a raw key.
 
 > **Status:** every page's copy is served from the catalogue (#22). New
-> features add keys as they land, so an existing translation may drift below
-> 100% between releases. `npm run i18n:report` shows what needs topping up.
+> features add keys as they land, so a disabled, in-progress translation may
+> drift below 100% between releases. Enabled translations must stay at 100% in
+> the same change. `npm run i18n:report` shows what needs topping up.
 
 ## Translation and regional formatting are separate
 
@@ -27,10 +28,14 @@ date formatting. Selecting a language offers its tag as a convenient formatting
 locale, but never changes the formatting setting automatically.
 
 Adding `ja` as an interface language therefore does **not** require a separate
-list of Japanese formatting rules. A well-formed locale such as `ja`, `ja-JP`
-or `en-NZ` is already accepted as `formatting_locale`; the browser's `Intl`
-implementation supplies the formatting data. The time zone remains an
-independent IANA name such as `Asia/Tokyo`.
+list of Japanese formatting rules. A locale such as `ja`, `ja-JP` or `en-NZ`
+is already accepted as `formatting_locale`; the browser's `Intl`
+implementation supplies the formatting data. plamotrack accepts canonical
+language, script, region and variant subtags, but not `-u-` extensions or
+`-x-` private-use subtags: extensions can smuggle calendar or hour-cycle
+behaviour into the locale, while plamotrack keeps the locale extension-free and
+stores hour cycle separately. The time zone remains an independent IANA name
+such as `Asia/Tokyo`.
 
 In short, a new disabled translation changes three places; enabling it changes
 a fourth:
@@ -111,9 +116,13 @@ sentence without changing the code that asks for it.
 ### Interpolation
 
 Interpolation uses semantic camelCase placeholders such as `{{name}}` or
-`{{countDisplay}}`. A translation must use exactly the same placeholder set as
-the corresponding `en-AU` value. Reordering placeholders is fine; omitting one,
-renaming one, or adding one is an error.
+`{{countDisplay}}`. For a non-plural key, a translation must use exactly the
+same placeholder set as the corresponding `en-AU` value. For a plural group,
+the validator compares the placeholder set across the group as a whole because
+the target language may have different CLDR categories from English: the target
+group collectively must use exactly the same placeholders as the `en-AU` group.
+Reordering placeholders is fine; omitting one from the group, renaming one, or
+adding one is an error.
 
 ```json
 {
@@ -169,10 +178,10 @@ categories for the new language.
 If the first contribution is intentionally incomplete, remove untranslated
 non-plural leaves and whole untranslated plural groups before submitting it.
 Keep every included plural group complete for the target language. Coverage
-measures the presence of keys, not the language of their values, so leaving
-English placeholders in every untranslated entry would misleadingly report
-100%. Keep an English value only when it is genuinely the correct wording or
-borrowing in the target language.
+measures the presence of keys, not the language of their values, so leaving the
+English values in every untranslated entry would misleadingly report 100%.
+Keep an English value only when it is genuinely the correct wording or borrowing
+in the target language.
 
 ### 2. Add the manifest entry
 

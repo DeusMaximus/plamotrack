@@ -50,6 +50,10 @@ Template:
   untranslated identifiers; exact disabled and enabled language changes;
   local checks; and enablement, update and human-review expectations. Named the
   coverage trap where copied-but-untranslated English values look complete.
+  GLM 5.3 Flash reviewed PR #183 at `1e53a12`: **GO with three wording-level
+  P3s**. All reproduced and corrected — value/placeholder terminology, the
+  validator's group-wide plural-placeholder contract, and enabled-versus-disabled
+  coverage drift; its locale-extension carve-out was documented too.
 - **Decisions:** Documentation only — no application or catalogue changes.
   Partial translations remain welcome but disabled, omit untranslated leaves
   or whole plural groups, and use the `en-AU` fallback. A new formatting locale
@@ -59,8 +63,8 @@ Template:
   Verification: frontend **469 passed**, i18n report **604/604** `en-AU`, lint
   and production build green; backend settings **69 passed**; `git diff
   --check` clean. No application code changed.
-- **Next:** Independent review and merge after the PR opens; M6 remains the next
-  product milestone.
+- **Next:** Await the owner's merge call after the review corrections and
+  attributed PR reply; M6 remains the next product milestone.
 
 ## 2026-08-29 — GPT-5.6 Sol (OpenAI) — Documentation drift corrected
 
