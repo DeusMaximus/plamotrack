@@ -41,6 +41,45 @@ Template:
 
 ---
 
+## 2026-09-02 — Claude Code (Fable 5.1) — M6 begun: threat model + route matrix (PR #185, #29)
+
+- **Done:** `docs/design.md` §5 rewritten as the M6 threat model and route
+  authorization matrix: current state (5.1), assets and actors (5.2–5.3), four
+  deployment modes L/P/R/Dev (5.4), five principals × three scopes × thirteen route
+  families with app-vs-ingress columns (5.5), fourteen threat rows + safe failure
+  (5.6), what loopback keeps (5.7), the thirteen gating tests T1–T13 (5.8), a
+  ten-issue implementation split (5.9); pointer edits in §4 and §11. Branch
+  `feature/m6-threat-model`, **PR #185 open at head `81ff6bb`** (not draft), for a
+  Codex round per the roster (M6 = Codex lane). Two §5.1 claims were probed rather
+  than asserted: JSON sent as `text/plain`, as a form, or with no `Content-Type`
+  returns 422 on `POST /retailers`; FastMCP's OAuth route set was read from the
+  pinned libraries.
+- **Decisions (proposed in the doc; the owner approves via the PR):** every mode
+  authenticates, no `AUTH_MODE=disabled` in the image; `instance:admin` = owner
+  session only, no admin PATs in M6; `/meta`, OpenAPI and docs → `collection:read`;
+  `GET /auth/session` is the anonymous bootstrap; `import/preview` + `mode=merge` →
+  write, `replace_all` → admin; MCP OAuth tokens audience-bound to `/mcp`, PATs valid
+  on both surfaces; `/readyz` → loopback TCP peer only, nginx 404 on top;
+  loopback-origin-vs-loopback-host accepted (dissolves the Vite `changeOrigin` trap);
+  CSRF = `SameSite=Lax` + Origin/Referer + session token, independent of `plan_hash`;
+  anonymous unrouted `/api/*` → 401; the Host/Origin guard (absorbs #39) ships as
+  **its own release** before any auth; cookie `Secure`/`__Host-` only on an https
+  `PUBLIC_BASE_URL`; mode P (plain HTTP, private network) supported with the
+  cleartext caveat. Nothing in #30's credential thread was re-decided.
+- **State:** `main` at `172512e` + this entry. PR #185 is docs-only — no code, no
+  migration, no suites run; `git diff --check` clean, table columns checked by
+  script. Dev `db` container is up (started for the probe). Working tree parked on
+  `main` for the review window. PR #184 (`ja`, draft) unchanged, awaiting a native
+  reviewer.
+- **Next:** (1) owner reads §5 and rules on the twelve "Deliberate calls" in the PR
+  body; (2) Codex review round — the brief was printed in the session chat, re-fill
+  it from `.agents/review-brief.md` if lost; (3) on merge, **file the ten §5.9
+  issues** under `M6 — Secure remote access` with their dependencies, close #29,
+  and mark #39 absorbed by item 1; (4) the first implementation branch is §5.9
+  item 1 (ingress identity + Host/Origin guard) — its own release, nothing rides
+  with it. LXC: still pre-0.2.9, **back up before pulling** (two migrations
+  pending) — unchanged from the 29/08 entry.
+
 ## 2026-09-02 — GPT-5 Codex (OpenAI) — PR #184 Japanese editorial review completed
 
 - **Done:** Finalised the disabled Japanese catalogue on PR #184 at `0470285`.
@@ -116,41 +155,5 @@ Template:
   kit-only receipt directions, archive manifest shape/version, and `/meta`
   language advertisement). `git diff --check` clean; no application code changed.
 - **Next:** Review and commit the documentation update when the owner is satisfied.
-
-## 2026-08-29 — Claude Code (Fable 5) — v0.2.9-alpha RELEASED (the M5.1 theme); oma- set folded (#181)
-
-- **Done:** **#181 merged `df2702a`** — oma-1..7 in the tracked harness (7/7
-  killed at fold-in; first targets outside `app/`, so the clean-tree check now
-  covers the registry fixture — a dirtied fixture refusing the run was
-  controlled before the counted run; `testing-and-review.md` corrected to the
-  measured **251 cases over twenty-six target files**). **Bump PR #182 merged
-  `f509c60`**; the release gate ran clean: M5.1 milestone 0 open / 8 closed
-  (#179 unscheduled by design, no milestone); `GET /meta` **and** the MCP
-  handshake's `serverInfo.version` both report 0.2.9; packaged stack built
-  from `f509c60` — four services healthy, `migrate` Exited (0), `/api/meta`
-  right, container-side export manifest carries `app_version 0.2.9` +
-  `schema_version f9979ec7b9cb`; dev overlay restored after. **Tag
-  `v0.2.9-alpha` pushed, release published `--prerelease`** (owner authorised
-  this release explicitly). Notes lead with the data-facing changes: set
-  Settings → Language & region right after upgrading; #114's naive-CSV
-  time-zone change; the #178 `import.match_ambiguous` →
-  `import.order_match_ambiguous` compatibility line.
-- **Decisions:** packaged-stack `migrate` was a **no-op** — the compose volume
-  was already at `f9979ec7b9cb` from this session's dev use — and I did not
-  `down -v` to force a from-empty run: the volume holds the (throwaway but in
-  use) dev collection, and from-empty coverage of the migration exists in
-  every pytest session (downgrade base → upgrade head), the from-empty e2e
-  DB, and the `mig-` harness cases.
-- **State:** `main` at `f509c60` (+ this entry), CI green at every head
-  including the merge and the bump. Suites at the tag: backend **1230**,
-  vitest **469**, from-empty e2e **40 + 1 skipped**. No dev servers running
-  (the session's preview pair was stopped for the packaged-stack step).
-- **Next:** **M6 — secure remote access** (Codex-lane reviews per the
-  roster) is the next milestone; M6.5/M7/M8 queue behind it. **LXC: BACK UP
-  FIRST**, then pull/upgrade — it has **two migrations pending**
-  (`2c97a5ced66a` display-items and `f9979ec7b9cb` settings; the old
-  hand-off phrase "0.2.8's settings migration" was wrong — the settings
-  singleton ships in 0.2.9), then **set Settings → Language & region
-  immediately** or rendering and naive CSV imports stay UTC/en-AU.
 
 ---
