@@ -41,6 +41,50 @@ Template:
 
 ---
 
+## 2026-09-03 — Claude Code (Fable 5.1) — #187 (M6-2) PR #198 open: Codex rounds 1–2 addressed, round 3 pending
+
+- **Done:** Branch `feature/m6-2-auth-foundation`, PR #198 (closes #187): `dd7e53e` the
+  foundation (principal model, route policy registry, default-deny dependency behind
+  `create_app(authorization=True)`, five auth tables + migration `f1058c5de0f3`, the
+  import-admin predicate), `66a2e04` the nginx `/api` rejection list generated from the
+  registry, `b2a82b2` the Codex round-1 fixes (Opus 4.8: no-store via a response
+  middleware, the mounted-surface snapshot, the write-only principal). **Round-2 fix at
+  `6354dad`** (Fable 5.1) — both P3s accepted, the invariants moved one level up:
+  (1) `ResponseProfileMiddleware` *enforces* the declared `Cache-Control` on the final
+  response: every handler/library line replaced, case-insensitive on the raw key,
+  `no-transform` alone kept beside `no-store` (`KEPT_BESIDE_NO_STORE`), `ResponseProfile.
+  cache_control` the single source, `no_store`+`cache` refused. The sweep found the `/mcp`
+  mount declared `no_store` and unstamped (the SDK's `no-cache, no-transform` stood) →
+  `RouteIndex.response_profile_for` covers mounted endpoints; `policy_for` stays REST-only.
+  (2) `build_route_index` refuses ambiguous graphs (`DuplicateRouteError`: a shadowed
+  dispatch entry with parameter names erased, a `*` beside a verb, a shared endpoint),
+  refuses unknown route types, descends nested mounts, treats a bare-callable mount as a
+  leaf, *declares* mounted routes (`_classify_mounted`); the transport's verbs and every
+  REST path are pinned behaviourally (405 exactly off the literal snapshot, `Allow`
+  checked). `AGENTS.md` rule 13 and design §5.9 items 2/7 updated. HANDOFF rotated
+  (the 2026-09-01 entry → `.agents/handoff/2026-09.md`, new file).
+- **Decisions:** `no-transform` is the one directive retained beside `no-store` (the SSE
+  stream through nginx); a 500 from `ServerErrorMiddleware` is not stamped (generic text
+  only); overlap by specificity (`/kits/series` before `/kits/{kit_id}`) is allowed,
+  duplication refused; the `auth-` mutant set stays queued for a post-merge fold-in (#197
+  precedent), tuples in the PR body. Shipped app still unenforced (owner's
+  foundation-first call, 03/09).
+- **State:** four auth modules 130 (77/7/42/4); full backend 1600 passed; frontend 473,
+  lint + build green; ruff clean; `render_ingress.py --check` up to date. Mutants: 15
+  single-site, all killed (auth-15 survived the first run — a dead second copy of the
+  `no-store` literal in the middleware, fixed — then 10 failed); Codex's three graph
+  probes replayed in their original shape, all refused. Migration unchanged since round
+  1. PR body amended (round-2 section, mutant table + tuples); the round-2 reply and a
+  round-3 brief are drafted in the session scratchpad — **posting/editing on GitHub
+  awaits the owner's go**.
+- **Next:** (1) post the round-2 reply, apply the PR-body amendment, run Codex round 3
+  with the brief; (2) on GO, squash-merge #198 (`Closes #187`), then fold the `auth-`
+  tuples into `mutation_test.py` (harness-only PR, no external review, per #197);
+  (3) #188 (session auth) next — its activation checklist carries the family-13 and
+  parser-stage items Codex named (unrouted `/api/*` 404 → 401; malformed JSON 422
+  before the dependency); #190 (the OAuth spike) can run in parallel. (4) **The LXC
+  stays put until M6 is finished** (owner, 03/09) — needs `ALLOWED_HOSTS` before its pull.
+
 ## 2026-09-03 — Claude Code (Opus 4.8) — #187 (M6-2) auth foundation — PR #198 OPEN, Codex round 1 addressed (`b2a82b2`)
 
 - **Done:** M6-2 auth foundation on `feature/m6-2-auth-foundation` (commits
@@ -305,13 +349,3 @@ Template:
   restored to disabled; disposable DB, preview hook and servers were removed.
 - **Next:** Native Japanese hobbyist review. Do not enable or merge the language
   solely on the LLM reviews; action any human findings on this same PR first.
-
-
-## 2026-09-01 — Gemini 3.1 Pro (High) (Google) — Initial Japanese localisation (disabled)
-
-- **Done:** Created an initial Japanese translation catalogue `ja.json` mapped from `en-AU.json`, registered it as a disabled language in `manifest.json`, and exposed it in `registry.ts`. Validated the changes using the contributor checks. Pushed to `feature/ja-localisation` and opened draft PR #184. Fixed NO-GO review findings from GPT 5.6 Sol (P3-1 through P3-6) at head `0d3dbf9`.
-- **Decisions:** Followed all translator documentation guidelines: kept all identifier variables exactly intact, translated to natural polite Japanese (Desu/Masu), strictly used `_other` for plurals according to CLDR rules, and left no English text purely for coverage padding.
-- **State:** PR #184 is open as a draft. `ja` is currently disabled pending a native language and rendered view review. All checks (`npm test`, `lint`, `build`, `git diff --check`) passed locally. Head is `0d3dbf9`.
-- **Next:** Await independent structural and Japanese-language review of PR #184 before any enablement.
-
----
