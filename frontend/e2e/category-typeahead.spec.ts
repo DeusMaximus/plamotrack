@@ -1,4 +1,4 @@
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /**
  * #130 review, P3-4 — two new-item lines in one order dialog each get their OWN
@@ -13,7 +13,7 @@ import { expect, request, test } from "@playwright/test";
  * browser's answer, not the JSX's.
  */
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 const suffix = Date.now().toString(36);
 const TOOL = `E2E CatList Tool ${suffix}`;
 const CONSUMABLE = `E2E CatList Consumable ${suffix}`;
@@ -21,7 +21,7 @@ const TOOL_CATEGORY = `e2e-cat-tools-${suffix}`;
 const CONSUMABLE_CATEGORY = `e2e-cat-paint-${suffix}`;
 
 test("each new-item line resolves its own category vocabulary", async ({ page }) => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   await api.post("/tools", { data: { name: TOOL, category: TOOL_CATEGORY } });
   await api.post("/consumables", { data: { name: CONSUMABLE, category: CONSUMABLE_CATEGORY } });
   await api.dispose();
@@ -61,7 +61,7 @@ test("each new-item line resolves its own category vocabulary", async ({ page })
 });
 
 test.afterAll("clean up everything this run created", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const tools = (await (await api.get("/tools")).json()) as { id: string; name: string }[];
   for (const t of tools.filter((t) => t.name === TOOL)) await api.delete(`/tools/${t.id}`);
   const consumables = (await (await api.get("/consumables")).json()) as {

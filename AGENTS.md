@@ -331,11 +331,16 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     import's required privilege is read off its **plan's mutations** (`plan_requires_admin`)
     — an `instance_settings` UPDATE or a `replace_all` needs `instance:admin` in any mode;
     an unchanged or skipped settings sheet, or a collection-only plan, stays
-    `collection:write`. **Activation is staged:** `create_app(authorization=True)` installs
-    the dependency and the shipped `app` keeps it *off* until the credential mechanisms
-    exist (browser session #188, bearer #189) — the "foundation first, activate once
-    credentials work" sequencing (owner's call, 2026-09-03). The matrix (`tests/test_authorization.py`)
-    drives the real route graph through the dependency now, with injected principals.
+    `collection:write`. **Activation landed with M6-3 (#188):** the shipped `app` is
+    `create_app(authorization=True)` — default-deny — now that the browser session
+    exists to claim the owner and sign in; `create_app()` (the default off) is what the
+    ingress and packaged-stack harnesses build, and the test suite drives the shipped
+    app with an injected owner (`tests/conftest.py`). The staged sequencing ("foundation
+    M6-2, activate once a credential works", owner's call 2026-09-03) is complete for the
+    browser; the bearer (#189) is the next credential the resolver adds. The matrix
+    (`tests/test_authorization.py`) drives the real route graph through the dependency
+    with injected principals; `tests/test_auth_local.py` drives the shipped app through
+    the real session cookie.
     The registry's **response profile is enforced, not defaulted, adjacent to the
     router that selects the route**: for the app's own routes the response
     middleware — added *first*, so it is the innermost user middleware, with only

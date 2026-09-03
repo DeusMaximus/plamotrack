@@ -1,0 +1,63 @@
+"""Audit events (§5.6, log and audit hygiene; M6-3 writes the first rows, #193
+owns retention and the rest of the vocabulary).
+
+One row per security-relevant event, carrying who (the principal's kind and its
+credential subject — an id, never the secret), where from (the client address as
+resolved behind `TRUSTED_PROXIES`, the raw peer otherwise), and what (the route
+or tool, a short structured note). **Never a secret, never a request body.**
+Appended inside the caller's transaction, so an event and the state change it
+records commit or roll back together.
+"""
+
+from __future__ import annotations
+
+from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.requests import Request
+
+from app.auth.principal import Principal
+from app.ingress import CLIENT_ADDRESS_KEY
+from app.models import AuditEvent
+
+# --- the M6-3 vocabulary --------------------------------------------------------
+SETUP_CLAIMED = "auth.setup_claimed"
+SETUP_FAILED = "auth.setup_failed"
+LOGIN_SUCCEEDED = "auth.login_succeeded"
+LOGIN_FAILED = "auth.login_failed"
+LOGIN_THROTTLED = "auth.login_throttled"
+LOGGED_OUT = "auth.logged_out"
+SESSIONS_REVOKED = "auth.sessions_revoked"
+RECOVERY_RUN = "auth.recovery_run"
+
+
+def client_address_of(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    resolved = request.scope.get("state", {}).get(CLIENT_ADDRESS_KEY)
+    if resolved:
+        return resolved
+    client = request.scope.get("client")
+    return client[0] if client else None
+
+
+async def record_event(
+    session: AsyncSession,
+    event_type: str,
+    *,
+    principal: Principal | None = None,
+    request: Request | None = None,
+    target: str | None = None,
+    detail: str | None = None,
+    client_address: str | None = None,
+) -> AuditEvent:
+    """Append one event to the caller's transaction. `detail` is capped at the
+    column's 500 characters; nothing here ever formats a body or a secret into it."""
+    event = AuditEvent(
+        event_type=event_type,
+        principal_kind=principal.label if principal is not None else None,
+        principal_subject=principal.subject if principal is not None else None,
+        client_address=client_address or client_address_of(request),
+        target=target if target is not None else (request.url.path if request else None),
+        detail=detail[:500] if detail else None,
+    )
+    session.add(event)
+    return event

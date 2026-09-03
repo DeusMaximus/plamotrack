@@ -361,6 +361,18 @@ def _classify(route: EffectiveRoute) -> RoutePolicy | None:
             4, CredentialPolicy.READ, route.methods, _NO_STORE, spellings=api_spelling
         )
 
+    if "auth" in tags:
+        # Local authentication (§5.5 families 2–3; #188). Anonymous at the
+        # dependency: `GET /auth/session` bootstraps the SPA and each action does
+        # its own check (the setup token, the password, the presented session).
+        # `no-store` — the session response carries the CSRF token. Family 2 is
+        # the read, family 3 the actions; both are anonymous, so the split is
+        # documentation the matrix asserts, not a scope difference.
+        family = 2 if route.path == "/auth/session" else 3
+        return RoutePolicy(
+            family, CredentialPolicy.ANONYMOUS, route.methods, _NO_STORE, spellings=api_spelling
+        )
+
     if "settings" in tags:
         # GET is a collection read (family 4); PATCH reconfigures the instance and
         # is admin (family 6). A write token cannot change settings via REST.

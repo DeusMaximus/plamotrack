@@ -2,10 +2,23 @@
 §5.8; M6-1, #186).
 
     uv run python ingress_matrix.py [BASE_URL] [--allowed-host NAME]
+                                    [--setup-token TOKEN] [--password PASSWORD]
 
 BASE_URL defaults to http://127.0.0.1:8080. `--allowed-host` names an entry the
 stack's `.env` carries in ALLOWED_HOSTS, which enables T3's "a listed name" rows
 at the ingress layer; CI sets `ci.plamotrack.test`.
+
+Since the default-deny flip (M6-3, #188) the collection routes want a signed-in
+owner, so the matrix signs in first when told how: `--setup-token` with
+`--password` **claims** an unclaimed stack through `/api/auth/setup` — the token
+is the one the API printed to its log, which is what CI reads out of
+`docker compose logs api`, so the first-run path is exercised through the
+packaged ingress; `--password` alone signs into a claimed instance through
+`/api/auth/login`. Either way the positives then run cookie-borne, with the
+`Origin` and `X-CSRF-Token` a cookie-borne write owes (§5.6), and the session
+is signed out at the end. With neither flag the same rows expect the
+dependency's 401 — still a positive control for the ingress (a spelling nginx
+rejects never reaches the dependency), just not for the content behind it.
 
 What it proves, per row: the status; that no response carries a `Location`
 except nginx's own relative `/api` → `/api/` 301; that the security headers are
@@ -62,6 +75,26 @@ class Response:
 
     def json(self):
         return json.loads(self.body)
+
+
+@dataclass
+class Credential:
+    """The owner session the positives run under: the cookie the API set
+    (whichever name the scheme selected) and the session-bound CSRF token."""
+
+    cookie: str
+    csrf_token: str
+
+    def read(self) -> dict[str, str]:
+        return {"Cookie": self.cookie}
+
+    def write(self, origin: str | None) -> dict[str, str]:
+        """A cookie-borne write owes an Origin and the CSRF token (§5.6); the
+        Origin is the row's own concern, so None sends none."""
+        headers = {"Cookie": self.cookie, "X-CSRF-Token": self.csrf_token}
+        if origin is not None:
+            headers["Origin"] = origin
+        return headers
 
 
 @dataclass
@@ -136,7 +169,72 @@ def rejected(label: str, method: str, path: str, **kw) -> Row:
     return Row(label, method, path, 404, json_equals=JSON_404, **kw)
 
 
-def rows(allowed_host: str | None) -> list[Row]:
+def unauthenticated(label: str, method: str, path: str, **kw) -> Row:
+    """The dependency's refusal of an anonymous request to a guarded route —
+    proof the spelling reached the app (nginx's rejections are 404, the ingress
+    guard's are 403/421)."""
+    return Row(
+        label,
+        method,
+        path,
+        401,
+        json_code="auth.unauthenticated",
+        content_type="application/json",
+        **kw,
+    )
+
+
+def sign_in(base: str, *, setup_token: str | None, password: str) -> Credential:
+    """Claim (setup token given) or log in, through the ingress, and keep the
+    session the API set. Exits with the response when the stack refuses."""
+    parts = urlsplit(base)
+    origin = f"{parts.scheme}://{parts.netloc}"
+    if setup_token is not None:
+        path, payload = "/api/auth/setup", {"token": setup_token, "password": password}
+    else:
+        path, payload = "/api/auth/login", {"password": password}
+    row = Row(
+        "sign in",
+        "POST",
+        path,
+        200,
+        headers={"Content-Type": "application/json", "Origin": origin},
+        body=json.dumps(payload).encode(),
+    )
+    resp = send(base, row)
+    if resp.status != 200:
+        raise SystemExit(f"{path} answered {resp.status}: {resp.body[:200]!r}")
+    set_cookie = resp.headers.get("set-cookie", "")
+    cookie = set_cookie.split(";", 1)[0]
+    if "=" not in cookie:
+        raise SystemExit(f"{path} set no session cookie: {set_cookie!r}")
+    return Credential(cookie=cookie, csrf_token=resp.json()["csrf_token"])
+
+
+def sign_out(base: str, credential: Credential) -> None:
+    parts = urlsplit(base)
+    row = Row(
+        "sign out",
+        "POST",
+        "/api/auth/logout",
+        204,
+        headers=credential.write(f"{parts.scheme}://{parts.netloc}"),
+    )
+    resp = send(base, row)
+    if resp.status != 204:
+        print(f"warning: sign-out answered {resp.status}", file=sys.stderr)
+
+
+def rows(allowed_host: str | None, credential: Credential | None = None) -> list[Row]:
+    owner = credential.read() if credential is not None else {}
+
+    def guarded(label: str, path: str, *, content_type: str) -> Row:
+        """A collection-read positive: 200 for the signed-in owner, else the
+        dependency's 401 — either way the spelling reached the app."""
+        if credential is None:
+            return unauthenticated(f"{label} (anonymous)", "GET", path)
+        return Row(label, "GET", path, 200, headers=owner, content_type=content_type)
+
     matrix: list[Row] = [
         # --- one spelling per family: the rejections ------------------------------
         rejected("api/mcp literal", "GET", "/api/mcp"),
@@ -221,11 +319,16 @@ def rows(allowed_host: str | None) -> list[Row]:
             headers={"X-Forwarded-Host": "evil.example"},
             json_equals={"status": "ok"},
         ),
-        Row("api/docs", "GET", "/api/docs", 200, content_type="text/html"),
-        Row("openapi.json canonical", "GET", "/openapi.json", 200, content_type="application/json"),
-        Row("api/kits", "GET", "/api/kits", 200, content_type="application/json"),
-        Row("api/retailers", "GET", "/api/retailers", 200, content_type="application/json"),
-        Row("api/meta", "GET", "/api/meta", 200, content_type="application/json"),
+        # The SPA's bootstrap (family 2) answers anyone; everything below it wants
+        # the owner (M6-3), and the anonymous row proves default-deny holds
+        # through nginx whatever credential this run carries.
+        Row("api/auth/session", "GET", "/api/auth/session", 200, content_type="application/json"),
+        unauthenticated("api/kits anonymous → 401", "GET", "/api/kits"),
+        guarded("api/docs", "/api/docs", content_type="text/html"),
+        guarded("openapi.json canonical", "/openapi.json", content_type="application/json"),
+        guarded("api/kits", "/api/kits", content_type="application/json"),
+        guarded("api/retailers", "/api/retailers", content_type="application/json"),
+        guarded("api/meta", "/api/meta", content_type="application/json"),
         Row(
             "mcp/ initialize",
             "POST",
@@ -331,54 +434,82 @@ def rows(allowed_host: str | None) -> list[Row]:
     return matrix
 
 
-def write_rows(base: str, allowed_host: str | None) -> list[tuple[Row, Response]]:
-    """Writes that must succeed, then be undone: a loopback-origin JSON write on
-    the loopback name and, with --allowed-host, a same-origin write on it."""
+def write_rows(
+    base: str, allowed_host: str | None, credential: Credential | None = None
+) -> list[tuple[Row, Response]]:
+    """Writes through the ingress's Origin rule: a loopback Origin on the
+    loopback name, no Origin at all, and (with --allowed-host) a same-origin
+    write on the listed name. Signed in, the first and third must succeed and are
+    undone; the absent-Origin write is now the app's own 403 — a cookie-borne
+    write must say where it came from (§5.6, CSRF), and nginx adds no Origin on
+    the way through. Anonymous, all three reach the dependency's 401: the ingress
+    passed them (its refusals are 403), the app withheld the write."""
     parts = urlsplit(base)
     port = f":{parts.port}" if parts.port else ""
+    json_type = {"Content-Type": "application/json"}
+
+    def write(label: str, name: str, *, origin: str | None, host: str | None = None) -> Row:
+        headers = {**json_type}
+        if host is not None:
+            headers["Host"] = host
+        if credential is None:
+            if origin is not None:
+                headers["Origin"] = origin
+            return unauthenticated(
+                f"{label} (anonymous)", "POST", "/api/retailers", headers=headers
+            )
+        headers.update(credential.write(origin))
+        if origin is None:
+            return Row(
+                f"{label} → 403",
+                "POST",
+                "/api/retailers",
+                403,
+                headers=headers,
+                body=json.dumps({"name": name}).encode(),
+                json_code="auth.origin_required",
+                content_type="application/json",
+            )
+        return Row(
+            f"{label} → 201",
+            "POST",
+            "/api/retailers",
+            201,
+            headers=headers,
+            body=json.dumps({"name": name}).encode(),
+            content_type="application/json",
+        )
+
     cases = [
-        Row(
-            "loopback Origin on a write → 201",
-            "POST",
-            "/api/retailers",
-            201,
-            headers={"Content-Type": "application/json", "Origin": f"http://localhost{port}"},
-            body=b'{"name":"Ingress Matrix Loopback"}',
-            content_type="application/json",
+        write(
+            "loopback Origin on a write",
+            "Ingress Matrix Loopback",
+            origin=f"http://localhost{port}",
         ),
-        Row(
-            "absent Origin on a write → 201",
-            "POST",
-            "/api/retailers",
-            201,
-            headers={"Content-Type": "application/json"},
-            body=b'{"name":"Ingress Matrix Script"}',
-            content_type="application/json",
-        ),
+        write("absent Origin on a cookie-borne write", "Ingress Matrix Script", origin=None),
     ]
     if allowed_host:
         cases.append(
-            Row(
-                f"same-origin write on {allowed_host} → 201",
-                "POST",
-                "/api/retailers",
-                201,
-                headers={
-                    "Content-Type": "application/json",
-                    "Host": f"{allowed_host}{port}",
-                    "Origin": f"http://{allowed_host}{port}",
-                },
-                body=b'{"name":"Ingress Matrix Listed"}',
-                content_type="application/json",
+            write(
+                f"same-origin write on {allowed_host}",
+                "Ingress Matrix Listed",
+                origin=f"http://{allowed_host}{port}",
+                host=f"{allowed_host}{port}",
             )
         )
     results = []
     for row in cases:
         resp = send(base, row)
         results.append((row, resp))
-        if resp.status == 201:
+        if resp.status == 201 and credential is not None:
             created = resp.json()["id"]
-            cleanup = Row("cleanup", "DELETE", f"/api/retailers/{created}", 204)
+            cleanup = Row(
+                "cleanup",
+                "DELETE",
+                f"/api/retailers/{created}",
+                204,
+                headers=credential.write(f"{parts.scheme}://{parts.netloc}"),
+            )
             done = send(base, cleanup)
             if done.status != 204:
                 results.append((cleanup, done))
@@ -391,23 +522,44 @@ def main(argv: list[str]) -> int:
     )
     parser.add_argument("base", nargs="?", default="http://127.0.0.1:8080")
     parser.add_argument("--allowed-host", default=None)
+    parser.add_argument(
+        "--setup-token",
+        default=None,
+        help="claim an unclaimed stack with this token (from the API log) and --password",
+    )
+    parser.add_argument(
+        "--password",
+        default=None,
+        help="the owner password: the one to set with --setup-token, else the one to log in with",
+    )
     args = parser.parse_args(argv)
+    if args.setup_token is not None and args.password is None:
+        parser.error("--setup-token needs --password (the password the claim sets)")
+
+    credential = None
+    if args.password is not None:
+        credential = sign_in(args.base, setup_token=args.setup_token, password=args.password)
+        print(f"signed in as the owner ({'claimed' if args.setup_token else 'logged in'})")
+    else:
+        print("no credential: guarded positives expect the dependency's 401")
 
     failures = 0
-    for row in rows(args.allowed_host):
+    for row in rows(args.allowed_host, credential):
         problems = check(row, send(args.base, row))
         status = "ok " if not problems else "FAIL"
         print(f"{status} {row.method:6} {row.path:60} {row.label}")
         for problem in problems:
             failures += 1
             print(f"       {problem}")
-    for row, resp in write_rows(args.base, args.allowed_host):
+    for row, resp in write_rows(args.base, args.allowed_host, credential):
         problems = check(row, resp)
         status = "ok " if not problems else "FAIL"
         print(f"{status} {row.method:6} {row.path:60} {row.label}")
         for problem in problems:
             failures += 1
             print(f"       {problem}")
+    if credential is not None:
+        sign_out(args.base, credential)
     print(f"\n{failures} failing check(s)")
     return failures
 

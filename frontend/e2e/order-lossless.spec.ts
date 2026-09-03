@@ -9,9 +9,9 @@
  * suite: the API already stores all of this correctly, and did throughout. Each
  * case below is one the browser used to destroy on the way past.
  */
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 
 const suffix = Date.now().toString(36);
 const SHOP = `E2E Lossless Shop ${suffix}`;
@@ -41,21 +41,21 @@ let reference: string; // this instance's currency
 let foreign: string; // a purchase currency with a *different* exponent
 
 async function findOrder(): Promise<StoredOrder> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const orders = (await (await api.get("/orders")).json()) as StoredOrder[];
   await api.dispose();
   return orders.find((order) => order.order_number === ORDER)!;
 }
 
 async function kitScale(kitId: string): Promise<string | null> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const kits = (await (await api.get("/kits")).json()) as { id: string; scale: string | null }[];
   await api.dispose();
   return kits.find((kit) => kit.id === kitId)!.scale;
 }
 
 test.beforeAll("seed an order carrying everything the form used to lose", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   reference = ((await (await api.get("/meta")).json()) as { reference_currency: string })
     .reference_currency;
   // A *different exponent* is what makes a mis-scaled amount visible: 1200 whole
@@ -176,7 +176,7 @@ type SpawnedKit = { id: string; scale: string | null; kit_number: string | null;
  *  reads the same on either side of the fix — these tests are about what ends up
  *  stored, and the payload's shape is the backend suite's business. */
 async function kitsOf(orderNumber: string): Promise<SpawnedKit[]> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const orders = (await (await api.get("/orders")).json()) as StoredOrder[];
   const ids = orders.find((order) => order.order_number === orderNumber)!.items[0].spawned_kit_ids;
   const all = (await (await api.get("/kits")).json()) as SpawnedKit[];
@@ -185,14 +185,14 @@ async function kitsOf(orderNumber: string): Promise<SpawnedKit[]> {
 }
 
 async function patchKit(id: string, data: Record<string, string>): Promise<void> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const resp = await api.patch(`/kits/${id}`, { data });
   expect(resp.status(), await resp.text()).toBe(200);
   await api.dispose();
 }
 
 test.beforeAll("seed a two-kit line whose kits are then made different", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
   const created = await api.post("/orders", {
     data: {
@@ -319,7 +319,7 @@ test("a price edit does not revert a kit changed while the dialog was open (#67)
   const [firstAfter] = await kitsOf(MULTI);
   expect(firstAfter.kit_number).toBe("MID-EDIT-67"); // survived the price edit
   expect(firstAfter.scale).toBe("1/35");
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const orders = (await (await api.get("/orders")).json()) as StoredOrder[];
   await api.dispose();
   const line = orders.find((order) => order.order_number === MULTI)!.items[0];
@@ -331,7 +331,7 @@ test("an order deleted under a stale row says so instead of loading forever (PR 
 }) => {
   // The fresh read's failure mode: the row is cached, the order is gone, and
   // the 404 must surface as words — not as a Loading state that never ends.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
   const created = (await (
     await api.post("/orders", {
@@ -370,7 +370,7 @@ test("an order deleted under a stale row says so instead of loading forever (PR 
 });
 
 test.afterAll("clean up everything this run created", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
   const shop = retailers.find((retailer) => retailer.name === SHOP);
   if (shop) {

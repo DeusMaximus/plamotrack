@@ -214,6 +214,14 @@ jobs:
           docker compose exec -T db sh -c 'exec pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > /tmp/plamotrack-ci.dump
           docker compose exec -T db sh -c 'exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < /tmp/plamotrack-ci.dump
 
+      # The packaged stack comes up the way a fresh install does: an empty
+      # volume, the migrate service from nothing, an unclaimed owner printing
+      # its setup token. The e2e suite above claimed the owner in this same
+      # Compose project's database (same `db` service, same volume), which
+      # would otherwise make the stack a claimed instance with no token to read.
+      - name: Discard the e2e database
+        run: docker compose down -v
+
       - name: Build and start the packaged stack
         run: docker compose up -d --build --wait
 
@@ -255,16 +263,34 @@ jobs:
           PY
           curl --fail --silent --show-error http://127.0.0.1:8080/ > /dev/null
           curl --fail --silent --show-error http://127.0.0.1:8080/api/healthz > /dev/null
-          curl --fail --silent --show-error http://127.0.0.1:8080/openapi.json > /dev/null
+          # The schema is behind collection:read since M6-3; the SPA's bootstrap
+          # is the anonymous probe, and a fresh stack must report itself unclaimed.
+          curl --fail --silent --show-error http://127.0.0.1:8080/api/auth/session | grep -q '"state":"unclaimed"'
+
+      # A fresh install's one way in (docs/operations.md, "First run"): the API
+      # printed a setup token to its log at start. Read it the way an operator
+      # would, so the matrix claims the stack through the packaged ingress and
+      # the first-run path is exercised end to end, not just unit-tested.
+      - name: Read the setup token from the API log
+        run: |
+          TOKEN="$(docker compose logs --no-color api \
+            | sed -nE 's/^[^|]*\|[[:space:]]+([A-Za-z0-9_-]{40,})[[:space:]]*$/\1/p' | tail -n 1)"
+          test -n "$TOKEN" || { echo "no setup token in the api log"; docker compose logs --no-color api; exit 1; }
+          echo "::add-mask::$TOKEN"
+          echo "SETUP_TOKEN=$TOKEN" >> "$GITHUB_ENV"
 
       # T2 (design notes §5.8): the ingress matrix against the packaged nginx —
       # the four rejected /api/ namespaces in their normalised spellings, the
-      # canonical positives beside them, no Location anywhere but nginx's own
-      # relative 301, the security headers, and T3's hostile Host / Origin and
-      # listed-name rows at this layer.
+      # canonical positives beside them (signed in as the owner the claim above
+      # creates; anonymous, they are the dependency's 401), no Location anywhere
+      # but nginx's own relative 301, the security headers, and T3's hostile
+      # Host / Origin and listed-name rows at this layer.
       - name: Run the ingress matrix
         working-directory: backend
-        run: uv run python ingress_matrix.py http://127.0.0.1:8080 --allowed-host ci.plamotrack.test
+        run: >
+          uv run python ingress_matrix.py http://127.0.0.1:8080
+          --allowed-host ci.plamotrack.test
+          --setup-token "$SETUP_TOKEN" --password ingress-matrix-ci-password
 
       - name: Smoke-test MCP through nginx
         working-directory: backend

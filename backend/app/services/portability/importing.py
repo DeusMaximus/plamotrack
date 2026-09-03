@@ -32,7 +32,7 @@ import zlib
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
@@ -41,7 +41,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app import error_codes
-from app.exceptions import ConflictError, DomainError, InvalidInputError
+from app.auth.principal import Scope
+from app.exceptions import ConflictError, DomainError, ForbiddenError, InvalidInputError
+
+if TYPE_CHECKING:
+    from app.auth.principal import Principal
 from app.models import ItemType, Kit, Order, OrderItem
 from app.models.enums import KitStatus
 from app.schemas.portability import (
@@ -3328,6 +3332,7 @@ async def apply_import(
     mode: ImportMode,
     plan_hash: str | None,
     confirm: str | None = None,
+    principal: "Principal | None" = None,
 ) -> ImportResult:
     if mode is ImportMode.REPLACE_ALL and (confirm or "").strip().upper() != "REPLACE":
         raise InvalidInputError(
@@ -3379,6 +3384,19 @@ async def apply_import(
             "the collection changed since you previewed this import, so the preview "
             "no longer matches what would happen — run the preview again",
             code=error_codes.IMPORT_PLAN_STALE,
+        )
+
+    # The admin escalation is read off the re-planned outcome, after the hash
+    # match and before any row is written (§5.5 family 6): a plan that UPDATEs
+    # instance_settings, or a replace_all, needs instance:admin whatever the
+    # mode; a collection-only plan or an unchanged/skipped settings sheet stays
+    # collection:write. `principal is None` is the pre-auth path (auth off, or a
+    # caller that predates this wiring) — the app-level dependency has already
+    # gated entry to collection:write, and the predicate is still tested directly.
+    if principal is not None and plan_requires_admin(plan) and not principal.has_scope(Scope.ADMIN):
+        raise ForbiddenError(
+            "this import changes instance settings, which needs owner access",
+            code=error_codes.AUTH_FORBIDDEN,
         )
 
     if mode is ImportMode.REPLACE_ALL:

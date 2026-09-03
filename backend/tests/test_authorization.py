@@ -461,13 +461,20 @@ async def test_the_generated_docs_routes_carry_no_store(path):
     assert resp.headers.get_list("cache-control") == ["no-store"]
 
 
-# --- the shipped app is not enforced (activation is deferred) -------------------
+# --- the shipped app IS enforced since M6-3 (#188) ------------------------------
 
 
-async def test_the_shipped_app_does_not_enforce_yet(client):
-    """`create_app()` default is authorization off, so the module-level app the
-    suite and uvicorn import still answers anonymously — the foundation ships
-    without activating, and CI/e2e stay green until #188 (owner's call)."""
+async def test_the_shipped_app_enforces(anon_client):
+    """The module-level `app` uvicorn and the suite import runs default-deny since
+    M6-3: an anonymous caller is 401 on a collection read. (The suite's own
+    `client` fixture injects an owner, which is why every other test still reaches
+    its route — `anon_client` is the un-injected caller.)"""
+    resp = await anon_client.get("/kits")
+    assert resp.status_code == 401
+    assert resp.json()["code"] == error_codes.AUTH_UNAUTHENTICATED
+
+
+async def test_the_shipped_app_still_serves_an_owner(client):
     assert (await client.get("/kits")).status_code == 200
 
 

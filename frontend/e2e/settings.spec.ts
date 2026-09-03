@@ -8,9 +8,9 @@
  * `settings` project in playwright.config.ts. The original value is restored
  * in afterAll whether the tests pass or not.
  */
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 
 test.describe.configure({ mode: "serial" });
 
@@ -26,7 +26,7 @@ let version: string;
 let target: string; // a valid code that differs from the stored one
 
 test.beforeAll("read the instance settings and version", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   original = (await (await api.get("/settings")).json()) as typeof original;
   version = ((await (await api.get("/meta")).json()) as { version: string }).version;
   target = original.reference_currency === "NZD" ? "CAD" : "NZD";
@@ -34,7 +34,7 @@ test.beforeAll("read the instance settings and version", async () => {
 });
 
 test.afterAll("restore the instance settings", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   await api.patch("/settings", {
     data: {
       reference_currency: original.reference_currency,
@@ -107,7 +107,7 @@ test("a malformed currency code is refused client-side with a field error", asyn
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("3-letter ISO code")).toBeVisible();
   // Nothing reached the server.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const row = (await (await api.get("/settings")).json()) as { reference_currency: string };
   await api.dispose();
   expect(row.reference_currency).toBe(original.reference_currency);
@@ -141,7 +141,7 @@ test("saving the currency persists it and refreshes the order form's default", a
   await expect(page.getByRole("status")).toHaveText("Saved");
 
   // Persisted on the instance, not just in this form.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const row = (await (await api.get("/settings")).json()) as { reference_currency: string };
   await api.dispose();
   expect(row.reference_currency).toBe(target);
@@ -173,7 +173,7 @@ test("saving regional settings re-renders visible dates in the same session (#27
 }) => {
   // A kit whose completion instant is unambiguous across the zones involved:
   // 04:00Z is 14/03 in UTC and 15:00 on 14/03 in Sydney.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const kit = (await (
     await api.post("/kits", {
       data: {
@@ -212,7 +212,7 @@ test("a cold page load re-renders once the settings row arrives (#174 review, P3
   page,
 }) => {
   // The prior test saved Sydney/long/h23; restate it so this test stands alone.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   await api.patch("/settings", {
     data: { time_zone: "Australia/Sydney", date_style: "long", hour_cycle: "h23" },
   });
@@ -258,7 +258,7 @@ test("a cold Board load re-renders its counts once the settings row arrives (#17
   // pass — only a presentation subscription can. ar-EG because its digits are
   // visibly not the boot locale's, so the assertion reads the rendering rather
   // than a value that happens to agree.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   await api.patch("/settings", { data: { formatting_locale: "ar-EG" } });
   const kit = (await (
     await api.post("/kits", {

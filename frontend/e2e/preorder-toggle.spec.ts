@@ -1,4 +1,4 @@
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /**
  * #120 — pre-order is one order-wide toggle, applied to every kit line.
@@ -10,7 +10,7 @@ import { expect, request, test } from "@playwright/test";
  * lines — and the second is the one a broken loop would miss.
  */
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 const suffix = Date.now().toString(36);
 const SHOP = `E2E Preorder Shop ${suffix}`;
 const KIT_A = `E2E Preorder Kit A ${suffix}`;
@@ -41,7 +41,7 @@ test("the pre-order toggle spawns every kit line as pre_ordered", async ({ page 
   await expect(orderRow.getByText("Pre-order")).toBeVisible();
 
   // Both kits, not just the first — read through the API, which is what stores.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const kits = (await (await api.get("/kits")).json()) as { name: string; status: string }[];
   expect(kits.find((kit) => kit.name === KIT_A)?.status).toBe("pre_ordered");
   expect(kits.find((kit) => kit.name === KIT_B)?.status).toBe("pre_ordered");
@@ -49,7 +49,7 @@ test("the pre-order toggle spawns every kit line as pre_ordered", async ({ page 
 });
 
 test.afterAll("clean up everything this run created", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as {
     id: string;
     name: string;

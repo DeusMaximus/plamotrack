@@ -43,6 +43,11 @@ class Scope(StrEnum):
     ADMIN = "instance:admin"
 
 
+#: `Principal.via` values.
+VIA_SESSION = "session"
+VIA_BEARER = "bearer"
+
+
 class PrincipalKind(StrEnum):
     ANON = "anon"
     OWNER = "owner"
@@ -64,6 +69,16 @@ class Principal:
     kind: PrincipalKind
     scopes: frozenset[Scope] = field(default_factory=frozenset)
     subject: str | None = None
+    #: How the credential arrived — `"session"` for the owner's cookie, `"bearer"`
+    #: for a token in `Authorization` (#189), None for `anon`, `internal` and the
+    #: pytest injection seam. The dependency reads it to decide whether the CSRF
+    #: controls apply: a cookie-borne unsafe request owes the session-bound token
+    #: and an Origin; a bearer-borne one owes neither (§5.6, CSRF).
+    via: str | None = None
+
+    @property
+    def cookie_borne(self) -> bool:
+        return self.via == VIA_SESSION
 
     def has_scope(self, scope: Scope) -> bool:
         """Whether this principal satisfies a required scope. The one implication
@@ -106,13 +121,15 @@ def internal() -> Principal:
     return Principal(kind=PrincipalKind.INTERNAL)
 
 
-def owner(subject: str | None = None) -> Principal:
+def owner(subject: str | None = None, *, via: str | None = None) -> Principal:
     """The single owner's browser session. Holds every scope, `instance:admin`
-    included — the only principal that does (§5.5)."""
+    included — the only principal that does (§5.5). `via` is `VIA_SESSION` when
+    a real cookie produced it (the resolver's call); the test seam leaves it None."""
     return Principal(
         kind=PrincipalKind.OWNER,
         scopes=frozenset({Scope.READ, Scope.WRITE, Scope.ADMIN}),
         subject=subject,
+        via=via,
     )
 
 

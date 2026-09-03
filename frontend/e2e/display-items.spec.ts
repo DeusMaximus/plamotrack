@@ -1,4 +1,4 @@
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /**
  * #126 — the display-items tab and the order line that stocks it.
@@ -24,7 +24,7 @@ import { expect, request, test } from "@playwright/test";
  * type that shows category *and* manufacturer *and* scale at once.
  */
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 const suffix = Date.now().toString(36);
 const STAND = `E2E Stand ${suffix}`;
 const SCENERY = `E2E Diorama Set ${suffix}`;
@@ -62,7 +62,7 @@ test("the Display tab adds an item, and blank optional fields store as null", as
   // `exact`, because the row's stepper buttons carry the name too ("Remove one …").
   await expect(page.getByRole("cell", { name: STAND, exact: true })).toBeVisible();
 
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const items = (await (await api.get("/display-items")).json()) as DisplayItem[];
   const stored = items.find((i) => i.name === STAND);
   expect(stored, "the item reached the API").toBeTruthy();
@@ -97,7 +97,7 @@ test("an order line creates a display item and stocks it on receive", async ({ p
   await page.getByRole("button", { name: "Record order" }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   let items = (await (await api.get("/display-items")).json()) as DisplayItem[];
   let created = items.find((i) => i.name === SCENERY);
   expect(created, "the line created the catalog row").toBeTruthy();
@@ -122,7 +122,7 @@ test("an order line creates a display item and stocks it on receive", async ({ p
 });
 
 test.afterAll("clean up everything this run created", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
   const shop = retailers.find((r) => r.name === SHOP);
   if (shop) {

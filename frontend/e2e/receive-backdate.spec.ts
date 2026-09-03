@@ -1,4 +1,4 @@
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /**
  * #93 — a receipt backdated through the browser survives the whole trip; since
@@ -14,7 +14,7 @@ import { expect, request, test } from "@playwright/test";
  * calendar the user picked from.
  */
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 const suffix = Date.now().toString(36);
 const SHOP = `E2E Backdate Shop ${suffix}`;
 const KIT = `E2E Backdate Kit ${suffix}`;
@@ -30,7 +30,7 @@ const YESTERDAY = localDateISO(new Date(Date.now() - 24 * 60 * 60 * 1000));
 test("shipping and receiving with a backdate stamps the order and its kits with those dates", async ({
   page,
 }) => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailer = await (await api.post("/retailers", { data: { name: SHOP } })).json();
   const order = await (
     await api.post("/orders", {
@@ -76,7 +76,7 @@ test("shipping and receiving with a backdate stamps the order and its kits with 
 });
 
 test.afterAll("clean up everything this run created", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const orders: Array<{ id: string; retailer_id: string }> = await (
     await api.get("/orders")
   ).json();

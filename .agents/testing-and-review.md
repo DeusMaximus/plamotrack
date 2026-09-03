@@ -30,7 +30,7 @@ last edited, so a large jump either way is worth a look.
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. Also the compile-time check on every static `t("…")` key. |
 | Frontend lint | `npm run lint` | oxlint. |
 | Translation coverage | `npm run i18n:report` (in `frontend/`) | Markdown table, presentation only — the catalogue tests are what gate. CI appends it to the job summary. |
-| E2E (~36) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. |
+| E2E (~43) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. The `setup` project (`e2e/auth.setup.ts`) signs in as the owner first — an **unclaimed** instance is claimed through the recovery command with `E2E_OWNER_PASSWORD` (default `e2e-owner-password`); a **claimed** one is only signed into, so on a dev database you claimed yourself export `E2E_OWNER_PASSWORD` to its password or the run stops and says so. The session lands in `e2e/.auth/` (gitignored); specs' own API calls go through `e2e/api.ts` (`apiContext()`), which carries the cookie, an `Origin` and the CSRF token. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. |
 | Mutation harness | `uv run python mutation_test.py` | See below. |
 
 **One pytest session at a time.** Two runs against `plamotrack_test` interfere —
@@ -270,7 +270,7 @@ no secrets to forks, stale runs cancelled.
 | --- | --- |
 | Backend | ruff check + format check, pytest against Postgres 16 |
 | Frontend | oxlint, vitest, translation coverage report to the step summary, `tsc -b` + Vite build |
-| Integration | Playwright e2e (one worker, one retry, trace on first retry, HTML report uploaded **only on failure**), then the packaged Compose stack: UI/API/OpenAPI probes, **`backend/ingress_matrix.py`** (T2 — the `/api/` alias rejections in their normalised spellings, the canonical positives, no `Location` but nginx's relative 301, security headers, hostile Host/Origin and the listed name `ci.plamotrack.test` from the CI `.env`), and an MCP `tools/list` through nginx |
+| Integration | Playwright e2e (one worker, one retry, trace on first retry, HTML report uploaded **only on failure**), then the packaged Compose stack **from an empty volume** (`down -v` first — the e2e claimed the owner in the same project's database, and a claimed instance prints no token): UI/liveness/`/api/auth/session` probes (a fresh stack must say `unclaimed`), the **setup token read from `docker compose logs api`** the way an operator would, **`backend/ingress_matrix.py`** (T2 — claims the stack with that token through nginx, then the `/api/` alias rejections in their normalised spellings, the canonical positives signed in beside an anonymous `401`, the cookie-borne writes with the absent-Origin `403`, no `Location` but nginx's relative 301, security headers, hostile Host/Origin and the listed name `ci.plamotrack.test` from the CI `.env`), and an MCP `tools/list` through nginx |
 
 - **A pass on retry reports as `flaky` with exit 0.** Deliberate: instability is
   surfaced without blocking a PR. The lever, if it hides a real intermittent, is the
@@ -281,8 +281,12 @@ no secrets to forks, stale runs cancelled.
   path, no secrets — and appends `ALLOWED_HOSTS=ci.plamotrack.test` so the matrix
   has a listed name to prove. Locally the matrix runs the same way against a
   packaged stack: `uv run python ingress_matrix.py http://127.0.0.1:8080
-  [--allowed-host NAME]` from `backend/`; without a name in your `.env`, omit the
-  flag and the listed-name rows are skipped.
+  [--allowed-host NAME] [--setup-token TOKEN | ] --password PASSWORD` from
+  `backend/`; without a name in your `.env`, omit the flag and the listed-name rows
+  are skipped. `--setup-token` (from `docker compose logs api`) claims a fresh
+  stack with `--password`; `--password` alone signs into a claimed one; with
+  neither, the guarded positives expect the dependency's 401 and no write lands.
+  The claim is real — a stack claimed by the matrix is claimed with that password.
 
 ---
 

@@ -102,6 +102,10 @@ def test_an_undeclared_route_fails_the_build():
 # Regenerate deliberately when a route legitimately changes.
 
 _REST_SURFACE: dict[tuple[str, str], tuple[int, str]] = {
+    ("/auth/login", "POST"): (3, "anonymous"),
+    ("/auth/logout", "POST"): (3, "anonymous"),
+    ("/auth/session", "GET"): (2, "anonymous"),
+    ("/auth/setup", "POST"): (3, "anonymous"),
     ("/catalog/search", "GET"): (4, "read"),
     ("/catalog/{catalog_id}/adjust", "POST"): (5, "write"),
     ("/consumables", "GET"): (4, "read"),
@@ -114,8 +118,7 @@ _REST_SURFACE: dict[tuple[str, str], tuple[int, str]] = {
     ("/display-items/categories", "GET"): (4, "read"),
     ("/display-items/{display_item_id}", "DELETE"): (5, "write"),
     ("/display-items/{display_item_id}", "PATCH"): (5, "write"),
-    ("/docs", "GET,HEAD"): (11, "read"),
-    ("/docs/oauth2-redirect", "GET,HEAD"): (11, "read"),
+    ("/docs", "GET"): (11, "read"),
     ("/export/archive", "GET"): (4, "read"),
     ("/export/starter-sheet.csv", "GET"): (4, "read"),
     ("/export/templates", "GET"): (4, "read"),
@@ -131,7 +134,7 @@ _REST_SURFACE: dict[tuple[str, str], tuple[int, str]] = {
     ("/kits/{kit_id}", "PATCH"): (5, "write"),
     ("/kits/{kit_id}/applications", "GET"): (4, "read"),
     ("/meta", "GET"): (4, "read"),
-    ("/openapi.json", "GET,HEAD"): (11, "read"),
+    ("/openapi.json", "GET"): (11, "read"),
     ("/orders", "GET"): (4, "read"),
     ("/orders", "POST"): (5, "write"),
     ("/orders/{order_id}", "DELETE"): (5, "write"),
@@ -140,7 +143,7 @@ _REST_SURFACE: dict[tuple[str, str], tuple[int, str]] = {
     ("/orders/{order_id}/receive", "POST"): (5, "write"),
     ("/orders/{order_id}/ship", "POST"): (5, "write"),
     ("/readyz", "GET"): (10, "internal"),
-    ("/redoc", "GET,HEAD"): (11, "read"),
+    ("/redoc", "GET"): (11, "read"),
     ("/retailers", "GET"): (4, "read"),
     ("/retailers", "POST"): (5, "write"),
     ("/retailers/{retailer_id}", "DELETE"): (5, "write"),
@@ -501,19 +504,20 @@ async def test_the_binding_refusal_is_the_sdk_protocol_error():
     )
 
 
-def test_every_mounted_route_is_bound_on_the_enforced_app_and_none_on_the_shipped():
-    """The binding is the outermost callable of every mounted route on the
-    enforced app, carrying that route's declared policy — so a wrapper installed
-    above it, or a route left unbound, is a graph the enforced app does not
-    have. The shipped app binds nothing (the foundation ships without
-    activating)."""
+def test_every_mounted_route_is_bound_on_the_enforced_app_and_none_on_the_unenforced():
+    """The binding is the outermost callable of every mounted route on an enforced
+    app, carrying that route's declared policy — so a wrapper installed above it,
+    or a route left unbound, is a graph the enforced app does not have. An
+    unenforced app (`create_app()` with the default off — what the ingress and
+    packaged-stack harnesses build) binds nothing. The shipped `app` is enforced
+    since M6-3, so it is *not* the unenforced case here."""
     live = create_app(authorization=True)
     index = live.state.route_index
     assert index.mounted_routes, "no mounted routes — the walk lost the /mcp child"
     for mounted in index.mounted_routes:
         assert isinstance(mounted.route.app, RouteBinding), mounted.path
         assert mounted.route.app.policy is index.mounted_by_endpoint[mounted.endpoint]
-    for mounted in build_route_index(app).mounted_routes:
+    for mounted in build_route_index(create_app()).mounted_routes:
         assert not isinstance(mounted.route.app, RouteBinding), mounted.path
 
 

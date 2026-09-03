@@ -9,9 +9,9 @@
  * Round-trip assertions, so they live here: the API has always honoured a partial
  * PATCH (`exclude_unset`), and the defect was entirely in what the browser sent.
  */
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 
 const suffix = Date.now().toString(36);
 const STALE_TOOL = `E2E Stale Nippers ${suffix}`;
@@ -30,7 +30,7 @@ type StoredTool = {
 test.describe.configure({ mode: "serial" });
 
 async function tools(): Promise<StoredTool[]> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const rows = (await (await api.get("/tools")).json()) as StoredTool[];
   await api.dispose();
   return rows;
@@ -41,14 +41,14 @@ async function tool(name: string): Promise<StoredTool> {
 }
 
 async function makeTool(name: string, data: Record<string, unknown>): Promise<void> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const created = await api.post("/tools", { data: { name, category: "cutting", ...data } });
   expect(created.status(), await created.text()).toBe(201);
   await api.dispose();
 }
 
 async function patchTool(id: string, data: Record<string, unknown>): Promise<void> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const patched = await api.patch(`/tools/${id}`, { data });
   expect(patched.status(), await patched.text()).toBe(200);
   await api.dispose();
@@ -119,7 +119,7 @@ test("changing only the cost currency rescales the amount with it", async ({ pag
 });
 
 test.afterAll("clean up everything this run created", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   for (const row of await tools()) {
     if (row.name.startsWith("E2E ") && row.name.endsWith(suffix)) {
       await api.delete(`/tools/${row.id}`);

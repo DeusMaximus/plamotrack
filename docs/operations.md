@@ -2,12 +2,46 @@
 
 Backing up, restoring, and upgrading the bundled Docker Compose stack.
 
-> **This stack has no authentication yet.** It binds to `127.0.0.1` by default and
-> belongs on a machine you trust. Exposing it to a network — or the internet —
-> means anyone who can reach the port owns your collection. Authentication and a
-> tested remote-access path are Milestone 6. What it does have, since 0.2.10, is a
-> list of names it answers to — reach it by any other name and it says
-> `421 Misdirected Request`; see [Names it answers to](#names-it-answers-to).
+> **This instance has a single owner login.** Since M6-3 every collection route
+> requires the owner's browser session: a fresh install comes up *unclaimed* and
+> prints a one-time setup token to the API log — see [First run](#first-run-claim-the-instance).
+> There is still **no TLS and no scoped API/MCP tokens** here — a tested HTTPS
+> reverse-proxy path and personal access tokens are the rest of Milestone 6 — so
+> keep an instance on a network you trust. It also answers only to names you list;
+> reach it by any other name and it says `421 Misdirected Request`; see
+> [Names it answers to](#names-it-answers-to).
+
+## First run: claim the instance
+
+A fresh install (and an existing instance upgraded onto M6-3) starts **unclaimed**:
+every collection route answers `401` and the UI shows a setup screen. Claim it once:
+
+```bash
+docker compose logs api | grep -A6 "no owner yet"
+```
+
+The API prints a one-time **setup token** at every start while the instance is
+unclaimed. Copy it, open the instance in a browser, and enter the token with the
+owner password you want. That's it — the token is single-use, and the instance
+stops printing one once claimed. Lost the token? Restart the container
+(`docker compose restart api`) and read the fresh one from the log.
+
+After that, one owner password signs you in from any browser on the trusted
+network. Sign out from the sidebar. Forgot the password? See
+[Recovery](#recovery-locked-out).
+
+### Recovery: locked out
+
+If you forget the password, reset it from **inside the API container** — never over
+the network:
+
+```bash
+docker compose exec api python -m app.auth.recovery reset-password
+```
+
+It prompts for a new password, sets it, and signs every browser out. To sign
+everyone out without changing the password, use `revoke-sessions` instead. Both
+run only where you already have shell access to the host, which is the point.
 
 ## What's running
 
@@ -294,13 +328,18 @@ M6 lands.
 > If you do need host-firewall rules to apply to Docker traffic, they belong in
 > the `DOCKER-USER` chain.
 
-### What about HTTPS and a login?
+### What about HTTPS and scoped tokens?
 
-That's Milestone 6: single-owner browser authentication, scoped API/MCP tokens,
-and a *tested* TLS reverse-proxy configuration. Putting a proxy in front of this
-today can give you HTTPS and a password prompt, and some people will want that —
-but a config here that hasn't been tested against the MCP streaming path would be
-a liability rather than a help, so this document won't pretend to supply one yet.
+The login landed in M6-3 — see [First run](#first-run-claim-the-instance). What is
+still to come in Milestone 6 is a *tested* TLS reverse-proxy configuration and
+scoped API/MCP tokens (so a script or an MCP client authenticates without the
+browser session). Putting a proxy in front of this today can give you HTTPS, and
+some people will want that — but a config here that hasn't been tested against the
+MCP streaming path would be a liability rather than a help, so this document won't
+pretend to supply one yet.
+On plain HTTP the session cookie cannot be marked `Secure` (a browser limitation),
+so its confidentiality rests on the network being yours; set `PUBLIC_BASE_URL=https://…`
+behind a TLS proxy and the cookie becomes `Secure` and `__Host-`-prefixed.
 If you do build your own: `frontend/nginx/default.conf.template` documents the two
 settings a proxy in front of MCP has to get right; the name it forwards goes in
 `ALLOWED_HOSTS`; `PUBLIC_BASE_URL=https://…` is what lets the browser's `https://`

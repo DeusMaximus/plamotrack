@@ -1,4 +1,4 @@
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /**
  * #49 — the two browser paths that could create a duplicate.
@@ -18,7 +18,7 @@ import { expect, request, test } from "@playwright/test";
  *    time; on the fixed code the picker re-asks the server regardless.
  */
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 const suffix = Date.now().toString(36);
 const SHOP = `E2E Dedup Shop ${suffix}`;
 const SEARCH_SHOP = `E2E Dedup Search Shop ${suffix}`;
@@ -54,7 +54,7 @@ test("double-clicking Add on the inline retailer control creates one retailer", 
   await expect(page.locator("select").first()).toHaveValue(/.+/);
 
   expect(requestsMade, "clicks that reached the network").toBe(1);
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { name: string }[];
   expect(retailers.filter((r) => r.name === SHOP)).toHaveLength(1);
   await api.dispose();
@@ -63,7 +63,7 @@ test("double-clicking Add on the inline retailer control creates one retailer", 
 test("the catalog picker offers an item created seconds ago instead of a second create", async ({
   page,
 }) => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const shop = (await (await api.post("/retailers", { data: { name: SEARCH_SHOP } })).json()) as {
     id: string;
   };
@@ -106,7 +106,7 @@ test("the catalog picker offers an item created seconds ago instead of a second 
 });
 
 test.afterAll("clean up everything this run created", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
   const mine = retailers.filter((r) => r.name === SHOP || r.name === SEARCH_SHOP);
   const orders = (await (await api.get("/orders")).json()) as { id: string; retailer_id: string }[];

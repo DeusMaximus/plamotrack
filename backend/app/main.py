@@ -1,13 +1,17 @@
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from fastapi.responses import HTMLResponse, JSONResponse
 from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
 from app import __version__, error_codes
+from app.auth import sessions, setup_token
 from app.auth.dependency import (
     ROUTE_INDEX_ATTR,
     ResponseProfileMiddleware,
@@ -16,13 +20,15 @@ from app.auth.dependency import (
 )
 from app.auth.registry import build_route_index
 from app.config import Settings, get_settings
-from app.db import SessionDep
+from app.db import SessionDep, get_sessionmaker
 from app.exceptions import (
     ConflictError,
     DomainError,
     ForbiddenError,
+    GoneError,
     InvalidInputError,
     NotFoundError,
+    RateLimitedError,
     UnauthenticatedError,
 )
 from app.ingress import (
@@ -32,7 +38,17 @@ from app.ingress import (
     is_internal_peer,
 )
 from app.mcp import mcp
-from app.routers import catalog, inventory, kits, meta, orders, portability, retailers, settings
+from app.routers import (
+    auth,
+    catalog,
+    inventory,
+    kits,
+    meta,
+    orders,
+    portability,
+    retailers,
+    settings,
+)
 from app.schemas.errors import ERROR_RESPONSES
 
 ROUTERS = (
@@ -44,6 +60,7 @@ ROUTERS = (
     portability.router,
     meta.router,
     settings.router,
+    auth.router,
 )
 
 _DOMAIN_STATUS: dict[type[DomainError], int] = {
@@ -52,6 +69,8 @@ _DOMAIN_STATUS: dict[type[DomainError], int] = {
     InvalidInputError: 422,
     UnauthenticatedError: 401,
     ForbiddenError: 403,
+    GoneError: 410,
+    RateLimitedError: 429,
 }
 
 
@@ -68,9 +87,12 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
             (status for cls, status in _DOMAIN_STATUS.items() if isinstance(exc, cls)),
             400,
         )
+    # A throttle refusal names when the caller may retry (§5.6, brute force).
+    headers = {"Retry-After": str(exc.retry_after)} if isinstance(exc, RateLimitedError) else None
     return JSONResponse(
         status_code=status_code,
         content={"detail": exc.detail, "code": exc.code, "params": jsonable_encoder(exc.params)},
+        headers=headers,
     )
 
 
@@ -166,16 +188,46 @@ def build_mcp_app(policy: IngressPolicy):
     return mcp_app
 
 
+def _setup_url(config: Settings) -> str:
+    """A best-effort URL for the setup-token log line — the instance's own address
+    if configured, else the loopback default the compose stack publishes."""
+    return f"{config.public_base_url or 'http://localhost:8080'}/setup"
+
+
+def _register_docs(app: FastAPI) -> None:
+    """Schema and docs as **guarded APIRoutes** (§5.5, family 11): FastAPI's auto
+    handlers are `add_route` endpoints the app-level dependency never runs for
+    (§5.1), so the constructor disables them (`openapi_url`/`docs_url`/`redoc_url`
+    = None) and these re-register the same paths as APIRoutes the dependency
+    covers. The Swagger OAuth2 redirect helper is not re-registered (dropped,
+    §5.5). Endpoint names match the registry's `_classify` (openapi /
+    swagger_ui_html / redoc_html). Ungated when `authorization=False`."""
+
+    @app.get("/openapi.json", include_in_schema=False)
+    async def openapi() -> JSONResponse:
+        return JSONResponse(app.openapi())
+
+    @app.get("/docs", include_in_schema=False)
+    async def swagger_ui_html() -> HTMLResponse:
+        return get_swagger_ui_html(openapi_url="/openapi.json", title="plamotrack — API docs")
+
+    @app.get("/redoc", include_in_schema=False)
+    async def redoc_html() -> HTMLResponse:
+        return get_redoc_html(openapi_url="/openapi.json", title="plamotrack — API docs")
+
+
 def create_app(config: Settings | None = None, *, authorization: bool = False) -> FastAPI:
     """The application, built from one `Settings`. Module-level `app` below is
     the one uvicorn and the suite import; tests that need a different ingress
     policy build their own through here rather than mutating that one.
 
-    `authorization` installs the app-level default-deny dependency (§5.5,
-    M6-2) and builds the route policy registry onto `app.state`. It is off
-    on the shipped app until the credential mechanisms exist (#188/#189) —
-    the "activate once credentials work" sequencing — and on for the
-    authorization matrix, which drives the real route graph through it."""
+    `authorization` installs the app-level default-deny dependency (§5.5), builds
+    the route policy registry onto `app.state`, and enforces the response profile.
+    The shipped `app` runs with it **on** since M6-3 (#188): local owner
+    authentication makes default-deny usable — an unclaimed instance fails closed
+    and prints a setup token, and the browser session claims the owner. Tests that
+    need the pre-auth app (ingress, the packaged-stack harnesses) call
+    `create_app()` with the default off."""
     config = config or get_settings()
     policy = IngressPolicy.from_settings(config)
 
@@ -184,19 +236,41 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
     # of §8's two-port layout; split later if operating them separately matters.
     mcp_app = build_mcp_app(policy)
 
-    # Default deny, one dependency for every REST route (§5.5) — not on the
-    # auto /openapi.json and /docs, which are add_route handlers an app-level
-    # dependency never runs for; those move behind the registry in #188.
+    @asynccontextmanager
+    async def lifespan(app_: FastAPI):
+        # An unclaimed instance prints a one-time setup token at every start
+        # until it is claimed (§5.6 safe failure, §5.7). Only when auth is on —
+        # the pre-auth app has no owner to claim.
+        if authorization:
+            # And which cookie mode the owner's session will run in — the
+            # operator's only tell when TLS sits in front of an http-configured
+            # instance (§5.6; Codex #200 round 1, f1).
+            sessions.announce_cookie_mode(config)
+            async with get_sessionmaker()() as session:
+                from app.services import auth as auth_service
+
+                if not await auth_service.is_claimed(session):
+                    setup_token.announce(app_, setup_url=_setup_url(config))
+        async with mcp_app.lifespan(app_):  # the MCP session manager lives here
+            yield
+
+    # Default deny, one dependency for every REST route (§5.5) — including the
+    # re-registered docs/schema routes below, which are APIRoutes for exactly
+    # this reason (the auto handlers are not, §5.1).
     route_dependencies = [Depends(enforce_route_policy)] if authorization else []
     app = FastAPI(
         title="plamotrack",
         version=__version__,
         description="Self-hosted Gunpla/plamo collection & build tracker",
-        lifespan=mcp_app.lifespan,  # required for the MCP session manager
+        lifespan=lifespan,
         dependencies=route_dependencies,
         # No request-derived redirects (§5.6): `GET /kits/` is 404, not a 307
         # whose Location is built from the request's Host.
         redirect_slashes=False,
+        # Disabled and re-registered as guarded APIRoutes (`_register_docs`).
+        openapi_url=None,
+        docs_url=None,
+        redoc_url=None,
     )
     app.state.ingress_policy = policy
 
@@ -205,6 +279,7 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
         # router cannot forget it.
         app.include_router(router, responses=ERROR_RESPONSES)
 
+    _register_docs(app)
     app.add_api_route("/healthz", healthz, methods=["GET"], include_in_schema=False)
     app.add_api_route("/readyz", readyz, methods=["GET"], include_in_schema=False)
     app.mount("/mcp", mcp_app)
@@ -237,4 +312,4 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
     return app
 
 
-app = create_app()
+app = create_app(authorization=True)
