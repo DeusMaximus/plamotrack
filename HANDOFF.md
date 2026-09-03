@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-03 — Claude Code (Fable 5.1) — #186 (M6-1): PR #196 open, Codex round 1 (GO + 3 P3) answered at `dc0c7d8`, awaiting the owner's merge call (own release, 0.2.10)
+## 2026-09-03 — Claude Code (Fable 5.1) — #186 (M6-1) MERGED: PR #196 → `7954e47` (#39 closed too); release gate for 0.2.10-alpha passed through step 5, tag created locally, push awaits the owner
 
 - **Done:** M6-1 — ingress identity and the Host/Origin guard — implemented end to
   end on branch `feature/m6-1-ingress-guard` (absorbs #39). `app/config.py` gains
@@ -69,9 +69,9 @@ Template:
   until M6-8 has a consumer; (3) REST guard wraps the MCP mount too, FastMCP's guard
   asserted separately; (4) `Host $http_host` at nginx so same-origin sees the port.
   All four in the PR body's *Deliberate calls* and in §5.9 item 1.
-- **State:** **PR #196** open from `feature/m6-1-ingress-guard`, head **`dc0c7d8`** (two
-  commits over `main` `ea4ce81`: `1e134f7` the feature, then the round-1 fixes), body
-  in the review-brief shape, `Closes #186, closes #39`. **Codex round 1 (GPT 5.6 Sol):
+- **State:** **PR #196 squash-merged as `7954e47`** on the owner's call (03/09), branch
+  deleted, **#186 and #39 closed**. Head before merge was `dc0c7d8` (`1e134f7` the
+  feature, then the round-1 fixes). **Codex round 1 (GPT 5.6 Sol):
   GO, three non-blocking P3s, all reproduced at `1e134f7` and fixed at the head** —
   one defect in three places (Python derivation vs sh generator disagreeing on the
   effective allowlist): (1) `*:8080`/`[*]`/`www.*` survived validation and became `*`
@@ -86,8 +86,18 @@ Template:
   `tests/test_ingress.py` **240 passed**, full backend **1470 passed**, seven more
   mutants killed (ing-20…26, two of them the first against the sh generator; ing-25
   survived once because the parity helper normalised the dot away before comparing —
-  fixed by asserting the raw `server_name` first). CI on the new head is the next
-  thing to glance at. Verified before the first push: `tests/test_ingress.py` 175 passed; full backend suite 1405 passed; ruff
+  fixed by asserting the raw `server_name` first). **Release gate (testing-and-review.md) run on `7954e47`:** M6 milestone still holds
+  #187–#195 + #30 by design (this is item 1 of ten, its own release — the notes say
+  so); version 0.2.10 in the three files; packaged stack `up -d --wait --build` from
+  the merge commit — `migrate` Exited (0), four services healthy, `GET /api/meta` →
+  0.2.10, MCP `serverInfo.version` → 0.2.10 through nginx, archive manifest
+  `app_version` 0.2.10 / `schema_version` f9979ec7b9cb (= alembic head), ingress
+  matrix 0 failures on the release build; stack `down` (no `-v`), dev `db` overlay
+  restored. **Annotated tag `v0.2.10-alpha — the instance knows its own name` created
+  locally on `7954e47`, NOT pushed** — outward-facing, needs the owner's word; notes
+  drafted in the session scratchpad (`release-notes-0.2.10.md`), leading with
+  `ALLOWED_HOSTS`. CI on `7954e47` was in progress at the time of writing. Verified
+  before the first push: `tests/test_ingress.py` 175 passed; full backend suite 1405 passed; ruff
   clean; frontend 470 passed, lint + build green; negative control in a worktree at
   `main` (`ea4ce81`) **30 red / 14 green** with the greens the positive controls;
   hand mutation pass **19/19 killed** (ing-5 survived the first pass — child has one
@@ -98,8 +108,11 @@ Template:
   restored, `.env` restored from backup. PR body + release-notes draft in the session
   scratchpad (`pr-body.md`, now posted as the PR body); PR #184 (`ja`) unchanged. LXC still pre-0.2.9 — and
   **needs `ALLOWED_HOSTS=<its LAN name>` in `.env` before pulling 0.2.10**.
-- **Next:** (1) **owner's merge call on PR #196** (GO stands; the P3s are answered and
-  fixed) — squash-merge, then delete the branch; (2) after merge, fold
+- **Next:** (1) **owner confirms → `git push origin v0.2.10-alpha` and `gh release
+  create v0.2.10-alpha --prerelease --verify-tag --notes-file …`** (step 6 of the
+  gate), then the LXC upgrade — **`ALLOWED_HOSTS=<its LAN name>` in its `.env` first**,
+  back up, then pull (three migrations pending there: display items, settings, none
+  new in 0.2.10); (2) fold
   the `ing-` tuples into `mutation_test.py` (`ing-1`…`ing-26`, + `tests/test_ingress.py` in
   `TEST_FILES`), then the release gate for **0.2.10-alpha** — notes lead with
   `ALLOWED_HOSTS`; (3) #187 (registry) next — it replaces the typed nginx rejections
