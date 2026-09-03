@@ -73,9 +73,12 @@ Template:
   left, owner claimed; frontend build/lint/481 unit green; backend ruff clean, pytest
   **1655 passed**; packaged stack (`up -d --build --wait` locally): token read from `docker compose logs api` (43 chars), matrix **0 failing** claimed / logged-in / anonymous, MCP `tools/list` ok. The pre-order spec flaked once locally
   under 10 workers (row not yet in the table) — passes alone and on one worker (CI's
-  setting); not a regression. Committed as `27e4d32` and pushed; PR #200 body updated. PR #200 body still says CI is red by construction — update it on push.
-- **Next:** (1) push, update the PR #200 body, watch CI Integration; (2) review + merge
-  #200 (Codex, high-stakes); (3) **#189 (M6-4) PATs**; (4) the two deferred family-13
+  setting); not a regression. Committed as `27e4d32`, then `641b214` (CI: `docker compose down -v` before the packaged
+  stack — the e2e had claimed the owner in the same Compose project's database, so the stack
+  came up claimed with no token to read; locally the two used different databases). **CI green
+  on `641b214`** (Backend / Frontend / Integration); PR #200 body updated. PR #200 body still says CI is red by construction — update it on push.
+- **Next:** (1) review + merge #200 (Codex, high-stakes — the PR body's deliberate calls plus
+  this entry's e2e/CI design); (3) **#189 (M6-4) PATs**; (4) the two deferred family-13
   hardening items (design §5.9 item 3(b)); (5) **LXC stays put until M6 is finished**
   (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first.
 
