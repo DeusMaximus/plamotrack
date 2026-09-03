@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-02 — Claude Code (Fable 5.1) — M6 begun: threat model + route matrix (PR #185, #29); Codex rounds 1–4 answered
+## 2026-09-02 — Claude Code (Fable 5.1) — M6 begun: threat model MERGED (PR #185, #29 closed), ten issues filed #186–#195
 
 - **Done:** `docs/design.md` §5 rewritten as the M6 threat model and route
   authorization matrix: current state (5.1), assets and actors (5.2–5.3), four
@@ -49,7 +49,11 @@ Template:
   families with app-vs-ingress columns (5.5), fourteen threat rows + safe failure
   (5.6), what loopback keeps (5.7), the thirteen gating tests T1–T13 (5.8), a
   ten-issue implementation split (5.9); pointer edits in §4 and §11. Branch
-  `feature/m6-threat-model`, **PR #185 open at head `0018162`** (not draft). **Codex
+  `feature/m6-threat-model`, **PR #185 squash-merged as `1d9b3b2` on the owner's call
+  (03/09) after four Codex rounds**; branch deleted; **#29 closed**; the ten §5.9 items
+  filed under `M6 — Secure remote access` as **#186–#195** (M6-1…M6-10, dependencies in
+  each body); #39 noted as absorbed by #186 and left open so the fixing PR closes both;
+  status note on #30. Round history: **Codex
   round 1 (GPT 5.6 Sol): NO-GO, four findings, all reproduced at `81ff6bb` and fixed
   at `414f076`**, answered per finding in the PR thread: (1, P2) `/api/mcp/*` and
   `/api/openapi.json` are live ingress aliases of `/mcp/` and `/openapi.json` → §5.5
@@ -116,19 +120,21 @@ Template:
   **its own release** before any auth; cookie `Secure`/`__Host-` only on an https
   `PUBLIC_BASE_URL`; mode P (plain HTTP, private network) supported with the
   cleartext caveat. Nothing in #30's credential thread was re-decided.
-- **State:** `main` at `9a46f35` + this entry. PR #185 is docs-only — no code, no
+- **State:** `main` at `1d9b3b2` (+ this entry). PR #185 was docs-only — no code, no
   migration, no suites run beyond the one settings-portability control; `git diff
-  --check` clean, table columns checked by script; CI green at `81ff6bb`, `414f076`, `790140d`
-  and `9e72a77`, running at `0018162`. The packaged stack was built once for the alias replay, then `down`
+  --check` clean, table columns checked by script; CI green at every head including
+  `0018162`; the merge commit's CI is the next thing to glance at. The packaged stack was built once for the alias replay, then `down`
   (no `-v`) and the dev `db` overlay restored — `db` is up on `127.0.0.1:5432`.
   Working tree parked on `main` for the review window. PR #184 (`ja`, draft)
   unchanged, awaiting a native reviewer.
-- **Next:** (1) owner rules on the twenty-three "Deliberate calls" in the PR body —
-  the reviewer's own recommendation is a **focused replay of the round-4 controls
-  only** (findings would number from 13) rather than a fifth broad round; all twelve
-  findings landed in family 8 and the registry plus its declared fields is the
-  structural answer; (2) on merge, the ten §5.9 issues get filed — item 5 (the
-  client/provider spike) is where the family-8 declarations meet real clients; (3) on merge, **file the ten §5.9
+- **Next:** (1) **#186 (M6-1)** is the first implementation branch — ingress identity
+  + Host/Origin guard, `--no-proxy-headers`, `redirect_slashes=False`, the nginx
+  envsubst template with the four `/api/` rejections and their positive controls;
+  **its own release**, Codex-lane review, release notes leading with `ALLOWED_HOSTS`;
+  the owner's LXC is reached by LAN hostname and will need `ALLOWED_HOSTS` set before
+  that upgrade; (2) #187 (registry + foundation) next, then #188/#189; #190 (spike)
+  can start once #186's topology exists; (3) #30 stays open as the credential
+  decision — its calls land in #190/#191/#192; (3) on merge, **file the ten §5.9
   issues** under `M6 — Secure remote access` with their dependencies, close #29,
   and mark #39 absorbed by item 1; (4) the first implementation branch is §5.9
   item 1 (ingress identity + Host/Origin guard) — its own release, nothing rides
