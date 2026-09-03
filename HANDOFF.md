@@ -41,6 +41,36 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #188 (M6-3) PR #200: Codex round 1 (NO-GO, 3×P3) addressed at `5be4414`, CI green, round-2 brief handed over
+
+- **Done:** Codex round 1 (GPT 5.6 Sol) on `641b214`: **NO-GO**, three P3s, no bypass, calls 1–5
+  retained. All three reproduced at `641b214` and fixed at `5be4414` (backend only): (f1) the
+  promised plain-http cookie-mode startup line didn't exist → `sessions.announce_cookie_mode`
+  from the lifespan at every auth-enabled start (warning on plain http, info on https); (f2)
+  `auth.sessions_revoked` declared, never recorded → `revoke_all_sessions` records it with
+  `count=N` in the caller's transaction (target/address from the caller; both recovery commands
+  pass `"host"`); (f3) three M6-3 security mutants survived (CSRF `==`, `verify_password(None)`
+  short-circuit, unconditional `claimed_at` re-stamp) + stale PR-body counts → tests spy on the
+  verifier's argument (`DUMMY_HASH`, via a wrapper — argon2's methods are read-only) and on
+  `hmac.compare_digest`, pin `claimed_at` across recovery, assert the audit rows; **ten** M6-3
+  mutants replayed by hand at `5be4414`, all killed, tuples in the PR body for the post-merge
+  harness fold-in. Reply posted, PR body amended (head, counts, mutant table, e2e work out of
+  "Deferred", token prose narrowed). Round-2 brief printed for the owner.
+- **Decisions:** the cookie-mode tests patch the module logger with a recorder, not `caplog` —
+  alembic's `fileConfig` in the session conftest disables already-imported app loggers
+  (`test_integrity.py`'s note; re-verified). The https line is `info`, so under uvicorn's default
+  logging (no root handler; last-resort prints WARNING+) it is **invisible in the shipped
+  container** while the plain-http warning shows — put to Codex as deliberate call 6, not changed.
+- **State:** `main` at this entry; branch head `5be4414`, **CI green** (Backend / Frontend /
+  Integration). Backend **1658**, `test_auth_local.py` **28**; negative control of the round-1
+  tests on `641b214`: 4 red / 24 green. Tree parked on `main` for the review window; dev DB owner
+  password is `e2e-owner-password` (reset so the suite's default works). **Round 2 pending.**
+- **Next:** (1) Codex round 2 on `5be4414` → address in the reviewer's numbering (4 onward);
+  (2) merge #200 on GO; (3) harness-only PR folding m63-1…10 into `mutation_test.py`
+  (`TEST_FILES` + `tests/test_auth_local.py`); (4) **#189 (M6-4) PATs**; (5) the two family-13
+  hardening items (design §5.9 item 3(b)); (6) **LXC stays put until M6 is finished** (owner,
+  03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #188 (M6-3) PR #200: e2e + CI Integration adapted to default-deny (PR #199 merged as `f713c8c`)
 
 - **Done:** (1) **PR #199 merged** (`f713c8c`, auth- mutant fold-in) — found merged at session
@@ -188,48 +218,4 @@ Template:
   auth) next — its activation checklist carries the family-13 and parser-stage items Codex
   named in round 1; #190 (the OAuth spike) can run in parallel. (4) **The LXC stays put
   until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` goes into its `.env` before the pull.
-
-## 2026-09-03 — Claude Code (Fable 5.1) — #187 (M6-2) PR #198 open: Codex rounds 1–2 addressed, round 3 pending
-
-- **Done:** Branch `feature/m6-2-auth-foundation`, PR #198 (closes #187): `dd7e53e` the
-  foundation (principal model, route policy registry, default-deny dependency behind
-  `create_app(authorization=True)`, five auth tables + migration `f1058c5de0f3`, the
-  import-admin predicate), `66a2e04` the nginx `/api` rejection list generated from the
-  registry, `b2a82b2` the Codex round-1 fixes (Opus 4.8: no-store via a response
-  middleware, the mounted-surface snapshot, the write-only principal). **Round-2 fix at
-  `6354dad`** (Fable 5.1) — both P3s accepted, the invariants moved one level up:
-  (1) `ResponseProfileMiddleware` *enforces* the declared `Cache-Control` on the final
-  response: every handler/library line replaced, case-insensitive on the raw key,
-  `no-transform` alone kept beside `no-store` (`KEPT_BESIDE_NO_STORE`), `ResponseProfile.
-  cache_control` the single source, `no_store`+`cache` refused. The sweep found the `/mcp`
-  mount declared `no_store` and unstamped (the SDK's `no-cache, no-transform` stood) →
-  `RouteIndex.response_profile_for` covers mounted endpoints; `policy_for` stays REST-only.
-  (2) `build_route_index` refuses ambiguous graphs (`DuplicateRouteError`: a shadowed
-  dispatch entry with parameter names erased, a `*` beside a verb, a shared endpoint),
-  refuses unknown route types, descends nested mounts, treats a bare-callable mount as a
-  leaf, *declares* mounted routes (`_classify_mounted`); the transport's verbs and every
-  REST path are pinned behaviourally (405 exactly off the literal snapshot, `Allow`
-  checked). `AGENTS.md` rule 13 and design §5.9 items 2/7 updated. HANDOFF rotated
-  (the 2026-09-01 entry → `.agents/handoff/2026-09.md`, new file).
-- **Decisions:** `no-transform` is the one directive retained beside `no-store` (the SSE
-  stream through nginx); a 500 from `ServerErrorMiddleware` is not stamped (generic text
-  only); overlap by specificity (`/kits/series` before `/kits/{kit_id}`) is allowed,
-  duplication refused; the `auth-` mutant set stays queued for a post-merge fold-in (#197
-  precedent), tuples in the PR body. Shipped app still unenforced (owner's
-  foundation-first call, 03/09).
-- **State:** four auth modules 130 (77/7/42/4); full backend 1600 passed; frontend 473,
-  lint + build green; ruff clean; `render_ingress.py --check` up to date. Mutants: 15
-  single-site, all killed (auth-15 survived the first run — a dead second copy of the
-  `no-store` literal in the middleware, fixed — then 10 failed); Codex's three graph
-  probes replayed in their original shape, all refused. Migration unchanged since round
-  1. PR body amended (round-2 section, mutant table + tuples); the round-2 reply and a
-  round-3 brief are drafted in the session scratchpad — **posting/editing on GitHub
-  awaits the owner's go**.
-- **Next:** (1) post the round-2 reply, apply the PR-body amendment, run Codex round 3
-  with the brief; (2) on GO, squash-merge #198 (`Closes #187`), then fold the `auth-`
-  tuples into `mutation_test.py` (harness-only PR, no external review, per #197);
-  (3) #188 (session auth) next — its activation checklist carries the family-13 and
-  parser-stage items Codex named (unrouted `/api/*` 404 → 401; malformed JSON 422
-  before the dependency); #190 (the OAuth spike) can run in parallel. (4) **The LXC
-  stays put until M6 is finished** (owner, 03/09) — needs `ALLOWED_HOSTS` before its pull.
 
