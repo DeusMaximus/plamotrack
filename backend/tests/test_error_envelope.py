@@ -312,7 +312,14 @@ def _raise_sites() -> list[tuple[str, str | None, set[str] | None]]:
                 continue
             func = node.exc.func
             name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
-            if name not in ("NotFoundError", "ConflictError", "InvalidInputError", "DomainError"):
+            if name not in (
+                "NotFoundError",
+                "ConflictError",
+                "InvalidInputError",
+                "DomainError",
+                "UnauthenticatedError",
+                "ForbiddenError",
+            ):
                 continue
             code, params_keys = _extract_code_and_params(node.exc)
             sites.append((f"{path.relative_to(app_dir)}:{node.lineno}", code, params_keys))

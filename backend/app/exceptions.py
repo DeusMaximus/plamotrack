@@ -30,3 +30,15 @@ class ConflictError(DomainError):
 
 class InvalidInputError(DomainError):
     """Payload is well-formed but semantically invalid for this operation."""
+
+
+class UnauthenticatedError(DomainError):
+    """No credential, or a presented one that fails, on a route that needs one
+    (§5.5). 401. Raised by the authorization dependency (`app/auth/dependency.py`),
+    not by a service — the service layer trusts that a caller reached it."""
+
+
+class ForbiddenError(DomainError):
+    """An authenticated principal without the scope the route requires (§5.5).
+    403 — the credential is valid, the grant is not enough. Raised by the
+    authorization dependency and by the import-apply admin check."""

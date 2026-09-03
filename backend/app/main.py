@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -8,9 +8,23 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
 from app import __version__, error_codes
+from app.auth.dependency import (
+    ROUTE_INDEX_ATTR,
+    ResponseProfileMiddleware,
+    bind_route_policies,
+    enforce_route_policy,
+)
+from app.auth.registry import build_route_index
 from app.config import Settings, get_settings
 from app.db import SessionDep
-from app.exceptions import ConflictError, DomainError, InvalidInputError, NotFoundError
+from app.exceptions import (
+    ConflictError,
+    DomainError,
+    ForbiddenError,
+    InvalidInputError,
+    NotFoundError,
+    UnauthenticatedError,
+)
 from app.ingress import (
     ForwardedClientMiddleware,
     HostOriginGuardMiddleware,
@@ -36,6 +50,8 @@ _DOMAIN_STATUS: dict[type[DomainError], int] = {
     NotFoundError: 404,
     ConflictError: 409,
     InvalidInputError: 422,
+    UnauthenticatedError: 401,
+    ForbiddenError: 403,
 }
 
 
@@ -150,10 +166,16 @@ def build_mcp_app(policy: IngressPolicy):
     return mcp_app
 
 
-def create_app(config: Settings | None = None) -> FastAPI:
+def create_app(config: Settings | None = None, *, authorization: bool = False) -> FastAPI:
     """The application, built from one `Settings`. Module-level `app` below is
     the one uvicorn and the suite import; tests that need a different ingress
-    policy build their own through here rather than mutating that one."""
+    policy build their own through here rather than mutating that one.
+
+    `authorization` installs the app-level default-deny dependency (§5.5,
+    M6-2) and builds the route policy registry onto `app.state`. It is off
+    on the shipped app until the credential mechanisms exist (#188/#189) —
+    the "activate once credentials work" sequencing — and on for the
+    authorization matrix, which drives the real route graph through it."""
     config = config or get_settings()
     policy = IngressPolicy.from_settings(config)
 
@@ -162,11 +184,16 @@ def create_app(config: Settings | None = None) -> FastAPI:
     # of §8's two-port layout; split later if operating them separately matters.
     mcp_app = build_mcp_app(policy)
 
+    # Default deny, one dependency for every REST route (§5.5) — not on the
+    # auto /openapi.json and /docs, which are add_route handlers an app-level
+    # dependency never runs for; those move behind the registry in #188.
+    route_dependencies = [Depends(enforce_route_policy)] if authorization else []
     app = FastAPI(
         title="plamotrack",
         version=__version__,
         description="Self-hosted Gunpla/plamo collection & build tracker",
         lifespan=mcp_app.lifespan,  # required for the MCP session manager
+        dependencies=route_dependencies,
         # No request-derived redirects (§5.6): `GET /kits/` is 404, not a 307
         # whose Location is built from the request's Host.
         redirect_slashes=False,
@@ -181,6 +208,23 @@ def create_app(config: Settings | None = None) -> FastAPI:
     app.add_api_route("/healthz", healthz, methods=["GET"], include_in_schema=False)
     app.add_api_route("/readyz", readyz, methods=["GET"], include_in_schema=False)
     app.mount("/mcp", mcp_app)
+
+    if authorization:
+        # Resolve every effective route to its declared policy now (raises on
+        # an undeclared route); the dependency reads this per request.
+        route_index = build_route_index(app)
+        setattr(app.state, ROUTE_INDEX_ATTR, route_index)
+        # The response profile is applied adjacent to the router that selects
+        # the route: the middleware below is added FIRST so it is the innermost
+        # user middleware, reading the endpoint FastAPI's router records in the
+        # very dict it holds and stamping the final response — replacing whatever
+        # the handler set; the mounted MCP transport, whose child may stack its
+        # own middleware, is bound at the route instead, where the binding also
+        # enforces the transport's declared verbs before the SDK runs. Exports
+        # returning their own Response, the deny envelope and the transport's
+        # responses all carry no-store (Codex #198 f1; round 2 f1; round 3 f1/f2).
+        bind_route_policies(app, route_index)
+        app.add_middleware(ResponseProfileMiddleware, index=route_index)
 
     app.add_exception_handler(DomainError, domain_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_envelope)

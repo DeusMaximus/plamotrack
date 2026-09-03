@@ -1,6 +1,12 @@
 {
   "note": "The stable wire codes (#25, #26), shared by both sides the way money-cases.json is: backend/tests/test_error_envelope.py pins backend/app/error_codes.py to exactly this list, and src/i18n/catalogue.test.ts pins the en-AU catalogue to it (every code has an api.* entry, and no entry interpolates a placeholder outside that code's declared params). A code reaches the wire as a raised error envelope or as an import-preview Diagnostic — same contract either way. `params` lists the keys GUARANTEED present on every emission of the code. An import-preview Diagnostic construction sends EXACTLY this set (#178 — a param emitted beyond the declaration is one no catalogue entry may name, so whatever it says is silently dropped in rendering; the exact-params audit refuses it at the emitter, and the two named bridge helpers that forward a raise's params are pinned by a runtime matrix instead). A DomainError raise site may still send more, never less; a translation may use less. Adding a code touches all three files; renaming one is a breaking API change.",
   "codes": {
+    "auth.forbidden": {
+      "params": []
+    },
+    "auth.unauthenticated": {
+      "params": []
+    },
     "catalog_item.category_required": {
       "params": [
         "item_type"

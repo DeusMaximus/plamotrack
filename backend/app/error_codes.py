@@ -171,6 +171,13 @@ IMPORT_RECEIPT_CONFLICT = "import.receipt_conflict"
 INGRESS_HOST_NOT_ALLOWED = "ingress.host_not_allowed"
 INGRESS_ORIGIN_NOT_ALLOWED = "ingress.origin_not_allowed"
 
+# --- authorization refusals (the route-policy dependency — app/auth, §5.5) ----
+# 401: no credential, or a presented one that fails, on a route that needs one.
+# 403: an authenticated principal whose scope is insufficient. Raised by the
+# authorization dependency; no params (the sentence names no value).
+AUTH_UNAUTHENTICATED = "auth.unauthenticated"
+AUTH_FORBIDDEN = "auth.forbidden"
+
 # --- request validation (FastAPI's 422 list shape) -------------------------
 REQUEST_VALIDATION = "request.validation"
 
