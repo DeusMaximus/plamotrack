@@ -22,11 +22,14 @@ revoke every session (`services/auth.py`).
 
 from __future__ import annotations
 
+import logging
 from datetime import timedelta
 
 from starlette.responses import Response
 
 from app.config import Settings
+
+log = logging.getLogger("plamotrack.auth")
 
 #: The cookie names — one per scheme, so an https instance never accepts a cookie
 #: a plain-http one set (the `__Host-` prefix is enforced by the browser).
@@ -54,6 +57,28 @@ def cookie_is_secure(settings: Settings) -> bool:
 
 def cookie_name(secure: bool) -> str:
     return SECURE_COOKIE_NAME if secure else PLAIN_COOKIE_NAME
+
+
+def announce_cookie_mode(settings: Settings) -> None:
+    """Say which cookie mode this instance runs in, at every auth-enabled start,
+    claimed or not. The mode is decided by configuration, never by the request
+    (rule 12), so the operator who put TLS in front of the stack and left
+    `PUBLIC_BASE_URL` on http gets no other tell that the browser cookie lacks
+    `Secure` and the `__Host-` prefix — this line is that tell (§5.6; #188)."""
+    if cookie_is_secure(settings):
+        log.info(
+            "Session cookie mode: %s (Secure, __Host-) — PUBLIC_BASE_URL is https.",
+            SECURE_COOKIE_NAME,
+        )
+        return
+    log.warning(
+        "Session cookie mode: %s is NOT Secure — PUBLIC_BASE_URL is %s. Fine on a "
+        "loopback or trusted-LAN install over plain http; if TLS terminates in front "
+        "of this stack, set PUBLIC_BASE_URL to its https address so the cookie is "
+        "Secure and __Host- prefixed.",
+        PLAIN_COOKIE_NAME,
+        repr(settings.public_base_url) if settings.public_base_url else "unset (plain http)",
+    )
 
 
 def set_session_cookie(response: Response, raw_token: str, *, secure: bool) -> None:

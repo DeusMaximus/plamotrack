@@ -11,7 +11,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
 from app import __version__, error_codes
-from app.auth import setup_token
+from app.auth import sessions, setup_token
 from app.auth.dependency import (
     ROUTE_INDEX_ATTR,
     ResponseProfileMiddleware,
@@ -242,6 +242,10 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
         # until it is claimed (§5.6 safe failure, §5.7). Only when auth is on —
         # the pre-auth app has no owner to claim.
         if authorization:
+            # And which cookie mode the owner's session will run in — the
+            # operator's only tell when TLS sits in front of an http-configured
+            # instance (§5.6; Codex #200 round 1, f1).
+            sessions.announce_cookie_mode(config)
             async with get_sessionmaker()() as session:
                 from app.services import auth as auth_service
 

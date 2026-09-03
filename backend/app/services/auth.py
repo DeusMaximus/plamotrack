@@ -147,13 +147,32 @@ async def resolve_session(session: AsyncSession, raw_token: str) -> SessionRow |
     return row
 
 
-async def revoke_all_sessions(session: AsyncSession) -> int:
+async def revoke_all_sessions(
+    session: AsyncSession,
+    *,
+    target: str,
+    principal: Principal | None = None,
+    request: Request | None = None,
+    client_address: str | None = None,
+) -> int:
     """Every live session revoked — logout-everywhere, the credential change and
-    the recovery command all end here (§5.6). Returns how many were live."""
+    the recovery command all end here (§5.6), and each records the bulk
+    revocation as its own audit event (#188: "session revoked"), with the count,
+    in the caller's transaction. Returns how many were live."""
     result = await session.execute(
         update(SessionRow).where(SessionRow.revoked_at.is_(None)).values(revoked_at=_now())
     )
-    return result.rowcount or 0
+    revoked = result.rowcount or 0
+    await audit.record_event(
+        session,
+        audit.SESSIONS_REVOKED,
+        principal=principal,
+        request=request,
+        target=target,
+        detail=f"count={revoked}",
+        client_address=client_address,
+    )
+    return revoked
 
 
 # --- the flows ------------------------------------------------------------------
@@ -306,7 +325,9 @@ async def recovery_reset_password(session: AsyncSession, *, password: str) -> in
     if owner.claimed_at is None:
         owner.claimed_at = _now()
     await _replace_credential(session, password)
-    revoked = await revoke_all_sessions(session)
+    revoked = await revoke_all_sessions(
+        session, target="recovery reset-password", client_address="host"
+    )
     await audit.record_event(
         session,
         audit.RECOVERY_RUN,
@@ -320,7 +341,9 @@ async def recovery_reset_password(session: AsyncSession, *, password: str) -> in
 
 async def recovery_revoke_sessions(session: AsyncSession) -> int:
     await acquire_write_gate(session)
-    revoked = await revoke_all_sessions(session)
+    revoked = await revoke_all_sessions(
+        session, target="recovery revoke-sessions", client_address="host"
+    )
     await audit.record_event(
         session,
         audit.RECOVERY_RUN,

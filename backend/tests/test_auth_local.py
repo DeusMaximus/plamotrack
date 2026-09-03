@@ -33,9 +33,10 @@ from app.auth.sessions import (
     SESSION_ABSOLUTE,
 )
 from app.auth.setup_token import setup_token_state
+from app.config import Settings
 from app.db import get_sessionmaker
-from app.main import app
-from app.models import AuditEvent
+from app.main import app, create_app
+from app.models import AuditEvent, Owner
 from app.models import Session as SessionRow
 from app.routers.auth import BUDGET_ATTR
 from app.services import audit
@@ -323,11 +324,27 @@ async def test_an_unclaimed_login_and_a_wrong_password_are_byte_identical(anon_c
     assert unclaimed.json() == wrong.json()
 
 
-def test_no_credential_verifies_against_the_dummy_hash():
+def test_no_credential_verifies_against_the_dummy_hash(monkeypatch):
     """The code path, not a stopwatch (§5.8 T11): `verify_password(None, ...)` runs
     the real verifier against `DUMMY_HASH` and returns False — it does not
-    short-circuit on the absent hash, which is what makes the timing equal."""
+    short-circuit on the absent hash, which is what makes the timing equal. The
+    verifier is spied on, so a short-circuit that returns False *without* the
+    Argon2 work fails here rather than passing on the answer alone (Codex #200
+    round 1, f3: the previous assertion was on the return value only)."""
+    seen: list[str] = []
+    real_hasher = credentials._hasher
+
+    class SpyingHasher:
+        def verify(self, encoded: str, password: str) -> bool:
+            seen.append(encoded)
+            return real_hasher.verify(encoded, password)
+
+        def __getattr__(self, name):
+            return getattr(real_hasher, name)
+
+    monkeypatch.setattr(credentials, "_hasher", SpyingHasher())
     assert credentials.verify_password(None, "anything at all") is False
+    assert seen == [credentials.DUMMY_HASH]
     # And a real verifier round-trips, so the False above is a mismatch, not a
     # broken verifier.
     encoded = credentials.hash_password(PASSWORD)
@@ -335,18 +352,41 @@ def test_no_credential_verifies_against_the_dummy_hash():
     assert credentials.verify_password(encoded, "other") is False
 
 
-def test_opaque_tokens_are_compared_on_their_digests():
+def _spy_compare_digest(monkeypatch) -> list[tuple[str, str]]:
+    """Record every constant-time compare so a test can assert the compare *was*
+    constant-time — a plain `==` gives the same answers (Codex #200 round 1, f3)."""
+    calls: list[tuple[str, str]] = []
+    real = credentials.hmac.compare_digest
+
+    def spying(a, b):
+        calls.append((a, b))
+        return real(a, b)
+
+    monkeypatch.setattr(credentials.hmac, "compare_digest", spying)
+    return calls
+
+
+def test_opaque_tokens_are_compared_on_their_digests(monkeypatch):
+    calls = _spy_compare_digest(monkeypatch)
     token = credentials.new_token()
-    assert credentials.tokens_match(token, credentials.digest(token)) is True
-    assert credentials.tokens_match("guess", credentials.digest(token)) is False
+    expected = credentials.digest(token)
+    assert credentials.tokens_match(token, expected) is True
+    assert credentials.tokens_match("guess", expected) is False
+    # Both compares went through compare_digest, on the digests (fixed length).
+    assert calls == [(expected, expected), (credentials.digest("guess"), expected)]
 
 
-def test_csrf_token_is_bound_to_the_session():
+def test_csrf_token_is_bound_to_the_session(monkeypatch):
+    calls = _spy_compare_digest(monkeypatch)
     a, b = credentials.new_token(), credentials.new_token()
-    assert credentials.csrf_tokens_match(credentials.csrf_token_for(a), a) is True
+    token_a = credentials.csrf_token_for(a)
+    assert credentials.csrf_tokens_match(token_a, a) is True
     # A token for one session does not validate another.
-    assert credentials.csrf_tokens_match(credentials.csrf_token_for(a), b) is False
+    assert credentials.csrf_tokens_match(token_a, b) is False
     assert credentials.csrf_tokens_match(None, a) is False
+    # Two compares, each constant-time and against the session-bound value; the
+    # None case never reaches the compare.
+    assert calls == [(token_a, token_a), (token_a, credentials.csrf_token_for(b))]
 
 
 # --- the cookie -----------------------------------------------------------------
@@ -366,6 +406,59 @@ async def test_the_session_cookie_is_httponly_and_lax(anon_client):
     assert f"Max-Age={int(SESSION_ABSOLUTE.total_seconds())}" in set_cookie
 
 
+class _LogRecorder:
+    """Stands in for the `plamotrack.auth` module logger. Not caplog: the session
+    conftest runs alembic, whose `fileConfig` disables every already-imported app
+    logger, so records from app modules never reach pytest's handler in this
+    suite (`test_integrity.py` has the same note). Patching the logger asserts
+    the call itself, which is the named control."""
+
+    def __init__(self) -> None:
+        self.warnings: list[str] = []
+        self.infos: list[str] = []
+
+    def warning(self, msg, *args) -> None:
+        self.warnings.append(msg % args)
+
+    def info(self, msg, *args) -> None:
+        self.infos.append(msg % args)
+
+
+async def _lifespan_log(monkeypatch, *, public_base_url: str) -> _LogRecorder:
+    """Enter the lifespan of an auth-enabled app built from `public_base_url` and
+    return what it logged through `sessions.log` and `setup_token.log`. The
+    startup announcement is the operator's only tell of the cookie mode (§5.6;
+    #188)."""
+    from app.auth import sessions, setup_token
+
+    recorder = _LogRecorder()
+    monkeypatch.setattr(sessions, "log", recorder, raising=False)
+    monkeypatch.setattr(setup_token, "log", recorder, raising=False)
+    live = create_app(Settings(public_base_url=public_base_url), authorization=True)
+    async with live.router.lifespan_context(live):
+        pass
+    return recorder
+
+
+async def test_plain_http_cookie_mode_is_announced_at_startup(anon_client, monkeypatch):
+    """On plain http the session cookie cannot be `Secure`; the startup log says
+    so, whether or not the instance is claimed (Codex #200 round 1, f1)."""
+    log = await _lifespan_log(monkeypatch, public_base_url="")
+    assert [m for m in log.warnings if "NOT Secure" in m and PLAIN_COOKIE_NAME in m], log.warnings
+    # And on a claimed instance too — the warning is not the setup-token banner,
+    # which a claimed instance no longer prints.
+    await _claim(anon_client)
+    log = await _lifespan_log(monkeypatch, public_base_url="")
+    assert [m for m in log.warnings if "NOT Secure" in m and PLAIN_COOKIE_NAME in m], log.warnings
+    assert not any("setup token" in m for m in log.warnings), log.warnings
+
+
+async def test_https_cookie_mode_is_not_warned_about(monkeypatch):
+    log = await _lifespan_log(monkeypatch, public_base_url="https://plamotrack.example")
+    assert not any(PLAIN_COOKIE_NAME in m for m in log.warnings), log.warnings
+    assert any(SECURE_COOKIE_NAME in m for m in log.infos), log.infos
+
+
 # --- recovery (T13; the host-side break-glass, never an HTTP route) --------------
 
 
@@ -380,9 +473,38 @@ async def test_recovery_reset_password_claims_and_revokes(anon_client):
         )
     ).status_code == 201
 
+    # Pin the claim time: recovery on a claimed instance must not re-stamp it
+    # (Codex #200 round 1, f3 — an unconditional re-stamp survived the old test).
+    claimed_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    async with get_sessionmaker()() as session:
+        owner_before = (await session.execute(select(Owner))).scalar_one()
+        owner_before.claimed_at = claimed_at
+        await session.commit()
+
+    revoked_before = await _audit_count(audit.SESSIONS_REVOKED)
     async with get_sessionmaker()() as session:
         revoked = await recovery_reset_password(session, password="a-brand-new-passphrase")
     assert revoked == 1  # the setup session
+
+    async with get_sessionmaker()() as session:
+        owner_after = (await session.execute(select(Owner))).scalar_one()
+        assert owner_after.claimed_at == claimed_at
+        # The bulk revocation is its own audit event (#188: "session revoked"),
+        # beside the record that recovery ran (f2).
+        events = (
+            (
+                await session.execute(
+                    select(AuditEvent).where(AuditEvent.event_type == audit.SESSIONS_REVOKED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(events) == revoked_before + 1
+        assert events[-1].detail == "count=1"
+        assert events[-1].target == "recovery reset-password"
+        assert events[-1].client_address == "host"
+    assert await _audit_count(audit.RECOVERY_RUN) == 1
 
     # The old cookie no longer authenticates.
     assert (await anon_client.get("/kits")).status_code == 401
@@ -392,6 +514,31 @@ async def test_recovery_reset_password_claims_and_revokes(anon_client):
             "/auth/login", json={"password": "a-brand-new-passphrase"}, headers=ORIGIN
         )
         assert login.status_code == 200
+
+
+async def test_recovery_revoke_sessions_is_audited_with_its_count(anon_client):
+    from app.services.auth import recovery_revoke_sessions
+
+    await _claim(anon_client)
+    async with fresh_client() as c:
+        assert (
+            await c.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        ).status_code == 200
+    async with get_sessionmaker()() as session:
+        assert await recovery_revoke_sessions(session) == 2
+        events = (
+            (
+                await session.execute(
+                    select(AuditEvent).where(AuditEvent.event_type == audit.SESSIONS_REVOKED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [(e.detail, e.target, e.client_address) for e in events] == [
+        ("count=2", "recovery revoke-sessions", "host")
+    ]
+    assert (await anon_client.get("/kits")).status_code == 401
 
 
 async def test_recovery_on_an_unclaimed_instance_claims_it(anon_client):
