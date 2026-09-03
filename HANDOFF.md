@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-02 — Claude Code (Fable 5.1) — M6 begun: threat model + route matrix (PR #185, #29); Codex rounds 1–3 answered
+## 2026-09-02 — Claude Code (Fable 5.1) — M6 begun: threat model + route matrix (PR #185, #29); Codex rounds 1–4 answered
 
 - **Done:** `docs/design.md` §5 rewritten as the M6 threat model and route
   authorization matrix: current state (5.1), assets and actors (5.2–5.3), four
@@ -49,7 +49,7 @@ Template:
   families with app-vs-ingress columns (5.5), fourteen threat rows + safe failure
   (5.6), what loopback keeps (5.7), the thirteen gating tests T1–T13 (5.8), a
   ten-issue implementation split (5.9); pointer edits in §4 and §11. Branch
-  `feature/m6-threat-model`, **PR #185 open at head `9e72a77`** (not draft). **Codex
+  `feature/m6-threat-model`, **PR #185 open at head `0018162`** (not draft). **Codex
   round 1 (GPT 5.6 Sol): NO-GO, four findings, all reproduced at `81ff6bb` and fixed
   at `414f076`**, answered per finding in the PR thread: (1, P2) `/api/mcp/*` and
   `/api/openapi.json` are live ingress aliases of `/mcp/` and `/openapi.json` → §5.5
@@ -88,8 +88,21 @@ Template:
   only request-derived ones forbidden, nginx's relative `/api`→`/api/` 301 retained,
   T2 rows are ingress spellings (`/api/kits/`, not `/kits/`). Also: bare `/mcp`
   ingress-only, bare `/.well-known/openid-configuration` pruned (issuer mismatch),
-  T13 proved via old-client refresh + initialize. PR body lists calls 13–21. Earlier
-  probes stand: non-JSON / no-`Content-Type` bodies 422 on
+  T13 proved via old-client refresh + initialize. **Codex round 4: NO-GO, two P3s,
+  both reproduced at `9e72a77` and fixed at `0018162`**: (11) the registry lacked a
+  response policy — FastMCP's consent page and redirects carry no `Cache-Control`
+  while the SDK's token/revoke do → registry gains protocol role per child route,
+  effective methods, modes and a response profile; `no-store` supplied by a thin
+  middleware on the mount; T1/T2/T10 extended; (12) "exact registered redirect URI"
+  is false for two client classes — FastMCP synthesises a client for the upstream
+  client id with `allow_unregistered_redirect_uris=True` (probed: 302 to consent for
+  an unlisted URI) and an allowlist replaces rather than narrows registration →
+  binding per client kind (DCR exact + RFC 8252 loopback-port exception, allowlist
+  AND registration, synthesised client refused/pinned, CIMD declared), T9 one row per
+  kind. Call 17 marked superseded by 19. **Reviewer's exit signal: after these
+  amendments, the useful gates are a focused replay of the round-4 controls and the
+  client/provider spike, not another broad wording round.** PR body lists calls
+  13–23. Earlier probes stand: non-JSON / no-`Content-Type` bodies 422 on
   `POST /retailers`; FastMCP's route set read from the pinned libraries.
 - **Decisions (proposed in the doc; the owner approves via the PR):** every mode
   authenticates, no `AUTH_MODE=disabled` in the image; `instance:admin` = owner
@@ -103,20 +116,19 @@ Template:
   **its own release** before any auth; cookie `Secure`/`__Host-` only on an https
   `PUBLIC_BASE_URL`; mode P (plain HTTP, private network) supported with the
   cleartext caveat. Nothing in #30's credential thread was re-decided.
-- **State:** `main` at `71a8563` + this entry. PR #185 is docs-only — no code, no
+- **State:** `main` at `9a46f35` + this entry. PR #185 is docs-only — no code, no
   migration, no suites run beyond the one settings-portability control; `git diff
-  --check` clean, table columns checked by script; CI green at `81ff6bb`, `414f076` and
-  `790140d`, running at `9e72a77`. The packaged stack was built once for the alias replay, then `down`
+  --check` clean, table columns checked by script; CI green at `81ff6bb`, `414f076`, `790140d`
+  and `9e72a77`, running at `0018162`. The packaged stack was built once for the alias replay, then `down`
   (no `-v`) and the dev `db` overlay restored — `db` is up on `127.0.0.1:5432`.
   Working tree parked on `main` for the review window. PR #184 (`ja`, draft)
   unchanged, awaiting a native reviewer.
-- **Next:** (1) owner decides whether to buy a **Codex round 4** at `9e72a77`
-  (findings would number from 11; re-fill the brief from `.agents/review-brief.md`)
-  or to rule directly — all three rounds landed in family 8 (the MCP/OAuth route
-  surface) and the route policy registry is the structural answer to that signal, so
-  a round 4 should test whether the registry's declarations are complete, not hunt
-  another inferred rule; (2) owner rules on the twenty-one "Deliberate calls" in the
-  PR body; (3) on merge, **file the ten §5.9
+- **Next:** (1) owner rules on the twenty-three "Deliberate calls" in the PR body —
+  the reviewer's own recommendation is a **focused replay of the round-4 controls
+  only** (findings would number from 13) rather than a fifth broad round; all twelve
+  findings landed in family 8 and the registry plus its declared fields is the
+  structural answer; (2) on merge, the ten §5.9 issues get filed — item 5 (the
+  client/provider spike) is where the family-8 declarations meet real clients; (3) on merge, **file the ten §5.9
   issues** under `M6 — Secure remote access` with their dependencies, close #29,
   and mark #39 absorbed by item 1; (4) the first implementation branch is §5.9
   item 1 (ingress identity + Host/Origin guard) — its own release, nothing rides
