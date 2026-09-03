@@ -41,6 +41,33 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #187 (M6-2) MERGED (PR #198 → `6604658`, Codex round 4 GO)
+
+- **Done:** Codex round 4 (GPT 5.6 Sol) on `0d594d0`: **GO, no remaining or new findings**
+  in the foundation-first scope. PR #198 squash-merged as `6604658` on the owner's call
+  (04/09), branch deleted, **#187 closed**. CI on `0d594d0` green. Rounds 1–3 are in the
+  previous entries; the merged design: the route policy registry + default-deny dependency
+  behind `create_app(authorization=True)`; the response profile bound adjacent to the
+  selecting router (innermost middleware for the app's routes; a `RouteBinding` on each
+  mounted route, which also enforces the transport's declared verbs before the SDK);
+  ambiguous route graphs refused at build; the nginx `/api` rejections generated from the
+  registry; five auth tables (migration `f1058c5de0f3`, additive, owner seeded unclaimed).
+  The shipped app is still **not** default-deny — activation lands with #188.
+- **Decisions:** none new — deliberate calls 1–11 in the PR body all accepted by review.
+- **State:** `main` at `6604658` plus this entry. Backend 1626 / frontend 473 at the merged
+  head. **Not yet done:** the `auth-` mutant fold-in (tuples auth-1…4, 6…23 in the PR body;
+  auth-5 retired) into `mutation_test.py` — harness-only PR, no external review (#197
+  precedent). No release cut — M6 ships as one release at the end (0.2.10 was the M6-1
+  exception). HANDOFF rotated (the 2026-09-02 "M6 begun" entry → `.agents/handoff/2026-09.md`).
+- **Next:** (1) fold the `auth-` tuples into `mutation_test.py` — add the four auth test
+  files to `TEST_FILES`, re-check every anchor at fold-in (the code moved under some in
+  round 3), run `-k auth-`; (2) **#188 (local owner auth)** — flips the `create_app`
+  default, suite-wide injection, e2e login, family 11 re-registered guarded, `apply_import`
+  wired to `plan_requires_admin`, plus the activation checklist (unrouted `/api/*` 404 → 401;
+  the parser-stage 422 before the dependency); #190 (the OAuth spike) can run in parallel.
+  (3) **The LXC stays put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` into its
+  `.env` before the pull, back up first.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #187 (M6-2) PR #198: Codex round 3 addressed at `0d594d0`, round 4 pending
 
 - **Done:** Round-3 fix on `feature/m6-2-auth-foundation` at `0d594d0` — both P3s accepted.
@@ -266,103 +293,3 @@ Template:
   `TEST_FILES`), then the release gate for **0.2.10-alpha** — notes lead with
   `ALLOWED_HOSTS`; (3) #187 (registry) next — it replaces the typed nginx rejections
   and the matrix's hand-typed rows.
-
-## 2026-09-02 — Claude Code (Fable 5.1) — M6 begun: threat model MERGED (PR #185, #29 closed), ten issues filed #186–#195
-
-- **Done:** `docs/design.md` §5 rewritten as the M6 threat model and route
-  authorization matrix: current state (5.1), assets and actors (5.2–5.3), four
-  deployment modes L/P/R/Dev (5.4), five principals × three scopes × thirteen route
-  families with app-vs-ingress columns (5.5), fourteen threat rows + safe failure
-  (5.6), what loopback keeps (5.7), the thirteen gating tests T1–T13 (5.8), a
-  ten-issue implementation split (5.9); pointer edits in §4 and §11. Branch
-  `feature/m6-threat-model`, **PR #185 squash-merged as `1d9b3b2` on the owner's call
-  (03/09) after four Codex rounds**; branch deleted; **#29 closed**; the ten §5.9 items
-  filed under `M6 — Secure remote access` as **#186–#195** (M6-1…M6-10, dependencies in
-  each body); #39 noted as absorbed by #186 and left open so the fixing PR closes both;
-  status note on #30. Round history: **Codex
-  round 1 (GPT 5.6 Sol): NO-GO, four findings, all reproduced at `81ff6bb` and fixed
-  at `414f076`**, answered per finding in the PR thread: (1, P2) `/api/mcp/*` and
-  `/api/openapi.json` are live ingress aliases of `/mcp/` and `/openapi.json` → §5.5
-  gains "one spelling per family" at the ingress, T2 the encoded/doubled spellings,
-  split item 1 the rejection; (2, P2) a `mode=merge` import updates
-  `instance_settings`, crossing the admin boundary with a write token → import
-  privilege is decided on the plan's content, T1/T6 gain that axis; (3, P3) uvicorn
-  0.52.1 runs its proxy-headers middleware by default (trusts `127.0.0.1`), so
-  `internal` must read the raw TCP peer → `--no-proxy-headers` + app-side forwarded
-  address, T9 control; (4, P3) a FastMCP child mounted at `/mcp` emits
-  `/mcp/.well-known/*` and no root discovery routes → parent installs
-  `get_well_known_routes(...)`, child aliases pruned, both route sets snapshotted.
-  Reviewer's qualifications on calls 5/7/9/11 folded in. **Codex round 2: NO-GO,
-  three P3s, all reproduced at `414f076` and fixed at `790140d`**: (5) the parent-root
-  discovery routes are reachable under `/api/.well-known` by the same rewrite → that
-  namespace rejected too, the rejection list derived from the route table by T2, T2
-  snapshots responses not route tables; (6) Starlette 1.4.0's slash redirect builds
-  `Location` from the request scheme/Host with the query intact (`/kits/` → 307
-  `http://<Host>/kits` on the real app) → `redirect_slashes=False` on both routers,
-  T2/T9 assert no `Location` on non-canonical spellings; (7) T13 promised `pg_dump`
-  restores MCP links while split item 5 allowed a file-tree store → storage-
-  independent backup contract (database + OAuth store + `.env`). Family 8's root set
-  tightened to the four routes `get_well_known_routes` really emits; `add_only` named;
-  family 3/9 `mcp` cells → 401. **Codex round 3: NO-GO, three P3s, all reproduced at
-  `790140d` and fixed at `9e72a77`**: (8) "derive the rejection list from the route
-  table" is not a property the table has (15 top-level entries, 8 `_IncludedRouter`
-  without `path`, 57 effective; `/docs` vs `/openapi.json` indistinguishable) → §5.5's
-  mechanism is now a **route policy registry** (family, credential policy, external
-  spellings, serving layer, redirect destinations per effective route/mount) that the
-  dependency, the nginx template and T1/T2 all read — the rule-9 shape applied to
-  routes; (9) FastAPI's generated `/openapi.json`, `/docs`, `/redoc`,
-  `/docs/oauth2-redirect` are `add_route` routes an app-level dependency never runs
-  for (probed: 0 calls) → disabled and re-registered as guarded routes, the OAuth2
-  helper dropped; (10) "every Location names PUBLIC_BASE_URL" would break OAuth
-  (provider and client redirects are protocol) → redirects classified by destination,
-  only request-derived ones forbidden, nginx's relative `/api`→`/api/` 301 retained,
-  T2 rows are ingress spellings (`/api/kits/`, not `/kits/`). Also: bare `/mcp`
-  ingress-only, bare `/.well-known/openid-configuration` pruned (issuer mismatch),
-  T13 proved via old-client refresh + initialize. **Codex round 4: NO-GO, two P3s,
-  both reproduced at `9e72a77` and fixed at `0018162`**: (11) the registry lacked a
-  response policy — FastMCP's consent page and redirects carry no `Cache-Control`
-  while the SDK's token/revoke do → registry gains protocol role per child route,
-  effective methods, modes and a response profile; `no-store` supplied by a thin
-  middleware on the mount; T1/T2/T10 extended; (12) "exact registered redirect URI"
-  is false for two client classes — FastMCP synthesises a client for the upstream
-  client id with `allow_unregistered_redirect_uris=True` (probed: 302 to consent for
-  an unlisted URI) and an allowlist replaces rather than narrows registration →
-  binding per client kind (DCR exact + RFC 8252 loopback-port exception, allowlist
-  AND registration, synthesised client refused/pinned, CIMD declared), T9 one row per
-  kind. Call 17 marked superseded by 19. **Reviewer's exit signal: after these
-  amendments, the useful gates are a focused replay of the round-4 controls and the
-  client/provider spike, not another broad wording round.** PR body lists calls
-  13–23. Earlier probes stand: non-JSON / no-`Content-Type` bodies 422 on
-  `POST /retailers`; FastMCP's route set read from the pinned libraries.
-- **Decisions (proposed in the doc; the owner approves via the PR):** every mode
-  authenticates, no `AUTH_MODE=disabled` in the image; `instance:admin` = owner
-  session only, no admin PATs in M6; `/meta`, OpenAPI and docs → `collection:read`;
-  `GET /auth/session` is the anonymous bootstrap; `import/preview` + `mode=merge` →
-  write, `replace_all` → admin; MCP OAuth tokens audience-bound to `/mcp`, PATs valid
-  on both surfaces; `/readyz` → loopback TCP peer only, nginx 404 on top;
-  loopback-origin-vs-loopback-host accepted (dissolves the Vite `changeOrigin` trap);
-  CSRF = `SameSite=Lax` + Origin/Referer + session token, independent of `plan_hash`;
-  anonymous unrouted `/api/*` → 401; the Host/Origin guard (absorbs #39) ships as
-  **its own release** before any auth; cookie `Secure`/`__Host-` only on an https
-  `PUBLIC_BASE_URL`; mode P (plain HTTP, private network) supported with the
-  cleartext caveat. Nothing in #30's credential thread was re-decided.
-- **State:** `main` at `1d9b3b2` (+ this entry). PR #185 was docs-only — no code, no
-  migration, no suites run beyond the one settings-portability control; `git diff
-  --check` clean, table columns checked by script; CI green at every head including
-  `0018162`; the merge commit's CI is the next thing to glance at. The packaged stack was built once for the alias replay, then `down`
-  (no `-v`) and the dev `db` overlay restored — `db` is up on `127.0.0.1:5432`.
-  Working tree parked on `main` for the review window. PR #184 (`ja`, draft)
-  unchanged, awaiting a native reviewer.
-- **Next:** (1) **#186 (M6-1)** is the first implementation branch — ingress identity
-  + Host/Origin guard, `--no-proxy-headers`, `redirect_slashes=False`, the nginx
-  envsubst template with the four `/api/` rejections and their positive controls;
-  **its own release**, Codex-lane review, release notes leading with `ALLOWED_HOSTS`;
-  the owner's LXC is reached by LAN hostname and will need `ALLOWED_HOSTS` set before
-  that upgrade; (2) #187 (registry + foundation) next, then #188/#189; #190 (spike)
-  can start once #186's topology exists; (3) #30 stays open as the credential
-  decision — its calls land in #190/#191/#192; (3) on merge, **file the ten §5.9
-  issues** under `M6 — Secure remote access` with their dependencies, close #29,
-  and mark #39 absorbed by item 1; (4) the first implementation branch is §5.9
-  item 1 (ingress identity + Host/Origin guard) — its own release, nothing rides
-  with it. LXC: still pre-0.2.9, **back up before pulling** (two migrations
-  pending) — unchanged from the 29/08 entry.
