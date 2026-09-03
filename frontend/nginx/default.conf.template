@@ -81,14 +81,15 @@ server {
         add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
     }
 
+    # >>> generated: /api alias rejections (app/auth/registry.py) — do not edit
     # One spelling per family (§5.5). The generic /api/ rewrite below makes every
     # root path of the API process reachable under /api/, so the families whose
     # canonical spelling is elsewhere are refused here first — after nginx has
     # merged slashes and percent-decoded, so /api//mcp/, /api/%6dcp/ and
     # /api/mcp%2f land on these too. An alias would reach the same handler under
     # the same app policy; what it would shed is this file's per-family settings
-    # (buffering, timeouts, the readiness block). Typed here for now; generated
-    # from the route policy registry once M6-2 lands.
+    # (buffering, timeouts, the readiness block). Generated from the route policy
+    # registry — see the markers above.
     location ^~ /api/mcp {
         return 404;
     }
@@ -105,6 +106,7 @@ server {
     location = /api/readyz {
         return 404;
     }
+    # <<< end generated
 
     # The docs page at /api/docs fetches its schema from an absolute /openapi.json,
     # which would otherwise hit the SPA fallback above and be handed index.html —

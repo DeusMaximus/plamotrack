@@ -305,9 +305,11 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     the API process whose canonical spelling is not under `/api/` (`/mcp`,
     `/.well-known`, `/openapi.json`, `/readyz`) is 404 under `/api/` before the
     generic location, and `backend/ingress_matrix.py` proves it against the
-    packaged stack (CI Integration). A new root route owes a row there until the
-    route policy registry (#187) generates the list. The app is authoritative and
-    nginx never grants: development runs without it.
+    packaged stack (CI Integration). That list is **generated** from the route
+    policy registry (`app/auth/registry.py`, `API_ALIAS_REJECTIONS`) into the
+    template by `scripts/render_ingress.py` (M6-2): a new root namespace owes a
+    declaration there or fails `tests/test_ingress_generation.py`. The app is
+    authoritative and nginx never grants: development runs without it.
 13. **Authorization is one dependency over a declared registry (M6-2, §5.5):** every
     request resolves to one `Principal` (`anon`, `owner`, `pat`, `mcp`, `internal`;
     scopes `collection:read`/`collection:write`/`instance:admin`, `write` implying

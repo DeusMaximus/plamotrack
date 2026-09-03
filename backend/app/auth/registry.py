@@ -382,3 +382,94 @@ def build_route_index(app: FastAPI) -> RouteIndex:
             "route policy registry declares no policy for: " + "; ".join(undeclared)
         )
     return RouteIndex(by_endpoint=by_endpoint, routes=tuple(routes))
+
+
+# --- ingress: the /api/ alias rejection list (§5.5, rule 12) ----------------------
+#
+# The generic `/api/` rewrite in the nginx template makes every root path of the
+# API process reachable under `/api/`, so a root-canonical family (its canonical
+# spelling is not under `/api/`) has to be refused there before the generic
+# location — otherwise the alias reaches the same handler under the same app
+# policy while shedding that family's per-location settings (§5.5, "one spelling
+# per family"). This is the source of that rejection list: `render_api_alias_
+# rejections()` emits the nginx blocks, `scripts/render_ingress.py` writes them
+# into the template between its markers, and `tests/test_ingress_generation.py`
+# fails if the template drifts from this declaration or a new root-canonical
+# route is added without a rejection here. Replaces item 1's hand-typed list.
+
+
+@dataclass(frozen=True)
+class ApiAliasRejection:
+    """One root namespace whose `/api/<namespace>` alias nginx answers 404.
+
+    `exact` chooses the nginx location operator: `=` for a single path
+    (`/api/openapi.json`, `/api/readyz`), `^~` for a prefix that must also catch
+    the namespace's children and encoded spellings (`/api/mcp`, `/api/mcp/…`,
+    `/api//mcp/`, `/api/%6dcp/`). `note`, if given, is an explanatory comment
+    emitted above the block."""
+
+    namespace: str
+    exact: bool
+    family: int
+    note: str | None = None
+
+
+#: The root API namespaces rejected under `/api/`. `/.well-known` (family 8) is
+#: declared ahead of its routes (#192): the root discovery documents do not exist
+#: yet, but their `/api/` alias must be dark from the start, and a registry that
+#: only listed live routes could not say so (§5.1 — the route table cannot supply
+#: this). `test_ingress_generation.py` proves every root-canonical *live* route is
+#: covered here, so a new one cannot slip in unlisted.
+API_ALIAS_REJECTIONS: tuple[ApiAliasRejection, ...] = (
+    ApiAliasRejection("/mcp", exact=False, family=7),
+    ApiAliasRejection("/.well-known", exact=False, family=8),
+    ApiAliasRejection("/openapi.json", exact=True, family=11),
+    ApiAliasRejection(
+        "/readyz",
+        exact=True,
+        family=10,
+        note=(
+            "Readiness is for the container healthcheck, which reaches the API from\n"
+            "inside its own container (§5.5, family 10). The app answers 404 to any\n"
+            "other peer; this is the same decision, duplicated, so a stranger cannot\n"
+            "probe whether the database is up. Liveness (/api/healthz) stays open."
+        ),
+    ),
+)
+
+#: The nginx template lines between these markers are generated. Do not edit them
+#: by hand — change `API_ALIAS_REJECTIONS` and run `scripts/render_ingress.py`.
+NGINX_REJECTIONS_BEGIN = (
+    "# >>> generated: /api alias rejections (app/auth/registry.py) — do not edit"
+)
+NGINX_REJECTIONS_END = "# <<< end generated"
+
+_REJECTION_PREAMBLE = (
+    "One spelling per family (§5.5). The generic /api/ rewrite below makes every\n"
+    "root path of the API process reachable under /api/, so the families whose\n"
+    "canonical spelling is elsewhere are refused here first — after nginx has\n"
+    "merged slashes and percent-decoded, so /api//mcp/, /api/%6dcp/ and\n"
+    "/api/mcp%2f land on these too. An alias would reach the same handler under\n"
+    "the same app policy; what it would shed is this file's per-family settings\n"
+    "(buffering, timeouts, the readiness block). Generated from the route policy\n"
+    "registry — see the markers above."
+)
+
+
+def _as_comment(text: str, indent: str) -> list[str]:
+    return [f"{indent}# {line}" if line else f"{indent}#" for line in text.split("\n")]
+
+
+def render_api_alias_rejections(indent: str = "    ") -> str:
+    """The nginx `location` blocks for `API_ALIAS_REJECTIONS`, as they appear
+    between the markers in `frontend/nginx/default.conf.template`. Deterministic:
+    the same declaration always renders the same text, byte for byte."""
+    lines = list(_as_comment(_REJECTION_PREAMBLE, indent))
+    for rejection in API_ALIAS_REJECTIONS:
+        if rejection.note:
+            lines.extend(_as_comment(rejection.note, indent))
+        operator = "=" if rejection.exact else "^~"
+        lines.append(f"{indent}location {operator} /api{rejection.namespace} {{")
+        lines.append(f"{indent}    return 404;")
+        lines.append(f"{indent}}}")
+    return "\n".join(lines)
