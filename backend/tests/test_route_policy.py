@@ -20,8 +20,10 @@ from fastapi import FastAPI
 from fastmcp import Client
 from httpx import ASGITransport, AsyncClient
 from starlette.applications import Starlette
+from starlette.responses import JSONResponse
 from starlette.routing import Mount, Route
 
+from app.auth.dependency import RouteBinding, allow_header, method_not_allowed
 from app.auth.principal import (
     Principal,
     PrincipalKind,
@@ -62,15 +64,15 @@ def test_every_effective_route_is_declared():
     assert len(index.by_endpoint) == len(routes)
     for route in routes:
         assert index.policy_for(route.endpoint) is not None, route.path
-    # And the child surface: every route under the mount is declared too, and
-    # answers only through the response-profile lookup — the REST dependency's
-    # `policy_for` does not know it, because the dependency never runs there.
+    # And the child surface: every route under the mount is declared too, in its
+    # own map — the REST dependency's `policy_for` does not know it, because the
+    # dependency never runs there; the route binding reads `mounted_by_endpoint`.
     mounted = list(iter_mounted_routes(app))
     assert mounted, "no mounted routes resolved — the walk lost the /mcp child"
     assert len(index.mounted_by_endpoint) == len(mounted)
     for route in mounted:
         assert index.policy_for(route.endpoint) is None, route.path
-        assert index.response_profile_for(route.endpoint) is not None, route.path
+        assert index.mounted_by_endpoint[route.endpoint] is not None, route.path
 
 
 def test_an_undeclared_route_fails_the_build():
@@ -358,7 +360,10 @@ def test_a_bare_asgi_mount_is_a_leaf_of_its_own():
 # universe, against the real app, is 405 exactly when the declaration does not
 # hold it. The declaration is the literal snapshot above, not `route.methods`.
 
-_METHOD_UNIVERSE = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE")
+_METHOD_UNIVERSE = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT")
+#: One verb outside every registry, so the boundary is shown to be an allowlist
+#: and not a longer denylist (Codex #198 round 3, f2).
+_EXTENSION_METHOD = "REVIEW198"
 
 
 def _probe_path(path: str) -> str:
@@ -406,31 +411,110 @@ async def test_every_rest_path_is_405_exactly_off_its_declared_methods(path, htt
             assert allowed <= declared, (method, url, allowed)
 
 
+_TRANSPORT_DECLARED = {"GET", "POST", "DELETE"}  # the literal; the registry must agree
+
+
+def _transport_route(live):
+    mount = next(r for r in live.routes if isinstance(r, Mount) and r.path == "/mcp")
+    return next(r for r in mount.routes if r.path == "/")
+
+
+async def _live_client(live):
+    transport = ASGITransport(app=live, client=("127.0.0.1", 123), raise_app_exceptions=False)
+    return AsyncClient(
+        transport=transport, base_url="http://127.0.0.1:8000", headers={"Host": "localhost"}
+    )
+
+
 async def test_the_mcp_transport_accepts_exactly_the_declared_methods():
     """`/mcp/` is a raw ASGI endpoint — its Starlette metadata is `methods=None`,
     so no snapshot of it can see which verbs the implementation accepts (round
-    2, f2B: a transport wrapped to answer PUT left every test green). Pinned
-    behaviourally, lifespan entered: every verb the registry does not declare is
-    405 and the transport's own `Allow` names exactly the declared set; every
-    declared verb reaches the transport (a 406/400 for a bare request, never
-    405 or 404). A transport release accepting a new verb, or a declaration
-    drifting from the transport, fails here."""
-    declared = {"GET", "POST", "DELETE"}  # the literal; the registry must agree
-    assert MCP_TRANSPORT_POLICY.methods == frozenset(declared)
-    live = create_app()
+    2, f2B). On the enforced app the registry's declared set is the dispatch
+    boundary (`RouteBinding`): every verb outside it — the universe, plus an
+    extension verb no registry holds — is 405 with `Allow` naming exactly the
+    declared set, and every declared verb reaches the transport (a 406/400 for
+    a bare request, never 405 or 404)."""
+    assert MCP_TRANSPORT_POLICY.methods == frozenset(_TRANSPORT_DECLARED)
+    live = create_app(authorization=True)
     async with live.router.lifespan_context(live):
-        transport = ASGITransport(app=live, client=("127.0.0.1", 123), raise_app_exceptions=False)
-        async with AsyncClient(
-            transport=transport, base_url="http://127.0.0.1:8000", headers={"Host": "localhost"}
-        ) as client:
-            for method in _METHOD_UNIVERSE:
+        async with await _live_client(live) as client:
+            for method in (*_METHOD_UNIVERSE, _EXTENSION_METHOD):
                 resp = await client.request(method, "/mcp/")
-                if method in declared:
+                if method in _TRANSPORT_DECLARED:
                     assert resp.status_code not in (404, 405), (method, resp.status_code)
                 else:
                     assert resp.status_code == 405, (method, resp.status_code)
                     allowed = {verb.strip() for verb in resp.headers["allow"].split(",")}
-                    assert allowed == declared, (method, allowed)
+                    assert allowed == _TRANSPORT_DECLARED, (method, allowed)
+
+
+async def test_the_transport_binding_refuses_undeclared_verbs_before_the_sdk_runs():
+    """Round 3, f2: the boundary is in front of the implementation, not a finite
+    list of verbs the test happens to try. The SDK's callable inside the binding
+    is replaced by a stub that accepts *everything*; every undeclared verb —
+    PUT, CONNECT, the extension verb — is still refused by the binding with the
+    SDK-shaped protocol error, and the stub is never invoked for them, while a
+    declared verb reaches the stub."""
+    live = create_app(authorization=True)
+    binding = _transport_route(live).app
+    assert isinstance(binding, RouteBinding)
+    reached: list[str] = []
+
+    async def accepts_everything(scope, receive, send):
+        reached.append(scope["method"])
+        await JSONResponse({"review_probe": "accepted"})(scope, receive, send)
+
+    binding.app = accepts_everything
+    async with live.router.lifespan_context(live):
+        async with await _live_client(live) as client:
+            for method in ("PUT", "CONNECT", _EXTENSION_METHOD):
+                resp = await client.request(method, "/mcp/")
+                assert resp.status_code == 405, (method, resp.status_code)
+                assert resp.json()["error"]["message"] == "Method Not Allowed"
+                assert resp.headers["allow"] == "GET, POST, DELETE"
+                assert resp.headers.get_list("cache-control") == ["no-store"]
+            assert reached == []
+            accepted = await client.post("/mcp/")
+            assert accepted.status_code == 200 and accepted.json() == {"review_probe": "accepted"}
+            assert reached == ["POST"]
+
+
+async def test_the_binding_refusal_is_the_sdk_protocol_error():
+    """The boundary preserves the transport's own refusal: status, `Allow`,
+    content type and the JSON-RPC body of the binding's 405 equal what the SDK
+    itself answers for a verb it knows how to refuse (PUT on the unenforced app,
+    where the SDK is reached). The one difference is deliberate: no
+    `mcp-session-id`, because a refused verb creates no session."""
+    plain = create_app()
+    async with plain.router.lifespan_context(plain):
+        async with await _live_client(plain) as client:
+            sdk = await client.put("/mcp/")
+    assert sdk.status_code == 405 and "mcp-session-id" in sdk.headers  # the SDK was reached
+    ours = method_not_allowed(MCP_TRANSPORT_POLICY)
+    assert ours.status_code == sdk.status_code
+    assert ours.headers["allow"] == sdk.headers["allow"]
+    assert ours.headers["content-type"] == sdk.headers["content-type"]
+    assert ours.body == sdk.content
+    assert "mcp-session-id" not in ours.headers
+    assert allow_header({"DELETE", "POST", "GET", "REVIEW198", "PATCH"}) == (
+        "GET, POST, PATCH, DELETE, REVIEW198"
+    )
+
+
+def test_every_mounted_route_is_bound_on_the_enforced_app_and_none_on_the_shipped():
+    """The binding is the outermost callable of every mounted route on the
+    enforced app, carrying that route's declared policy — so a wrapper installed
+    above it, or a route left unbound, is a graph the enforced app does not
+    have. The shipped app binds nothing (the foundation ships without
+    activating)."""
+    live = create_app(authorization=True)
+    index = live.state.route_index
+    assert index.mounted_routes, "no mounted routes — the walk lost the /mcp child"
+    for mounted in index.mounted_routes:
+        assert isinstance(mounted.route.app, RouteBinding), mounted.path
+        assert mounted.route.app.policy is index.mounted_by_endpoint[mounted.endpoint]
+    for mounted in build_route_index(app).mounted_routes:
+        assert not isinstance(mounted.route.app, RouteBinding), mounted.path
 
 
 def test_the_mcp_tool_scope_map_matches_the_live_registry():

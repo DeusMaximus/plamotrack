@@ -28,10 +28,12 @@ from contextlib import asynccontextmanager
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from starlette.middleware import Middleware
+from starlette.routing import Mount
 
 from app import error_codes
 from app.auth import anonymous, owner, pat
-from app.auth.dependency import ResponseProfileMiddleware
+from app.auth.dependency import ResponseProfileMiddleware, RouteBinding
 from app.auth.registry import CredentialPolicy, ResponseProfile, RouteIndex, RoutePolicy
 from app.auth.resolver import INJECTED_PRINCIPAL_ATTR
 from app.db import get_sessionmaker
@@ -185,38 +187,62 @@ async def test_no_store_on_the_deny_envelope_too():
 
 
 # --- the profile is enforced, not defaulted (Codex #198 round 2, f1) ------------
-# The real middleware around a synthetic downstream, so the handler's own
+# The real stampers around a synthetic downstream, so the handler's own
 # `Cache-Control` is the axis: whatever it set — nothing, an empty value, a
 # directive that permits storing, one that only revalidates, `no-store` already,
 # the SDK's SSE value, mixed-case directives, two header lines, a capitalised raw
-# key — the final header is the declaration. The unscoped negative controls sit
-# beside it: a profile with no demand leaves the handler's header alone, and a
-# declared cache directive is set verbatim.
+# key — the final header is the declaration. Two stampers, one table (round 3,
+# f1): the middleware, reading the endpoint the adjacent router recorded, and a
+# `RouteBinding`, stamping on a mounted route's own send. The unscoped negative
+# controls sit beside them: a profile with no demand leaves the handler's header
+# alone, and a declared cache directive is set verbatim.
 
 _NO_STORE = ResponseProfile(no_store=True)
 _PUBLIC = ResponseProfile(cache="public, max-age=3600")
 _NO_DEMAND = ResponseProfile()
 
 
-async def _through_middleware(profile, headers, *, endpoint_resolved=True):
-    async def endpoint(scope, receive, send):  # pragma: no cover - the match key only
-        pass
-
-    policy = RoutePolicy(family=4, credential=CredentialPolicy.READ, response=profile)
-    index = RouteIndex(by_endpoint={endpoint: policy}, routes=())
-
+def _downstream(headers):
     async def downstream(scope, receive, send):
-        if endpoint_resolved:
-            scope["endpoint"] = endpoint
         start = {"type": "http.response.start", "status": 200}
         if headers is not None:
             start["headers"] = list(headers)
         await send(start)
         await send({"type": "http.response.body", "body": b"{}"})
 
+    return downstream
+
+
+async def _through_middleware(profile, headers, *, endpoint_resolved=True):
+    """The middleware around a downstream that records its endpoint the way a
+    router does — into the dict it was handed."""
+
+    async def endpoint(scope, receive, send):  # pragma: no cover - the match key only
+        pass
+
+    policy = RoutePolicy(family=4, credential=CredentialPolicy.READ, response=profile)
+    index = RouteIndex(by_endpoint={endpoint: policy}, routes=())
+    send_response = _downstream(headers)
+
+    async def downstream(scope, receive, send):
+        if endpoint_resolved:
+            scope["endpoint"] = endpoint
+        await send_response(scope, receive, send)
+
     transport = ASGITransport(app=ResponseProfileMiddleware(downstream, index))
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         return await client.get("/probe")
+
+
+async def _through_binding(profile, headers):
+    """A `RouteBinding` around the downstream: the route's own send."""
+    policy = RoutePolicy(family=7, credential=CredentialPolicy.MCP_TRANSPORT, response=profile)
+    transport = ASGITransport(app=RouteBinding(_downstream(headers), policy))
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.get("/probe")
+
+
+_STAMPERS = {"middleware": _through_middleware, "binding": _through_binding}
 
 
 @pytest.mark.parametrize(
@@ -233,43 +259,50 @@ async def _through_middleware(profile, headers, *, endpoint_resolved=True):
         ([b"no-transform", b"no-transform"], ["no-store, no-transform"]),  # kept once
     ],
 )
-async def test_no_store_replaces_every_handler_cache_control_state(existing, final):
+@pytest.mark.parametrize("stamper", sorted(_STAMPERS))
+async def test_no_store_replaces_every_handler_cache_control_state(stamper, existing, final):
     headers = [(b"content-type", b"application/json")]
     headers += [(b"cache-control", value) for value in existing]
-    resp = await _through_middleware(_NO_STORE, headers)
+    resp = await _STAMPERS[stamper](_NO_STORE, headers)
     assert resp.status_code == 200
     assert resp.headers.get_list("cache-control") == final
     assert resp.headers["content-type"] == "application/json"  # the rest is untouched
 
 
-async def test_a_capitalised_raw_cache_control_key_is_replaced_too():
+@pytest.mark.parametrize("stamper", sorted(_STAMPERS))
+async def test_a_capitalised_raw_cache_control_key_is_replaced_too(stamper):
     """A raw ASGI endpoint may spell the key `Cache-Control`; header names are
     case-insensitive, so it is the same header and must not survive beside the
     stamped one (Starlette's `MutableHeaders` would have left it standing)."""
-    resp = await _through_middleware(_NO_STORE, [(b"Cache-Control", b"public, max-age=3600")])
+    resp = await _STAMPERS[stamper](_NO_STORE, [(b"Cache-Control", b"public, max-age=3600")])
     assert resp.headers.get_list("cache-control") == ["no-store"]
 
 
-async def test_a_start_message_without_headers_gets_the_profile():
-    resp = await _through_middleware(_NO_STORE, None)
+@pytest.mark.parametrize("stamper", sorted(_STAMPERS))
+async def test_a_start_message_without_headers_gets_the_profile(stamper):
+    resp = await _STAMPERS[stamper](_NO_STORE, None)
     assert resp.headers.get_list("cache-control") == ["no-store"]
 
 
+@pytest.mark.parametrize("stamper", sorted(_STAMPERS))
 @pytest.mark.parametrize("existing", [[], [b"public, max-age=3600"], [b"no-store"]])
-async def test_a_profile_with_no_demand_leaves_the_handler_header_alone(existing):
-    resp = await _through_middleware(_NO_DEMAND, [(b"cache-control", v) for v in existing])
+async def test_a_profile_with_no_demand_leaves_the_handler_header_alone(stamper, existing):
+    resp = await _STAMPERS[stamper](_NO_DEMAND, [(b"cache-control", v) for v in existing])
     assert resp.headers.get_list("cache-control") == [v.decode() for v in existing]
 
 
+@pytest.mark.parametrize("stamper", sorted(_STAMPERS))
 @pytest.mark.parametrize("existing", [[], [b"no-store"], [b"private, no-transform"]])
-async def test_a_declared_cache_directive_is_set_verbatim(existing):
+async def test_a_declared_cache_directive_is_set_verbatim(stamper, existing):
     """The other declared state (#192's discovery documents): the profile's
     `cache` replaces the handler's value exactly, no retention."""
-    resp = await _through_middleware(_PUBLIC, [(b"cache-control", v) for v in existing])
+    resp = await _STAMPERS[stamper](_PUBLIC, [(b"cache-control", v) for v in existing])
     assert resp.headers.get_list("cache-control") == ["public, max-age=3600"]
 
 
 async def test_an_unresolved_endpoint_is_left_alone():
+    """No route was matched — an unrouted path — so there is no endpoint to look
+    up and the middleware applies nothing."""
     resp = await _through_middleware(
         _NO_STORE, [(b"cache-control", b"public")], endpoint_resolved=False
     )
@@ -286,9 +319,11 @@ def test_a_profile_cannot_be_no_store_and_cacheable():
 
 async def test_no_store_across_the_status_axis():
     """The stamp is on the final response whatever its status: a 405 for a wrong
-    verb on a no-store path, a 422 the parser produced before any handler, a
-    404 for a row that does not exist — while an unrouted 404 (no endpoint) and
-    readiness for an outside peer (a declared no-demand profile) carry nothing."""
+    verb on a no-store path (raised by Starlette before the route's app, after
+    the router recorded the endpoint), a 422 the parser produced before any
+    dependency ran, a 404 for a row that does not exist — while an unrouted 404
+    (no endpoint) and readiness for an outside peer (a declared no-demand
+    profile) carry nothing."""
     wrong_verb = await _request(owner(), "PUT", "/kits")
     assert wrong_verb.status_code == 405
     assert wrong_verb.headers.get_list("cache-control") == ["no-store"]
@@ -323,25 +358,107 @@ async def _enforced_client(principal):
             yield client
 
 
-async def test_the_mcp_transport_carries_no_store_over_the_sdk_header():
+class _CopyScope:
+    """A transparent middleware that hands a *copy* of the scope downstream —
+    what the ASGI contract recommends a middleware do before modifying it. A
+    router below it then records its selected endpoint in the copy, invisible to
+    any layer above reading its own dict (Codex #198 round 3, f1)."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        await self.app(dict(scope), receive, send)
+
+
+def test_the_profile_middleware_is_innermost():
+    """The positional guarantee the REST-side read rests on: the middleware is
+    the last user middleware — Starlette builds the stack outermost-first, so
+    the first one added wraps the router most closely — and between it and
+    FastAPI's router sit only the framework's own `ExceptionMiddleware` and
+    `AsyncExitStackMiddleware`, which pass the dict they are handed straight on.
+    A middleware added later lands above it and cannot interpose."""
+    live = create_app(authorization=True)
+    assert live.user_middleware[-1].cls is ResponseProfileMiddleware
+    live.add_middleware(_CopyScope)
+    assert live.user_middleware[0].cls is _CopyScope
+    assert live.user_middleware[-1].cls is ResponseProfileMiddleware
+
+
+async def test_a_scope_copy_above_the_middleware_changes_nothing():
+    """A scope-copying middleware anywhere above the stamping layer hands it a
+    copy — which is then simply the dict FastAPI's router writes the selection
+    into. Reads, the deny envelope, the parser 422 and the 405 all keep their
+    profile; liveness keeps none."""
+    live = create_app(authorization=True)
+    live.add_middleware(_CopyScope)  # outermost
+    setattr(live.state, INJECTED_PRINCIPAL_ATTR, owner())
+    transport = ASGITransport(app=live, client=LOOPBACK, raise_app_exceptions=False)
+    async with AsyncClient(
+        transport=transport, base_url="http://127.0.0.1:8000", headers={"Host": "localhost"}
+    ) as client:
+        assert (await client.get("/kits")).headers.get_list("cache-control") == ["no-store"]
+        assert (await client.put("/kits")).headers.get_list("cache-control") == ["no-store"]
+        bad = await client.post(
+            "/retailers", content=b"{", headers={"Content-Type": "application/json"}
+        )
+        assert bad.status_code == 422
+        assert bad.headers.get_list("cache-control") == ["no-store"]
+        assert "cache-control" not in (await client.get("/healthz")).headers
+        delattr(live.state, INJECTED_PRINCIPAL_ATTR)
+        denied = await client.get("/kits")
+        assert denied.status_code == 401
+        assert denied.headers.get_list("cache-control") == ["no-store"]
+
+
+async def _assert_mount_profile(client):
+    stream = await client.post("/mcp/", json=INITIALIZE, headers=MCP_HEADERS)
+    assert stream.status_code == 200
+    assert stream.headers["content-type"].startswith("text/event-stream")
+    assert stream.headers.get_list("cache-control") == ["no-store, no-transform"]
+    not_acceptable = await client.get("/mcp/")  # no Accept: text/event-stream
+    assert not_acceptable.status_code == 406
+    assert not_acceptable.headers.get_list("cache-control") == ["no-store"]
+    wrong_verb = await client.put("/mcp/")
+    assert wrong_verb.status_code == 405
+    assert wrong_verb.headers.get_list("cache-control") == ["no-store"]
+
+
+@pytest.mark.parametrize("copies_scope", [False, True])
+async def test_the_mcp_transport_carries_no_store_over_the_sdk_header(copies_scope):
     """The mount is declared no-store (tool results are collection data) and the
-    dependency never runs there, so the middleware is the only thing that can
-    say so — and before this it did not: the transport's endpoint was not in the
-    index. The SDK's own SSE header, `no-cache, no-transform`, is exactly the
-    handler-set state finding 1 was about: `no-cache` still permits storing, so
-    it goes; `no-transform` is kept. Its JSON error responses carry no cache
-    header at all and gain one."""
-    async with _enforced_client(owner()) as client:
-        stream = await client.post("/mcp/", json=INITIALIZE, headers=MCP_HEADERS)
-        assert stream.status_code == 200
-        assert stream.headers["content-type"].startswith("text/event-stream")
-        assert stream.headers.get_list("cache-control") == ["no-store, no-transform"]
-        not_acceptable = await client.get("/mcp/")  # no Accept: text/event-stream
-        assert not_acceptable.status_code == 406
-        assert not_acceptable.headers.get_list("cache-control") == ["no-store"]
-        wrong_verb = await client.put("/mcp/")
-        assert wrong_verb.status_code == 405
-        assert wrong_verb.headers.get_list("cache-control") == ["no-store"]
+    dependency never runs there, so the route's own binding is what says so —
+    on the route's send, inside whatever the child stacks above its routes. The
+    SDK's own SSE header, `no-cache, no-transform`, is exactly the handler-set
+    state round 2's finding 1 was about: `no-cache` still permits storing, so it
+    goes; `no-transform` is kept. Its JSON error responses carry no cache header
+    at all and gain one. With `copies_scope`, the mount is rebuilt around the same
+    child with a scope-copying middleware in front (round 3, f1) — the binding
+    sits below it and nothing changes."""
+    live = create_app(authorization=True)
+    if copies_scope:
+        old = next(r for r in live.routes if isinstance(r, Mount) and r.path == "/mcp")
+        live.router.routes[live.router.routes.index(old)] = Mount(
+            "/mcp", app=old._base_app, middleware=[Middleware(_CopyScope)]
+        )
+    setattr(live.state, INJECTED_PRINCIPAL_ATTR, owner())
+    async with live.router.lifespan_context(live):
+        transport = ASGITransport(app=live, client=LOOPBACK, raise_app_exceptions=False)
+        async with AsyncClient(
+            transport=transport, base_url="http://127.0.0.1:8000", headers={"Host": "localhost"}
+        ) as client:
+            await _assert_mount_profile(client)
+
+
+@pytest.mark.parametrize("path", ["/openapi.json", "/docs", "/redoc"])
+async def test_the_generated_docs_routes_carry_no_store(path):
+    """Family 11 is declared no-store and the dependency does not run for the
+    generated handlers (plain Starlette routes; #188 re-registers them guarded);
+    they are the app's own routes, so the innermost middleware covers them by
+    position like every other route of the app."""
+    resp = await _request(owner(), "GET", path)
+    assert resp.status_code == 200
+    assert resp.headers.get_list("cache-control") == ["no-store"]
 
 
 # --- the shipped app is not enforced (activation is deferred) -------------------

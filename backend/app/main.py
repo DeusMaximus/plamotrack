@@ -11,6 +11,7 @@ from app import __version__, error_codes
 from app.auth.dependency import (
     ROUTE_INDEX_ATTR,
     ResponseProfileMiddleware,
+    bind_route_policies,
     enforce_route_policy,
 )
 from app.auth.registry import build_route_index
@@ -213,10 +214,16 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
         # an undeclared route); the dependency reads this per request.
         route_index = build_route_index(app)
         setattr(app.state, ROUTE_INDEX_ATTR, route_index)
-        # The response profile is stamped on the way out — replacing whatever
-        # the handler set — so an export that returns its own Response, the
-        # deny envelope and the MCP transport's responses under the mount all
-        # carry no-store (Codex #198 f1, round 2 f1).
+        # The response profile is applied adjacent to the router that selects
+        # the route: the middleware below is added FIRST so it is the innermost
+        # user middleware, reading the endpoint FastAPI's router records in the
+        # very dict it holds and stamping the final response — replacing whatever
+        # the handler set; the mounted MCP transport, whose child may stack its
+        # own middleware, is bound at the route instead, where the binding also
+        # enforces the transport's declared verbs before the SDK runs. Exports
+        # returning their own Response, the deny envelope and the transport's
+        # responses all carry no-store (Codex #198 f1; round 2 f1; round 3 f1/f2).
+        bind_route_policies(app, route_index)
         app.add_middleware(ResponseProfileMiddleware, index=route_index)
 
     app.add_exception_handler(DomainError, domain_error_handler)

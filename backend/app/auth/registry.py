@@ -102,12 +102,17 @@ class ResponseProfile:
     proxy. The SPA shell, liveness and readiness do not (static assets cache;
     `/healthz` and `/readyz` carry nothing worth withholding).
 
-    The profile is **enforced** on the final response by `ResponseProfileMiddleware`
-    (`app/auth/dependency.py`), not defaulted: whatever `Cache-Control` a handler
-    or a library set is replaced with the declaration — `no-transform` alone
-    survives beside `no-store` — so nothing downstream can weaken it (Codex #198
-    round 2, f1). A profile that makes no demand leaves the handler's header as
-    it is.
+    The profile is **enforced** on the final response, not defaulted: whatever
+    `Cache-Control` a handler or a library set is replaced with the declaration —
+    `no-transform` alone survives beside `no-store` — so nothing downstream can
+    weaken it (Codex #198 round 2, f1). It is applied **adjacent to the router
+    that selects the route** (round 3, f1): for the app's own routes by
+    `ResponseProfileMiddleware`, the innermost middleware, which reads the
+    endpoint FastAPI's router recorded in the very dict it holds; for every
+    route under a mount by a `RouteBinding` on the route itself, below whatever
+    middleware the child stacks above its routes — so a middleware that copies
+    the scope, which the ASGI contract permits, can lose neither. A profile that
+    makes no demand leaves the handler's header as it is.
     """
 
     no_store: bool = False
@@ -218,6 +223,10 @@ class MountedRoute:
     methods: frozenset[str]
     endpoint: object
     name: str
+    #: The route (or bare-callable `Mount`) object whose `.app` Starlette invokes;
+    #: `bind_route_policies` wraps it, so the child's own send carries the profile
+    #: and the declared verbs are enforced before the child's implementation runs.
+    route: object = field(default=None, compare=False, repr=False)
 
 
 def _walk(
@@ -251,13 +260,18 @@ def _walk(
                     methods=frozenset(),
                     endpoint=route.app,
                     name=route.name or type(route.app).__name__,
+                    route=route,
                 )
         elif isinstance(route, Route):
             path = prefix + route.path
             methods = frozenset(route.methods or ())
             if mounted:
                 yield MountedRoute(
-                    path=path, methods=methods, endpoint=route.endpoint, name=route.name
+                    path=path,
+                    methods=methods,
+                    endpoint=route.endpoint,
+                    name=route.name,
+                    route=route,
                 )
             else:
                 # An APIRoute carries its router's tags; the auto Starlette routes
@@ -485,10 +499,11 @@ class _DispatchTable:
 @dataclass(frozen=True)
 class RouteIndex:
     """The resolved registry: every effective REST route's endpoint mapped to its
-    policy (`by_endpoint` — what the dependency reads), every mounted route's
-    endpoint mapped to its policy (`mounted_by_endpoint` — what the response
-    middleware reads for the child surface; the dependency never runs there),
-    and the enumerated routes both were built from. The enumeration test walks
+    policy (`by_endpoint` — what the dependency and the innermost middleware
+    read), every mounted route's endpoint mapped to its policy
+    (`mounted_by_endpoint` — what `bind_route_policies` binds onto the child's
+    routes; the dependency never runs there), and the enumerated routes both
+    were built from. The enumeration test walks
     these against the live routes and `MCP_TOOL_SCOPES` against the live tool
     registry."""
 
@@ -499,18 +514,12 @@ class RouteIndex:
     mcp: RoutePolicy = MCP_TRANSPORT_POLICY
 
     def policy_for(self, endpoint: object) -> RoutePolicy | None:
-        """The credential policy the REST dependency enforces. REST endpoints
-        only: a mounted endpoint answers None here because the dependency does
-        not wrap the child — its credential policy is FastMCP's to enforce."""
+        """The policy for one of the app's own routes — what the REST dependency
+        enforces and the innermost middleware stamps. A mounted endpoint answers
+        None here: the dependency does not wrap the child (its credential policy
+        is FastMCP's to enforce) and its response profile is bound onto the
+        route itself from `mounted_by_endpoint`."""
         return self.by_endpoint.get(endpoint)
-
-    def response_profile_for(self, endpoint: object) -> ResponseProfile | None:
-        """The response profile the middleware stamps on the final response —
-        REST and mounted endpoints alike, because the profile is a property of
-        the response, not of who enforces the credential: the mount is declared
-        `no-store` too (tool results are collection data)."""
-        policy = self.by_endpoint.get(endpoint) or self.mounted_by_endpoint.get(endpoint)
-        return None if policy is None else policy.response
 
 
 def build_route_index(app: FastAPI) -> RouteIndex:

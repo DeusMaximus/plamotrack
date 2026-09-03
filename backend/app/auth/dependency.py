@@ -38,12 +38,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from fastapi import Request
+from fastapi import FastAPI, Request
+from mcp.server.streamable_http import CONTENT_TYPE_JSON
+from mcp.types import INVALID_REQUEST, ErrorData, JSONRPCError
+from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app import error_codes
 from app.auth.principal import Principal, PrincipalKind
-from app.auth.registry import CredentialPolicy, ResponseProfile, RouteIndex
+from app.auth.registry import CredentialPolicy, ResponseProfile, RouteIndex, RoutePolicy
 from app.auth.resolver import resolve_principal
 from app.exceptions import ForbiddenError, UnauthenticatedError
 
@@ -138,33 +141,41 @@ def _stamp_cache_control(message: Message, profile: ResponseProfile) -> None:
 
 
 class ResponseProfileMiddleware:
-    """Applies the registry's response profile to the **final outgoing response**,
-    however the handler produced it — a value FastAPI serialises, an explicit
-    `Response` (the CSV/zip exports go through `portability._attachment`), a
-    raised deny the exception handler renders, a 405/422 the framework produced,
-    or the MCP transport's own responses under the mount.
+    """Applies the registry's response profile to the **final outgoing response**
+    of every route of the app itself, however the route produced it — a value
+    FastAPI serialises, an explicit `Response` (the CSV/zip exports go through
+    `portability._attachment`), a raised deny the exception handler renders, a
+    parser 422 raised before any dependency ran, Starlette's 405 for a wrong
+    verb on a matched path.
 
     Why a middleware and not the dependency: FastAPI's temporary dependency
     `Response` only merges into responses it builds from a return value, so a
     handler that returns its own `Response` never receives those headers — the
     exports carry collection data and lost `Cache-Control: no-store` that way
-    (PR #198 Codex finding 1). Reading `scope["endpoint"]` at response start —
-    set by routing before any handler runs, and by the mount's child router for
-    `/mcp/` — lets this stamp every declared route uniformly, the mounted child
-    included: its profile is declared `no-store` too (tool results are
-    collection data), and the dependency never runs there, so nothing else
-    could say so.
+    (PR #198 Codex finding 1); and the dependency runs after the body is parsed,
+    so a 422 from the parser would report nothing.
+
+    Why reading `scope["endpoint"]` here is sound (round 3, f1): a middleware may
+    legally hand a *copy* of the scope downstream, and a router then records the
+    selected endpoint in the copy. This layer is installed **first**, so it is the
+    innermost user middleware: between it and FastAPI's router sit only
+    Starlette's `ExceptionMiddleware` and FastAPI's `AsyncExitStackMiddleware`,
+    both of which add keys to the dict they were handed and pass that same dict
+    on. The router therefore writes the selection into the very dict this layer
+    holds, and a copy made anywhere *above* is simply the dict the router
+    receives (`test_a_scope_copy_above_the_middleware_changes_nothing`); the
+    position is pinned by `test_the_profile_middleware_is_innermost`. What this
+    reasoning cannot cover is a *mounted* child, whose own middleware may sit
+    between its router and this layer — so `policy_for` answers only for the
+    app's own routes, and every mounted route carries a `RouteBinding` on the
+    route itself instead. A response produced before any route is matched — the
+    unrouted 404, the outer 500 — has no endpoint and carries nothing.
 
     Why *replace* and not default (round 2, f1): a handler- or library-set
-    `Cache-Control` — `public`, `private, no-cache`, the SDK's `no-cache,
-    no-transform` on the SSE stream — would otherwise stand, and none of those
-    means "do not store". The declaration wins; `no-transform` alone survives
-    beside it (`KEPT_BESIDE_NO_STORE`). The declared liveness/readiness
-    exceptions keep whatever they had (their profile makes no demand), and an
-    unrouted path has no endpoint. A 500 from `ServerErrorMiddleware` — which
-    wraps this — is not stamped; its body is the generic error text and carries
-    nothing. Installed only when `authorization=True`; the shipped app is
-    untouched.
+    `Cache-Control` — `public`, `private, no-cache` — would otherwise stand, and
+    none of those means "do not store". The declaration wins; `no-transform`
+    alone survives beside it (`KEPT_BESIDE_NO_STORE`). Installed only when
+    `authorization=True`; the shipped app is untouched.
     """
 
     def __init__(self, app: ASGIApp, index: RouteIndex) -> None:
@@ -179,11 +190,102 @@ class ResponseProfileMiddleware:
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":
                 endpoint = scope.get("endpoint")
-                profile = (
-                    self.index.response_profile_for(endpoint) if endpoint is not None else None
-                )
-                if profile is not None:
-                    _stamp_cache_control(message, profile)
+                policy = self.index.policy_for(endpoint) if endpoint is not None else None
+                if policy is not None:
+                    _stamp_cache_control(message, policy.response)
             await send(message)
 
         await self.app(scope, receive, send_wrapper)
+
+
+# --- binding a policy onto a route the dependency cannot reach ---------------------
+
+#: The order `Allow` lists verbs in — the SDK's own for its transport
+#: (`GET, POST, DELETE`), so the binding's refusal reads the same as the SDK's.
+_METHOD_ORDER = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT")
+
+
+def allow_header(methods: Iterable[str]) -> str:
+    declared = set(methods)
+    ordered = [m for m in _METHOD_ORDER if m in declared]
+    return ", ".join(ordered + sorted(declared - set(_METHOD_ORDER)))
+
+
+def method_not_allowed(policy: RoutePolicy) -> Response:
+    """The refusal for a verb the policy does not declare. For the MCP transport
+    it is the SDK's own protocol error — the same JSON-RPC document, status,
+    `Allow` and content type its `_handle_unsupported_request` produces (built
+    from the SDK's types, so a serialisation change follows) — without an
+    `mcp-session-id`, because a refused verb creates no session. Any other route
+    gets the framework's plain 405."""
+    headers = {"Allow": allow_header(policy.methods)}
+    if policy.credential == CredentialPolicy.MCP_TRANSPORT:
+        error = JSONRPCError(
+            jsonrpc="2.0",
+            id="server-error",
+            error=ErrorData(code=INVALID_REQUEST, message="Method Not Allowed"),
+        )
+        return Response(
+            error.model_dump_json(by_alias=True, exclude_none=True),
+            status_code=405,
+            headers={**headers, "Content-Type": CONTENT_TYPE_JSON},
+        )
+    return JSONResponse({"detail": "Method Not Allowed"}, status_code=405, headers=headers)
+
+
+class RouteBinding:
+    """A declared policy bound onto one mounted route's ASGI app — the app
+    Starlette's `Route.handle` (or a bare-callable `Mount`) invokes — for every
+    route under a mount (§5.5 family 7/8), which the app-level dependency never
+    runs for and whose child app may stack middleware of its own above it.
+
+    Two things, both decided from the declaration and nothing else:
+
+    - **the accepted verbs** (round 3, f2): a request whose method the policy does
+      not declare is refused here, before the wrapped implementation runs. For a
+      REST route Starlette's own metadata is that boundary; the MCP transport's
+      metadata is `methods=None` (the SDK dispatches on the verb inside), so the
+      registry's declared set is enforced in front of it — an SDK release
+      accepting a new verb, registered or extension, cannot widen the surface.
+      The refusal is the SDK's own protocol error (`method_not_allowed`);
+    - **the response profile** (round 3, f1): stamped on this route's own send,
+      below whatever middleware the child app stacks above its routes, so a
+      copied scope upstream cannot lose it.
+
+    Idempotent per app: `bind_route_policies` skips a route already bound. The
+    REST dependency still never wraps these — a binding enforces verbs and the
+    response profile, not a credential.
+    """
+
+    def __init__(self, app: ASGIApp, policy: RoutePolicy) -> None:
+        self.app = app
+        self.policy = policy
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                _stamp_cache_control(message, self.policy.response)
+            await send(message)
+
+        if self.policy.methods and scope["method"] not in self.policy.methods:
+            await method_not_allowed(self.policy)(scope, receive, send_wrapper)
+            return
+        await self.app(scope, receive, send_wrapper)
+
+
+def bind_route_policies(app: FastAPI, index: RouteIndex) -> None:
+    """Wrap every mounted route in a `RouteBinding` for its declared policy. The
+    mounted child is built per `create_app`, so its route objects are this app's
+    own and binding them touches no other app. The app's own routes are not
+    bound: FastAPI re-derives an included router's routes per app from the
+    router's originals (the original's `.app` is never what runs), and the
+    innermost middleware covers them by position instead."""
+    for mounted in index.mounted_routes:
+        policy = index.mounted_by_endpoint.get(mounted.endpoint)
+        route = mounted.route
+        if policy is not None and not isinstance(route.app, RouteBinding):  # type: ignore[attr-defined]
+            route.app = RouteBinding(route.app, policy)  # type: ignore[attr-defined]
