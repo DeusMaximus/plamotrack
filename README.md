@@ -204,6 +204,10 @@ Backups, restores, upgrading, and the full configuration reference live in
   data directory. Either set it back, or `docker compose down -v` to start clean, which
   **deletes the database**.
 - **Pointing at a Postgres you already run** — uncomment `DATABASE_URL` in `.env`.
+- **`421 Misdirected Request`** — you reached the instance by a name it doesn't
+  know (a LAN hostname, a container name). Add it to `ALLOWED_HOSTS` in `.env` and
+  `docker compose up -d`. Nothing is lost while it's wrong; see
+  [Names it answers to](docs/operations.md#names-it-answers-to).
 
 ---
 
@@ -215,9 +219,14 @@ plamotrack speaks MCP over streamable HTTP at:
 http://localhost:8080/mcp/
 ```
 
-**Keep the trailing slash** as a habit. The bundled stack serves both spellings, but
-running the API straight from source (see *Developing on it*) redirects without it —
-and a 307 in response to a POST loses the body on clients that don't re-send it.
+**Keep the trailing slash.** The bundled stack serves both spellings, but the API
+run straight from source (see *Developing on it*) answers a bare `/mcp` with 404 —
+it no longer redirects, because a redirect built from the request's own `Host` is
+the kind of thing the ingress hardening removed.
+
+Reaching the instance by anything other than `localhost` — a LAN hostname, a
+container name — needs that name in `ALLOWED_HOSTS` in `.env`, or the server
+answers `421 Misdirected Request`. `docs/operations.md` → *Names it answers to*.
 
 ### Claude Desktop
 
@@ -317,7 +326,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db --wait
 # just Postgres, on fixed loopback and POSTGRES_PORT (5432 by default)
 
 cd backend && uv sync && uv run alembic upgrade head
-uv run uvicorn app.main:app                          # REST on :8000, MCP at :8000/mcp/
+uv run uvicorn app.main:app --no-proxy-headers       # REST on :8000, MCP at :8000/mcp/
 
 cd ../frontend && npm install && npm run dev         # Vite on :5173, proxies /api to :8000
 ```

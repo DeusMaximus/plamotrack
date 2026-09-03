@@ -145,6 +145,9 @@ jobs:
           sed -i 's/^POSTGRES_USER=.*/POSTGRES_USER=plamotrack_ci/' .env
           sed -i 's/^POSTGRES_DB=.*/POSTGRES_DB=plamotrack_ci/' .env
           sed -i 's/^POSTGRES_PORT=.*/POSTGRES_PORT=55432/' .env
+          # A listed name for the ingress matrix's T3 rows (a name only
+          # ALLOWED_HOSTS can supply answers; everything else is 421).
+          echo 'ALLOWED_HOSTS=ci.plamotrack.test' >> .env
 
       - name: Validate packaged and development Compose configurations
         run: |
@@ -168,6 +171,11 @@ jobs:
           assert base["services"]["api"]["environment"]["POSTGRES_HOST"] == "db"
           assert base["services"]["api"]["environment"]["POSTGRES_PORT"] == "5432"
           assert base["services"]["migrate"]["environment"]["POSTGRES_PORT"] == "5432"
+          # The ingress builds its Host allowlist from exactly these, and gets
+          # nothing else — the web container has no business with the password.
+          web_env = base["services"]["web"]["environment"]
+          assert set(web_env) == {"PUBLIC_BASE_URL", "ALLOWED_HOSTS", "WEB_BIND"}, web_env
+          assert web_env["ALLOWED_HOSTS"] == "ci.plamotrack.test", web_env
 
           [port] = development["services"]["db"]["ports"]
           assert port["host_ip"] == "127.0.0.1", port
@@ -246,8 +254,17 @@ jobs:
           ], published_web
           PY
           curl --fail --silent --show-error http://127.0.0.1:8080/ > /dev/null
-          curl --fail --silent --show-error http://127.0.0.1:8080/api/readyz > /dev/null
+          curl --fail --silent --show-error http://127.0.0.1:8080/api/healthz > /dev/null
           curl --fail --silent --show-error http://127.0.0.1:8080/openapi.json > /dev/null
+
+      # T2 (design notes §5.8): the ingress matrix against the packaged nginx —
+      # the four rejected /api/ namespaces in their normalised spellings, the
+      # canonical positives beside them, no Location anywhere but nginx's own
+      # relative 301, the security headers, and T3's hostile Host / Origin and
+      # listed-name rows at this layer.
+      - name: Run the ingress matrix
+        working-directory: backend
+        run: uv run python ingress_matrix.py http://127.0.0.1:8080 --allowed-host ci.plamotrack.test
 
       - name: Smoke-test MCP through nginx
         working-directory: backend

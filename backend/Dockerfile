@@ -45,4 +45,10 @@ EXPOSE 8000
 
 # Config arrives as real environment variables; app/config.py finds no .env file
 # in here and falls through to them (.dockerignore keeps one from sneaking in).
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+#
+# --no-proxy-headers is load-bearing (design notes §5.6, proxy trust): uvicorn's
+# default middleware rewrites request.client from X-Forwarded-For for any peer
+# on its trust list, and request.client is the raw socket peer that /readyz's
+# `internal` check reads. The app resolves the forwarded address itself, from
+# TRUSTED_PROXIES, into a separate key (app/ingress.py).
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]

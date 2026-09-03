@@ -241,7 +241,16 @@ async def test_unrouted_paths_keep_the_stock_body(http_client):
 # --- the raise-site audit (#169 review, P3) -------------------------------------
 
 # Codes emitted by handlers in main.py rather than raised by a service.
-_HANDLER_CODES = {"request.validation", "request.body_invalid"}
+# Codes a handler or middleware builds into a response directly rather than
+# raising: FastAPI's two parser-stage handlers in app/main.py, and the ingress
+# guard's two refusals — 421 and 403 — that `_refusal` in app/ingress.py emits
+# before routing, so no exception handler is ever involved (§5.6, M6-1).
+_HANDLER_CODES = {
+    "request.validation",
+    "request.body_invalid",
+    "ingress.host_not_allowed",
+    "ingress.origin_not_allowed",
+}
 
 # The two bridge helpers whose `Diagnostic(code=exc.code, params={**...})` the
 # AST cannot see through. Each borrows a `DomainError`'s own code and params, so

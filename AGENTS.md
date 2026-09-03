@@ -95,8 +95,12 @@ backend/
   tests/                # pytest against real Postgres, in-memory MCP client tests
 frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-hook-form
   Dockerfile            # node build -> nginx:alpine
-  nginx.conf            # THE ingress. Read the comments before touching the /mcp or
-                        #   resolver lines — both encode bugs found by testing (§8)
+  nginx/                # THE ingress: default.conf.template (rendered by envsubst at
+                        #   container start — default-deny 421 server, the /api/ alias
+                        #   rejections, security headers) plus the .envsh that assembles
+                        #   server_name from PUBLIC_BASE_URL, WEB_BIND and ALLOWED_HOSTS.
+                        #   Read the comments before touching the /mcp or resolver
+                        #   lines — both encode bugs found by testing (§8)
   src/
     api/                # hand-typed API client + types mirroring backend schemas
     i18n/               # language manifest + en-AU catalogue (§6.1) — manifest.json's
@@ -130,7 +134,7 @@ stack has no hot reload, and both want port 5432:
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db --wait
 ```
 
-To exercise the packaged stack instead (before touching Dockerfiles, `nginx.conf`,
+To exercise the packaged stack instead (before touching Dockerfiles, `frontend/nginx/`,
 or anything about startup ordering):
 
 ```bash
@@ -158,7 +162,7 @@ uv run pytest                # tests: auto-creates plamotrack_test DB, runs alem
                              # downgrade+upgrade, truncates tables between tests
 uv run ruff check --fix . && uv run ruff format .   # lint+format — run before committing
 uv run alembic upgrade head  # apply migrations to the dev DB
-uv run uvicorn app.main:app  # REST on :8000, MCP endpoint at /mcp/
+uv run uvicorn app.main:app --no-proxy-headers  # REST on :8000, MCP at /mcp/ (the flag: rule 12)
 ```
 
 Frontend is npm-managed — run from `frontend/` (needs the backend on :8000; the
@@ -285,6 +289,25 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     additional languages ship from the repository through reviewed PRs. Keep language
     separate from regional formatting, keep canonical API/MCP/database/CSV identifiers
     untranslated, and never let a settings change reinterpret historical money.
+12. **Ingress identity (M6-1, §5.5–§5.6):** the instance's own names and origin come
+    from `PUBLIC_BASE_URL`, `ALLOWED_HOSTS`, `ALLOWED_ORIGINS` and `WEB_BIND` — never
+    from `Host`, `Origin` or `X-Forwarded-*`. `app/ingress.py` derives one
+    `IngressPolicy` that the REST guard and FastMCP's guard (strict mode, same lists)
+    both read: a Host outside the list is 421, an unsafe request whose Origin fails
+    the three-way rule (listed, loopback-to-loopback, or equal to the request's own
+    origin) is 403, each with the envelope naming the setting. `scope["client"]` is
+    the raw socket peer and stays that way — uvicorn runs with `--no-proxy-headers`,
+    and the forwarded address (believed from `TRUSTED_PROXIES` only) goes to
+    `request.state.client_address` instead — because the raw peer is what `/readyz`'s
+    `internal` check reads. No router-generated redirects (`redirect_slashes=False`
+    on both routers): a non-canonical spelling is 404, never 3xx. nginx duplicates
+    the cheap denies and owns **one spelling per family**: every root namespace of
+    the API process whose canonical spelling is not under `/api/` (`/mcp`,
+    `/.well-known`, `/openapi.json`, `/readyz`) is 404 under `/api/` before the
+    generic location, and `backend/ingress_matrix.py` proves it against the
+    packaged stack (CI Integration). A new root route owes a row there until the
+    route policy registry (#187) generates the list. The app is authoritative and
+    nginx never grants: development runs without it.
 
 ## Fixing a defect: sweep the class first
 

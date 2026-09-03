@@ -164,6 +164,13 @@ IMPORT_STOCK_NOTE = "import.stock_note"
 # starter sheet
 IMPORT_RECEIPT_CONFLICT = "import.receipt_conflict"
 
+# --- ingress refusals (before routing — app/ingress.py, §5.6) ----------------
+# 421: the Host header names nothing the instance answers to. 403: an unsafe
+# request's Origin (or Referer) fails the three-way rule. `params.setting` is
+# the .env key that fixes it, so the sentence can point at it.
+INGRESS_HOST_NOT_ALLOWED = "ingress.host_not_allowed"
+INGRESS_ORIGIN_NOT_ALLOWED = "ingress.origin_not_allowed"
+
 # --- request validation (FastAPI's 422 list shape) -------------------------
 REQUEST_VALIDATION = "request.validation"
 

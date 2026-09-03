@@ -178,6 +178,10 @@
       "value_required_for_create": "{{field}}: a new {{table}} row needs this, and this one has no value for it. Fill the column in.",
       "version_newer": "This archive was written by a newer version of plamotrack (format {{exportVersion}}; this instance reads {{supportedVersion}}). Update before importing it."
     },
+    "ingress": {
+      "host_not_allowed": "This instance doesn't answer to that host name. Add the name you're using to {{setting}} in .env, then run docker compose up -d.",
+      "origin_not_allowed": "This instance doesn't accept writes from that site. If it's yours, add its origin to {{setting}} in .env."
+    },
     "kit": {
       "has_applications_one": "'{{name}}' has {{countDisplay}} upgrade applied — that record explains the stock it used, so the kit is kept. Withdraw the application first; withdrawal asks whether its stock returns.",
       "has_applications_other": "'{{name}}' has {{countDisplay}} upgrades applied — those records explain the stock they used, so the kit is kept. Withdraw the applications first; each withdrawal asks whether its stock returns.",

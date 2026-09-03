@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -8,25 +8,20 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
 from app import __version__, error_codes
+from app.config import Settings, get_settings
 from app.db import SessionDep
 from app.exceptions import ConflictError, DomainError, InvalidInputError, NotFoundError
+from app.ingress import (
+    ForwardedClientMiddleware,
+    HostOriginGuardMiddleware,
+    IngressPolicy,
+    is_internal_peer,
+)
 from app.mcp import mcp
 from app.routers import catalog, inventory, kits, meta, orders, portability, retailers, settings
 from app.schemas.errors import ERROR_RESPONSES
 
-# REST and MCP share one process and one service layer (§2). The MCP endpoint is
-# mounted at /mcp on the same port — a deliberate simplification of §8's
-# two-port layout; split later if operating them separately ever matters.
-mcp_app = mcp.http_app(path="/")
-
-app = FastAPI(
-    title="plamotrack",
-    version=__version__,
-    description="Self-hosted Gunpla/plamo collection & build tracker",
-    lifespan=mcp_app.lifespan,  # required for the MCP session manager
-)
-
-for router in (
+ROUTERS = (
     kits.router,
     inventory.router,
     catalog.router,
@@ -35,12 +30,7 @@ for router in (
     portability.router,
     meta.router,
     settings.router,
-):
-    # One envelope for every router's failures (#25) — declared here so a new
-    # router cannot forget it.
-    app.include_router(router, responses=ERROR_RESPONSES)
-
-app.mount("/mcp", mcp_app)
+)
 
 _DOMAIN_STATUS: dict[type[DomainError], int] = {
     NotFoundError: 404,
@@ -49,7 +39,6 @@ _DOMAIN_STATUS: dict[type[DomainError], int] = {
 }
 
 
-@app.exception_handler(DomainError)
 async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
     """The envelope (#25): `detail` unchanged from pre-#25, `code`/`params` additive.
 
@@ -69,7 +58,6 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
     )
 
 
-@app.exception_handler(StarletteHTTPException)
 async def http_exception_envelope(request: Request, exc: StarletteHTTPException) -> Response:
     """Parser-stage 400s enter the envelope (#169 review, P2): the framework
     raises `HTTPException(400)` for a body it cannot read — multipart with no
@@ -91,7 +79,6 @@ async def http_exception_envelope(request: Request, exc: StarletteHTTPException)
     return await http_exception_handler(request, exc)
 
 
-@app.exception_handler(RequestValidationError)
 async def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """FastAPI's 422, in the envelope. `detail` stays the default list body —
     its list-vs-string shape against a service 422 is load-bearing for clients
@@ -117,19 +104,93 @@ async def request_validation_handler(request: Request, exc: RequestValidationErr
     )
 
 
-@app.get("/healthz", include_in_schema=False)
 async def healthz() -> dict:
     """Liveness: the process is up and serving. Deliberately touches nothing else."""
     return {"status": "ok"}
 
 
-@app.get("/readyz", include_in_schema=False)
-async def readyz(session: SessionDep) -> dict:
-    """Readiness: the API can actually reach Postgres.
+async def readyz(request: Request, session: SessionDep) -> dict:
+    """Readiness: the API can actually reach Postgres — for the `internal`
+    principal only (§5.5, family 10).
 
-    This is what the container healthcheck watches. /healthz answers happily
-    while the database is unreachable, which would let compose report a stack
-    healthy that cannot serve a single request.
+    This is what the container healthcheck watches, from inside the container,
+    so its peer is loopback. Any other peer — nginx on the compose network, a
+    developer's browser, a stranger — gets the same 404 an unrouted path earns:
+    readiness says whether the database is reachable, and that is not something
+    to hand to whoever can reach the port. /healthz stays public and says only
+    that the process is up. The raw socket peer is what decides; nothing
+    forwarded is consulted.
     """
+    if not is_internal_peer(request.scope):
+        raise HTTPException(status_code=404)
     await session.execute(text("SELECT 1"))
     return {"status": "ok"}
+
+
+def build_mcp_app(policy: IngressPolicy):
+    """The FastMCP ASGI child for the `/mcp` mount, guarded with the same lists
+    as REST (§5.6, Host spoofing): `host_origin_protection=True` is FastMCP's
+    strict mode — Host validated on every request, Origin whenever present —
+    and the extras are `IngressPolicy.mcp_allowed_hosts` (the configured names,
+    each DNS name dotted as well) / `allowed_origins`, to which the guard adds
+    the loopback names itself.
+
+    Slash redirects are off (§5.6, proxy trust): Starlette builds a redirect's
+    `Location` from the request's scheme and Host, query string included, which
+    behind TLS would bounce an OAuth code to a plain-http URL (M6-7). A
+    non-canonical spelling is 404, never 3xx.
+    """
+    mcp_app = mcp.http_app(
+        path="/",
+        host_origin_protection=True,
+        allowed_hosts=list(policy.mcp_allowed_hosts),
+        allowed_origins=list(policy.allowed_origins),
+    )
+    mcp_app.router.redirect_slashes = False
+    return mcp_app
+
+
+def create_app(config: Settings | None = None) -> FastAPI:
+    """The application, built from one `Settings`. Module-level `app` below is
+    the one uvicorn and the suite import; tests that need a different ingress
+    policy build their own through here rather than mutating that one."""
+    config = config or get_settings()
+    policy = IngressPolicy.from_settings(config)
+
+    # REST and MCP share one process and one service layer (§2). The MCP
+    # endpoint is mounted at /mcp on the same port — a deliberate simplification
+    # of §8's two-port layout; split later if operating them separately matters.
+    mcp_app = build_mcp_app(policy)
+
+    app = FastAPI(
+        title="plamotrack",
+        version=__version__,
+        description="Self-hosted Gunpla/plamo collection & build tracker",
+        lifespan=mcp_app.lifespan,  # required for the MCP session manager
+        # No request-derived redirects (§5.6): `GET /kits/` is 404, not a 307
+        # whose Location is built from the request's Host.
+        redirect_slashes=False,
+    )
+    app.state.ingress_policy = policy
+
+    for router in ROUTERS:
+        # One envelope for every router's failures (#25) — declared here so a new
+        # router cannot forget it.
+        app.include_router(router, responses=ERROR_RESPONSES)
+
+    app.add_api_route("/healthz", healthz, methods=["GET"], include_in_schema=False)
+    app.add_api_route("/readyz", readyz, methods=["GET"], include_in_schema=False)
+    app.mount("/mcp", mcp_app)
+
+    app.add_exception_handler(DomainError, domain_error_handler)
+    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)
+    app.add_exception_handler(RequestValidationError, request_validation_handler)
+
+    # Outermost last: the guard answers a hostile Host before anything else
+    # runs, and the forwarded-client resolver sees only requests that passed it.
+    app.add_middleware(ForwardedClientMiddleware, policy=policy)
+    app.add_middleware(HostOriginGuardMiddleware, policy=policy)
+    return app
+
+
+app = create_app()
