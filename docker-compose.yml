@@ -83,12 +83,21 @@ services:
     build: ./frontend
     image: plamotrack-web:local
     restart: unless-stopped
+    environment:
+      # The ingress builds its Host allowlist from these (frontend/nginx/), the
+      # same keys the API reads from .env for its own copy of the check. Only
+      # these three reach the web container — it has no business with the
+      # database password.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-}
+      WEB_BIND: ${WEB_BIND:-127.0.0.1}
     ports:
-      # The one published port. WEB_BIND is the whole access-control story until
-      # M6 — nothing here authenticates, so whoever can reach this can write to
-      # it. Loopback by default; see "Reaching it from another machine" in
-      # docs/operations.md before widening it, especially on Linux, where a
-      # published port is not covered by the host firewall.
+      # The one published port. WEB_BIND decides who can connect; ALLOWED_HOSTS
+      # decides which names the instance answers to (a request for any other
+      # name is 421). Nothing here authenticates yet, so whoever can reach this
+      # can write to it. Loopback by default; see "Reaching it from another
+      # machine" in docs/operations.md before widening it, especially on Linux,
+      # where a published port is not covered by the host firewall.
       - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:80"
     depends_on:
       api:

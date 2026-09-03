@@ -1,12 +1,19 @@
 import re
 from functools import lru_cache
+from ipaddress import ip_network
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _CURRENCY_RE = re.compile(r"[A-Z]{3}")
+
+
+def split_csv(value: str) -> list[str]:
+    """A comma-separated setting as its non-empty, stripped entries."""
+    return [entry.strip() for entry in value.split(",") if entry.strip()]
+
 
 # Anchored on this file, not the working directory: `uv run uvicorn` from
 # backend/ and `pytest` from the repo root must resolve the same config.
@@ -47,6 +54,94 @@ class Settings(BaseSettings):
     # amount stores the code it was captured under, so changing this later never
     # reinterprets a snapshot that was already taken.
     reference_currency: str = "AUD"
+
+    # --- Ingress identity (§5.6, M6-1 / #186) ----------------------------------
+    # The instance's own address, as a browser reaches it: scheme, host and port,
+    # nothing after. It is never derived from Host or X-Forwarded-* (§5.6, proxy
+    # trust). Its host joins the Host allowlist and its origin the Origin
+    # allowlist — behind TLS the app sees plain http on the socket while the
+    # browser sends https://…, and this entry is what lets that match. Empty
+    # means the loopback install: http://localhost:<WEB_PORT>, which the loopback
+    # rules already cover, so nothing extra is listed.
+    public_base_url: str = ""
+    # Comma-separated host names the instance may be reached by, on top of the
+    # loopback names, PUBLIC_BASE_URL's host and WEB_BIND. Ports are ignored
+    # (the Host header's port is not identity). `*.example.lan` wildcards are
+    # accepted; a bare `*` is not — an allowlist of everything is the DNS-
+    # rebinding hole the setting exists to close. A Host outside the list is 421.
+    allowed_hosts: str = ""
+    # Comma-separated browser origins (scheme://host[:port]) trusted on unsafe
+    # methods beyond the three-way rule (listed, loopback-to-loopback, or equal
+    # to the request's own origin). Only needed for a non-canonical alias
+    # reached over a scheme the app does not see. A miss is 403.
+    allowed_origins: str = ""
+    # Comma-separated IPs or CIDRs whose X-Forwarded-For is believed for the
+    # *client address* (rate limiting and audit, later M6 items). Never for the
+    # app's identity, never for the raw peer `/readyz` reads. Empty: ignored.
+    trusted_proxies: str = ""
+    # The interface the published port binds to (compose reads the same key).
+    # A non-loopback bind address is a name the instance answers to, so it joins
+    # the Host allowlist; 0.0.0.0 and :: are unspecified and add nothing.
+    web_bind: str = "127.0.0.1"
+
+    @field_validator("public_base_url")
+    @classmethod
+    def _validate_public_base_url(cls, value: str) -> str:
+        value = value.strip().rstrip("/")
+        if not value:
+            return ""
+        parsed = urlsplit(value)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError(
+                "PUBLIC_BASE_URL must be an absolute http:// or https:// URL "
+                f"with a host (got {value!r})"
+            )
+        if parsed.path or parsed.query or parsed.fragment or parsed.username:
+            raise ValueError(
+                "PUBLIC_BASE_URL is scheme, host and port only — no path, query, "
+                f"fragment or credentials (got {value!r})"
+            )
+        try:
+            _ = parsed.port  # raises on a non-numeric or out-of-range port
+        except ValueError as exc:
+            raise ValueError(f"PUBLIC_BASE_URL has an invalid port (got {value!r})") from exc
+        return value
+
+    @field_validator("allowed_hosts")
+    @classmethod
+    def _validate_allowed_hosts(cls, value: str) -> str:
+        for entry in split_csv(value):
+            if entry.strip("*") == "":
+                raise ValueError(
+                    "ALLOWED_HOSTS may not contain a bare '*': list the names the "
+                    "instance is reached by (wildcards like *.example.lan are fine)"
+                )
+        return value
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def _validate_allowed_origins(cls, value: str) -> str:
+        for entry in split_csv(value):
+            parsed = urlsplit(entry)
+            if parsed.scheme not in ("http", "https") or not parsed.hostname:
+                raise ValueError(
+                    f"ALLOWED_ORIGINS entries are origins — scheme://host[:port] (got {entry!r})"
+                )
+            if parsed.path.strip("/") or parsed.query or parsed.fragment or parsed.username:
+                raise ValueError(f"ALLOWED_ORIGINS entry {entry!r} is not a bare origin")
+        return value
+
+    @field_validator("trusted_proxies")
+    @classmethod
+    def _validate_trusted_proxies(cls, value: str) -> str:
+        for entry in split_csv(value):
+            try:
+                ip_network(entry, strict=False)
+            except ValueError as exc:
+                raise ValueError(
+                    f"TRUSTED_PROXIES entries are IP addresses or CIDR ranges (got {entry!r})"
+                ) from exc
+        return value
 
     @field_validator("reference_currency")
     @classmethod

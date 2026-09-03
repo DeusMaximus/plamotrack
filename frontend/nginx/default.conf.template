@@ -1,0 +1,193 @@
+# The single ingress for the bundled stack (design notes §8 and §5.5): static
+# frontend here, API and MCP proxied to the api service. Nothing else is
+# published to the host, so this file is the whole public surface of an instance.
+#
+# It is an envsubst TEMPLATE. The nginx image renders /etc/nginx/templates/
+# *.template into /etc/nginx/conf.d/ when the container starts, substituting
+# only ${PLAMOTRACK_*} names (NGINX_ENVSUBST_FILTER in the Dockerfile), so nginx's
+# own $host, $uri and friends pass through untouched. PLAMOTRACK_SERVER_NAMES is
+# assembled by 15-plamotrack-server-names.envsh from PUBLIC_BASE_URL, WEB_BIND and
+# ALLOWED_HOSTS — the same inputs the API derives its allowlist from.
+
+# Default deny (§5.6, Host spoofing and DNS rebinding). A request whose Host is
+# not a name this instance answers to is refused here, before any location is
+# considered and before it reaches the API process; the app repeats the check
+# (app/ingress.py), because nothing is "protected by nginx" (§5.5). The body is
+# the API's error envelope, naming the setting that fixes it.
+server {
+    listen 80 default_server;
+    server_name _;
+    default_type application/json;
+    return 421 '{"detail":"This instance does not answer to that host name. Add the name you use to ALLOWED_HOSTS in .env, then run `docker compose up -d`.","code":"ingress.host_not_allowed","params":{"setting":"ALLOWED_HOSTS"}}';
+}
+
+server {
+    listen 80;
+    server_name ${PLAMOTRACK_SERVER_NAMES};
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    # Emit relative Location headers. nginx redirects /api to /api/ on its own,
+    # and by default rebuilds that as an absolute URL from server_name — dropping
+    # the port, so anyone on a non-default WEB_PORT (or behind another proxy) is
+    # bounced to a URL that isn't their instance. Relative redirects resolve
+    # against whatever the client actually asked for. That 301 is the one
+    # ingress-produced redirect, kept deliberately (§5.6, proxy trust); the app
+    # itself produces none.
+    absolute_redirect off;
+
+    # Docker's embedded DNS. This is here for a specific failure: with a literal
+    # hostname in proxy_pass, nginx resolves it once at startup and caches it
+    # forever, so when `docker compose up -d` recreates the api container onto a
+    # different address — which is exactly what upgrading does — every request
+    # 502s until the web container is restarted too. Resolving through a variable
+    # forces re-resolution instead, at the cost of having to rewrite URIs by hand
+    # below (nginx skips the automatic prefix substitution when proxy_pass holds
+    # a variable).
+    resolver 127.0.0.11 valid=10s ipv6=off;
+
+    # A CSV archive from a large collection is well over nginx's 1 MB default.
+    # The API's own 10 MB limit should be the thing that rejects an oversized
+    # import, with its explanatory error — not a bare 413 from the proxy.
+    client_max_body_size 32m;
+
+    # Security headers on everything served here (§5.5, family 1; §5.6,
+    # clickjacking). `always` so error responses carry them too. nginx's
+    # add_header does not accumulate: a location with add_header lines of its
+    # own inherits none of these, which is why the SPA location repeats them.
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    add_header Content-Security-Policy "frame-ancestors 'none'" always;
+
+    # The API's error envelope for the 404s this file answers itself, so a
+    # client sees the same shape an unrouted path earns from the app.
+    error_page 404 = @not_found;
+    location @not_found {
+        default_type application/json;
+        return 404 '{"detail":"Not Found"}';
+    }
+
+    # react-router owns the path space: a deep link like /orders is not a file,
+    # and must return the app rather than a 404.
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options DENY always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        # The bundle's policy: same-origin scripts, styles and API calls; data:
+        # and blob: images for inline SVG assets and future photo previews.
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'" always;
+    }
+
+    # One spelling per family (§5.5). The generic /api/ rewrite below makes every
+    # root path of the API process reachable under /api/, so the families whose
+    # canonical spelling is elsewhere are refused here first — after nginx has
+    # merged slashes and percent-decoded, so /api//mcp/, /api/%6dcp/ and
+    # /api/mcp%2f land on these too. An alias would reach the same handler under
+    # the same app policy; what it would shed is this file's per-family settings
+    # (buffering, timeouts, the readiness block). Typed here for now; generated
+    # from the route policy registry once M6-2 lands.
+    location ^~ /api/mcp {
+        return 404;
+    }
+    location ^~ /api/.well-known {
+        return 404;
+    }
+    location = /api/openapi.json {
+        return 404;
+    }
+    # Readiness is for the container healthcheck, which reaches the API from
+    # inside its own container (§5.5, family 10). The app answers 404 to any
+    # other peer; this is the same decision, duplicated, so a stranger cannot
+    # probe whether the database is up. Liveness (/api/healthz) stays open.
+    location = /api/readyz {
+        return 404;
+    }
+
+    # The docs page at /api/docs fetches its schema from an absolute /openapi.json,
+    # which would otherwise hit the SPA fallback above and be handed index.html —
+    # a 200 that Swagger then fails to parse. One exact path, so the app keeps the
+    # rest of the root namespace; it is the schema's only spelling.
+    location = /openapi.json {
+        set $upstream http://api:8000;
+        proxy_pass $upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+    }
+
+    # OAuth discovery (§5.5, family 8) lives at the root, installed on the API by
+    # M6-7; until then the API answers these 404. Exact locations, so nothing
+    # else under /.well-known/ is ever handed the SPA's index.html as a 200.
+    location ^~ /.well-known/ {
+        return 404;
+    }
+    location = /.well-known/oauth-protected-resource/mcp/ {
+        set $upstream http://api:8000;
+        proxy_pass $upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+    }
+    location = /.well-known/oauth-authorization-server/mcp {
+        set $upstream http://api:8000;
+        proxy_pass $upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+    }
+    location = /.well-known/openid-configuration/mcp {
+        set $upstream http://api:8000;
+        proxy_pass $upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+    }
+
+    # Strips the /api prefix, exactly as the Vite dev proxy does — so the
+    # client's fetch paths are identical in development and in the container.
+    # The rewrite carries the query string over untouched. Host is forwarded
+    # whole ($http_host keeps the port; $host drops it), because the app's
+    # same-origin rule compares Origin against scheme://Host and a browser's
+    # Origin carries the port.
+    location /api/ {
+        set $upstream http://api:8000;
+        rewrite ^/api/(.*)$ /$1 break;
+        proxy_pass $upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # MCP clients that forget the trailing slash get served rather than
+    # redirected. A redirect here is a real problem, not a cosmetic one: it
+    # arrives in response to a POST, and not every client re-sends the body.
+    # This is the ingress-only spelling of family 7: the source-run app has no
+    # slash redirect and answers bare /mcp with 404.
+    location = /mcp {
+        set $upstream http://api:8000;
+        rewrite ^ /mcp/ break;
+        proxy_pass $upstream;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_set_header Host $http_host;
+    }
+
+    # Streamable HTTP. proxy_buffering must stay off — with it on, nginx holds
+    # the response until the upstream closes it, and the client sits waiting for
+    # bytes the proxy is already sitting on. It presents as a hang, not an error.
+    location /mcp/ {
+        set $upstream http://api:8000;
+        proxy_pass $upstream;
+        proxy_http_version 1.1;
+        proxy_buffering off;
+        proxy_cache off;
+        # Long-lived streams: the default 60s read timeout would cut an idle
+        # session. Connection "" clears the hop-by-hop header so keepalive works.
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        proxy_set_header Connection "";
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}

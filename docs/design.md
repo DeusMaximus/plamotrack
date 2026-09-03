@@ -652,11 +652,12 @@ timeline is planned, only that the columns are cheap now and expensive to retrof
 
 ---
 
-## 5. Auth, Remote Access & Public Mode 🔨 **Planned (M6 + M8) — threat model recorded 02/09/2026; none of it is implemented**
+## 5. Auth, Remote Access & Public Mode 🔨 **Planned (M6 + M8) — threat model recorded 02/09/2026; §5.9 item 1 (ingress identity, #186) implemented 03/09/2026, nothing else yet**
 
-Nothing in this section is built. Today every endpoint is unauthenticated and every
-endpoint can write; §5.1 records that state exactly, and §10 says what it means for
-running an alpha. The rest of the section is the M6 threat model and route
+Of this section only §5.9 item 1 is built — the Host/Origin guard, the ingress
+topology and the proxy-trust posture (#186, 03/09/2026). Every endpoint is still
+unauthenticated and every endpoint can still write; §5.1 records that state exactly,
+and §10 says what it means for running an alpha. The rest of the section is the M6 threat model and route
 authorization matrix (#29): the actors, the trust boundaries, the deployment modes
 that will be supported, what every route family requires from whom, which layer
 enforces it, how it fails, and the tests that have to exist before the documentation
@@ -673,6 +674,22 @@ it.
 ### 5.1 What exists today (02/09/2026)
 
 Recorded so the matrix reads as a diff against reality rather than a description of it.
+
+> **Superseded in part by M6-1 (#186, 03/09/2026).** The first three bullets below
+> describe the tree before item 1 of §5.9 shipped. Since then: `app/ingress.py`
+> derives one `IngressPolicy` from `PUBLIC_BASE_URL`, `ALLOWED_HOSTS`,
+> `ALLOWED_ORIGINS`, `TRUSTED_PROXIES` and `WEB_BIND`; the REST middleware and
+> FastMCP's guard in strict mode both read it (421 / 403 with the envelope);
+> `redirect_slashes=False` on both routers; uvicorn runs with `--no-proxy-headers`
+> and the forwarded address lands in `request.state.client_address`; `/readyz`
+> answers the raw loopback peer only; nginx is an envsubst template
+> (`frontend/nginx/`) with a default-deny 421 server whose names come from the same
+> keys, the `/api/mcp`, `/api/.well-known`, `/api/openapi.json` and `/api/readyz`
+> rejections ahead of the generic location, exact root `.well-known` locations, the
+> security headers and a CSP for the bundle, forwarding `$http_host` so the app's
+> same-origin rule sees the port. The remaining bullets — no authentication, four
+> writers with no principal, the incidental cross-origin picture — still describe the
+> code.
 
 - **One process, one port.** FastAPI serves the REST routers at `/` and FastMCP is
   mounted as an ASGI sub-application at `/mcp` (§2). There is no middleware of any
@@ -1068,6 +1085,21 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    raw peer; `/readyz` restricted to `internal`. Absorbs #39. **Its own release**, for
    the lockout reason. No authentication yet, so the only client-visible change is the
    alias spellings going dark. (T2, T3, T9.)
+   **Shipped 03/09/2026 (#186)**, with two calls the item's wording left open,
+   recorded so a later item does not re-derive them. (a) An unsafe request carrying
+   *neither* `Origin` nor `Referer` passes: §5.6's CSRF row conditions the
+   missing-`Origin` denial on a cookie-borne principal, none exists until item 3, and
+   refusing it would refuse every script and MCP client for no gain — a browser cannot
+   omit `Origin` on a cross-origin unsafe request, and the `null` it sends from a
+   sandboxed or no-referrer page is refused. Item 3 tightens the absent case when the
+   session cookie arrives. (b) `TRUSTED_PROXIES` ships as the mechanism alone — the
+   compose file sets no value for the bundled nginx, because nothing consumes the
+   resolved address until item 8 and the compose network's range is not known
+   statically; item 8 decides how the bundled hop declares itself, and until then the
+   client address the app records behind nginx is nginx's own, which is a degradation
+   in a value nobody reads, not a bypass. Also: T2's rows are typed in
+   `backend/ingress_matrix.py` (CI Integration runs it against the packaged stack)
+   until item 2's registry generates them.
 2. **Auth foundation** — owner, credential, session, personal-token and audit tables;
    the principal model; the app-level default-deny dependency with the anonymous
    allowlist; the route policy registry — family, credential policy, external spellings, serving layer and redirect destinations per effective route and mount — that the dependency, the ingress template and T1/T2 all read; the scope helper shared by routes and tools; the import-apply privilege check on plan content; the enumeration test;

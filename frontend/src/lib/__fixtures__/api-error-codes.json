@@ -415,6 +415,16 @@
         "supported_version"
       ]
     },
+    "ingress.host_not_allowed": {
+      "params": [
+        "setting"
+      ]
+    },
+    "ingress.origin_not_allowed": {
+      "params": [
+        "setting"
+      ]
+    },
     "kit.has_applications": {
       "params": [
         "name",

@@ -1,0 +1,48 @@
+#!/bin/sh
+# Sourced by the nginx image's entrypoint before its envsubst step (the
+# `.envsh` suffix is what makes it sourced rather than executed, so the export
+# survives). Assembles PLAMOTRACK_SERVER_NAMES — the `server_name` line of the
+# allow server in default.conf.template — from the same three inputs the API's
+# Host allowlist is built from (backend/app/ingress.py): the loopback names, the
+# host of PUBLIC_BASE_URL, a WEB_BIND that names something, and ALLOWED_HOSTS.
+# Ports are dropped (nginx matches server_name on the host alone), an IPv6
+# literal is bracketed, and a bare `*` is refused at the API and ignored here.
+
+set -e
+
+plamotrack_add_name() {
+    name="$1"
+    case "$name" in
+        "") return ;;
+        \[*) name="${name%%]*}]" ;;                       # [v6]:port -> [v6]
+        *:*:*) name="[$name]" ;;                          # bare v6 -> [v6]
+        *) name="${name%%:*}" ;;                          # host:port -> host
+    esac
+    case "$name" in
+        "*"|"**"|"[]") return ;;
+    esac
+    PLAMOTRACK_SERVER_NAMES="${PLAMOTRACK_SERVER_NAMES} ${name}"
+}
+
+PLAMOTRACK_SERVER_NAMES="localhost 127.0.0.1 [::1]"
+
+if [ -n "${PUBLIC_BASE_URL:-}" ]; then
+    host="${PUBLIC_BASE_URL#*://}"                        # strip the scheme
+    host="${host%%/*}"                                    # strip any path
+    host="${host##*@}"                                    # strip any userinfo
+    plamotrack_add_name "$host"
+fi
+
+case "${WEB_BIND:-127.0.0.1}" in
+    ""|0.0.0.0|::|127.0.0.1|localhost) ;;
+    *) plamotrack_add_name "${WEB_BIND}" ;;
+esac
+
+if [ -n "${ALLOWED_HOSTS:-}" ]; then
+    for entry in $(printf '%s' "${ALLOWED_HOSTS}" | tr ',' ' '); do
+        plamotrack_add_name "$entry"
+    done
+fi
+
+export PLAMOTRACK_SERVER_NAMES
+echo "plamotrack: server_name ${PLAMOTRACK_SERVER_NAMES}"

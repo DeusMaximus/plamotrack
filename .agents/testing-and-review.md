@@ -24,7 +24,7 @@ last edited, so a large jump either way is worth a look.
 
 | What | Command | Notes |
 | --- | --- | --- |
-| Backend (~1216) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
+| Backend (~1405) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
 | Lint + format | `uv run ruff check --fix . && uv run ruff format .` | Before every commit. CI checks both. |
 | Frontend unit (~350) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. Also the compile-time check on every static `t("…")` key. |
@@ -246,7 +246,7 @@ no secrets to forks, stale runs cancelled.
 | --- | --- |
 | Backend | ruff check + format check, pytest against Postgres 16 |
 | Frontend | oxlint, vitest, translation coverage report to the step summary, `tsc -b` + Vite build |
-| Integration | Playwright e2e (one worker, one retry, trace on first retry, HTML report uploaded **only on failure**), then the packaged Compose stack: UI/API/OpenAPI probes and an MCP `tools/list` through nginx |
+| Integration | Playwright e2e (one worker, one retry, trace on first retry, HTML report uploaded **only on failure**), then the packaged Compose stack: UI/API/OpenAPI probes, **`backend/ingress_matrix.py`** (T2 — the `/api/` alias rejections in their normalised spellings, the canonical positives, no `Location` but nginx's relative 301, security headers, hostile Host/Origin and the listed name `ci.plamotrack.test` from the CI `.env`), and an MCP `tools/list` through nginx |
 
 - **A pass on retry reports as `flaky` with exit 0.** Deliberate: instability is
   surfaced without blocking a PR. The lever, if it hides a real intermittent, is the
@@ -254,7 +254,11 @@ no secrets to forks, stale runs cancelled.
 - **A job stuck `in_progress` with every step green:** `gh run rerun <run> --job
   <id>`. Not a project problem.
 - **Integration copies `.env.example` to `.env`** — the documented fresh-install
-  path, no secrets.
+  path, no secrets — and appends `ALLOWED_HOSTS=ci.plamotrack.test` so the matrix
+  has a listed name to prove. Locally the matrix runs the same way against a
+  packaged stack: `uv run python ingress_matrix.py http://127.0.0.1:8080
+  [--allowed-host NAME]` from `backend/`; without a name in your `.env`, omit the
+  flag and the listed-name rows are skipped.
 
 ---
 
