@@ -41,10 +41,10 @@ Template:
 
 ---
 
-## 2026-09-03 — Claude Code (Fable 5.1) — #187 (M6-2) auth foundation — PR #198 OPEN (foundation-first)
+## 2026-09-03 — Claude Code (Opus 4.8) — #187 (M6-2) auth foundation — PR #198 OPEN, Codex round 1 addressed (`b2a82b2`)
 
 - **Done:** M6-2 auth foundation on `feature/m6-2-auth-foundation` (commits
-  `dd7e53e`, `66a2e04`), **PR #198 open** against `main`, awaiting review. Landed
+  `dd7e53e`, `66a2e04`, review-fix `b2a82b2`), **PR #198 open** against `main`. Landed
   **foundation-first** (owner's call, 03/09): the machinery is built and tested against
   the real route graph, but the shipped `app` is **not** default-deny —
   `create_app(authorization=True)` installs enforcement; the module-level app keeps it
@@ -67,19 +67,30 @@ Template:
   **resolver's** (audience/peer, #189/#186, T5), not the scope dependency, so the matrix
   injects only `{anon, owner, pat:read, pat:write}`; (4) auth tables land unwritten until
   #188/#189/#193; (5) import-admin is a predicate now, the raise wired at activation;
-  (6) no-store on allowed responses (deny-envelope no-store a small follow-up); (7) nginx
+  (6) no-store stamped on the final outgoing response by a middleware — exports and the
+  401/403 deny envelope too (Codex r1 fix 1, superseded the earlier follow-up); (7) nginx
   list generated, `/.well-known` declared ahead of its #192 routes.
-- **State:** backend **1527 passed**, frontend **473 passed**, ruff + format clean,
+- **State:** backend **1532 passed**, frontend **473 passed**, ruff + format clean,
   `render_ingress.py --check` up to date; migration `f1058c5de0f3` round-trips both
-  directions, enum CHECKs + owner seed intact. New tests: `test_route_policy.py` (27),
-  `test_auth_tables.py` (7), `test_authorization.py` (19 — T1 on the real graph + the
-  plan-mutation axis), `test_ingress_generation.py` (4). **No `auth-` mutation set run** —
-  queued for a fold-in after merge (principal algebra, the dependency branches,
-  `plan_requires_admin`, the owner seed). Deferred acceptance criteria tracked in the PR
-  body: shipped-app flip, suite-wide injection, e2e login, family-11 enforcement,
-  `apply_import` wiring → **#188**; MCP tool-scope + bearer/audience → **#189**.
-- **Next:** **Codex (GPT 5.6 Sol) review round on #198** — the security foundation, per the
-  roster; brief prepared this session. Park the tree during the round. On GO + merge, then
+  directions, enum CHECKs + owner seed intact. Tests: `test_route_policy.py` (30),
+  `test_auth_tables.py` (7), `test_authorization.py` (21 — T1 on the real graph + the
+  plan-mutation axis), `test_ingress_generation.py` (4). **Codex round 1 (GPT 5.6 Sol):
+  NO-GO, three P3s, all reproduced at `66a2e04` and fixed at `b2a82b2`**, each mutant
+  hand-confirmed (backup, not `git checkout`): (1) no-store was lost on handler-returned
+  exports — a `ResponseProfileMiddleware` now stamps the final response from
+  `scope["endpoint"]` (exports + deny envelope); (2) the enumeration skipped the `/mcp`
+  mount and copied `route.methods` — added `iter_mounted_routes` + a full HTTP-surface
+  snapshot (REST + mounted, methods pinned); (3) `write⇒read` was never exercised (the pat
+  factory holds read) — a write-only principal now reads only through the implication.
+  Answered per finding on the PR; **PR body attribution corrected Fable → Opus 4.8**
+  (owner's note; commit trailers already Opus 4.8). **No `auth-` mutation set folded** —
+  queued after merge (principal algebra, dependency branches, `plan_requires_admin`, owner
+  seed). Deferred criteria tracked in the PR body + scratchpad: shipped-app flip,
+  suite-wide injection, e2e login, family-11 enforcement, `apply_import` wiring, and the
+  round-1 activation checklist (family-13 unrouted → 401, parser-stage 422) → **#188**;
+  MCP tool-scope + bearer/audience → **#189**.
+- **Next:** **awaiting Codex round 2 on #198** (round 1 addressed at `b2a82b2`, tree parked
+  on `main`). Expect another round; on GO + merge, then
   **#188 (local owner auth)** activates default-deny. **LXC unchanged — still held until M6
   is finished** (owner, 03/09): no 0.2.10 upgrade there yet; when the time comes,
   `ALLOWED_HOSTS=<its LAN name>` goes into `.env` before the pull, then the pending
