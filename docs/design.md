@@ -1087,12 +1087,18 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    alias spellings going dark. (T2, T3, T9.)
    **Shipped 03/09/2026 (#186)**, with two calls the item's wording left open,
    recorded so a later item does not re-derive them. (a) An unsafe request carrying
-   *neither* `Origin` nor `Referer` passes: §5.6's CSRF row conditions the
-   missing-`Origin` denial on a cookie-borne principal, none exists until item 3, and
-   refusing it would refuse every script and MCP client for no gain — a browser cannot
-   omit `Origin` on a cross-origin unsafe request, and the `null` it sends from a
-   sandboxed or no-referrer page is refused. Item 3 tightens the absent case when the
-   session cookie arrives. (b) `TRUSTED_PROXIES` ships as the mechanism alone — the
+   *neither* `Origin` nor `Referer` passes. What carries this is browser behaviour,
+   not the absence of cookies: a browser cannot omit `Origin` on a cross-origin unsafe
+   request — the Fetch algorithm sends `null` at worst, from a sandboxed or
+   no-referrer page, and `null` is refused — so the omission can only come from a
+   non-browser client, and refusing it would refuse every script and MCP client for
+   no gain (the PR #196 review probed 36 multipart shapes across Chromium 151,
+   Firefox 153 and WebKit 26.5, including forms, beacons, workers, sandboxed frames,
+   307/308 redirects and an extension, and every one carried an `Origin`). §5.6's
+   CSRF row conditions the missing-`Origin` denial on a cookie-borne principal, and
+   item 3 tightens the absent case when the session cookie arrives; the claim is not
+   proved for every legacy engine or privileged extension, which is one more reason
+   the credential-aware rule follows. (b) `TRUSTED_PROXIES` ships as the mechanism alone — the
    compose file sets no value for the bundled nginx, because nothing consumes the
    resolved address until item 8 and the compose network's range is not known
    statically; item 8 decides how the bundled hop declares itself, and until then the

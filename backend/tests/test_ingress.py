@@ -30,8 +30,11 @@ in `app/ingress.py` cannot drift from the guard it is meant to agree with.
 
 from __future__ import annotations
 
+import os
+import subprocess
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import pytest
 from fastmcp.server import http as fastmcp_http
@@ -41,6 +44,7 @@ from starlette.datastructures import Headers
 
 from app import error_codes
 from app.config import Settings
+from app.hostnames import validate_host_pattern
 from app.ingress import (
     CLIENT_ADDRESS_KEY,
     LOOPBACK_HOSTS,
@@ -52,6 +56,10 @@ from app.ingress import (
     normalize_origin,
 )
 from app.main import build_mcp_app, create_app
+
+SERVER_NAMES_SCRIPT = (
+    Path(__file__).resolve().parents[2] / "frontend/nginx/15-plamotrack-server-names.envsh"
+)
 
 LOOPBACK_PEER = ("127.0.0.1", 123)
 OUTSIDE_PEER = ("198.51.100.7", 40000)
@@ -252,6 +260,33 @@ async def test_hostile_host_is_421_on_a_safe_method_too():
             ["0.0.0.0:8080", "192.168.1.10:8080"],
             id="web_bind-unspecified-adds-nothing",
         ),
+        pytest.param(
+            # PR #196 review, P3-2: an explicit alternate loopback bind is a name
+            # the operator chose; nginx lists it, so the app must too.
+            {"web_bind": "127.0.0.2"},
+            ["127.0.0.2:8080", "127.0.0.2"],
+            ["127.0.0.3:8080"],
+            id="web_bind-alternate-loopback",
+        ),
+        pytest.param(
+            {"web_bind": "127.10.20.30"},
+            ["127.10.20.30:8080"],
+            ["127.10.20.31:8080"],
+            id="web_bind-alternate-loopback-deep",
+        ),
+        pytest.param(
+            # PR #196 review, P3-3: a terminal DNS dot is the same name.
+            {"public_base_url": "http://nas.lan."},
+            ["nas.lan", "nas.lan.", "nas.lan.:8080", "NAS.LAN."],
+            ["nas.lan.evil.example"],
+            id="public_base_url-terminal-dot",
+        ),
+        pytest.param(
+            {"allowed_hosts": "nas.lan"},
+            ["nas.lan.", "nas.lan.:8080"],
+            ["nas.lan.."],
+            id="allowed_hosts-dotted-request",
+        ),
     ],
 )
 async def test_the_allowlist_is_the_configured_names(settings_kwargs, allowed, refused):
@@ -261,6 +296,19 @@ async def test_the_allowlist_is_the_configured_names(settings_kwargs, allowed, r
             assert resp.status_code == 200, (host, resp.text)
         for host in refused:
             assert_host_refused(await client.get("/healthz", headers={"Host": host}))
+
+
+async def test_a_dotted_name_passes_on_mcp_and_rest_alike():
+    # FastMCP's normaliser keeps the terminal dot; ours drops it. The dotted
+    # spellings handed to its guard are what keep the two answers equal.
+    settings = make_settings(allowed_hosts="nas.lan")
+    for host in ("nas.lan.", "localhost."):
+        async with running_client(settings, host=host) as client:
+            assert (await mcp_initialize(client)).status_code == 200, host
+            assert (await json_write(client)).status_code == 201, host
+    async with running_client(settings, host="nas.lan..") as client:
+        assert_host_refused(await mcp_initialize(client))
+        assert_host_refused(await json_write(client))
 
 
 async def test_a_listed_name_passes_every_unsafe_request():
@@ -505,6 +553,18 @@ def test_host_normalisation_mirrors_fastmcp(value):
 
 
 @pytest.mark.parametrize(
+    "value,ours,theirs",
+    [("nas.lan.", "nas.lan", "nas.lan."), ("localhost.", "localhost", "localhost.")],
+)
+def test_terminal_dots_are_the_one_deliberate_divergence(value, ours, theirs):
+    # Ours drops them (nginx does on the request side); FastMCP keeps them. The
+    # dotted entries in `mcp_allowed_hosts` are the bridge, tested end to end in
+    # test_a_dotted_name_passes_on_mcp_and_rest_alike.
+    assert normalize_host(value) == ours
+    assert fastmcp_http._normalize_host(value) == theirs
+
+
+@pytest.mark.parametrize(
     "value",
     [
         "http://localhost:5173",
@@ -692,15 +752,127 @@ def test_public_base_url_refuses_anything_but_a_bare_origin(value):
         make_settings(public_base_url=value)
 
 
-@pytest.mark.parametrize("value", ["*", "**", "nas.lan,*", " * "])
-def test_allowed_hosts_refuses_a_bare_wildcard(value):
-    with pytest.raises(ValidationError, match="bare '\\*'"):
+@pytest.mark.parametrize(
+    "value",
+    [
+        "*",
+        "**",
+        "nas.lan,*",
+        " * ",
+        # PR #196 review, P3-1: wildcard-equivalents whose *normalised* form is
+        # `*` — the port, the brackets and the doubled star all come off before
+        # matching, so judging the raw spelling admitted every Host.
+        "*:8080",
+        "**:80",
+        "[*]",
+        "[*]:8080",
+        "*.",
+        "www.*",
+        "*foo.lan",
+        "nas.*.lan",
+        "*.*",
+        ".lan",
+        "nas..lan",
+        "0.0.0.0",
+        "::",
+        "-nas.lan",
+    ],
+)
+def test_allowed_hosts_refuses_wildcard_equivalents_and_non_names(value):
+    with pytest.raises(ValidationError, match="ALLOWED_HOSTS"):
         make_settings(allowed_hosts=value)
 
 
-@pytest.mark.parametrize("value", ["", ",", " , ", "nas.lan", "*.home.arpa", "a,b"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        ",",
+        " , ",
+        "nas.lan",
+        "*.home.arpa",
+        "a,b",
+        "NAS.LAN:8080",
+        "nas.lan.",
+        "[fd00::10]:8080",
+        "fd00::10",
+        "127.0.0.2",
+        "my_container",
+        "*.a.b.c",
+    ],
+)
 def test_allowed_hosts_accepts_names_and_wildcards(value):
     make_settings(allowed_hosts=value)
+
+
+def test_a_port_qualified_wildcard_never_reaches_the_guard():
+    # The end-to-end shape of P3-1: had `*:8080` survived validation it would
+    # have admitted evil.example. Refused at Settings, so no policy exists.
+    with pytest.raises(ValidationError):
+        IngressPolicy.from_settings(make_settings(allowed_hosts="*:8080"))
+    # And the accepted wildcard keeps its subdomain-only meaning.
+    policy = IngressPolicy.from_settings(make_settings(allowed_hosts="*.lan"))
+    assert policy.host_allowed("nas.lan:8080")
+    assert not policy.host_allowed("evil.example:8080")
+    assert not policy.host_allowed("lan")
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"public_base_url": "http://*:8080"},
+        {"public_base_url": "http://*.lan:8080"},
+        {"web_bind": "*"},
+        {"web_bind": "*.lan"},
+        {"web_bind": "nas.*"},
+        {"allowed_origins": "http://*:8080"},
+        {"allowed_origins": "https://*.lan"},
+    ],
+)
+def test_every_host_producing_setting_refuses_a_wildcard(kwargs):
+    # The P3-1 sweep: ALLOWED_HOSTS is not the only setting whose host reaches
+    # the allowlist or the guard's fnmatch.
+    with pytest.raises(ValidationError):
+        make_settings(**kwargs)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "",
+        "0.0.0.0",
+        "::",
+        "127.0.0.1",
+        "127.0.0.2",
+        "192.168.1.10",
+        "fd00::10",
+        "localhost",
+        "nas.lan",
+    ],
+)
+def test_web_bind_accepts_addresses_and_names(value):
+    make_settings(web_bind=value)
+
+
+@pytest.mark.parametrize(
+    "entry,allow_wildcard,expected",
+    [
+        ("NAS.lan:8080", True, "nas.lan"),
+        ("nas.lan.", True, "nas.lan"),
+        ("[FD00::10]:8080", True, "fd00::10"),
+        ("*.Home.ARPA", True, "*.home.arpa"),
+        ("127.0.0.2", False, "127.0.0.2"),
+    ],
+)
+def test_validate_host_pattern_returns_the_normalised_form(entry, allow_wildcard, expected):
+    assert validate_host_pattern(entry, setting="X", allow_wildcard=allow_wildcard) == expected
+
+
+def test_validate_host_pattern_names_the_setting():
+    with pytest.raises(ValueError, match="^SOME_SETTING entry"):
+        validate_host_pattern("*:8080", setting="SOME_SETTING", allow_wildcard=True)
+    with pytest.raises(ValueError, match="may not be a wildcard"):
+        validate_host_pattern("*.lan", setting="SOME_SETTING", allow_wildcard=False)
 
 
 @pytest.mark.parametrize(
@@ -738,6 +910,16 @@ def test_policy_derivation_from_every_setting():
     )
     policy = IngressPolicy.from_settings(settings)
     assert policy.extra_hosts == ("app.example", "192.168.1.10", "nas.lan", "*.home.arpa")
+    assert policy.mcp_allowed_hosts == (
+        "app.example",
+        "192.168.1.10",
+        "nas.lan",
+        "*.home.arpa",
+        "localhost.",
+        "app.example.",
+        "nas.lan.",
+        "*.home.arpa.",
+    )
     assert policy.allowed_origins == ("https://app.example:8443", "http://alias.lan:9000")
     assert policy.canonical_origin == "https://app.example:8443"
     assert [str(n) for n in policy.trusted_proxies] == ["10.0.0.0/8"]
@@ -759,9 +941,110 @@ def test_the_loopback_install_derives_an_empty_policy():
     assert policy.trusted_proxies == ()
 
 
-@pytest.mark.parametrize("bind", ["0.0.0.0", "::", "127.0.0.1", "localhost", "[::1]"])
-def test_a_loopback_or_unspecified_bind_adds_no_host(bind):
+@pytest.mark.parametrize(
+    "bind", ["0.0.0.0", "::", "127.0.0.1", "localhost", "[::1]", "LOCALHOST", ""]
+)
+def test_a_built_in_or_unspecified_bind_adds_no_host(bind):
     assert IngressPolicy.from_settings(make_settings(web_bind=bind)).extra_hosts == ()
+
+
+@pytest.mark.parametrize(
+    "bind,expected",
+    [("127.0.0.2", "127.0.0.2"), ("127.10.20.30", "127.10.20.30"), ("NAS.lan.", "nas.lan")],
+)
+def test_an_explicit_bind_that_is_not_a_built_in_is_kept(bind, expected):
+    # PR #196 review, P3-2: excluding the whole loopback class dropped a name
+    # nginx lists. Only the three built-ins are redundant.
+    assert IngressPolicy.from_settings(make_settings(web_bind=bind)).extra_hosts == (expected,)
+
+
+def test_configured_names_are_stored_normalised_and_deduplicated():
+    settings = make_settings(
+        public_base_url="http://NAS.lan.:8080",
+        web_bind="nas.lan",
+        allowed_hosts="nas.lan., NAS.LAN:9090, localhost, 127.0.0.1, [::1]:80, *.HOME.arpa",
+    )
+    assert IngressPolicy.from_settings(settings).extra_hosts == ("nas.lan", "*.home.arpa")
+
+
+# --- the two derivations agree: this file's policy and the nginx generator --------
+
+SERVER_NAME_CORPUS = [
+    pytest.param("", "", "", id="loopback-install"),
+    pytest.param("http://nas.lan.", "127.0.0.2", "", id="p3-2-and-p3-3"),
+    pytest.param(
+        "http://NAS.lan:8080", "0.0.0.0", "nas.lan, *.home.arpa", id="dupes-case-wildcard"
+    ),
+    pytest.param(
+        "https://app.example",
+        "192.168.1.10",
+        "a.lan:8080, [fd00::10]:8080, fd00::11",
+        id="ports-and-ipv6",
+    ),
+    pytest.param(
+        "http://[fd00::10]:8080",
+        "::1",
+        "localhost., LOCALHOST, 127.0.0.1",
+        id="ipv6-base-loopback-noise",
+    ),
+    pytest.param("http://nas.lan:8080/", "::", "", id="trailing-slash-unspecified"),
+    pytest.param(
+        "", "127.10.20.30", "plamotrack.home.arpa., my_container", id="deep-loopback-underscore"
+    ),
+]
+
+
+def _nginx_server_names(public_base_url: str, web_bind: str, allowed_hosts: str) -> set[str]:
+    env = {
+        "PATH": os.environ["PATH"],
+        "PUBLIC_BASE_URL": public_base_url,
+        "WEB_BIND": web_bind,
+        "ALLOWED_HOSTS": allowed_hosts,
+    }
+    result = subprocess.run(
+        [
+            "sh",
+            "-c",
+            f'. "{SERVER_NAMES_SCRIPT}" >/dev/null; printf "%s" "$PLAMOTRACK_SERVER_NAMES"',
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    names = result.stdout.split()
+    assert len(names) == len(set(names)), f"nginx would warn on a duplicate server_name: {names}"
+    for name in names:
+        # nginx-side invariants, checked on the raw spelling because the
+        # normalised comparison below would hide them (a first version of this
+        # helper did, and the generator's dot-strip mutant survived it).
+        assert not name.endswith("."), f"a dotted server_name never matches: {name}"
+        assert name.startswith("[") or ":" not in name, f"a port in a server_name: {name}"
+        assert name == name.lower(), f"the generator lowercases for its dedupe: {name}"
+    return {normalize_host(name) for name in names}
+
+
+@pytest.mark.parametrize("public_base_url,web_bind,allowed_hosts", SERVER_NAME_CORPUS)
+def test_nginx_server_names_equal_the_apps_allowlist(public_base_url, web_bind, allowed_hosts):
+    # One corpus through both derivations (PR #196 review: the three P3s were
+    # all mismatches between the Python policy and the sh generator). Compared
+    # on the normalised form each layer matches against — nginx brackets IPv6
+    # and keeps its own case rules, the app normalises the Host header.
+    settings = make_settings(
+        public_base_url=public_base_url, web_bind=web_bind, allowed_hosts=allowed_hosts
+    )
+    policy = IngressPolicy.from_settings(settings)
+    ours = {normalize_host(h) for h in (*LOOPBACK_HOSTS, *policy.extra_hosts)}
+    assert _nginx_server_names(public_base_url, web_bind, allowed_hosts) == ours
+
+
+def test_the_generator_drops_a_terminal_dot_and_a_port():
+    # P3-3 as the review reproduced it: `server_name nas.lan.;` never matches.
+    names = _nginx_server_names("http://nas.lan.", "", "other.lan.:8080")
+    assert "nas.lan" in names and "other.lan" in names
+    # The raw-spelling invariants inside _nginx_server_names are what refuse a
+    # dotted or port-carrying entry; this pins that the names still arrived.
+    assert names == {"localhost", "127.0.0.1", "::1", "nas.lan", "other.lan"}
 
 
 def test_the_refusal_bodies_are_the_error_envelope():

@@ -3,23 +3,36 @@
 # `.envsh` suffix is what makes it sourced rather than executed, so the export
 # survives). Assembles PLAMOTRACK_SERVER_NAMES — the `server_name` line of the
 # allow server in default.conf.template — from the same three inputs the API's
-# Host allowlist is built from (backend/app/ingress.py): the loopback names, the
-# host of PUBLIC_BASE_URL, a WEB_BIND that names something, and ALLOWED_HOSTS.
-# Ports are dropped (nginx matches server_name on the host alone), an IPv6
-# literal is bracketed, and a bare `*` is refused at the API and ignored here.
+# Host allowlist is built from (backend/app/ingress.py, backend/app/hostnames.py):
+# the loopback names, the host of PUBLIC_BASE_URL, every WEB_BIND that names
+# something, and ALLOWED_HOSTS. The two derivations are held equal by
+# backend/tests/test_ingress.py, which runs this file under `sh` over one corpus.
+#
+# Normalisation, matching the API's: lowercase; ports dropped (nginx matches
+# server_name on the host alone); an IPv6 literal bracketed; terminal DNS dots
+# dropped (nginx drops them from the request Host before matching, so a dotted
+# server_name would never match — PR #196 review, P3-3); duplicates skipped
+# (nginx warns on a repeated server_name); the one wildcard form is `*.domain`,
+# any other `*` placement is ignored here and refused by the API at startup.
 
 set -e
 
 plamotrack_add_name() {
-    name="$1"
+    name=$(printf '%s' "$1" | tr 'A-Z' 'a-z')
     case "$name" in
         "") return ;;
         \[*) name="${name%%]*}]" ;;                       # [v6]:port -> [v6]
         *:*:*) name="[$name]" ;;                          # bare v6 -> [v6]
         *) name="${name%%:*}" ;;                          # host:port -> host
     esac
+    name="${name%.}"                                      # one terminal DNS dot, as the API
     case "$name" in
-        "*"|"**"|"[]") return ;;
+        ""|"[]") return ;;
+        \*.?*) ;;
+        *\**) return ;;
+    esac
+    case " ${PLAMOTRACK_SERVER_NAMES} " in
+        *" ${name} "*) return ;;
     esac
     PLAMOTRACK_SERVER_NAMES="${PLAMOTRACK_SERVER_NAMES} ${name}"
 }
@@ -33,9 +46,9 @@ if [ -n "${PUBLIC_BASE_URL:-}" ]; then
     plamotrack_add_name "$host"
 fi
 
-case "${WEB_BIND:-127.0.0.1}" in
-    ""|0.0.0.0|::|127.0.0.1|localhost) ;;
-    *) plamotrack_add_name "${WEB_BIND}" ;;
+case "${WEB_BIND:-}" in
+    ""|0.0.0.0|::|"[::]") ;;                              # binds everything, names nothing
+    *) plamotrack_add_name "${WEB_BIND}" ;;               # loopback aliases included (P3-2)
 esac
 
 if [ -n "${ALLOWED_HOSTS:-}" ]; then

@@ -44,10 +44,15 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import error_codes
 from app.config import Settings, split_csv
+from app.hostnames import (  # noqa: F401 — re-exported; the tests and main read them here
+    LOOPBACK_HOSTS,
+    is_ip_literal,
+    is_loopback_host,
+    is_unspecified_host,
+    normalize_host,
+)
 
-#: The names every install answers to. A literal, equal by test to FastMCP's
-#: `DEFAULT_HOSTS`, so the two guards' built-ins cannot drift apart unnoticed.
-LOOPBACK_HOSTS: tuple[str, ...] = ("127.0.0.1", "localhost", "::1")
+_LOOPBACK_NORMALIZED = frozenset(normalize_host(h) for h in LOOPBACK_HOSTS)
 
 #: Methods the Origin rule does not apply to. A cross-site GET without CORS
 #: headers is unreadable by the page that sent it, so there is nothing to deny.
@@ -62,43 +67,7 @@ ORIGIN_SETTING = "ALLOWED_ORIGINS"
 CLIENT_ADDRESS_KEY = "client_address"
 
 
-# --- normalisation ---------------------------------------------------------------
-
-
-def normalize_host(host: str) -> str:
-    """A Host header, or an allowlist entry, reduced to its comparable form:
-    lowercase, brackets and port removed. `[::1]:8080` → `::1`; `NAS.lan:80` →
-    `nas.lan`; a bare IPv6 literal with several colons is left whole."""
-    host = host.strip().lower()
-    if not host:
-        return ""
-    if host.startswith("["):
-        end = host.find("]")
-        return host if end == -1 else host[1:end]
-    if host.count(":") == 1:
-        return host.rsplit(":", 1)[0]
-    return host
-
-
-def is_loopback_host(host: str) -> bool:
-    host = normalize_host(host)
-    if host == "localhost":
-        return True
-    try:
-        return ip_address(host).is_loopback
-    except ValueError:
-        return False
-
-
-def is_unspecified_host(host: str) -> bool:
-    """`0.0.0.0`, `::` and the empty string — a bind address that names nothing."""
-    host = normalize_host(host)
-    if not host:
-        return True
-    try:
-        return ip_address(host).is_unspecified
-    except ValueError:
-        return False
+# --- normalisation (the host helpers live in app/hostnames.py) --------------------
 
 
 def host_matches(host: str, patterns: tuple[str, ...]) -> bool:
@@ -171,10 +140,11 @@ def _parse_address(value: str) -> str:
 class IngressPolicy:
     """The allowlists, derived once from settings and shared by both guards."""
 
-    #: Host names on top of the loopback names: PUBLIC_BASE_URL's host, a
-    #: non-unspecified WEB_BIND, and ALLOWED_HOSTS. This is exactly what
-    #: FastMCP's guard receives as `allowed_hosts` (it adds the loopback names
-    #: and the socket's bound address itself, as `allowed_hosts_for` does here).
+    #: Host names on top of the loopback names, normalised: PUBLIC_BASE_URL's
+    #: host, every explicit WEB_BIND that names something and is not already a
+    #: built-in (`127.0.0.2` counts — PR #196 review, P3-2), and ALLOWED_HOSTS.
+    #: `mcp_allowed_hosts` is what FastMCP's guard receives (it adds the loopback
+    #: names and the socket's local address itself, as `allowed_hosts_for` does).
     extra_hosts: tuple[str, ...]
     #: PUBLIC_BASE_URL's origin plus ALLOWED_ORIGINS — FastMCP's `allowed_origins`.
     allowed_origins: tuple[str, ...]
@@ -188,11 +158,13 @@ class IngressPolicy:
         canonical_origin: str | None = None
         if settings.public_base_url:
             parsed = urlsplit(settings.public_base_url)
-            extra_hosts.append(parsed.hostname or "")
+            extra_hosts.append(normalize_host(parsed.hostname or ""))
             canonical_origin = normalize_origin(settings.public_base_url)
-        if not is_unspecified_host(settings.web_bind) and not is_loopback_host(settings.web_bind):
-            extra_hosts.append(settings.web_bind)
-        extra_hosts.extend(split_csv(settings.allowed_hosts))
+        bind = normalize_host(settings.web_bind)
+        if not is_unspecified_host(bind) and bind not in _LOOPBACK_NORMALIZED:
+            extra_hosts.append(bind)
+        extra_hosts.extend(normalize_host(entry) for entry in split_csv(settings.allowed_hosts))
+        extra_hosts = [host for host in extra_hosts if host and host not in _LOOPBACK_NORMALIZED]
 
         allowed_origins: list[str] = []
         if canonical_origin is not None:
@@ -209,10 +181,25 @@ class IngressPolicy:
             canonical_origin=canonical_origin,
         )
 
+    @property
+    def mcp_allowed_hosts(self) -> tuple[str, ...]:
+        """What FastMCP's guard is handed. Its normaliser keeps a terminal DNS
+        dot where ours drops it, so each DNS name is listed dotted as well —
+        `localhost` included — and the two guards agree on `Host: nas.lan.`
+        (PR #196 review, P3-3). IP literals take no dot."""
+        names = [*self.extra_hosts]
+        for host in ("localhost", *self.extra_hosts):
+            if not is_ip_literal(host):
+                names.append(f"{host}.")
+        return tuple(dict.fromkeys(names))
+
     def allowed_hosts_for(self, server_host: str | None) -> tuple[str, ...]:
         """The complete Host allowlist for one request: the loopback names, the
-        configured extras, and the address the socket is bound to when it names
-        something (`0.0.0.0` inside the container names nothing)."""
+        configured extras, and the socket's local address when it names something
+        — the same rule FastMCP's guard applies. uvicorn reports the accepted
+        connection's concrete local address there, not the bind literal: source-run
+        that is `127.0.0.1`; in the container it is the api container's compose-
+        network address, reachable only from that network (PR #196 review)."""
         hosts = [*LOOPBACK_HOSTS, *self.extra_hosts]
         if server_host and not is_unspecified_host(server_host):
             hosts.append(server_host)

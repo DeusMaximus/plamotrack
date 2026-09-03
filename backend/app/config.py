@@ -7,6 +7,8 @@ from urllib.parse import quote, urlsplit
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.hostnames import validate_host_pattern
+
 _CURRENCY_RE = re.compile(r"[A-Z]{3}")
 
 
@@ -105,17 +107,31 @@ class Settings(BaseSettings):
             _ = parsed.port  # raises on a non-numeric or out-of-range port
         except ValueError as exc:
             raise ValueError(f"PUBLIC_BASE_URL has an invalid port (got {value!r})") from exc
+        # The host joins the allowlist, so it obeys the allowlist grammar — a
+        # `*` here would otherwise admit every Host (PR #196 review, P3-1).
+        validate_host_pattern(parsed.hostname, setting="PUBLIC_BASE_URL", allow_wildcard=False)
         return value
 
     @field_validator("allowed_hosts")
     @classmethod
     def _validate_allowed_hosts(cls, value: str) -> str:
+        # Judged on the normalised form the guard matches, not the raw spelling:
+        # `*:8080` loses its port on the way to matching and becomes `*` (PR
+        # #196 review, P3-1). `*.example.lan` is the one accepted wildcard.
         for entry in split_csv(value):
-            if entry.strip("*") == "":
-                raise ValueError(
-                    "ALLOWED_HOSTS may not contain a bare '*': list the names the "
-                    "instance is reached by (wildcards like *.example.lan are fine)"
-                )
+            validate_host_pattern(entry, setting="ALLOWED_HOSTS", allow_wildcard=True)
+        return value
+
+    @field_validator("web_bind")
+    @classmethod
+    def _validate_web_bind(cls, value: str) -> str:
+        # Also a name the instance answers to, so the same grammar; the
+        # unspecified addresses are the exception — they bind everything and
+        # name nothing.
+        value = value.strip()
+        if value in ("", "0.0.0.0", "::", "[::]"):
+            return value
+        validate_host_pattern(value, setting="WEB_BIND", allow_wildcard=False)
         return value
 
     @field_validator("allowed_origins")
@@ -129,6 +145,9 @@ class Settings(BaseSettings):
                 )
             if parsed.path.strip("/") or parsed.query or parsed.fragment or parsed.username:
                 raise ValueError(f"ALLOWED_ORIGINS entry {entry!r} is not a bare origin")
+            # Origins are exact: `http://*:8080` would be a wildcard pattern to
+            # the guard's fnmatch (PR #196 review, the P3-1 sweep).
+            validate_host_pattern(parsed.hostname, setting="ALLOWED_ORIGINS", allow_wildcard=False)
         return value
 
     @field_validator("trusted_proxies")

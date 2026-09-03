@@ -177,9 +177,11 @@ install, which is why it shipped as a release of its own.
 Always known: `localhost`, `127.0.0.1`, `[::1]`, a `WEB_BIND` address that names an
 interface, and the host of `PUBLIC_BASE_URL`. Everything else — `nas.lan`,
 `plamotrack.home.arpa`, a container name, whatever a reverse proxy forwards — goes
-in `ALLOWED_HOSTS`. Ports don't matter (`nas.lan:8080` is `nas.lan`); wildcards
-like `*.home.arpa` work; a bare `*` is refused, because an allowlist of everything
-is the hole the setting closes. `WEB_BIND=0.0.0.0` names *nothing*, so the LAN
+in `ALLOWED_HOSTS`. Ports don't matter (`nas.lan:8080` is `nas.lan`), nor does a
+trailing DNS dot or letter case; wildcards like `*.home.arpa` work (that leading
+`*.` is the only wildcard form); a bare `*`, a `*:8080`, or a `*` anywhere else
+is refused at startup, because an allowlist of everything is the hole the
+setting closes. `WEB_BIND=0.0.0.0` names *nothing*, so the LAN
 address or hostname you actually type still has to be listed.
 
 **Locked out?** You typed a name into a browser or an MCP client and got 421. Nothing

@@ -131,8 +131,9 @@ def build_mcp_app(policy: IngressPolicy):
     """The FastMCP ASGI child for the `/mcp` mount, guarded with the same lists
     as REST (§5.6, Host spoofing): `host_origin_protection=True` is FastMCP's
     strict mode — Host validated on every request, Origin whenever present —
-    and the extras are exactly `IngressPolicy.extra_hosts` / `allowed_origins`,
-    to which the guard adds the loopback names itself.
+    and the extras are `IngressPolicy.mcp_allowed_hosts` (the configured names,
+    each DNS name dotted as well) / `allowed_origins`, to which the guard adds
+    the loopback names itself.
 
     Slash redirects are off (§5.6, proxy trust): Starlette builds a redirect's
     `Location` from the request's scheme and Host, query string included, which
@@ -142,7 +143,7 @@ def build_mcp_app(policy: IngressPolicy):
     mcp_app = mcp.http_app(
         path="/",
         host_origin_protection=True,
-        allowed_hosts=list(policy.extra_hosts),
+        allowed_hosts=list(policy.mcp_allowed_hosts),
         allowed_origins=list(policy.allowed_origins),
     )
     mcp_app.router.redirect_slashes = False
