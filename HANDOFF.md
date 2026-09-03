@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-03 — Claude Code (Fable 5.1) — #186 (M6-1) MERGED: PR #196 → `7954e47` (#39 closed too); release gate for 0.2.10-alpha passed through step 5, tag created locally, push awaits the owner
+## 2026-09-03 — Claude Code (Fable 5.1) — #186 (M6-1) MERGED (PR #196 → `7954e47`, #39 closed) and **v0.2.10-alpha RELEASED** ("the instance knows its own name")
 
 - **Done:** M6-1 — ingress identity and the Host/Origin guard — implemented end to
   end on branch `feature/m6-1-ingress-guard` (absorbs #39). `app/config.py` gains
@@ -93,11 +93,12 @@ Template:
   0.2.10, MCP `serverInfo.version` → 0.2.10 through nginx, archive manifest
   `app_version` 0.2.10 / `schema_version` f9979ec7b9cb (= alembic head), ingress
   matrix 0 failures on the release build; stack `down` (no `-v`), dev `db` overlay
-  restored. **Annotated tag `v0.2.10-alpha — the instance knows its own name` created
-  locally on `7954e47`, NOT pushed** — outward-facing, needs the owner's word; notes
-  drafted in the session scratchpad (`release-notes-0.2.10.md`), leading with
-  `ALLOWED_HOSTS`. CI on `7954e47` was in progress at the time of writing. Verified
-  before the first push: `tests/test_ingress.py` 175 passed; full backend suite 1405 passed; ruff
+  restored. **Released on the owner's word:** annotated tag `v0.2.10-alpha — the instance knows
+  its own name` on `7954e47` pushed, `gh release create --prerelease --verify-tag`
+  with notes leading with the `ALLOWED_HOSTS` lockout and recovery, then the
+  client-visible changes, upgrade steps and the mid-milestone note —
+  https://github.com/DeusMaximus/plamotrack/releases/tag/v0.2.10-alpha. CI on
+  `7954e47` green (Backend, Frontend, Integration). Verified before the first push: `tests/test_ingress.py` 175 passed; full backend suite 1405 passed; ruff
   clean; frontend 470 passed, lint + build green; negative control in a worktree at
   `main` (`ea4ce81`) **30 red / 14 green** with the greens the positive controls;
   hand mutation pass **19/19 killed** (ing-5 survived the first pass — child has one
@@ -108,11 +109,9 @@ Template:
   restored, `.env` restored from backup. PR body + release-notes draft in the session
   scratchpad (`pr-body.md`, now posted as the PR body); PR #184 (`ja`) unchanged. LXC still pre-0.2.9 — and
   **needs `ALLOWED_HOSTS=<its LAN name>` in `.env` before pulling 0.2.10**.
-- **Next:** (1) **owner confirms → `git push origin v0.2.10-alpha` and `gh release
-  create v0.2.10-alpha --prerelease --verify-tag --notes-file …`** (step 6 of the
-  gate), then the LXC upgrade — **`ALLOWED_HOSTS=<its LAN name>` in its `.env` first**,
-  back up, then pull (three migrations pending there: display items, settings, none
-  new in 0.2.10); (2) fold
+- **Next:** (1) **LXC upgrade to 0.2.10 — `ALLOWED_HOSTS=<its LAN name>` in its `.env`
+  first**, back up, then pull (two migrations pending there from 0.2.8/0.2.9: display
+  items and settings; none new in 0.2.10); (2) fold
   the `ing-` tuples into `mutation_test.py` (`ing-1`…`ing-26`, + `tests/test_ingress.py` in
   `TEST_FILES`), then the release gate for **0.2.10-alpha** — notes lead with
   `ALLOWED_HOSTS`; (3) #187 (registry) next — it replaces the typed nginx rejections
