@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-03 — Claude Code (Fable 5.1) — #186 (M6-1) MERGED (PR #196 → `7954e47`, #39 closed), **v0.2.10-alpha RELEASED**, mutant fold-in **PR #197** open
+## 2026-09-03 — Claude Code (Fable 5.1) — #186 (M6-1) MERGED (PR #196 → `7954e47`, #39 closed), **v0.2.10-alpha RELEASED**, mutant fold-in MERGED (PR #197 → `987c6da`)
 
 - **Done:** M6-1 — ingress identity and the Host/Origin guard — implemented end to
   end on branch `feature/m6-1-ingress-guard` (absorbs #39). `app/config.py` gains
@@ -98,8 +98,8 @@ Template:
   with notes leading with the `ALLOWED_HOSTS` lockout and recovery, then the
   client-visible changes, upgrade steps and the mid-milestone note —
   https://github.com/DeusMaximus/plamotrack/releases/tag/v0.2.10-alpha. CI on
-  `7954e47` green (Backend, Frontend, Integration). **Fold-in: PR #197** (branch
-  `chore/fold-ing-mutants`) puts the 26 tuples into `mutation_test.py` as **`ingr-`**
+  `7954e47` green (Backend, Frontend, Integration). **Fold-in: PR #197, squash-merged as `987c6da`** on the owner's call once CI was
+  green (branch deleted) — puts the 26 tuples into `mutation_test.py` as **`ingr-`**
   — relabelled because `-k ing-` substring-matches wdr-8's "missing-application" —
   with `tests/test_ingress.py` in `TEST_FILES`, the nginx generator in the
   clean-tree check (ingr-25/26 are the first cases against a shell file), ingr-15
@@ -117,10 +117,14 @@ Template:
   restored, `.env` restored from backup. PR body + release-notes draft in the session
   scratchpad (`pr-body.md`, now posted as the PR body); PR #184 (`ja`) unchanged. LXC still pre-0.2.9 — and
   **needs `ALLOWED_HOSTS=<its LAN name>` in `.env` before pulling 0.2.10**.
-- **Next:** (1) **LXC upgrade to 0.2.10 — `ALLOWED_HOSTS=<its LAN name>` in its `.env`
-  first**, back up, then pull (two migrations pending there from 0.2.8/0.2.9: display
-  items and settings; none new in 0.2.10); (2) **merge PR #197** once its CI is green
-  (the fold-in replaces the old item: fold
+- **Next:** (1) **#187 (M6-2, the route policy registry)** is the next implementation
+  branch — it replaces the typed nginx rejections and `ingress_matrix.py`'s hand-typed
+  rows; #190 (the OAuth spike) can start in parallel now that M6-1's topology exists.
+  (2) **The LXC stays where it is until M6 is finished** — owner's call, 03/09: no
+  0.2.10 upgrade, no `ALLOWED_HOSTS` edit there yet; when the time comes, that name
+  goes into its `.env` before the pull, and the two 0.2.8/0.2.9 migrations plus
+  whatever M6 adds land together (back up first). Do not raise the LXC upgrade
+  before then. (Was: fold
   the `ing-` tuples into `mutation_test.py` (`ing-1`…`ing-26`, + `tests/test_ingress.py` in
   `TEST_FILES`), then the release gate for **0.2.10-alpha** — notes lead with
   `ALLOWED_HOSTS`; (3) #187 (registry) next — it replaces the typed nginx rejections
