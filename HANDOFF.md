@@ -41,6 +41,50 @@ Template:
 
 ---
 
+## 2026-09-03 — Claude Code (Fable 5.1) — #187 (M6-2) auth foundation — PR #198 OPEN (foundation-first)
+
+- **Done:** M6-2 auth foundation on `feature/m6-2-auth-foundation` (commits
+  `dd7e53e`, `66a2e04`), **PR #198 open** against `main`, awaiting review. Landed
+  **foundation-first** (owner's call, 03/09): the machinery is built and tested against
+  the real route graph, but the shipped `app` is **not** default-deny —
+  `create_app(authorization=True)` installs enforcement; the module-level app keeps it
+  off until credentials exist (#188/#189), so CI/e2e stay green. Pieces:
+  `app/auth/principal.py` (the five principals, three scopes, write⇒read, admin=owner);
+  `app/auth/registry.py` (route policy registry — every effective route → a policy keyed
+  on the **endpoint**, the MCP tool scope map, `build_route_index` raises on an undeclared
+  route; `API_ALIAS_REJECTIONS` + `render_api_alias_rejections`); `app/auth/dependency.py`
+  + `resolver.py` (the default-deny dependency: 401 anon / 403 insufficient / no-store on
+  scoped responses; readiness self-guards on the raw peer; the pytest injection seam is a
+  test-only `app.state` attr); `models/auth.py` + migration `f1058c5de0f3` (owner seeded
+  **unclaimed**, credential, session, personal_access_token, audit_event — never portable,
+  rule 9); auth codes `auth.unauthenticated`/`auth.forbidden` through the #25 envelope +
+  frontend fixture/catalogue; `importing.py::plan_requires_admin`; the nginx `/api/`
+  rejection list **generated** from the registry (`scripts/render_ingress.py`,
+  byte-identical to #186's blocks); `AGENTS.md` rule 13 + rule 12 update.
+- **Decisions (in the PR body's *Deliberate calls*):** (1) foundation-first, shipped app
+  not default-deny — activate with #188; (2) policy keyed on the resolved endpoint,
+  classified by router tag + method; (3) the `mcp`/`internal` → 401-on-REST cells are the
+  **resolver's** (audience/peer, #189/#186, T5), not the scope dependency, so the matrix
+  injects only `{anon, owner, pat:read, pat:write}`; (4) auth tables land unwritten until
+  #188/#189/#193; (5) import-admin is a predicate now, the raise wired at activation;
+  (6) no-store on allowed responses (deny-envelope no-store a small follow-up); (7) nginx
+  list generated, `/.well-known` declared ahead of its #192 routes.
+- **State:** backend **1527 passed**, frontend **473 passed**, ruff + format clean,
+  `render_ingress.py --check` up to date; migration `f1058c5de0f3` round-trips both
+  directions, enum CHECKs + owner seed intact. New tests: `test_route_policy.py` (27),
+  `test_auth_tables.py` (7), `test_authorization.py` (19 — T1 on the real graph + the
+  plan-mutation axis), `test_ingress_generation.py` (4). **No `auth-` mutation set run** —
+  queued for a fold-in after merge (principal algebra, the dependency branches,
+  `plan_requires_admin`, the owner seed). Deferred acceptance criteria tracked in the PR
+  body: shipped-app flip, suite-wide injection, e2e login, family-11 enforcement,
+  `apply_import` wiring → **#188**; MCP tool-scope + bearer/audience → **#189**.
+- **Next:** **Codex (GPT 5.6 Sol) review round on #198** — the security foundation, per the
+  roster; brief prepared this session. Park the tree during the round. On GO + merge, then
+  **#188 (local owner auth)** activates default-deny. **LXC unchanged — still held until M6
+  is finished** (owner, 03/09): no 0.2.10 upgrade there yet; when the time comes,
+  `ALLOWED_HOSTS=<its LAN name>` goes into `.env` before the pull, then the pending
+  migrations (incl. `f1058c5de0f3`) land together (back up first).
+
 ## 2026-09-03 — Claude Code (Fable 5.1) — #186 (M6-1) MERGED (PR #196 → `7954e47`, #39 closed), **v0.2.10-alpha RELEASED**, mutant fold-in MERGED (PR #197 → `987c6da`)
 
 - **Done:** M6-1 — ingress identity and the Host/Origin guard — implemented end to
@@ -258,33 +302,5 @@ Template:
 - **Decisions:** Followed all translator documentation guidelines: kept all identifier variables exactly intact, translated to natural polite Japanese (Desu/Masu), strictly used `_other` for plurals according to CLDR rules, and left no English text purely for coverage padding.
 - **State:** PR #184 is open as a draft. `ja` is currently disabled pending a native language and rendered view review. All checks (`npm test`, `lint`, `build`, `git diff --check`) passed locally. Head is `0d3dbf9`.
 - **Next:** Await independent structural and Japanese-language review of PR #184 before any enablement.
-
-
-## 2026-08-31 — GPT-5.6 Sol (OpenAI) — Translation contribution guide expanded
-
-- **Done:** Expanded `docs/translating.md` into a self-contained contributor
-  guide for the shipped M5.1 design: interface language versus independent
-  regional formatting; the synchronous manifest → registry → i18next →
-  settings runtime path; catalogue structure, placeholders, CLDR plurals and
-  untranslated identifiers; exact disabled and enabled language changes;
-  local checks; and enablement, update and human-review expectations. Named the
-  coverage trap where copied-but-untranslated English values look complete.
-  GLM 5.3 Flash reviewed PR #183 at `1e53a12`: **GO with three wording-level
-  P3s**. All reproduced and corrected — value/placeholder terminology, the
-  validator's group-wide plural-placeholder contract, and enabled-versus-disabled
-  coverage drift; its locale-extension carve-out was documented too. The owner
-  then authorised merge; PR #183 squash-merged as `6cf0f71` and the feature
-  branch was deleted.
-- **Decisions:** Documentation only — no application or catalogue changes.
-  Partial translations remain welcome but disabled, omit untranslated leaves
-  or whole plural groups, and use the `en-AU` fallback. A new formatting locale
-  requires no registry entry; `Intl` consumes the stored canonical locale.
-- **State:** `main` at `6cf0f71` (+ this entry), with PR #183 merged and its
-  local/remote branch removed. Final-head CI: Backend, Frontend and Integration
-  all green. Local verification: frontend **469 passed**, i18n report **604/604**
-  `en-AU`, lint and production build green; backend settings **69 passed**;
-  focused catalogue suite after review **285 passed**; `git diff --check` clean.
-  No application code changed.
-- **Next:** M6 remains the next product milestone.
 
 ---
