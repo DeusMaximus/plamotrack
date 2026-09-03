@@ -41,6 +41,44 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #187 (M6-2) PR #198: Codex round 3 addressed at `0d594d0`, round 4 pending
+
+- **Done:** Round-3 fix on `feature/m6-2-auth-foundation` at `0d594d0` — both P3s accepted.
+  (1) The response profile is applied **adjacent to the router that selects the route**:
+  `ResponseProfileMiddleware` is added *first* in `create_app` (innermost user middleware —
+  only Starlette's `ExceptionMiddleware` and FastAPI's `AsyncExitStackMiddleware` sit
+  between it and the router, both pass the same dict on) and reads the endpoint the router
+  recorded in the very dict it holds, so a scope-copying middleware above it changes nothing
+  (pinned: `test_the_profile_middleware_is_innermost` + a `CopyScope`-above test); every
+  mounted route carries a `RouteBinding` (`bind_route_policies`, `app/auth/dependency.py`)
+  that stamps on the route's own send, below the child's own middleware. A "report from the
+  dependency" design was tried and rejected: FastAPI parses the body before solving
+  dependencies, so the parser-stage 422 lost its stamp. (2) The same binding enforces the
+  transport's declared verbs (`MCP_TRANSPORT_POLICY.methods`) before the SDK runs, refusing
+  with the SDK's own JSON-RPC 405 built from `mcp.types` (byte-equal to the SDK's, minus
+  `mcp-session-id` — a refused verb creates no session); `CONNECT` and an extension verb
+  joined the sweeps. `RouteIndex.response_profile_for` removed (dead). `AGENTS.md` rule 13
+  and design §5.9 item 2 restated. HANDOFF rotated (the 2026-09-02 GPT-5 Codex entry →
+  `.agents/handoff/2026-09.md`).
+- **Decisions:** the REST side reads `scope["endpoint"]` *by stack position* rather than
+  propagating a report (the call a round 4 would weigh — stated in the reply); the mount is
+  bound at the route; the shipped app binds nothing (foundation-first, owner 03/09); the
+  refusal deliberately carries no `mcp-session-id`.
+- **State:** four auth modules 156 (80/7/65/4); full backend 1626 passed; frontend 473,
+  lint + build green; ruff clean; `render_ingress.py --check` up to date. Mutants: eight new
+  (auth-16…23) all killed; the round-2 set re-run on the reworked code — auth-1 16 failed / 4 passed, auth-2 2 / 0, auth-3 8 / 12, auth-4 6 / 0, auth-6 3 / 0, auth-7 1 / 0, auth-8 1 / 0, auth-9 1 / 0, auth-10 1 / 0, auth-11 2 / 0, auth-12 1 / 0, auth-13 1 / 0, auth-14 2 / 38, auth-15 19 / 0 — all killed (the header-table counts doubled, since the table now runs through both stampers); auth-5's anchor no longer exists (retired, its site was removed); auth-5
+  retired (its site was removed, auth-16 succeeds it). Codex's round-3 probes replayed in
+  their original shape: the `CopyScope` mount → all rows correct; CONNECT inside the binding
+  → 405; CONNECT above it → the structural pin fails. PR body amended (round-3 section,
+  calls 10/11, the tuples); the round-3 reply and a round-4 brief are drafted in the session
+  scratchpad — **posting/editing on GitHub awaits the owner's go**. Migration unchanged.
+- **Next:** (1) post the reply, apply the PR body, run Codex round 4 with the brief; (2) on
+  GO, squash-merge #198 (`Closes #187`), then fold the `auth-` tuples into
+  `mutation_test.py` (harness-only PR, no external review, per #197); (3) #188 (session
+  auth) next — its activation checklist carries the family-13 and parser-stage items Codex
+  named in round 1; #190 (the OAuth spike) can run in parallel. (4) **The LXC stays put
+  until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` goes into its `.env` before the pull.
+
 ## 2026-09-03 — Claude Code (Fable 5.1) — #187 (M6-2) PR #198 open: Codex rounds 1–2 addressed, round 3 pending
 
 - **Done:** Branch `feature/m6-2-auth-foundation`, PR #198 (closes #187): `dd7e53e` the
@@ -328,24 +366,3 @@ Template:
   item 1 (ingress identity + Host/Origin guard) — its own release, nothing rides
   with it. LXC: still pre-0.2.9, **back up before pulling** (two migrations
   pending) — unchanged from the 29/08 entry.
-
-## 2026-09-02 — GPT-5 Codex (OpenAI) — PR #184 Japanese editorial review completed
-
-- **Done:** Finalised the disabled Japanese catalogue on PR #184 at `0470285`.
-  Corrected the value-dependent withdrawal prompt for both the empty and
-  preformatted `(×N)` suffixes; completed the 注文明細/CSV 行 terminology
-  distinction; and applied Fable 5's remaining high-confidence wording fixes.
-  Added a value-level catalogue regression test and pushed the commit to
-  `feature/ja-localisation`.
-- **Decisions:** Keep `ja` disabled until a native Japanese hobbyist reviews the
-  rendered application. Settled terms remain: インベントリ, 購入先, 追加パーツ,
-  ディスプレイ用品 and 受領済み. Further LLM-wide rewrites would be churn.
-- **State:** PR #184 remains open as a draft at exact head `0470285`. Frontend
-  **470 passed**, focused catalogue **286 passed**, lint and production build
-  green, and coverage **604/604** for both catalogues. The old withdrawal copy
-  failed the new control on the empty suffix; byte-identical restoration was
-  verified. Rendered Japanese checks passed for quantity 1/2 withdrawal,
-  expanded order details/totals, and a blocking import diagnostic. Japanese was
-  restored to disabled; disposable DB, preview hook and servers were removed.
-- **Next:** Native Japanese hobbyist review. Do not enable or merge the language
-  solely on the LLM reviews; action any human findings on this same PR first.
