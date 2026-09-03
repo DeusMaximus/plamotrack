@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-03 — Claude Code (Fable 5.1) — #186 (M6-1) implemented: PR #196 open at `1e134f7`, Codex lane, own release (0.2.10)
+## 2026-09-03 — Claude Code (Fable 5.1) — #186 (M6-1): PR #196 open, Codex round 1 (GO + 3 P3) answered at `dc0c7d8`, awaiting the owner's merge call (own release, 0.2.10)
 
 - **Done:** M6-1 — ingress identity and the Host/Origin guard — implemented end to
   end on branch `feature/m6-1-ingress-guard` (absorbs #39). `app/config.py` gains
@@ -69,9 +69,25 @@ Template:
   until M6-8 has a consumer; (3) REST guard wraps the MCP mount too, FastMCP's guard
   asserted separately; (4) `Host $http_host` at nginx so same-origin sees the port.
   All four in the PR body's *Deliberate calls* and in §5.9 item 1.
-- **State:** **PR #196** open from `feature/m6-1-ingress-guard` at head `1e134f7`
-  (one commit over `main` `ea4ce81`), body in the review-brief shape, `Closes #186,
-  closes #39`; CI on the head is the next thing to glance at. Verified before push: `tests/test_ingress.py` 175 passed; full backend suite 1405 passed; ruff
+- **State:** **PR #196** open from `feature/m6-1-ingress-guard`, head **`dc0c7d8`** (two
+  commits over `main` `ea4ce81`: `1e134f7` the feature, then the round-1 fixes), body
+  in the review-brief shape, `Closes #186, closes #39`. **Codex round 1 (GPT 5.6 Sol):
+  GO, three non-blocking P3s, all reproduced at `1e134f7` and fixed at the head** —
+  one defect in three places (Python derivation vs sh generator disagreeing on the
+  effective allowlist): (1) `*:8080`/`[*]`/`www.*` survived validation and became `*`
+  after port-stripping → new `app/hostnames.py`, every host-producing setting judged
+  on its normalised form; (2) `WEB_BIND=127.0.0.2` dropped by the app, listed by
+  nginx → only the three built-ins are dropped; (3) `PUBLIC_BASE_URL=http://nas.lan.`
+  emitted a dotted `server_name` nginx can never match → one terminal dot stripped
+  at both layers, FastMCP handed dotted names too. Plus a seven-case corpus test
+  running the real `.envsh` under `sh` against the Python policy. Answered per
+  finding in the PR thread; frontend count corrected to 471; call 5 reworded
+  (uvicorn's `scope.server` is the concrete local address). After the fixes:
+  `tests/test_ingress.py` **240 passed**, full backend **1470 passed**, seven more
+  mutants killed (ing-20…26, two of them the first against the sh generator; ing-25
+  survived once because the parity helper normalised the dot away before comparing —
+  fixed by asserting the raw `server_name` first). CI on the new head is the next
+  thing to glance at. Verified before the first push: `tests/test_ingress.py` 175 passed; full backend suite 1405 passed; ruff
   clean; frontend 470 passed, lint + build green; negative control in a worktree at
   `main` (`ea4ce81`) **30 red / 14 green** with the greens the positive controls;
   hand mutation pass **19/19 killed** (ing-5 survived the first pass — child has one
@@ -82,10 +98,9 @@ Template:
   restored, `.env` restored from backup. PR body + release-notes draft in the session
   scratchpad (`pr-body.md`, now posted as the PR body); PR #184 (`ja`) unchanged. LXC still pre-0.2.9 — and
   **needs `ALLOWED_HOSTS=<its LAN name>` in `.env` before pulling 0.2.10**.
-- **Next:** (1) Codex review of PR #196 (security boundary → Codex lane); the brief
-  was printed in the session chat; answer per finding at the head, tree parked on
-  `main` for the review window; (2) after merge, fold
-  the `ing-` tuples into `mutation_test.py` (+ `tests/test_ingress.py` in
+- **Next:** (1) **owner's merge call on PR #196** (GO stands; the P3s are answered and
+  fixed) — squash-merge, then delete the branch; (2) after merge, fold
+  the `ing-` tuples into `mutation_test.py` (`ing-1`…`ing-26`, + `tests/test_ingress.py` in
   `TEST_FILES`), then the release gate for **0.2.10-alpha** — notes lead with
   `ALLOWED_HOSTS`; (3) #187 (registry) next — it replaces the typed nginx rejections
   and the matrix's hand-typed rows.
