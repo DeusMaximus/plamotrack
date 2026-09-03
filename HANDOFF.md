@@ -41,6 +41,44 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #188 (M6-3) PR #200: e2e + CI Integration adapted to default-deny (PR #199 merged as `f713c8c`)
+
+- **Done:** (1) **PR #199 merged** (`f713c8c`, auth- mutant fold-in) — found merged at session
+  start. (2) On `feature/m6-3-local-owner-auth` (PR #200), the adaptation the flip owed:
+  **Playwright** — a `setup` project (`e2e/auth.setup.ts`) that claims an *unclaimed*
+  instance through the recovery command (`E2E_OWNER_PASSWORD`, default `e2e-owner-password`)
+  and only ever *signs into* a claimed one (refuses, with the two ways out, rather than reset
+  a credential it didn't create); signs in through the Vite proxy so the cookie lands on
+  `localhost`; storage state + an `e2e/.auth/api.json` (gitignored) that `e2e/api.ts`'s
+  `apiContext()` turns into Cookie + `Origin` + `X-CSRF-Token` for the specs' own API calls
+  (every `request.newContext({ baseURL: API })` replaced; screenshots.spec too). New
+  `e2e/auth.spec.ts`: signed-out browser → sign-in screen, wrong password refused (waits out
+  `BASE_DELAY`), right one opens the app + a cookie-borne write, sign out → sign-in screen,
+  reload stays out. **It caught a real bug:** `Layout.signOut` cleared the query cache *then*
+  invalidated the session query — nothing left to invalidate, the gate kept rendering the app.
+  Fixed (invalidate first, then `removeQueries` everything but the session). **Ingress
+  matrix** — `--setup-token`/`--password`: claims (or logs into) the stack through
+  `/api/auth/setup|login` and runs the positives cookie-borne (docs/openapi/kits/retailers/
+  meta 200; writes 201 with the CSRF token; the absent-Origin write is now the app's 403
+  `auth.origin_required`); with no credential the same rows expect the dependency's 401; an
+  anonymous `/api/kits → 401` and `/api/auth/session → 200` row always. **CI** — the smoke
+  curl on `/openapi.json` (now guarded) became `/api/auth/session` asserting `unclaimed`; a
+  new step reads the setup token out of `docker compose logs api` (masked) and the matrix
+  claims with it — the first-run path proven through the packaged nginx. Docs: procedure
+  E2E + Integration rows and the matrix command, README e2e line, design §5.5 T2 sentence.
+- **Decisions:** the suite never overwrites an existing owner credential; the matrix's
+  anonymous mode stays meaningful (401 ≠ nginx's 404 / ingress 403) rather than requiring a
+  credential; the packaged CI stack is claimed with a disposable password on argv.
+- **State:** local: e2e **42 passed / 1 skipped** on one worker from an empty DB, zero rows
+  left, owner claimed; frontend build/lint/481 unit green; backend ruff clean, pytest
+  **1655 passed**; packaged stack (`up -d --build --wait` locally): token read from `docker compose logs api` (43 chars), matrix **0 failing** claimed / logged-in / anonymous, MCP `tools/list` ok. The pre-order spec flaked once locally
+  under 10 workers (row not yet in the table) — passes alone and on one worker (CI's
+  setting); not a regression. Committed as `27e4d32` and pushed; PR #200 body updated. PR #200 body still says CI is red by construction — update it on push.
+- **Next:** (1) push, update the PR #200 body, watch CI Integration; (2) review + merge
+  #200 (Codex, high-stakes); (3) **#189 (M6-4) PATs**; (4) the two deferred family-13
+  hardening items (design §5.9 item 3(b)); (5) **LXC stays put until M6 is finished**
+  (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first.
+
 ## 2026-09-04 — Claude Code (Opus 4.8) — auth- fold-in (PR #199) + #188 (M6-3) local owner auth OPEN (PR #200, default-deny flip landed)
 
 - **Done:** (1) **auth- mutant fold-in → PR #199** (harness-only, branched off `main`):
@@ -192,57 +230,3 @@ Template:
   before the dependency); #190 (the OAuth spike) can run in parallel. (4) **The LXC
   stays put until M6 is finished** (owner, 03/09) — needs `ALLOWED_HOSTS` before its pull.
 
-## 2026-09-03 — Claude Code (Opus 4.8) — #187 (M6-2) auth foundation — PR #198 OPEN, Codex round 1 addressed (`b2a82b2`)
-
-- **Done:** M6-2 auth foundation on `feature/m6-2-auth-foundation` (commits
-  `dd7e53e`, `66a2e04`, review-fix `b2a82b2`), **PR #198 open** against `main`. Landed
-  **foundation-first** (owner's call, 03/09): the machinery is built and tested against
-  the real route graph, but the shipped `app` is **not** default-deny —
-  `create_app(authorization=True)` installs enforcement; the module-level app keeps it
-  off until credentials exist (#188/#189), so CI/e2e stay green. Pieces:
-  `app/auth/principal.py` (the five principals, three scopes, write⇒read, admin=owner);
-  `app/auth/registry.py` (route policy registry — every effective route → a policy keyed
-  on the **endpoint**, the MCP tool scope map, `build_route_index` raises on an undeclared
-  route; `API_ALIAS_REJECTIONS` + `render_api_alias_rejections`); `app/auth/dependency.py`
-  + `resolver.py` (the default-deny dependency: 401 anon / 403 insufficient / no-store on
-  scoped responses; readiness self-guards on the raw peer; the pytest injection seam is a
-  test-only `app.state` attr); `models/auth.py` + migration `f1058c5de0f3` (owner seeded
-  **unclaimed**, credential, session, personal_access_token, audit_event — never portable,
-  rule 9); auth codes `auth.unauthenticated`/`auth.forbidden` through the #25 envelope +
-  frontend fixture/catalogue; `importing.py::plan_requires_admin`; the nginx `/api/`
-  rejection list **generated** from the registry (`scripts/render_ingress.py`,
-  byte-identical to #186's blocks); `AGENTS.md` rule 13 + rule 12 update.
-- **Decisions (in the PR body's *Deliberate calls*):** (1) foundation-first, shipped app
-  not default-deny — activate with #188; (2) policy keyed on the resolved endpoint,
-  classified by router tag + method; (3) the `mcp`/`internal` → 401-on-REST cells are the
-  **resolver's** (audience/peer, #189/#186, T5), not the scope dependency, so the matrix
-  injects only `{anon, owner, pat:read, pat:write}`; (4) auth tables land unwritten until
-  #188/#189/#193; (5) import-admin is a predicate now, the raise wired at activation;
-  (6) no-store stamped on the final outgoing response by a middleware — exports and the
-  401/403 deny envelope too (Codex r1 fix 1, superseded the earlier follow-up); (7) nginx
-  list generated, `/.well-known` declared ahead of its #192 routes.
-- **State:** backend **1532 passed**, frontend **473 passed**, ruff + format clean,
-  `render_ingress.py --check` up to date; migration `f1058c5de0f3` round-trips both
-  directions, enum CHECKs + owner seed intact. Tests: `test_route_policy.py` (30),
-  `test_auth_tables.py` (7), `test_authorization.py` (21 — T1 on the real graph + the
-  plan-mutation axis), `test_ingress_generation.py` (4). **Codex round 1 (GPT 5.6 Sol):
-  NO-GO, three P3s, all reproduced at `66a2e04` and fixed at `b2a82b2`**, each mutant
-  hand-confirmed (backup, not `git checkout`): (1) no-store was lost on handler-returned
-  exports — a `ResponseProfileMiddleware` now stamps the final response from
-  `scope["endpoint"]` (exports + deny envelope); (2) the enumeration skipped the `/mcp`
-  mount and copied `route.methods` — added `iter_mounted_routes` + a full HTTP-surface
-  snapshot (REST + mounted, methods pinned); (3) `write⇒read` was never exercised (the pat
-  factory holds read) — a write-only principal now reads only through the implication.
-  Answered per finding on the PR; **PR body attribution corrected Fable → Opus 4.8**
-  (owner's note; commit trailers already Opus 4.8). **No `auth-` mutation set folded** —
-  queued after merge (principal algebra, dependency branches, `plan_requires_admin`, owner
-  seed). Deferred criteria tracked in the PR body + scratchpad: shipped-app flip,
-  suite-wide injection, e2e login, family-11 enforcement, `apply_import` wiring, and the
-  round-1 activation checklist (family-13 unrouted → 401, parser-stage 422) → **#188**;
-  MCP tool-scope + bearer/audience → **#189**.
-- **Next:** **awaiting Codex round 2 on #198** (round 1 addressed at `b2a82b2`, tree parked
-  on `main`). Expect another round; on GO + merge, then
-  **#188 (local owner auth)** activates default-deny. **LXC unchanged — still held until M6
-  is finished** (owner, 03/09): no 0.2.10 upgrade there yet; when the time comes,
-  `ALLOWED_HOSTS=<its LAN name>` goes into `.env` before the pull, then the pending
-  migrations (incl. `f1058c5de0f3`) land together (back up first).
