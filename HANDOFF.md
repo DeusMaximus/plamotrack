@@ -41,6 +41,55 @@ Template:
 
 ---
 
+## 2026-09-03 — Claude Code (Fable 5.1) — #186 (M6-1) implemented: PR #196 open at `1e134f7`, Codex lane, own release (0.2.10)
+
+- **Done:** M6-1 — ingress identity and the Host/Origin guard — implemented end to
+  end on branch `feature/m6-1-ingress-guard` (absorbs #39). `app/config.py` gains
+  `PUBLIC_BASE_URL`, `ALLOWED_HOSTS`, `ALLOWED_ORIGINS`, `TRUSTED_PROXIES` (+ reads
+  `WEB_BIND`) with validators (bare `*` refused); new `app/ingress.py` — one
+  `IngressPolicy` from settings, `HostOriginGuardMiddleware` (421 / 403 in the #25
+  envelope, `params.setting` names the key), `ForwardedClientMiddleware`
+  (`request.state.client_address` from `TRUSTED_PROXIES` peers; `scope["client"]`
+  untouched), `is_internal_peer`; `app/main.py` is now a factory (`create_app`,
+  `build_mcp_app`) with FastMCP in strict mode on the same lists,
+  `redirect_slashes=False` on both routers, `/readyz` raw-loopback-only; uvicorn
+  `--no-proxy-headers` (Dockerfile, Playwright, README, AGENTS.md); nginx moved to
+  `frontend/nginx/default.conf.template` + `15-plamotrack-server-names.envsh`
+  (default-deny 421 server, the four `/api/` rejections, root `.well-known`
+  locations, security headers + SPA CSP, `Host $http_host`); compose passes exactly
+  three keys to `web`; `.env.example`; two error codes through registry, fixture,
+  catalogue and the envelope audit; `backend/ingress_matrix.py` (T2, 44 rows) run
+  by CI Integration with `ALLOWED_HOSTS=ci.plamotrack.test`; docs (operations:
+  *Names it answers to*, *Upgrading to 0.2.10*; README; AGENTS.md rule 12;
+  design.md §5 status + §5.9 item 1 shipped note; testing-and-review CI row).
+  **Version bumped to 0.2.10** (three files, `uv lock`). No migration.
+- **Decisions:** (1) an unsafe request with neither `Origin` nor `Referer` passes —
+  T3's denial is for cookie-borne principals (none until M6-3); `null` is refused;
+  (2) `TRUSTED_PROXIES` ships as mechanism only, compose sets nothing for nginx
+  until M6-8 has a consumer; (3) REST guard wraps the MCP mount too, FastMCP's guard
+  asserted separately; (4) `Host $http_host` at nginx so same-origin sees the port.
+  All four in the PR body's *Deliberate calls* and in §5.9 item 1.
+- **State:** **PR #196** open from `feature/m6-1-ingress-guard` at head `1e134f7`
+  (one commit over `main` `ea4ce81`), body in the review-brief shape, `Closes #186,
+  closes #39`; CI on the head is the next thing to glance at. Verified before push: `tests/test_ingress.py` 175 passed; full backend suite 1405 passed; ruff
+  clean; frontend 470 passed, lint + build green; negative control in a worktree at
+  `main` (`ea4ce81`) **30 red / 14 green** with the greens the positive controls;
+  hand mutation pass **19/19 killed** (ing-5 survived the first pass — child has one
+  route today — killed by the added probe-route test); packaged stack built and
+  probed (matrix 0 failures with `nas.lan:8080` + `PUBLIC_BASE_URL` in a scratch
+  `.env`, fastmcp `Client` through nginx on both spellings, SPA under the CSP with an
+  empty console incl. the *Add kit* dialog); stack `down` (no `-v`), dev `db` overlay
+  restored, `.env` restored from backup. PR body + release-notes draft in the session
+  scratchpad (`pr-body.md`, now posted as the PR body); PR #184 (`ja`) unchanged. LXC still pre-0.2.9 — and
+  **needs `ALLOWED_HOSTS=<its LAN name>` in `.env` before pulling 0.2.10**.
+- **Next:** (1) Codex review of PR #196 (security boundary → Codex lane); the brief
+  was printed in the session chat; answer per finding at the head, tree parked on
+  `main` for the review window; (2) after merge, fold
+  the `ing-` tuples into `mutation_test.py` (+ `tests/test_ingress.py` in
+  `TEST_FILES`), then the release gate for **0.2.10-alpha** — notes lead with
+  `ALLOWED_HOSTS`; (3) #187 (registry) next — it replaces the typed nginx rejections
+  and the matrix's hand-typed rows.
+
 ## 2026-09-02 — Claude Code (Fable 5.1) — M6 begun: threat model MERGED (PR #185, #29 closed), ten issues filed #186–#195
 
 - **Done:** `docs/design.md` §5 rewritten as the M6 threat model and route
@@ -197,24 +246,5 @@ Template:
   focused catalogue suite after review **285 passed**; `git diff --check` clean.
   No application code changed.
 - **Next:** M6 remains the next product milestone.
-
-## 2026-08-29 — GPT-5.6 Sol (OpenAI) — Documentation drift corrected
-
-- **Done:** Corrected the verified documentation drift at `392172d`: the README
-  now scopes low-stock thresholds to consumables; `docs/design.md` has the current
-  order-item conversion pair, a 29/08 revision date, and the four missing built
-  routes in §4; `docs/import-export.md` now distinguishes kit-only receipt flips
-  from catalog-bearing orders and uses an explicitly illustrative 0.2.9/current-head
-  manifest; `AGENTS.md` names Settings/DataSection instead of the removed DataPage.
-- **Decisions:** Kept every remaining `converted_price_aud_minor` reference because
-  each describes the legacy CSV alias or rename history. Kept the separate
-  “un-shipping isn't supported anywhere” statement because that claim is true on
-  every writer. The manifest example carries current values but explicitly says
-  exports write live metadata, preventing future example/version drift.
-- **State:** Uncommitted documentation-only changes on clean-starting `main` at
-  `392172d`. Focused backend verification: **6 passed** (exact MCP tool set, both
-  kit-only receipt directions, archive manifest shape/version, and `/meta`
-  language advertisement). `git diff --check` clean; no application code changed.
-- **Next:** Review and commit the documentation update when the owner is satisfied.
 
 ---
