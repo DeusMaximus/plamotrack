@@ -41,6 +41,31 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #188 (M6-3) MERGED (PR #200 → `a84ca48`, Codex round 2 GO); m63- fold-in PR #201 OPEN
+
+- **Done:** Codex round 2 (GPT 5.6 Sol) on `5be4414`: **GO, no new findings** — round-1 f1–f3
+  confirmed fixed by replay (4 red / 24 green on `641b214`, 28/28 and 1658/1658 at head, five
+  mutants independently killed), calls 1–7 retained. PR #200 squash-merged as `a84ca48` on the
+  owner's call (04/09), branch deleted, **#188 closed**. **The shipped app is default-deny from
+  `a84ca48`:** an unclaimed instance prints a setup token; the owner claims and signs in through
+  the browser; CSRF on cookie-borne writes; docs/schema behind `collection:read`. Then the
+  harness fold-in: `chore/fold-m63-mutants` → **PR #201** (harness-only, no external review —
+  the #197/#199 precedent): m63-1…10 into `mutation_test.py`, `TEST_FILES` +
+  `tests/test_auth_local.py`, four file constants; `-k m63-` → all 10 killed at fold-in.
+- **Decisions:** none new; #201 rides CI only.
+- **State:** `main` at `a84ca48` plus this entry. PR #201 open, unreviewed, awaiting CI + merge.
+  Dev DB is claimed with the e2e default password (`e2e-owner-password`); the packaged stack
+  (`docker compose up`) on this Mac reuses the same volume — to see the first-run token locally,
+  `docker compose down -v` first. No release cut — M6 ships as one release at the end.
+- **Next:** (1) merge #201 on green; (2) **#189 (M6-4) PATs** — mint/list/revoke in Settings,
+  bearer on REST+MCP as the resolver's next credential (the strict presented-and-failed → 401
+  rule applies there; design §5.9 item 3(a)), per-tool scope, T5/T6/T10; `revoke_all_sessions`
+  callers from a request should pass `principal`/`request` (Codex round 2 note); (3) the two
+  family-13 hardening items (unrouted `/api/*` → 401 for anon; parse-before-auth) — design §5.9
+  item 3(b); (4) #190 (OAuth spike) can run in parallel; (5) **LXC stays put until M6 is
+  finished** (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first, and
+  it will come up **unclaimed**: read the setup token from `docker compose logs api`.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #188 (M6-3) PR #200: Codex round 1 (NO-GO, 3×P3) addressed at `5be4414`, CI green, round-2 brief handed over
 
 - **Done:** Codex round 1 (GPT 5.6 Sol) on `641b214`: **NO-GO**, three P3s, no bypass, calls 1–5
@@ -180,42 +205,4 @@ Template:
   the parser-stage 422 before the dependency); #190 (the OAuth spike) can run in parallel.
   (3) **The LXC stays put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` into its
   `.env` before the pull, back up first.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #187 (M6-2) PR #198: Codex round 3 addressed at `0d594d0`, round 4 pending
-
-- **Done:** Round-3 fix on `feature/m6-2-auth-foundation` at `0d594d0` — both P3s accepted.
-  (1) The response profile is applied **adjacent to the router that selects the route**:
-  `ResponseProfileMiddleware` is added *first* in `create_app` (innermost user middleware —
-  only Starlette's `ExceptionMiddleware` and FastAPI's `AsyncExitStackMiddleware` sit
-  between it and the router, both pass the same dict on) and reads the endpoint the router
-  recorded in the very dict it holds, so a scope-copying middleware above it changes nothing
-  (pinned: `test_the_profile_middleware_is_innermost` + a `CopyScope`-above test); every
-  mounted route carries a `RouteBinding` (`bind_route_policies`, `app/auth/dependency.py`)
-  that stamps on the route's own send, below the child's own middleware. A "report from the
-  dependency" design was tried and rejected: FastAPI parses the body before solving
-  dependencies, so the parser-stage 422 lost its stamp. (2) The same binding enforces the
-  transport's declared verbs (`MCP_TRANSPORT_POLICY.methods`) before the SDK runs, refusing
-  with the SDK's own JSON-RPC 405 built from `mcp.types` (byte-equal to the SDK's, minus
-  `mcp-session-id` — a refused verb creates no session); `CONNECT` and an extension verb
-  joined the sweeps. `RouteIndex.response_profile_for` removed (dead). `AGENTS.md` rule 13
-  and design §5.9 item 2 restated. HANDOFF rotated (the 2026-09-02 GPT-5 Codex entry →
-  `.agents/handoff/2026-09.md`).
-- **Decisions:** the REST side reads `scope["endpoint"]` *by stack position* rather than
-  propagating a report (the call a round 4 would weigh — stated in the reply); the mount is
-  bound at the route; the shipped app binds nothing (foundation-first, owner 03/09); the
-  refusal deliberately carries no `mcp-session-id`.
-- **State:** four auth modules 156 (80/7/65/4); full backend 1626 passed; frontend 473,
-  lint + build green; ruff clean; `render_ingress.py --check` up to date. Mutants: eight new
-  (auth-16…23) all killed; the round-2 set re-run on the reworked code — auth-1 16 failed / 4 passed, auth-2 2 / 0, auth-3 8 / 12, auth-4 6 / 0, auth-6 3 / 0, auth-7 1 / 0, auth-8 1 / 0, auth-9 1 / 0, auth-10 1 / 0, auth-11 2 / 0, auth-12 1 / 0, auth-13 1 / 0, auth-14 2 / 38, auth-15 19 / 0 — all killed (the header-table counts doubled, since the table now runs through both stampers); auth-5's anchor no longer exists (retired, its site was removed); auth-5
-  retired (its site was removed, auth-16 succeeds it). Codex's round-3 probes replayed in
-  their original shape: the `CopyScope` mount → all rows correct; CONNECT inside the binding
-  → 405; CONNECT above it → the structural pin fails. PR body amended (round-3 section,
-  calls 10/11, the tuples); the round-3 reply and a round-4 brief are drafted in the session
-  scratchpad — **posting/editing on GitHub awaits the owner's go**. Migration unchanged.
-- **Next:** (1) post the reply, apply the PR body, run Codex round 4 with the brief; (2) on
-  GO, squash-merge #198 (`Closes #187`), then fold the `auth-` tuples into
-  `mutation_test.py` (harness-only PR, no external review, per #197); (3) #188 (session
-  auth) next — its activation checklist carries the family-13 and parser-stage items Codex
-  named in round 1; #190 (the OAuth spike) can run in parallel. (4) **The LXC stays put
-  until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` goes into its `.env` before the pull.
 
