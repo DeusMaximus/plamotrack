@@ -47,8 +47,12 @@ finding once already here.
 The domain, for anyone reading this cold: plamotrack is a single-user, self-hosted
 model-kit collection tracker. The rules being mutated are data-integrity checks
 about inventory counts and purchase records — that a paint order can't be counted
-twice, that a line's quantity matches the kits attached to it. Nothing here is an
-access control; the application has no authentication at all yet (milestone 6).
+twice, that a line's quantity matches the kits attached to it. Nothing here was an
+access control until the `ingr-` set (#186, M6-1): those cases mutate the Host/Origin
+guard — which names the instance answers to, which browser origins may write — the
+first request-boundary control in the app, defensive hardening of a self-hosted
+service that still has no authentication behind it (milestone 6). Two of them mutate
+a shell file, the nginx server-name generator, killed by a test that runs it.
 
 Restores from a backup in a `finally`, and refuses to start unless the tree is
 clean, so an interrupted run is obvious in `git status`.
@@ -89,6 +93,14 @@ META = ROOT / "app/services/meta.py"
 #: Both paths are in the clean-tree check below, the way #151 added alembic/.
 FIX = ROOT.parent / "frontend/src/lib/__fixtures__/api-error-codes.json"
 TEE = ROOT / "tests/test_error_envelope.py"
+#: The M6-1 ingress guard (#186, PR #196): the policy and middlewares, the shared
+#: host grammar, the settings validators, the app factory — and the nginx
+#: server-name generator, a POSIX-sh file the corpus test runs under `sh`. The
+#: clean-tree check covers that path too, the way FIX joined for oma-2.
+ING = ROOT / "app/ingress.py"
+HOSTS = ROOT / "app/hostnames.py"
+CFG = ROOT / "app/config.py"
+ENVSH = ROOT.parent / "frontend/nginx/15-plamotrack-server-names.envsh"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -2117,6 +2129,196 @@ CASES = [
         '            params={"total": total, "maximum": MAX_TOTAL_FANOUT, "unrendered": "probe"},',
         "test_the_borrowed_bridge_matrix_covers_the_large_quantity_and_fanout_codes",
     ),
+    # --- #186 (M6-1): the ingress guard — queued on PR #196 as `ing-` (19 tuples at the
+    # --- reviewed head plus 7 for the Codex round's three P3s, all killed there by
+    # --- a scratch runner), relabelled `ingr-` here because `-k ing-` substring-
+    # --- matches wdr-8's "missing-application"; anchors re-checked at fold-in (ingr-15's original
+    # --- anchor, the bare-`*` check, was replaced by the round-1 grammar, so it
+    # --- now removes the validation call outright; ingr-22 restores the old raw
+    # --- check on the same site). ingr-25/26 are the first cases against a SHELL
+    # --- file — the clean-tree check covers ENVSH since this fold-in. -----------
+    (
+        "ingr-1. origin rule skips POST",
+        ING,
+        'SAFE_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS"})',
+        'SAFE_METHODS: frozenset[str] = frozenset({"GET", "HEAD", "OPTIONS", "POST"})',
+        "hostile_origin",
+    ),
+    (
+        "ingr-2. Host check dropped",
+        ING,
+        "        if not self.policy.host_allowed(host, server[0] if server else None):",
+        "        if False and not self.policy.host_allowed(host, server[0] if server else None):",
+        "hostile_host",
+    ),
+    (
+        "ingr-3. every peer is internal",
+        ING,
+        "        return ip_address(client[0]).is_loopback",
+        "        return True or ip_address(client[0]).is_loopback",
+        "readyz",
+    ),
+    (
+        "ingr-4. FastMCP guard switched off",
+        MAIN,
+        "        host_origin_protection=True,",
+        "        host_origin_protection=False,",
+        "mcp_guard or mcp_child",
+    ),
+    (
+        "ingr-5. MCP child keeps slash redirects",
+        MAIN,
+        "    mcp_app.router.redirect_slashes = False\n",
+        "    mcp_app.router.redirect_slashes = True\n",
+        "never_redirects",
+    ),
+    (
+        "ingr-6. parent keeps slash redirects",
+        MAIN,
+        "        redirect_slashes=False,",
+        "        redirect_slashes=True,",
+        "non_canonical",
+    ),
+    (
+        "ingr-7. loopback-to-loopback origin rule dropped",
+        ING,
+        "        if is_loopback_host(origin_host(origin)) and is_loopback_host(host):\n            return True",
+        "        if False:\n            return True",
+        "loopback_origin",
+    ),
+    (
+        "ingr-8. same-origin equality dropped",
+        ING,
+        '        return normalized == normalize_origin(f"{scheme}://{host}")',
+        "        return False",
+        "same_origin",
+    ),
+    (
+        "ingr-9. canonical origin not listed",
+        ING,
+        "        if canonical_origin is not None:\n            allowed_origins.append(canonical_origin)",
+        "        if False:\n            allowed_origins.append(canonical_origin)",
+        "canonical_origin",
+    ),
+    (
+        "ingr-10. WEB_BIND not added",
+        ING,
+        "            extra_hosts.append(bind)",
+        "            pass",
+        "web_bind or policy_derivation",
+    ),
+    (
+        "ingr-11. forwarded trust ignored",
+        ING,
+        "        if not self.is_trusted_proxy(peer):\n            return peer",
+        "        if False:\n            return peer",
+        "forwarded_client",
+    ),
+    (
+        "ingr-12. Referer fallback removed",
+        ING,
+        "                if referer is not None:\n                    origin = origin_of_referer(referer)",
+        "                if False:\n                    origin = origin_of_referer(referer)",
+        "referer",
+    ),
+    (
+        "ingr-13. unspecified bind treated as a name",
+        HOSTS,
+        "        return ip_address(host).is_unspecified\n    except ValueError:\n        return False",
+        "        return False and ip_address(host).is_unspecified\n    except ValueError:\n        return False",
+        "unspecified or policy_derivation or web_bind",
+    ),
+    (
+        "ingr-14. 421 names the wrong setting",
+        ING,
+        "                error_codes.INGRESS_HOST_NOT_ALLOWED,\n                HOST_SETTING,",
+        "                error_codes.INGRESS_HOST_NOT_ALLOWED,\n                ORIGIN_SETTING,",
+        "hostile_host",
+    ),
+    (
+        "ingr-15. ALLOWED_HOSTS validation removed",
+        CFG,
+        '            validate_host_pattern(entry, setting="ALLOWED_HOSTS", allow_wildcard=True)',
+        "            pass",
+        "wildcard or port_qualified",
+    ),
+    (
+        "ingr-16. forwarded address overwrites the raw peer",
+        ING,
+        '            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = self.policy.resolve_client_address(\n                peer, forwarded\n            )',
+        '            resolved = self.policy.resolve_client_address(peer, forwarded)\n            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = resolved\n            if resolved:\n                scope["client"] = (resolved, 0)',
+        "raw_peer or forge",
+    ),
+    (
+        "ingr-17. null Origin admitted",
+        ING,
+        "        normalized = normalize_origin(origin)\n        if any(",
+        '        normalized = normalize_origin(origin)\n        if normalized == "null":\n            return True\n        if any(',
+        "null_origin",
+    ),
+    (
+        "ingr-18. host match ignores the list",
+        ING,
+        "    return any(fnmatchcase(host, normalize_host(pattern)) for pattern in patterns)",
+        "    return True",
+        "hostile_host or lan_name",
+    ),
+    (
+        "ingr-19. PUBLIC_BASE_URL host not allowed",
+        ING,
+        '            extra_hosts.append(normalize_host(parsed.hostname or ""))',
+        "            pass",
+        "public_base_url or policy_derivation",
+    ),
+    (
+        "ingr-20. terminal DNS dot kept on the app side",
+        HOSTS,
+        '    return host.removesuffix(".")',
+        "    return host",
+        "terminal_dot or dotted or server_names_equal",
+    ),
+    (
+        "ingr-21. loopback class excluded from binds again",
+        ING,
+        "        if not is_unspecified_host(bind) and bind not in _LOOPBACK_NORMALIZED:",
+        "        if not is_unspecified_host(bind) and not is_loopback_host(bind):",
+        "alternate_loopback or explicit_bind or server_names_equal",
+    ),
+    (
+        "ingr-22. ALLOWED_HOSTS judged on the raw spelling again",
+        CFG,
+        '            validate_host_pattern(entry, setting="ALLOWED_HOSTS", allow_wildcard=True)',
+        '            if entry.strip("*") == "":\n                raise ValueError("ALLOWED_HOSTS bare *")',
+        "wildcard_equivalents or port_qualified",
+    ),
+    (
+        "ingr-23. PUBLIC_BASE_URL host unvalidated",
+        CFG,
+        '        validate_host_pattern(parsed.hostname, setting="PUBLIC_BASE_URL", allow_wildcard=False)',
+        "        pass",
+        "every_host_producing",
+    ),
+    (
+        "ingr-24. dotted names withheld from FastMCP",
+        ING,
+        '                names.append(f"{host}.")',
+        "                pass",
+        "dotted_name_passes_on_mcp or policy_derivation",
+    ),
+    (
+        "ingr-25. generator keeps the terminal dot (sh)",
+        ENVSH,
+        '    name="${name%.}"                                      # one terminal DNS dot, as the API\n',
+        "",
+        "server_names_equal or generator_drops",
+    ),
+    (
+        "ingr-26. generator drops loopback binds (sh)",
+        ENVSH,
+        '    ""|0.0.0.0|::|"[::]") ;;                              # binds everything, names nothing',
+        '    ""|0.0.0.0|::|"[::]"|127.*) ;;',
+        "server_names_equal",
+    ),
 ]
 
 
@@ -3087,6 +3289,8 @@ TEST_FILES = [
     "tests/test_import_diagnostics.py",
     # The #114 (tz-) fold-in.
     "tests/test_naive_csv_dates.py",
+    # The #186 (ingr-) fold-in: every ingr- kill lives here, the sh ones included.
+    "tests/test_ingress.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
@@ -3125,7 +3329,9 @@ def tree_is_clean() -> bool:
         # str(FIX): oma-2 mutates the shared registry fixture over in
         # frontend/, which "app tests alembic" never covered — a failed restore
         # there was invisible before this fold-in.
-        ["git", "status", "--porcelain", "app", "tests", "alembic", str(FIX)],
+        # str(ENVSH): ingr-25/26 mutate the nginx server-name generator, a shell
+        # file under frontend/ — same reason.
+        ["git", "status", "--porcelain", "app", "tests", "alembic", str(FIX), str(ENVSH)],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -3139,8 +3345,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if not tree_is_clean():
-        print("app/, tests/, alembic/ or the shared error-codes fixture has uncommitted")
-        print("changes — commit or stash first, so that a restore that doesn't happen is")
+        print("app/, tests/, alembic/, the shared error-codes fixture or the nginx server-")
+        print("name generator has uncommitted changes — commit or stash first, so that a")
+        print("restore that doesn't happen is")
         print("visible rather than mixed in with your edits.")
         return 2
 

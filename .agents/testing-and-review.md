@@ -190,7 +190,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 251 cases over twenty-six target files** — #86's
+- **On `main` at the time of writing: 277 cases over twenty-seven target files** — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
   #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
   #118 (`ship-`), #129 (`dsp-`), #130 (`cat-`), #133 (`ref-`), #136
@@ -218,7 +218,19 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   `app/`: oma-2 mutates the shared registry fixture in `frontend/` and
   oma-4/5 mutate `tests/test_error_envelope.py`'s audit comparator, so the
   clean-tree check covers the fixture path since that fold-in — a dirtied
-  fixture refuses the run, measured at fold-in time).
+  fixture refuses the run, measured at fold-in time) and #186 (`ingr-` — queued as
+  `ing-`, relabelled because `-k ing-` substring-matches wdr-8's "missing-application";
+  the M6-1 Host/Origin guard, `app/ingress.py`, `app/hostnames.py`, `app/config.py` and
+  `app/main.py`; queued on PR #196 as 19 + 7 tuples, all killed there by hand, the
+  seven round-1 ones against the Codex findings. **The first cases against a shell
+  file:** ingr-25 and ingr-26 mutate `frontend/nginx/15-plamotrack-server-names.envsh`
+  and are killed by the corpus test that runs it under `sh` against the Python
+  policy, so the clean-tree check covers that path since this fold-in. ingr-5
+  survived the branch's first pass — the MCP child has one route today, so its
+  `redirect_slashes` was unobservable — and is killed by a probe-route test; ingr-25
+  survived once because the parity helper normalised the terminal dot away before
+  comparing, fixed by asserting the raw `server_name` first. The one set here that
+  is about the request boundary rather than inventory: see the harness docstring).
   **A message-restructuring change rots anchors silently**: #25 rewrote 81
   raise sites and six anchors (n5, n6a, n6b, cat-13, cat-14, wdr-8) sat
   SKIP-broken until #26's full run — a fold-in that runs only its own `-k`
