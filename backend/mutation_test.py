@@ -114,6 +114,10 @@ ENVSH = ROOT.parent / "frontend/nginx/15-plamotrack-server-names.envsh"
 PRIN = ROOT / "app/auth/principal.py"
 DEP = ROOT / "app/auth/dependency.py"
 REG = ROOT / "app/auth/registry.py"
+CRED = ROOT / "app/auth/credentials.py"
+SESS = ROOT / "app/auth/sessions.py"
+AUTH_SVC = ROOT / "app/services/auth.py"
+MAIN = ROOT / "app/main.py"
 AUTH_MIG = VERS / "20260903_f1058c5de0f3_auth_foundation_tables_m6_2_187.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
@@ -2657,6 +2661,80 @@ CASES = [
         '        lines.append(f"{indent}    return 403;")',
         "template_region_equals_the_registry_render",
     ),
+    # --- #188 (M6-3) local owner auth — the m63- set from PR #200 (Codex round 1, f3:
+    # m63-1, -2 and -4 survived the tests as first written; the re-anchored tests
+    # kill them on the named control — the compare_digest call list, the
+    # verifier's DUMMY_HASH argument, a pinned claimed_at) ------------------------
+    (
+        "m63-1. CSRF compared with ==",
+        CRED,
+        "    return hmac.compare_digest(presented, csrf_token_for(raw_session_token))",
+        "    return presented == csrf_token_for(raw_session_token)",
+        "csrf_token_is_bound",
+    ),
+    (
+        "m63-2. verify_password(None) short-circuits before Argon2",
+        CRED,
+        "    try:\n        return _hasher.verify(encoded if encoded is not None else DUMMY_HASH, password)",
+        "    if encoded is None:\n        return False\n    try:\n        return _hasher.verify(encoded if encoded is not None else DUMMY_HASH, password)",
+        "dummy_hash",
+    ),
+    (
+        "m63-3. opaque tokens compared with ==",
+        CRED,
+        "    return hmac.compare_digest(digest(presented), expected_digest)",
+        "    return digest(presented) == expected_digest",
+        "opaque_tokens",
+    ),
+    (
+        "m63-4. recovery re-stamps claimed_at unconditionally",
+        AUTH_SVC,
+        "    if owner.claimed_at is None:\n        owner.claimed_at = _now()\n    await _replace_credential",
+        "    owner.claimed_at = _now()\n    await _replace_credential",
+        "recovery_reset_password_claims_and_revokes",
+    ),
+    (
+        "m63-5. recovery never claims an unclaimed instance",
+        AUTH_SVC,
+        "    if owner.claimed_at is None:\n        owner.claimed_at = _now()\n    await _replace_credential",
+        "    if owner.claimed_at is not None:\n        owner.claimed_at = _now()\n    await _replace_credential",
+        "recovery_on_an_unclaimed",
+    ),
+    (
+        "m63-6. CSRF never enforced",
+        DEP,
+        "    if request.method in _SAFE_METHODS or not principal.cookie_borne:\n        return",
+        "    if True:\n        return",
+        "without_the_csrf_token or without_an_origin or multipart_import",
+    ),
+    (
+        "m63-7. bulk revocation not audited",
+        AUTH_SVC,
+        "    await audit.record_event(\n        session,\n        audit.SESSIONS_REVOKED,",
+        "    if False:\n        await audit.record_event(\n        session,\n        audit.SESSIONS_REVOKED,",
+        "recovery",
+    ),
+    (
+        "m63-8. cookie mode never announced",
+        MAIN,
+        "            sessions.announce_cookie_mode(config)",
+        "            pass",
+        "cookie_mode",
+    ),
+    (
+        "m63-9. the plain-http warning demoted to info",
+        SESS,
+        '    log.warning(\n        "Session cookie mode: %s is NOT Secure',
+        '    log.info(\n        "Session cookie mode: %s is NOT Secure',
+        "cookie_mode",
+    ),
+    (
+        "m63-10. a login success does not reset the budget",
+        AUTH_SVC,
+        "    budget.reset()\n    if credentials.password_needs_rehash",
+        "    if credentials.password_needs_rehash",
+        "throttle_then_a_success_resets",
+    ),
 ]
 
 
@@ -3636,6 +3714,8 @@ TEST_FILES = [
     "tests/test_auth_tables.py",
     "tests/test_authorization.py",
     "tests/test_ingress_generation.py",
+    # The #188 (m63-) fold-in: every m63- kill lives here.
+    "tests/test_auth_local.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
