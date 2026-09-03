@@ -686,8 +686,16 @@ Recorded so the matrix reads as a diff against reality rather than a description
   `index.html` with a 200. `location /api/` proxies to the API with the prefix
   stripped, which makes `/api/docs`, `/api/redoc`, `/api/healthz` and `/api/readyz`
   reachable from outside; `location = /openapi.json` proxies the schema at the root.
-  `/mcp` and `/mcp/` proxy to the MCP app with buffering off. nginx sets
-  `X-Forwarded-For` and `X-Forwarded-Proto`; nothing reads them.
+  Because that `/api/` rewrite is generic, `/api/mcp/` reaches the MCP handler and
+  returns a fresh session id — as do `/api//mcp/`, `//api/mcp/`, `/api/%6dcp/` and
+  `/api/mcp%2f` once nginx has merged slashes and percent-decoded — and
+  `/api/openapi.json` serves the schema byte-for-byte (replayed against the packaged
+  stack, 02/09/2026; Codex's finding 1 on PR #185). `/mcp` and `/mcp/` proxy to the
+  MCP app with buffering off. nginx sets `X-Forwarded-For` and `X-Forwarded-Proto`.
+  Nothing in the app reads them, but uvicorn 0.52.1's proxy-headers middleware is on
+  by default and trusts `127.0.0.1` only, so today it ignores nginx's headers and
+  would start rewriting `request.client` from them the moment nginx's address were
+  added to its trust list (§5.6, proxy trust).
 - **Binding.** `WEB_BIND:WEB_PORT` → nginx:80, default `127.0.0.1:8080`. `api` and
   `db` are not published. The compose file's own comment calls `WEB_BIND` "the whole
   access-control story until M6", which is accurate.
@@ -790,7 +798,7 @@ instance with linked MCP clients without relinking them (§5.6, safe failure).
 | `owner` | Session cookie, **plus** the CSRF token on unsafe methods | `collection:read`, `collection:write`, `instance:admin` |
 | `pat:read` / `pat:write` | `Authorization: Bearer` personal access token | `collection:read` / `collection:read` + `collection:write` |
 | `mcp` | `Authorization: Bearer` access token issued by the MCP OAuth path (OIDC mode only), audience-bound to `/mcp` | `collection:read` and, if granted, `collection:write`; never `instance:admin` |
-| `internal` | A request whose TCP peer is loopback inside the API's own network namespace — the container healthcheck, source-run development | Readiness only; grants nothing else |
+| `internal` | A request whose **raw TCP peer** — the socket's, read before any forwarded-header processing — is loopback inside the API's own network namespace: the container healthcheck, source-run development | Readiness only; grants nothing else |
 
 Three scopes, one implication (`write` implies `read`). `instance:admin` is held by the
 owner's browser session and by nothing else in M6: no admin tokens are minted, so a
@@ -801,7 +809,10 @@ Settings, not something a script needs. If a scripted admin action ever has a re
 case, it is a scope added deliberately, with the "conspicuous opt-in" Codex proposed
 on #30. A personal access token is valid on both REST and MCP because it is the
 owner's own credential; an MCP OAuth token is a delegated grant with the MCP resource
-as its audience and is refused by REST.
+as its audience and is refused by REST. A credential that is *presented* and fails —
+expired, revoked, malformed, or valid for another audience — is 401 on every route the
+app's dependency covers, the anonymous families included; only an *absent* credential
+resolves to `anon`. Nothing is silently downgraded.
 
 **Route families.** Paths are as a client sees them at the ingress; the app sees
 `/api/…` with the prefix stripped, and the MCP app sees `/mcp/…` as `/…`.
@@ -809,16 +820,16 @@ as its audience and is refused by REST.
 | # | Family | Paths | `anon` | `owner` | `pat:read` | `pat:write` | `mcp` | App enforces | Ingress adds |
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | SPA shell and assets | `/`, `/board`, `/kits`, `/orders`, `/inventory`, `/retailers`, `/settings/*`, `/data`, `/assets/*`, `/favicon*`; `/setup` and `/login` from M6 | allow | allow | — | — | — | nothing: static files, served by nginx (by Vite in dev) | security headers — `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`, a CSP for the bundle |
-| 2 | Auth bootstrap | `GET /api/auth/session` | allow | allow | allow | allow | allow (as `anon`) | returns `{state: unclaimed \| anonymous \| owner, interface_language, formatting_locale}` and, for `owner`, the CSRF token. No version, no collection data. `Cache-Control: no-store`. | rate limit |
+| 2 | Auth bootstrap | `GET /api/auth/session` | allow | allow | allow | allow | 401 (presented, wrong audience) | returns `{state: unclaimed \| anonymous \| owner, interface_language, formatting_locale}` and, for `owner`, the CSRF token. No version, no collection data. `Cache-Control: no-store`. | rate limit |
 | 3 | Auth actions | `POST /api/auth/setup` (until claimed, then 410), `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/oidc/start`, `GET /api/auth/oidc/callback` | allow, by necessity | logout only | 403 | 403 | 403 | Origin check on every unsafe method even with no session; failure budget; audit event on every outcome; `state` and `nonce` on OIDC | rate limit |
 | 4 | Collection reads | `GET` on `/api/kits*`, `/api/orders*`, `/api/tools*`, `/api/consumables*`, `/api/upgrades*`, `/api/display-items*`, `/api/retailers*`, `/api/catalog/search`, `/api/settings`, `/api/meta`, `/api/export/*` | 401 | allow | allow | allow | 401 | `collection:read`; `Cache-Control: no-store` | — |
-| 5 | Collection writes | `POST`/`PATCH`/`DELETE` on the family-4 resources; `POST /api/catalog/{id}/adjust`, `/api/upgrades/{id}/apply`, `/api/orders/{id}/receive`, `/api/orders/{id}/ship`; `POST /api/import/preview`; `POST /api/import/apply` with `mode=merge` | 401 | allow (+ CSRF + Origin) | 403 | allow | 401 | `collection:write`; Origin check when the principal is cookie-borne | — |
-| 6 | Instance administration | `PATCH /api/settings`; `POST /api/import/apply` with `mode=replace_all`; `/api/auth/tokens*` (mint, list, revoke); credential change and OIDC rebind | 401 | allow (+ CSRF + Origin) | 403 | 403 | 401 | `instance:admin`; `replace_all` keeps `confirm=REPLACE` and the mandatory `plan_hash` on top | — |
-| 7 | MCP transport | `POST`/`GET`/`DELETE` `/mcp`, `/mcp/` | 401 + `WWW-Authenticate: Bearer` | **401** — a cookie is never a credential here, a valid one included | allow; write tools refused | allow | allow per scope | bearer only; Host/Origin guard (421/403); per-tool scope check in the tool wrapper; no tool holds `instance:admin` | buffering off, long timeouts (§8); the Host allowlist |
-| 8 | OAuth / OIDC protocol routes (OIDC mode only; 404 in local mode) | at the root: `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server[/mcp]`, `/.well-known/openid-configuration[/mcp]`; under the mount: `/mcp/authorize`, `/mcp/token`, `/mcp/register`, `/mcp/consent`, `/mcp/auth/callback`, and `/mcp/revoke` when the upstream offers revocation — FastMCP 3.4.5's defaults (client registration is on unless disabled); the exact set is snapshotted by a test in the spike | allow, by protocol | allow | — | — | — | FastMCP's handlers; PKCE; exact redirect-URI matching; the upstream identity must equal the bound owner | **exact** `location` blocks at the root for the `.well-known` paths — today the SPA fallback answers them with HTML — and rate limits on `authorize`, `token`, `register` |
+| 5 | Collection writes | `POST`/`PATCH`/`DELETE` on the family-4 resources; `POST /api/catalog/{id}/adjust`, `/api/upgrades/{id}/apply`, `/api/orders/{id}/receive`, `/api/orders/{id}/ship`; `POST /api/import/preview`; `POST /api/import/apply` with `mode=merge` when the plan touches collection tables only | 401 | allow (+ CSRF + Origin) | 403 | allow | 401 | `collection:write`; Origin check when the principal is cookie-borne | — |
+| 6 | Instance administration | `PATCH /api/settings`; `POST /api/import/apply` with `mode=replace_all`, or in **any** mode when the plan updates `instance_settings`; `/api/auth/tokens*` (mint, list, revoke); credential change and OIDC rebind | 401 | allow (+ CSRF + Origin) | 403 | 403 | 401 | `instance:admin`; an import's privilege is decided on the **plan's content**, not the mode alone — checked after the re-plan and before any row is written; `replace_all` keeps `confirm=REPLACE` and the mandatory `plan_hash` on top | — |
+| 7 | MCP transport | `POST`/`GET`/`DELETE` `/mcp`, `/mcp/` | 401 + `WWW-Authenticate: Bearer` | **401** — a cookie is never a credential here, a valid one included | allow; write tools refused | allow | allow per scope | bearer only; Host/Origin guard (421/403); per-tool scope check in the tool wrapper; no tool holds `instance:admin` | buffering off, long timeouts (§8); the Host allowlist; **one spelling** — `/api/mcp` and `/api/mcp/*` return 404 from an exact-prefix `location` placed before the generic `/api/` one, matched after nginx's normalisation (slashes merged, percent-decoded), so the alias cannot shed these settings or family 8's limits |
+| 8 | OAuth / OIDC protocol routes (OIDC mode only; 404 in local mode) | at the root, **installed by the parent app** with FastMCP's `get_well_known_routes(...)`: `/.well-known/oauth-protected-resource/mcp/` (trailing slash — the resource is `…/mcp/`), `/.well-known/oauth-authorization-server[/mcp]`, `/.well-known/openid-configuration[/mcp]`; under the mount, generated by the child: `/mcp/authorize`, `/mcp/token`, `/mcp/register`, `/mcp/consent`, `/mcp/auth/callback`, and `/mcp/revoke` when the upstream offers revocation. The child also generates `/mcp/.well-known/oauth-authorization-server` and `/mcp/.well-known/oauth-protected-resource/mcp/`; those are **pruned before mounting** and never forwarded. Read by mounting a probe on FastMCP 3.4.5 / MCP SDK 1.29.0 (02/09/2026); the spike snapshots the raw route set and the set nginx exposes, trailing slashes included | allow, by protocol | allow | — | — | — | FastMCP's handlers; PKCE; exact redirect-URI matching; the upstream identity must equal the bound owner | **exact** `location` blocks at the root for the `.well-known` paths — today the SPA fallback answers them with HTML — and rate limits on `authorize`, `token`, `register`; the family-7 `/api/mcp/*` rejection covers their aliases |
 | 9 | Liveness | `GET /api/healthz` | allow | allow | allow | allow | allow | `{"status":"ok"}` and nothing else | rate limit |
-| 10 | Readiness | `GET /readyz` in-container; `GET /api/readyz` at the ingress | `internal` only; any other peer 404 | 404 | 404 | 404 | 404 | the TCP peer must be loopback — the healthcheck is `python -c … 127.0.0.1:8000/readyz` inside the container, and nginx arrives from the compose network | `location = /api/readyz { return 404; }` — the same decision, duplicated |
-| 11 | Schema and docs | `/openapi.json`, `/api/docs`, `/api/redoc` | 401 | allow | allow | allow | 401 | `collection:read` | passes; `/openapi.json` keeps its root location |
+| 10 | Readiness | `GET /readyz` in-container; `GET /api/readyz` at the ingress | `internal` only; any other peer 404 | 404 | 404 | 404 | 404 | the raw TCP peer must be loopback — the healthcheck is `python -c … 127.0.0.1:8000/readyz` inside the container, and nginx arrives from the compose network | `location = /api/readyz { return 404; }` — the same decision, duplicated |
+| 11 | Schema and docs | `/openapi.json`, `/api/docs`, `/api/redoc` | 401 | allow | allow | allow | 401 | `collection:read` | passes; `/openapi.json` keeps its root location and is the only spelling — `/api/openapi.json` returns 404 at the ingress |
 | 12 | Public read (M8) | `/api/public/*` | allow | allow | allow | allow | — | separate handlers (rule 8); **absent until M8** — an M6 test asserts no route under `/public` | its own `location`, so it can be the only thing a showcase proxy forwards |
 | 13 | Everything else under `/api/` | unrouted paths, wrong verbs | 401 | 404 / 405 | 404 / 405 | 404 / 405 | 401 | an anonymous client gets 401 for an unrouted path, not 404, so the route table cannot be enumerated without a credential | the default `server` block answers 421 for a Host outside the allowlist before any `location` is considered |
 
@@ -831,7 +842,14 @@ Notes on the table:
   are cheap to repeat (the Host default-deny, `/api/readyz`, rate limits) or that only
   it can do (security headers on static files, the `.well-known` routing). Family 10
   is the one place the two layers reason differently, and both conclusions are "deny
-  from outside".
+  from outside". An ingress *alias* is the one shape this rule does not catch on its
+  own: `/api/mcp/` reaches the very same handler as `/mcp/` under the very same
+  app-level policy, so the app cannot tell them apart and nothing is granted — what the
+  alias sheds is the per-family ingress configuration (buffering, timeouts, rate
+  limits). So the ingress owns a second rule, **one spelling per family**: the paths in
+  the table are the only ones nginx forwards to that handler, every other spelling is
+  404 before the generic `location`, and T2 proves it with the doubled-slash and
+  percent-encoded forms as well as the literal one.
 - **Default deny, explicit allow, enumerated by test.** Authentication is a single
   app-level dependency, not a per-route decoration a new router can forget (the #25
   envelope lesson, applied to auth). Anonymous access is an explicit allowlist of
@@ -840,7 +858,10 @@ Notes on the table:
   traversal can select a different policy than the handler it reaches. Scope is a
   second dependency on the route or tool. A test walks `app.routes` and the MCP tool
   registry and fails on any route or tool that is neither allowlisted nor scoped; the
-  same test is what makes the M8 `/public/*` handlers a deliberate act.
+  same test is what makes the M8 `/public/*` handlers a deliberate act. Routes that
+  are *meant* to answer 404 in some mode — family 8 in local mode — are registered and
+  return 404 themselves, so the anonymous fallback does not turn them into 401 and
+  leak the mode.
 - **Family 4 includes `GET /meta` and `GET /export/*`.** `/meta` moves from public to
   `collection:read`: the SPA's anonymous bootstrap becomes `GET /auth/session`
   (family 2), which carries what a login page needs — the instance's interface
@@ -853,7 +874,16 @@ Notes on the table:
   admin.** Preview parses an untrusted file and writes nothing; merge is a bulk write
   that never invents stock (rule 10) and is bound to its preview by `plan_hash`. A
   write token doing a nightly merge from a spreadsheet is a legitimate automation.
-  `replace_all` is the wipe, and it is admin-only.
+  `replace_all` is the wipe, and it is admin-only. The mode is not the whole
+  authorization, though: the archive's `instance_settings` sheet is importable (§6.1)
+  and `apply_import` applies every planned update in every mode, so a write token
+  could reconfigure the instance through a merge — the family-6 boundary crossed by a
+  side door (Codex, PR #185). Authorization is therefore decided on the **plan's
+  content**: a plan that updates `instance_settings` requires `instance:admin` whatever
+  the mode, refused after the re-plan and before any row is written; a collection-only
+  merge stays `collection:write`. Preview is unaffected — it writes nothing, and a
+  write token seeing a settings diff it cannot apply learns nothing the same token
+  cannot `GET /settings`.
 - **Family 7's 401 for a session cookie is the design, not a limitation.** MCP clients
   are bearer-only by contract; a cookie that could authenticate `/mcp` would make every
   MCP write CSRF-able and would let a page in the owner's browser drive an agent's tool
@@ -863,9 +893,15 @@ Notes on the table:
   #30). `/authorize`, `/token` and `/register` do not leave the SPA's path space. The
   browser OIDC login callback (family 3, `/api/auth/oidc/callback`, Authlib) and the
   MCP proxy's upstream callback (family 8, `/mcp/auth/callback`, FastMCP) are
-  different routes for different flows and stay different.
+  different routes for different flows and stay different. The discovery topology has
+  two halves and both are explicit: the parent FastAPI app installs the root discovery
+  routes with FastMCP's `get_well_known_routes(...)` — an nginx `location` can route to
+  them but cannot create them, and a child mounted at `/mcp` does not put them at the
+  root on its own — and the child's generated `/mcp/.well-known/*` aliases are pruned
+  before mounting, so there are fewer public spellings and the `/api/mcp/.well-known/*`
+  alias dies with them.
 - **What changes for existing clients.** `/api/meta`, `/openapi.json` and the docs
-  pages stop answering anonymously; `/api/readyz` stops answering from outside; every
+  pages stop answering anonymously; `/api/readyz` stops answering from outside; `/api/mcp/` and `/api/openapi.json` stop answering at all (use `/mcp/` and `/openapi.json`); every
   REST and MCP call needs a credential; an MCP client configured as
   `http://localhost:8080/mcp/` needs a token added (the `mcp-remote` bridge passes
   headers). Release notes lead with the `ALLOWED_HOSTS` lockout risk (§5.6) and then
@@ -879,14 +915,14 @@ Each row names the control, the layer that owns it, and the §5.8 tests that pro
 | Threat | Modes | Control | Layer | Tests |
 |---|---|---|---|---|
 | **CSRF** against cookie-authenticated writes, the CORS-safelisted multipart routes included | all | Three independent controls, any one of which defeats a simple request: (1) the session cookie is `SameSite=Lax`; (2) every unsafe method whose principal is cookie-borne — and every family-3 action, session or not — requires an `Origin` header (`Referer` as the fallback) matching the canonical origin from `PUBLIC_BASE_URL` or an entry in `ALLOWED_ORIGINS`, and a missing one is denied; (3) a session-bound CSRF token in `X-CSRF-Token`, obtained from `GET /auth/session`. Bearer-borne requests skip (2) and (3): a browser never attaches a bearer to a cross-site request without a CORS preflight, and no CORS allow-origin will ever be emitted for families 2–7. **CSRF protection does not rest on `plan_hash`**; the multipart routes get their own hostile-origin tests. | app | T3, T4 |
-| **Host spoofing and DNS rebinding** — a page whose hostname resolves to the instance, so `Origin` and `Host` are both the attacker's | L, P, Dev | A Host allowlist: the host of `PUBLIC_BASE_URL`, the loopback names, the bind address, and `ALLOWED_HOSTS`. A miss is `421 Misdirected Request` with a body naming the setting. Applied to REST and MCP alike; FastMCP's guard runs in `strict` mode with the same lists, because the MCP transport specification requires Origin validation on the MCP app itself. Loopback origins are accepted against loopback hosts — the rule FastMCP already applies — which is what lets the Vite proxy (`Origin: localhost:5173` against `Host: 127.0.0.1:8000`) work with no permanent development exception. **This is the one control that can lock an operator out** (#39): anything reached by a LAN hostname, a container name or a proxy has to be in the list. The setting, a default that covers the loopback names and the bind address, the 421 body and the release note ship together, and the change ships as its own release so nobody upgrading for a data fix meets it by surprise. | both — nginx's default `server` returns 421 before any `location`; the app repeats it | T3 |
+| **Host spoofing and DNS rebinding** — a page whose hostname resolves to the instance, so `Origin` and `Host` are both the attacker's | L, P, Dev | A Host allowlist: the host of `PUBLIC_BASE_URL`, the loopback names, the bind address, and `ALLOWED_HOSTS`. A miss is `421 Misdirected Request` with a body naming the setting. Applied to REST and MCP alike; FastMCP's guard runs in `strict` mode with the same lists, because the MCP transport specification requires Origin validation on the MCP app itself. Loopback origins are accepted against loopback hosts — the rule FastMCP already applies — which is what lets the Vite proxy (`Origin: localhost:5173` against `Host: 127.0.0.1:8000`) work with no permanent development exception. The REST middleware applies the same three-way rule as that guard — an origin in the list, loopback-to-loopback, or an `Origin` equal to the request's own origin for any allowed Host — and the canonical origin from `PUBLIC_BASE_URL` is always in the list: behind TLS the app sees `http` while the browser sends `https://…`, which is exactly the entry the canonical origin supplies (probed on the pinned guard: an allowed `https://app.example` passes with an `http` ASGI scheme). `ALLOWED_ORIGINS` is needed only for a non-canonical alias reached over a scheme the app does not see. **This is the one control that can lock an operator out** (#39): anything reached by a LAN hostname, a container name or a proxy has to be in the list. The setting, a default that covers the loopback names and the bind address, the 421 body and the release note ship together, and the change ships as its own release so nobody upgrading for a data fix meets it by surprise. | both — nginx's default `server` returns 421 before any `location`; the app repeats it | T3 |
 | **Clickjacking** of the SPA | P, R | `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY` on the SPA; the API sets both on the few HTML responses it has (docs pages, OAuth consent) | ingress for static files, app for its own HTML | T2 |
 | **Brute force** against login, setup and token endpoints | P, R | Argon2id for the local password; a per-IP rate limit at the ingress; at the app a global failure budget with exponential delay rather than a lockout an attacker could use against the owner; identical response and timing for "no such user" and "wrong password" (there is one user); a high-entropy single-use setup token; an audit event per attempt. The app's limiter is in-process, which is correct while the API runs one worker, as it does; more workers means a shared store, and the Dockerfile is where that is pinned. | both | T8 |
 | **Credential and token leakage** | all | Bearer tokens only in the `Authorization` header — never a query parameter, which lands in access logs and `Referer`; PATs shown once, stored as digests, looked up by a public prefix, compared with `hmac.compare_digest`; session ids opaque, only a digest stored; `Cache-Control: no-store` on every authenticated response; no credential or token in any log line, enforced by a test that greps captured logs; the setup token printed to the API's log at startup while the instance is unclaimed and nowhere else (the log stream is the host operator's, §5.3); the CSV archive **never** carries auth tables — rule 9's registry does not gain them, so an export cannot become a credential dump; a backup of auth state is `pg_dump` plus the env secrets, and restoring one without the other yields intact data with credentials to re-mint. | app | T10, T11, T13 |
-| **Session fixation and theft** | P, R | Session id rotated on login; `HttpOnly`; `Secure` and the `__Host-` prefix when `PUBLIC_BASE_URL` is `https`. On plain HTTP — modes L and P — the cookie cannot be `Secure` (browsers disagree about loopback), so its name changes with the scheme and its confidentiality rests on the network being the owner's own; the startup log says which it is. Idle and absolute expiry; logout, credential change and OIDC rebind revoke every session. | app | T7 |
-| **Proxy-header trust** | R | The app's own identity — scheme and host for cookies, redirect URIs, the OAuth issuer and resource — comes from `PUBLIC_BASE_URL` and never from `X-Forwarded-*` or `Host`. Forwarded headers influence only the client address used for rate limiting and audit, and are honoured only from `TRUSTED_PROXIES`; the bundled nginx is a trusted hop by construction. `PUBLIC_BASE_URL` is installation identity: changing it invalidates every linked MCP client (the issuer changed) and is documented as a migration, not a config edit. | both | T9 |
+| **Session fixation and theft** | P, R | Session id rotated on login; `HttpOnly`; `Secure` and the `__Host-` prefix when `PUBLIC_BASE_URL` is `https`. On plain HTTP — modes L and P — the cookie cannot be `Secure` (Chrome 152 and Firefox 153 store a `Secure` cookie set over `http://localhost` and `http://127.0.0.1`; WebKit 26.5 does not — WebKit bug 232088, still open), so its name changes with the scheme and its confidentiality rests on the network being the owner's own; the startup log says which it is. Idle and absolute expiry; logout, credential change and OIDC rebind revoke every session. | app | T7 |
+| **Proxy-header trust** | R | The app's own identity — scheme and host for cookies, redirect URIs, the OAuth issuer and resource — comes from `PUBLIC_BASE_URL` and never from `X-Forwarded-*` or `Host`. Forwarded headers influence only the client address used for rate limiting and audit, and are honoured only from `TRUSTED_PROXIES`; the bundled nginx is a trusted hop by construction. `PUBLIC_BASE_URL` is installation identity: changing it invalidates every linked MCP client (the issuer changed) and is documented as a migration, not a config edit. uvicorn is started with `--no-proxy-headers`: its default middleware is on, trusts `127.0.0.1`, and replaces `request.client` from `X-Forwarded-For` for any address added to its trust list — so wiring `TRUSTED_PROXIES` through it would let a trusted proxy forge the loopback peer that `internal` reads. The app's own middleware resolves the forwarded client address into a separate scope key and leaves the raw peer alone. | both | T9 |
 | **Route bypass and exposed admin** | all | Default deny with an enumerated allowlist (§5.5); policy matched on the resolved endpoint; `api:8000` unpublished; the `.well-known` and `/api/readyz` locations exact; **no unauthenticated mode in the shipped image** — there is no `AUTH_MODE=disabled`, and the test suites use an in-process principal injection the packaged image does not contain (the alternative, "refuse to start when auth is off and the bind is not loopback", still ships the bypass and relies on a check being right); auth configuration is env-only and never a settings row, so the Settings page cannot grow a "disable auth" toggle; `/public/*` absent until M8. | both | T1, T2 |
-| **Scope escalation** | R, and any leaked token | One principal shape for REST and MCP; scope checks in the route dependency and the tool wrapper through the same helper, so a tool cannot be more permissive than its REST twin; a PAT cannot mint a PAT; MCP OAuth grants never include `instance:admin`; the enumeration test pairs every write tool with `collection:write`. | app | T1, T6 |
+| **Scope escalation** | R, and any leaked token | One principal shape for REST and MCP; scope checks in the route dependency and the tool wrapper through the same helper, so a tool cannot be more permissive than its REST twin; a PAT cannot mint a PAT; MCP OAuth grants never include `instance:admin`; the enumeration test pairs every write tool with `collection:write`; an import's required privilege is read off its plan's content, so the mode cannot smuggle an admin-owned table past a write token. | app | T1, T6 |
 | **Prompt injection through an agent** (adversary D) | any mode with MCP | Not solvable in the server; bounded instead: scope, no import or export tools ever (§12.7), no admin tools, the rule-2 guards on destructive order edits, `remove_missing_lines` (§7), and audit lines naming the credential so a rogue session can be found and revoked. | app | T6 |
 | **Open redirect and code interception** in OIDC flows | R | Authlib's `state` and `nonce`; exact redirect-URI matching; PKCE on the MCP proxy path; the upstream identity required to equal the bound `(issuer, subject)`; a non-owner identity refused with an audit event and no session. | app | T6, T7 |
 | **Version and topology disclosure** | R | `/meta`, the OpenAPI schema and the docs pages behind `collection:read`; anonymous unrouted paths answer 401 rather than 404; `/healthz` says only `ok`. | app | T2 |
@@ -934,15 +970,15 @@ feeling.
 
 | # | Test | Where it runs |
 |---|---|---|
-| T1 | **The matrix, app layer.** One table of (family, method, principal) → status, driven by injected principals through the ASGI client, plus the enumeration test: every route in `app.routes` and every registered MCP tool is allowlisted or scoped, or the test fails naming it. | pytest |
-| T2 | **The matrix, ingress layer.** The same table through the packaged nginx: `/api/readyz` 404, `/openapi.json` 401 anonymous, `/.well-known/oauth-*` 404 in local mode, the SPA fallback still 200 for `/orders`, security headers present, `/api/../mcp` and `//api` normalised, and the CI job's existing MCP `tools/list` probe now carrying a token. | CI Integration, against `docker compose up` |
+| T1 | **The matrix, app layer.** One table of (family, method, principal) → status, driven by injected principals through the ASGI client, plus the enumeration test: every route in `app.routes` and every registered MCP tool is allowlisted or scoped, or the test fails naming it. Imports carry a plan-content axis: a collection-only merge succeeds for `pat:write`; the same mode with an `instance_settings` update is refused for `pat:write` before any row is written and succeeds for `owner`. | pytest |
+| T2 | **The matrix, ingress layer.** The same table through the packaged nginx: `/api/readyz` 404, `/openapi.json` 401 anonymous, `/.well-known/oauth-*` 404 in local mode, the SPA fallback still 200 for `/orders`, security headers present, `/api/../mcp` and `//api` normalised, one spelling per family — `/api/mcp/`, `/api//mcp/`, `//api/mcp/`, `/api/%6dcp/`, `/api/mcp%2f` and `/api/openapi.json` all 404 while `/mcp/` and `/openapi.json` answer; in OIDC mode the root discovery documents answer and `/mcp/.well-known/*` and `/api/mcp/.well-known/*` do not; and the CI job's existing MCP `tools/list` probe now carrying a token. | CI Integration, against `docker compose up` |
 | T3 | **Hostile Host and Origin.** For MCP initialize, a JSON write, `POST /import/preview` and `POST /import/apply` (multipart, both modes): hostile Host → 421; hostile Origin → 403; missing Origin on a cookie-borne write → 403; loopback origin against a loopback host → 200; a name in `ALLOWED_HOSTS` → 200. At both layers. | pytest + CI Integration |
 | T4 | **CSRF.** A valid session without the CSRF token → 403; the token with a hostile Origin → 403; a bearer with a hostile Origin → 200; the multipart routes named individually. | pytest |
 | T5 | **MCP never takes a cookie.** A valid session cookie and no bearer → 401 with `WWW-Authenticate: Bearer` and the resource-metadata pointer; the same request with a PAT → 200; an MCP OAuth token on a REST route → 401. | pytest |
-| T6 | **Scope.** `pat:read` on every family-5 and family-6 route → 403 and on every write tool → tool error; `pat:write` on every family-6 route → 403; an MCP grant requesting `instance:admin` is not issued; a non-owner OIDC identity is refused. | pytest |
+| T6 | **Scope.** `pat:read` on every family-5 and family-6 route → 403 and on every write tool → tool error; `pat:write` on every family-6 route → 403; an MCP grant requesting `instance:admin` is not issued; a non-owner OIDC identity is refused; a `pat:write` merge whose plan updates `instance_settings` → 403 with the settings row unchanged. | pytest |
 | T7 | **Lifecycle.** Logout, PAT revocation, credential reset and OIDC rebind each invalidate exactly what §5.6 says; an expired session or token is 401; an unclaimed instance is 401 on every collection route; the setup token works once and 410s after. | pytest + e2e (real login and logout) |
 | T8 | **Brute force.** N failures → delay or 429 and audit rows; identical body and status for the two failure kinds; the setup token's length asserted. | pytest |
-| T9 | **Proxy trust.** A spoofed `X-Forwarded-For` from an untrusted peer is ignored for rate-limit keying and audit; from a `TRUSTED_PROXIES` peer it is honoured; `X-Forwarded-Host` never changes a redirect or a cookie. | pytest |
+| T9 | **Proxy trust.** A spoofed `X-Forwarded-For` from an untrusted peer is ignored for rate-limit keying and audit; from a `TRUSTED_PROXIES` peer it is honoured; `X-Forwarded-Host` never changes a redirect or a cookie; a `TRUSTED_PROXIES` peer sending `X-Forwarded-For: 127.0.0.1` still gets 404 from `/readyz`. | pytest |
 | T10 | **Leakage.** Captured logs contain no token, password or session id across a full login, PAT and MCP run; `Cache-Control: no-store` on families 2–7; the archive's table registry contains no auth table (a rule-9 spec test); `GET /auth/session` and `/healthz` carry no version. | pytest |
 | T11 | **Timing shape.** An unknown token prefix and a wrong secret produce identical status and body; the compare is `compare_digest` by construction, and the test asserts the code path, not a stopwatch. | pytest |
 | T12 | **The deployment path.** The documented Caddy + compose configuration on a fresh VM: TLS, setup, login, a PAT REST call, MCP initialize through the proxy with a stream held open past 60 s, OAuth discovery through Caddy → nginx → api, `/api/readyz` 404 from outside, an `ALLOWED_HOSTS` lockout and its recovery. Scripted where possible; results recorded in the release notes. | release gate |
@@ -957,12 +993,15 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    `ALLOWED_ORIGINS`, `TRUSTED_PROXIES`; the 421/403 guard on REST and on FastMCP in
    strict mode; nginx moved to the `envsubst` template mechanism with a default-deny
    `server`, the `/api/readyz` block, the `.well-known` locations and the security
-   headers; `/readyz` restricted to `internal`. Absorbs #39. **Its own release**, for
-   the lockout reason. No authentication yet, so nothing else changes for clients.
-   (T2, T3, T9.)
+   headers; one spelling per family (`/api/mcp`, `/api/mcp/*` and `/api/openapi.json`
+   rejected before the generic `/api/` location); uvicorn started with
+   `--no-proxy-headers` and the app-side forwarded-address middleware that keeps the
+   raw peer; `/readyz` restricted to `internal`. Absorbs #39. **Its own release**, for
+   the lockout reason. No authentication yet, so the only client-visible change is the
+   alias spellings going dark. (T2, T3, T9.)
 2. **Auth foundation** — owner, credential, session, personal-token and audit tables;
    the principal model; the app-level default-deny dependency with the anonymous
-   allowlist; the scope helper shared by routes and tools; the enumeration test;
+   allowlist; the scope helper shared by routes and tools; the import-apply privilege check on plan content; the enumeration test;
    in-process principal injection for pytest; an e2e bootstrap that claims the owner
    and reuses storage state. (T1, T10.)
 3. **Local owner authentication** — setup token and claim, login and logout, session
@@ -980,8 +1019,10 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    `(issuer, subject)`, rebind recovery, the mutually exclusive `local`/`oidc` mode
    switch. (T6, T7.)
 7. **MCP OAuth** — the FastMCP proxy wired with the spike's decisions, owner
-   restriction, scope mapping, persistence, the family-8 routes through nginx. (T2,
-   T5, T6, T12.)
+   restriction, scope mapping, persistence, the root discovery routes installed on the
+   parent app, the child's `/mcp/.well-known/*` aliases pruned, and snapshots of both
+   the raw route set and the set nginx exposes, trailing slashes included. (T2, T5,
+   T6, T12.)
 8. **Audit, rate limiting and log hygiene** — the event table and its prune, ingress
    `limit_req`, the app's budget, the log-grep test. (T8, T10.)
 9. **Reference TLS deployment and documentation** — the Caddy configuration,
