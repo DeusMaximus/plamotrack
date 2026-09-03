@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-02 — Claude Code (Fable 5.1) — M6 begun: threat model + route matrix (PR #185, #29)
+## 2026-09-02 — Claude Code (Fable 5.1) — M6 begun: threat model + route matrix (PR #185, #29); Codex round 1 answered
 
 - **Done:** `docs/design.md` §5 rewritten as the M6 threat model and route
   authorization matrix: current state (5.1), assets and actors (5.2–5.3), four
@@ -49,11 +49,22 @@ Template:
   families with app-vs-ingress columns (5.5), fourteen threat rows + safe failure
   (5.6), what loopback keeps (5.7), the thirteen gating tests T1–T13 (5.8), a
   ten-issue implementation split (5.9); pointer edits in §4 and §11. Branch
-  `feature/m6-threat-model`, **PR #185 open at head `81ff6bb`** (not draft), for a
-  Codex round per the roster (M6 = Codex lane). Two §5.1 claims were probed rather
-  than asserted: JSON sent as `text/plain`, as a form, or with no `Content-Type`
-  returns 422 on `POST /retailers`; FastMCP's OAuth route set was read from the
-  pinned libraries.
+  `feature/m6-threat-model`, **PR #185 open at head `414f076`** (not draft). **Codex
+  round 1 (GPT 5.6 Sol): NO-GO, four findings, all reproduced at `81ff6bb` and fixed
+  at `414f076`**, answered per finding in the PR thread: (1, P2) `/api/mcp/*` and
+  `/api/openapi.json` are live ingress aliases of `/mcp/` and `/openapi.json` → §5.5
+  gains "one spelling per family" at the ingress, T2 the encoded/doubled spellings,
+  split item 1 the rejection; (2, P2) a `mode=merge` import updates
+  `instance_settings`, crossing the admin boundary with a write token → import
+  privilege is decided on the plan's content, T1/T6 gain that axis; (3, P3) uvicorn
+  0.52.1 runs its proxy-headers middleware by default (trusts `127.0.0.1`), so
+  `internal` must read the raw TCP peer → `--no-proxy-headers` + app-side forwarded
+  address, T9 control; (4, P3) a FastMCP child mounted at `/mcp` emits
+  `/mcp/.well-known/*` and no root discovery routes → parent installs
+  `get_well_known_routes(...)`, child aliases pruned, both route sets snapshotted.
+  Reviewer's qualifications on calls 5/7/9/11 folded in; PR body now lists calls
+  13–15. Earlier probes stand: non-JSON / no-`Content-Type` bodies 422 on
+  `POST /retailers`; FastMCP's route set read from the pinned libraries.
 - **Decisions (proposed in the doc; the owner approves via the PR):** every mode
   authenticates, no `AUTH_MODE=disabled` in the image; `instance:admin` = owner
   session only, no admin PATs in M6; `/meta`, OpenAPI and docs → `collection:read`;
@@ -66,14 +77,17 @@ Template:
   **its own release** before any auth; cookie `Secure`/`__Host-` only on an https
   `PUBLIC_BASE_URL`; mode P (plain HTTP, private network) supported with the
   cleartext caveat. Nothing in #30's credential thread was re-decided.
-- **State:** `main` at `172512e` + this entry. PR #185 is docs-only — no code, no
-  migration, no suites run; `git diff --check` clean, table columns checked by
-  script. Dev `db` container is up (started for the probe). Working tree parked on
-  `main` for the review window. PR #184 (`ja`, draft) unchanged, awaiting a native
-  reviewer.
-- **Next:** (1) owner reads §5 and rules on the twelve "Deliberate calls" in the PR
-  body; (2) Codex review round — the brief was printed in the session chat, re-fill
-  it from `.agents/review-brief.md` if lost; (3) on merge, **file the ten §5.9
+- **State:** `main` at `d05feb5` + this entry. PR #185 is docs-only — no code, no
+  migration, no suites run beyond the one settings-portability control; `git diff
+  --check` clean, table columns checked by script; CI green at `81ff6bb`, running at
+  `414f076`. The packaged stack was built once for the alias replay, then `down`
+  (no `-v`) and the dev `db` overlay restored — `db` is up on `127.0.0.1:5432`.
+  Working tree parked on `main` for the review window. PR #184 (`ja`, draft)
+  unchanged, awaiting a native reviewer.
+- **Next:** (1) **Codex round 2** at `414f076` — re-fill the brief from
+  `.agents/review-brief.md` (round-2 wording: "independent re-review", findings
+  numbered after round 1's four); (2) owner rules on the fifteen "Deliberate calls"
+  in the PR body; (3) on merge, **file the ten §5.9
   issues** under `M6 — Secure remote access` with their dependencies, close #29,
   and mark #39 absorbed by item 1; (4) the first implementation branch is §5.9
   item 1 (ingress identity + Host/Origin guard) — its own release, nothing rides
