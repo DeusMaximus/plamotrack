@@ -13,8 +13,14 @@ The principal/scope algebra is unit-tested here too — `write` implies `read`,
 admin implies nothing — because the dependency's allow/deny reduces to it.
 """
 
+import re
+
 import pytest
+from fastapi import FastAPI
 from fastmcp import Client
+from httpx import ASGITransport, AsyncClient
+from starlette.applications import Starlette
+from starlette.routing import Mount, Route
 
 from app.auth.principal import (
     Principal,
@@ -28,14 +34,17 @@ from app.auth.principal import (
 )
 from app.auth.registry import (
     MCP_TOOL_SCOPES,
+    MCP_TRANSPORT_POLICY,
     CredentialPolicy,
+    DuplicateRouteError,
     RoutePolicy,
     UndeclaredRouteError,
     build_route_index,
+    dispatch_pattern,
     iter_effective_routes,
     iter_mounted_routes,
 )
-from app.main import app
+from app.main import app, create_app
 from app.mcp import mcp as mcp_server
 
 # --- the enumeration ------------------------------------------------------------
@@ -53,6 +62,15 @@ def test_every_effective_route_is_declared():
     assert len(index.by_endpoint) == len(routes)
     for route in routes:
         assert index.policy_for(route.endpoint) is not None, route.path
+    # And the child surface: every route under the mount is declared too, and
+    # answers only through the response-profile lookup — the REST dependency's
+    # `policy_for` does not know it, because the dependency never runs there.
+    mounted = list(iter_mounted_routes(app))
+    assert mounted, "no mounted routes resolved — the walk lost the /mcp child"
+    assert len(index.mounted_by_endpoint) == len(mounted)
+    for route in mounted:
+        assert index.policy_for(route.endpoint) is None, route.path
+        assert index.response_profile_for(route.endpoint) is not None, route.path
 
 
 def test_an_undeclared_route_fails_the_build():
@@ -147,12 +165,20 @@ _MOUNTED_SURFACE: dict[tuple[str, str], str] = {
 
 def _observed_rest_surface() -> dict[tuple[str, str], tuple[int, str]]:
     index = build_route_index(app)
-    surface: dict[tuple[str, str], tuple[int, str]] = {}
+    entries: list[tuple[tuple[str, str], tuple[int, str]]] = []
     for route in index.routes:
         policy = index.policy_for(route.endpoint)
         assert policy is not None
-        surface[(route.path, ",".join(sorted(route.methods)))] = (policy.family, policy.credential)
-    return surface
+        entries.append(
+            ((route.path, ",".join(sorted(route.methods))), (policy.family, policy.credential))
+        )
+    # Multiplicity is preserved on the way into the dictionary: two leaves on one
+    # key would collapse to the later one, hiding a shadowed route (Codex #198
+    # round 2, f2A). The build refuses that graph first; this is the test's own
+    # independent check, so the snapshot cannot read green through a collapse.
+    keys = [key for key, _ in entries]
+    assert len(set(keys)) == len(keys), sorted(k for k in keys if keys.count(k) > 1)
+    return dict(entries)
 
 
 def _observed_mounted_surface() -> dict[tuple[str, str], str]:
@@ -177,6 +203,234 @@ def test_the_mounted_surface_matches_the_snapshot():
     #198 f2). This does not wrap the child in the REST dependency; it only sees
     it."""
     assert _observed_mounted_surface() == _MOUNTED_SURFACE
+
+
+# --- the route graphs the build refuses (Codex #198 round 2, f2A) ---------------
+# The snapshot compares the observed graph with a declaration; these prove the
+# build itself refuses a graph no declaration can describe, so the guard does not
+# depend on the snapshot noticing — each probe is a graph shape, built fresh.
+
+
+async def _transport(scope, receive, send):  # pragma: no cover - never called
+    pass
+
+
+def test_two_routes_on_one_dispatch_entry_fail_the_build():
+    """Starlette serves the first route matching a (path, method); a second on the
+    same entry is unreachable and its declared policy describes nothing — the
+    shadow the observed-surface dictionary collapsed (round 2, f2A: a probe
+    `GET /tools` named `healthz` ahead of the real one answered anonymously).
+    The build refuses it, naming both, before any snapshot is compared."""
+    probe = FastAPI()
+
+    async def shadow():  # pragma: no cover - never called
+        return {"review_probe": "shadow handler"}
+
+    async def genuine():  # pragma: no cover - never called
+        return {}
+
+    probe.add_api_route("/tools", shadow, methods=["GET"], name="healthz")
+    probe.add_api_route("/tools", genuine, methods=["GET"], tags=["inventory"])
+    with pytest.raises(DuplicateRouteError) as excinfo:
+        build_route_index(probe)
+    assert "GET /tools" in str(excinfo.value)
+    assert "healthz" in str(excinfo.value)
+
+
+def test_a_renamed_path_parameter_is_the_same_dispatch_entry():
+    """`/kits/{kit_id}` and `/kits/{id}` compile to the same matcher, so the second
+    is as unreachable as an exact duplicate — the key is the pattern, not the
+    spelling."""
+    assert dispatch_pattern("/kits/{kit_id}") == dispatch_pattern("/kits/{id}") == "/kits/{}"
+    assert dispatch_pattern("/kits/{kit_id}") != dispatch_pattern("/kits/series")
+    probe = FastAPI()
+
+    async def first(kit_id: str):  # pragma: no cover - never called
+        return {}
+
+    async def second(id: str):  # pragma: no cover - never called
+        return {}
+
+    probe.add_api_route("/kits/{kit_id}", first, methods=["GET"], tags=["kits"])
+    probe.add_api_route("/kits/{id}", second, methods=["GET"], tags=["kits"])
+    with pytest.raises(DuplicateRouteError):
+        build_route_index(probe)
+
+
+def test_one_endpoint_on_two_routes_fails_the_build():
+    """The index is keyed on the endpoint callable, so one function registered on
+    two routes could carry only one policy — refused rather than resolved to
+    whichever route came last. Two different, individually declared families,
+    so the collapse would have been a wrong policy, not merely a lost one."""
+    probe = FastAPI()
+
+    async def shared():  # pragma: no cover - never called
+        return {}
+
+    probe.add_api_route("/kits", shared, methods=["GET"], tags=["kits"])
+    probe.add_api_route("/settings", shared, methods=["PATCH"], tags=["settings"])
+    with pytest.raises(DuplicateRouteError) as excinfo:
+        build_route_index(probe)
+    assert "shares its endpoint" in str(excinfo.value)
+
+
+def test_a_wildcard_route_beside_a_method_route_fails_the_build():
+    """A raw ASGI route (`methods=None`, every verb) on the same pattern as a
+    method-specific one leaves one of them partly unreachable, whichever is first
+    — refused as the same ambiguity."""
+    child = Starlette(
+        routes=[
+            Route("/", endpoint=_transport),
+            Route("/", endpoint=_transport.__class__, methods=["GET"]),
+        ]
+    )
+    probe = FastAPI()
+    probe.mount("/mcp", child)
+    with pytest.raises(DuplicateRouteError):
+        build_route_index(probe)
+
+
+def test_an_unrecognised_route_type_fails_the_build():
+    """The walk refuses what it cannot enumerate rather than skipping it: a
+    WebSocket route passed over silently would be the same hole as an
+    undeclared route."""
+    probe = FastAPI()
+
+    async def socket(websocket):  # pragma: no cover - never called
+        pass
+
+    probe.add_api_websocket_route("/ws", socket)
+    with pytest.raises(UndeclaredRouteError) as excinfo:
+        build_route_index(probe)
+    assert "WebSocketRoute" in str(excinfo.value)
+    assert "/ws" in str(excinfo.value)
+
+
+def test_a_route_added_under_the_mount_fails_the_build():
+    """Round 1's probe (`/mcp/review-undeclared`), refused at build and not only
+    by the snapshot: the child surface is declared (`_classify_mounted`), so an
+    extra route under `/mcp` — or under a mount nested inside it, which the
+    walk descends — is undeclared. The transport alone is declared and builds."""
+
+    async def handler(request):  # pragma: no cover - never called
+        pass
+
+    async def nested_handler(request):  # pragma: no cover - never called
+        pass
+
+    child = Starlette(
+        routes=[
+            Route("/", endpoint=_transport),
+            Route("/review-undeclared", endpoint=handler),
+            Mount("/nested", app=Starlette(routes=[Route("/leaf", endpoint=nested_handler)])),
+        ]
+    )
+    probe = FastAPI()
+    probe.mount("/mcp", child)
+    with pytest.raises(UndeclaredRouteError) as excinfo:
+        build_route_index(probe)
+    assert "/mcp/review-undeclared" in str(excinfo.value)
+    assert "/mcp/nested/leaf" in str(excinfo.value)
+
+    alone = FastAPI()
+    alone.mount("/mcp", Starlette(routes=[Route("/", endpoint=_transport)]))
+    index = build_route_index(alone)
+    assert index.mounted_by_endpoint[_transport] is MCP_TRANSPORT_POLICY
+    assert index.policy_for(_transport) is None
+
+
+def test_a_bare_asgi_mount_is_a_leaf_of_its_own():
+    """A mount whose app has no route table (a raw callable) is itself the leaf —
+    Starlette puts that app in `scope["endpoint"]` — and, undeclared, fails the
+    build naming the mount's path."""
+    probe = FastAPI()
+    probe.mount("/raw", _transport)
+    with pytest.raises(UndeclaredRouteError) as excinfo:
+        build_route_index(probe)
+    assert "/raw" in str(excinfo.value)
+
+
+# --- the accepted methods, behaviourally (Codex #198 round 2, f2B) ---------------
+# Route metadata declares the methods of a REST route and nothing for a raw ASGI
+# endpoint (`methods=None`): which verbs `/mcp/` accepts only its implementation
+# knows, so no snapshot of the metadata can see a transport that starts answering
+# PUT. The method axis is therefore pinned by asking: every verb in a literal
+# universe, against the real app, is 405 exactly when the declaration does not
+# hold it. The declaration is the literal snapshot above, not `route.methods`.
+
+_METHOD_UNIVERSE = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE")
+
+
+def _probe_path(path: str) -> str:
+    # A parameter's value is irrelevant to dispatch: any segment matches, and a
+    # bad one earns a 404/422 from the handler's side — never a 405.
+    return re.sub(r"\{[^}]*\}", "probe", path)
+
+
+def _matches(pattern: str, url: str) -> bool:
+    # The snapshot's own matcher: a parameter is one non-empty segment, as it is
+    # for Starlette's default convertor — so `/kits/series` is matched by both
+    # `/kits/series` and `/kits/{kit_id}`, and a verb the literal route lacks is
+    # served by the parameter route, not refused. Derived from the literal
+    # snapshot, never from `app.routes`.
+    literal = re.split(r"\{[^}]*\}", pattern)
+    return re.fullmatch("[^/]+".join(re.escape(part) for part in literal), url) is not None
+
+
+def _declared_methods_for(url: str) -> set[str]:
+    return {
+        verb
+        for path, methods in _REST_SURFACE
+        if _matches(path, url)
+        for verb in methods.split(",")
+    }
+
+
+@pytest.mark.parametrize("path", sorted({path for path, _ in _REST_SURFACE}))
+async def test_every_rest_path_is_405_exactly_off_its_declared_methods(path, http_client):
+    """A probe URL for each REST path answers 405 for every verb no declared
+    route matching that URL holds, and something other than 405 for every verb
+    one does — and never advertises in `Allow` a verb the snapshot lacks. A
+    route gaining a method, or a method the snapshot names that the app stopped
+    serving, fails here on behaviour, independently of the metadata comparison."""
+    url = _probe_path(path)
+    declared = _declared_methods_for(url)
+    assert declared, url
+    for method in _METHOD_UNIVERSE:
+        resp = await http_client.request(method, url)
+        if method in declared:
+            assert resp.status_code != 405, (method, url, resp.status_code)
+        else:
+            assert resp.status_code == 405, (method, url, resp.status_code)
+            allowed = {verb.strip() for verb in resp.headers["allow"].split(",")}
+            assert allowed <= declared, (method, url, allowed)
+
+
+async def test_the_mcp_transport_accepts_exactly_the_declared_methods():
+    """`/mcp/` is a raw ASGI endpoint — its Starlette metadata is `methods=None`,
+    so no snapshot of it can see which verbs the implementation accepts (round
+    2, f2B: a transport wrapped to answer PUT left every test green). Pinned
+    behaviourally, lifespan entered: every verb the registry does not declare is
+    405 and the transport's own `Allow` names exactly the declared set; every
+    declared verb reaches the transport (a 406/400 for a bare request, never
+    405 or 404). A transport release accepting a new verb, or a declaration
+    drifting from the transport, fails here."""
+    declared = {"GET", "POST", "DELETE"}  # the literal; the registry must agree
+    assert MCP_TRANSPORT_POLICY.methods == frozenset(declared)
+    live = create_app()
+    async with live.router.lifespan_context(live):
+        transport = ASGITransport(app=live, client=("127.0.0.1", 123), raise_app_exceptions=False)
+        async with AsyncClient(
+            transport=transport, base_url="http://127.0.0.1:8000", headers={"Host": "localhost"}
+        ) as client:
+            for method in _METHOD_UNIVERSE:
+                resp = await client.request(method, "/mcp/")
+                if method in declared:
+                    assert resp.status_code not in (404, 405), (method, resp.status_code)
+                else:
+                    assert resp.status_code == 405, (method, resp.status_code)
+                    allowed = {verb.strip() for verb in resp.headers["allow"].split(",")}
+                    assert allowed == declared, (method, allowed)
 
 
 def test_the_mcp_tool_scope_map_matches_the_live_registry():

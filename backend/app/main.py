@@ -213,8 +213,10 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
         # an undeclared route); the dependency reads this per request.
         route_index = build_route_index(app)
         setattr(app.state, ROUTE_INDEX_ATTR, route_index)
-        # The response profile is stamped on the way out, so an export that
-        # returns its own Response still carries no-store (Codex #198 f1).
+        # The response profile is stamped on the way out — replacing whatever
+        # the handler set — so an export that returns its own Response, the
+        # deny envelope and the MCP transport's responses under the mount all
+        # carry no-store (Codex #198 f1, round 2 f1).
         app.add_middleware(ResponseProfileMiddleware, index=route_index)
 
     app.add_exception_handler(DomainError, domain_error_handler)

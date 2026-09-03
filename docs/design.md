@@ -1108,7 +1108,7 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    until item 2's registry generates them.
 2. **Auth foundation** — owner, credential, session, personal-token and audit tables;
    the principal model; the app-level default-deny dependency with the anonymous
-   allowlist; the route policy registry — family, credential policy, external spellings, serving layer and redirect destinations per effective route and mount — that the dependency, the ingress template and T1/T2 all read; the scope helper shared by routes and tools; the import-apply privilege check on plan content; the enumeration test;
+   allowlist; the route policy registry — family, credential policy, external spellings, serving layer and redirect destinations per effective route and mount — that the dependency, the ingress template and T1/T2 all read; the response-profile middleware that enforces the declared `Cache-Control` on the final response, the mount included (landed here rather than with item 7); the scope helper shared by routes and tools; the import-apply privilege check on plan content; the enumeration test, which also refuses a route graph no declaration can describe (a shadowed dispatch entry, a shared endpoint, an unknown route type) and pins the raw transport's accepted verbs behaviourally;
    in-process principal injection for pytest; an e2e bootstrap that claims the owner
    and reuses storage state. (T1, T10.)
 3. **Local owner authentication** — setup token and claim, login and logout, session
@@ -1133,7 +1133,8 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    restriction, scope mapping, persistence, the root discovery routes installed on the
    parent app, the child's `/mcp/.well-known/*` aliases pruned, the per-route
    protocol-role, method, mode and response-profile declarations for the child's
-   routes, the `no-store` response middleware on the mount, the client-redirect
+   routes (the `no-store` stamp on the mount already lands with item 2; the
+   protocol routes' own profiles are declared there as they arrive), the client-redirect
    binding per client kind (DCR exact with the loopback-port exception, an allowlist
    narrowing registration rather than replacing it, the synthesised upstream-id client
    refused or pinned to a configured callback, CIMD declared), and snapshots of both

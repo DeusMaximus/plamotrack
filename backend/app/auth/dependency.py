@@ -36,13 +36,14 @@ with `code` `auth.unauthenticated` / `auth.forbidden`.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+
 from fastapi import Request
-from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app import error_codes
 from app.auth.principal import Principal, PrincipalKind
-from app.auth.registry import CredentialPolicy, RouteIndex
+from app.auth.registry import CredentialPolicy, ResponseProfile, RouteIndex
 from app.auth.resolver import resolve_principal
 from app.exceptions import ForbiddenError, UnauthenticatedError
 
@@ -86,21 +87,84 @@ async def enforce_route_policy(request: Request) -> Principal:
     return principal
 
 
+# --- the response profile, enforced on the final response ------------------------
+
+#: The one `Cache-Control` directive a handler may keep beside a required
+#: `no-store`: `no-transform` forbids intermediaries from re-encoding the payload
+#: and says nothing about storing (RFC 9111 §5.2.2.6). The MCP SDK sets it on the
+#: SSE stream so a proxy does not transform the event stream; stripping it would
+#: trade one leak for another. Every other directive a handler set — `public`,
+#: `private`, `max-age`, `s-maxage`, `no-cache`, `must-revalidate`, `immutable`,
+#: the `stale-*` extensions — either permits storing or is redundant beside
+#: `no-store`, and is replaced.
+KEPT_BESIDE_NO_STORE = frozenset({"no-transform"})
+
+_CACHE_CONTROL = b"cache-control"
+
+
+def final_cache_control(profile: ResponseProfile, existing: Iterable[str]) -> str | None:
+    """The `Cache-Control` value the final response carries for `profile`, given
+    the value(s) the handler set. None when the profile makes no demand (the
+    handler's header stands, whatever it is); the declared `cache` verbatim; or
+    `no-store` — with `no-transform` retained if the handler had it — replacing
+    everything else. The header-value axis (Codex #198 round 2, f1): absent,
+    empty, a directive that permits storing, one that merely revalidates, or
+    `no-store` already, all end as the declaration. `setdefault` only ever
+    covered the first of those."""
+    required = profile.cache_control
+    if required is None:
+        return None
+    if not profile.no_store:
+        return required
+    directives = [part.strip().lower() for value in existing for part in value.split(",")]
+    kept = [d for d in directives if d and d.split("=", 1)[0].strip() in KEPT_BESIDE_NO_STORE]
+    return ", ".join([required, *dict.fromkeys(kept)])
+
+
+def _stamp_cache_control(message: Message, profile: ResponseProfile) -> None:
+    """Replace every `Cache-Control` line in a response-start message with the
+    profile's final value. Header names are case-insensitive, and a raw ASGI
+    endpoint may spell the key `Cache-Control`, which Starlette's
+    `MutableHeaders` would not match and would leave standing beside the
+    stamped one — so every spelling goes and one comes back."""
+    raw = [(bytes(k), bytes(v)) for k, v in (message.get("headers") or ())]
+    existing = [v.decode("latin-1") for k, v in raw if k.lower() == _CACHE_CONTROL]
+    value = final_cache_control(profile, existing)
+    if value is None:
+        return
+    message["headers"] = [(k, v) for k, v in raw if k.lower() != _CACHE_CONTROL] + [
+        (_CACHE_CONTROL, value.encode("latin-1"))
+    ]
+
+
 class ResponseProfileMiddleware:
     """Applies the registry's response profile to the **final outgoing response**,
     however the handler produced it — a value FastAPI serialises, an explicit
-    `Response` (the CSV/zip exports go through `portability._attachment`), or a
-    raised deny the exception handler renders.
+    `Response` (the CSV/zip exports go through `portability._attachment`), a
+    raised deny the exception handler renders, a 405/422 the framework produced,
+    or the MCP transport's own responses under the mount.
 
     Why a middleware and not the dependency: FastAPI's temporary dependency
     `Response` only merges into responses it builds from a return value, so a
     handler that returns its own `Response` never receives those headers — the
     exports carry collection data and lost `Cache-Control: no-store` that way
     (PR #198 Codex finding 1). Reading `scope["endpoint"]` at response start —
-    set by routing before any handler runs — lets this stamp every matched
-    route uniformly. The declared liveness/readiness exceptions keep no header
-    (their policy's `no_store` is False), and an unrouted path has no endpoint.
-    Installed only when `authorization=True`; the shipped app is untouched.
+    set by routing before any handler runs, and by the mount's child router for
+    `/mcp/` — lets this stamp every declared route uniformly, the mounted child
+    included: its profile is declared `no-store` too (tool results are
+    collection data), and the dependency never runs there, so nothing else
+    could say so.
+
+    Why *replace* and not default (round 2, f1): a handler- or library-set
+    `Cache-Control` — `public`, `private, no-cache`, the SDK's `no-cache,
+    no-transform` on the SSE stream — would otherwise stand, and none of those
+    means "do not store". The declaration wins; `no-transform` alone survives
+    beside it (`KEPT_BESIDE_NO_STORE`). The declared liveness/readiness
+    exceptions keep whatever they had (their profile makes no demand), and an
+    unrouted path has no endpoint. A 500 from `ServerErrorMiddleware` — which
+    wraps this — is not stamped; its body is the generic error text and carries
+    nothing. Installed only when `authorization=True`; the shipped app is
+    untouched.
     """
 
     def __init__(self, app: ASGIApp, index: RouteIndex) -> None:
@@ -115,10 +179,11 @@ class ResponseProfileMiddleware:
         async def send_wrapper(message: Message) -> None:
             if message["type"] == "http.response.start":
                 endpoint = scope.get("endpoint")
-                policy = self.index.policy_for(endpoint) if endpoint is not None else None
-                if policy is not None and policy.response.no_store:
-                    headers = MutableHeaders(raw=message.setdefault("headers", []))
-                    headers.setdefault("cache-control", "no-store")
+                profile = (
+                    self.index.response_profile_for(endpoint) if endpoint is not None else None
+                )
+                if profile is not None:
+                    _stamp_cache_control(message, profile)
             await send(message)
 
         await self.app(scope, receive, send_wrapper)

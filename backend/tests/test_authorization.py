@@ -24,12 +24,15 @@ exit in a different task (the same reason `test_ingress` builds per test).
 """
 
 import uuid
+from contextlib import asynccontextmanager
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from app import error_codes
 from app.auth import anonymous, owner, pat
+from app.auth.dependency import ResponseProfileMiddleware
+from app.auth.registry import CredentialPolicy, ResponseProfile, RouteIndex, RoutePolicy
 from app.auth.resolver import INJECTED_PRINCIPAL_ATTR
 from app.db import get_sessionmaker
 from app.main import create_app
@@ -39,6 +42,18 @@ from app.services.portability.spec import INSTANCE_SETTINGS
 
 LOOPBACK = ("127.0.0.1", 12345)
 OUTSIDE = ("198.51.100.7", 40000)
+
+INITIALIZE = {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
+    "params": {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "test_authorization", "version": "0"},
+    },
+}
+MCP_HEADERS = {"Accept": "application/json, text/event-stream"}
 
 # One enforced app for the module. The lifespan is deliberately not entered:
 # ASGITransport never runs it, REST needs nothing from it, and the FastMCP
@@ -167,6 +182,166 @@ async def test_no_store_on_the_deny_envelope_too():
     denied_403 = await _request(pat(write=False), "POST", "/retailers", json=_unique_retailer())
     assert denied_403.status_code == 403
     assert denied_403.headers.get("cache-control") == "no-store"
+
+
+# --- the profile is enforced, not defaulted (Codex #198 round 2, f1) ------------
+# The real middleware around a synthetic downstream, so the handler's own
+# `Cache-Control` is the axis: whatever it set — nothing, an empty value, a
+# directive that permits storing, one that only revalidates, `no-store` already,
+# the SDK's SSE value, mixed-case directives, two header lines, a capitalised raw
+# key — the final header is the declaration. The unscoped negative controls sit
+# beside it: a profile with no demand leaves the handler's header alone, and a
+# declared cache directive is set verbatim.
+
+_NO_STORE = ResponseProfile(no_store=True)
+_PUBLIC = ResponseProfile(cache="public, max-age=3600")
+_NO_DEMAND = ResponseProfile()
+
+
+async def _through_middleware(profile, headers, *, endpoint_resolved=True):
+    async def endpoint(scope, receive, send):  # pragma: no cover - the match key only
+        pass
+
+    policy = RoutePolicy(family=4, credential=CredentialPolicy.READ, response=profile)
+    index = RouteIndex(by_endpoint={endpoint: policy}, routes=())
+
+    async def downstream(scope, receive, send):
+        if endpoint_resolved:
+            scope["endpoint"] = endpoint
+        start = {"type": "http.response.start", "status": 200}
+        if headers is not None:
+            start["headers"] = list(headers)
+        await send(start)
+        await send({"type": "http.response.body", "body": b"{}"})
+
+    transport = ASGITransport(app=ResponseProfileMiddleware(downstream, index))
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        return await client.get("/probe")
+
+
+@pytest.mark.parametrize(
+    "existing,final",
+    [
+        ([], ["no-store"]),  # absent — the only state setdefault ever handled
+        ([b""], ["no-store"]),  # empty value
+        ([b"public, max-age=3600"], ["no-store"]),  # permits shared storing
+        ([b"private, no-cache"], ["no-store"]),  # revalidates, still stores
+        ([b"no-store"], ["no-store"]),  # already right
+        ([b"no-cache, no-transform"], ["no-store, no-transform"]),  # the MCP SSE stream's
+        ([b"Public, No-Transform, max-age=60"], ["no-store, no-transform"]),  # mixed case
+        ([b"public", b"max-age=3600"], ["no-store"]),  # two header lines become one
+        ([b"no-transform", b"no-transform"], ["no-store, no-transform"]),  # kept once
+    ],
+)
+async def test_no_store_replaces_every_handler_cache_control_state(existing, final):
+    headers = [(b"content-type", b"application/json")]
+    headers += [(b"cache-control", value) for value in existing]
+    resp = await _through_middleware(_NO_STORE, headers)
+    assert resp.status_code == 200
+    assert resp.headers.get_list("cache-control") == final
+    assert resp.headers["content-type"] == "application/json"  # the rest is untouched
+
+
+async def test_a_capitalised_raw_cache_control_key_is_replaced_too():
+    """A raw ASGI endpoint may spell the key `Cache-Control`; header names are
+    case-insensitive, so it is the same header and must not survive beside the
+    stamped one (Starlette's `MutableHeaders` would have left it standing)."""
+    resp = await _through_middleware(_NO_STORE, [(b"Cache-Control", b"public, max-age=3600")])
+    assert resp.headers.get_list("cache-control") == ["no-store"]
+
+
+async def test_a_start_message_without_headers_gets_the_profile():
+    resp = await _through_middleware(_NO_STORE, None)
+    assert resp.headers.get_list("cache-control") == ["no-store"]
+
+
+@pytest.mark.parametrize("existing", [[], [b"public, max-age=3600"], [b"no-store"]])
+async def test_a_profile_with_no_demand_leaves_the_handler_header_alone(existing):
+    resp = await _through_middleware(_NO_DEMAND, [(b"cache-control", v) for v in existing])
+    assert resp.headers.get_list("cache-control") == [v.decode() for v in existing]
+
+
+@pytest.mark.parametrize("existing", [[], [b"no-store"], [b"private, no-transform"]])
+async def test_a_declared_cache_directive_is_set_verbatim(existing):
+    """The other declared state (#192's discovery documents): the profile's
+    `cache` replaces the handler's value exactly, no retention."""
+    resp = await _through_middleware(_PUBLIC, [(b"cache-control", v) for v in existing])
+    assert resp.headers.get_list("cache-control") == ["public, max-age=3600"]
+
+
+async def test_an_unresolved_endpoint_is_left_alone():
+    resp = await _through_middleware(
+        _NO_STORE, [(b"cache-control", b"public")], endpoint_resolved=False
+    )
+    assert resp.headers.get_list("cache-control") == ["public"]
+
+
+def test_a_profile_cannot_be_no_store_and_cacheable():
+    with pytest.raises(ValueError):
+        ResponseProfile(no_store=True, cache="public, max-age=3600")
+
+
+# --- the profile on the real graph: the status axis, and the mount ---------------
+
+
+async def test_no_store_across_the_status_axis():
+    """The stamp is on the final response whatever its status: a 405 for a wrong
+    verb on a no-store path, a 422 the parser produced before any handler, a
+    404 for a row that does not exist — while an unrouted 404 (no endpoint) and
+    readiness for an outside peer (a declared no-demand profile) carry nothing."""
+    wrong_verb = await _request(owner(), "PUT", "/kits")
+    assert wrong_verb.status_code == 405
+    assert wrong_verb.headers.get_list("cache-control") == ["no-store"]
+    unparsable = await _request(
+        owner(), "POST", "/retailers", content=b"{", headers={"Content-Type": "application/json"}
+    )
+    assert unparsable.status_code == 422
+    assert unparsable.headers.get_list("cache-control") == ["no-store"]
+    missing = await _request(owner(), "GET", f"/kits/{uuid.uuid4()}")
+    assert missing.status_code == 404
+    assert missing.headers.get_list("cache-control") == ["no-store"]
+    unrouted = await _request(owner(), "GET", "/no-such-route")
+    assert unrouted.status_code == 404
+    assert "cache-control" not in unrouted.headers
+    outside = await _request(owner(), "GET", "/readyz", peer=OUTSIDE)
+    assert outside.status_code == 404
+    assert "cache-control" not in outside.headers
+
+
+@asynccontextmanager
+async def _enforced_client(principal):
+    """A fresh enforced app with its lifespan entered — the FastMCP session manager
+    lives there — for the mount's rows; per test, for the cancel-scope reason in
+    the module docstring."""
+    live = create_app(authorization=True)
+    setattr(live.state, INJECTED_PRINCIPAL_ATTR, principal)
+    async with live.router.lifespan_context(live):
+        transport = ASGITransport(app=live, client=LOOPBACK, raise_app_exceptions=False)
+        async with AsyncClient(
+            transport=transport, base_url="http://127.0.0.1:8000", headers={"Host": "localhost"}
+        ) as client:
+            yield client
+
+
+async def test_the_mcp_transport_carries_no_store_over_the_sdk_header():
+    """The mount is declared no-store (tool results are collection data) and the
+    dependency never runs there, so the middleware is the only thing that can
+    say so — and before this it did not: the transport's endpoint was not in the
+    index. The SDK's own SSE header, `no-cache, no-transform`, is exactly the
+    handler-set state finding 1 was about: `no-cache` still permits storing, so
+    it goes; `no-transform` is kept. Its JSON error responses carry no cache
+    header at all and gain one."""
+    async with _enforced_client(owner()) as client:
+        stream = await client.post("/mcp/", json=INITIALIZE, headers=MCP_HEADERS)
+        assert stream.status_code == 200
+        assert stream.headers["content-type"].startswith("text/event-stream")
+        assert stream.headers.get_list("cache-control") == ["no-store, no-transform"]
+        not_acceptable = await client.get("/mcp/")  # no Accept: text/event-stream
+        assert not_acceptable.status_code == 406
+        assert not_acceptable.headers.get_list("cache-control") == ["no-store"]
+        wrong_verb = await client.put("/mcp/")
+        assert wrong_verb.status_code == 405
+        assert wrong_verb.headers.get_list("cache-control") == ["no-store"]
 
 
 # --- the shipped app is not enforced (activation is deferred) -------------------

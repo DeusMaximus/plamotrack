@@ -336,6 +336,15 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     exist (browser session #188, bearer #189) — the "foundation first, activate once
     credentials work" sequencing (owner's call, 2026-09-03). The matrix (`tests/test_authorization.py`)
     drives the real route graph through the dependency now, with injected principals.
+    The registry's **response profile is enforced, not defaulted**: the response
+    middleware replaces whatever `Cache-Control` a handler or library set with the
+    declaration on the final response (`no-transform` alone survives beside
+    `no-store`), the `/mcp` mount included — the dependency never runs there, so
+    nothing else could stamp it. And `build_route_index` refuses a route graph a
+    declaration cannot describe — two routes on one dispatch entry, one endpoint on
+    two routes, an undeclared route under a mount, a route type the walk does not
+    know — while the raw transport's accepted verbs are pinned *behaviourally*
+    (`tests/test_route_policy.py`), since its metadata declares none.
 
 ## Fixing a defect: sweep the class first
 

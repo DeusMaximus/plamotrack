@@ -17,10 +17,13 @@ exposure. So the policy is *declared* here, once, and three things read it:
   without a declaration fails the enumeration test rather than waiting for a
   reviewer.
 
-The enumeration test (`tests/test_route_policy.py`) walks every effective route
-and every registered MCP tool and fails naming anything the registry does not
-declare — which is what makes the M8 `/public/*` handlers, or a new router, a
-deliberate act rather than an accident.
+The enumeration test (`tests/test_route_policy.py`) walks every effective route,
+every route under a mount and every registered MCP tool and fails naming
+anything the registry does not declare — which is what makes the M8 `/public/*`
+handlers, or a new router, a deliberate act rather than an accident. The index
+build itself refuses a route graph a declaration cannot describe: two routes on
+one dispatch entry, one endpoint on two routes, a route type the walk does not
+know (Codex #198 round 2, f2).
 
 **What M6-2 populates.** Every route that exists today, plus the MCP tool scope
 map. The family-2/3 auth routes (#188), family-8 OAuth routes (#192) and their
@@ -33,7 +36,8 @@ rather than reshape this.
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+import re
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 
 from fastapi import FastAPI
@@ -97,12 +101,34 @@ class ResponseProfile:
     keeps out of a shared cache cannot leak the collection to the next user of a
     proxy. The SPA shell, liveness and readiness do not (static assets cache;
     `/healthz` and `/readyz` carry nothing worth withholding).
+
+    The profile is **enforced** on the final response by `ResponseProfileMiddleware`
+    (`app/auth/dependency.py`), not defaulted: whatever `Cache-Control` a handler
+    or a library set is replaced with the declaration — `no-transform` alone
+    survives beside `no-store` — so nothing downstream can weaken it (Codex #198
+    round 2, f1). A profile that makes no demand leaves the handler's header as
+    it is.
     """
 
     no_store: bool = False
     #: `public, max-age=…` for discovery documents (#192). None → no explicit
     #: caching directive from the app.
     cache: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.no_store and self.cache is not None:
+            raise ValueError(
+                "a response profile is no-store or declares a cache directive, not both"
+            )
+
+    @property
+    def cache_control(self) -> str | None:
+        """The `Cache-Control` value this profile requires on the final response,
+        or None when it makes no demand and the response keeps whatever the
+        handler set."""
+        if self.no_store:
+            return "no-store"
+        return self.cache
 
 
 @dataclass(frozen=True)
@@ -149,11 +175,26 @@ class RoutePolicy:
 # --- effective-route enumeration -------------------------------------------------
 
 
+class UndeclaredRouteError(RuntimeError):
+    """An effective route no rule in this module classifies — or a route type the
+    walk cannot enumerate. Raised at index build so a route lands with a policy
+    or not at all: the enumeration test's failure, surfaced the moment the app
+    is built rather than at first request."""
+
+
+class DuplicateRouteError(RuntimeError):
+    """Two effective routes that cannot both carry their declared policy: the same
+    dispatch entry (path pattern and method) twice, where Starlette serves the
+    first and the second's policy describes nothing a request can reach; or one
+    endpoint callable on two routes, where the endpoint-keyed lookup could hold
+    only one policy. Refused at build (Codex #198 round 2, f2A)."""
+
+
 @dataclass(frozen=True)
 class EffectiveRoute:
-    """One resolved leaf route: the path a client sees at the app, the methods,
-    the endpoint callable (the runtime match key), and the router tags used to
-    classify it."""
+    """One resolved leaf route of the FastAPI app itself: the path a client sees
+    at the app, the methods, the endpoint callable (the runtime match key), and
+    the router tags used to classify it. The REST dependency runs for these."""
 
     path: str
     methods: frozenset[str]
@@ -162,78 +203,95 @@ class EffectiveRoute:
     name: str
 
 
-def _iter_routes(routes: list[BaseRoute], prefix: str) -> Iterator[EffectiveRoute]:
+@dataclass(frozen=True)
+class MountedRoute:
+    """One leaf route under a `Mount` (the `/mcp` child): the full external path,
+    its declared methods — empty for a raw ASGI endpoint, Starlette's
+    `methods=None`, whose accepted verbs only its implementation knows, which is
+    why `tests/test_route_policy.py` pins those behaviourally — the endpoint
+    callable, and Starlette's name. The REST dependency does not wrap these (they
+    are FastMCP's), but the enumeration must *see* and *declare* them, or a route
+    added under the mount lands unlisted (Codex #198 f2), and the response
+    middleware needs the endpoint to stamp the mount's declared profile."""
+
+    path: str
+    methods: frozenset[str]
+    endpoint: object
+    name: str
+
+
+def _walk(
+    routes: Sequence[BaseRoute], prefix: str, *, mounted: bool
+) -> Iterator[EffectiveRoute | MountedRoute]:
+    """Every leaf under `routes`: included routers expanded, mounts descended
+    (nested ones too). A route type the walk does not know is refused, not
+    skipped — a `WebSocketRoute` or a `Host` passed over silently would be the
+    same hole as an undeclared route."""
     for route in routes:
         if type(route).__name__ == "_IncludedRouter":
             # FastAPI's lazy include wrapper: the real routes live on the wrapped
             # APIRouter, offset by the include's prefix. Recurse so a nested
             # include is expanded too (there are none today; cheap insurance).
             context = route.include_context  # type: ignore[attr-defined]
-            yield from _iter_routes(route.original_router.routes, prefix + context.prefix)  # type: ignore[attr-defined]
-        elif isinstance(route, APIRoute):
-            yield EffectiveRoute(
-                path=prefix + route.path,
-                methods=frozenset(route.methods or ()),
-                endpoint=route.endpoint,
-                tags=tuple(str(t) for t in route.tags),
-                name=route.name,
+            yield from _walk(
+                route.original_router.routes,  # type: ignore[attr-defined]
+                prefix + context.prefix,
+                mounted=mounted,
             )
+        elif isinstance(route, Mount):
+            # `Mount.routes` is the mounted app's route table — empty when the
+            # mounted app is a bare ASGI callable, in which case the mount itself
+            # is the leaf and its app is what Starlette puts in `scope["endpoint"]`.
+            sub_routes = route.routes
+            if sub_routes:
+                yield from _walk(sub_routes, prefix + route.path, mounted=True)
+            else:
+                yield MountedRoute(
+                    path=prefix + route.path,
+                    methods=frozenset(),
+                    endpoint=route.app,
+                    name=route.name or type(route.app).__name__,
+                )
         elif isinstance(route, Route):
-            # The auto Starlette routes: /openapi.json, /docs, /redoc,
-            # /docs/oauth2-redirect, and /healthz /readyz (added as api routes but
-            # arriving here as plain routes when include_in_schema is off).
-            yield EffectiveRoute(
-                path=prefix + route.path,
-                methods=frozenset(route.methods or ()),
-                endpoint=route.endpoint,
-                tags=(),
-                name=route.name,
+            path = prefix + route.path
+            methods = frozenset(route.methods or ())
+            if mounted:
+                yield MountedRoute(
+                    path=path, methods=methods, endpoint=route.endpoint, name=route.name
+                )
+            else:
+                # An APIRoute carries its router's tags; the auto Starlette routes
+                # (/openapi.json, /docs, /redoc, /docs/oauth2-redirect) carry none
+                # and classify by name, as do /healthz and /readyz.
+                tags = tuple(str(t) for t in route.tags) if isinstance(route, APIRoute) else ()
+                yield EffectiveRoute(
+                    path=path, methods=methods, endpoint=route.endpoint, tags=tags, name=route.name
+                )
+        else:
+            raise UndeclaredRouteError(
+                "route policy registry cannot enumerate a "
+                f"{type(route).__name__} at {prefix}{getattr(route, 'path', '?')}"
             )
-        # Mount (the /mcp sub-app) is handled by the caller: the REST dependency
-        # does not wrap it, so it is not an endpoint-keyed route here.
 
 
 def iter_effective_routes(app: FastAPI) -> Iterator[EffectiveRoute]:
-    """Every effective leaf route of the FastAPI app, included routers expanded.
-    The MCP mount is deliberately excluded — it is family 7, guarded by FastMCP
-    and the tool wrappers, not by the endpoint-keyed REST dependency."""
-    for route in app.routes:
-        if isinstance(route, Mount):
-            continue
-        yield from _iter_routes([route], "")
-
-
-@dataclass(frozen=True)
-class MountedRoute:
-    """One route inside a mounted sub-app (the `/mcp` child): the full external
-    path, its methods, and Starlette's name. The REST dependency does not wrap
-    these — they are FastMCP's — but the enumeration must still *see* them, or a
-    route added under the mount lands unlisted (Codex #198 f2)."""
-
-    path: str
-    methods: frozenset[str]
-    name: str
+    """Every effective leaf route of the FastAPI app itself, included routers
+    expanded — the routes the endpoint-keyed REST dependency runs for. Routes
+    under a `Mount` are family 7/8, guarded by FastMCP and the tool wrappers;
+    `iter_mounted_routes` enumerates those."""
+    for leaf in _walk(app.routes, "", mounted=False):
+        if isinstance(leaf, EffectiveRoute):
+            yield leaf
 
 
 def iter_mounted_routes(app: FastAPI) -> Iterator[MountedRoute]:
-    """Every leaf route under every `Mount`, so the enumeration covers the child
-    HTTP surface as well as the REST leaves. The child owns its own auth (family
-    7/8); this enumerates it, it does not wrap it in the resource-bearer
-    dependency."""
-    for route in app.routes:
-        if not isinstance(route, Mount):
-            continue
-        sub_app = route.app
-        sub_routes = getattr(sub_app, "routes", None)
-        if sub_routes is None:
-            sub_routes = getattr(getattr(sub_app, "router", None), "routes", [])
-        for sub in sub_routes:
-            if isinstance(sub, (Route, Mount)):
-                yield MountedRoute(
-                    path=route.path + sub.path,
-                    methods=frozenset(getattr(sub, "methods", None) or ()),
-                    name=getattr(sub, "name", ""),
-                )
+    """Every leaf route under every `Mount`, nested mounts descended, so the
+    enumeration covers the child HTTP surface as well as the REST leaves. The
+    child owns its own auth (family 7/8); this enumerates it, it does not wrap
+    it in the resource-bearer dependency."""
+    for leaf in _walk(app.routes, "", mounted=False):
+        if isinstance(leaf, MountedRoute):
+            yield leaf
 
 
 # --- the declarations ------------------------------------------------------------
@@ -326,6 +384,18 @@ MCP_TRANSPORT_POLICY = RoutePolicy(
 )
 
 
+def _classify_mounted(route: MountedRoute) -> RoutePolicy | None:
+    """The policy for one route under a mount, or None if nothing declares it.
+    Today the child surface is exactly the streamable-HTTP transport at `/mcp/`;
+    #192's protocol routes (family 8) add their declarations here as they land.
+    Until then anything else under a mount is undeclared and fails the build —
+    the round-1 probe route (`/mcp/review-undeclared`) is refused here, not only
+    by the test's snapshot."""
+    if route.path == "/mcp/":
+        return MCP_TRANSPORT_POLICY
+    return None
+
+
 # --- MCP tool scopes -------------------------------------------------------------
 #
 # The scope each MCP tool requires, read by the scope helper the tool wrappers
@@ -375,46 +445,121 @@ MCP_TOOL_SCOPES: dict[str, Scope] = {
 # --- the index -------------------------------------------------------------------
 
 
-class UndeclaredRouteError(RuntimeError):
-    """An effective route no rule in this module classifies. Raised at index
-    build so a route lands with a policy or not at all — the enumeration test's
-    failure, surfaced the moment the app is built rather than at first request."""
+_PATH_PARAMETER = re.compile(r"\{[^}]*\}")
+
+
+def dispatch_pattern(path: str) -> str:
+    """A route path with its parameter names (and convertors) erased:
+    `/kits/{kit_id}` and `/kits/{id}` compile to the same matcher, so they are
+    one dispatch entry and the second registered is unreachable."""
+    return _PATH_PARAMETER.sub("{}", path)
+
+
+def _method_label(methods: Iterable[str]) -> str:
+    return ",".join(sorted(methods)) or "*"
+
+
+class _DispatchTable:
+    """The (path pattern, methods) entries and the endpoints claimed so far, so a
+    second route on an entry — or a raw `*` route beside a method-specific one on
+    the same pattern, either of which leaves the other partly or wholly
+    unreachable — and a shared endpoint are named rather than absorbed."""
+
+    def __init__(self) -> None:
+        self._by_pattern: dict[str, list[tuple[frozenset[str], str]]] = {}
+        self._by_endpoint: dict[object, str] = {}
+        self.conflicts: list[str] = []
+
+    def claim(self, path: str, methods: frozenset[str], endpoint: object, label: str) -> None:
+        pattern = dispatch_pattern(path)
+        for other_methods, other in self._by_pattern.get(pattern, ()):
+            if not methods or not other_methods or methods & other_methods:
+                self.conflicts.append(f"{label} shares dispatch entry {pattern} with {other}")
+        self._by_pattern.setdefault(pattern, []).append((methods, label))
+        if endpoint in self._by_endpoint:
+            self.conflicts.append(f"{label} shares its endpoint with {self._by_endpoint[endpoint]}")
+        else:
+            self._by_endpoint[endpoint] = label
 
 
 @dataclass(frozen=True)
 class RouteIndex:
-    """The resolved registry: every effective route's endpoint mapped to its
-    policy, plus the MCP mount's policy. The dependency looks a request's
-    `scope["endpoint"]` up here; the enumeration test walks `by_endpoint` against
-    the live routes and `MCP_TOOL_SCOPES` against the live tool registry."""
+    """The resolved registry: every effective REST route's endpoint mapped to its
+    policy (`by_endpoint` — what the dependency reads), every mounted route's
+    endpoint mapped to its policy (`mounted_by_endpoint` — what the response
+    middleware reads for the child surface; the dependency never runs there),
+    and the enumerated routes both were built from. The enumeration test walks
+    these against the live routes and `MCP_TOOL_SCOPES` against the live tool
+    registry."""
 
     by_endpoint: dict[object, RoutePolicy]
     routes: tuple[EffectiveRoute, ...]
+    mounted_by_endpoint: dict[object, RoutePolicy] = field(default_factory=dict)
+    mounted_routes: tuple[MountedRoute, ...] = ()
     mcp: RoutePolicy = MCP_TRANSPORT_POLICY
 
     def policy_for(self, endpoint: object) -> RoutePolicy | None:
+        """The credential policy the REST dependency enforces. REST endpoints
+        only: a mounted endpoint answers None here because the dependency does
+        not wrap the child — its credential policy is FastMCP's to enforce."""
         return self.by_endpoint.get(endpoint)
+
+    def response_profile_for(self, endpoint: object) -> ResponseProfile | None:
+        """The response profile the middleware stamps on the final response —
+        REST and mounted endpoints alike, because the profile is a property of
+        the response, not of who enforces the credential: the mount is declared
+        `no-store` too (tool results are collection data)."""
+        policy = self.by_endpoint.get(endpoint) or self.mounted_by_endpoint.get(endpoint)
+        return None if policy is None else policy.response
 
 
 def build_route_index(app: FastAPI) -> RouteIndex:
-    """Resolve every effective route to its declared policy, or raise. Called
-    once at app build (the dependency reads the result), so an undeclared route
-    fails startup — and the test — rather than a request."""
+    """Resolve every effective route — REST leaves and the routes under every
+    mount — to its declared policy, or raise. Called once at app build (the
+    dependency and the response middleware read the result), so an undeclared
+    route fails startup — and the test — rather than a request.
+
+    Refused as well as an undeclared route, because each makes a declared policy
+    a lie about what a request reaches (Codex #198 round 2, f2A): two routes on
+    one dispatch entry, where Starlette serves the first and the second's policy
+    describes nothing; and one endpoint callable on two routes, where the
+    endpoint-keyed lookup could hold only one of their policies.
+    """
     by_endpoint: dict[object, RoutePolicy] = {}
     routes: list[EffectiveRoute] = []
+    mounted_by_endpoint: dict[object, RoutePolicy] = {}
+    mounted: list[MountedRoute] = []
     undeclared: list[str] = []
-    for route in iter_effective_routes(app):
-        routes.append(route)
-        policy = _classify(route)
+    table = _DispatchTable()
+    for leaf in _walk(app.routes, "", mounted=False):
+        label = f"{_method_label(leaf.methods)} {leaf.path} (name={leaf.name})"
+        table.claim(leaf.path, leaf.methods, leaf.endpoint, label)
+        if isinstance(leaf, EffectiveRoute):
+            routes.append(leaf)
+            policy = _classify(leaf)
+            target = by_endpoint
+        else:
+            mounted.append(leaf)
+            policy = _classify_mounted(leaf)
+            target = mounted_by_endpoint
         if policy is None:
-            undeclared.append(f"{sorted(route.methods)} {route.path} (name={route.name})")
-            continue
-        by_endpoint[route.endpoint] = policy
+            undeclared.append(label)
+        else:
+            target[leaf.endpoint] = policy
+    if table.conflicts:
+        raise DuplicateRouteError(
+            "route policy registry refuses an ambiguous route graph: " + "; ".join(table.conflicts)
+        )
     if undeclared:
         raise UndeclaredRouteError(
             "route policy registry declares no policy for: " + "; ".join(undeclared)
         )
-    return RouteIndex(by_endpoint=by_endpoint, routes=tuple(routes))
+    return RouteIndex(
+        by_endpoint=by_endpoint,
+        routes=tuple(routes),
+        mounted_by_endpoint=mounted_by_endpoint,
+        mounted_routes=tuple(mounted),
+    )
 
 
 # --- ingress: the /api/ alias rejection list (§5.5, rule 12) ----------------------
