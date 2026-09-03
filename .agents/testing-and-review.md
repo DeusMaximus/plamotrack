@@ -190,7 +190,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 277 cases over twenty-seven target files** — #86's
+- **On `main` at the time of writing: 318 cases over thirty target files** — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
   #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
   #118 (`ship-`), #129 (`dsp-`), #130 (`cat-`), #133 (`ref-`), #136
@@ -230,7 +230,19 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   `redirect_slashes` was unobservable — and is killed by a probe-route test; ingr-25
   survived once because the parity helper normalised the terminal dot away before
   comparing, fixed by asserting the raw `server_name` first. The one set here that
-  is about the request boundary rather than inventory: see the harness docstring).
+  is about the request boundary rather than inventory: see the harness docstring)
+  and #187 (`auth-` — the M6-2 auth foundation, PR #198: `app/auth/principal.py`,
+  `dependency.py`, `registry.py`, `app/main.py`, `plan_requires_admin` in the importer and,
+  under the mig- set's clean-tree cover, the auth migration's owner seed. auth-1…23 were
+  queued on the PR (auth-5 retired at round 3, its site removed — the gap is kept);
+  auth-24…42 are the round-1 set the PR queued by name only, written at fold-in. Every
+  behavioural kill runs against `create_app(authorization=True)` — the shipped app is
+  unenforced until #188. Two fold-in findings: the queued auth-22 tuple *appended* a
+  second copy of the profile middleware outermost where the round-3 hand run had moved
+  it, and survived (the inner copy still stamps) — re-anchored as one block replacement
+  that moves the call; and auth-37 (the predicate counting every table's UPDATEs)
+  survived because the collection-only import test planned a CREATE, never an UPDATE
+  — the test now seeds the retailer so the row is an UPDATE, the state-axis rule).
   **A message-restructuring change rots anchors silently**: #25 rewrote 81
   raise sites and six anchors (n5, n6a, n6b, cat-13, cat-14, wdr-8) sat
   SKIP-broken until #26's full run — a fold-in that runs only its own `-k`

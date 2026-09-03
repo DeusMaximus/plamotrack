@@ -531,7 +531,22 @@ async def test_an_unchanged_settings_sheet_does_not_require_admin():
 
 
 async def test_a_collection_only_merge_does_not_require_admin():
-    plan = await _plan("retailers.csv", b"name\nAuth Matrix Import Retailer\n", ImportMode.MERGE)
+    """A plan whose mutations touch collection tables only stays collection:write
+    — and the row is a genuine UPDATE, not a CREATE (the state axis): the
+    predicate must read *which table* an UPDATE lands on, not whether any UPDATE
+    is planned at all. With a CREATE-only plan a predicate that counted every
+    table's UPDATEs read green for the wrong reason (mutant auth-37 at fold-in).
+    Seeding the retailer first is what makes the imported row an UPDATE."""
+    await _request(owner(), "POST", "/retailers", json={"name": "Auth Matrix Import Retailer"})
+    plan = await _plan(
+        "retailers.csv",
+        b"name,notes\nAuth Matrix Import Retailer,updated by the import\n",
+        ImportMode.MERGE,
+    )
+    retailer_actions = [
+        row.action for table in plan.tables if table.table == "retailers" for row in table.rows
+    ]
+    assert RowAction.UPDATE in retailer_actions, retailer_actions
     assert plan_requires_admin(plan) is False
 
 

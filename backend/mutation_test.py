@@ -52,7 +52,13 @@ access control until the `ingr-` set (#186, M6-1): those cases mutate the Host/O
 guard — which names the instance answers to, which browser origins may write — the
 first request-boundary control in the app, defensive hardening of a self-hosted
 service that still has no authentication behind it (milestone 6). Two of them mutate
-a shell file, the nginx server-name generator, killed by a test that runs it.
+a shell file, the nginx server-name generator, killed by a test that runs it. The
+`auth-` set (#187, M6-2) is the first that mutates authorization itself — the
+principal/scope algebra, the default-deny dependency's 401/403 branches, the route
+policy registry and the response profile it declares — against an app built with
+`create_app(authorization=True)`: the shipped app stays unenforced until #188, so
+those kills come from the matrix that drives the real route graph through the
+dependency with injected principals, not from the shipped configuration.
 
 Restores from a backup in a `finally`, and refuses to start unless the tree is
 clean, so an interrupted run is obvious in `git status`.
@@ -101,6 +107,14 @@ ING = ROOT / "app/ingress.py"
 HOSTS = ROOT / "app/hostnames.py"
 CFG = ROOT / "app/config.py"
 ENVSH = ROOT.parent / "frontend/nginx/15-plamotrack-server-names.envsh"
+#: The M6-2 auth foundation (#187, PR #198): the principal/scope algebra, the
+#: default-deny dependency and the response profile it enforces, the route
+#: policy registry — and the auth migration, mutated under the mig- set's
+#: clean-tree cover. `IMP` (the importer) carries `plan_requires_admin`.
+PRIN = ROOT / "app/auth/principal.py"
+DEP = ROOT / "app/auth/dependency.py"
+REG = ROOT / "app/auth/registry.py"
+AUTH_MIG = VERS / "20260903_f1058c5de0f3_auth_foundation_tables_m6_2_187.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -2319,6 +2333,330 @@ CASES = [
         '    ""|0.0.0.0|::|"[::]"|127.*) ;;',
         "server_names_equal",
     ),
+    # --- #187 / PR #198 (M6-2): the auth foundation — queued on the PR as `auth-` --
+    # --- (15 tuples at round 2 plus 8 at round 3, all killed there by hand); auth-5
+    # --- was retired at round 3 when `response_profile_for` was removed — auth-16 is
+    # --- its successor, so the numbering keeps the gap. Anchors re-checked at fold-in
+    # --- against `6604658`: none had moved. auth-24 onward are the round-1 set the PR
+    # --- body queued by name only — the principal algebra, the dependency's 401/403
+    # --- branches, the classifications, `plan_requires_admin`, the owner seed, the
+    # --- tool scope map, the generated nginx rejections — written and measured at
+    # --- fold-in. Every behavioural kill runs against `create_app(authorization=
+    # --- True)`: the shipped app is unenforced until #188. auth-39/40 mutate the auth
+    # --- MIGRATION under the mig- set's clean-tree cover. ----------------------------
+    (
+        "auth-1. stamp only when no header is present (the setdefault behaviour)",
+        DEP,
+        "    value = final_cache_control(profile, existing)\n    if value is None:\n        return\n",
+        "    value = final_cache_control(profile, existing)\n    if value is None or existing:\n        return\n",
+        "replaces_every_handler or carries_no_store_over",
+    ),
+    (
+        "auth-2. only a lowercase cache-control key is removed",
+        DEP,
+        '    message["headers"] = [(k, v) for k, v in raw if k.lower() != _CACHE_CONTROL] + [',
+        '    message["headers"] = [(k, v) for k, v in raw if k != _CACHE_CONTROL] + [',
+        "capitalised",
+    ),
+    (
+        "auth-3. nothing kept beside no-store",
+        DEP,
+        'KEPT_BESIDE_NO_STORE = frozenset({"no-transform"})',
+        "KEPT_BESIDE_NO_STORE = frozenset()",
+        "replaces_every_handler or carries_no_store_over",
+    ),
+    (
+        "auth-4. a declared cache directive is dropped",
+        DEP,
+        "    if not profile.no_store:\n        return required\n",
+        "    if not profile.no_store:\n        return None\n",
+        "declared_cache_directive",
+    ),
+    (
+        "auth-6. dispatch-entry conflict dropped",
+        REG,
+        '                self.conflicts.append(f"{label} shares dispatch entry {pattern} with {other}")',
+        "                pass",
+        "one_dispatch_entry or renamed_path_parameter or wildcard_route",
+    ),
+    (
+        "auth-7. dispatch pattern keeps parameter names",
+        REG,
+        '    return _PATH_PARAMETER.sub("{}", path)',
+        "    return path",
+        "renamed_path_parameter",
+    ),
+    (
+        "auth-8. shared-endpoint conflict dropped",
+        REG,
+        '            self.conflicts.append(f"{label} shares its endpoint with {self._by_endpoint[endpoint]}")',
+        "            pass",
+        "one_endpoint_on_two_routes",
+    ),
+    (
+        "auth-9. an unknown route type is skipped",
+        REG,
+        '            raise UndeclaredRouteError(\n                "route policy registry cannot enumerate a "',
+        '            continue\n            raise UndeclaredRouteError(\n                "route policy registry cannot enumerate a "',
+        "unrecognised_route_type",
+    ),
+    (
+        "auth-10. a nested mount is not descended",
+        REG,
+        "            sub_routes = route.routes\n            if sub_routes:",
+        "            sub_routes = route.routes if not mounted else []\n            if sub_routes:",
+        "added_under_the_mount",
+    ),
+    (
+        "auth-11. every mounted route declared as the transport",
+        REG,
+        '    if route.path == "/mcp/":\n        return MCP_TRANSPORT_POLICY',
+        "    if True:\n        return MCP_TRANSPORT_POLICY",
+        "added_under_the_mount or bare_asgi_mount",
+    ),
+    (
+        "auth-12. transport declares PUT",
+        REG,
+        '    frozenset({"GET", "POST", "DELETE"}),\n    _NO_STORE,\n    spellings=frozenset({"/mcp/", "/mcp"}),',
+        '    frozenset({"GET", "POST", "DELETE", "PUT"}),\n    _NO_STORE,\n    spellings=frozenset({"/mcp/", "/mcp"}),',
+        "accepts_exactly_the_declared_methods",
+    ),
+    (
+        "auth-13. no_store beside cache allowed",
+        REG,
+        "        if self.no_store and self.cache is not None:\n            raise ValueError(",
+        "        if False:\n            raise ValueError(",
+        "cannot_be_no_store_and_cacheable",
+    ),
+    (
+        "auth-14. /healthz gains POST",
+        MAIN,
+        '    app.add_api_route("/healthz", healthz, methods=["GET"], include_in_schema=False)',
+        '    app.add_api_route("/healthz", healthz, methods=["GET", "POST"], include_in_schema=False)',
+        "rest_surface_matches_the_snapshot or 405_exactly",
+    ),
+    (
+        "auth-15. no-store becomes no-cache",
+        REG,
+        '        if self.no_store:\n            return "no-store"',
+        '        if self.no_store:\n            return "no-cache"',
+        "replaces_every_handler or status_axis",
+    ),
+    (
+        "auth-16. mounted routes never bound",
+        DEP,
+        "    for mounted in index.mounted_routes:\n        policy = index.mounted_by_endpoint.get(mounted.endpoint)",
+        "    for mounted in ():\n        policy = index.mounted_by_endpoint.get(mounted.endpoint)",
+        "carries_no_store_over or mounted_route_is_bound or refuses_undeclared_verbs",
+    ),
+    (
+        "auth-17. the binding does not stamp",
+        DEP,
+        '            if message["type"] == "http.response.start":\n                _stamp_cache_control(message, self.policy.response)\n            await send(message)\n\n        if self.policy.methods',
+        "            if False:\n                _stamp_cache_control(message, self.policy.response)\n            await send(message)\n\n        if self.policy.methods",
+        "replaces_every_handler or carries_no_store_over",
+    ),
+    (
+        "auth-18. the binding's verb gate removed",
+        DEP,
+        '        if self.policy.methods and scope["method"] not in self.policy.methods:',
+        '        if False and scope["method"] not in self.policy.methods:',
+        "refuses_undeclared_verbs or accepts_exactly_the_declared_methods",
+    ),
+    (
+        "auth-19. the refusal message drifts from the SDK's",
+        DEP,
+        'error=ErrorData(code=INVALID_REQUEST, message="Method Not Allowed"),',
+        'error=ErrorData(code=INVALID_REQUEST, message="Method not allowed"),',
+        "refusal_is_the_sdk_protocol_error",
+    ),
+    (
+        "auth-20. Allow sorted instead of the SDK's order",
+        DEP,
+        '    return ", ".join(ordered + sorted(declared - set(_METHOD_ORDER)))',
+        '    return ", ".join(sorted(declared))',
+        "refusal_is_the_sdk_protocol_error or refuses_undeclared_verbs",
+    ),
+    (
+        "auth-21. the profile middleware never added",
+        MAIN,
+        "        bind_route_policies(app, route_index)\n        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n\n    app.add_exception_handler",
+        "        bind_route_policies(app, route_index)\n\n    app.add_exception_handler",
+        "middleware_is_innermost or no_store_on_a_collection_read",
+    ),
+    # auth-22 MOVES the add_middleware call to the tail of create_app — after the
+    # two ingress guards, so the profile middleware lands outermost. The PR-body
+    # tuple only appended a second copy there and left the inner one in place, and
+    # that survived at fold-in (the inner copy still stamps; the position pin still
+    # holds): the round-3 hand run had made two edits. One anchor now spans both
+    # sites, so the harness's single replacement is the fault that was measured.
+    (
+        "auth-22. the profile middleware added last (outermost)",
+        MAIN,
+        "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n\n"
+        "    app.add_exception_handler(DomainError, domain_error_handler)\n"
+        "    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n"
+        "    app.add_exception_handler(RequestValidationError, request_validation_handler)\n\n"
+        "    # Outermost last: the guard answers a hostile Host before anything else\n"
+        "    # runs, and the forwarded-client resolver sees only requests that passed it.\n"
+        "    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n"
+        "    app.add_middleware(HostOriginGuardMiddleware, policy=policy)\n"
+        "    return app",
+        "\n    app.add_exception_handler(DomainError, domain_error_handler)\n"
+        "    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n"
+        "    app.add_exception_handler(RequestValidationError, request_validation_handler)\n\n"
+        "    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n"
+        "    app.add_middleware(HostOriginGuardMiddleware, policy=policy)\n"
+        "    if authorization:\n"
+        "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n"
+        "    return app",
+        "middleware_is_innermost",
+    ),
+    (
+        "auth-23. transport declares CONNECT",
+        REG,
+        '    frozenset({"GET", "POST", "DELETE"}),\n    _NO_STORE,\n    spellings=frozenset({"/mcp/", "/mcp"}),',
+        '    frozenset({"GET", "POST", "DELETE", "CONNECT"}),\n    _NO_STORE,\n    spellings=frozenset({"/mcp/", "/mcp"}),',
+        "accepts_exactly_the_declared_methods or refuses_undeclared_verbs",
+    ),
+    # --- the round-1 set, written at fold-in ------------------------------------------
+    (
+        "auth-24. write no longer implies read",
+        PRIN,
+        "        if scope is Scope.READ and Scope.WRITE in self.scopes:\n            return True",
+        "        if False:\n            return True",
+        "write_only_scope_set_reads_through_the_implication",
+    ),
+    (
+        "auth-25. admin implies read",
+        PRIN,
+        "        if scope is Scope.READ and Scope.WRITE in self.scopes:",
+        "        if scope is Scope.READ and (Scope.WRITE in self.scopes or Scope.ADMIN in self.scopes):",
+        "write_implies_read_admin_implies_nothing or write_only_scope_set_reads_through_the_implication",
+    ),
+    (
+        "auth-26. the owner drops instance:admin",
+        PRIN,
+        "        scopes=frozenset({Scope.READ, Scope.WRITE, Scope.ADMIN}),",
+        "        scopes=frozenset({Scope.READ, Scope.WRITE}),",
+        "settings_patch_is_admin_only or permits_matches_the_scope_algebra",
+    ),
+    # The bare scopes line also appears in `mcp()`; the return line makes it the pat
+    # factory's.
+    (
+        "auth-27. a write token gains instance:admin",
+        PRIN,
+        "    scopes = {Scope.READ, Scope.WRITE} if write else {Scope.READ}\n    return Principal(kind=PrincipalKind.PAT,",
+        "    scopes = {Scope.READ, Scope.WRITE, Scope.ADMIN} if write else {Scope.READ}\n    return Principal(kind=PrincipalKind.PAT,",
+        "settings_patch_is_admin_only or permits_matches_the_scope_algebra",
+    ),
+    (
+        "auth-28. anon on a scoped route is 403, not 401",
+        DEP,
+        "    if principal.kind is PrincipalKind.ANON:\n        raise UnauthenticatedError(_UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED)\n    if not principal.has_scope(scope):",
+        "    if not principal.has_scope(scope):",
+        "reads_need_a_read_scope or anonymous_read_is_the_unauthenticated_envelope",
+    ),
+    (
+        "auth-29. the scope check dropped",
+        DEP,
+        "    if not principal.has_scope(scope):\n        raise ForbiddenError(_FORBIDDEN, code=error_codes.AUTH_FORBIDDEN)\n    return principal",
+        "    return principal",
+        "a_write_needs_write_scope or settings_patch_is_admin_only",
+    ),
+    (
+        "auth-30. the anonymous family enforced",
+        DEP,
+        "    if credential == CredentialPolicy.ANONYMOUS:\n        return principal\n    if credential == CredentialPolicy.INTERNAL:",
+        "    if credential == CredentialPolicy.INTERNAL:",
+        "liveness_is_anonymous",
+    ),
+    (
+        "auth-31. readiness no longer passed to its own peer guard",
+        DEP,
+        "        # Readiness self-guards on the raw peer; let it answer its own 404.\n        return principal",
+        "        pass",
+        "readiness_answers_the_loopback_peer",
+    ),
+    (
+        "auth-32. PATCH /settings classified write",
+        REG,
+        "        credential = CredentialPolicy.READ if is_safe else CredentialPolicy.ADMIN",
+        "        credential = CredentialPolicy.READ if is_safe else CredentialPolicy.WRITE",
+        "settings_patch_is_admin_only or sensitive_routes_are_classified_as_intended",
+    ),
+    # The route self-guards on the peer, so only the classification pin can see
+    # these two today; #188's flip makes the docs one behavioural.
+    (
+        "auth-33. readiness declared anonymous",
+        REG,
+        '            10, CredentialPolicy.INTERNAL, route.methods, spellings=frozenset({"internal"})',
+        '            10, CredentialPolicy.ANONYMOUS, route.methods, spellings=frozenset({"internal"})',
+        "sensitive_routes_are_classified_as_intended",
+    ),
+    (
+        "auth-34. schema and docs declared anonymous",
+        REG,
+        "            11, CredentialPolicy.READ, route.methods, _NO_STORE, spellings=frozenset({root})",
+        "            11, CredentialPolicy.ANONYMOUS, route.methods, _NO_STORE, spellings=frozenset({root})",
+        "sensitive_routes_are_classified_as_intended",
+    ),
+    (
+        "auth-35. a mutating tool declared read",
+        REG,
+        '    "create_kit": Scope.WRITE,',
+        '    "create_kit": Scope.READ,',
+        "every_mutating_tool_holds_write",
+    ),
+    (
+        "auth-36. replace_all no longer needs admin",
+        IMP,
+        "    if plan.mode is ImportMode.REPLACE_ALL:\n        return True\n    return any(",
+        "    return any(",
+        "replace_all_always_requires_admin",
+    ),
+    (
+        "auth-37. any table's UPDATE needs admin",
+        IMP,
+        "        table.table == INSTANCE_SETTINGS.key\n        and any(row.action is RowAction.UPDATE for row in table.rows)",
+        "        any(row.action is RowAction.UPDATE for row in table.rows)",
+        "collection_only_merge_does_not_require_admin",
+    ),
+    (
+        "auth-38. a settings sheet's presence needs admin",
+        IMP,
+        "        and any(row.action is RowAction.UPDATE for row in table.rows)",
+        "        and any(True for row in table.rows)",
+        "unchanged_settings_sheet_does_not_require_admin or add_only_skips_a_settings_change",
+    ),
+    (
+        "auth-39. owner seeded claimed",
+        AUTH_MIG,
+        '    op.execute(sa.text("INSERT INTO owner (id, claimed_at) VALUES (1, NULL)"))',
+        '    op.execute(sa.text("INSERT INTO owner (id, claimed_at) VALUES (1, now())"))',
+        "owner_is_seeded_unclaimed_and_singular",
+    ),
+    (
+        "auth-40. owner not seeded",
+        AUTH_MIG,
+        '    op.execute(sa.text("INSERT INTO owner (id, claimed_at) VALUES (1, NULL)"))',
+        "    pass  # neutered",
+        "owner_is_seeded_unclaimed_and_singular",
+    ),
+    (
+        "auth-41. the /openapi.json alias rejection dropped",
+        REG,
+        '    ApiAliasRejection("/openapi.json", exact=True, family=11),\n',
+        "",
+        "root_canonical_live_route_is_covered or template_region_equals_the_registry_render",
+    ),
+    (
+        "auth-42. the generated rejection answers 403",
+        REG,
+        '        lines.append(f"{indent}    return 404;")',
+        '        lines.append(f"{indent}    return 403;")',
+        "template_region_equals_the_registry_render",
+    ),
 ]
 
 
@@ -3291,6 +3629,13 @@ TEST_FILES = [
     "tests/test_naive_csv_dates.py",
     # The #186 (ingr-) fold-in: every ingr- kill lives here, the sh ones included.
     "tests/test_ingress.py",
+    # The #187 (auth-) fold-in: the four auth modules — each named by at least one
+    # auth- expression (the generation suite by auth-41/42). The session-level
+    # migration walk in conftest is what applies the auth-39/40 migration mutants.
+    "tests/test_route_policy.py",
+    "tests/test_auth_tables.py",
+    "tests/test_authorization.py",
+    "tests/test_ingress_generation.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
