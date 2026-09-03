@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-03 — Claude Code (Fable 5.1) — #186 (M6-1) MERGED (PR #196 → `7954e47`, #39 closed) and **v0.2.10-alpha RELEASED** ("the instance knows its own name")
+## 2026-09-03 — Claude Code (Fable 5.1) — #186 (M6-1) MERGED (PR #196 → `7954e47`, #39 closed), **v0.2.10-alpha RELEASED**, mutant fold-in **PR #197** open
 
 - **Done:** M6-1 — ingress identity and the Host/Origin guard — implemented end to
   end on branch `feature/m6-1-ingress-guard` (absorbs #39). `app/config.py` gains
@@ -98,7 +98,15 @@ Template:
   with notes leading with the `ALLOWED_HOSTS` lockout and recovery, then the
   client-visible changes, upgrade steps and the mid-milestone note —
   https://github.com/DeusMaximus/plamotrack/releases/tag/v0.2.10-alpha. CI on
-  `7954e47` green (Backend, Frontend, Integration). Verified before the first push: `tests/test_ingress.py` 175 passed; full backend suite 1405 passed; ruff
+  `7954e47` green (Backend, Frontend, Integration). **Fold-in: PR #197** (branch
+  `chore/fold-ing-mutants`) puts the 26 tuples into `mutation_test.py` as **`ingr-`**
+  — relabelled because `-k ing-` substring-matches wdr-8's "missing-application" —
+  with `tests/test_ingress.py` in `TEST_FILES`, the nginx generator in the
+  clean-tree check (ingr-25/26 are the first cases against a shell file), ingr-15
+  re-anchored to the round-1 grammar; measured through the tracked harness:
+  **all 26 killed**, tree clean after; procedure doc count 251 → 277 over 27 files.
+  Harness-only change, no app code — rides the gate, no external review bought
+  (owner's criterion from #40). Verified before the first push: `tests/test_ingress.py` 175 passed; full backend suite 1405 passed; ruff
   clean; frontend 470 passed, lint + build green; negative control in a worktree at
   `main` (`ea4ce81`) **30 red / 14 green** with the greens the positive controls;
   hand mutation pass **19/19 killed** (ing-5 survived the first pass — child has one
@@ -111,7 +119,8 @@ Template:
   **needs `ALLOWED_HOSTS=<its LAN name>` in `.env` before pulling 0.2.10**.
 - **Next:** (1) **LXC upgrade to 0.2.10 — `ALLOWED_HOSTS=<its LAN name>` in its `.env`
   first**, back up, then pull (two migrations pending there from 0.2.8/0.2.9: display
-  items and settings; none new in 0.2.10); (2) fold
+  items and settings; none new in 0.2.10); (2) **merge PR #197** once its CI is green
+  (the fold-in replaces the old item: fold
   the `ing-` tuples into `mutation_test.py` (`ing-1`…`ing-26`, + `tests/test_ingress.py` in
   `TEST_FILES`), then the release gate for **0.2.10-alpha** — notes lead with
   `ALLOWED_HOSTS`; (3) #187 (registry) next — it replaces the typed nginx rejections
