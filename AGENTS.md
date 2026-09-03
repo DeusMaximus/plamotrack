@@ -308,6 +308,32 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     packaged stack (CI Integration). A new root route owes a row there until the
     route policy registry (#187) generates the list. The app is authoritative and
     nginx never grants: development runs without it.
+13. **Authorization is one dependency over a declared registry (M6-2, §5.5):** every
+    request resolves to one `Principal` (`anon`, `owner`, `pat`, `mcp`, `internal`;
+    scopes `collection:read`/`collection:write`/`instance:admin`, `write` implying
+    `read`, `admin` held by the owner alone), and a single app-level default-deny
+    dependency (`app/auth/dependency.py`) allows or denies from the **route policy
+    registry** (`app/auth/registry.py`) — the rule-9 shape applied to routes: declared
+    once, read by the dependency, the ingress rejection list and the T1/T2 matrix, and
+    matched on the **resolved endpoint**, never the URL string. The enumeration test
+    (`tests/test_route_policy.py`) fails on any effective route or MCP tool the registry
+    does not declare, which is what makes a new router or an M8 `/public/*` handler a
+    deliberate act. Auth configuration is **env-only** — there is no `AUTH_MODE=disabled`
+    in the shipped image and no settings row that turns authentication off (the Settings
+    page cannot grow a "disable auth" toggle); the pytest principal-injection seam
+    (`app/auth/resolver.py`) is a test-only `app.state` attribute the shipped app never
+    sets. Only an **absent** credential is `anon`; a credential that is *presented and
+    fails* — expired, revoked, malformed, wrong audience — is **401**, never a silent
+    downgrade. Auth tables are **never** portable (rule 9): they are absent from
+    `services/portability/spec.py`, so an export cannot become a credential dump. An
+    import's required privilege is read off its **plan's mutations** (`plan_requires_admin`)
+    — an `instance_settings` UPDATE or a `replace_all` needs `instance:admin` in any mode;
+    an unchanged or skipped settings sheet, or a collection-only plan, stays
+    `collection:write`. **Activation is staged:** `create_app(authorization=True)` installs
+    the dependency and the shipped `app` keeps it *off* until the credential mechanisms
+    exist (browser session #188, bearer #189) — the "foundation first, activate once
+    credentials work" sequencing (owner's call, 2026-09-03). The matrix (`tests/test_authorization.py`)
+    drives the real route graph through the dependency now, with injected principals.
 
 ## Fixing a defect: sweep the class first
 

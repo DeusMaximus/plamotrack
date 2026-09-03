@@ -78,6 +78,7 @@ from app.services.portability.exporting import (
 )
 from app.services.portability.spec import (
     CATALOG_TABLE_BY_ITEM_TYPE,
+    INSTANCE_SETTINGS,
     SPEC_BY_KEY,
     TABLE_SPECS,
     ColumnRole,
@@ -3297,6 +3298,27 @@ def _stamp_generated_status_changes(execution: ExecutionPlan) -> None:
             continue
         if any(change.field == "status" for change in row.changes):
             row.target.status_updated_at = now
+
+
+def plan_requires_admin(plan: ImportPlan) -> bool:
+    """Whether applying this plan needs `instance:admin` (§5.5 family 6).
+
+    An import reconfigures the instance — and so crosses the admin boundary — in
+    exactly two shapes: a ``replace_all`` wipe, or a plan that UPDATEs the
+    ``instance_settings`` singleton. The privilege follows the **mutation**, not
+    the presence of a settings sheet: a sheet that is unchanged (SKIP) or absent
+    leaves settings untouched and stays ``collection:write`` (Codex, PR #185;
+    §5.5). Read off the re-planned outcome and enforced before any row is
+    written — the wiring lands with the credential mechanisms (#188); the
+    predicate is the foundation the authorization matrix drives now.
+    """
+    if plan.mode is ImportMode.REPLACE_ALL:
+        return True
+    return any(
+        table.table == INSTANCE_SETTINGS.key
+        and any(row.action is RowAction.UPDATE for row in table.rows)
+        for table in plan.tables
+    )
 
 
 async def apply_import(

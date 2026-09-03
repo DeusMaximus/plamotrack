@@ -39,6 +39,12 @@ TOOL_COST_CURRENCY = "24ee4c9024e4"
 SHIPPED_AT = "bcdb375e32d0"
 DISPLAY_ITEMS = "2c97a5ced66a"
 INSTANCE_SETTINGS = "f9979ec7b9cb"
+AUTH_TABLES = "f1058c5de0f3"
+
+# The current migration head, as a literal (this module keeps revision ids as
+# literals on purpose — see the header). The "recovered to head" / "nothing
+# moved" assertions compare against it, so a new migration bumps this one line.
+HEAD = AUTH_TABLES
 
 
 def db(sql: str, **params) -> list[tuple]:
@@ -265,12 +271,12 @@ def test_restore_head_reraises_when_the_test_body_gave_no_signal(monkeypatch):
 
     with pytest.raises(RuntimeError, match="data-conditional failure"):
         _restore_head(cfg, body_failed=False)
-    assert current_revision() == INSTANCE_SETTINGS  # recovered to head before re-raising
+    assert current_revision() == HEAD  # recovered to head before re-raising
     assert calls["n"] == 2  # the rebuild really ran
 
     calls["n"] = 0
     _restore_head(cfg, body_failed=True)  # primary signal exists: swallow
-    assert current_revision() == INSTANCE_SETTINGS
+    assert current_revision() == HEAD
     assert calls["n"] == 2
 
 
@@ -434,9 +440,10 @@ def test_display_downgrade_refuses_until_no_display_data_in_any_form(walk):
     )
     with pytest.raises(RuntimeError, match=r"1 display item\(s\)"):
         walk.down(SHIPPED_AT)
-    # Transactional: nothing moved — including the instance_settings drop that
-    # sits between head and the refusing revision, rolled back with the rest.
-    assert current_revision() == INSTANCE_SETTINGS
+    # Transactional: nothing moved — including the auth-tables and
+    # instance_settings drops that sit between head and the refusing revision,
+    # rolled back with the rest.
+    assert current_revision() == HEAD
     assert db("SELECT count(*) FROM display_items") == [(1,)]
 
     # An order line, with the row also present: the message must put the line
