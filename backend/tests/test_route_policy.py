@@ -17,6 +17,7 @@ import pytest
 from fastmcp import Client
 
 from app.auth.principal import (
+    Principal,
     PrincipalKind,
     Scope,
     anonymous,
@@ -32,6 +33,7 @@ from app.auth.registry import (
     UndeclaredRouteError,
     build_route_index,
     iter_effective_routes,
+    iter_mounted_routes,
 )
 from app.main import app
 from app.mcp import mcp as mcp_server
@@ -68,6 +70,113 @@ def test_an_undeclared_route_fails_the_build():
     with pytest.raises(UndeclaredRouteError) as excinfo:
         build_route_index(probe)
     assert "/unclassified-probe" in str(excinfo.value)
+
+
+# --- the effective HTTP surface, snapshotted (Codex #198 f2) ---------------------
+# The enumeration's independent declaration: every REST leaf as
+# (path, methods) -> (family, credential), and every route under the /mcp mount as
+# (path, methods) -> name. Observed against these, so an added route, an added
+# HTTP method, a reclassification, or a NEW route under the mount all fail here —
+# `build_route_index` copying `route.methods` into the policy cannot notice a
+# method change on its own, and `iter_effective_routes` does not descend the mount.
+# Regenerate deliberately when a route legitimately changes.
+
+_REST_SURFACE: dict[tuple[str, str], tuple[int, str]] = {
+    ("/catalog/search", "GET"): (4, "read"),
+    ("/catalog/{catalog_id}/adjust", "POST"): (5, "write"),
+    ("/consumables", "GET"): (4, "read"),
+    ("/consumables", "POST"): (5, "write"),
+    ("/consumables/categories", "GET"): (4, "read"),
+    ("/consumables/{consumable_id}", "DELETE"): (5, "write"),
+    ("/consumables/{consumable_id}", "PATCH"): (5, "write"),
+    ("/display-items", "GET"): (4, "read"),
+    ("/display-items", "POST"): (5, "write"),
+    ("/display-items/categories", "GET"): (4, "read"),
+    ("/display-items/{display_item_id}", "DELETE"): (5, "write"),
+    ("/display-items/{display_item_id}", "PATCH"): (5, "write"),
+    ("/docs", "GET,HEAD"): (11, "read"),
+    ("/docs/oauth2-redirect", "GET,HEAD"): (11, "read"),
+    ("/export/archive", "GET"): (4, "read"),
+    ("/export/starter-sheet.csv", "GET"): (4, "read"),
+    ("/export/templates", "GET"): (4, "read"),
+    ("/export/{table_key}.csv", "GET"): (4, "read"),
+    ("/healthz", "GET"): (9, "anonymous"),
+    ("/import/apply", "POST"): (5, "write"),
+    ("/import/preview", "POST"): (5, "write"),
+    ("/kits", "GET"): (4, "read"),
+    ("/kits", "POST"): (5, "write"),
+    ("/kits/series", "GET"): (4, "read"),
+    ("/kits/{kit_id}", "DELETE"): (5, "write"),
+    ("/kits/{kit_id}", "GET"): (4, "read"),
+    ("/kits/{kit_id}", "PATCH"): (5, "write"),
+    ("/kits/{kit_id}/applications", "GET"): (4, "read"),
+    ("/meta", "GET"): (4, "read"),
+    ("/openapi.json", "GET,HEAD"): (11, "read"),
+    ("/orders", "GET"): (4, "read"),
+    ("/orders", "POST"): (5, "write"),
+    ("/orders/{order_id}", "DELETE"): (5, "write"),
+    ("/orders/{order_id}", "GET"): (4, "read"),
+    ("/orders/{order_id}", "PATCH"): (5, "write"),
+    ("/orders/{order_id}/receive", "POST"): (5, "write"),
+    ("/orders/{order_id}/ship", "POST"): (5, "write"),
+    ("/readyz", "GET"): (10, "internal"),
+    ("/redoc", "GET,HEAD"): (11, "read"),
+    ("/retailers", "GET"): (4, "read"),
+    ("/retailers", "POST"): (5, "write"),
+    ("/retailers/{retailer_id}", "DELETE"): (5, "write"),
+    ("/retailers/{retailer_id}", "PATCH"): (5, "write"),
+    ("/settings", "GET"): (4, "read"),
+    ("/settings", "PATCH"): (6, "admin"),
+    ("/tools", "GET"): (4, "read"),
+    ("/tools", "POST"): (5, "write"),
+    ("/tools/categories", "GET"): (4, "read"),
+    ("/tools/{tool_id}", "DELETE"): (5, "write"),
+    ("/tools/{tool_id}", "PATCH"): (5, "write"),
+    ("/upgrades", "GET"): (4, "read"),
+    ("/upgrades", "POST"): (5, "write"),
+    ("/upgrades/{upgrade_id}", "DELETE"): (5, "write"),
+    ("/upgrades/{upgrade_id}", "PATCH"): (5, "write"),
+    ("/upgrades/{upgrade_id}/applications/{application_id}", "DELETE"): (5, "write"),
+    ("/upgrades/{upgrade_id}/apply", "POST"): (5, "write"),
+}
+
+_MOUNTED_SURFACE: dict[tuple[str, str], str] = {
+    ("/mcp/", "*"): "StreamableHTTPASGIApp",
+}
+
+
+def _observed_rest_surface() -> dict[tuple[str, str], tuple[int, str]]:
+    index = build_route_index(app)
+    surface: dict[tuple[str, str], tuple[int, str]] = {}
+    for route in index.routes:
+        policy = index.policy_for(route.endpoint)
+        assert policy is not None
+        surface[(route.path, ",".join(sorted(route.methods)))] = (policy.family, policy.credential)
+    return surface
+
+
+def _observed_mounted_surface() -> dict[tuple[str, str], str]:
+    return {
+        (route.path, ",".join(sorted(route.methods)) or "*"): route.name
+        for route in iter_mounted_routes(app)
+    }
+
+
+def test_the_rest_surface_matches_the_snapshot():
+    """A new route, an added HTTP method, or a changed family/credential all move
+    the observed surface off this pinned declaration. The method half is why the
+    snapshot exists: the policy copies `route.methods`, so nothing else compares
+    the observed methods against an independent set (Codex #198 f2)."""
+    assert _observed_rest_surface() == _REST_SURFACE
+
+
+def test_the_mounted_surface_matches_the_snapshot():
+    """The `/mcp` child is enumerated too, so a route added under the mount fails
+    here — `iter_effective_routes` does not descend the mount, and the static MCP
+    policy plus the tool map do not enumerate the child HTTP surface (Codex
+    #198 f2). This does not wrap the child in the REST dependency; it only sees
+    it."""
+    assert _observed_mounted_surface() == _MOUNTED_SURFACE
 
 
 def test_the_mcp_tool_scope_map_matches_the_live_registry():
@@ -162,6 +271,26 @@ def test_write_implies_read_admin_implies_nothing():
     admin_only = internal().__class__(kind=PrincipalKind.OWNER, scopes=frozenset({Scope.ADMIN}))
     assert admin_only.has_scope(Scope.ADMIN)
     assert not admin_only.has_scope(Scope.READ)
+
+
+def test_a_write_only_scope_set_reads_through_the_implication():
+    """The implication itself, not the factory. `pat(write=True)` holds both
+    scopes, so `has_scope(READ)` is answered by direct membership and never needs
+    the `write ⇒ read` branch — which is why the mutant that makes that branch a
+    no-op survived (Codex #198 f3). A principal holding ONLY `collection:write`
+    (which no factory produces — the pat factory always adds read) must still
+    satisfy a read requirement, and does so only through the implication."""
+    write_only = Principal(kind=PrincipalKind.PAT, scopes=frozenset({Scope.WRITE}))
+    assert write_only.has_scope(Scope.READ) is True  # False under the mutant
+    assert write_only.has_scope(Scope.WRITE) is True
+    # Negative controls, so the assertion is the implication and not a tautology:
+    read_only = Principal(kind=PrincipalKind.PAT, scopes=frozenset({Scope.READ}))
+    assert read_only.has_scope(Scope.WRITE) is False
+    admin_only = Principal(kind=PrincipalKind.OWNER, scopes=frozenset({Scope.ADMIN}))
+    assert admin_only.has_scope(Scope.READ) is False
+    # And through the read policy the dependency reduces to: a write-only grant is
+    # permitted on a read route.
+    assert RoutePolicy(family=4, credential=CredentialPolicy.READ).permits(write_only) is True
 
 
 def test_labels_match_the_matrix_names():

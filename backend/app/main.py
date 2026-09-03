@@ -8,7 +8,11 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
 from app import __version__, error_codes
-from app.auth.dependency import ROUTE_INDEX_ATTR, enforce_route_policy
+from app.auth.dependency import (
+    ROUTE_INDEX_ATTR,
+    ResponseProfileMiddleware,
+    enforce_route_policy,
+)
 from app.auth.registry import build_route_index
 from app.config import Settings, get_settings
 from app.db import SessionDep
@@ -207,7 +211,11 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
     if authorization:
         # Resolve every effective route to its declared policy now (raises on
         # an undeclared route); the dependency reads this per request.
-        setattr(app.state, ROUTE_INDEX_ATTR, build_route_index(app))
+        route_index = build_route_index(app)
+        setattr(app.state, ROUTE_INDEX_ATTR, route_index)
+        # The response profile is stamped on the way out, so an export that
+        # returns its own Response still carries no-store (Codex #198 f1).
+        app.add_middleware(ResponseProfileMiddleware, index=route_index)
 
     app.add_exception_handler(DomainError, domain_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_envelope)

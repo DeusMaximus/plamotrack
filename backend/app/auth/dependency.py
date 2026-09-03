@@ -36,7 +36,9 @@ with `code` `auth.unauthenticated` / `auth.forbidden`.
 
 from __future__ import annotations
 
-from fastapi import Request, Response
+from fastapi import Request
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app import error_codes
 from app.auth.principal import Principal, PrincipalKind
@@ -54,7 +56,7 @@ _UNAUTHENTICATED = "You need to sign in to do that."
 _FORBIDDEN = "Your access doesn't allow that action."
 
 
-async def enforce_route_policy(request: Request, response: Response) -> Principal:
+async def enforce_route_policy(request: Request) -> Principal:
     index: RouteIndex = getattr(request.app.state, ROUTE_INDEX_ATTR)
     endpoint = request.scope.get("endpoint")
     policy = index.policy_for(endpoint) if endpoint is not None else None
@@ -65,10 +67,6 @@ async def enforce_route_policy(request: Request, response: Response) -> Principa
         # An app-level dependency runs only for a matched route, and every
         # declared route resolves — so this is defence in depth. Fail closed.
         raise UnauthenticatedError(_UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED)
-
-    # The response profile (§5.5): a no-store route never lands in a shared cache.
-    if policy.response.no_store:
-        response.headers["cache-control"] = "no-store"
 
     credential = policy.credential
     if credential == CredentialPolicy.ANONYMOUS:
@@ -86,3 +84,41 @@ async def enforce_route_policy(request: Request, response: Response) -> Principa
     if not principal.has_scope(scope):
         raise ForbiddenError(_FORBIDDEN, code=error_codes.AUTH_FORBIDDEN)
     return principal
+
+
+class ResponseProfileMiddleware:
+    """Applies the registry's response profile to the **final outgoing response**,
+    however the handler produced it — a value FastAPI serialises, an explicit
+    `Response` (the CSV/zip exports go through `portability._attachment`), or a
+    raised deny the exception handler renders.
+
+    Why a middleware and not the dependency: FastAPI's temporary dependency
+    `Response` only merges into responses it builds from a return value, so a
+    handler that returns its own `Response` never receives those headers — the
+    exports carry collection data and lost `Cache-Control: no-store` that way
+    (PR #198 Codex finding 1). Reading `scope["endpoint"]` at response start —
+    set by routing before any handler runs — lets this stamp every matched
+    route uniformly. The declared liveness/readiness exceptions keep no header
+    (their policy's `no_store` is False), and an unrouted path has no endpoint.
+    Installed only when `authorization=True`; the shipped app is untouched.
+    """
+
+    def __init__(self, app: ASGIApp, index: RouteIndex) -> None:
+        self.app = app
+        self.index = index
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                endpoint = scope.get("endpoint")
+                policy = self.index.policy_for(endpoint) if endpoint is not None else None
+                if policy is not None and policy.response.no_store:
+                    headers = MutableHeaders(raw=message.setdefault("headers", []))
+                    headers.setdefault("cache-control", "no-store")
+            await send(message)
+
+        await self.app(scope, receive, send_wrapper)

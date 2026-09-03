@@ -203,6 +203,39 @@ def iter_effective_routes(app: FastAPI) -> Iterator[EffectiveRoute]:
         yield from _iter_routes([route], "")
 
 
+@dataclass(frozen=True)
+class MountedRoute:
+    """One route inside a mounted sub-app (the `/mcp` child): the full external
+    path, its methods, and Starlette's name. The REST dependency does not wrap
+    these — they are FastMCP's — but the enumeration must still *see* them, or a
+    route added under the mount lands unlisted (Codex #198 f2)."""
+
+    path: str
+    methods: frozenset[str]
+    name: str
+
+
+def iter_mounted_routes(app: FastAPI) -> Iterator[MountedRoute]:
+    """Every leaf route under every `Mount`, so the enumeration covers the child
+    HTTP surface as well as the REST leaves. The child owns its own auth (family
+    7/8); this enumerates it, it does not wrap it in the resource-bearer
+    dependency."""
+    for route in app.routes:
+        if not isinstance(route, Mount):
+            continue
+        sub_app = route.app
+        sub_routes = getattr(sub_app, "routes", None)
+        if sub_routes is None:
+            sub_routes = getattr(getattr(sub_app, "router", None), "routes", [])
+        for sub in sub_routes:
+            if isinstance(sub, (Route, Mount)):
+                yield MountedRoute(
+                    path=route.path + sub.path,
+                    methods=frozenset(getattr(sub, "methods", None) or ()),
+                    name=getattr(sub, "name", ""),
+                )
+
+
 # --- the declarations ------------------------------------------------------------
 #
 # Classification is by router tag and method, with the handful of per-route

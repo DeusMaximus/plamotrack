@@ -140,6 +140,35 @@ async def test_no_store_on_a_collection_read_not_on_liveness():
     assert live.headers.get("cache-control") != "no-store"
 
 
+async def test_no_store_reaches_handler_returned_export_responses():
+    """Exports return their own `Response` through `portability._attachment`, which
+    a dependency's temporary response object never reaches — so the no-store
+    profile is stamped by the response middleware on the way out (Codex #198 f1).
+    Every export carries collection data and must not land in a shared cache."""
+    await _request(owner(), "POST", "/retailers", json=_unique_retailer())
+    for path in (
+        "/export/archive",
+        "/export/retailers.csv",
+        "/export/templates",
+        "/export/starter-sheet.csv",
+    ):
+        resp = await _request(owner(), "GET", path)
+        assert resp.status_code == 200, path
+        assert resp.headers.get("cache-control") == "no-store", path
+
+
+async def test_no_store_on_the_deny_envelope_too():
+    """A 401/403 on a no-store family carries the header as well — the middleware
+    stamps the final response whatever produced it, so the deny path is not the
+    gap it was when the dependency owned the header."""
+    denied_401 = await _request(anonymous(), "GET", "/kits")
+    assert denied_401.status_code == 401
+    assert denied_401.headers.get("cache-control") == "no-store"
+    denied_403 = await _request(pat(write=False), "POST", "/retailers", json=_unique_retailer())
+    assert denied_403.status_code == 403
+    assert denied_403.headers.get("cache-control") == "no-store"
+
+
 # --- the shipped app is not enforced (activation is deferred) -------------------
 
 
