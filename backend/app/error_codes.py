@@ -178,6 +178,22 @@ INGRESS_ORIGIN_NOT_ALLOWED = "ingress.origin_not_allowed"
 AUTH_UNAUTHENTICATED = "auth.unauthenticated"
 AUTH_FORBIDDEN = "auth.forbidden"
 
+# --- local owner authentication (M6-3, #188 — §5.5 families 2–3, §5.6) --------
+# 401 `login_failed` / `setup_token_invalid`: the presented secret is wrong (one
+# body for every failure kind, T11). 410 `setup_claimed`: the instance already
+# has an owner. 429 `too_many_attempts`: the failure budget is shut, `params.
+# retry_after` in seconds. 403 `csrf_failed` / `origin_required`: a cookie-borne
+# unsafe request without the session-bound token, or without an Origin/Referer.
+# 422 `password_too_short` / `password_too_long`: `params.min` / `params.max`.
+AUTH_LOGIN_FAILED = "auth.login_failed"
+AUTH_SETUP_TOKEN_INVALID = "auth.setup_token_invalid"
+AUTH_SETUP_CLAIMED = "auth.setup_claimed"
+AUTH_TOO_MANY_ATTEMPTS = "auth.too_many_attempts"
+AUTH_CSRF_FAILED = "auth.csrf_failed"
+AUTH_ORIGIN_REQUIRED = "auth.origin_required"
+AUTH_PASSWORD_TOO_SHORT = "auth.password_too_short"
+AUTH_PASSWORD_TOO_LONG = "auth.password_too_long"
+
 # --- request validation (FastAPI's 422 list shape) -------------------------
 REQUEST_VALIDATION = "request.validation"
 

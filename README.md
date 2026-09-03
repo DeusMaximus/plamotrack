@@ -12,9 +12,12 @@ want it to.
 
 > ### ⚠️ This is a public alpha
 >
-> **There is no authentication yet.** Anyone who can reach the API can write to it, and
-> that includes deleting things. Run it on a network you trust — your LAN, a VPN, or
-> plain old localhost — and please don't put it on the internet until Milestone 6 lands.
+> **There is a single owner login (since M6-3), but no TLS or API tokens yet.** A fresh
+> install comes up unclaimed and prints a one-time setup token to the API log; you claim
+> it in the browser and every REST route then needs that session. Still missing until the
+> rest of Milestone 6: a tested HTTPS path, and scoped tokens so scripts and **MCP clients**
+> authenticate (the MCP endpoint is not yet gated). Run it on a network you trust — your
+> LAN, a VPN, or plain old localhost — and don't put it on the internet yet.
 >
 > The database schema is also still moving. Migrations are provided and tested in both
 > directions, but export an archive before you upgrade. It takes one click, and that's
@@ -299,8 +302,9 @@ issue if yours needs something unusual.
 Import and export deliberately have **no** MCP tools. An agent that can silently replace
 your entire collection is not a feature.
 
-> ⚠️ The MCP server has no auth either — it's the same unauthenticated process as the
-> REST API. Keep it on localhost or a trusted network.
+> ⚠️ The MCP endpoint is not yet behind the owner login — scoped bearer tokens for MCP
+> and REST scripts are the next Milestone 6 release. Keep it on localhost or a trusted
+> network until then.
 
 ### Teach your agent your hobby's conventions
 

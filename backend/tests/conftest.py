@@ -31,8 +31,18 @@ from app.services.instance_settings import DEFAULTS as _SETTINGS_DEFAULTS  # noq
 
 _TABLES = (
     "kits, kit_photos, tools, consumables, upgrades, display_items, "
-    "upgrade_applications, retailers, orders, order_items"
+    "upgrade_applications, retailers, orders, order_items, "
+    # Auth tables (M6-3, #188). Never portable, so absent from the CSV spec, but
+    # they still accumulate across tests: setup claims the owner and login/setup
+    # write credentials, sessions and audit rows. `owner` is the exception — a
+    # singleton like instance_settings, reset below rather than truncated.
+    "credential, session, personal_access_token, audit_event"
 )
+
+#: The owner row is seeded once by the migration and cannot be recreated at
+#: runtime (the singleton CHECK). Between tests it is reset to **unclaimed**, the
+#: fresh-install state, so a setup test starts from the same place every time.
+_RESET_OWNER = "UPDATE owner SET claimed_at = NULL, oidc_issuer = NULL, oidc_subject = NULL"
 
 # The instance_settings singleton is deliberately NOT in _TABLES — truncating it
 # would delete the row migrations created, which nothing at runtime can do (#23).
@@ -86,7 +96,38 @@ async def clean_tables(apply_migrations):
             text(_RESET_SETTINGS),
             _SETTINGS_DEFAULTS | {"reference_currency": Settings().reference_currency},
         )
+        await session.execute(text(_RESET_OWNER))
         await session.commit()
+
+
+# The shipped `app` is default-deny since M6-3 (#188). The suite drives it with
+# an injected **owner** principal by default (the in-process seam the shipped
+# image never sets), so every pre-auth test keeps exercising its route without a
+# real login; an injected principal is not cookie-borne, so the CSRF controls do
+# not apply to it. Tests about authentication itself use `anon_client` (no
+# principal) or build a real session; `test_authorization.py` manages injection
+# per request on its own app.
+from app.auth import owner  # noqa: E402
+from app.auth.budget import FailureBudget  # noqa: E402
+from app.auth.resolver import INJECTED_PRINCIPAL_ATTR  # noqa: E402
+from app.auth.setup_token import setup_token_state  # noqa: E402
+from app.routers.auth import BUDGET_ATTR  # noqa: E402
+
+
+@pytest.fixture(autouse=True)
+def _inject_owner():
+    """Every test starts with an injected owner on the shipped app, cleared after
+    so a test that removes it (the auth-flow tests) cannot leak anonymity into
+    the next test. The process-level auth state that also lives on `app.state` —
+    the login/setup failure budget and the announced setup token — is reset too,
+    so one test's throttle or issued token cannot reach the next (both persist on
+    the module app otherwise)."""
+    setattr(app.state, INJECTED_PRINCIPAL_ATTR, owner())
+    setattr(app.state, BUDGET_ATTR, FailureBudget())
+    setup_token_state(app).consume()
+    yield
+    if hasattr(app.state, INJECTED_PRINCIPAL_ATTR):
+        delattr(app.state, INJECTED_PRINCIPAL_ATTR)
 
 
 @pytest.fixture
@@ -106,6 +147,19 @@ async def http_client():
     person to read it can't tell whether 500 or 422 is the agreed answer. Use this
     wherever the point of the test is which status a bad upload earns (rule 6).
     """
+    transport = ASGITransport(app=app, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c
+
+
+@pytest.fixture
+async def anon_client():
+    """The shipped app with **no** injected principal — a real anonymous caller.
+    Used by the auth-flow tests, which then present real cookies. Clears the
+    autouse owner injection for the duration."""
+    had = hasattr(app.state, INJECTED_PRINCIPAL_ATTR)
+    if had:
+        delattr(app.state, INJECTED_PRINCIPAL_ATTR)
     transport = ASGITransport(app=app, raise_app_exceptions=False)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c

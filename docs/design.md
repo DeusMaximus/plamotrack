@@ -1116,7 +1116,26 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    login screens, the host-side recovery command, `/meta` and the docs moved behind
    `collection:read` — FastAPI's generated schema/docs handlers disabled and
    re-registered as guarded routes, the Swagger OAuth2 helper dropped. (T4, T7, T8,
-   T11.)
+   T11.) **Shipped (#188):** the shipped `app` is default-deny (`create_app(
+   authorization=True)`); `Principal.via` distinguishes cookie-borne from bearer, and
+   the CSRF controls (Origin presence + session-bound `X-CSRF-Token`) apply to a
+   cookie-borne unsafe request only; `apply_import` reads `plan_requires_admin` off the
+   re-planned outcome. Two calls the item left open, recorded so a later item does not
+   re-derive them. (a) **A non-resolving session cookie resolves to `anon`, not 401**
+   (a deliberate narrowing of §5.5's "presented-and-failed → 401"): the cookie is
+   `HttpOnly`, so a browser cannot clear a stale one, and a 401 on a cookie the client
+   cannot drop would wedge `GET /auth/session` — the endpoint the SPA bootstraps and
+   recovers through — in a loop; treating a stale cookie as absent keeps recovery
+   automatic and the next login overwrites it. The strict rule stands for the **bearer**
+   (#189), where the client owns the header. (b) **Two disclosure-hardening items from
+   the family-13 row are deferred to a follow-up:** an unrouted `/api/*` path answers
+   `404` for everyone (not `401` for `anon`), and a malformed body to a protected route
+   is parsed to `422` before the dependency runs — both need auth to run *ahead of*
+   Starlette routing / FastAPI body parsing (a middleware-level check), which the
+   app-level dependency cannot do. The **e2e suite and CI Integration** need the auth
+   adaptation the flip requires (a Playwright global-setup that claims the owner and
+   reuses storage state, and auth on the specs' own API contexts); until that lands the
+   Integration job is red by construction.
 4. **Personal access tokens** — mint, list and revoke under Settings; bearer validation
    on REST and MCP; per-tool scope enforcement; `mcp-remote` documentation. (T5, T6.)
 5. **MCP OAuth compatibility spike** — the pinned FastMCP against Google and one

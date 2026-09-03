@@ -19,6 +19,7 @@ dependencies = [
     # database first and this as the fallback/union, so /settings accepts a
     # current zone list even on an image whose OS tzdata is absent or ancient.
     "tzdata>=2025.1",
+    "argon2-cffi>=25.1.0",
 ]
 
 [dependency-groups]

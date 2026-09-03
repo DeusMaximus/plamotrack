@@ -42,3 +42,25 @@ class ForbiddenError(DomainError):
     """An authenticated principal without the scope the route requires (§5.5).
     403 — the credential is valid, the grant is not enough. Raised by the
     authorization dependency and by the import-apply admin check."""
+
+
+class GoneError(DomainError):
+    """The thing addressed existed once and is deliberately gone for good (410):
+    the setup token's route after the instance is claimed (§5.5, family 3)."""
+
+
+class RateLimitedError(DomainError):
+    """The failure budget is shut (429, §5.6 brute force): `retry_after` is the
+    whole seconds until the next attempt is allowed, sent as `Retry-After` by the
+    handler as well as in `params`."""
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        code: str,
+        params: Mapping[str, object] | None = None,
+        retry_after: int,
+    ):
+        super().__init__(detail, code=code, params=params)
+        self.retry_after = retry_after

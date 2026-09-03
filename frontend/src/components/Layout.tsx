@@ -1,9 +1,9 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
 
-import { settingsQuery } from "../api/client";
+import { api, authSessionQuery, setCsrfToken, settingsQuery } from "../api/client";
 import { applyInstanceSettings } from "../lib/presentation";
 
 const NAV = [
@@ -19,6 +19,19 @@ export const SIDEBAR_DIVIDER_CLASS = "border-e";
 
 export function Layout() {
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
+  const signOut = async () => {
+    try {
+      await api.logout();
+    } finally {
+      // Whatever the server said, this browser is done: forget the CSRF token,
+      // drop every cached query, and re-read the session so the AuthGate shows
+      // the login screen.
+      setCsrfToken(null);
+      queryClient.clear();
+      await queryClient.invalidateQueries({ queryKey: authSessionQuery.queryKey });
+    }
+  };
   // The one place the persisted settings row becomes this browser's
   // presentation (#27): language, document lang/dir, and the formatting
   // preferences the date/number helpers read. Every browser runs the same
@@ -60,6 +73,16 @@ export function Layout() {
             </NavLink>
           ))}
         </nav>
+        <div className="mt-4 px-2">
+          <button
+            type="button"
+            onClick={signOut}
+            className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-zinc-500 hover:bg-zinc-50 hover:text-zinc-900"
+          >
+            <span aria-hidden>🚪</span>
+            {t("auth.signOut")}
+          </button>
+        </div>
       </aside>
       <main className="min-w-0 flex-1 p-6">
         <Outlet />

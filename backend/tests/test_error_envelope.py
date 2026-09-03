@@ -319,6 +319,8 @@ def _raise_sites() -> list[tuple[str, str | None, set[str] | None]]:
                 "DomainError",
                 "UnauthenticatedError",
                 "ForbiddenError",
+                "GoneError",
+                "RateLimitedError",
             ):
                 continue
             code, params_keys = _extract_code_and_params(node.exc)

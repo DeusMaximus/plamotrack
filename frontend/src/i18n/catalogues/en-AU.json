@@ -10,6 +10,22 @@
   "layout": {
     "tagline": "pre-order → panel-lined masterpiece"
   },
+  "auth": {
+    "setupTitle": "Set up plamotrack",
+    "setupIntro": "This instance has no owner yet. Paste the setup token from the API log and choose a password.",
+    "setupTokenLabel": "Setup token",
+    "setupTokenHint": "Printed in the API log at startup — `docker compose logs api`.",
+    "loginTitle": "Sign in",
+    "loginIntro": "Enter the owner password for this instance.",
+    "passwordLabel": "Password",
+    "passwordHint": "At least 12 characters.",
+    "createButton": "Create owner",
+    "signInButton": "Sign in",
+    "signOut": "Sign out",
+    "checking": "Checking…",
+    "passwordMismatch": "The passwords don't match.",
+    "confirmPasswordLabel": "Confirm password"
+  },
   "common": {
     "close": "Close",
     "loading": "Loading…",
@@ -179,7 +195,15 @@
       "version_newer": "This archive was written by a newer version of plamotrack (format {{exportVersion}}; this instance reads {{supportedVersion}}). Update before importing it."
     },
     "auth": {
+      "csrf_failed": "This request didn't carry a valid session token. Reload the page and try again.",
       "forbidden": "Your access doesn't allow that action.",
+      "login_failed": "That password isn't right.",
+      "origin_required": "This request didn't say where it came from, so it was refused.",
+      "password_too_long": "The password can't be longer than {{max}} characters.",
+      "password_too_short": "The password needs at least {{min}} characters.",
+      "setup_claimed": "This instance already has an owner. Sign in instead.",
+      "setup_token_invalid": "That setup token isn't right. The current one is in the API log.",
+      "too_many_attempts": "Too many failed attempts. Try again in {{retryAfter}} seconds.",
       "unauthenticated": "You need to sign in to do that."
     },
     "ingress": {

@@ -11,6 +11,7 @@ import type {
   ImportResult,
   InstanceSettings,
   InstanceSettingsUpdate,
+  AuthSession,
   Kit,
   KitCreate,
   KitStatus,
@@ -77,10 +78,33 @@ async function throwApiError(res: Response): Promise<never> {
   throw new ApiError(res.status, resolveApiError(res.statusText, body));
 }
 
+/** The session-bound CSRF token (#188): obtained from `GET /auth/session` for the
+ *  owner and sent in `X-CSRF-Token` on every cookie-borne unsafe request. Held in
+ *  a module variable rather than storage — it lives exactly as long as the tab,
+ *  the same lifetime as the session cookie it is bound to, and is re-read on every
+ *  session refresh (`setCsrfToken`). The cookie itself is `HttpOnly`, so JS never
+ *  sees or sends it explicitly; `credentials: "same-origin"` is what carries it. */
+let csrfToken: string | null = null;
+
+export function setCsrfToken(token: string | null): void {
+  csrfToken = token;
+}
+
+const UNSAFE = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
+function withCsrf(method: string, headers: HeadersInit): HeadersInit {
+  if (csrfToken && UNSAFE.has(method.toUpperCase())) {
+    return { ...headers, "X-CSRF-Token": csrfToken };
+  }
+  return headers;
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = init?.method ?? "GET";
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
     ...init,
+    headers: withCsrf(method, { "Content-Type": "application/json", ...init?.headers }),
   });
   if (!res.ok) {
     await throwApiError(res);
@@ -101,7 +125,12 @@ function patch(body: unknown): RequestInit {
 
 /** Multipart POST — the browser sets its own boundary, so no Content-Type here. */
 async function upload<T>(path: string, form: FormData): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, { method: "POST", body: form });
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    body: form,
+    credentials: "same-origin",
+    headers: withCsrf("POST", {}),
+  });
   if (!res.ok) {
     await throwApiError(res);
   }
@@ -111,7 +140,7 @@ async function upload<T>(path: string, form: FormData): Promise<T> {
 /** Pull a file down through fetch so an API error renders as a message rather
  *  than dumping a JSON error page into a download. */
 export async function downloadFile(path: string, fallbackName: string): Promise<void> {
-  const res = await fetch(`${API_BASE}${path}`);
+  const res = await fetch(`${API_BASE}${path}`, { credentials: "same-origin" });
   if (!res.ok) {
     throw new ApiError(res.status, i18n.t("api.exportFailed", { status: res.status }));
   }
@@ -196,6 +225,15 @@ export const api = {
 
   getMeta: () => request<Meta>("/meta"),
 
+  /** The SPA bootstrap (#188): claim state, whether this browser is the owner,
+   *  the language/locale for the setup and login screens, and the CSRF token. */
+  getAuthSession: () => request<AuthSession>("/auth/session"),
+  /** Claim an unclaimed instance: the setup token from the API log + a password. */
+  setupOwner: (token: string, password: string) =>
+    request<AuthSession>("/auth/setup", post({ token, password })),
+  login: (password: string) => request<AuthSession>("/auth/login", post({ password })),
+  logout: () => request<void>("/auth/logout", { method: "POST" }),
+
   getSettings: () => request<InstanceSettings>("/settings"),
   updateSettings: (data: InstanceSettingsUpdate) =>
     request<InstanceSettings>("/settings", patch(data)),
@@ -237,6 +275,14 @@ export const metaQuery = {
   queryKey: ["meta"],
   queryFn: api.getMeta,
   staleTime: Infinity,
+} as const;
+
+/** The auth session (#188). Short staleTime so a login/logout elsewhere in the
+ * app reflects quickly; the AuthGate keeps `setCsrfToken` in step with it. */
+export const authSessionQuery = {
+  queryKey: ["auth-session"],
+  queryFn: api.getAuthSession,
+  staleTime: 30_000,
 } as const;
 
 /** The instance-settings singleton (§6.1). Same shape and reasoning as

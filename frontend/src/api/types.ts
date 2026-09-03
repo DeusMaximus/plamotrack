@@ -501,3 +501,15 @@ export interface InstanceSettingsUpdate {
   hour_cycle?: HourCycle;
   reference_currency?: string;
 }
+
+/** `GET /auth/session` (§5.5 family 2, #188) — the SPA's bootstrap: whether the
+ *  instance is claimed, whether this browser is the owner, the language/locale
+ *  the setup and login screens render in, and (owner only) the CSRF token that
+ *  travels back in `X-CSRF-Token` on every unsafe request. No version, no
+ *  collection data. Mirrors backend/app/schemas/auth.py. */
+export interface AuthSession {
+  state: "unclaimed" | "anonymous" | "owner";
+  interface_language: string;
+  formatting_locale: string;
+  csrf_token: string | null;
+}

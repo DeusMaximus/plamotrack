@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, File, Form, UploadFile
+from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import Response
 
 from app.db import SessionDep
@@ -80,6 +80,7 @@ async def preview_import(
 
 @router.post("/import/apply", response_model=ImportResult)
 async def apply_import(
+    request: Request,
     session: SessionDep,
     file: Annotated[UploadFile, File()],
     mode: Annotated[ImportMode, Form()] = ImportMode.MERGE,
@@ -93,5 +94,11 @@ async def apply_import(
     the domain error (422) that says *why*, rather than FastAPI rejecting the form
     field with a validation shape that doesn't mention previewing (rule 6)."""
     return await importing.apply_import(
-        session, file.filename or "upload.csv", await file.read(), mode, plan_hash, confirm
+        session,
+        file.filename or "upload.csv",
+        await file.read(),
+        mode,
+        plan_hash,
+        confirm,
+        principal=getattr(request.state, "principal", None),
     )

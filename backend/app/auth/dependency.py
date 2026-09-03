@@ -7,15 +7,15 @@ principal's scopes. Because it matches on `scope["endpoint"]` — the callable
 Starlette resolved — and never on the URL string, no encoding, doubled slash or
 traversal can select a different policy than the handler it reaches.
 
-**Not yet installed on the shipped app.** `create_app(authorization=False)` is
-the default, so the shipped instance keeps answering every route until the
-credential mechanisms exist (#188 session, #189 bearer) — the "activate once
-credentials work" sequencing (foundation first, M6-2). `create_app(
-authorization=True)` installs it, and the authorization matrix
-(`tests/test_authorization.py`) drives the real route graph through it with
-injected principals. When #188 flips the default to True it also does the
-suite-wide injection and the CI/e2e credential path; until then this is
-exercised only where a test asks for it.
+**Installed on the shipped app since M6-3 (#188).** `create_app(authorization=
+True)` installs it and the module-level `app` runs with it on: local owner
+authentication (#188) is what makes default-deny usable, so the sequencing "build
+the foundation (M6-2), activate once a credential exists (M6-3)" completes here.
+`create_app()` (the default off) is still what the ingress and packaged-stack
+harnesses build, and the suite drives the shipped app with an injected owner
+(`tests/conftest.py`); the authorization matrix (`tests/test_authorization.py`)
+injects each principal against the real route graph. The bearer (#189) is the
+next credential the resolver will add.
 
 Statuses (§5.5):
 
@@ -45,9 +45,12 @@ from starlette.responses import JSONResponse, Response
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app import error_codes
+from app.auth.credentials import csrf_tokens_match
 from app.auth.principal import Principal, PrincipalKind
 from app.auth.registry import CredentialPolicy, ResponseProfile, RouteIndex, RoutePolicy
-from app.auth.resolver import resolve_principal
+from app.auth.resolver import RAW_SESSION_TOKEN_ATTR, resolve_principal
+from app.auth.sessions import CSRF_HEADER
+from app.db import SessionDep
 from app.exceptions import ForbiddenError, UnauthenticatedError
 
 #: Where `create_app` stores the resolved registry for the dependency to read.
@@ -56,21 +59,57 @@ ROUTE_INDEX_ATTR = "route_index"
 #: Also stashed on `request.state` for downstream use (audit, #193).
 REQUEST_PRINCIPAL_ATTR = "principal"
 
+#: Methods that carry no CSRF risk — a cross-site GET is unreadable by the page
+#: that sent it (mirrors `ingress.SAFE_METHODS`).
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
 _UNAUTHENTICATED = "You need to sign in to do that."
 _FORBIDDEN = "Your access doesn't allow that action."
+_CSRF_FAILED = "This request didn't carry a valid session token. Reload the page and try again."
+_ORIGIN_REQUIRED = "This request didn't say where it came from, so it was refused."
 
 
-async def enforce_route_policy(request: Request) -> Principal:
+def _enforce_csrf(request: Request, principal: Principal) -> None:
+    """The session's CSRF controls (§5.6, CSRF; #188). They apply to a
+    **cookie-borne** unsafe request only — a bearer request (#189) skips both, a
+    browser never attaching a bearer cross-site without a CORS preflight no
+    allow-origin will ever grant. Two independent conditions, either enough to
+    stop a simple forgery:
+
+    - **an Origin (or Referer) must be present.** The ingress guard already
+      validated its *value* when present (`app/ingress.py`); this closes the
+      absent case for a cookie-borne write, the tightening §5.6 deferred to this
+      item — a browser cannot omit `Origin` on a cross-site unsafe request.
+    - **the session-bound CSRF token** in `X-CSRF-Token`, from `GET /auth/session`
+      (`csrf_tokens_match`), which only a holder of the `HttpOnly` cookie value
+      can compute.
+    """
+    if request.method in _SAFE_METHODS or not principal.cookie_borne:
+        return
+    if request.headers.get("origin") is None and request.headers.get("referer") is None:
+        raise ForbiddenError(_ORIGIN_REQUIRED, code=error_codes.AUTH_ORIGIN_REQUIRED)
+    raw_token = getattr(request.state, RAW_SESSION_TOKEN_ATTR, None)
+    presented = request.headers.get(CSRF_HEADER)
+    if raw_token is None or not csrf_tokens_match(presented, raw_token):
+        raise ForbiddenError(_CSRF_FAILED, code=error_codes.AUTH_CSRF_FAILED)
+
+
+async def enforce_route_policy(request: Request, session: SessionDep) -> Principal:
     index: RouteIndex = getattr(request.app.state, ROUTE_INDEX_ATTR)
     endpoint = request.scope.get("endpoint")
     policy = index.policy_for(endpoint) if endpoint is not None else None
-    principal = resolve_principal(request)
+    principal = await resolve_principal(request, session)
     setattr(request.state, REQUEST_PRINCIPAL_ATTR, principal)
 
     if policy is None:
         # An app-level dependency runs only for a matched route, and every
         # declared route resolves — so this is defence in depth. Fail closed.
         raise UnauthenticatedError(_UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED)
+
+    # CSRF applies to any cookie-borne unsafe request, whatever the route's
+    # credential policy — a family-3 logout is anonymous-classified but still
+    # cookie-borne, so the check lives here, before the scope switch.
+    _enforce_csrf(request, principal)
 
     credential = policy.credential
     if credential == CredentialPolicy.ANONYMOUS:
