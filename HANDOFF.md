@@ -41,6 +41,48 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Opus 4.8) — auth- fold-in (PR #199) + #188 (M6-3) local owner auth OPEN (PR #200, default-deny flip landed)
+
+- **Done:** (1) **auth- mutant fold-in → PR #199** (harness-only, branched off `main`):
+  the 22 tuples queued on #198 (auth-1…4, 6…23; auth-5 retired) plus the round-1 set
+  written at fold-in (auth-24…42 — principal/scope algebra, the dependency's 401/403 +
+  family branches, the classifications, the MCP tool scope map, `plan_requires_admin`,
+  the owner seed, the generated nginx rejections). Four auth test files → `TEST_FILES`.
+  Two fold-in findings: auth-22 as queued *appended* a 2nd profile middleware outermost
+  and survived → re-anchored as one block move; auth-37 survived because the
+  collection-only import test planned a CREATE, never an UPDATE → the test now seeds the
+  retailer (state-axis). **All 42 killed**; backend 1626. Doc count 277→318/30 files.
+  (2) **#188 (M6-3) → PR #200** off `feature/m6-3-local-owner-auth`: local owner auth,
+  shipped app now **default-deny** (`create_app(authorization=True)`). New under
+  `app/auth`: credentials, budget, sessions, setup_token, recovery; `services/auth` +
+  `services/audit`; `routers/auth` (family 2/3, anonymous+self-checking); `schemas/auth`.
+  Resolver reads the session cookie on the *request's own session*; dependency enforces
+  CSRF (Origin presence + `X-CSRF-Token`) on cookie-borne unsafe requests. Docs/schema
+  re-registered as guarded APIRoutes (OAuth2 redirect dropped); GoneError 410 +
+  RateLimitedError 429; `apply_import` wired to `plan_requires_admin`. Frontend AuthGate
+  (setup/login/owner) + CSRF-aware client + sidebar sign-out. Backend **1653**, frontend
+  **481**, ruff + build clean, `render_ingress --check` ok. `argon2-cffi` added; no new
+  migration (inherits #187's `f1058c5de0f3`).
+- **Decisions (PR #200 body + design §5.9 item 3):** a non-resolving session cookie → `anon`,
+  not 401 (an `HttpOnly` cookie can't be cleared out of a 401 loop on `/auth/session`;
+  the strict rule is the bearer's, #189); resolve on the request session (a 2nd
+  connection deadlocked vs the teardown TRUNCATE); CSRF cookie-borne-only; docs always
+  re-registered as APIRoutes; conftest injects an owner by default so the ~1600 pre-auth
+  tests pass; `test_auth_local.py` uses `anon_client` + real cookies.
+- **State:** both PRs **OPEN, unmerged, unreviewed**. **CI Integration on #200 is red by
+  construction** — the Playwright e2e specs hit the API anonymously and now 401; the flip
+  needs an e2e global-setup (claim via the recovery command, reuse storage state) + auth
+  on the specs' own `request.newContext` calls, **NOT done** (no Chromium / dev stack in
+  this env). **Merge ordering: #199 before #188** — else #199's anchors need re-checking
+  after #188 moves `dependency.py`/`main.py`/`registry.py`. Two family-13 hardening items
+  deferred (unrouted `/api/*` → 401; parse-before-auth), design §5.9 item 3(b).
+- **Next:** (1) the e2e/CI-Integration auth adaptation for #200 (the one blocker to green);
+  (2) review + merge **#199 then #200** (order above); (3) **#189 (M6-4) PATs** — mint/list/
+  revoke in Settings, bearer on REST+MCP as the resolver's next credential, per-tool
+  scope, T5/T6/T10 — **not started this session**; (4) the two deferred hardening items;
+  (5) **LXC stays put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` into its
+  `.env` before the pull, back up first.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #187 (M6-2) MERGED (PR #198 → `6604658`, Codex round 4 GO)
 
 - **Done:** Codex round 4 (GPT 5.6 Sol) on `0d594d0`: **GO, no remaining or new findings**
@@ -204,92 +246,3 @@ Template:
   is finished** (owner, 03/09): no 0.2.10 upgrade there yet; when the time comes,
   `ALLOWED_HOSTS=<its LAN name>` goes into `.env` before the pull, then the pending
   migrations (incl. `f1058c5de0f3`) land together (back up first).
-
-## 2026-09-03 — Claude Code (Fable 5.1) — #186 (M6-1) MERGED (PR #196 → `7954e47`, #39 closed), **v0.2.10-alpha RELEASED**, mutant fold-in MERGED (PR #197 → `987c6da`)
-
-- **Done:** M6-1 — ingress identity and the Host/Origin guard — implemented end to
-  end on branch `feature/m6-1-ingress-guard` (absorbs #39). `app/config.py` gains
-  `PUBLIC_BASE_URL`, `ALLOWED_HOSTS`, `ALLOWED_ORIGINS`, `TRUSTED_PROXIES` (+ reads
-  `WEB_BIND`) with validators (bare `*` refused); new `app/ingress.py` — one
-  `IngressPolicy` from settings, `HostOriginGuardMiddleware` (421 / 403 in the #25
-  envelope, `params.setting` names the key), `ForwardedClientMiddleware`
-  (`request.state.client_address` from `TRUSTED_PROXIES` peers; `scope["client"]`
-  untouched), `is_internal_peer`; `app/main.py` is now a factory (`create_app`,
-  `build_mcp_app`) with FastMCP in strict mode on the same lists,
-  `redirect_slashes=False` on both routers, `/readyz` raw-loopback-only; uvicorn
-  `--no-proxy-headers` (Dockerfile, Playwright, README, AGENTS.md); nginx moved to
-  `frontend/nginx/default.conf.template` + `15-plamotrack-server-names.envsh`
-  (default-deny 421 server, the four `/api/` rejections, root `.well-known`
-  locations, security headers + SPA CSP, `Host $http_host`); compose passes exactly
-  three keys to `web`; `.env.example`; two error codes through registry, fixture,
-  catalogue and the envelope audit; `backend/ingress_matrix.py` (T2, 44 rows) run
-  by CI Integration with `ALLOWED_HOSTS=ci.plamotrack.test`; docs (operations:
-  *Names it answers to*, *Upgrading to 0.2.10*; README; AGENTS.md rule 12;
-  design.md §5 status + §5.9 item 1 shipped note; testing-and-review CI row).
-  **Version bumped to 0.2.10** (three files, `uv lock`). No migration.
-- **Decisions:** (1) an unsafe request with neither `Origin` nor `Referer` passes —
-  T3's denial is for cookie-borne principals (none until M6-3); `null` is refused;
-  (2) `TRUSTED_PROXIES` ships as mechanism only, compose sets nothing for nginx
-  until M6-8 has a consumer; (3) REST guard wraps the MCP mount too, FastMCP's guard
-  asserted separately; (4) `Host $http_host` at nginx so same-origin sees the port.
-  All four in the PR body's *Deliberate calls* and in §5.9 item 1.
-- **State:** **PR #196 squash-merged as `7954e47`** on the owner's call (03/09), branch
-  deleted, **#186 and #39 closed**. Head before merge was `dc0c7d8` (`1e134f7` the
-  feature, then the round-1 fixes). **Codex round 1 (GPT 5.6 Sol):
-  GO, three non-blocking P3s, all reproduced at `1e134f7` and fixed at the head** —
-  one defect in three places (Python derivation vs sh generator disagreeing on the
-  effective allowlist): (1) `*:8080`/`[*]`/`www.*` survived validation and became `*`
-  after port-stripping → new `app/hostnames.py`, every host-producing setting judged
-  on its normalised form; (2) `WEB_BIND=127.0.0.2` dropped by the app, listed by
-  nginx → only the three built-ins are dropped; (3) `PUBLIC_BASE_URL=http://nas.lan.`
-  emitted a dotted `server_name` nginx can never match → one terminal dot stripped
-  at both layers, FastMCP handed dotted names too. Plus a seven-case corpus test
-  running the real `.envsh` under `sh` against the Python policy. Answered per
-  finding in the PR thread; frontend count corrected to 471; call 5 reworded
-  (uvicorn's `scope.server` is the concrete local address). After the fixes:
-  `tests/test_ingress.py` **240 passed**, full backend **1470 passed**, seven more
-  mutants killed (ing-20…26, two of them the first against the sh generator; ing-25
-  survived once because the parity helper normalised the dot away before comparing —
-  fixed by asserting the raw `server_name` first). **Release gate (testing-and-review.md) run on `7954e47`:** M6 milestone still holds
-  #187–#195 + #30 by design (this is item 1 of ten, its own release — the notes say
-  so); version 0.2.10 in the three files; packaged stack `up -d --wait --build` from
-  the merge commit — `migrate` Exited (0), four services healthy, `GET /api/meta` →
-  0.2.10, MCP `serverInfo.version` → 0.2.10 through nginx, archive manifest
-  `app_version` 0.2.10 / `schema_version` f9979ec7b9cb (= alembic head), ingress
-  matrix 0 failures on the release build; stack `down` (no `-v`), dev `db` overlay
-  restored. **Released on the owner's word:** annotated tag `v0.2.10-alpha — the instance knows
-  its own name` on `7954e47` pushed, `gh release create --prerelease --verify-tag`
-  with notes leading with the `ALLOWED_HOSTS` lockout and recovery, then the
-  client-visible changes, upgrade steps and the mid-milestone note —
-  https://github.com/DeusMaximus/plamotrack/releases/tag/v0.2.10-alpha. CI on
-  `7954e47` green (Backend, Frontend, Integration). **Fold-in: PR #197, squash-merged as `987c6da`** on the owner's call once CI was
-  green (branch deleted) — puts the 26 tuples into `mutation_test.py` as **`ingr-`**
-  — relabelled because `-k ing-` substring-matches wdr-8's "missing-application" —
-  with `tests/test_ingress.py` in `TEST_FILES`, the nginx generator in the
-  clean-tree check (ingr-25/26 are the first cases against a shell file), ingr-15
-  re-anchored to the round-1 grammar; measured through the tracked harness:
-  **all 26 killed**, tree clean after; procedure doc count 251 → 277 over 27 files.
-  Harness-only change, no app code — rides the gate, no external review bought
-  (owner's criterion from #40). Verified before the first push: `tests/test_ingress.py` 175 passed; full backend suite 1405 passed; ruff
-  clean; frontend 470 passed, lint + build green; negative control in a worktree at
-  `main` (`ea4ce81`) **30 red / 14 green** with the greens the positive controls;
-  hand mutation pass **19/19 killed** (ing-5 survived the first pass — child has one
-  route today — killed by the added probe-route test); packaged stack built and
-  probed (matrix 0 failures with `nas.lan:8080` + `PUBLIC_BASE_URL` in a scratch
-  `.env`, fastmcp `Client` through nginx on both spellings, SPA under the CSP with an
-  empty console incl. the *Add kit* dialog); stack `down` (no `-v`), dev `db` overlay
-  restored, `.env` restored from backup. PR body + release-notes draft in the session
-  scratchpad (`pr-body.md`, now posted as the PR body); PR #184 (`ja`) unchanged. LXC still pre-0.2.9 — and
-  **needs `ALLOWED_HOSTS=<its LAN name>` in `.env` before pulling 0.2.10**.
-- **Next:** (1) **#187 (M6-2, the route policy registry)** is the next implementation
-  branch — it replaces the typed nginx rejections and `ingress_matrix.py`'s hand-typed
-  rows; #190 (the OAuth spike) can start in parallel now that M6-1's topology exists.
-  (2) **The LXC stays where it is until M6 is finished** — owner's call, 03/09: no
-  0.2.10 upgrade, no `ALLOWED_HOSTS` edit there yet; when the time comes, that name
-  goes into its `.env` before the pull, and the two 0.2.8/0.2.9 migrations plus
-  whatever M6 adds land together (back up first). Do not raise the LXC upgrade
-  before then. (Was: fold
-  the `ing-` tuples into `mutation_test.py` (`ing-1`…`ing-26`, + `tests/test_ingress.py` in
-  `TEST_FILES`), then the release gate for **0.2.10-alpha** — notes lead with
-  `ALLOWED_HOSTS`; (3) #187 (registry) next — it replaces the typed nginx rejections
-  and the matrix's hand-typed rows.
