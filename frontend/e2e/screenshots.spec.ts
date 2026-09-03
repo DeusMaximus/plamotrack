@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT = path.join(HERE, "..", "..", "docs", "screenshots");
 
@@ -36,25 +36,23 @@ test.skip(!process.env.SCREENSHOTS, "screenshot capture runs only with SCREENSHO
 
 test.use({ deviceScaleFactor: 2, viewport: { width: 1440, height: 900 } });
 
-test("seed the demo collection and capture the README screenshots", async ({
-  page,
-  request,
-}) => {
+test("seed the demo collection and capture the README screenshots", async ({ page }) => {
   test.setTimeout(180_000);
+  const api = await apiContext();
   const post = async (route: string, json: object) => {
-    const resp = await request.post(`${API}${route}`, { data: json });
+    const resp = await api.post(route, { data: json });
     expect(resp.ok(), `${route}: ${resp.status()} ${await resp.text()}`).toBeTruthy();
     return resp.json();
   };
   const patch = async (route: string, json: object) => {
-    const resp = await request.patch(`${API}${route}`, { data: json });
+    const resp = await api.patch(route, { data: json });
     expect(resp.ok(), `${route}: ${resp.status()} ${await resp.text()}`).toBeTruthy();
     return resp.json();
   };
 
   // Refuse to seed into a database that already holds anything — this spec is
   // for the throwaway demo DB, and a stray run against dev data would pollute it.
-  const existing = await (await request.get(`${API}/retailers`)).json();
+  const existing = await (await api.get("/retailers")).json();
   expect(existing, "screenshots seed wants an empty database").toEqual([]);
 
   // --- retailers (all invented; the README disclaimer depends on it) ------------
@@ -348,4 +346,5 @@ test("seed the demo collection and capture the README screenshots", async ({
   await shot("/settings/data", "data.png", { width: 1440, height: 900 }, async () => {
     await expect(page.getByText(/export/i).first()).toBeVisible();
   });
+  await api.dispose();
 });

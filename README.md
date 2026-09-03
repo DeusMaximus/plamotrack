@@ -362,7 +362,9 @@ uv run ruff check --fix . && uv run ruff format .
 cd ../frontend
 npm run build                                        # type-check + production build
 npm run lint
-npm run test:e2e                                     # Playwright (npx playwright install chromium)
+npm run test:e2e                                     # Playwright (npx playwright install chromium);
+                                                     #   claims a fresh instance itself — on one you
+                                                     #   claimed, set E2E_OWNER_PASSWORD
 ```
 
 Two documents are worth reading before you change anything structural:

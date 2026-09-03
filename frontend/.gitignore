@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Playwright e2e: the owner session auth.setup.ts writes for the other projects
+e2e/.auth/

@@ -1,4 +1,4 @@
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 /**
  * #61 — withdrawing an upgrade application from the kit editor.
@@ -14,7 +14,7 @@ import { expect, request, test } from "@playwright/test";
  * its own control with its own coverage; this spec is about the withdrawal.
  */
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 const suffix = Date.now().toString(36);
 const UPGRADE = `E2E Metal Thrusters ${suffix}`;
 const KIT = `E2E Sazabi ${suffix}`;
@@ -27,7 +27,7 @@ let upgradeId = "";
 let kitId = "";
 
 test.beforeAll(async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const upgrade = (await (
     await api.post("/upgrades", {
       data: { name: UPGRADE, manufacturer: "E2E Works", quantity_on_hand: 5 },
@@ -44,14 +44,14 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   // Withdrawals in the tests empty the application list, so both deletes are
   // legal again — the cleanup itself exercises the released guards.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   if (kitId) await api.delete(`/kits/${kitId}`);
   if (upgradeId) await api.delete(`/upgrades/${upgradeId}`);
   await api.dispose();
 });
 
 async function applyViaApi(quantity: number): Promise<void> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const resp = await api.post(`/upgrades/${upgradeId}/apply`, {
     data: { kit_id: kitId, quantity },
   });
@@ -60,7 +60,7 @@ async function applyViaApi(quantity: number): Promise<void> {
 }
 
 async function stockOnHand(): Promise<number> {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const upgrades = (await (await api.get("/upgrades")).json()) as Upgrade[];
   await api.dispose();
   return upgrades.find((u) => u.name === UPGRADE)!.quantity_on_hand;

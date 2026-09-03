@@ -1,6 +1,6 @@
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 
 // Unique names so the test never collides with (or damages) real dev data.
 const suffix = Date.now().toString(36);
@@ -112,7 +112,7 @@ test("kanban drag moves the kit to Building", async ({ page }) => {
   await page.mouse.up();
 
   // Optimistic UI: the card is under Building immediately; the API agrees shortly.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   await expect
     .poll(async () => {
       const kits = (await (await api.get("/kits")).json()) as { name: string; status: string }[];
@@ -123,7 +123,7 @@ test("kanban drag moves the kit to Building", async ({ page }) => {
 });
 
 test.afterAll("clean up everything this run created", async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
 
   const kits = (await (await api.get("/kits")).json()) as { id: string; name: string }[];
   const kit = kits.find((k) => k.name === KIT);

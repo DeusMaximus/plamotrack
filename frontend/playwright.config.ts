@@ -1,5 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
+import { STORAGE_STATE } from "./e2e/api";
+
 // E2E runs against the dev stack (backend :8000 + Vite :5173), reusing servers
 // that are already up. The spec creates uniquely-named records and cleans up
 // after itself via the API, so the dev database is left as it was found.
@@ -29,6 +31,11 @@ export default defineConfig({
     // difference between reading that a button stayed visible and seeing why.
     trace: "on-first-retry",
   },
+  // `setup` signs in as the owner once (e2e/auth.setup.ts) — since the
+  // default-deny flip (#188) every collection route wants one — and the other
+  // projects reuse its session: browser contexts through storageState, the
+  // specs' own API calls through e2e/api.ts.
+  //
   // settings.spec.ts flips the instance-settings singleton (the reference
   // currency) — the one piece of state every spec shares. order-snapshot and
   // order-lossless read that value in a beforeAll and assert stamps against
@@ -36,8 +43,19 @@ export default defineConfig({
   // cross-file ordering Playwright offers. The trade: a failure in `app`
   // skips `settings` for that run.
   projects: [
-    { name: "app", testIgnore: /settings\.spec\.ts/ },
-    { name: "settings", testMatch: /settings\.spec\.ts/, dependencies: ["app"] },
+    { name: "setup", testMatch: /auth\.setup\.ts/ },
+    {
+      name: "app",
+      testIgnore: /settings\.spec\.ts/,
+      dependencies: ["setup"],
+      use: { storageState: STORAGE_STATE },
+    },
+    {
+      name: "settings",
+      testMatch: /settings\.spec\.ts/,
+      dependencies: ["app"],
+      use: { storageState: STORAGE_STATE },
+    },
   ],
   webServer: [
     {

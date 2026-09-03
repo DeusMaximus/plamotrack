@@ -15,10 +15,10 @@
  *  timer, which this file once waited out, is gone — #104 closes the list on
  *  focus genuinely leaving it, which is not a race.)
  */
-import { expect, request, test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import type { Page } from "@playwright/test";
 
-const API = "http://127.0.0.1:8000";
+import { apiContext } from "./api";
 
 const suffix = Date.now().toString(36);
 const RETAILER = `E2E Keyboard ${suffix}`;
@@ -31,7 +31,7 @@ let orderId: string;
 let consumableId: string;
 
 test.beforeAll(async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const retailer = await api.post("/retailers", { data: { name: RETAILER } });
   expect(retailer.status(), await retailer.text()).toBe(201);
   retailerId = ((await retailer.json()) as { id: string }).id;
@@ -71,7 +71,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   // Order first: a retailer with order history refuses deletion (409), and
   // deleting the order also removes the kit it spawned.
   await api.delete(`/orders/${orderId}`);
@@ -280,7 +280,7 @@ test("a keyboard user can select a catalog search result (#104)", async ({ page 
   await expect(dialog).toBeHidden();
 
   // Driven through: the stored line carries the id of the item picked by key.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const orders = (await (await api.get("/orders")).json()) as {
     id: string;
     items: { item_type: string; catalog_ref_id: string | null }[];
@@ -344,7 +344,7 @@ test("submitting from the keyboard does not drop focus while the request is in f
   await expect(trigger).toBeFocused();
 
   // Clean up the retailer this test created.
-  const api = await request.newContext({ baseURL: API });
+  const api = await apiContext();
   const rows = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
   const created = rows.find((row) => row.name === `${RETAILER} submit`);
   if (created) await api.delete(`/retailers/${created.id}`);

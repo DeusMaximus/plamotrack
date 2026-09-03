@@ -25,11 +25,17 @@ export function Layout() {
       await api.logout();
     } finally {
       // Whatever the server said, this browser is done: forget the CSRF token,
-      // drop every cached query, and re-read the session so the AuthGate shows
-      // the login screen.
+      // re-read the session — it now reports anonymous, so the AuthGate swaps to
+      // the login screen and every page unmounts — then drop everything else so
+      // nothing from this session lingers for the next owner. The order matters:
+      // the session query has to still exist to be refetched (a cleared cache
+      // has nothing to invalidate, and the gate would keep rendering the app
+      // from its last result — caught by e2e/auth.spec.ts).
       setCsrfToken(null);
-      queryClient.clear();
       await queryClient.invalidateQueries({ queryKey: authSessionQuery.queryKey });
+      queryClient.removeQueries({
+        predicate: (query) => query.queryKey[0] !== authSessionQuery.queryKey[0],
+      });
     }
   };
   // The one place the persisted settings row becomes this browser's

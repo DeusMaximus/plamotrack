@@ -897,7 +897,11 @@ Notes on the table:
   negative ones — `/api/docs` and `/api/healthz` stay usable by their principals while
   `/api/openapi.json`, `/api/.well-known/*` and `/api/readyz` are rejected — because
   rejecting every parent-root path under `/api/` would take the docs and liveness
-  down with them. The externally observable surface is five things — parent routes,
+  down with them. Since the default-deny flip those positives want the owner, so
+  T2 signs in first — in CI with the setup token read from the API container's
+  log, which makes the first-run claim itself part of what the packaged stack
+  proves — and keeps an anonymous row beside them: the dependency's 401 through
+  nginx, distinct from the ingress's own 403/404/421. The externally observable surface is five things — parent routes,
   child routes, the `/api/` rewrite's aliases, router-generated redirects, and nginx's
   own prefix redirect — so T2 snapshots *responses*, status and `Location` both, never
   a route table alone. And it snapshots them **per layer**: one registry drives both
