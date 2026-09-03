@@ -214,6 +214,14 @@ jobs:
           docker compose exec -T db sh -c 'exec pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"' > /tmp/plamotrack-ci.dump
           docker compose exec -T db sh -c 'exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB" --clean --if-exists' < /tmp/plamotrack-ci.dump
 
+      # The packaged stack comes up the way a fresh install does: an empty
+      # volume, the migrate service from nothing, an unclaimed owner printing
+      # its setup token. The e2e suite above claimed the owner in this same
+      # Compose project's database (same `db` service, same volume), which
+      # would otherwise make the stack a claimed instance with no token to read.
+      - name: Discard the e2e database
+        run: docker compose down -v
+
       - name: Build and start the packaged stack
         run: docker compose up -d --build --wait
 
