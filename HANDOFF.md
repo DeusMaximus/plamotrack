@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-04 — Claude Code (Fable 5.1) — #188 (M6-3) MERGED (PR #200 → `a84ca48`, Codex round 2 GO); m63- fold-in PR #201 OPEN
+## 2026-09-04 — Claude Code (Fable 5.1) — #188 (M6-3) MERGED (PR #200 → `a84ca48`, Codex round 2 GO); m63- fold-in MERGED (PR #201 → `66bc922`)
 
 - **Done:** Codex round 2 (GPT 5.6 Sol) on `5be4414`: **GO, no new findings** — round-1 f1–f3
   confirmed fixed by replay (4 red / 24 green on `641b214`, 28/28 and 1658/1658 at head, five
@@ -53,16 +53,16 @@ Template:
   the #197/#199 precedent): m63-1…10 into `mutation_test.py`, `TEST_FILES` +
   `tests/test_auth_local.py`, four file constants; `-k m63-` → all 10 killed at fold-in.
 - **Decisions:** none new; #201 rides CI only.
-- **State:** `main` at `a84ca48` plus this entry. PR #201 open, unreviewed, awaiting CI + merge.
+- **State:** `main` at `66bc922` plus this entry (#201 squash-merged on green, owner's call).
   Dev DB is claimed with the e2e default password (`e2e-owner-password`); the packaged stack
   (`docker compose up`) on this Mac reuses the same volume — to see the first-run token locally,
   `docker compose down -v` first. No release cut — M6 ships as one release at the end.
-- **Next:** (1) merge #201 on green; (2) **#189 (M6-4) PATs** — mint/list/revoke in Settings,
+- **Next:** (1) **#189 (M6-4) PATs** — mint/list/revoke in Settings,
   bearer on REST+MCP as the resolver's next credential (the strict presented-and-failed → 401
   rule applies there; design §5.9 item 3(a)), per-tool scope, T5/T6/T10; `revoke_all_sessions`
-  callers from a request should pass `principal`/`request` (Codex round 2 note); (3) the two
+  callers from a request should pass `principal`/`request` (Codex round 2 note); (2) the two
   family-13 hardening items (unrouted `/api/*` → 401 for anon; parse-before-auth) — design §5.9
-  item 3(b); (4) #190 (OAuth spike) can run in parallel; (5) **LXC stays put until M6 is
+  item 3(b); (3) #190 (OAuth spike) can run in parallel; (4) **LXC stays put until M6 is
   finished** (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first, and
   it will come up **unclaimed**: read the setup token from `docker compose logs api`.
 
