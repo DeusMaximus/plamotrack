@@ -63,13 +63,12 @@ Template:
   AGENTS.md rule 13). **Verified against the real Keycloak** (spike realm, `localhost:8081`,
   API run in OIDC mode with `PUBLIC_BASE_URL=http://localhost:5173`): setup token → provider
   → bound owner in the SPA; a stranger → `auth_error=oidc_identity_refused` + audit row.
-- **Decisions:** in the PR-body draft (`scratchpad/pr-body-191.md`, "Deliberate calls" 1–10)
-  and design §5.9 item 6 — notably `start` is a POST returning JSON (token never in a URL,
+- **Decisions:** on PR #209's body ("Deliberate calls" 1–10) and design §5.9 item 6 — notably `start` is a POST returning JSON (token never in a URL,
   Origin-guarded), the transaction is a DB row not a signed cookie (no app secret exists),
   unbound ⇒ `unclaimed` ⇒ setup token, joserfc over Authlib's deprecated `jose`.
 - **State:** backend **1903 green** (`test_migration_data.py` HEAD bumped to `0db6c35d0a7e`),
   `tests/test_auth_oidc.py` **35**; frontend 487, build + lint clean. Hand mutants oidc-1…20
-  (runner in the session scratchpad, tuples in the PR-body draft): **18 killed, 2 equivalent**
+  (exact tuples in a `<details>` block on the PR body): **18 killed, 2 equivalent**
   (oidc-11 sub fallback — joserfc's essential `sub` refuses first; oidc-13 HS256 — no symmetric
   key in the JWKS); three first-pass survivors (5, 12, 19) were test gaps, now tests.
   T2 rows added to `ingress_matrix.py` (CI Integration proves them; packaged stack not run
@@ -77,7 +76,11 @@ Template:
   holds the local credential (`e2e-owner-password`) — switching the API back to local mode
   just works; Keycloak spike container is **up** (`.agents/spikes/190/keycloak/`, realm now
   lists the `localhost:5173` callback). No e2e change (local mode).
-- **Next:** (1) Codex round 1 on PR #209 (M6 security work; brief printed in the session);
+- **Next:** (1) **Codex round 1 on PR #209** — the brief was printed once in the authoring
+  session and is not stored; regenerate it from `.agents/review-brief.md` (Codex footer), the
+  PR body's "Deliberate calls" and its **"Where a reviewer should push"** section, head
+  `96f24ab`, `main` `a642d0b`, rules 1/6/7.1/9/11/13 in play; answer findings per
+  `.agents/testing-and-review.md` → "Responding to a review". Tree parked on the branch.
   (2) fold oidc- mutants
   into `mutation_test.py` after merge (the usual harness-only PR); (3) #192 (M6-7) on top —
   same issuer/client, the spike's decisions; (4) #193; (5) **LXC stays put until M6 is
