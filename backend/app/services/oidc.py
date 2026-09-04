@@ -49,6 +49,7 @@ import asyncio
 import base64
 import hashlib
 import logging
+import math
 import secrets
 import time
 from dataclasses import dataclass
@@ -140,8 +141,18 @@ class OidcLoginRefused(Exception):
 
 
 def _numeric_date(value: object) -> bool:
-    """A JWT NumericDate: a number — and not the bool that is also an `int`."""
-    return isinstance(value, int | float) and not isinstance(value, bool)
+    """A JWT NumericDate as its value domain, not its Python type: a JSON number
+    naming an instant (RFC 7519 §2), which JSON cannot spell as NaN or Infinity
+    (RFC 8259 §6) though Python's parser admits both — and every clock
+    comparison against NaN is false, so a NaN `exp` never "passes" (Codex #209
+    round 2, f3). Integers on their own branch: an arbitrarily large one is a
+    valid instant, and `math.isfinite` on it raises rather than answers. Not
+    the bool that is also an `int`."""
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, int):
+        return True
+    return isinstance(value, float) and math.isfinite(value)
 
 
 def validate_id_token_claims(
@@ -168,9 +179,10 @@ def validate_id_token_claims(
       member is it. An additional audience is one this client does not trust,
       whatever `azp` says, so it is refused (step 3);
     - `azp`, when present, is this client's id (step 5);
-    - `exp` is a NumericDate no more than `leeway` in the past (step 9); `iat`
-      a NumericDate — §2 requires the claim — no more than `leeway` in the
-      future (step 10); `nbf`, when present, likewise;
+    - `exp` is a NumericDate — a finite number, `_numeric_date` — no more than
+      `leeway` in the past (step 9); `iat` a NumericDate — §2 requires the claim
+      — no more than `leeway` in the future (step 10); `nbf`, when present,
+      likewise;
     - `nonce` is the string this login sent, not a list holding it (step 11).
 
     Raises `OidcLoginRefused(FAILED)`; the log line names the claim, never the

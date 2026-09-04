@@ -679,6 +679,18 @@ _NOW = int(time.time())
         pytest.param({"omit": ("iss",)}, id="issuer-missing"),
         pytest.param({"sub": ""}, id="subject-empty"),
         pytest.param({"sub": 12345}, id="subject-number"),
+        # A NumericDate is a JSON number, and JSON has no NaN or Infinity (RFC
+        # 7519 §2, RFC 8259 §6); Python's parser admits them, and every clock
+        # comparison against NaN is false (Codex #209 round 2, f3).
+        pytest.param({"exp": float("nan")}, id="exp-nan"),
+        pytest.param({"exp": float("inf")}, id="exp-inf"),
+        pytest.param({"exp": float("-inf")}, id="exp-neg-inf"),
+        pytest.param({"iat": float("nan")}, id="iat-nan"),
+        pytest.param({"iat": float("inf")}, id="iat-inf"),
+        pytest.param({"iat": float("-inf")}, id="iat-neg-inf"),
+        pytest.param({"nbf": float("nan")}, id="nbf-nan"),
+        pytest.param({"nbf": float("inf")}, id="nbf-inf"),
+        pytest.param({"nbf": float("-inf")}, id="nbf-neg-inf"),
     ],
 )
 async def test_an_id_token_that_fails_a_check_opens_no_session(tamper):
@@ -758,6 +770,38 @@ def test_the_claim_validator_holds_the_clock_leeway_at_its_edges():
         with pytest.raises(OidcLoginRefused) as refused:
             check(**edge)
         assert refused.value.code == CallbackError.FAILED
+
+
+def test_the_claim_validator_admits_only_finite_numeric_dates():
+    """The value domain, not the Python type (Codex #209 round 2, f3): NaN and
+    the infinities are floats a permissive parser hands over, and a comparison
+    against NaN is always false, so the predicate names the domain — a finite
+    number. Integers stay on their own branch: a huge one is a valid instant,
+    and `math.isfinite` on it would raise rather than answer."""
+    from app.services.oidc import OidcLoginRefused, validate_id_token_claims
+
+    now = 1_800_000_000
+
+    def check(**overrides) -> None:
+        claims = {
+            "iss": ISSUER,
+            "aud": CLIENT_ID,
+            "sub": OWNER_SUB,
+            "iat": now,
+            "exp": now + 300,
+            "nonce": "n",
+            **overrides,
+        }
+        validate_id_token_claims(claims, issuer=ISSUER, client_id=CLIENT_ID, nonce="n", now=now)
+
+    check(exp=10**400)
+    check(iat=-(10**400), nbf=-(10**400))
+    check(exp=float(now + 300), iat=float(now))
+    for claim in ("exp", "iat", "nbf"):
+        for value in (float("nan"), float("inf"), float("-inf")):
+            with pytest.raises(OidcLoginRefused) as refused:
+                check(**{claim: value})
+            assert refused.value.code == CallbackError.FAILED, (claim, value)
 
 
 async def test_a_provider_that_refuses_the_code_opens_no_session():

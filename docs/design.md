@@ -1278,7 +1278,9 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    each claim's type before its value: `iss` and `sub` as strings; `aud` exactly this
    client, as the string or a single-member array, an additional audience refused
    as untrusted whatever `azp` says; `azp`, when present, the client id; `exp`, `iat`
-   (required) and `nbf` as numbers against the clock with one leeway; `nonce` the
+   (required) and `nbf` as **finite** numbers against the clock with one leeway —
+   NaN and the infinities are floats Python's JSON parser admits and JSON forbids,
+   and a comparison against NaN is always false (round 2); `nonce` the
    transaction's string, not a list holding it. A generic JWT claims registry read a
    list as *containing* the expected value and knew none of the OIDC-specific rules,
    so a signed token naming another client as its authorized party opened a session.
