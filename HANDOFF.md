@@ -41,6 +41,41 @@ Template:
 
 ---
 
+## 2026-09-05 — Claude Code (Fable 5.1) — #191 (M6-6) MERGED (PR #209 → `b84f757`, Codex round 3 GO); oidc- fold-in MERGED (PR #211 → `ffaddd4`)
+
+- **Done:** Codex round 3 (GPT 5.6 Sol) on `59eb9a4`: **GO, no findings**. PR #209 squash-merged
+  to `main` as `b84f757` (`Closes #191` — issue closed), branch deleted. Then the usual
+  harness-only fold-in, PR #211 → `ffaddd4`: 34 `oidc-` cases in `backend/mutation_test.py`
+  (constants `OIDC_SVC`, `AUTH_ROUTER`, `MODE`; `TEST_FILES` + `tests/test_auth_oidc.py`;
+  procedure count 368/32 → 402/33 with the oidc- paragraph). Not folded: oidc-1/2/3/11
+  (anchored on the joserfc registry round 1 replaced; superseded by 23/22/27/26) and oidc-13
+  (equivalent — no symmetric key in the JWKS); oidc-20 and oidc-25 re-anchored. `-k oidc-`
+  all 34 killed on the fold-in head, no external review (the #199/#201/#203/#207 precedent).
+- **Decisions:** owner's — #192 (M6-7, MCP OAuth) starts in a **new session** (context, not
+  scope); this session closes here. Memory (agent-side): the owner switches sessions at
+  ~80–90% context after a hand-off update and never relies on compaction.
+- **State:** `main` at `ffaddd4` + this entry; tree clean. Backend 1949 green at the merge,
+  frontend 487. Dev DB at `4f3a9c1e7b2d` (head), owner bound to the Keycloak `owner` user
+  (spike realm) in OIDC mode and still holding the local credential — note the migration
+  stamped its existing sessions `local`, so the next OIDC-mode start of the API signs that
+  browser out once (sweep + `auth.mode_changed` row); local-mode starts are unaffected.
+  Keycloak spike container state as the #190 entry left it (`.agents/spikes/190/`, tracked at
+  `a642d0b`). The LXC is on the pre-M6 reset and **stays put until M6 is finished** (owner,
+  03/09) — it will need `ALLOWED_HOSTS` and, if it ever switches modes, expect the one-time
+  sign-out.
+- **Next:** (1) **#192 (M6-7) MCP OAuth** on a branch off `main` — build from design §5.9
+  item 7 and the #190 spike's decisions (`.agents/spikes/190/findings.md` §10: CIMD on,
+  synthesised upstream-id client refused, allowlist narrows DCR only, path-aware OpenID doc
+  kept and the bare one pruned, Postgres adapter for proxy state with the table owned by
+  Alembic, explicit `MCP_OAUTH_SIGNING_KEY`, `verify_id_token=True`, owner binding at
+  issuance, fixed rw scope mapping); same issuer/client as #191, so `services/oidc.py`'s
+  provider/discovery is the thing to reuse, and family 8's registry declarations + the
+  generated ingress rejections are where `test_route_policy.py` / `test_ingress_generation.py`
+  will push back first; (2) #193 audit/rate limiting; (3) M6-9 TLS docs, then the M6 release
+  (gate in `.agents/testing-and-review.md`) and only then the LXC upgrade. Release-notes
+  items so far: `AUTH_MODE=oidc`; a mode switch signs every browser out at the first start in
+  the new mode; a local→oidc switch needs the setup token once; `session.auth_mode` migration.
+
 ## 2026-09-05 — Claude Code (Fable 5.1) — #191 (M6-6) PR #209: Codex round 2 (NO-GO, 2×P3) addressed at `59eb9a4`, round 3 pending
 
 - **Done:** Codex round 2 (GPT 5.6 Sol) on `083ad08`: NO-GO, two P3s, no P1/P2, round-1 P2s
@@ -219,29 +254,3 @@ Template:
   mapping, Google's two parameters, bare `/mcp` carrying the pointer; (3) #193 audit / rate
   limiting can run in parallel (family-8 `limit_req` on `authorize` matters more now that the
   proxy fetches CIMD URLs); (4) **LXC stays put until M6 is finished** (owner, 03/09).
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) MERGED (PR #205 → `70d6b3d`, Codex round 2 GO); f13- fold-in MERGED (PR #207 → `4366695`)
-
-- **Done:** Codex round 2 (GPT 5.6 Sol) on `388de0b`: **GO, no findings** — replayed f1–f3, instrumented
-  the gate's session order (open → resolve → commit/rollback → close → router/render, so "no
-  overlap" holds), confirmed #206 as the right family-7 cut. PR #205 squash-merged as `70d6b3d` on
-  the owner's call, branch deleted, **#204 closed**. Shipped: `app/auth/prerouting.py` (the
-  pre-routing gate), `PROTOCOL_NAMESPACES` + `iter_dispatch_order` in the registry, the dependency
-  reusing the stashed principal, T2 family-13 rows, `tests/test_auth_unrouted.py` (106).
-- **Decisions:** none new; the nine deliberate calls are recorded in design §5.9 item 3(b) (i)–(vi)
-  and on the PR. `.agents/lessons.md` owes nothing: the family-8 miss is the sweep rule as written
-  (enumerate the families the ingress forwards, not just the ones with routes) — the hand-off
-  entries below carry the case.
-- **State:** `main` at `4366695` plus this entry. Backend 1866, frontend 485, e2e 43+1 (CI). The
-  shipped app: anonymous unrouted / wrong-verb / malformed requests under `/api/` are 401 with the
-  bare `Bearer` challenge; `/.well-known/*` stays the router's 404 until M6-7; `/mcp/*` untouched.
-  The f13- fold-in landed as **PR #207 → `4366695`** (harness-only, no external review): `PRE`
-  path constant, `TEST_FILES` + `tests/test_auth_unrouted.py`, `-k f13-` → all 15 killed on a
-  clean tree; procedure doc: 368 cases over thirty-two files. Dev DB
-  claimed with `e2e-owner-password`. No release cut — M6 ships as one release at the end.
-- **Next:** (1) #190/#192 MCP OAuth spike (§5.9 item 5); (2) #193 audit/rate limiting (item 8);
-  (3) #206 (family-7 `Allow` to anon) rides with whichever of those touches the
-  mount; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release-notes items for the M6
-  release: `ALLOWED_HOSTS` lockout risk (M6-1); the instance comes up unclaimed (M6-3); `/mcp/`
-  requires a PAT, wrong password / setup token is 403, never a token in a URL (M6-4); anonymous
-  probes under `/api/` are 401, not 404/405/422 (M6-3b).
