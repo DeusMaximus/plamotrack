@@ -129,10 +129,13 @@ send a header needs nothing new.
 Ending a link: a client that revokes either of its tokens (`POST /mcp/revoke`) ends
 the whole grant at once — its access token, its refresh token, and, best effort,
 the provider's own refresh token — recorded as `auth.mcp_grant_revoked`; rebinding
-the owner (`recovery rebind-oidc`) ends every grant at the next request; and a
-grant whose provider token can no longer be refreshed ends with it. Revoking a
-linked client at the provider (its sessions or consent) has the same effect once
-its token comes up for refresh.
+the owner (`recovery rebind-oidc`) ends every grant at the next request; a
+grant whose provider token can no longer be refreshed ends with it; and a refresh
+the provider answers with another identity, or with an id_token that fails
+verification, ends the grant too — `auth.mcp_grant_revoked` with
+`ended_by=upstream_refresh`, beside the refusal — and the client links again.
+Revoking a linked client at the provider (its sessions or consent) has the same
+effect once its token comes up for refresh.
 
 What the signing key is: installation identity, like `PUBLIC_BASE_URL`. Rotate it
 (or change `PUBLIC_BASE_URL`) and every linked client asks you to sign in again;

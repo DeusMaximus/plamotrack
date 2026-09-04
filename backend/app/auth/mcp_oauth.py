@@ -27,27 +27,38 @@ revocation) rather than to the entry points one at a time:
   token the proxy issues (FastMCP's `upstream_claims`, under its own
   signature) and compared with the owner row on **every request**
   (`load_access_token`), so a rebind refuses an issued token at the next
-  request. The id_token is never re-expired: a refresh that brings a new one
-  verifies it in full and requires the same owner; a refresh that validly
-  omits one (OpenID Connect Core §12.2) carries the binding forward
-  (`_extract_upstream_claims`). What bounds a grant is the provider's own
-  access token, re-read per request and refreshed transparently; when the
-  provider cannot refresh it, the grant ends with it (Codex #212 round 1, f3).
-- **One redemption per grant handle** (RFC 6749 §4.1.2, RFC 9700 §4.14.2).
-  FastMCP's get→mint→delete of an authorization code, and its
-  get→refresh→rotate of a refresh token, are not atomic across requests or
-  processes; `_one_redemption` serializes every redemption of one handle on
-  a transaction-scoped Postgres advisory lock — the write gate's shape (rule
-  7.1: taken *before* the read the decision is made from) — so the second
-  redeemer reads the first's deletion and gets `invalid_grant`, whichever
-  process it landed on (f2).
+  request. The id_token is never re-expired: the binding lives on the **grant
+  record** too (`GrantRecord.owner`, with the digest of the id_token last
+  verified), and the record gate (`GrantRecords`) admits a refresh's upstream
+  set — the client's exchange or the transparent refresh behind a request —
+  only with an identity that binding names: the id_token already verified, or
+  a new one that passes the same check in full and names the same owner, else
+  the grant **ends** with nothing of the response stored (round 2, f7); a
+  refresh that validly omits one (OpenID Connect Core §12.2) carries the
+  binding forward. What bounds a grant is the provider's own access token,
+  re-read per request and refreshed transparently; when the provider cannot
+  refresh it, the grant ends with it (Codex #212 round 1, f3).
+- **One transition per grant** (RFC 6749 §4.1.2, RFC 9700 §4.14.2, RFC 7009
+  §2.1). FastMCP's get→mint→delete of an authorization code, its
+  get→refresh→rotate of a refresh token, the transparent refresh behind a
+  request and a revocation are not atomic across requests or processes;
+  `_one_transition` runs each under a transaction-scoped Postgres advisory
+  lock on the grant — the record's id, or the code before a record exists —
+  the write gate's shape (rule 7.1: taken *before* the read the decision is
+  made from), so the second redeemer of a handle reads the first's deletion
+  and gets `invalid_grant`, whichever process it landed on (f2), and a
+  revocation and a refresh never interleave: whichever lands first, the record
+  is gone afterwards (round 2, f6 — the reviewed head's revocation deleted the
+  record while a refresh writer recreated it through the store's upsert).
 - **Revocation is the grant's** (RFC 7009 §2.1). Whichever half a client
   presents at `/revoke`, the grant record goes — locally, first, so the answer
   does not depend on the provider — and the provider is then asked, best
   effort, to revoke *its* refresh token through the injectable upstream
-  client; `auth.mcp_grant_revoked` names the client. FastMCP alone deleted a
-  refresh token's hash entry, left every access mapping to its hour-long TTL,
-  and posted the `AccessToken.token` field upstream (f1).
+  client; `auth.mcp_grant_revoked` names the client, or names the upstream
+  (`ended_by=upstream_refresh`) when a refresh response that was not the
+  owner's is what ended the grant. FastMCP alone deleted a refresh token's
+  hash entry, left every access mapping to its hour-long TTL, and posted the
+  `AccessToken.token` field upstream (f1).
 - **Fixed scope mapping** (7c). The scope vocabulary the proxy advertises and
   forwards is the provider's (`openid`); `collection:read`/`collection:write`
   cannot be per-grant OAuth scopes on FastMCP 3.4.5 without translating in both
@@ -135,6 +146,7 @@ from fastmcp.server.auth.oauth_proxy.models import (
 )
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.utilities.ui import create_secure_html_response
+from key_value.aio.adapters.pydantic import PydanticAdapter
 from key_value.aio.stores.postgresql import PostgreSQLStore
 from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
 from mcp.server.auth.provider import (
@@ -211,13 +223,20 @@ UNRESOLVED_ENDPOINT = "https://oidc-provider-unresolved.invalid/"
 #: The key under `upstream_claims` in every token the proxy issues that holds
 #: the owner binding the grant was issued to.
 BINDING_CLAIM = "plamotrack_owner"
+#: The collection FastMCP keeps the grant records in — the SDK's own name for
+#: it; the record gate's adapter reads and writes that same collection.
+GRANT_COLLECTION = "mcp-upstream-tokens"
+#: What an `auth.mcp_grant_revoked` row's `ended_by` says when the provider's
+#: refresh response, not a client at `/revoke`, ended the grant.
+ENDED_BY_UPSTREAM = "upstream_refresh"
 #: Postgres advisory-lock namespace for the grant lock — the two-int4 form,
 #: which cannot collide with the write gate's single int8 key; spells "moa",
 #: so it is recognisable in `pg_locks`.
-_GRANT_LOCK_NAMESPACE = 0x6D6F61
+GRANT_LOCK_NAMESPACE = 0x6D6F61
 
 _NOT_IN_THIS_MODE = "This instance does not sign in that way; see AUTH_MODE."
 _NOT_OWNER = "The signed-in identity is not this instance's owner."
+_GRANT_ENDED = "The grant has ended; link the client again."
 _PROVIDER_UNAVAILABLE = "The identity provider could not be reached; try again shortly."
 _PROVIDER_UNAVAILABLE_HTML = (
     "<h1>Identity provider unavailable</h1>"
@@ -352,18 +371,47 @@ class GrantVerifier(TokenVerifier):
         return AccessToken(token=token, client_id="", scopes=[], claims={"kind": "mcp"})
 
 
-@dataclass(frozen=True)
-class _Exchange:
-    """The token exchange in flight on this task: the binding it holds (the one
-    established a moment ago at issuance, or the one the presented refresh
-    token carries) and the client it is for, read by `_extract_upstream_claims`
-    inside the SDK's minting code."""
+class _GrantEnded(Exception):
+    """Raised by the record gate when a transition finds its grant gone —
+    revoked, or ended by another transition — since it read the record it
+    set out to update. Nothing of the transition's is stored."""
 
-    binding: OwnerBinding
+
+class _GrantRefused(Exception):
+    """Raised by the record gate when the identity a refresh response carries
+    is not the grant's owner. The transition that meets it ends the grant."""
+
+    def __init__(self, verdict: OwnerVerdict) -> None:
+        super().__init__(verdict.reason)
+        self.verdict = verdict
+
+
+ISSUANCE, REFRESH, TRANSPARENT = "issuance", "refresh", "transparent"
+
+
+@dataclass
+class _Transition:
+    """One transition of a grant, declared on the task that runs it and read by
+    the record gate inside the SDK's code: which kind, for which client and
+    route, the binding it holds — the one established a moment ago at
+    issuance, or the one the presented token carries, replaced by the record's
+    own once the gate has read it — the handles it knows (the record's id, the
+    presented token's JTI, the refresh token's hash), and what it learned on
+    the way (`outcome`: `ended`, or `refused`)."""
+
+    kind: str
     client_id: str
+    target: str
+    binding: OwnerBinding | None = None
+    grant_id: str | None = None
+    jti: str | None = None
+    refresh_hash: str | None = None
+    outcome: str | None = None
 
 
-_exchange_in_flight: ContextVar[_Exchange | None] = ContextVar("mcp_oauth_exchange", default=None)
+_transition_in_flight: ContextVar[_Transition | None] = ContextVar(
+    "mcp_oauth_transition", default=None
+)
 
 
 class _GrantLock:
@@ -387,7 +435,7 @@ class _GrantLock:
             text(
                 "SELECT pg_advisory_xact_lock(CAST(:namespace AS integer), CAST(:key AS integer))"
             ),
-            {"namespace": _GRANT_LOCK_NAMESPACE, "key": _lock_key(self._handle)},
+            {"namespace": GRANT_LOCK_NAMESPACE, "key": _lock_key(self._handle)},
         )
 
     async def __aexit__(self, exc_type, exc, tb) -> bool:
@@ -400,6 +448,125 @@ class _GrantLock:
         finally:
             await self._session.close()
         return False
+
+
+class _GrantTransition:
+    """`_one_transition`'s context: the advisory lock on the handle — the grant
+    record's id, or the authorization code before a record exists — held for
+    the whole transition, the declaration the record gate reads, and the
+    ending. A transition the gate refused ends its grant here, under the lock,
+    before the SDK's `invalid_grant` goes out; one that found the grant gone
+    reports the same error and touches nothing."""
+
+    def __init__(self, proxy: PlamotrackOAuthProxy, transition: _Transition, handle: str) -> None:
+        self._proxy = proxy
+        self._transition = transition
+        self._lock = _GrantLock(handle)
+        self._declared = None
+
+    async def __aenter__(self) -> _Transition:
+        await self._lock.__aenter__()
+        self._declared = _transition_in_flight.set(self._transition)
+        return self._transition
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        try:
+            if isinstance(exc, _GrantRefused):
+                raise await self._proxy._refuse_transition(self._transition, exc.verdict) from None
+            if isinstance(exc, _GrantEnded):
+                self._transition.outcome = "ended"
+                raise TokenError("invalid_grant", _GRANT_ENDED) from None
+            return False
+        finally:
+            assert self._declared is not None
+            _transition_in_flight.reset(self._declared)
+            await self._lock.__aexit__(exc_type, exc, tb)
+
+
+class GrantRecord(UpstreamTokenSet):
+    """The grant record: FastMCP's upstream token set — the provider's access
+    and refresh tokens, their expiry, the raw response — plus the identity the
+    set was verified for. `owner` is the durable binding: the `(iss, sub)` and
+    the digest of the id_token that established or last renewed it. A record
+    without one predates the gate and ends at its next refresh."""
+
+    owner: OwnerBinding | None = None
+
+
+class GrantRecords:
+    """The one gate every write to a grant record passes. FastMCP writes the
+    record at issuance, on the client's refresh exchange and on the transparent
+    refresh behind a request, through the adapter it built in `__init__`; this
+    stands in its place, so a writer this module has not enumerated — a future
+    SDK path included — meets the same rule. A write is admitted only from a
+    declared transition on this task (anything else is a programming error and
+    raises); after issuance the record is read back here, under the
+    transition's lock, because the record's own binding is the authority —
+    the digest it holds is the id_token last verified, whichever transition
+    verified it, not the one the client's tokens were minted with — and a
+    record that is gone or unbound ends the transition (`_GrantEnded`); and
+    the set is written only with an identity that binding names: its id_token
+    is the one already verified, or it is new and passes the owner check in
+    full, else `_GrantRefused` and the transition ends the grant. What keeps a
+    revocation and a refresh from interleaving is the lock every transition
+    holds (`_one_transition`), revocation included. The SDK's own order —
+    persist, then extract claims — let a refused set become the active one,
+    its transparent refresh never asked (Codex #212 round 2, f7), and its
+    revocation and refresh writers shared nothing, so a stale refresh
+    recreated a revoked grant through the store's upsert (f6)."""
+
+    def __init__(self, proxy: PlamotrackOAuthProxy, inner: PydanticAdapter[GrantRecord]) -> None:
+        self._proxy = proxy
+        self._inner = inner
+
+    async def get(
+        self, key: str, *, collection: str | None = None, default: GrantRecord | None = None
+    ) -> GrantRecord | None:
+        return await self._inner.get(key=key, collection=collection, default=default)
+
+    async def delete(self, key: str, *, collection: str | None = None) -> bool:
+        return await self._inner.delete(key=key, collection=collection)
+
+    async def put(
+        self,
+        key: str,
+        value: UpstreamTokenSet,
+        *,
+        collection: str | None = None,
+        ttl: float | None = None,
+    ) -> None:
+        transition = _transition_in_flight.get()
+        if transition is None or transition.binding is None:
+            raise RuntimeError("MCP OAuth: a grant record written outside a declared transition")
+        if transition.grant_id is None:
+            if transition.kind != ISSUANCE:
+                raise RuntimeError("MCP OAuth: a refresh wrote a record it had not read")
+            transition.grant_id = key
+            established = transition.binding
+        else:
+            if key != transition.grant_id:
+                raise RuntimeError("MCP OAuth: a transition wrote another grant's record")
+            current = await self._inner.get(key=key)
+            if current is None or current.owner is None:
+                raise _GrantEnded()
+            established = current.owner
+            if (established.issuer, established.subject) != (
+                transition.binding.issuer,
+                transition.binding.subject,
+            ):
+                raise _GrantEnded()
+        id_token = value.raw_token_data.get("id_token")
+        if isinstance(id_token, str) and _digest(id_token) == established.id_token_digest:
+            binding = established
+        else:
+            verdict = await self._proxy._owner_check.check(id_token)
+            if verdict.binding is None:
+                raise _GrantRefused(verdict)
+            binding = verdict.binding
+        transition.binding = binding
+        record = value if isinstance(value, GrantRecord) else GrantRecord(**value.model_dump())
+        record.owner = binding
+        await self._inner.put(key=key, value=record, collection=collection, ttl=ttl)
 
 
 # --- the redirect binding -----------------------------------------------------------
@@ -466,6 +633,20 @@ class PlamotrackOAuthProxy(OAuthProxy):
             fastmcp_access_token_expiry_seconds=ACCESS_TOKEN_LIFETIME,
             token_expiry_threshold_seconds=REFRESH_THRESHOLD,
             enable_cimd=True,
+        )
+        # The grant records behind the gate: the same storage and collection
+        # as the adapter the SDK just built, read back as `GrantRecord`.
+        sdk_records = self._upstream_token_store
+        if getattr(sdk_records, "_default_collection", GRANT_COLLECTION) != GRANT_COLLECTION:
+            raise RuntimeError("MCP OAuth: FastMCP moved its grant records; the gate must follow")
+        self._upstream_token_store = GrantRecords(  # type: ignore[assignment]
+            self,
+            PydanticAdapter[GrantRecord](
+                key_value=self._client_storage,
+                pydantic_model=GrantRecord,
+                default_collection=GRANT_COLLECTION,
+                raise_on_validation_error=True,
+            ),
         )
 
     # -- the upstream: a view of the provider's document ---------------------------
@@ -571,21 +752,27 @@ class PlamotrackOAuthProxy(OAuthProxy):
             return create_secure_html_response(_PROVIDER_UNAVAILABLE_HTML, status_code=503)
         return await super()._handle_idp_callback(request)
 
-    def _one_redemption(self, handle: str) -> _GrantLock:
-        """Serialize every redemption of one grant handle — an authorization
-        code, a refresh token's JTI — across requests and processes: a
-        transaction-scoped Postgres advisory lock (`pg_advisory_xact_lock`, the
-        write gate's shape), taken before the SDK reads the handle and held
-        through its get→mint→delete, so a second redeemer reads the first's
-        deletion and gets `invalid_grant`. Released at commit or rollback, so
-        nothing survives the exchange; a refresh holds it across one upstream
-        call, bounded by the SDK's HTTP timeout."""
-        return _GrantLock(handle)
+    def _one_transition(self, transition: _Transition, handle: str) -> _GrantTransition:
+        """Run one transition of a grant under the advisory lock on `handle` —
+        the grant record's id once a record exists, the authorization code
+        before it — a transaction-scoped Postgres advisory lock
+        (`pg_advisory_xact_lock`, the write gate's shape: rule 7.1, taken
+        *before* the read the decision is made from) held through the SDK's
+        get→mint→delete or get→refresh→rotate, with the declaration the record
+        gate reads. Every transition of one grant across requests and
+        processes serializes on it: a second redemption of a code or a refresh
+        token reads the first's deletion and gets `invalid_grant`; a
+        revocation and a refresh never interleave, so whichever lands first the
+        record is gone afterwards. Released at commit or rollback, so nothing
+        survives the transition; a refresh holds it across one upstream call,
+        bounded by the SDK's HTTP timeout."""
+        return _GrantTransition(self, transition, handle)
 
     async def exchange_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
-        async with self._one_redemption(authorization_code.code):
+        transition = _Transition(ISSUANCE, client.client_id or "", f"{MCP_MOUNT}/token")
+        async with self._one_transition(transition, authorization_code.code):
             code_model = await self._code_store.get(key=authorization_code.code)
             if code_model is None:
                 # The SDK's own `invalid_grant` for a code it does not hold —
@@ -595,12 +782,10 @@ class PlamotrackOAuthProxy(OAuthProxy):
             if verdict.binding is None:
                 # Consume the code first: a retry must not find it.
                 await self._code_store.delete(key=authorization_code.code)
-                await self._refuse(verdict, client.client_id)
-            token = _exchange_in_flight.set(_Exchange(verdict.binding, client.client_id))
-            try:
-                tokens = await super().exchange_authorization_code(client, authorization_code)
-            finally:
-                _exchange_in_flight.reset(token)
+                await self._record_refusal(verdict, transition)
+                raise self._refusal_error(verdict)
+            transition.binding = verdict.binding
+            tokens = await super().exchange_authorization_code(client, authorization_code)
             await self._record(
                 audit.MCP_GRANT_ISSUED,
                 principal=mcp_principal(write=True, subject=verdict.subject),
@@ -629,48 +814,95 @@ class PlamotrackOAuthProxy(OAuthProxy):
             await self._resolve_upstream()
         except UnavailableError as exc:
             raise TokenError("invalid_request", _PROVIDER_UNAVAILABLE) from exc
-        async with self._one_redemption(payload["jti"]):
-            token = _exchange_in_flight.set(_Exchange(carried, client.client_id or ""))
-            try:
-                return await super().exchange_refresh_token(client, refresh_token, scopes)
-            finally:
-                _exchange_in_flight.reset(token)
+        mapping = await self._jti_mapping_store.get(key=payload["jti"])
+        if mapping is None:
+            # The SDK's own `invalid_grant` for a refresh token it no longer
+            # holds — rotated, revoked, or a second redemption's read of the
+            # first's rotation.
+            return await super().exchange_refresh_token(client, refresh_token, scopes)
+        transition = _Transition(
+            REFRESH,
+            client.client_id or "",
+            f"{MCP_MOUNT}/token",
+            binding=carried,
+            grant_id=mapping.upstream_token_id,
+            jti=payload["jti"],
+            refresh_hash=_hash_token(refresh_token.token),
+        )
+        async with self._one_transition(transition, mapping.upstream_token_id):
+            return await super().exchange_refresh_token(client, refresh_token, scopes)
 
     async def _extract_upstream_claims(self, idp_tokens: dict[str, Any]) -> dict[str, Any] | None:
         """FastMCP's hook for what its issued tokens carry — here the owner
-        binding. Called inside the SDK's minting code, at issuance with the
-        code's provider tokens and at a refresh with the stored set merged
-        with the provider's response. The exchange in flight holds the binding
-        it established or carries: the id_token that established it, re-sent
-        or merely still stored, is carried forward; a **new** id_token is
-        verified in full and must name the bound owner, else the exchange is
-        `invalid_grant` with the same audit rows as a refusal at issuance."""
-        exchange = _exchange_in_flight.get()
+        binding. Called inside the SDK's minting code after the record was
+        written, at issuance with the code's provider tokens and at a refresh
+        with the stored set merged with the provider's response; by then the
+        record gate has verified that set and left the record's binding on the
+        transition, so the claims are that binding and nothing is verified
+        here a second time. A set the gate did not verify cannot reach this
+        point; one that did is a programming error and fails loudly rather
+        than minting."""
+        transition = _transition_in_flight.get()
         id_token = idp_tokens.get("id_token")
         if (
-            exchange is not None
-            and isinstance(id_token, str)
-            and _digest(id_token) == exchange.binding.id_token_digest
+            transition is None
+            or transition.binding is None
+            or not isinstance(id_token, str)
+            or _digest(id_token) != transition.binding.id_token_digest
         ):
-            return exchange.binding.as_claims()
-        verdict = await self._owner_check.check(id_token)
-        if verdict.binding is None:
-            await self._refuse(verdict, exchange.client_id if exchange is not None else None)
-        return verdict.binding.as_claims()
+            raise RuntimeError("MCP OAuth: a token minted for a set the record gate did not verify")
+        return transition.binding.as_claims()
 
-    async def _refuse(self, verdict: OwnerVerdict, client_id: str | None) -> None:
-        """A verdict other than the owner's, at issuance or on a refresh's new
-        id_token: the audit row, then `invalid_grant` (never raised for the
-        owner)."""
+    async def _refuse_transition(
+        self, transition: _Transition, verdict: OwnerVerdict
+    ) -> TokenError:
+        """The record gate refused what a refresh brought back from the
+        provider — another subject, or an id_token that fails the contract:
+        the refusal is audited as at issuance and, unless the provider's keys
+        were merely unreachable, the grant **ends** under the lock the
+        transition holds — the record, the presented token's mapping and the
+        refresh token's hash entry go, and `auth.mcp_grant_revoked` names the
+        upstream as what ended it. Nothing of the response was stored; a
+        relink is the way back (a provider that answers a refresh with another
+        identity is not one to retry against). Returns the error to raise."""
+        await self._record_refusal(verdict, transition)
+        if verdict.reason != "unavailable":
+            assert transition.grant_id is not None and transition.binding is not None
+            await self._upstream_token_store.delete(key=transition.grant_id)
+            if transition.jti is not None:
+                await self._jti_mapping_store.delete(key=transition.jti)
+            if transition.refresh_hash is not None:
+                await self._refresh_token_store.delete(key=transition.refresh_hash)
+            await self._record(
+                audit.MCP_GRANT_REVOKED,
+                principal=mcp_principal(write=True, subject=transition.binding.subject),
+                detail=f"client={transition.client_id} ended_by={ENDED_BY_UPSTREAM}",
+                target=transition.target,
+            )
+        transition.outcome = "refused"
+        return self._refusal_error(verdict)
+
+    async def _record_refusal(self, verdict: OwnerVerdict, transition: _Transition) -> None:
+        """A verdict other than the owner's, at issuance or on a refresh: the
+        audit row — the identity refusal names the subject, a token that fails
+        the contract is a failed round trip — on the route the transition
+        answers."""
         if verdict.reason == "identity":
             await self._record(
-                audit.MCP_IDENTITY_REFUSED, detail=f"subject={verdict.subject} client={client_id}"
+                audit.MCP_IDENTITY_REFUSED,
+                detail=f"subject={verdict.subject} client={transition.client_id}",
+                target=transition.target,
             )
-            raise TokenError("invalid_grant", _NOT_OWNER)
+            return
         await self._record(
-            audit.OIDC_LOGIN_FAILED, detail=f"id_token_{verdict.reason} client={client_id}"
+            audit.OIDC_LOGIN_FAILED,
+            detail=f"id_token_{verdict.reason} client={transition.client_id}",
+            target=transition.target,
         )
-        raise TokenError(
+
+    @staticmethod
+    def _refusal_error(verdict: OwnerVerdict) -> TokenError:
+        return TokenError(
             "invalid_grant",
             _PROVIDER_UNAVAILABLE if verdict.reason == "unavailable" else _NOT_OWNER,
         )
@@ -702,8 +934,22 @@ class PlamotrackOAuthProxy(OAuthProxy):
             return None
         # The transparent refresh behind this may need the token endpoint.
         await self._resolve_upstream_softly()
-        validated = await super().load_access_token(token)
-        if validated is None:
+        transition = _Transition(
+            TRANSPARENT,
+            str(payload.get("client_id") or ""),
+            f"{MCP_MOUNT}/",
+            binding=binding,
+            jti=payload["jti"],
+        )
+        declared = _transition_in_flight.set(transition)
+        try:
+            validated = await super().load_access_token(token)
+        finally:
+            _transition_in_flight.reset(declared)
+        if validated is None or transition.outcome is not None:
+            # The refresh behind this request found the grant gone, or refused
+            # what the provider sent: the SDK then falls back to the set it had
+            # loaded, and that is not an answer.
             return None
         client_id = str(payload.get("client_id") or validated.client_id)
         # FastMCP hands back the *upstream* access token in `token`; a reference
@@ -723,6 +969,26 @@ class PlamotrackOAuthProxy(OAuthProxy):
             }
         )
 
+    async def _try_transparent_refresh(
+        self, upstream_token_set: UpstreamTokenSet
+    ) -> UpstreamTokenSet:
+        """The refresh behind a request, as one transition of the grant: under
+        the grant's lock the record is read again — gone, and the request is
+        refused without the provider being asked — and the SDK's refresh runs
+        on that fresh read. Its write goes through the record gate like every
+        other, so a refused identity ends the grant on this path too; what
+        the transition learned is left on it for `load_access_token`, since
+        the SDK answers a failed refresh with the set it had loaded."""
+        transition = _transition_in_flight.get()
+        if transition is None or transition.kind != TRANSPARENT:
+            raise RuntimeError("MCP OAuth: a transparent refresh outside a request")
+        transition.grant_id = upstream_token_set.upstream_token_id
+        async with self._one_transition(transition, transition.grant_id):
+            current = await self._upstream_token_store.get(key=transition.grant_id)
+            if current is None:
+                raise _GrantEnded()
+            return await super()._try_transparent_refresh(current)
+
     # -- revocation ------------------------------------------------------------------------
 
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
@@ -740,10 +1006,18 @@ class PlamotrackOAuthProxy(OAuthProxy):
             jti, binding = handle
             mapping = await self._jti_mapping_store.get(key=jti)
             if mapping is not None:
-                grant = await self._upstream_token_store.get(key=mapping.upstream_token_id)
-                await self._upstream_token_store.delete(key=mapping.upstream_token_id)
-            await self._jti_mapping_store.delete(key=jti)
+                # Under the grant's lock, so a refresh at the provider with
+                # this record in hand writes after this — into a record that
+                # is gone, which the gate refuses — never over it.
+                async with _GrantLock(mapping.upstream_token_id):
+                    grant = await self._upstream_token_store.get(key=mapping.upstream_token_id)
+                    await self._upstream_token_store.delete(key=mapping.upstream_token_id)
+                    await self._jti_mapping_store.delete(key=jti)
+            else:
+                await self._jti_mapping_store.delete(key=jti)
         if isinstance(token, RefreshToken):
+            # Its own hash entry; not what serializes a concurrent refresh — the
+            # mapping and the record, under the lock, are — so outside it.
             await self._refresh_token_store.delete(key=_hash_token(token.token))
         if grant is None or handle is None:
             return

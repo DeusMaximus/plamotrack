@@ -404,15 +404,21 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     documented extension point: the upstream identity must be the bound owner, checked
     **at issuance** (`exchange_authorization_code` — a stranger gets `invalid_grant`, an
     `auth.mcp_identity_refused` row and nothing minted — the id_token through the same
-    `validate_id_token_claims`, with `nonce=None`) and carried as **grant state** in
-    every token the proxy issues, compared with the owner row on every request and
-    never re-expired (a refresh's new id_token is verified in full; one validly omitted
-    carries the binding forward); **one redemption per grant handle** — the code and
-    refresh exchanges serialize on a Postgres advisory lock, the write gate's shape;
-    **revocation is the grant's** — either half presented ends the whole grant locally
-    first, then the provider's refresh token best effort (`auth.mcp_grant_revoked`);
-    what bounds a grant is the provider's own token, refreshed transparently while it
-    can be (Codex #212 round 1, f1–f3); every issued token maps to a **fixed** `collection:read` +
+    `validate_id_token_claims`, with `nonce=None`) and carried as **grant state** — in
+    every token the proxy issues, compared with the owner row on every request, and on
+    the **grant record** itself, whose binding is what every refresh is checked
+    against: the record gate (`GrantRecords`) admits a refresh's upstream set, on the
+    client's exchange or the transparent refresh behind a request, only with an
+    identity that binding names — the id_token already verified, or a new one verified
+    in full naming the same owner — else the grant ends (`ended_by=upstream_refresh`);
+    one validly omitted carries the binding forward; **one transition per grant** —
+    issuance, both refreshes and revocation serialize on a Postgres advisory lock per
+    grant, the write gate's shape, so a second redemption is `invalid_grant` and a
+    revocation and a refresh never interleave; **revocation is the grant's** — either
+    half presented ends the whole grant locally first, then the provider's refresh
+    token best effort (`auth.mcp_grant_revoked`); what bounds a grant is the
+    provider's own token, refreshed transparently while it can be (Codex #212 rounds
+    1–2, f1–f3 and f6–f7); every issued token maps to a **fixed** `collection:read` +
     `collection:write` by its `kind` (the OAuth scope vocabulary is the provider's,
     `openid`), never `instance:admin`; the mount requires no OAuth scope, so a personal
     access token stays valid on `/mcp/` in that mode; the redirect-URI binding is per

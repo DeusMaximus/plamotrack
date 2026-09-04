@@ -134,13 +134,13 @@ Add to the brief:
 > under you mid-round, re-run in a detached worktree at the reviewed head and say
 > so (the #173 round's precedent).
 
-**Codex (GPT 5.6 Sol).** Any size, or multi-round. Capacity stopped being the
+**Codex (GPT-6; GPT 5.6 Sol before 2026-09-05).** Any size, or multi-round. Capacity stopped being the
 constraint with the 2026-08-28 subscription bump — no meter check needed for a
 routine round.
 
 ```
-**Codex (OpenAI, GPT 5.6 Sol) — independent review of PR #‹N›, replayed at head `‹sha›`.**
-— **Codex (OpenAI, GPT 5.6 Sol)**
+**Codex (OpenAI, GPT-6) — independent review of PR #‹N›, replayed at head `‹sha›`.**
+— **Codex (OpenAI, GPT-6)**
 ```
 
 (*independent re-review* / *third independent review* on later rounds.) Add:

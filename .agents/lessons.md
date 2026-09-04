@@ -578,3 +578,40 @@ re-raising it dies with `FrozenInstanceError` (a 500 where `invalid_grant` was
 meant) — a class-based `__aexit__` re-raises cleanly; and a secret bound as a SQL
 parameter is a secret in the engine's DEBUG log, which the log-grep test caught
 when the lock key was the authorization code itself.
+
+## The record, not the transitions (#212, round 2)
+
+Round 1's fix applied the plamotrack rules to the grant "as one state machine" —
+issuance, refresh, verification, revocation — and the reply's sweep enumerated those
+transitions. Round 2 landed in the same function again ("When rounds keep landing in
+one function", above): revocation deleted the grant record while a refresh that
+already held the provider's answer wrote it back through the store's upsert (the
+client's exchange under its per-token lock, the transparent refresh behind a request
+under FastMCP's in-process one — two locks, neither the revocation's); and the SDK's
+refresh persisted the provider's set *before* calling the hook that verified it, and
+its transparent refresh never called the hook at all, so a stranger's id_token on a
+refresh was refused at the token endpoint and yet the set it came with was the one
+every existing access token then read. Each transition had been made correct; what
+none of them owned was the **record** — the one row every transition reads and
+writes. The fix is a gate on that row's writes (`GrantRecords`: a write only from a
+declared transition, only against the binding the record itself holds, only with an
+identity that binding names) and one lock per grant that every transition takes,
+revocation included. The lesson, one level above round 1's: when a framework's
+transitions share a piece of state, enumerate the **writers of the state**, not the
+transitions, and put the invariant where the writes land — grep for the store's
+`put` and `delete`, and make every hit either pass through your gate or be provably
+under your lock. Two smaller things from the same round: the binding on the record
+also closed a sibling the sweep predicted — a binding renewed by a transparent
+refresh (which mints nothing) drifted from the digest the client's tokens carried,
+and the next exchange re-verified a token that had since expired, round 1's f3 by
+another road; and the SDK answers a failed transparent refresh from the object it
+had already loaded, so a refusal inside the refresh has to reach the request by a
+route other than the exception (`_Transition.outcome`), or the fallback answers 200.
+And one from the mutation pass, filed under "green for the wrong reason": the drift
+test passed on its mutant because the fake provider's *re-issued* id_token was
+byte-identical to the one issued at link time whenever both fell in the same second
+— identical claims, and RS256 is deterministic — so the test that meant to bring a
+*new* id_token brought the old one back and had nothing to drift on; it had gone
+red at the reviewed head only because the clock ticked between the link and the
+refresh. A fake that re-issues a credential must make it distinct on purpose (a
+`jti`), not by luck of the clock; the mutant, not the red run, is what noticed.

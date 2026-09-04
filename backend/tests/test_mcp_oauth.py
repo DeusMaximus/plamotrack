@@ -51,6 +51,7 @@ from app import error_codes
 from app.auth.mcp_auth import principal_from_access_token
 from app.auth.mcp_oauth import (
     ACCESS_TOKEN_LIFETIME,
+    GRANT_LOCK_NAMESPACE,
     MCP_OAUTH_ATTR,
     UPSTREAM_AUTHORIZE_PARAMS,
     OwnerVerdict,
@@ -1418,7 +1419,11 @@ async def initialize(client, access_token: str) -> httpx.Response:
 def _provider_refresh(fake: FakeIdp, *, id_token: object = "same", **overrides) -> dict:
     """A refresh response the fake will honour: a new upstream pair, and an
     id_token when the provider chooses to send one — `"same"` re-issues the
-    owner's, `None` omits it (OpenID Connect Core §12.2 allows both)."""
+    owner's, `None` omits it (OpenID Connect Core §12.2 allows both). The
+    re-issued token carries a unique `jti`: with identical claims in the same
+    second an RS256 token is the same bytes as the one issued at link time,
+    and a test meaning to bring a *new* id_token then brought the old one back
+    (the moa-49 survivor — green because nothing had drifted)."""
     response = {
         "access_token": "upstream-access-" + secrets.token_hex(8),
         "token_type": "Bearer",
@@ -1427,7 +1432,9 @@ def _provider_refresh(fake: FakeIdp, *, id_token: object = "same", **overrides) 
         "scope": "openid",
     }
     if id_token == "same":
-        response["id_token"] = fake.issue(sub=OWNER_SUB, nonce=None, omit=("nonce",))
+        response["id_token"] = fake.issue(
+            sub=OWNER_SUB, nonce=None, omit=("nonce",), jti=secrets.token_hex(8)
+        )
     elif id_token is not None:
         response["id_token"] = id_token
     response.update(overrides)
@@ -1648,40 +1655,6 @@ async def test_a_refresh_without_a_new_id_token_keeps_the_grant_usable(monkeypat
         assert (await initialize(client, tokens["access_token"])).status_code == 200
 
 
-async def test_a_new_id_token_on_refresh_is_verified_and_must_name_the_owner():
-    """When the provider does send a new id_token with a refresh, it is
-    verified in full — signature and the claim contract — and must name the
-    bound owner: another subject is `invalid_grant` with the identity refusal
-    audited, a token that fails the contract is `invalid_grant` audited as a
-    failed round trip, and the owner's own re-issued token carries on."""
-    fake = FakeIdp()
-    await _bind_owner()
-    async with oauth_app(fake) as (_, client):
-        outcome = await link(client, fake)
-        tokens, client_id = outcome["body"], outcome["client_id"]
-        stranger = fake.issue(sub=STRANGER_SUB, nonce=None, omit=("nonce",))
-        fake.next_refresh = _provider_refresh(fake, id_token=stranger)
-        refused = await refresh(client, client_id, tokens["refresh_token"])
-        assert refused.status_code == 401, refused.text
-        assert refused.json()["error"] == "invalid_grant"
-        # The presented refresh token was not consumed by a refusal the
-        # provider caused: the same token tries again with a bad signature.
-        forged = fake.issue(sub=OWNER_SUB, nonce=None, omit=("nonce",), key=fake.other_key)
-        fake.next_refresh = _provider_refresh(fake, id_token=forged)
-        refused = await refresh(client, client_id, tokens["refresh_token"])
-        assert refused.status_code == 401, refused.text
-        assert refused.json()["error"] == "invalid_grant"
-        fake.next_refresh = _provider_refresh(fake)
-        renewed = await refresh(client, client_id, tokens["refresh_token"])
-        assert renewed.status_code == 200, renewed.text
-        assert (await initialize(client, renewed.json()["access_token"])).status_code == 200
-    refused_rows = await _events(audit.MCP_IDENTITY_REFUSED)
-    assert [row.detail for row in refused_rows] == [f"subject={STRANGER_SUB} client={client_id}"]
-    failed = await _events(audit.OIDC_LOGIN_FAILED)
-    assert len(failed) == 1 and failed[0].detail.startswith("id_token_invalid")
-    assert len(await _events(audit.MCP_GRANT_ISSUED)) == 1
-
-
 async def test_a_restart_between_the_consent_page_and_its_approval_still_reaches_the_provider():
     """The consent page is shown by one process and approved on a fresh one —
     a container restart in the window. The approval builds the provider's
@@ -1851,3 +1824,236 @@ async def test_a_process_whose_start_missed_the_provider_resolves_at_its_first_r
             fake.next_refresh = _provider_refresh(fake)
             resp = await refresh(cold, client_id, tokens["refresh_token"])
             assert resp.status_code == 200, resp.text
+
+
+# --- the grant record under concurrent and hostile transitions (round 2, f6–f7) --------
+
+
+class _Held:
+    """A gate on one call: the caller parks at `reached` until the test says
+    `release` — an occurrence, not an opportunity."""
+
+    def __init__(self) -> None:
+        self.reached = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self) -> None:
+        self.reached.set()
+        await self.release.wait()
+
+
+def _hold(target, method: str) -> _Held:
+    held = _Held()
+    original = getattr(target, method)
+
+    async def held_call(*args, **kwargs):
+        await held()
+        return await original(*args, **kwargs)
+
+    setattr(target, method, held_call)
+    return held
+
+
+def _record_write(proxy):
+    """The object whose `put` is the grant record's write: the store behind the
+    guard on this head, the SDK's adapter itself on one without a guard."""
+    store = proxy._upstream_token_store
+    return getattr(store, "_inner", store)
+
+
+async def _grant_lock_waiters() -> int:
+    async with get_sessionmaker()() as session:
+        row = await session.execute(
+            text(
+                "SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' "
+                "AND NOT granted AND classid = :namespace"
+            ),
+            {"namespace": GRANT_LOCK_NAMESPACE},
+        )
+        return int(row.scalar_one())
+
+
+async def _until(predicate, *, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not await predicate():
+        assert time.monotonic() < deadline, "the condition never arrived"
+        await asyncio.sleep(0.02)
+
+
+@pytest.mark.parametrize("presented", ["access_token", "refresh_token"])
+@pytest.mark.parametrize("path", ["explicit", "transparent"])
+async def test_a_refresh_in_flight_cannot_recreate_a_grant_that_revocation_removed(path, presented):
+    """RFC 7009 §2.1, against the write the grant record gets from a refresh:
+    a refresh — the client's own exchange, or the transparent one behind a
+    request — holds the provider's answer and is about to write it back when
+    another process revokes either half of the grant. Whichever lands first,
+    once both have answered nothing of the grant works: the record is gone,
+    every token of it is refused, and the provider was asked to revoke the
+    refresh token the record held *at revocation*, the rotated one. The
+    reviewed head's revocation deleted the record while the refresh writer
+    recreated it through the store's upsert (Codex #212 round 2, f6)."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (first_app, first), oauth_app(fake) as (_, second):
+        outcome = await link(first, fake, expires_in=(-5 if path == "transparent" else 300))
+        tokens, client_id = outcome["body"], outcome["client_id"]
+        fake.next_refresh = _provider_refresh(fake)
+        rotated = fake.next_refresh["refresh_token"]
+        proxy = getattr(first_app.state, MCP_OAUTH_ATTR).proxy
+        held = _hold(_record_write(proxy), "put")
+        if path == "explicit":
+            in_flight = asyncio.create_task(refresh(first, client_id, tokens["refresh_token"]))
+        else:
+            in_flight = asyncio.create_task(initialize(first, tokens["access_token"]))
+        await asyncio.wait_for(held.reached.wait(), 5)
+        revoking = asyncio.create_task(revoke(second, client_id, tokens[presented]))
+
+        async def revocation_landed() -> bool:
+            # Either nothing serialises it and it completes here, or it is
+            # seen waiting for the grant lock the refresh holds.
+            return revoking.done() or await _grant_lock_waiters() > 0
+
+        await _until(revocation_landed)
+        held.release.set()
+        completed = await in_flight
+        revoked = await revoking
+        assert revoked.status_code == 200, revoked.text
+        assert completed.status_code == 200, completed.text[:300]
+        if path == "explicit":
+            successor = completed.json()
+            assert (await initialize(first, successor["access_token"])).status_code == 401
+            replay = await refresh(first, client_id, successor["refresh_token"])
+            assert replay.status_code == 401 and replay.json()["error"] == "invalid_grant"
+        for client in (first, second):
+            assert (await initialize(client, tokens["access_token"])).status_code == 401
+            replay = await refresh(client, client_id, tokens["refresh_token"])
+            assert replay.status_code == 401, replay.text
+        assert [r["token"] for r in fake.revoked] == [rotated]
+    assert "mcp-upstream-tokens" not in {c for c, _ in await _state_rows()}
+    assert len(await _events(audit.MCP_GRANT_REVOKED)) == 1
+
+
+async def test_a_transparent_refresh_that_finds_the_grant_gone_refuses_the_request():
+    """The other order, on the path a client never sees: the request loaded
+    its grant, decided to refresh (the upstream token inside its threshold —
+    not yet expired, so the SDK's own expiry check would still admit the
+    loaded set), and revocation completed before the refresh took the grant
+    lock. The refresh finds the record gone, asks the provider nothing, and
+    the request is refused — the SDK falls back to the object it had loaded
+    when a refresh fails, and that fallback must not be an answer (f6)."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (live, client):
+        outcome = await link(client, fake, expires_in=20)
+        tokens, client_id = outcome["body"], outcome["client_id"]
+        fake.next_refresh = _provider_refresh(fake)
+        proxy = getattr(live.state, MCP_OAUTH_ATTR).proxy
+        held = _hold(proxy, "_try_transparent_refresh")
+        in_flight = asyncio.create_task(initialize(client, tokens["access_token"]))
+        await asyncio.wait_for(held.reached.wait(), 5)
+        revoked = await revoke(client, client_id, tokens["refresh_token"])
+        assert revoked.status_code == 200
+        held.release.set()
+        refused = await in_flight
+        assert refused.status_code == 401, refused.text[:300]
+        assert not [f for f in fake.token_requests if f.get("grant_type") == "refresh_token"]
+        assert (await initialize(client, tokens["access_token"])).status_code == 401
+    assert "mcp-upstream-tokens" not in {c for c, _ in await _state_rows()}
+
+
+@pytest.mark.parametrize("response", ["owner", "omitted", "stranger", "forged"])
+@pytest.mark.parametrize("path", ["explicit", "transparent"])
+async def test_a_refresh_response_becomes_the_grant_only_once_it_is_verified(path, response):
+    """The provider's refresh response replaces the grant's upstream set only
+    after the identity it carries has been verified against the record's
+    binding — on the client's exchange and on the transparent refresh alike
+    (OpenID Connect Core §12.2: a refreshed id_token must keep the issuer and
+    subject). The owner's re-issued id_token and a response that validly
+    omits one carry on; a stranger's, or an owner-shaped token under the
+    wrong key, ends the grant: nothing of the response is stored, the
+    original tokens are refused even with the provider gone, and the ending
+    is audited beside the refusal. The reviewed head persisted the refused set
+    before the check on the exchange and never checked it on the transparent
+    path (Codex #212 round 2, f7)."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        outcome = await link(client, fake, expires_in=(-5 if path == "transparent" else 300))
+        tokens, client_id = outcome["body"], outcome["client_id"]
+        id_token = {
+            "owner": "same",
+            "omitted": None,
+            "stranger": fake.issue(sub=STRANGER_SUB, nonce=None, omit=("nonce",)),
+            "forged": fake.issue(sub=OWNER_SUB, nonce=None, omit=("nonce",), key=fake.other_key),
+        }[response]
+        fake.next_refresh = _provider_refresh(fake, id_token=id_token)
+        if path == "explicit":
+            answered = await refresh(client, client_id, tokens["refresh_token"])
+        else:
+            answered = await initialize(client, tokens["access_token"])
+        hostile = response in ("stranger", "forged")
+        if not hostile:
+            assert answered.status_code == 200, answered.text[:300]
+            if path == "explicit":
+                successor = answered.json()["access_token"]
+                assert (await initialize(client, successor)).status_code == 200
+            assert "mcp-upstream-tokens" in {c for c, _ in await _state_rows()}
+            assert not await _events(audit.MCP_IDENTITY_REFUSED)
+            assert not await _events(audit.OIDC_LOGIN_FAILED)
+            assert not await _events(audit.MCP_GRANT_REVOKED)
+            return
+        assert answered.status_code == 401, answered.text[:300]
+        if path == "explicit":
+            assert answered.json()["error"] == "invalid_grant"
+        # Nothing left to refresh with: what is stored decides, and nothing is.
+        fake.network_down = True
+        assert (await initialize(client, tokens["access_token"])).status_code == 401
+        fake.network_down = False
+        fake.next_refresh = _provider_refresh(fake)
+        replay = await refresh(client, client_id, tokens["refresh_token"])
+        assert replay.status_code == 401 and replay.json()["error"] == "invalid_grant"
+        assert "mcp-upstream-tokens" not in {c for c, _ in await _state_rows()}
+    target = "/mcp/token" if path == "explicit" else "/mcp/"
+    if response == "stranger":
+        refused = await _events(audit.MCP_IDENTITY_REFUSED)
+        assert [(r.detail, r.target) for r in refused] == [
+            (f"subject={STRANGER_SUB} client={client_id}", target)
+        ]
+        assert not await _events(audit.OIDC_LOGIN_FAILED)
+    else:
+        failed = await _events(audit.OIDC_LOGIN_FAILED)
+        assert [(r.detail, r.target) for r in failed] == [
+            (f"id_token_invalid client={client_id}", target)
+        ]
+        assert not await _events(audit.MCP_IDENTITY_REFUSED)
+    ended = await _events(audit.MCP_GRANT_REVOKED)
+    assert [(r.detail, r.target, r.principal_subject) for r in ended] == [
+        (f"client={client_id} ended_by=upstream_refresh", target, OWNER_SUB)
+    ]
+    assert len(await _events(audit.MCP_GRANT_ISSUED)) == 1
+
+
+async def test_a_binding_verified_on_a_transparent_refresh_carries_to_the_next_exchange(
+    monkeypatch,
+):
+    """The verified binding lives on the record, not in the tokens: a
+    transparent refresh brings the owner's new id_token (verified, stored),
+    that token then passes its `exp`, and the client's next exchange — the
+    provider omitting an id_token this time — carries the record's binding
+    forward rather than re-verifying a token it already verified. Comparing
+    the stored id_token against the digest the *client's* tokens carried
+    would find it "new" and expired — round 1's f3 by another road."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        outcome = await link(client, fake, expires_in=-5)
+        tokens, client_id = outcome["body"], outcome["client_id"]
+        fake.next_refresh = _provider_refresh(fake)
+        assert (await initialize(client, tokens["access_token"])).status_code == 200
+        _advance_id_token_clock(monkeypatch, 600)
+        fake.next_refresh = _provider_refresh(fake, id_token=None)
+        renewed = await refresh(client, client_id, tokens["refresh_token"])
+        assert renewed.status_code == 200, renewed.text
+        assert (await initialize(client, renewed.json()["access_token"])).status_code == 200
+    assert not await _events(audit.OIDC_LOGIN_FAILED)
+    assert not await _events(audit.MCP_GRANT_REVOKED)

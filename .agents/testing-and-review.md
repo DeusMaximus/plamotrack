@@ -190,7 +190,12 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 448 cases over thirty-four target files** — #86's
+- **On `main` after #212: 457 cases over 46 target files** — counted the way the
+  harness itself counts, `len(CASES)` and the distinct paths those cases mutate
+  (migrations, the one test file and the two `frontend/` files included; the
+  one-liner is `uv run python -c "import mutation_test as m, pathlib; print(len(m.CASES), len({pathlib.Path(c[1]).resolve() for c in m.CASES}))"`
+  — the number in this sentence has been wrong twice in one PR body, so re-derive
+  it rather than edit it by hand; Codex #212 round 2) — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
   #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
   #118 (`ship-`), #129 (`dsp-`), #130 (`cat-`), #133 (`ref-`), #136
@@ -266,7 +271,16 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   re-anchored in place by that round, moa-6 now the upstream token bounding a grant,
   moa-12/14/15 re-pointed at the cold-start tests because the endpoints as a view of
   the cache made the lifespan's warm-up every warm test's resolver; moa-39's kill is
-  the log-grep test seeing the lock's key when it is the authorization code itself)
+  the log-grep test seeing the lock's key when it is the authorization code itself;
+  49…56 from round 2 — the grant record as the unit of authority: the record gate,
+  one lock per grant that revocation takes too, the binding on the record, the
+  ending on a refused refresh response, the transparent path's outcome carried to
+  the request — with 34/36/37/38/39/42 re-anchored by that round (37/38 are now the
+  transition's lock, 42 the gate's digest check pointed at the f7 matrix, the retry
+  test it named withdrawn with the retry it asserted); all 55 killed on the branch,
+  `-k moa-` — three first-pass survivors, each fixed outside the tuple: moa-47 a
+  redundant second delete, moa-56 a fallback re-check masking the gate, moa-49 the
+  fake's re-issued id_token identical to the original within one second)
   and #191 (`oidc-` — browser OIDC, PR #209: `app/services/oidc.py`, `services/auth.py`,
   `routers/auth.py`, `auth/registry.py`, `auth/mode.py` and `main.py`; oidc-4…20
   hand-run on the branch, 21…38 from Codex round 1 — a session is authority only in the
@@ -344,7 +358,7 @@ the release gate instead. State the call and the reason in the hand-off entry.
 | Reviewer | Fits | Notes |
 | --- | --- | --- |
 | **GLM 5.3 Flash (Zhipu AI, via T3 Code on OpenRouter)** | **The default** for feature and fix rounds, any size | 1M context — holds a 2,000-insertion PR, its body and the process docs at once. Three rounds on 2026-08-28 (#171 GO+3P3, #173 GO+1P3, #174 GO+4P3): re-measures claims rather than reading them (its negative-control breakdowns have been exact), sweeps systematically (an AST prose-diff caught an author overclaim), probes empirically (injected a mutant to test an audit's pin), and discloses scope honestly. ~20 min and ~$0.07 a round (11.1M tokens ≈ $0.22 across all three, 96 % cache hit, OpenRouter billing). **Calibration: its findings have been reliable; its *remedies* are not pre-verified — measure a suggested fix like any claim** (#174 P3-1's suggested remedy failed measurement; the finding itself was right and subtle). It has not yet caught a hidden P2 on a branch that wasn't already exhaustively self-verified — widen its lane when it does. Replaced Cursor / Grok 4.6 (retired 2026-08-28, owner's call: the 256K context ceiling made large PRs a truncation risk; GLM holds them whole). |
-| **Codex (GPT 5.6 Sol)** | The highest-stakes shared mechanisms; second opinions | Has absorbed #86 (4,442 insertions) across four rounds, and its NO-GO rounds have caught hidden P2s (#159's isalpha currency, #169's parser-stage envelope). Reserve it for anything touching the write gate, money/stock semantics, migrations, and the M6 security work — and as a second opinion when a GO on an unpolished branch feels too easy. Subscription upped 2026-08-28; routine rounds need no meter check. |
+| **Codex (GPT-6 since 2026-09-05; GPT 5.6 Sol before)** | The highest-stakes shared mechanisms; second opinions | Its first GPT-6 round (#212 round 2) reproduced two grant-lifecycle defects round 1 had not, each with an independent control, and corrected the author's mutant count. Has absorbed #86 (4,442 insertions) across four rounds, and its NO-GO rounds have caught hidden P2s (#159's isalpha currency, #169's parser-stage envelope). Reserve it for anything touching the write gate, money/stock semantics, migrations, and the M6 security work — and as a second opinion when a GO on an unpolished branch feels too easy. Subscription upped 2026-08-28; routine rounds need no meter check. |
 | **Copilot auto-review** | Off | Disabled by the owner on 2026-08-11 to conserve credits until 1 September. Its useful finds have been API-state semantics readable off a diff, not value-space defects. Don't request one casually. |
 
 Match the tool to the size of the work rather than forcing everything through one
