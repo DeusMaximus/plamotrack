@@ -1163,7 +1163,13 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    row); through nginx it is still rewritten to `/mcp/` and reaches the bearer
    challenge. (v) The wrong-verb refusal carries **no `Allow`**, and every gate refusal
    carries the family-13 profile (`no-store`) stamped by the gate itself, since the
-   innermost middleware has no endpoint to read when the router never ran. What the
+   innermost middleware has no endpoint to read when the router never ran. (vi) **Family
+   8's namespace is the protocol's**: under `/.well-known/` with no route registered —
+   local mode — the router's 404 stands for everyone and no principal is resolved,
+   because discovery is anonymous by protocol and a `Bearer` challenge on a discovery URL
+   would be a claim about the resource; the namespace is `PROTOCOL_NAMESPACES`, derived
+   from the same family-8 declaration the ingress alias rejection reads, and the T2 rows
+   for the three root documents (404 until M6-7) are what found the first head's 401. What the
    gate does not change: a presented-and-failed bearer is still the resolver's 401
    `auth.bearer_invalid` on an unrouted path as on a routed one, and a stale cookie is
    still `anon` (call (a)). The **e2e suite and CI Integration** need the auth

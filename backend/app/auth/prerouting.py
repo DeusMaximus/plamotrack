@@ -30,6 +30,13 @@ What it does not do, deliberately:
   middleware owns that credential, a cookie never authenticates there, and the
   `RouteBinding` is its verb boundary (#198 round 3). The gate does not resolve
   a principal for a request the mount claims.
+- **Family 8's namespace is the protocol's** (`PROTOCOL_NAMESPACES`, the same
+  declaration the ingress alias rejection reads): under `/.well-known/` with no
+  route registered — local mode — the router's 404 stands for everyone, because
+  discovery is anonymous by protocol and a `Bearer` challenge on a discovery
+  URL would be a claim about the resource. No principal is resolved there
+  either; in OIDC mode (M6-7) the routes FastMCP installs carry `PROTOCOL` and
+  are admitted the same way.
 - **Anonymous routes keep their own 405 and 422** — a wrong verb on `/healthz`,
   a malformed login body — because there is no credential to gate on: a path
   whose every matching route is `ANONYMOUS` passes through untouched.
@@ -64,6 +71,7 @@ from app import error_codes
 from app.auth.dependency import BEARER_CHALLENGE, REQUEST_PRINCIPAL_ATTR
 from app.auth.principal import PrincipalKind
 from app.auth.registry import (
+    PROTOCOL_NAMESPACES,
     UNROUTED_PROFILE,
     CredentialPolicy,
     RouteIndex,
@@ -88,6 +96,7 @@ class Dispatch(Enum):
     """What Starlette's router would do with the request."""
 
     MOUNT = "mount"  # a `Mount` claims it; the child decides everything
+    PROTOCOL = "protocol"  # under a family-8 namespace with no route: anonymous by protocol
     FULL = "full"  # a route matches path and method
     PARTIAL = "partial"  # a route matches the path, none the method → 405
     NONE = "none"  # nothing matches → 404
@@ -98,7 +107,8 @@ class Outcome:
     kind: Dispatch
     #: The endpoint(s) involved: the one route for FULL, every path-matching
     #: route for PARTIAL (Starlette answers with the first, but the gate asks
-    #: whether *any* of them needs a credential), none for MOUNT and NONE.
+    #: whether *any* of them needs a credential), none for MOUNT, PROTOCOL and
+    #: NONE.
     endpoints: tuple[object, ...] = ()
 
 
@@ -149,25 +159,31 @@ class DispatchTable:
             partial.append(entry.endpoint)
         if partial:
             return Outcome(Dispatch.PARTIAL, tuple(partial))
+        if any(route_path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES):
+            # Family 8's namespace with nothing registered (local mode): the
+            # router's 404 is the protocol's answer, not the gate's 401.
+            return Outcome(Dispatch.PROTOCOL)
         return Outcome(Dispatch.NONE)
 
 
 def refuses_anonymous(index: RouteIndex, outcome: Outcome) -> bool:
     """Whether an anonymous caller is refused before the router runs. A mount
-    is the child's. A full match is refused unless its declared policy admits
-    `anon` (`ANONYMOUS`; `INTERNAL` self-guards on the peer). A partial match —
-    the router's 405 — is refused unless *every* route on that path is
-    anonymous, because an `Allow` header on a scoped path is the route table.
-    No match — the router's 404 — is refused. An endpoint the registry does not
-    know (impossible after `build_route_index`) fails closed."""
-    if outcome.kind is Dispatch.MOUNT:
+    is the child's; a family-8 namespace with no route is the protocol's 404.
+    A full match is refused unless its declared policy admits `anon`
+    (`ANONYMOUS`; `INTERNAL` self-guards on the peer; `PROTOCOL` is anonymous
+    by protocol). A partial match — the router's 405 — is refused unless
+    *every* route on that path is anonymous (or protocol), because an `Allow`
+    header on a scoped path is the route table. No match — the router's 404 —
+    is refused. An endpoint the registry does not know (impossible after
+    `build_route_index`) fails closed."""
+    if outcome.kind in (Dispatch.MOUNT, Dispatch.PROTOCOL):
         return False
     if outcome.kind is Dispatch.NONE:
         return True
     admitted = (
-        {CredentialPolicy.ANONYMOUS, CredentialPolicy.INTERNAL}
+        {CredentialPolicy.ANONYMOUS, CredentialPolicy.INTERNAL, CredentialPolicy.PROTOCOL}
         if outcome.kind is Dispatch.FULL
-        else {CredentialPolicy.ANONYMOUS}
+        else {CredentialPolicy.ANONYMOUS, CredentialPolicy.PROTOCOL}
     )
     for endpoint in outcome.endpoints:
         policy = index.policy_for(endpoint)
@@ -193,7 +209,7 @@ class PreRoutingAuthMiddleware:
             await self.app(scope, receive, send)
             return
         outcome = self.table.resolve(scope)
-        if outcome.kind is Dispatch.MOUNT:
+        if outcome.kind in (Dispatch.MOUNT, Dispatch.PROTOCOL):
             await self.app(scope, receive, send)
             return
 

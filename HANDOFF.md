@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) family-13 hardening: PR #205 OPEN at `ec77ff8`, Codex round 1 pending
+## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) family-13 hardening: PR #205 OPEN at `<HEAD2>` (CI Integration caught family 8 at `1912fbe`, fixed), Codex round 1 pending
 
 - **Done:** Issue **#204** filed (M6 milestone) for §5.9 item 3(b)'s two deferred items, then the
   branch. The fix is **the pre-routing gate** `app/auth/prerouting.py`: one middleware directly
@@ -52,18 +52,21 @@ Template:
   scoped 401 — read off the registry's `iter_dispatch_order` walk + `compile_path`, never the URL.
   Never grants; the dependency stays the authority. Calls recorded in design §5.9 item 3(b):
   anonymous families keep their 405/422; `INTERNAL` admitted on full, refused on partial; the
-  `/mcp` mount is the child's; bare `/mcp` at the source-run app is now 401 anon / 404 owner.
+  `/mcp` mount is the child's; bare `/mcp` at the source-run app is now 401 anon / 404 owner;
+  **family 8's `/.well-known/` namespace passes through** (`PROTOCOL_NAMESPACES`, derived from
+  the family-8 `API_ALIAS_REJECTIONS` entry) — the first head's sweep missed it and CI
+  Integration's three root-discovery T2 rows (404 until M6-7) went red with the gate's 401.
   Also: `ingress_matrix.py` trailing-slash rows → family-13 rows (+ `/api/no-such-route`,
   `DELETE /api/kits`); design §5 header + family-7 row; AGENTS.md rule 13 paragraph.
 - **Decisions:** the gate renders through `domain_error_handler` passed in by `create_app` (one
   envelope author, no circular import). `PUT /mcp/` → 405 with `Allow` to anon (the
   `RouteBinding`) is **out of scope, recorded on #204** for the reviewer to classify.
-- **State:** committed and pushed on the owner's instruction as `ec77ff8`; **PR #205** open. New suite
-  `tests/test_auth_unrouted.py` **97 green**; negative control on unfixed `main` (trimmed copy,
-  worktree, own DB) **23 red / 65 green**, every red an anon-side 404/405/422; **13 hand mutants
-  f13-1…13 all killed** (runner + verdicts in the session scratchpad; tuples in the PR-body draft
+- **State:** **PR #205** open at `<HEAD2>` (gate `ec77ff8`, hand-off `1912fbe`, family-8 fix). New
+  suite `tests/test_auth_unrouted.py` **106 green**; negative control on unfixed `main` (trimmed
+  copy, worktree, own DB) **23 red / 73 green**, every red an anon-side 404/405/422; **15 hand mutants
+  f13-1…15 all killed** (runner + verdicts in the session scratchpad; tuples in the PR-body draft
   `scratchpad/pr-body-204.md`, to be folded into `mutation_test.py` by the usual harness-only PR
-  after merge). Auth/ingress suites green (523); full backend run **1855 green** (started before the last two pins landed; the final file's own run is 97 green → 1857). T2's new rows are
+  after merge). Auth/ingress suites green; full backend run **1855 green** at `ec77ff8` (before the last pins) → 1866 by count at the head; CI Backend and Frontend green at `1912fbe`, Integration red there on exactly the family-8 rows (fixed at `<HEAD2>` — check `gh pr checks 205`). T2's new rows are
   CI Integration's to prove (packaged stack not run locally — `up` would recreate the dev `db`).
   Dev DB still claimed with `e2e-owner-password`.
 - **Next:** (1) **Codex review** round 1 (M6 security → Codex per `.agents/testing-and-review.md`);

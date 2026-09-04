@@ -684,6 +684,19 @@ API_ALIAS_REJECTIONS: tuple[ApiAliasRejection, ...] = (
     ),
 )
 
+#: Root namespaces that are anonymous **by protocol** (§5.5 family 8): OAuth
+#: discovery lives under `/.well-known/`, installed by M6-7 in OIDC mode and
+#: absent — the router's 404 — in local mode. Derived from the family-8 entry
+#: above so the ingress alias rejection and the pre-routing gate (#204) read one
+#: declaration. The gate passes a request under one of these through unresolved:
+#: family 8's anonymous column says "allow, by protocol", and a 401 with a
+#: `Bearer` challenge on a discovery URL would tell an OAuth client the resource
+#: speaks bearer *there* — the packaged stack's T2 rows expect the plain 404
+#: until M6-7 (the CI Integration run on PR #205's first head found exactly that).
+PROTOCOL_NAMESPACES: tuple[str, ...] = tuple(
+    rejection.namespace + "/" for rejection in API_ALIAS_REJECTIONS if rejection.family == 8
+)
+
 #: The nginx template lines between these markers are generated. Do not edit them
 #: by hand — change `API_ALIAS_REJECTIONS` and run `scripts/render_ingress.py`.
 NGINX_REJECTIONS_BEGIN = (

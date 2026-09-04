@@ -236,6 +236,27 @@ async def test_the_mount_is_the_child_s():
     assert "www-authenticate" not in resp.headers
 
 
+#: Family 8's namespace (§5.5): the three root discovery documents M6-7 will
+#: install, and an arbitrary sibling. Anonymous by protocol, absent in local
+#: mode — the router's 404 for everyone, never a `Bearer` challenge (the CI
+#: Integration run on PR #205's first head found the 401).
+PROTOCOL_PATHS = [
+    "/.well-known/openid-configuration/mcp",
+    "/.well-known/oauth-authorization-server/mcp",
+    "/.well-known/oauth-protected-resource/mcp/",
+    "/.well-known/anything",
+]
+
+
+@pytest.mark.parametrize("path", PROTOCOL_PATHS)
+@pytest.mark.parametrize("principal", [anonymous(), owner()], ids=lambda p: p.label)
+async def test_the_protocol_namespace_is_the_router_s_404_in_local_mode(path, principal):
+    resp = await _request(principal, "GET", path)
+    assert resp.status_code == 404, resp.text
+    assert resp.json() == {"detail": "Not Found"}
+    assert "www-authenticate" not in resp.headers
+
+
 async def test_readiness_is_still_decided_by_the_peer():
     """`INTERNAL` admits `anon` on a full match — the route self-guards on the
     raw peer (family 10): loopback answers, any other peer gets the 404 an
@@ -334,6 +355,7 @@ async def test_a_revoked_token_writes_one_audit_row_per_request():
         ("/healthz", {"gate": 1, "dependency": 0}),
         ("/no-such-route", {"gate": 1, "dependency": 0}),
         ("/mcp/no-such-route", {"gate": 0, "dependency": 0}),
+        ("/.well-known/openid-configuration/mcp", {"gate": 0, "dependency": 0}),
     ],
 )
 async def test_the_principal_is_resolved_by_the_gate_and_reused_by_the_dependency(
@@ -341,8 +363,8 @@ async def test_the_principal_is_resolved_by_the_gate_and_reused_by_the_dependenc
 ):
     """Which of the two places resolves: the gate once, the dependency never —
     on a scoped route, an anonymous one, and an unrouted path alike; and
-    neither for a request the mount claims, so a cookie is never even looked
-    at on the way to FastMCP."""
+    neither for a request the mount claims (a cookie is never even looked at
+    on the way to FastMCP) nor for one under the protocol namespace."""
     from app.auth import dependency, prerouting
 
     calls: dict[str, int] = {"gate": 0, "dependency": 0}
@@ -472,10 +494,15 @@ async def test_the_gate_and_the_router_agree_on_every_declared_route():
         await client.get("/no-such-route")
         assert recorder[-1].seen[-1] is None
         assert table.resolve(scope_for("POST", "/mcp/")).kind is Dispatch.MOUNT
+        for path in PROTOCOL_PATHS:
+            assert table.resolve(scope_for("GET", path)).kind is Dispatch.PROTOCOL, path
+            await client.get(path)
+            assert recorder[-1].seen[-1] is None, path
 
 
 def test_refuses_anonymous_is_decided_by_policy_not_path():
-    """The decision table, off the live index: a full match refuses unless the
+    """The decision table, off the live index: a mount and the protocol
+    namespace are never refused; a full match refuses unless the
     policy admits `anon` (`ANONYMOUS`, and `INTERNAL` which self-guards); a
     partial refuses unless *every* route on the path is `ANONYMOUS` (so
     `INTERNAL` is refused there — a 405 would name `/readyz`); no match and
@@ -493,6 +520,7 @@ def test_refuses_anonymous_is_decided_by_policy_not_path():
     read_ep = by_credential[CredentialPolicy.READ]
 
     assert refuses_anonymous(index, Outcome(Dispatch.MOUNT)) is False
+    assert refuses_anonymous(index, Outcome(Dispatch.PROTOCOL)) is False
     assert refuses_anonymous(index, Outcome(Dispatch.NONE)) is True
     assert refuses_anonymous(index, Outcome(Dispatch.FULL, (anonymous_ep,))) is False
     assert refuses_anonymous(index, Outcome(Dispatch.FULL, (internal_ep,))) is False

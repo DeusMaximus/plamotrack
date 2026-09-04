@@ -377,7 +377,9 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     a wrong verb (no `Allow`), a malformed body — reading what the request would reach
     from the registry's dispatch walk, never the URL. It never grants; the dependency
     stays the authority on every matched route. The anonymous families keep their own
-    405/422, the `/mcp` mount is the child's, and a new mutating middleware or a change
+    405/422, the `/mcp` mount is the child's, family 8's `/.well-known/` namespace
+    (`PROTOCOL_NAMESPACES`, one declaration with the ingress rejection) is the
+    router's 404 for everyone, and a new mutating middleware or a change
     to the resolver owes the once-per-request test (`tests/test_auth_unrouted.py`).
 
 ## Fixing a defect: sweep the class first
