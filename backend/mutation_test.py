@@ -126,6 +126,10 @@ MCP_AUTH = ROOT / "app/auth/mcp_auth.py"
 # The #204 (f13-) set: the pre-routing gate.
 PRE = ROOT / "app/auth/prerouting.py"
 AUTH_MIG = VERS / "20260903_f1058c5de0f3_auth_foundation_tables_m6_2_187.py"
+# #191 (M6-6): the oidc- set.
+OIDC_SVC = ROOT / "app/services/oidc.py"
+AUTH_ROUTER = ROOT / "app/routers/auth.py"
+MODE = ROOT / "app/auth/mode.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -2270,8 +2274,8 @@ CASES = [
     (
         "ingr-16. forwarded address overwrites the raw peer",
         ING,
-        '            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = self.policy.resolve_client_address(\n                peer, forwarded\n            )',
-        '            resolved = self.policy.resolve_client_address(peer, forwarded)\n            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = resolved\n            if resolved:\n                scope["client"] = (resolved, 0)',
+        '            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = address\n',
+        '            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = address\n            if address:\n                scope["client"] = (address, 0)\n',
         "raw_peer or forge",
     ),
     (
@@ -2491,8 +2495,8 @@ CASES = [
     (
         "auth-21. the profile middleware never added",
         MAIN,
-        "        bind_route_policies(app, route_index)\n        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n\n    app.add_exception_handler",
-        "        bind_route_policies(app, route_index)\n\n    app.add_exception_handler",
+        "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n",
+        "",
         "middleware_is_innermost or no_store_on_a_collection_read",
     ),
     # auth-22 MOVES the add_middleware call to the tail of create_app — after the
@@ -2504,20 +2508,70 @@ CASES = [
     (
         "auth-22. the profile middleware added last (outermost)",
         MAIN,
-        "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n\n"
+        "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n"
+        "        # Directly above it, the pre-routing gate (§5.5 family 13, #204): the\n"
+        "        # principal resolved once, before Starlette routes and FastAPI parses,\n"
+        "        # so an anonymous caller is refused ahead of the router's 404/405 and\n"
+        "        # the parser's 422 — none of which the dependency can reach. It renders\n"
+        "        # through the same envelope handler the dependency's errors take.\n"
+        "        app.add_middleware(\n"
+        "            PreRoutingAuthMiddleware,\n"
+        "            index=route_index,\n"
+        "            table=DispatchTable.from_app(app),\n"
+        "            render=domain_error_handler,\n"
+        "        )\n"
+        "\n"
+        "        async def record_ingress_rejection(event_type: str, scope, setting: str) -> None:\n"
+        "            # Lazy import keeps the ingress policy independent of persistence;\n"
+        "            # the service owns the audit transaction (rule 1).\n"
+        "            from app.services.audit import record_ingress_rejection as record\n"
+        "\n"
+        "            await record(event_type, scope, policy=policy, setting=setting)\n"
+        "\n"
         "    app.add_exception_handler(DomainError, domain_error_handler)\n"
         "    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n"
-        "    app.add_exception_handler(RequestValidationError, request_validation_handler)\n\n"
+        "    app.add_exception_handler(RequestValidationError, request_validation_handler)\n"
+        "\n"
         "    # Outermost last: the guard answers a hostile Host before anything else\n"
         "    # runs, and the forwarded-client resolver sees only requests that passed it.\n"
         "    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n"
-        "    app.add_middleware(HostOriginGuardMiddleware, policy=policy)\n"
+        "    app.add_middleware(\n"
+        "        HostOriginGuardMiddleware,\n"
+        "        policy=policy,\n"
+        "        rejection_recorder=record_ingress_rejection if authorization else None,\n"
+        "    )\n"
         "    return app",
-        "\n    app.add_exception_handler(DomainError, domain_error_handler)\n"
+        "        # Directly above it, the pre-routing gate (§5.5 family 13, #204): the\n"
+        "        # principal resolved once, before Starlette routes and FastAPI parses,\n"
+        "        # so an anonymous caller is refused ahead of the router's 404/405 and\n"
+        "        # the parser's 422 — none of which the dependency can reach. It renders\n"
+        "        # through the same envelope handler the dependency's errors take.\n"
+        "        app.add_middleware(\n"
+        "            PreRoutingAuthMiddleware,\n"
+        "            index=route_index,\n"
+        "            table=DispatchTable.from_app(app),\n"
+        "            render=domain_error_handler,\n"
+        "        )\n"
+        "\n"
+        "        async def record_ingress_rejection(event_type: str, scope, setting: str) -> None:\n"
+        "            # Lazy import keeps the ingress policy independent of persistence;\n"
+        "            # the service owns the audit transaction (rule 1).\n"
+        "            from app.services.audit import record_ingress_rejection as record\n"
+        "\n"
+        "            await record(event_type, scope, policy=policy, setting=setting)\n"
+        "\n"
+        "    app.add_exception_handler(DomainError, domain_error_handler)\n"
         "    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n"
-        "    app.add_exception_handler(RequestValidationError, request_validation_handler)\n\n"
+        "    app.add_exception_handler(RequestValidationError, request_validation_handler)\n"
+        "\n"
+        "    # Outermost last: the guard answers a hostile Host before anything else\n"
+        "    # runs, and the forwarded-client resolver sees only requests that passed it.\n"
         "    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n"
-        "    app.add_middleware(HostOriginGuardMiddleware, policy=policy)\n"
+        "    app.add_middleware(\n"
+        "        HostOriginGuardMiddleware,\n"
+        "        policy=policy,\n"
+        "        rejection_recorder=record_ingress_rejection if authorization else None,\n"
+        "    )\n"
         "    if authorization:\n"
         "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n"
         "    return app",
@@ -2564,9 +2618,9 @@ CASES = [
     (
         "auth-28. anon on a scoped route is 403, not 401",
         DEP,
-        "    if principal.kind is PrincipalKind.ANON:\n        raise UnauthenticatedError(_UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED)\n    if not principal.has_scope(scope):",
+        "    if principal.kind is PrincipalKind.ANON:\n        raise UnauthenticatedError(\n            _UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED, challenge=BEARER_CHALLENGE\n        )\n    if not principal.has_scope(scope):",
         "    if not principal.has_scope(scope):",
-        "reads_need_a_read_scope or anonymous_read_is_the_unauthenticated_envelope",
+        "dependency_alone_refuses_anonymous",
     ),
     (
         "auth-29. the scope check dropped",
@@ -3036,6 +3090,255 @@ CASES = [
         "        if outcome.kind in (Dispatch.MOUNT, Dispatch.PROTOCOL):\n            await self.app",
         "        if outcome.kind is Dispatch.MOUNT:\n            await self.app",
         "resolved_by_the_gate",
+    ),
+    # --- #191 (M6-6, PR #209): browser OIDC — the oidc- set. The id_token claim
+    # --- contract (`validate_id_token_claims`), the login transaction and its binding
+    # --- cookie, the `(issuer, subject)` binding, the mode gate, the rebind, and — from
+    # --- the Codex rounds — a session being authority only in the mode that minted it
+    # --- (`session.auth_mode`, the resolver, the start-up sweep) and the NumericDate
+    # --- domain. oidc-4…20 hand-run on the branch; 21…38 from round 1 (two P2s), 39
+    # --- from round 2 (a P3). oidc-1/2/3/11 anchored on the joserfc registry the round
+    # --- replaced and are superseded by 23/22/27/26; oidc-13 (HS256 on the allowlist)
+    # --- is equivalent — the JWKS holds no symmetric key — and stays out; oidc-20 and
+    # --- oidc-25 re-anchored at fold-in. oidc-30's kill is a 500 at the callback's
+    # --- required 302, accepted by Codex round 2 as a semantic regression. -----------
+    (
+        "oidc-4. binding cookie not checked",
+        OIDC_SVC,
+        "        or binding is None\n        or not credentials.tokens_match(binding, row.binding_hash)\n",
+        "",
+        "callback_needs_a_live_transaction",
+    ),
+    (
+        "oidc-5. transaction never spent",
+        OIDC_SVC,
+        "    row.used_at = now\n    claiming, nonce, verifier",
+        "    claiming, nonce, verifier",
+        "callback_needs_a_live_transaction",
+    ),
+    (
+        "oidc-6. expiry not checked",
+        OIDC_SVC,
+        "        or now >= row.expires_at\n",
+        "",
+        "expired_transaction_is_refused",
+    ),
+    (
+        "oidc-7. binding compares subject only",
+        OIDC_SVC,
+        "    if (owner.oidc_issuer, owner.oidc_subject) != (provider.issuer, subject):",
+        "    if owner.oidc_subject != subject:",
+        "binding_is_the_issuer_too",
+    ),
+    (
+        "oidc-8. unbound = unclaimed only",
+        OIDC_SVC,
+        "    return owner.claimed_at is None or owner.oidc_subject is None",
+        "    return owner.claimed_at is None",
+        "rebind_revokes_every_session",
+    ),
+    (
+        "oidc-9. bind without the token having matched",
+        OIDC_SVC,
+        "        if not claiming:\n            raise await _refuse(",
+        "        if False:\n            raise await _refuse(",
+        "unbound_owner_without_the_token_at_start",
+    ),
+    (
+        "oidc-10. setup token never required at start",
+        OIDC_SVC,
+        "        if setup_token is None or not setup_state.matches(setup_token):",
+        "        if False:",
+        "start_on_an_unbound_instance_needs_the_setup_token",
+    ),
+    (
+        "oidc-12. provider error still exchanges",
+        OIDC_SVC,
+        "    if error is not None or not code:",
+        "    if not code:",
+        "owner_cancelling_at_the_provider",
+    ),
+    (
+        "oidc-14. rebind keeps sessions",
+        OIDC_SVC,
+        '    revoked = await auth_service.revoke_all_sessions(\n        session, target="recovery rebind-oidc", principal=internal(), client_address="host"\n    )',
+        "    revoked = 0",
+        "rebind_revokes_every_session",
+    ),
+    (
+        "oidc-15. refused stranger still gets a session",
+        OIDC_SVC,
+        "        await session.commit()\n        raise OidcLoginRefused(CallbackError.IDENTITY_REFUSED)",
+        "        await session.commit()",
+        "different_identity_is_refused",
+    ),
+    (
+        "oidc-16. discovery issuer mismatch accepted",
+        OIDC_SVC,
+        "            if issuer != self.issuer:",
+        "            if False:",
+        "discovery_document_with_another_issuer",
+    ),
+    (
+        "oidc-17. mode gate inverted",
+        AUTH_ROUTER,
+        "    if (provider is not None) != oidc:",
+        "    if (provider is None) != oidc:",
+        "password_routes_are_404_in_oidc_mode",
+    ),
+    (
+        "oidc-18. modes undeclared on the OIDC pair",
+        REG,
+        'OIDC_MODE_ROUTES: frozenset[str] = frozenset({"/auth/oidc/start", "/auth/oidc/callback"})',
+        "OIDC_MODE_ROUTES: frozenset[str] = frozenset()",
+        "registry_declares_the_mode_axis",
+    ),
+    (
+        "oidc-19. callback Location built from the request",
+        AUTH_ROUTER,
+        "    response = RedirectResponse(provider.home_url, status_code=302)",
+        "    response = RedirectResponse(str(request.base_url), status_code=302)",
+        "callback_redirects_to_public_base_url",
+    ),
+    (
+        "oidc-20. setup token consumed at start, not at the bind",
+        OIDC_SVC,
+        "        setup_state.consume()\n        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.OIDC)\n",
+        "        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.OIDC)\n",
+        "first_login_with_the_setup_token_binds_the_owner",
+    ),
+    (
+        "oidc-21. azp not checked",
+        OIDC_SVC,
+        '    if "azp" in claims and claims["azp"] != client_id:\n        raise refused("azp", "is not this client")\n',
+        "",
+        "azp-other",
+    ),
+    (
+        "oidc-22. aud membership instead of exactly this client",
+        OIDC_SVC,
+        "        or set(audiences) != {client_id}\n",
+        "        or client_id not in audiences\n",
+        "extra-audience-own-azp",
+    ),
+    (
+        "oidc-23. nonce matched by membership (the registry's semantics)",
+        OIDC_SVC,
+        "    if not isinstance(token_nonce, str) or token_nonce != nonce:\n",
+        "    if nonce not in ([token_nonce] if isinstance(token_nonce, str) else (token_nonce or [])):\n",
+        "nonce-list",
+    ),
+    (
+        "oidc-24. iat optional",
+        OIDC_SVC,
+        '    if not _numeric_date(iat):\n        raise refused("iat", "is missing or not a NumericDate")\n    if iat > clock + leeway:\n',
+        '    if iat is not None and not _numeric_date(iat):\n        raise refused("iat", "is missing or not a NumericDate")\n    if iat is not None and iat > clock + leeway:\n',
+        "iat-missing",
+    ),
+    (
+        "oidc-25. bool accepted as a NumericDate",
+        OIDC_SVC,
+        "    if isinstance(value, bool):\n        return False\n    if isinstance(value, int):\n        return True\n",
+        "    if isinstance(value, int):\n        return True\n",
+        "iat-bool",
+    ),
+    (
+        "oidc-26. sub not checked by the validator",
+        OIDC_SVC,
+        '    sub = claims.get("sub")\n    if not isinstance(sub, str) or not sub:\n        raise refused("sub", "is missing or not a string")\n',
+        "",
+        "no-subject",
+    ),
+    (
+        "oidc-27. iss matched by membership",
+        OIDC_SVC,
+        "    if not isinstance(iss, str) or iss != issuer:\n",
+        "    if iss != issuer and not (isinstance(iss, list) and issuer in iss):\n",
+        "issuer-list",
+    ),
+    (
+        "oidc-28. exp leeway applied the wrong way",
+        OIDC_SVC,
+        "    if exp < clock - leeway:\n",
+        "    if exp < clock + leeway:\n",
+        "claim_validator_holds_the_clock_leeway",
+    ),
+    (
+        "oidc-29. nbf not checked",
+        OIDC_SVC,
+        '    if "nbf" in claims:\n        nbf = claims["nbf"]\n        if not _numeric_date(nbf):\n            raise refused("nbf", "is not a NumericDate")\n        if nbf > clock + leeway:\n            raise refused("nbf", "is in the future")\n',
+        "",
+        "nbf-future",
+    ),
+    (
+        "oidc-30. exp type not checked",
+        OIDC_SVC,
+        '    if not _numeric_date(exp):\n        raise refused("exp", "is missing or not a NumericDate")\n',
+        '    if exp is None:\n        raise refused("exp", "is missing or not a NumericDate")\n',
+        "exp-string",
+    ),
+    (
+        "oidc-31. resolver ignores the session's mode",
+        AUTH_SVC,
+        "    if row is None or row.revoked_at is not None or row.auth_mode != auth_mode:\n",
+        "    if row is None or row.revoked_at is not None:\n",
+        "local_mode_session_is_not_the_owner_in_oidc_mode",
+    ),
+    (
+        "oidc-32. sweep revokes every mode's sessions",
+        AUTH_SVC,
+        "        .where(SessionRow.revoked_at.is_(None), SessionRow.auth_mode != auth_mode)\n",
+        "        .where(SessionRow.revoked_at.is_(None))\n",
+        "restart_in_the_same_mode_signs_nobody_out",
+    ),
+    (
+        "oidc-33. sweep touches instead of revoking",
+        AUTH_SVC,
+        '        .values(revoked_at=_now())\n    )\n    revoked = result.rowcount or 0\n    if revoked:\n        await audit.record_event(\n            session,\n            audit.SESSIONS_REVOKED,\n            principal=internal(),\n            target="startup",',
+        '        .values(last_used_at=_now())\n    )\n    revoked = result.rowcount or 0\n    if revoked:\n        await audit.record_event(\n            session,\n            audit.SESSIONS_REVOKED,\n            principal=internal(),\n            target="startup",',
+        "starting_in_the_other_mode_revokes",
+    ),
+    (
+        "oidc-34. lifespan never sweeps",
+        MAIN,
+        "                await auth_service.revoke_sessions_of_other_modes(\n                    session, auth_mode=auth_mode_of(app_)\n                )\n",
+        "",
+        "starting_in_the_other_mode_revokes",
+    ),
+    (
+        "oidc-35. the OIDC bind mints a local-mode session",
+        OIDC_SVC,
+        "        setup_state.consume()\n        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.OIDC)\n",
+        "        setup_state.consume()\n        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.LOCAL)\n",
+        "first_login_with_the_setup_token_binds_the_owner",
+    ),
+    (
+        "oidc-36. the local claim mints an OIDC-mode session",
+        AUTH_SVC,
+        "    owner.claimed_at = now\n    raw, row = new_session_row(now, auth_mode=AuthMode.LOCAL)\n",
+        "    owner.claimed_at = now\n    raw, row = new_session_row(now, auth_mode=AuthMode.OIDC)\n",
+        "local_mode_session_is_not_the_owner_in_oidc_mode",
+    ),
+    (
+        "oidc-37. mode_changed audit row not written",
+        AUTH_SVC,
+        '        await audit.record_event(\n            session,\n            audit.AUTH_MODE_CHANGED,\n            principal=internal(),\n            target="startup",\n            detail=f"auth_mode={auth_mode} sessions_revoked={revoked}",\n            client_address="host",\n        )\n',
+        "",
+        "starting_in_the_other_mode_revokes",
+    ),
+    (
+        "oidc-38. auth_mode_of inverted",
+        MODE,
+        "    if getattr(app.state, OIDC_PROVIDER_ATTR, None) is not None:\n        return AuthMode.OIDC\n    return AuthMode.LOCAL\n",
+        "    if getattr(app.state, OIDC_PROVIDER_ATTR, None) is None:\n        return AuthMode.OIDC\n    return AuthMode.LOCAL\n",
+        "first_login_with_the_setup_token_binds_the_owner",
+    ),
+    (
+        "oidc-39. non-finite floats accepted as NumericDates",
+        OIDC_SVC,
+        "    return isinstance(value, float) and math.isfinite(value)\n",
+        "    return isinstance(value, float)\n",
+        "exp-nan",
     ),
 ]
 
@@ -4024,6 +4327,7 @@ TEST_FILES = [
     # The #204 (f13-) fold-in: every f13- kill lives here, bar f13-11's second
     # witness in test_authorization.py (already listed).
     "tests/test_auth_unrouted.py",
+    "tests/test_auth_oidc.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.

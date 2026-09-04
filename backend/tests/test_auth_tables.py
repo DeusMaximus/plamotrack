@@ -16,6 +16,7 @@ from app.db import get_sessionmaker
 from app.models import (
     AuditEvent,
     Credential,
+    OidcLogin,
     Owner,
     PersonalAccessToken,
     Session,
@@ -23,7 +24,7 @@ from app.models import (
 from app.models.auth import OWNER_ROW_ID
 from app.services.portability.spec import TABLE_SPECS
 
-_AUTH_MODELS = (Owner, Credential, Session, PersonalAccessToken, AuditEvent)
+_AUTH_MODELS = (Owner, Credential, Session, PersonalAccessToken, AuditEvent, OidcLogin)
 
 
 def test_no_auth_table_is_portable():

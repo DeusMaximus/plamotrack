@@ -1,6 +1,7 @@
 from app.models.auth import (
     AuditEvent,
     Credential,
+    OidcLogin,
     Owner,
     PersonalAccessToken,
     Session,
@@ -23,6 +24,7 @@ __all__ = [
     "Kit",
     "KitPhoto",
     "KitStatus",
+    "OidcLogin",
     "Order",
     "OrderItem",
     "Owner",

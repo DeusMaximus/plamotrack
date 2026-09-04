@@ -190,7 +190,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 368 cases over thirty-two target files** — #86's
+- **On `main` at the time of writing: 402 cases over thirty-three target files** — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
   #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
   #118 (`ship-`), #129 (`dsp-`), #130 (`cat-`), #133 (`ref-`), #136
@@ -254,7 +254,18 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   standing example that a sweep enumerates the *families the ingress forwards*, not
   the families with routes; f13-6's sole witness is the resolution-count test, the
   audit-row test being a control that cannot see it (Codex round 1); all 15 killed
-  at fold-in, `-k f13-`).
+  at fold-in, `-k f13-`)
+  and #191 (`oidc-` — browser OIDC, PR #209: `app/services/oidc.py`, `services/auth.py`,
+  `routers/auth.py`, `auth/registry.py`, `auth/mode.py` and `main.py`; oidc-4…20
+  hand-run on the branch, 21…38 from Codex round 1 — a session is authority only in the
+  mode that minted it, and one explicit id_token claim validator — and 39 from round 2,
+  the NumericDate's finite domain; oidc-1/2/3/11 anchored on the joserfc claims
+  registry that round 1 replaced and are superseded by 23/22/27/26; oidc-13, HS256 on
+  the allowlist, is **equivalent** — the JWKS holds no symmetric key, and
+  `test_an_id_token_signed_with_the_client_secret_is_refused` pins the behaviour either
+  way — so it stays out rather than train anyone to ignore a permanent survivor; oidc-30's
+  kill is a 500 at the callback's required 302, accepted by round 2 as a semantic
+  regression; all 34 killed at fold-in, `-k oidc-`).
   **A message-restructuring change rots anchors silently**: #25 rewrote 81
   raise sites and six anchors (n5, n6a, n6b, cat-13, cat-14, wdr-8) sat
   SKIP-broken until #26's full run — a fold-in that runs only its own `-k`

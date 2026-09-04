@@ -24,7 +24,17 @@
     "signOut": "Sign out",
     "checking": "Checking…",
     "passwordMismatch": "The passwords don't match.",
-    "confirmPasswordLabel": "Confirm password"
+    "confirmPasswordLabel": "Confirm password",
+    "oidcSetupIntro": "This instance has no owner yet. Paste the setup token from the API log, then sign in at your identity provider — the account you sign in with becomes the owner.",
+    "oidcRebindIntro": "This instance signs in through an identity provider but has no owner bound. Paste the setup token from the API log, then sign in — that account becomes the owner.",
+    "oidcLoginIntro": "This instance signs in through your identity provider.",
+    "continueWithProvider": "Continue with {{provider}}",
+    "redirecting": "Taking you to {{provider}}…",
+    "oidcError_denied": "The sign-in was cancelled at the identity provider.",
+    "oidcError_expired": "That sign-in took too long or was already used. Start again.",
+    "oidcError_failed": "The identity provider's answer couldn't be verified. Try again; if it keeps failing, check the API log.",
+    "oidcError_setupRequired": "This instance has no owner bound yet. Enter the setup token from the API log and sign in again.",
+    "oidcError_identityRefused": "That account isn't this instance's owner. Sign in with the account that set it up, or run the rebind recovery command on the host."
   },
   "common": {
     "close": "Close",
@@ -199,6 +209,8 @@
       "csrf_failed": "This request didn't carry a valid session token. Reload the page and try again.",
       "forbidden": "Your access doesn't allow that action.",
       "login_failed": "That password isn't right.",
+      "not_in_this_mode": "This instance doesn't sign in that way.",
+      "oidc_provider_unavailable": "The identity provider couldn't be reached. Existing sessions still work; try again shortly.",
       "origin_required": "This request didn't say where it came from, so it was refused.",
       "password_too_long": "The password can't be longer than {{max}} characters.",
       "password_too_short": "The password needs at least {{min}} characters.",

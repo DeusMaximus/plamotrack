@@ -41,6 +41,144 @@ Template:
 
 ---
 
+## 2026-09-05 — Codex (GPT-6) — #208 integration finalized; next session is #194
+
+- **Done:** this merge commit integrates `main` `a497481` into
+  `codex/193-audit-rate-limit-log-hygiene`, retaining #191 and the #193 fixes described in
+  the entry below. All conflicts resolved; worker pin, descriptor-based secret output,
+  OIDC audit actors, and seven repaired mutation cases are included. Corrected design §5.9
+  to name the actual `auth.oidc_rebind` emitter. The owner requested commit, push, then a
+  return to fast-forwarded `main`; no PR merge was requested.
+- **Validation:** full backend 1,971 passed; the subsequent deployment/authorization selection
+  11 passed, including the newly added dependency-only test. Frontend 487 passed plus lint
+  and build; Ruff/format/render green. Fresh isolated packaged matrix: zero failures, all
+  four limit families and 12 alternate spellings, real PAT/anonymous MCP checks, full
+  password/PAT/session log scan. Seven repaired + twelve new hand mutants killed (19/19);
+  all 402 tracked anchors match once. Full mutation harness was not rerun. The earlier
+  entry retains the negative-control counts and local scratch evidence location.
+- **Decisions:** #208 stays open until #212 is reviewed and merged. #212 is still open at
+  `529ad68`, with the latest review NO-GO (f6 grant resurrection, f7 unvalidated refresh
+  state, f8 evidence counts); the desktop owns those repairs. #210 remains a separate item.
+  After #212, reconcile the OAuth/family limiters and private client-address overwrites,
+  retain the 429 response profile, rerun local/OIDC packaged gates and get a fresh review.
+  PR prose/review replies were not updated by this commit/push request. Fold aud-1…29 after
+  #208 merges; the original entry lists the twelve new cases.
+- **Next session:** #194 in its own feature branch/worktree from current main: prepare the
+  Caddy deployment harness and draft operations documentation. Read issues #194 and PRs
+  #208/#212 for pending integration changes. Final OAuth/restore verification and supported
+  remote-deployment claims wait for #192/#193. The existing LXC stays untouched until M6
+  is finished. Local dev Postgres is running; disposable stack, volume and mutant DB are gone.
+
+## 2026-09-05 — Codex (GPT-6) — #208 laptop integration prepared; hold the PR for #212
+
+- **Done:** verified GitHub instead of treating this laptop's hand-off as current. #191 is
+  merged (#209/#211); `origin/main` is `a497481`. Prepared `git merge --no-commit --no-ff
+  origin/main` on `codex/193-audit-rate-limit-log-hygiene` (`HEAD` remains `1b18bbb`). All five
+  conflict files resolved: recovery keeps both prune and OIDC rebind; setup failures keep
+  anonymous attribution AND the caller's OIDC target; audit keeps #191's real `auth.oidc_rebind`
+  and removes #193's unused `auth.oidc_rebound` placeholder. Both hand-off histories retained
+  and rotated without changing entry content.
+- **Review follow-up:** reproduced CodeRabbit's worker and secret-output findings. Dockerfile
+  now passes `--workers 1`, overriding both WEB_CONCURRENCY and UVICORN_WORKERS. Harness
+  secret files use one O_NOFOLLOW descriptor, fchmod before writing, and no path reopening.
+  #210 remains the separately filed refusal-volume policy; the old six-entry hand-off finding
+  was already obsolete. No GitHub review reply or PR-body edit posted this session.
+- **Class sweep:** #191's OIDC failure/identity-refusal audit rows now explicitly identify anon;
+  startup mode changes/session revocation and OIDC recovery/rebind rows identify internal.
+  Existing OIDC tests assert these actors and the setup-failure route. New deployment tests
+  cover environment defaults, new/empty/existing files, live/dangling symlinks and a pinned
+  path replacement between chmod and write.
+- **Mutation maintenance:** re-anchored ingr-16, auth-21/22/28, oidc-14/33/37. auth-21/22/28
+  were already stale on main; auth-28 now exercises the dependency without the pre-routing
+  gate, so that gate cannot hide a broken dependency. All 402 anchors match once. All seven
+  repaired cases and twelve new single-site mutants killed in a detached snapshot with its
+  own test DB: aud-18 worker pin; 19 nofollow; 20 chmod; 21 descriptor write; 22 setup target;
+  23/24 OIDC failure/refusal actors; 25/26 startup actors; 27/28/29 rebind actors. Exact runner
+  and logs remain in the local scratch directory named by `/tmp/plamotrack-208-scratch-path`.
+  The complete 402-case mutation harness was not rerun.
+- **State:** full backend **1,971 passed**, plus the subsequently added dependency-only check
+  in the focused deployment/authorization run. Negative control before these fixes: **9 red /
+  5 green**, all reds at the intended behavior. Ruff/format/render green; frontend lint,
+  **487 tests**, build green. Fresh isolated packaged stack: matrix **0 failures**, all four
+  canonical limits and 12 alternate spellings, authenticated/anonymous real MCP-client controls,
+  non-vacuous password/PAT/session log scan. Exactly one API worker despite environment 4/8.
+  Disposable stack/volume and mutation DB removed; dev Postgres left running and untouched by
+  the packaged checks. No commit or push; resolved merge remains pending locally.
+- **Next:** hold #208 until #212 is reviewed and merged. Live #212 tip is `529ad68`, CI green
+  but latest review is **NO-GO**: f6 P1 refresh resurrects a revoked grant; f7 P2 rejected or
+  unchecked refresh state becomes active; f8 P3 evidence-count correction. Desktop owns that
+  work. After it lands, integrate latest main (complete this prepared merge first if keeping
+  it), reconcile #212's OAuth limiter with #208's four family zones, preserve its 429 no-store
+  envelope, and ensure every retained proxy path overwrites the private client-address header.
+  Adapt the matrix to active discovery responses in OIDC mode; rerun local AND OIDC packaged
+  gates, log scan, and a fresh security review before merging #208. Update the PR body/reply
+  with the new evidence and real OIDC event name when posting is requested. Fold aud-1…29
+  after merge. #210 is still open; the LXC stays put until M6 is finished.
+
+## 2026-09-05 — Claude Code (Fable 5.1) — #191 (M6-6) MERGED (PR #209 → `b84f757`, Codex round 3 GO); oidc- fold-in MERGED (PR #211 → `ffaddd4`)
+
+- **Done:** Codex round 3 (GPT 5.6 Sol) on `59eb9a4`: **GO, no findings**. PR #209 squash-merged
+  to `main` as `b84f757` (`Closes #191` — issue closed), branch deleted. Then the usual
+  harness-only fold-in, PR #211 → `ffaddd4`: 34 `oidc-` cases in `backend/mutation_test.py`
+  (constants `OIDC_SVC`, `AUTH_ROUTER`, `MODE`; `TEST_FILES` + `tests/test_auth_oidc.py`;
+  procedure count 368/32 → 402/33 with the oidc- paragraph). Not folded: oidc-1/2/3/11
+  (anchored on the joserfc registry round 1 replaced; superseded by 23/22/27/26) and oidc-13
+  (equivalent — no symmetric key in the JWKS); oidc-20 and oidc-25 re-anchored. `-k oidc-`
+  all 34 killed on the fold-in head, no external review (the #199/#201/#203/#207 precedent).
+- **Decisions:** owner's — #192 (M6-7, MCP OAuth) starts in a **new session** (context, not
+  scope); this session closes here. Memory (agent-side): the owner switches sessions at
+  ~80–90% context after a hand-off update and never relies on compaction.
+- **State:** `main` at `ffaddd4` + this entry; tree clean. Backend 1949 green at the merge,
+  frontend 487. Dev DB at `4f3a9c1e7b2d` (head), owner bound to the Keycloak `owner` user
+  (spike realm) in OIDC mode and still holding the local credential — note the migration
+  stamped its existing sessions `local`, so the next OIDC-mode start of the API signs that
+  browser out once (sweep + `auth.mode_changed` row); local-mode starts are unaffected.
+  Keycloak spike container state as the #190 entry left it (`.agents/spikes/190/`, tracked at
+  `a642d0b`). The LXC is on the pre-M6 reset and **stays put until M6 is finished** (owner,
+  03/09) — it will need `ALLOWED_HOSTS` and, if it ever switches modes, expect the one-time
+  sign-out.
+- **Next:** (1) **#192 (M6-7) MCP OAuth** on a branch off `main` — build from design §5.9
+  item 7 and the #190 spike's decisions (`.agents/spikes/190/findings.md` §10: CIMD on,
+  synthesised upstream-id client refused, allowlist narrows DCR only, path-aware OpenID doc
+  kept and the bare one pruned, Postgres adapter for proxy state with the table owned by
+  Alembic, explicit `MCP_OAUTH_SIGNING_KEY`, `verify_id_token=True`, owner binding at
+  issuance, fixed rw scope mapping); same issuer/client as #191, so `services/oidc.py`'s
+  provider/discovery is the thing to reuse, and family 8's registry declarations + the
+  generated ingress rejections are where `test_route_policy.py` / `test_ingress_generation.py`
+  will push back first; (2) #193 audit/rate limiting; (3) M6-9 TLS docs, then the M6 release
+  (gate in `.agents/testing-and-review.md`) and only then the LXC upgrade. Release-notes
+  items so far: `AUTH_MODE=oidc`; a mode switch signs every browser out at the first start in
+  the new mode; a local→oidc switch needs the setup token once; `session.auth_mode` migration.
+
+## 2026-09-05 — Claude Code (Fable 5.1) — #191 (M6-6) PR #209: Codex round 2 (NO-GO, 2×P3) addressed at `59eb9a4`, round 3 pending
+
+- **Done:** Codex round 2 (GPT 5.6 Sol) on `083ad08`: NO-GO, two P3s, no P1/P2, round-1 P2s
+  confirmed closed, calls 3/6/11/12 not overruled (its provider survey backs call 12's no
+  trusted-audience list). **f3 — non-finite NumericDates:** `_numeric_date` in
+  `services/oidc.py` now names the value domain — an `int` (never the bool) on its own branch,
+  or a `float` that `math.isfinite` — because JSON cannot spell NaN/Infinity (RFC 8259 §6)
+  but Python's parser admits them and every clock comparison against NaN is false.
+  Reproduced first: nine shapes (NaN, ±∞ on each of `exp`/`iat`/`nbf`) added to the matrix,
+  six opened a session at `083ad08`; a pinned-clock unit test drives all nine plus the
+  positive side (`10**400`, negative huge ints, float instants). Mutant **oidc-39** (finite
+  condition removed) killed by `[exp-nan]`. Design §5.9 (f) says "finite". **f4 — PR body
+  provenance:** Tests intro 35 → 70 → 80 by round; the Negative-control paragraph now carries
+  the reviewed-head baselines (`910a335`: 14 red / 56 green; `083ad08`: 7 red / 3 green) and
+  the matrix count (41 refused + 4 accepted), oidc-39 row and tuple.
+- **Decisions:** the domain is stated at the predicate, not by a JSON-strictness layer under
+  joserfc — the three time claims are the only numerically compared values, and the predicate
+  is the one place that admits them.
+- **State:** backend **1949 green**, `tests/test_auth_oidc.py` **80**, frontend untouched
+  (487), lint clean; tree clean at `59eb9a4` + this entry, both pushed. Reply posted on PR #209;
+  body amended. Dev DB at `4f3a9c1e7b2d`. Round-1 state still true: `session.auth_mode` +
+  start-up sweep (`auth.mode_changed`), one claim validator, migration `4f3a9c1e7b2d`.
+- **Next:** (1) Codex **round 3** on PR #209 — brief per `.agents/review-brief.md` (Codex
+  footer) at the new head, pointing at the round-2 reply; if GO, merge with `Closes #191`;
+  (2) after merge, fold oidc-1…39 into `mutation_test.py` (1/2/3/11 superseded by 21–30);
+  (3) #192 (M6-7) on top; (4) #193; (5) **LXC stays put until M6 is finished** (owner, 03/09).
+  Release-notes items unchanged: `AUTH_MODE=oidc`; a mode switch signs every browser out at the
+  first start in the new mode; a local→oidc switch needs the setup token once.
+
 ## 2026-09-04 — Codex (GPT-5.6 Sol) — #193 review GO; four P3s addressed, PR #208 held for #191/#192
 
 - **Done:** GLM 5.3 Flash reviewed PR #208 at `6a3c4ff`: **GO, four P3s, no P1/P2**.
@@ -65,135 +203,3 @@ Template:
 - **Next:** wait for #191/#192 integration state, rebase #208 if main moves, rerun the packaged
   ingress gate after any conflict resolution, and only then choose review/merge timing. After
   merge, fold aud-1…17 into `mutation_test.py`. The LXC stays put until M6 is finished.
-
-## 2026-09-04 — Codex (GPT-5.6 Sol) — #193 PR #208 open; ready for external review
-
-- **Done:** rebased `codex/193-audit-rate-limit-log-hygiene` onto `main` `a642d0b` after
-  the #190 spike archive, preserving #204's pre-routing gate; opened PR #208. M6-8 adds
-  Host/Origin audit recording and audited pruning; explicit anonymous/internal actors; trusted
-  client-address propagation through the bundled nginx and FastMCP verifier; four independent
-  nginx limit zones for families 2/3/8/9; and a non-vacuous full-login/PAT/MCP container-log scan.
-  The PR body carries the numbered calls, negative control, and exact hand-mutant table.
-- **Decisions:** nginx owns the external `TRUSTED_PROXIES` walk and overwrites its private address
-  header on all seven proxy paths; only the unpublished Compose API trusts it. Rate maps read
-  `$request_uri` because `/api/` rewriting precedes nginx's limit phase. Retention is explicit,
-  strict-before, and self-auditing. No migration: #187 supplied the table. `auth.oidc_rebound` is
-  reserved until OAuth ships. #206's family-7/family-8 `Allow` disclosure remains separate.
-- **State:** PR #208 is open at feature head `20eb1d0` plus this hand-off commit; CI is running.
-  Post-rebase: backend **1878 passed**, ruff/format green; frontend lint + **485 tests** + build
-  green. Changed-test negative control on `main` `a642d0b`: **14 red / 2 green**; branch 16/16.
-  All **16** single-site `aud-` hand mutants killed. Packaged matrix previously passed with all
-  four 429s, zero failures, and password/PAT/session absent from non-vacuous logs. Packaged stack
-  is stopped; dev Postgres is healthy on loopback and claimed with `e2e-owner-password`.
-- **Next:** wait for CI, then give the prepared round-1 brief to GLM 5.3 Flash (different family
-  from the Codex author); reproduce and answer every finding before another round. After merge,
-  fold `aud-1…16` into `mutation_test.py`. The LXC stays put until M6 is finished.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #190 spike: EVERY leg run (Keycloak, Google, MCP Inspector, Claude web, ChatGPT web, nginx, T13); evidence comment POSTED
-
-- **Done:** #190's spike, every leg that needs no external account, against the pinned
-  FastMCP 3.4.5 / MCP SDK 1.29.0. Harness + raw outputs in **`.agents/spikes/190/`**
-  (untracked — owner decides whether it is committed; `.agents/README.md` gained a line for
-  `spikes/`); **`findings.md` there is the #190 evidence comment, posted** as
-  https://github.com/DeusMaximus/plamotrack/issues/190#issuecomment-5538814198 (owner's call). Phase A
-  (in-process, no network): raw child + parent well-known route tables — exactly §5.5's four;
-  the response profile per route; the redirect-binding matrix (every §5.6 claim reproduced:
-  pattern replaces registration, synthesised upstream-id client → consent for any URI) and the
-  **thin constraint** (`BoundProxy`, 15 lines: registration AND allowlist, upstream id refused).
-  Phase B: **Keycloak 26.6.4** (realm import, `basic` scope needed for `sub`) + **MCP Inspector
-  2.5.0** (DCR public client, callback `http://127.0.0.1:6274/oauth/callback`, negotiated MCP
-  2025-11-25, requested only the PRM from the 401 pointer + path-aware AS doc — **never the bare
-  `openid-configuration`**); scripted client end to end; **T13 matrix**: same store+key → refresh
-  200 / 0 registrations; empty store or other key → 401 `invalid_client` (the DCR record is in
-  the store) → clients relink, nothing else lost. **Postgres adapter proven** (py-key-value-aio
-  `PostgreSQLStore` over asyncpg, one table `mcp_oauth_state`, values Fernet-encrypted, link →
-  restart → refresh 200). Phase C: packaged nginx (built from `frontend/`) in front of the probe —
-  the family-8 T2 surface matches §5.5 except two new facts: nginx **301**s the slash-less
-  `/.well-known/oauth-protected-resource/mcp`, and `PUT /mcp/authorize` is Starlette's 405 +
-  `Allow` (#206's family-8 sibling). **Then the owner-supplied legs, same session**, through a
-  Cloudflare tunnel `https://testing.gunp.la` → the packaged nginx (built from `frontend/`, tunnel
-  host in its allowlist) → the probe: **Google** (`verify_id_token=True`; scopes come back as
-  URIs so require `openid` only, else 403 `insufficient_scope`; **no refresh token without
-  `access_type=offline&prompt=consent`**), **Claude web = CIMD**
-  (`https://claude.ai/oauth/mcp-oauth-client-metadata`, callback `…/api/mcp/auth_callback`;
-  it **strips the trailing slash and posts to bare `/mcp`** — source-run it stalled on a
-  404/no-pointer fallback chain, so nginx's rewrite is load-bearing), **ChatGPT web = CIMD**
-  (per-connector `client.json`, callback `chatgpt.com/connector/oauth/<id>`; it reads the
-  **path-aware `openid-configuration/mcp`** after 404 on the pruned child alias). Nobody used
-  the bare OpenID document or the upstream-client-id path.
-- **Decisions (proposed in `findings.md` §10, not yet in `docs/design.md`):** CIMD **on** (both
-  web clients chose it), the synthesised upstream-id client refused, the allowlist narrows DCR
-  only; path-aware OpenID doc kept, bare one pruned; bare `/mcp` is a client-facing spelling; Postgres adapter
-  for proxy state, table owned by Alembic, backup set becomes DB + `.env`; explicit
-  `MCP_OAUTH_SIGNING_KEY` as 32 random bytes (the default store crashes on non-UTF-8 key bytes,
-  so always pass `client_storage`); `verify_id_token=True` as the one verifier shape (Google's
-  access tokens are opaque; proven on Keycloak); **owner binding at issuance** via an
-  `exchange_authorization_code` override (the verifier alone refuses a stranger only at the first
-  MCP call — they still get a token pair); refuse a token without `sub`; **the MCP scope
-  vocabulary is the IdP's** — `collection:*` cannot be per-grant scopes on 3.4.5 without
-  translating both directions (outbound is a private method) → fixed rw mapping for every
-  proxy-issued token; CIMD off until a named client needs it; FastMCP token lifetime = upstream
-  `expires_in` (Keycloak 300 s) unless pinned.
-- **State:** `main` at `4366695` + this entry, `.agents/README.md` edited, `.agents/spikes/190/`
-  untracked (its `.gitignore` keeps `secrets.env` — the owner's Google client — plus stores,
-  state and key out); **nothing committed** (owner's call). Spike containers: Keycloak stopped
-  (realm inside), nginx spike stack removed, image `plamotrack-web-spike` kept, scratch DB
-  dropped; ports 8000 / 8001 / 6274 / 8082 free. The tunnel `testing.gunp.la` → `10.86.64.128:8000`
-  route has been deleted by the owner; both web-client connectors removed (the Claude one may
-  linger as "Reconnect" — harmless, points nowhere). No code change in
-  `backend/` or `frontend/`. Dev DB still claimed with `e2e-owner-password`.
-- **Next:** (1) owner closes #190 when satisfied; (2) the §5 amendments (`findings.md` §10) and #192 (M6-7) on a
-  branch: CIMD on, owner binding at issuance, Postgres store under Alembic, fixed rw scope
-  mapping, Google's two parameters, bare `/mcp` carrying the pointer; (3) #193 audit / rate
-  limiting can run in parallel (family-8 `limit_req` on `authorize` matters more now that the
-  proxy fetches CIMD URLs); (4) **LXC stays put until M6 is finished** (owner, 03/09).
-## 2026-09-04 — Codex (GPT-5.6 Sol) — #193 rebased onto #205/#207; post-rebase verification green
-
-- **Done:** implemented M6-8 on `codex/193-audit-rate-limit-log-hygiene`: Host/Origin audit
-  recording plus audited retention CLI; explicit anonymous/internal audit principals; resolved
-  client identity through trusted proxies and the bundled nginx; revoked-PAT MCP audit address
-  propagation; independent nginx `limit_req` zones for families 2/3/8/9; full
-  setup→logout→password-login/PAT/MCP log-hygiene scan; operations/design/process docs updated.
-  The packaged test exposed and fixed two nginx traps: `limit_req` takes `zone=...` (not a key
-  argument), and the maps must read `$request_uri` because `/api/` rewrites `$uri` before the
-  limit phase. The local feature commit was rebased onto `main` at `916a337`, after #205 and its
-  f13- harness fold-in #207 merged; the pre-routing gate and audit middleware both remain.
-- **Decisions:** nginx performs the external `TRUSTED_PROXIES` walk and overwrites the internal
-  client-address header on all seven proxied paths; only the unpublished compose API enables
-  trust in it. Source runs leave that flag false. The bundled default-server Host 421 is an nginx
-  access-log event because it never reaches the API; the app's repeated Host refusal is the
-  database event. `auth.oidc_rebound` is reserved now; the OIDC item emits it when that flow exists.
-- **State:** original commit `9f4b204` was fully green before rebase: backend 1772; focused
-  security 286; frontend lint + 485 tests + production build. After rebase: ruff/format/render
-  green; combined auth/audit/ingress 556 passed; packaged matrix 0 failures, including #204's
-  family-13 rows and all four 429s; password/PAT/session absent from non-vacuous logs. Packaged
-  stack is stopped; dev Postgres is healthy on loopback and claimed with `e2e-owner-password`;
-  no disposable matrix PAT remains live.
-- **Next:** push/open a PR only on the owner's instruction, run the security review loop, and fold
-  resulting mutants after merge. #206 (family-7 `Allow` disclosure) is still open. The LXC stays
-  put until M6 is finished.
-## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) MERGED (PR #205 → `70d6b3d`, Codex round 2 GO); f13- fold-in MERGED (PR #207 → `4366695`)
-
-- **Done:** Codex round 2 (GPT 5.6 Sol) on `388de0b`: **GO, no findings** — replayed f1–f3, instrumented
-  the gate's session order (open → resolve → commit/rollback → close → router/render, so "no
-  overlap" holds), confirmed #206 as the right family-7 cut. PR #205 squash-merged as `70d6b3d` on
-  the owner's call, branch deleted, **#204 closed**. Shipped: `app/auth/prerouting.py` (the
-  pre-routing gate), `PROTOCOL_NAMESPACES` + `iter_dispatch_order` in the registry, the dependency
-  reusing the stashed principal, T2 family-13 rows, `tests/test_auth_unrouted.py` (106).
-- **Decisions:** none new; the nine deliberate calls are recorded in design §5.9 item 3(b) (i)–(vi)
-  and on the PR. `.agents/lessons.md` owes nothing: the family-8 miss is the sweep rule as written
-  (enumerate the families the ingress forwards, not just the ones with routes) — the hand-off
-  entries below carry the case.
-- **State:** `main` at `4366695` plus this entry. Backend 1866, frontend 485, e2e 43+1 (CI). The
-  shipped app: anonymous unrouted / wrong-verb / malformed requests under `/api/` are 401 with the
-  bare `Bearer` challenge; `/.well-known/*` stays the router's 404 until M6-7; `/mcp/*` untouched.
-  The f13- fold-in landed as **PR #207 → `4366695`** (harness-only, no external review): `PRE`
-  path constant, `TEST_FILES` + `tests/test_auth_unrouted.py`, `-k f13-` → all 15 killed on a
-  clean tree; procedure doc: 368 cases over thirty-two files. Dev DB
-  claimed with `e2e-owner-password`. No release cut — M6 ships as one release at the end.
-- **Next:** (1) #190/#192 MCP OAuth spike (§5.9 item 5); (2) #193 audit/rate limiting (item 8);
-  (3) #206 (family-7 `Allow` to anon) rides with whichever of those touches the
-  mount; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release-notes items for the M6
-  release: `ALLOWED_HOSTS` lockout risk (M6-1); the instance comes up unclaimed (M6-3); `/mcp/`
-  requires a PAT, wrong password / setup token is 403, never a token in a URL (M6-4); anonymous
-  probes under `/api/` are 401, not 404/405/422 (M6-3b).

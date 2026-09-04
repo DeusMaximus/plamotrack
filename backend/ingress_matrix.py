@@ -60,6 +60,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import os
 import pathlib
 import sys
 from dataclasses import dataclass, field
@@ -120,11 +121,12 @@ class Credential:
 
 
 def write_private(path_value: str, content: str) -> pathlib.Path:
-    """Create/restrict a harness secret file before putting a secret in it."""
+    """Restrict and write one opened file, refusing a symlink at the output path."""
     path = pathlib.Path(path_value)
-    path.touch(mode=0o600, exist_ok=True)
-    path.chmod(0o600)
-    path.write_text(content)
+    flags = os.O_CREAT | os.O_TRUNC | os.O_WRONLY | os.O_NOFOLLOW
+    with os.fdopen(os.open(path, flags, 0o600), "w", encoding="utf-8") as output:
+        os.fchmod(output.fileno(), 0o600)
+        output.write(content)
     return path
 
 
@@ -730,6 +732,26 @@ def token_rows(base: str, tokens: Tokens) -> list[Row]:
             },
             body=b'{"password":"irrelevant"}',
             json_code="auth.forbidden",
+        ),
+        # OIDC mode's routes exist in local mode too (#191) — registered and
+        # answering 404 themselves, never the anonymous 401, so a mode is not a
+        # challenge (§5.5). The callback carries no Location: a browser sent
+        # here by a hostile page lands on the envelope, nowhere else.
+        Row(
+            "api/auth/oidc/start in local mode → 404",
+            "POST",
+            "/api/auth/oidc/start",
+            404,
+            headers={"Content-Type": "application/json", "Origin": f"http://localhost{port}"},
+            body=b"{}",
+            json_code="auth.not_in_this_mode",
+        ),
+        Row(
+            "api/auth/oidc/callback in local mode → 404, no Location",
+            "GET",
+            "/api/auth/oidc/callback?state=x&code=y",
+            404,
+            json_code="auth.not_in_this_mode",
         ),
         # A well-shaped *fake* token, never a live one: request URIs land in the
         # uvicorn and nginx access logs, and a real token there would put the

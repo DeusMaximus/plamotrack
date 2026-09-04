@@ -20,6 +20,7 @@ import type {
   KitStatus,
   KitUpdate,
   Meta,
+  OidcStart,
   Order,
   OrderCreate,
   OrderReceive,
@@ -236,6 +237,13 @@ export const api = {
     request<AuthSession>("/auth/setup", post({ token, password })),
   login: (password: string) => request<AuthSession>("/auth/login", post({ password })),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
+  /** OIDC mode (#191): begin a login at the provider. The setup token is needed
+   *  only while the instance reports `unclaimed`; the caller navigates to the URL. */
+  oidcStart: (setupToken?: string) =>
+    request<OidcStart>(
+      "/auth/oidc/start",
+      post(setupToken ? { setup_token: setupToken } : {}),
+    ),
 
   /** Personal access tokens (#189) — owner-session only (family 6); the mint
    *  response is the one time the secret is readable. */

@@ -58,23 +58,35 @@ def setup_token_state(app: FastAPI) -> SetupToken:
     return state
 
 
-def announce(app: FastAPI, *, setup_url: str) -> str:
+def announce(app: FastAPI, *, setup_url: str, oidc_issuer: str | None = None) -> str:
     """Issue this process's token and print it. Called from the lifespan while the
-    instance is unclaimed; the return value is for tests, the log line is the
-    product."""
+    instance is unclaimed — in OIDC mode, while the owner is unbound (#191), when
+    the token is presented before the provider sign-in that binds. The return
+    value is for tests, the log line is the product."""
     raw = setup_token_state(app).issue()
+    if oidc_issuer is None:
+        how = "enter this setup token with your new password:"
+        then = "until the instance is claimed."
+    else:
+        how = (
+            f"enter this setup token, then sign in at {oidc_issuer}\n"
+            "  — that account becomes the owner:"
+        )
+        then = "until an identity is bound (AUTH_MODE=oidc)."
     log.warning(
         "\n"
         "============================================================\n"
         "  This plamotrack instance has no owner yet.\n"
-        "  Open %s and enter this setup token with your new password:\n"
+        "  Open %s and %s\n"
         "\n"
         "      %s\n"
         "\n"
         "  The token works once. A new one is printed at every start\n"
-        "  until the instance is claimed.\n"
+        "  %s\n"
         "============================================================",
         setup_url,
+        how,
         raw,
+        then,
     )
     return raw

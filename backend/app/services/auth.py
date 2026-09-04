@@ -18,6 +18,7 @@ rolls the transaction back, and an attempt that leaves no trace is exactly what
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from enum import StrEnum
 
@@ -39,8 +40,11 @@ from app.exceptions import (
 from app.models import Credential, Owner
 from app.models import Session as SessionRow
 from app.models.auth import OWNER_ROW_ID
+from app.models.enums import AuthMode
 from app.services import audit
 from app.services.write_gate import acquire_write_gate
+
+log = logging.getLogger("plamotrack.auth")
 
 
 class InstanceState(StrEnum):
@@ -114,19 +118,32 @@ async def _the_credential(session: AsyncSession) -> Credential | None:
 # --- sessions -------------------------------------------------------------------
 
 
-def _new_session_row(now: datetime) -> tuple[str, SessionRow]:
+def new_session_row(now: datetime, *, auth_mode: AuthMode) -> tuple[str, SessionRow]:
+    """A fresh session: the raw token for the cookie and the row holding its
+    digest, stamped with the mode that mints it. Shared with the OIDC flow
+    (`services/oidc.py`), which mints sessions the same way after its own
+    credential check."""
     raw = credentials.new_token()
     row = SessionRow(
         token_hash=credentials.digest(raw),
+        auth_mode=auth_mode,
         last_used_at=now,
         expires_at=now + SESSION_ABSOLUTE,
     )
     return raw, row
 
 
-async def resolve_session(session: AsyncSession, raw_token: str) -> SessionRow | None:
+async def resolve_session(
+    session: AsyncSession, raw_token: str, *, auth_mode: AuthMode
+) -> SessionRow | None:
     """The live session row a presented cookie names, or None when it names no
-    session, a revoked one, or an expired one (idle or absolute). Touches
+    session, a revoked one, an expired one (idle or absolute), or one minted in
+    an authentication mode other than `auth_mode` — the one the app is running
+    in. A session is authority only in the mode that minted it: a password-flow
+    cookie kept across a switch to OIDC mode is not the owner there, nor a
+    provider-minted one after the switch back (Codex #209 round 1, f1); the
+    start-up sweep (`revoke_sessions_of_other_modes`) revokes them, this is
+    the per-request refusal that does not depend on it having run. Touches
     `last_used_at` at most every `LAST_USED_WRITE_INTERVAL`; the caller's
     transaction commits that."""
     row = (
@@ -134,7 +151,7 @@ async def resolve_session(session: AsyncSession, raw_token: str) -> SessionRow |
             select(SessionRow).where(SessionRow.token_hash == credentials.digest(raw_token))
         )
     ).scalar_one_or_none()
-    if row is None or row.revoked_at is not None:
+    if row is None or row.revoked_at is not None or row.auth_mode != auth_mode:
         return None
     now = _now()
     if row.expires_at is not None and now >= row.expires_at:
@@ -175,6 +192,47 @@ async def revoke_all_sessions(
     return revoked
 
 
+async def revoke_sessions_of_other_modes(session: AsyncSession, *, auth_mode: AuthMode) -> int:
+    """The API's start in `auth_mode` (the lifespan; #191): every live session
+    minted in any other mode is revoked, with the bulk-revocation audit row and
+    an `auth.mode_changed` row naming the mode and the count. The resolver
+    already refuses the other mode's cookie on every request; this makes the
+    refusal durable, so switching back does not find those sessions live again
+    (Codex #209 round 1, f1). A restart in the same mode revokes nothing and
+    records nothing. Returns how many were live."""
+    await acquire_write_gate(session)
+    result = await session.execute(
+        update(SessionRow)
+        .where(SessionRow.revoked_at.is_(None), SessionRow.auth_mode != auth_mode)
+        .values(revoked_at=_now())
+    )
+    revoked = result.rowcount or 0
+    if revoked:
+        await audit.record_event(
+            session,
+            audit.SESSIONS_REVOKED,
+            principal=internal(),
+            target="startup",
+            detail=f"count={revoked}",
+            client_address="host",
+        )
+        await audit.record_event(
+            session,
+            audit.AUTH_MODE_CHANGED,
+            principal=internal(),
+            target="startup",
+            detail=f"auth_mode={auth_mode} sessions_revoked={revoked}",
+            client_address="host",
+        )
+        log.warning(
+            "Auth mode is now %s: %d browser session(s) from the previous mode signed out.",
+            auth_mode,
+            revoked,
+        )
+    await session.commit()
+    return revoked
+
+
 # --- the flows ------------------------------------------------------------------
 
 
@@ -196,13 +254,13 @@ async def claim_instance(
     now = _now()
     await _replace_credential(session, password)
     owner.claimed_at = now
-    raw, row = _new_session_row(now)
+    raw, row = new_session_row(now, auth_mode=AuthMode.LOCAL)
     session.add(row)
     await session.flush()
     await audit.record_event(
         session,
         audit.SETUP_CLAIMED,
-        principal=_owner_principal(row),
+        principal=owner_principal(row),
         request=request,
         target="/auth/setup",
     )
@@ -210,7 +268,7 @@ async def claim_instance(
     return raw
 
 
-def _owner_principal(row: SessionRow) -> Principal:
+def owner_principal(row: SessionRow) -> Principal:
     from app.auth.principal import owner
 
     return owner(subject=str(row.id), via="session")
@@ -246,17 +304,22 @@ async def refuse_throttled(
 
 
 async def record_setup_failure(
-    session: AsyncSession, budget: FailureBudget, *, request: Request | None
+    session: AsyncSession,
+    budget: FailureBudget,
+    *,
+    request: Request | None,
+    target: str = "/auth/setup",
 ) -> None:
     """A wrong setup token: counts against the budget, audited, refused as a
-    rejected form credential (403 — see `CredentialRejectedError`)."""
+    rejected form credential (403 — see `CredentialRejectedError`). The OIDC
+    start presents the same token (#191) and names its own route as `target`."""
     budget.record_failure()
     await audit.record_event(
         session,
         audit.SETUP_FAILED,
         principal=anonymous(),
         request=request,
-        target="/auth/setup",
+        target=target,
     )
     await session.commit()
     raise CredentialRejectedError(_SETUP_TOKEN_INVALID, code=error_codes.AUTH_SETUP_TOKEN_INVALID)
@@ -298,13 +361,13 @@ async def login(
     budget.reset()
     if credentials.password_needs_rehash(credential.secret_hash):
         credential.secret_hash = credentials.hash_password(password)
-    raw, row = _new_session_row(_now())
+    raw, row = new_session_row(_now(), auth_mode=AuthMode.LOCAL)
     session.add(row)
     await session.flush()
     await audit.record_event(
         session,
         audit.LOGIN_SUCCEEDED,
-        principal=_owner_principal(row),
+        principal=owner_principal(row),
         request=request,
         target="/auth/login",
     )
