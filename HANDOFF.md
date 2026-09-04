@@ -41,6 +41,25 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 5 (NO-GO, 2×P3, prose/evidence) addressed at `4fb946b`, round 6 pending
+
+- **Done:** Codex round 5 (GPT 5.6 Sol) on `77fb1c9`: NO-GO, two P3s, no bypass; finding-9
+  class gone, "other than 10–11, no remaining P1–P3 across five rounds". (f10) the round-4
+  rewrite overcorrected to "every request / everything is authenticated" — liveness,
+  `GET /auth/session` and login/setup are anonymous by design → both sentences (operations
+  *Reaching it…*, AGENTS.md roadmap note) now say collection and administrative access is
+  authenticated and name the anonymous entry points. (f11) PR body named `622965f` not the
+  final corrective head `09ef061` → opening line now names `4fb946b`, rounds 1–5. Reply posted.
+- **Decisions:** none new. Option 3's "positioned on the path" wording retained (Codex: accurate).
+- **State:** branch head `4fb946b` (docs/process only since `ef7764d`; runtime unchanged since
+  `5aca2e6`); CI on the merged head running when written. Tree parked on `main`. Dev DB
+  claimed with `e2e-owner-password`. **Round 6 pending** (findings from 12).
+- **Next:** (1) Codex round 6 → merge on GO (`Closes #189`), branch delete; (2) harness fold-in
+  PR for pat-1…25; (3) the two family-13 hardening items (design §5.9 item 3(b)); (4) #190/#192
+  OAuth spike; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release notes for
+  the M6 release: wrong password / setup token is 403; `/mcp/` requires a PAT; never a token
+  in a URL.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 4 (NO-GO, 1×P3, docs only) addressed at `09ef061`, round 5 pending
 
 - **Done:** Codex round 4 (GPT 5.6 Sol) on `98a82b2`: NO-GO, one P3, no bypass; f6/f7/f8 held,
@@ -134,32 +153,4 @@ Template:
   family-13 hardening items (design §5.9 item 3(b)); (4) #190/#192 OAuth spike; (5) **LXC stays
   put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull,
   back up first, it comes up unclaimed.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) personal access tokens: PR #202 OPEN at `789357d`, Codex round 1 pending
-
-- **Done:** #189 built on `feature/m6-4-personal-access-tokens`, one commit (`789357d`),
-  pushed, **PR #202** open against `main` `17751a1`. The branch's own HANDOFF entry (in
-  that commit) has the file-by-file state; in short: `ptk_<12 hex>_<secret>` tokens,
-  `services/tokens.resolve_bearer` behind both the REST resolver and a FastMCP
-  `TokenVerifier` on the `/mcp` mount, `ToolScopeMiddleware` on `tools/call` reading
-  `MCP_TOOL_SCOPES`, `/auth/tokens` as family 6, `RoutePolicy.bearer_refused` (family 3),
-  `WWW-Authenticate` on every 401, audit `auth.token_minted/revoked/use_after_revoke`,
-  Settings → Access tokens, e2e `tokens.spec.ts`, matrix + CI probe carrying a token,
-  README/operations/design/AGENTS updated. Deliberate calls a–h in design §5.9 item 4 and
-  1–9 in the PR body.
-- **Decisions:** review by Codex (M6 security work); the `pat-` mutants (23, all killed)
-  were hand-run from a scratch runner because the tracked harness refuses a dirty tree —
-  tuples in the PR body's collapsed block, **fold into `mutation_test.py` after merge**
-  (`TEST_FILES` + `tests/test_auth_tokens.py`, the #197/#199/#201 precedent).
-- **State:** backend 1754 / `test_auth_tokens.py` 94, frontend 485, e2e tokens 2/2, packaged
-  stack from empty: matrix 54 rows 0 failing, `fastmcp` client 30 tools with the token and
-  401 without. Negative control: the new file does not collect on `main` (imports the
-  feature); the adapted matrix files go 6 red / 145 green there. Tree parked on `main` for
-  the review window. Dev DB claimed with `e2e-owner-password` (re-claimed after the
-  packaged run's `down -v`). CI on `789357d` not yet observed.
-- **Next:** (1) Codex round 1 on `789357d` → reproduce, fix, reply in its numbering; merge on
-  GO; (2) harness fold-in PR for `pat-`; (3) the two family-13 hardening items (design §5.9
-  item 3(b)); (4) #190/#192 OAuth spike; (5) **LXC stays put until M6 is finished** (owner,
-  03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first, it comes up
-  unclaimed (setup token in `docker compose logs api`).
 
