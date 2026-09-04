@@ -243,6 +243,11 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   that moves the call; and auth-37 (the predicate counting every table's UPDATEs)
   survived because the collection-only import test planned a CREATE, never an UPDATE
   — the test now seeds the retailer so the row is an UPDATE, the state-axis rule).
+  and #189 (`pat-` — personal access tokens, PR #202: `app/auth/tokens.py`,
+  `app/services/tokens.py`, `app/auth/resolver.py`, `app/auth/mcp_auth.py`, plus
+  `dependency.py`, `registry.py` and `main.py`; pat-1…23 hand-run on the branch, pat-24
+  and pat-25 added by the Codex rounds — the value normalised in the shared helper and
+  rejected form credentials mapped to 403; all 25 killed at fold-in, `-k pat-`).
   **A message-restructuring change rots anchors silently**: #25 rewrote 81
   raise sites and six anchors (n5, n6a, n6b, cat-13, cat-14, wdr-8) sat
   SKIP-broken until #26's full run — a fold-in that runs only its own `-k`

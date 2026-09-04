@@ -118,6 +118,11 @@ CRED = ROOT / "app/auth/credentials.py"
 SESS = ROOT / "app/auth/sessions.py"
 AUTH_SVC = ROOT / "app/services/auth.py"
 MAIN = ROOT / "app/main.py"
+# The #189 (pat-) set: personal access tokens.
+TOK_SVC = ROOT / "app/services/tokens.py"
+TOK_FMT = ROOT / "app/auth/tokens.py"
+RESOLVER = ROOT / "app/auth/resolver.py"
+MCP_AUTH = ROOT / "app/auth/mcp_auth.py"
 AUTH_MIG = VERS / "20260903_f1058c5de0f3_auth_foundation_tables_m6_2_187.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
@@ -2735,6 +2740,191 @@ CASES = [
         "    if credentials.password_needs_rehash",
         "throttle_then_a_success_resets",
     ),
+    # --- #189 (M6-4, PR #202): personal access tokens — the pat- set. The token
+    # format and the shared bearer helper (the dummy compare, revoked/expired,
+    # last-used, the audit rows), the resolver's strict presented-and-failed
+    # 401 (malformed, fall-through, the committed audit row, the query string),
+    # the family-3 bearer refusal, the family-6 classification, the MCP
+    # verifier and tool-scope middleware (the seam order, the scope grant), the
+    # mount built with the verifier, the 401 challenge, and the two review-round
+    # fixes (pat-24: the value normalised in the helper; pat-25: rejected form
+    # credentials are 403). Hand-run on the branch across six Codex rounds, all
+    # killed; folded in here after merge (`f685c30`). ----------------------------
+    (
+        "pat-1. an unknown id skips the compare (no dummy digest)",
+        TOK_SVC,
+        "    expected = row.secret_hash if row is not None else token_format.DUMMY_DIGEST\n    matched = credentials.tokens_match(raw, expected)\n",
+        "    matched = row is not None and credentials.tokens_match(raw, row.secret_hash)\n",
+        "do_the_same_compare",
+    ),
+    (
+        "pat-2. a revoked token still resolves",
+        TOK_SVC,
+        "    if row.revoked_at is not None:\n        await audit.record_event(",
+        "    if False and row.revoked_at is not None:\n        await audit.record_event(",
+        "use_after_revoke or same_401_on_every_route",
+    ),
+    (
+        "pat-3. expiry compared the wrong way",
+        TOK_SVC,
+        "    if row.expires_at is not None and now >= row.expires_at:",
+        "    if row.expires_at is not None and now < row.expires_at:",
+        "expired or future_expiry",
+    ),
+    (
+        "pat-4. admin scope mintable",
+        TOK_SVC,
+        "    if not granted or not granted <= token_format.GRANTABLE_SCOPES:",
+        "    if not granted:",
+        "no_admin_and_no_unknown",
+    ),
+    (
+        "pat-5. write no longer implies read in the column",
+        TOK_FMT,
+        "    if Scope.WRITE in granted:\n        granted.add(Scope.READ)\n",
+        "",
+        "stored_grant_is_canonical",
+    ),
+    (
+        "pat-6. a malformed Authorization header is anon",
+        RESOLVER,
+        "    if presented is token_format.MALFORMED:\n        raise UnauthenticatedError(\n            _BEARER_INVALID,\n            code=error_codes.AUTH_BEARER_INVALID,\n            challenge=INVALID_TOKEN_CHALLENGE,\n        )\n",
+        "    if presented is token_format.MALFORMED:\n        return anonymous()\n",
+        "same_401_on_every_route",
+    ),
+    (
+        "pat-7. a failed bearer falls through to anon",
+        RESOLVER,
+        "        await session.commit()\n        raise UnauthenticatedError(\n            _BEARER_INVALID,\n            code=error_codes.AUTH_BEARER_INVALID,\n            challenge=INVALID_TOKEN_CHALLENGE,\n        )\n    return resolution.principal\n",
+        "        await session.commit()\n        return anonymous()\n    return resolution.principal\n",
+        "beside_a_cookie or same_401_on_every_route",
+    ),
+    (
+        "pat-8. the use-after-revoke audit row is rolled back with the 401",
+        RESOLVER,
+        "        await session.commit()\n        raise UnauthenticatedError(",
+        "        raise UnauthenticatedError(",
+        "use_after_revoke_is_audited_even",
+    ),
+    (
+        "pat-9. a query-string token is a credential",
+        RESOLVER,
+        "    presented = token_format.bearer_from_headers(request.headers)\n",
+        '    presented = token_format.bearer_from_headers(request.headers) or request.query_params.get(\n        "access_token"\n    )\n',
+        "query_string",
+    ),
+    (
+        "pat-10. the dependency ignores bearer_refused",
+        DEP,
+        "    if policy.bearer_refused and principal.bearer_borne:",
+        "    if False:",
+        "refused_on_the_auth_actions",
+    ),
+    (
+        "pat-11. the registry never sets bearer_refused",
+        REG,
+        "            bearer_refused=(family == 3),",
+        "            bearer_refused=False,",
+        "refused_on_the_auth_actions",
+    ),
+    (
+        "pat-12. token management is a family-5 write",
+        REG,
+        "        return RoutePolicy(\n            6, CredentialPolicy.ADMIN, route.methods, _NO_STORE, spellings=api_spelling\n        )\n",
+        "        return RoutePolicy(\n            5, CredentialPolicy.WRITE, route.methods, _NO_STORE, spellings=api_spelling\n        )\n",
+        "cannot_manage_tokens or rest_surface_matches",
+    ),
+    (
+        "pat-13. the tool-scope check is skipped",
+        MCP_AUTH,
+        "        if not principal.has_scope(required):",
+        "        if False:",
+        "every_write_tool_refuses or tool_scope_over_http",
+    ),
+    (
+        "pat-14. an HTTP request without a token falls back to the seam",
+        MCP_AUTH,
+        "        if _http_request_in_flight():\n            raise ToolError(_UNAUTHENTICATED)\n",
+        "",
+        "open_mount_still_refuses",
+    ),
+    (
+        "pat-15. the verifier grants every scope",
+        MCP_AUTH,
+        "                scopes=[scope.value for scope in Scope if scope in principal.scopes],",
+        "                scopes=[scope.value for scope in Scope],",
+        "tool_scope_over_http",
+    ),
+    (
+        "pat-16. the mount is built without the verifier",
+        MAIN,
+        "        auth=PersonalAccessTokenVerifier() if authorization else None,",
+        "        auth=None,",
+        "takes_a_bearer_and_never_a_cookie or carries_no_store_over",
+    ),
+    (
+        "pat-17. no WWW-Authenticate on the 401 envelope",
+        MAIN,
+        '    if isinstance(exc, UnauthenticatedError) and exc.challenge:\n        headers["WWW-Authenticate"] = exc.challenge\n',
+        "",
+        "anonymous_401_carries or same_401_on_every_route",
+    ),
+    (
+        "pat-18. the mint audit row carries the secret",
+        TOK_SVC,
+        '        detail=f"token={row.id} scopes={row.scopes}",',
+        '        detail=f"token={raw} scopes={row.scopes}",',
+        "audited_without_the_secret or leaves_no_secret",
+    ),
+    (
+        "pat-19. revoke re-stamps an already-revoked row",
+        TOK_SVC,
+        "    if row.revoked_at is None:\n        row.revoked_at = _now()\n",
+        "    row.revoked_at = _now()\n",
+        "revoke_is_idempotent",
+    ),
+    (
+        "pat-20. the bearer scheme is case-sensitive",
+        TOK_FMT,
+        '    if scheme.lower() != "bearer" or not value:',
+        '    if scheme != "Bearer" or not value:',
+        "only_a_bearer_header",
+    ),
+    (
+        "pat-21. last_used_at is never touched",
+        TOK_SVC,
+        "    if row.last_used_at is None or now - row.last_used_at >= LAST_USED_WRITE_INTERVAL:\n        row.last_used_at = now\n",
+        "",
+        "last_used_is_touched",
+    ),
+    (
+        "pat-22. every verified token is a write token",
+        MCP_AUTH,
+        "        return pat(write=Scope.WRITE in scopes, subject=token.client_id, via=VIA_BEARER)",
+        "        return pat(write=True, subject=token.client_id, via=VIA_BEARER)",
+        "tool_scope_over_http",
+    ),
+    (
+        "pat-23. the transport route keeps FastMCP's declared methods",
+        MAIN,
+        "                route.methods = None  # type: ignore[attr-defined]",
+        "                pass",
+        "mounted_surface_matches or accepts_exactly_the_declared or carries_no_store_over",
+    ),
+    (
+        "pat-24. the shared helper no longer strips the presented value (round 1, f1)",
+        TOK_SVC,
+        "    raw = raw.strip()\n",
+        "",
+        "header_form",
+    ),
+    (
+        "pat-25. a rejected form credential is 401 again (round 2, f4)",
+        MAIN,
+        "    CredentialRejectedError: 403,\n",
+        "    CredentialRejectedError: 401,\n",
+        "every_401_carries or wrong_password_is_403 or wrong_setup_token_is_403",
+    ),
 ]
 
 
@@ -3716,6 +3906,9 @@ TEST_FILES = [
     "tests/test_ingress_generation.py",
     # The #188 (m63-) fold-in: every m63- kill lives here.
     "tests/test_auth_local.py",
+    # The #189 (pat-) fold-in: the token suite; pat-12/16/23 also kill in
+    # test_route_policy.py / test_authorization.py, listed above.
+    "tests/test_auth_tokens.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
