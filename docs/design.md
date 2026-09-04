@@ -1267,8 +1267,10 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    command uses a strict cutoff and records its own result. OIDC rebind has a reserved
    event type; item 6 emits it when that flow exists. Four independent nginx zones key
    families 2, 3, 8 and 9 by `$binary_remote_addr` after the trusted-proxy walk; their
-   maps read `$request_uri`, not rewritten `$uri`, because the generic `/api/` location
-   strips the prefix before the limit phase. Uvicorn stays at one worker while the
+   maps read a server-rewrite snapshot of nginx's normalised `$uri`, taken before the
+   generic `/api/` location strips the prefix; raw `$request_uri` lets alternative
+   spellings bypass the key, while live `$uri` has already lost the prefix by the limit
+   phase. Uvicorn stays at one worker while the
    login/setup failure budget is in process. CI drives setup, sign-out, a real password
    login, PAT mint/use/revoke, REST and MCP, proves all four zones eventually return
    429, requires access records from both containers, and scans their complete output

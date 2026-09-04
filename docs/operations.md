@@ -406,6 +406,14 @@ settings a proxy in front of MCP has to get right; the name it forwards goes in
 origin write; and `TRUSTED_PROXIES` names the proxy so rate limits and audit use
 the client address rather than treating the proxy as one client.
 
+In the bundled stack, nginx performs that proxy walk and the unpublished API trusts
+the client-address header nginx overwrites. Every container attached to the private
+Compose network is therefore inside that header's trust boundary: do not attach an
+untrusted companion container to it, and do not treat audit addresses on requests
+sent directly to `api:8000` by another container as verified. Host clients cannot
+reach that port through the supplied Compose configuration; all published traffic
+passes through nginx, which overwrites a forged value.
+
 ## When something's wrong
 
 **`up --wait` hangs or fails.** Find the unhealthy service:

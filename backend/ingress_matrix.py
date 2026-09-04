@@ -801,7 +801,10 @@ def rate_limit_checks(base: str) -> list[str]:
     The checks run after sign-out and use safe GETs, so they cannot change auth
     state or trip the app's separate login-failure budget. We intentionally do
     not pin the exact accepted count — elapsed time and a worker scheduling gap
-    can replenish a request — only the control's observable boundary.
+    can replenish a request — only the control's observable boundary. Doubled-
+    slash, dot-segment and percent-encoded spellings are sent verbatim for every
+    family: nginx normalises each to the real handler, so each must share the
+    canonical route's limit key (#208 review P3-1).
     """
     cases = (
         ("family 2 auth bootstrap", "/api/auth/session", {200}),
@@ -827,6 +830,43 @@ def rate_limit_checks(base: str) -> list[str]:
             problems.append(f"{label} never answered 429 across {len(statuses)} requests")
         else:
             print(f"ok  RATE   {path:60} {label} → 429 after {len(statuses)} requests")
+    normalised_cases = (
+        ("family 2", "//api/auth/session", {200}),
+        ("family 2", "/api/./auth/session", {200}),
+        ("family 2", "/api/%61uth/session", {200}),
+        ("family 3", "//api/auth/login", {405}),
+        ("family 3", "/api/./auth/login", {405}),
+        ("family 3", "/api/auth/%6cogin", {405}),
+        ("family 8", "//.well-known/openid-configuration/mcp", {404}),
+        ("family 8", "/.well-known/./openid-configuration/mcp", {404}),
+        ("family 8", "/.well-known/%6fpenid-configuration/mcp", {404}),
+        ("family 9", "//api/healthz", {200}),
+        ("family 9", "/api/./healthz", {200}),
+        ("family 9", "/api/%68ealthz", {200}),
+    )
+    for family, path, admitted in normalised_cases:
+        statuses = []
+        for _ in range(80):
+            response = send(base, Row(f"{family} normalised spelling", "GET", path, 0))
+            statuses.append(response.status)
+            if response.status == 429:
+                break
+            if response.status not in admitted:
+                problems.append(
+                    f"normalised {family} spelling {path!r} answered {response.status} "
+                    f"before throttling; expected one of {sorted(admitted)}"
+                )
+                break
+        if 429 not in statuses:
+            problems.append(
+                f"normalised {family} spelling {path!r} never answered 429 "
+                f"across {len(statuses)} requests"
+            )
+        else:
+            print(
+                f"ok  RATE   {path:60} {family} normalised spelling → 429 "
+                f"after {len(statuses)} requests"
+            )
     return problems
 
 

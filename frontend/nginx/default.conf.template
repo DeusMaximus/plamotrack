@@ -12,30 +12,33 @@
 # TRUSTED_PROXIES is rendered as validated `set_real_ip_from` directives by the
 # same startup script. Only those peers may supply X-Forwarded-For; after nginx's
 # real-ip module resolves the chain, `$binary_remote_addr` is the per-client key
-# for the four deliberately bounded route families (§5.6, T8).
+# for the four deliberately bounded route families (§5.6, T8). The maps read a
+# server-rewrite snapshot of nginx's normalised URI: raw `$request_uri` lets
+# doubled-slash, dot-segment and percent-encoded spellings reach a real handler
+# with an empty key, while live `$uri` has already lost `/api/` by the limit phase.
 ${PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES}
 real_ip_header X-Forwarded-For;
 real_ip_recursive on;
 
-map $request_uri $plamotrack_family_2_key {
+map $plamotrack_normalized_request_uri $plamotrack_family_2_key {
     default "";
-    ~^/api/auth/session(?:\?|$) $binary_remote_addr;
+    ~^/api/auth/session$ $binary_remote_addr;
 }
 
-map $request_uri $plamotrack_family_3_key {
+map $plamotrack_normalized_request_uri $plamotrack_family_3_key {
     default "";
-    ~^/api/auth/(setup|login|logout|oidc/start|oidc/callback)(?:\?|$) $binary_remote_addr;
+    ~^/api/auth/(setup|login|logout|oidc/start|oidc/callback)$ $binary_remote_addr;
 }
 
-map $request_uri $plamotrack_family_8_key {
+map $plamotrack_normalized_request_uri $plamotrack_family_8_key {
     default "";
-    ~^/\.well-known/(oauth-protected-resource/mcp/|oauth-authorization-server/mcp|openid-configuration/mcp)(?:\?|$) $binary_remote_addr;
-    ~^/mcp/(authorize|token|register|consent|auth/callback|revoke)(?:\?|$) $binary_remote_addr;
+    ~^/\.well-known/(oauth-protected-resource/mcp/|oauth-authorization-server/mcp|openid-configuration/mcp)$ $binary_remote_addr;
+    ~^/mcp/(authorize|token|register|consent|auth/callback|revoke)$ $binary_remote_addr;
 }
 
-map $request_uri $plamotrack_family_9_key {
+map $plamotrack_normalized_request_uri $plamotrack_family_9_key {
     default "";
-    ~^/api/healthz(?:\?|$) $binary_remote_addr;
+    ~^/api/healthz$ $binary_remote_addr;
 }
 
 limit_req_zone $plamotrack_family_2_key zone=plamotrack_family_2:1m rate=10r/s;
@@ -58,6 +61,11 @@ server {
 server {
     listen 80;
     server_name ${PLAMOTRACK_SERVER_NAMES};
+
+    # Server-level rewrite directives run before location selection and the
+    # `/api/` prefix rewrite. This captures nginx's already-normalised path for
+    # the limiter maps without losing the public namespace.
+    set $plamotrack_normalized_request_uri $uri;
 
     root /usr/share/nginx/html;
     index index.html;

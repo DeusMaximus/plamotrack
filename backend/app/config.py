@@ -83,7 +83,8 @@ class Settings(BaseSettings):
     trusted_proxies: str = ""
     # Internal compose contract: the API port is unpublished and the bundled
     # nginx overwrites X-Plamotrack-Client-Address with the client address it
-    # resolved. Never set by users; source-run deployments leave it false.
+    # resolved. Every peer on that private Compose network is inside this trust
+    # boundary; never set by users, and source-run deployments leave it false.
     plamotrack_bundled_ingress: bool = False
     # The interface the published port binds to (compose reads the same key).
     # A non-loopback bind address is a name the instance answers to, so it joins
