@@ -243,7 +243,8 @@ into the client configuration below, and revoke it from the same page if it ever
 The list shows when each token was last used.
 
 Every client sends it the same way: an `Authorization: Bearer <token>` header, on the
-REST API and on `/mcp/` alike. A token in a URL is ignored.
+REST API and on `/mcp/` alike. Never put one in a URL — it is ignored as a credential,
+and request URIs end up in access logs.
 
 ### Claude Desktop
 

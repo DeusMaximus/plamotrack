@@ -1152,9 +1152,12 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    check is one FastMCP middleware on `tools/call` reading `MCP_TOOL_SCOPES`, refusing
    before arguments are parsed; management is family 6 (`/auth/tokens`, the
    `auth-tokens` tag); audit events `auth.token_minted`, `auth.token_revoked`,
-   `auth.token_use_after_revoke`; `WWW-Authenticate` on every 401 (bare `Bearer` for
-   an absent credential, `error="invalid_token"` for a presented one, on REST and MCP
-   alike). Calls the item's wording left open, recorded here: (a) **no
+   `auth.token_use_after_revoke`; `WWW-Authenticate` on every 401 **at the bearer
+   boundary** (bare `Bearer` for an absent credential on a scoped route,
+   `error="invalid_token"` for a presented one, on REST and MCP alike) — and
+   deliberately **not** on the family-3 form failures (a wrong password, a wrong setup
+   token), which refuse a bearer and so have no scheme to advertise (Codex #202 round 1,
+   f2). Calls the item's wording left open, recorded here: (a) **no
    `resource_metadata` pointer in local mode** — there is no protected-resource
    document until M6-7 (family 8 is OIDC-only), and a pointer at a 404 would be worse
    than none; T5's "resource-metadata pointer" lands with item 7. (b) **A bearer on a
@@ -1182,6 +1185,15 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    (h) The in-memory MCP client the tests use carries no header, so the tool-scope
    middleware reads an injected principal off the server object **only when no HTTP
    request is in flight** — the `app.state` seam's twin, unreachable from the wire.
+   (i) **The token value is normalised in the shared helper** (`resolve_bearer` strips
+   it): the REST parser and FastMCP's bearer backend cut the header differently
+   (`Bearer  <token>` reached the verifier with a leading space), and the one-helper
+   invariant has to hold at the value, not the call (round 1, f1). (j) **A live token
+   travels only in headers, in the tests and the matrix too**: request URIs are what
+   uvicorn's and nginx's access logs record, so the matrix's query-string row carries a
+   fake token and CI scans the packaged stack's logs for the real one after the run
+   (round 1, f3); the unit T10 attaches its capture to every logger, propagating or
+   not, and says what it cannot see (no access log exists under ASGITransport).
 5. **MCP OAuth compatibility spike** — the pinned FastMCP against Google and one
    self-hosted OIDC provider, Claude web, ChatGPT web and MCP Inspector; the exact
    generated route table snapshotted; each named client's version and the discovery

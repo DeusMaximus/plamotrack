@@ -327,6 +327,18 @@ jobs:
           asyncio.run(check())
           PY
 
+      # T10 at the packaged layer: the token travelled only in headers, so
+      # neither uvicorn's nor nginx's access log — both write request URIs to
+      # stdout — may hold it (Codex #202 round 1, f3). The matrix's query-string
+      # row uses a fake for the same reason.
+      - name: Scan the Compose logs for the token
+        run: |
+          PAT="$(cat "$RUNNER_TEMP/plamotrack-pat")"
+          if docker compose logs --no-color | grep -qF "$PAT"; then
+            echo "the personal access token appears in a container log"; exit 1
+          fi
+          echo "no token in the container logs"
+
       - name: Show Compose logs on failure
         if: failure()
         run: docker compose logs --no-color

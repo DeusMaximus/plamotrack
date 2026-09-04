@@ -28,7 +28,9 @@ secret and a revoked token are the `invalid_token` 401 on REST and MCP alike,
 and an anonymous MCP initialize is the bare `Bearer` challenge. `--token-out
 PATH` writes the write token there (mode 0600) and leaves it live for the next
 step — CI's MCP `tools/list` probe with a real client; without it both tokens
-are revoked at the end. The token is never printed.
+are revoked at the end. The token is never printed, and a live token travels
+only in headers: the query-string row uses a fake, because request URIs are
+what access logs record (T10).
 
 What it proves, per row: the status; that no response carries a `Location`
 except nginx's own relative `/api` → `/api/` 301; that the security headers are
@@ -694,10 +696,16 @@ def token_rows(base: str, tokens: Tokens) -> list[Row]:
             body=b'{"password":"irrelevant"}',
             json_code="auth.forbidden",
         ),
+        # A well-shaped *fake* token, never a live one: request URIs land in the
+        # uvicorn and nginx access logs, and a real token there would put the
+        # branch's own integration run in breach of T10 (Codex #202 round 1,
+        # f3). The row still proves the parameter is ignored — an
+        # implementation honouring it would answer `auth.bearer_invalid` for
+        # this value, not the anonymous 401.
         Row(
             "api/kits?access_token= is anonymous → 401",
             "GET",
-            f"/api/kits?access_token={tokens.write.raw}",
+            f"/api/kits?access_token=ptk_{'0' * 12}_{'A' * 43}",
             401,
             json_code="auth.unauthenticated",
             www_authenticate="Bearer",
@@ -795,9 +803,7 @@ def main(argv: list[str]) -> int:
         nonlocal failures
         problems = check(row, resp if resp is not None else send(args.base, row))
         status = "ok " if not problems else "FAIL"
-        # A token in the query string is the row's point, not something to print.
-        shown = row.path.split("?")[0] + ("?…" if "?" in row.path else "")
-        print(f"{status} {row.method:6} {shown:60} {row.label}")
+        print(f"{status} {row.method:6} {row.path:60} {row.label}")
         for problem in problems:
             failures += 1
             print(f"       {problem}")

@@ -52,9 +52,11 @@ Desktop, Claude Code, anything else that speaks MCP over HTTP) authenticates wit
 login required. A token looks like `ptk_<id>_<secret>`, is shown once when it is
 created, and is stored only as a digest — if you lose it, revoke it and make
 another. Send it as an `Authorization: Bearer ptk_…` header on the REST API
-(`/api/…`) and on the MCP endpoint (`/mcp/`); a token in a URL is ignored. The
-README's *Wiring up the MCP server* section has the Claude Desktop and Claude Code
-configuration.
+(`/api/…`) and on the MCP endpoint (`/mcp/`). **Never put a token in a URL:** a
+query parameter is ignored as a credential, but request URIs are what access
+logs record — nginx's and the API's both go to `docker compose logs` — so a token
+there is a token in your logs. The README's *Wiring up the MCP server* section has
+the Claude Desktop and Claude Code configuration.
 
 What a token can do is chosen when it is minted and never widens:
 

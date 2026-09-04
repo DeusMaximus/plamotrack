@@ -98,6 +98,13 @@ async def resolve_bearer(
     on MCP). The audit row for use-after-revoke and the `last_used_at` touch are
     added to `session`; the caller commits (before raising, on the REST side —
     a raise rolls the transaction back)."""
+    # One normalisation for both surfaces: the REST parser strips the value it
+    # cut from the header, FastMCP's bearer backend drops exactly one space after
+    # the scheme and hands the rest over verbatim — `Bearer  <token>` reached
+    # here as ` <token>` and was refused on MCP while REST accepted it (Codex
+    # #202 round 1, f1). Whatever the transport did, the token is the trimmed
+    # value.
+    raw = raw.strip()
     public_id = token_format.public_id_of(raw)
     if public_id is None:
         return BearerResolution(None, "malformed")

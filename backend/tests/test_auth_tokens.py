@@ -30,6 +30,7 @@ from sqlalchemy import func, select
 from app import error_codes
 from app.auth import credentials
 from app.auth import tokens as token_format
+from app.auth.budget import FailureBudget
 from app.auth.mcp_auth import INJECTED_MCP_PRINCIPAL_ATTR
 from app.auth.principal import Scope, pat
 from app.auth.registry import MCP_TOOL_SCOPES
@@ -39,6 +40,7 @@ from app.db import get_sessionmaker
 from app.main import app, create_app
 from app.mcp import mcp as mcp_server
 from app.models import AuditEvent, PersonalAccessToken, Retailer
+from app.routers.auth import BUDGET_ATTR
 from app.services import audit
 from app.services import tokens as token_service
 
@@ -413,6 +415,31 @@ async def test_an_anonymous_401_carries_the_bearer_challenge(anon_client):
     assert resp.headers["www-authenticate"] == "Bearer"
 
 
+async def test_the_form_login_401s_carry_no_challenge(anon_client):
+    """The challenge belongs to the bearer boundary. A wrong setup token and a
+    wrong password are 401s from routes that *refuse* a bearer (family 3), so
+    advertising `Bearer` there would name a credential the route cannot take
+    (Codex #202 round 1, f2) — pinned as the decision, not left to a default."""
+    setup_token_state(app).issue()
+    wrong_token = await anon_client.post(
+        "/auth/setup", json={"token": "not-it", "password": PASSWORD}, headers=ORIGIN
+    )
+    assert wrong_token.status_code == 401
+    assert wrong_token.json()["code"] == error_codes.AUTH_SETUP_TOKEN_INVALID
+    assert "www-authenticate" not in wrong_token.headers
+    setattr(app.state, BUDGET_ATTR, FailureBudget())
+    await _claim(anon_client)
+    async with AsyncClient(
+        transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"
+    ) as fresh:
+        wrong_password = await fresh.post(
+            "/auth/login", json={"password": "not-the-password"}, headers=ORIGIN
+        )
+    assert wrong_password.status_code == 401
+    assert wrong_password.json()["code"] == error_codes.AUTH_LOGIN_FAILED
+    assert "www-authenticate" not in wrong_password.headers
+
+
 async def test_last_used_is_touched_on_use_and_not_on_failure(anon_client):
     raw, token_id = await _mint_direct(scopes=(Scope.READ,))
     assert (await _row(token_id)).last_used_at is None
@@ -654,6 +681,25 @@ async def test_mcp_takes_a_bearer_and_never_a_cookie(anon_client):
         assert with_token.headers["content-type"].startswith("text/event-stream")
 
 
+@pytest.mark.parametrize(
+    "form",
+    ["Bearer {t}", "bearer {t}", "Bearer  {t}", "Bearer {t} ", "BEARER   {t}"],
+)
+async def test_every_accepted_header_form_is_accepted_on_both_surfaces(anon_client, form):
+    """The single-parser invariant reaches the wire on both sides (Codex #202
+    round 1, f1): FastMCP's bearer backend drops exactly one space after the
+    scheme and hands the rest over, so `Bearer  <token>` was 200 on REST and 401
+    on MCP until the shared helper normalised the value. Every form the REST
+    parser accepts must open an MCP session too."""
+    raw, _ = await _mint_direct(scopes=(Scope.READ,))
+    headers = {"Authorization": form.format(t=raw)}
+    assert (await anon_client.get("/kits", headers=headers)).status_code == 200, form
+    async with _enforced_mcp() as mcp_client:
+        resp = await mcp_client.post("/mcp/", json=INITIALIZE, headers={**MCP_HEADERS, **headers})
+        assert resp.status_code == 200, (form, resp.status_code, resp.text)
+        assert "mcp-session-id" in resp.headers
+
+
 async def test_mcp_refuses_a_failed_bearer_the_same_way():
     async with _enforced_mcp() as mcp_client:
         for reason, headers in (await _failures()).items():
@@ -819,17 +865,29 @@ class _Capture(logging.Handler):
 
 async def test_a_full_token_run_leaves_no_secret_in_the_logs(anon_client):
     """Every logger re-enabled (alembic's `fileConfig` disables the app's at
-    session start) and a root handler at DEBUG for the whole run: mint, a REST
-    read, an MCP initialize and tool call, a failed bearer, a revoke, a
-    use-after-revoke. Then: no line carries the token, the owner password or the
-    session cookie, and no audit row does either."""
+    session start), and the capture handler attached to **every** logger, not
+    only root — uvicorn's `uvicorn` and `uvicorn.access` are non-propagating
+    under the shipped configuration, so a root-only capture would read green
+    past an access line (Codex #202 round 1, f3) — at DEBUG for the whole run:
+    mint, a REST read, an MCP initialize and tool call, a failed bearer, a
+    revoke, a use-after-revoke. Then: no line carries the token, the owner
+    password or the session cookie, and no audit row does either.
+
+    What this proves is bounded by the transport: under ASGITransport there is
+    no uvicorn access log and no nginx, so the request line is not exercised
+    here at all. The packaged-stack proof is CI's log scan after the matrix
+    (`.github/workflows/ci.yml`), and the reason the matrix's query-string row
+    carries a fake token."""
     loggers = [
         lg for lg in logging.root.manager.loggerDict.values() if isinstance(lg, logging.Logger)
     ]
     was_disabled = {lg: lg.disabled for lg in loggers}
+    levels = {lg: lg.level for lg in loggers}
+    capture = _Capture()
     for lg in loggers:
         lg.disabled = False
-    capture = _Capture()
+        lg.setLevel(logging.DEBUG)
+        lg.addHandler(capture)
     root_level = logging.root.level
     logging.root.addHandler(capture)
     logging.root.setLevel(logging.DEBUG)
@@ -852,6 +910,8 @@ async def test_a_full_token_run_leaves_no_secret_in_the_logs(anon_client):
         logging.root.removeHandler(capture)
         logging.root.setLevel(root_level)
         for lg, disabled in was_disabled.items():
+            lg.removeHandler(capture)
+            lg.setLevel(levels[lg])
             lg.disabled = disabled
     assert capture.lines, "nothing was logged at all — the capture is broken"
     secrets_ = [raw, PASSWORD, csrf, *cookie_values]
