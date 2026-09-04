@@ -123,6 +123,8 @@ TOK_SVC = ROOT / "app/services/tokens.py"
 TOK_FMT = ROOT / "app/auth/tokens.py"
 RESOLVER = ROOT / "app/auth/resolver.py"
 MCP_AUTH = ROOT / "app/auth/mcp_auth.py"
+# The #204 (f13-) set: the pre-routing gate.
+PRE = ROOT / "app/auth/prerouting.py"
 AUTH_MIG = VERS / "20260903_f1058c5de0f3_auth_foundation_tables_m6_2_187.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
@@ -2925,6 +2927,116 @@ CASES = [
         "    CredentialRejectedError: 401,\n",
         "every_401_carries or wrong_password_is_403 or wrong_setup_token_is_403",
     ),
+    # The #204 (f13-) set: the pre-routing gate (§5.5 family 13), folded from PR
+    # #205. f13-1…13 hand-run on the branch; f13-14/15 added when CI Integration
+    # caught the family-8 namespace miss. f13-6's only witness is the
+    # resolution-count test (Codex round 1, f2: the audit-row test cannot see
+    # it — a revoked token is refused at the gate); f13-11 is structural.
+    (
+        "f13-1. the gate passes everything through",
+        PRE,
+        "        if outcome.kind in (Dispatch.MOUNT, Dispatch.PROTOCOL):\n            await self.app(scope, receive, send)\n            return\n",
+        "        if True:\n            await self.app(scope, receive, send)\n            return\n",
+        "is_401_for_anon or resolver_s_401",
+    ),
+    (
+        "f13-2. no match is not refused",
+        PRE,
+        "    if outcome.kind is Dispatch.NONE:\n        return True\n",
+        "    if outcome.kind is Dispatch.NONE:\n        return False\n",
+        "unrouted_path_is_401_for_anon",
+    ),
+    (
+        "f13-3. a partial match admits INTERNAL (405 names /readyz)",
+        PRE,
+        "        else {CredentialPolicy.ANONYMOUS, CredentialPolicy.PROTOCOL}\n",
+        "        else {CredentialPolicy.ANONYMOUS, CredentialPolicy.PROTOCOL, CredentialPolicy.INTERNAL}\n",
+        "wrong_verb_on_a_scoped_path_is_401_for_anon or decided_by_policy",
+    ),
+    (
+        "f13-4. a full match no longer admits INTERNAL (loopback /readyz → 401)",
+        PRE,
+        "        {CredentialPolicy.ANONYMOUS, CredentialPolicy.INTERNAL, CredentialPolicy.PROTOCOL}\n        if outcome.kind is Dispatch.FULL",
+        "        {CredentialPolicy.ANONYMOUS, CredentialPolicy.PROTOCOL}\n        if outcome.kind is Dispatch.FULL",
+        "readiness_is_still_decided or decided_by_policy",
+    ),
+    (
+        "f13-5. an endpoint the index does not know fails open",
+        PRE,
+        "        if policy is None or policy.credential not in admitted:",
+        "        if policy is not None and policy.credential not in admitted:",
+        "decided_by_policy",
+    ),
+    (
+        "f13-6. the dependency ignores the stashed principal (resolves twice)",
+        DEP,
+        "    principal = getattr(request.state, REQUEST_PRINCIPAL_ATTR, None)\n    if principal is None:",
+        "    principal = None\n    if principal is None:",
+        "resolved_by_the_gate or one_audit_row",
+    ),
+    (
+        "f13-7. the gate's refusal drops Cache-Control",
+        PRE,
+        "        if cache_control is not None:",
+        "        if cache_control is None:",
+        "unrouted_path_is_401_for_anon",
+    ),
+    (
+        "f13-8. the early return keys on NONE, not MOUNT (a cookie is resolved under /mcp)",
+        PRE,
+        "        if outcome.kind in (Dispatch.MOUNT, Dispatch.PROTOCOL):\n            await self.app",
+        "        if outcome.kind in (Dispatch.NONE, Dispatch.PROTOCOL):\n            await self.app",
+        "resolved_by_the_gate or unrouted_path_is_401_for_anon",
+    ),
+    (
+        "f13-9. the dispatch table adds HEAD beside GET the way Starlette's Route would",
+        PRE,
+        "entries.append(_Leaf(regex=regex, methods=entry.methods, endpoint=entry.endpoint))",
+        "entries.append(_Leaf(regex=regex, methods=entry.methods | ({'HEAD'} if 'GET' in entry.methods else set()), endpoint=entry.endpoint))",
+        "agree_on_every_declared_route",
+    ),
+    (
+        "f13-10. a failed bearer is refused with the bare challenge, not the resolver's",
+        PRE,
+        "            await self._refuse(request, exc, scope, receive, send)\n            return\n        setattr",
+        "            await self._refuse(request, UnauthenticatedError(_UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED, challenge=BEARER_CHALLENGE), scope, receive, send)\n            return\n        setattr",
+        "resolver_s_401",
+    ),
+    (
+        "f13-11. the gate and the profile layer swap positions",
+        MAIN,
+        "            render=domain_error_handler,\n        )\n",
+        "            render=domain_error_handler,\n        )\n        app.user_middleware.reverse()\n",
+        "sits_between or profile_middleware_is_innermost",
+    ),
+    (
+        "f13-12. the dependency's fallback resolution removed",
+        DEP,
+        "    if principal is None:\n        principal = await resolve_principal(request, session)",
+        "    if False:\n        principal = await resolve_principal(request, session)",
+        "denies_without_the_gate",
+    ),
+    (
+        "f13-13. a partial match considers only the first route on the path",
+        PRE,
+        "    for endpoint in outcome.endpoints:\n        policy = index.policy_for(endpoint)",
+        "    for endpoint in outcome.endpoints[:1]:\n        policy = index.policy_for(endpoint)",
+        "decided_by_policy",
+    ),
+    (
+        "f13-14. the protocol-namespace pass-through disabled (the first head's family-8 miss)",
+        PRE,
+        "        if any(route_path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES):",
+        "        if False and any(route_path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES):",
+        "protocol_namespace or decided_by_policy or agree_on_every",
+    ),
+    (
+        "f13-15. the early return keeps MOUNT only (a principal is resolved under /.well-known/)",
+        PRE,
+        "        if outcome.kind in (Dispatch.MOUNT, Dispatch.PROTOCOL):\n            await self.app",
+        "        if outcome.kind is Dispatch.MOUNT:\n            await self.app",
+        "resolved_by_the_gate",
+    ),
 ]
 
 
@@ -3909,6 +4021,9 @@ TEST_FILES = [
     # The #189 (pat-) fold-in: the token suite; pat-12/16/23 also kill in
     # test_route_policy.py / test_authorization.py, listed above.
     "tests/test_auth_tokens.py",
+    # The #204 (f13-) fold-in: every f13- kill lives here, bar f13-11's second
+    # witness in test_authorization.py (already listed).
+    "tests/test_auth_unrouted.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
