@@ -41,43 +41,33 @@ Template:
 
 ---
 
-## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) personal access tokens BUILT on `feature/m6-4-personal-access-tokens` — UNCOMMITTED, no PR yet
+## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) personal access tokens: PR #202 OPEN at `789357d`, Codex round 1 pending
 
-- **Done (all uncommitted on the branch, tree clean of mutants):** backend — `app/auth/tokens.py`
-  (format `ptk_<12 hex>_<secret>`, `DUMMY_DIGEST`, `bearer_from_headers`), `services/tokens.py`
-  (mint/list/revoke under the write gate, `resolve_bearer` — the one helper both surfaces call),
-  `routers/tokens.py` (`/auth/tokens` GET/POST/DELETE, tag `auth-tokens` → family 6 ADMIN),
-  resolver reads `Authorization` before the cookie (presented-and-failed → 401
-  `auth.bearer_invalid` + `WWW-Authenticate: Bearer error="invalid_token"`; every 401 now carries a
-  challenge via `UnauthenticatedError(challenge=)`), `RoutePolicy.bearer_refused` (family 3 → 403 for
-  a token), `app/auth/mcp_auth.py` (FastMCP `TokenVerifier` + `ToolScopeMiddleware` on `tools/call`
-  reading `MCP_TOOL_SCOPES`; in-memory seam `INJECTED_MCP_PRINCIPAL_ATTR` on the server object,
-  read only with no HTTP request in flight), `build_mcp_app(policy, authorization=)` via
-  `create_streamable_http_app` with the transport route's `methods` cleared so the `RouteBinding`
-  stays the verb boundary; audit `auth.token_minted/revoked/use_after_revoke`; four error codes +
-  fixture + catalogue. Frontend — Settings → Access tokens (`AccessTokensSection.tsx`, route
-  `settings/tokens`), api client/types, e2e `tokens.spec.ts` (passes through the real UI). Matrix —
-  mints two tokens, bearer rows, `--token-out`; CI's MCP probe carries the token and proves the
-  anonymous refusal. Docs — README (alpha warning, MCP wiring with `mcp-remote --header` via env),
-  operations (Access tokens section), design (§5 header; §5.9 item 4 "Shipped" with calls a–h),
-  AGENTS rule 13, procedure doc.
-- **Decisions (design §5.9 item 4 a–h):** no `resource_metadata` pointer in local mode; family-3
-  bearer refusal by registry flag; tool list unfiltered, refusal at call; revoked rows kept; a
-  wrong secret/unknown id writes no audit row (only use-after-revoke does); mount built directly
-  + route methods cleared; T5's "MCP OAuth token on REST" waits for #192; seam order.
-- **State:** backend **1754** (`test_auth_tokens.py` 94), frontend 485, ruff/build/lint clean; e2e
-  `tokens.spec.ts` 2/2 with setup; packaged stack from empty: token read from the log, matrix
-  **0 failing (54 rows)**, `fastmcp` client `tools/list` 30 tools with the token, 401 without;
-  **23 hand-run `pat-` mutants all killed** (tuples in the scratch runner — copy them into the PR
-  body's `<details>` and fold into `mutation_test.py` after merge, `TEST_FILES` +
-  `tests/test_auth_tokens.py`). Dev DB re-claimed with `e2e-owner-password` after the `down -v`.
-  Negative control (which tests go red on unfixed `main`) **not yet measured** — do it in a
-  worktree before opening the PR.
-- **Next:** (1) commit on the branch, negative control in a worktree, open the PR with the
-  What / Deliberate calls / Tests shape, Codex round (M6 security work); (2) fold `pat-` into the
-  harness after merge; (3) the two family-13 hardening items (design §5.9 item 3(b)); (4) #190/#192
-  OAuth spike; (5) **LXC stays put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` into its
-  `.env` before the pull, back up first, it comes up unclaimed (setup token in `docker compose logs api`).
+- **Done:** #189 built on `feature/m6-4-personal-access-tokens`, one commit (`789357d`),
+  pushed, **PR #202** open against `main` `17751a1`. The branch's own HANDOFF entry (in
+  that commit) has the file-by-file state; in short: `ptk_<12 hex>_<secret>` tokens,
+  `services/tokens.resolve_bearer` behind both the REST resolver and a FastMCP
+  `TokenVerifier` on the `/mcp` mount, `ToolScopeMiddleware` on `tools/call` reading
+  `MCP_TOOL_SCOPES`, `/auth/tokens` as family 6, `RoutePolicy.bearer_refused` (family 3),
+  `WWW-Authenticate` on every 401, audit `auth.token_minted/revoked/use_after_revoke`,
+  Settings → Access tokens, e2e `tokens.spec.ts`, matrix + CI probe carrying a token,
+  README/operations/design/AGENTS updated. Deliberate calls a–h in design §5.9 item 4 and
+  1–9 in the PR body.
+- **Decisions:** review by Codex (M6 security work); the `pat-` mutants (23, all killed)
+  were hand-run from a scratch runner because the tracked harness refuses a dirty tree —
+  tuples in the PR body's collapsed block, **fold into `mutation_test.py` after merge**
+  (`TEST_FILES` + `tests/test_auth_tokens.py`, the #197/#199/#201 precedent).
+- **State:** backend 1754 / `test_auth_tokens.py` 94, frontend 485, e2e tokens 2/2, packaged
+  stack from empty: matrix 54 rows 0 failing, `fastmcp` client 30 tools with the token and
+  401 without. Negative control: the new file does not collect on `main` (imports the
+  feature); the adapted matrix files go 6 red / 145 green there. Tree parked on `main` for
+  the review window. Dev DB claimed with `e2e-owner-password` (re-claimed after the
+  packaged run's `down -v`). CI on `789357d` not yet observed.
+- **Next:** (1) Codex round 1 on `789357d` → reproduce, fix, reply in its numbering; merge on
+  GO; (2) harness fold-in PR for `pat-`; (3) the two family-13 hardening items (design §5.9
+  item 3(b)); (4) #190/#192 OAuth spike; (5) **LXC stays put until M6 is finished** (owner,
+  03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first, it comes up
+  unclaimed (setup token in `docker compose logs api`).
 
 ## 2026-09-04 — Claude Code (Fable 5.1) — #188 (M6-3) MERGED (PR #200 → `a84ca48`, Codex round 2 GO); m63- fold-in MERGED (PR #201 → `66bc922`)
 
