@@ -82,13 +82,25 @@ Template:
   their next refresh (relink) — dev DB only. Packaged stack not re-run (nothing under
   `frontend/nginx/`, the registry or the routes changed). Dev `db` up, Keycloak spike up.
   LXC untouched (**stays put until M6 is finished**).
-- **Next:** (1) the owner pastes the round-3 brief (printed in this session's chat; regenerate from
-  `.agents/review-brief.md` with the GPT-6 footer if lost) into Codex; (2) Codex round 3 on PR #212 (brief from `.agents/review-brief.md`,
-  GPT-6 footer; push on: the gate as the one writer, the `unavailable` exception leaving the
-  grant standing, the transparent outcome path, `raise_on_validation_error=True` parity);
-  if GO, merge with `Closes #192`; (3) #193, M6-9 TLS docs, the M6 release (gate:
-  `ingress_matrix.py --mode oidc` + the burst — make the burst concurrent there), then the
-  LXC upgrade.
+- **Next:** (1) **Codex round 3 on PR #212, in a new session** (this one closed after the round-2
+  reply): the brief was printed in this session's chat and the owner pastes it — it is not
+  stored; regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming runtime head
+  `e90550f` and branch tip `ed5a7d7`+ (hand-off commits only above it), `main` `a497481`, rules
+  1/6/7.1/9/11/12/13. The round-2 reply (issuecomment-5546424919) is the record of what changed
+  and why; its "where I'd push" bullets were: the gate as the only writer of the record, the
+  lock-plus-re-read boundary with no tombstone, the `unavailable` verdict leaving the grant
+  standing, the transparent outcome reaching the request through `_Transition.outcome`, the
+  `pg_locks` witness in the racing test, the fake's same-second id_token. Findings: reproduce at
+  `e90550f` first, answer per `.agents/testing-and-review.md` → "Responding to a review"
+  (numbering continues from 8), re-verify by mutation (`-k moa-`; the scratch runner that
+  bypasses the clean-tree check on a dirty tree is trivial to rewrite: apply/run/restore per
+  case, hash targets before and after). If GO: squash-merge with `Closes #192` (as #209 was);
+  nothing to fold in — every moa- tuple is tracked. (2) After merge: #193, M6-9 TLS docs, the
+  M6 release — gate `ingress_matrix.py --mode oidc` against a packaged stack with the Keycloak
+  spike (the socat-sidecar compose overlay is not tracked; rebuild it under
+  `.agents/spikes/190/` if kept) and make the register burst concurrent there (Codex's call-10
+  remark) — then the LXC upgrade; relink any MCP client first, since records written before
+  `e90550f` carry no binding and end at their next refresh.
 
 ## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 1 (NO-GO, 5 findings) answered on the branch — head `e248a4b`, reply posted (issuecomment-5545491101), PR body amended
 
