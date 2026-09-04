@@ -12,12 +12,12 @@ want it to.
 
 > ### ⚠️ This is a public alpha
 >
-> **There is a single owner login (since M6-3), but no TLS or API tokens yet.** A fresh
+> **There is a single owner login and personal access tokens, but no TLS yet.** A fresh
 > install comes up unclaimed and prints a one-time setup token to the API log; you claim
-> it in the browser and every REST route then needs that session. Still missing until the
-> rest of Milestone 6: a tested HTTPS path, and scoped tokens so scripts and **MCP clients**
-> authenticate (the MCP endpoint is not yet gated). Run it on a network you trust — your
-> LAN, a VPN, or plain old localhost — and don't put it on the internet yet.
+> it in the browser, every REST route then needs that session, and scripts and **MCP
+> clients** authenticate with an access token minted under Settings. Still missing until
+> the rest of Milestone 6: a tested HTTPS path. Run it on a network you trust — your LAN,
+> a VPN, or plain old localhost — and don't put it on the internet yet.
 >
 > The database schema is also still moving. Migrations are provided and tested in both
 > directions, but export an archive before you upgrade. It takes one click, and that's
@@ -188,7 +188,7 @@ container runs the database migrations and exits before the API starts; seeing i
 as `Exited (0)` is success, not a failure.
 
 Running it on a server and want to reach it from your laptop? That door stays on
-loopback by default for a reason — there's no login yet — so see
+loopback by default for a reason — there's a login now, but no TLS yet — so see
 [Reaching it from another machine](docs/operations.md#reaching-it-from-another-machine)
 rather than just widening the bind.
 
@@ -231,6 +231,20 @@ Reaching the instance by anything other than `localhost` — a LAN hostname, a
 container name — needs that name in `ALLOWED_HOSTS` in `.env`, or the server
 answers `421 Misdirected Request`. `docs/operations.md` → *Names it answers to*.
 
+### First, mint a token
+
+The MCP endpoint takes a **personal access token** and nothing else — your browser
+session never authenticates it, so a page in your browser can't drive an agent's tools.
+In the app, open **Settings → Access tokens** and create one. *Read-only* is enough for
+an agent that looks things up; *read and write* lets it record orders, move kits along
+the pipeline and adjust stock. Neither level can change settings, import or export, or
+manage tokens — those stay with the owner login. The token is shown **once**; copy it
+into the client configuration below, and revoke it from the same page if it ever leaks.
+The list shows when each token was last used.
+
+Every client sends it the same way: an `Authorization: Bearer <token>` header, on the
+REST API and on `/mcp/` alike. A token in a URL is ignored.
+
 ### Claude Desktop
 
 Edit the config file directly — Claude Desktop's **Add custom connector** dialog only
@@ -238,38 +252,52 @@ accepts publicly reachable URLs, and a self-hosted plamotrack on your own networ
 one. Nor should it be at this stage; see the alpha warning above.
 
 So bridge the HTTP endpoint into a stdio server with
-[`mcp-remote`](https://www.npmjs.com/package/mcp-remote). Open
-`claude_desktop_config.json` — on macOS at
+[`mcp-remote`](https://www.npmjs.com/package/mcp-remote), which passes the header
+through. Open `claude_desktop_config.json` — on macOS at
 `~/Library/Application Support/Claude/claude_desktop_config.json`, on Windows at
-`%APPDATA%\Claude\claude_desktop_config.json` — and add:
+`%APPDATA%\Claude\claude_desktop_config.json` — and add, with your token in place of
+`ptk_…`:
 
 ```json
 {
   "mcpServers": {
     "plamotrack": {
       "command": "npx",
-      "args": ["-y", "mcp-remote", "http://localhost:8080/mcp/"]
+      "args": [
+        "-y",
+        "mcp-remote",
+        "http://localhost:8080/mcp/",
+        "--header",
+        "Authorization:${PLAMOTRACK_AUTH}"
+      ],
+      "env": {
+        "PLAMOTRACK_AUTH": "Bearer ptk_…"
+      }
     }
   }
 }
 ```
 
-Restart Claude Desktop. If it complains about the URL not being HTTPS, add
-`"--allow-http"` to the end of the `args` array.
+The header goes through an environment variable because Claude Desktop splits `args`
+on spaces on some platforms, and `Bearer ptk_…` contains one. Restart Claude Desktop.
+If it complains about the URL not being HTTPS, add `"--allow-http"` to the end of the
+`args` array.
 
 ### Claude Code
 
 ```bash
-claude mcp add --transport http plamotrack http://localhost:8080/mcp/
+claude mcp add --transport http plamotrack http://localhost:8080/mcp/ \
+  --header "Authorization: Bearer ptk_…"
 ```
 
 ### Anything else
 
 It's a standard streamable-HTTP MCP server, so any client that can point at a local URL
-will work — give it `http://localhost:8080/mcp/`. Clients that only speak stdio, or
-that (like Claude Desktop) only accept publicly reachable URLs, can use the `mcp-remote`
-bridge shown above. Instructions for other specific clients are welcome as PRs; open an
-issue if yours needs something unusual.
+and send a bearer header will work — give it `http://localhost:8080/mcp/` and
+`Authorization: Bearer ptk_…`. Clients that only speak stdio, or that (like Claude
+Desktop) only accept publicly reachable URLs, can use the `mcp-remote` bridge shown
+above. Instructions for other specific clients are welcome as PRs; open an issue if
+yours needs something unusual.
 
 ### The tools it exposes
 

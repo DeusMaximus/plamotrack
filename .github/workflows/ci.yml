@@ -291,20 +291,37 @@ jobs:
           uv run python ingress_matrix.py http://127.0.0.1:8080
           --allowed-host ci.plamotrack.test
           --setup-token "$SETUP_TOKEN" --password ingress-matrix-ci-password
+          --token-out "$RUNNER_TEMP/plamotrack-pat"
 
-      - name: Smoke-test MCP through nginx
+      # The transport is bearer-only (§5.5 family 7; #189): a real MCP client
+      # with the token the matrix minted lists the tools through nginx, and
+      # the same client without one is refused at the handshake.
+      - name: Smoke-test MCP through nginx with a personal access token
         working-directory: backend
         run: |
-          uv run python - <<'PY'
+          PAT="$(cat "$RUNNER_TEMP/plamotrack-pat")"
+          test -n "$PAT" || { echo "the matrix wrote no token"; exit 1; }
+          echo "::add-mask::$PAT"
+          PLAMOTRACK_PAT="$PAT" uv run python - <<'PY'
           import asyncio
+          import os
 
           from fastmcp import Client
 
 
           async def check() -> None:
-              async with Client("http://127.0.0.1:8080/mcp/") as client:
+              async with Client(
+                  "http://127.0.0.1:8080/mcp/", auth=os.environ["PLAMOTRACK_PAT"]
+              ) as client:
                   tools = await client.list_tools()
                   assert any(tool.name == "list_kits" for tool in tools)
+              try:
+                  async with Client("http://127.0.0.1:8080/mcp/") as client:
+                      await client.list_tools()
+              except Exception as exc:  # the handshake is refused: 401
+                  assert "401" in str(exc), exc
+              else:
+                  raise AssertionError("the MCP endpoint answered without a token")
 
 
           asyncio.run(check())

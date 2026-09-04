@@ -25,13 +25,14 @@ build itself refuses a route graph a declaration cannot describe: two routes on
 one dispatch entry, one endpoint on two routes, a route type the walk does not
 know (Codex #198 round 2, f2).
 
-**What M6-2 populates.** Every route that exists today, plus the MCP tool scope
-map. The family-2/3 auth routes (#188), family-8 OAuth routes (#192) and their
-protocol roles do not exist yet; their declarations arrive with the code that
-adds the routes, and the registry's job then is to already own the shape they
-slot into. The `CredentialPolicy` and `ResponseProfile` types carry the OAuth
-fields (protocol role, redirect destinations, modes) so those items extend
-rather than reshape this.
+**What M6-2 populated.** Every route that existed then, plus the MCP tool scope
+map. The family-2/3 auth routes arrived with #188 and the family-6 token routes
+with #189 (their declarations are below, beside the routers that add them); the
+family-8 OAuth routes (#192) and their protocol roles do not exist yet, and the
+registry's job is to already own the shape they slot into. The
+`CredentialPolicy` and `ResponseProfile` types carry the OAuth fields (protocol
+role, redirect destinations, modes) so those items extend rather than reshape
+this.
 """
 
 from __future__ import annotations
@@ -152,6 +153,11 @@ class RoutePolicy:
     credential: str
     methods: frozenset[str] = field(default_factory=frozenset)
     response: ResponseProfile = field(default_factory=ResponseProfile)
+    #: A bearer-borne principal is refused (403) even though the credential
+    #: policy would admit it — the family-3 auth actions (§5.5): a token cannot
+    #: log in, log out or claim the instance; those are a browser's, and a
+    #: `pat:*` column in the matrix reads 403 there while family 2 admits it.
+    bearer_refused: bool = False
     #: The external spellings nginx forwards here. For a family-4/5/6 route this
     #: is `/api/<path>`; for the root-canonical routes (`/openapi.json`, the MCP
     #: mount, `/.well-known/*`) it is the root spelling; `internal` marks a route
@@ -370,7 +376,23 @@ def _classify(route: EffectiveRoute) -> RoutePolicy | None:
         # documentation the matrix asserts, not a scope difference.
         family = 2 if route.path == "/auth/session" else 3
         return RoutePolicy(
-            family, CredentialPolicy.ANONYMOUS, route.methods, _NO_STORE, spellings=api_spelling
+            family,
+            CredentialPolicy.ANONYMOUS,
+            route.methods,
+            _NO_STORE,
+            spellings=api_spelling,
+            # A token is not a browser: the actions refuse a bearer (403), the
+            # session read admits one and reports `anonymous` (§5.5, #189).
+            bearer_refused=(family == 3),
+        )
+
+    if "auth-tokens" in tags:
+        # Personal access token management (§5.5 family 6; #189): mint, list,
+        # revoke — `instance:admin`, so only the owner's session reaches it and a
+        # token cannot mint a token. `no-store`: a mint response carries the
+        # secret, once.
+        return RoutePolicy(
+            6, CredentialPolicy.ADMIN, route.methods, _NO_STORE, spellings=api_spelling
         )
 
     if "settings" in tags:

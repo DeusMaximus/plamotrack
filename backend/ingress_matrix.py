@@ -20,6 +20,16 @@ is signed out at the end. With neither flag the same rows expect the
 dependency's 401 — still a positive control for the ingress (a spelling nginx
 rejects never reaches the dependency), just not for the content behind it.
 
+Signed in, the matrix also mints two personal access tokens (M6-4, #189) — the
+MCP transport is bearer-only, so the `/mcp/` positives carry one — and proves
+the token rows through nginx: a read token reads and cannot write, a write
+token cannot manage tokens, a token in the query string is nothing, a wrong
+secret and a revoked token are the `invalid_token` 401 on REST and MCP alike,
+and an anonymous MCP initialize is the bare `Bearer` challenge. `--token-out
+PATH` writes the write token there (mode 0600) and leaves it live for the next
+step — CI's MCP `tools/list` probe with a real client; without it both tokens
+are revoked at the end. The token is never printed.
+
 What it proves, per row: the status; that no response carries a `Location`
 except nginx's own relative `/api` → `/api/` 301; that the security headers are
 present on everything nginx serves; and that the one-spelling-per-family
@@ -39,6 +49,7 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import pathlib
 import sys
 from dataclasses import dataclass, field
 from urllib.parse import urlsplit
@@ -115,6 +126,28 @@ class Row:
     #: proxies; the default-deny server's 421 is the one response without them.
     security_headers: bool = True
     csp_contains: str | None = "frame-ancestors 'none'"
+    #: The `WWW-Authenticate` value a 401 must carry — exact, or a prefix when
+    #: `www_authenticate_exact` is False (FastMCP appends an error description).
+    www_authenticate: str | None = None
+    www_authenticate_exact: bool = True
+
+
+@dataclass
+class Bearer:
+    """A personal access token the matrix minted (#189): the raw value for the
+    header and the id for the revoke."""
+
+    raw: str
+    token_id: str
+
+    def header(self) -> dict[str, str]:
+        return {"Authorization": f"Bearer {self.raw}"}
+
+
+@dataclass
+class Tokens:
+    write: Bearer
+    read: Bearer
 
 
 def send(base: str, row: Row, host_override: str | None = None) -> Response:
@@ -155,6 +188,15 @@ def check(row: Row, resp: Response) -> list[str]:
             problems.append(f"body {parsed!r}, expected {row.json_equals!r}")
         if parsed is not None and row.json_code is not None and parsed.get("code") != row.json_code:
             problems.append(f"code {parsed.get('code')!r}, expected {row.json_code!r}")
+    if row.www_authenticate is not None:
+        got = resp.headers.get("www-authenticate")
+        matched = (
+            got == row.www_authenticate
+            if row.www_authenticate_exact
+            else (got or "").startswith(row.www_authenticate)
+        )
+        if not matched:
+            problems.append(f"www-authenticate {got!r}, expected {row.www_authenticate!r}")
     if row.security_headers:
         for name, value in SECURITY_HEADERS.items():
             if resp.headers.get(name) != value:
@@ -211,6 +253,46 @@ def sign_in(base: str, *, setup_token: str | None, password: str) -> Credential:
     return Credential(cookie=cookie, csrf_token=resp.json()["csrf_token"])
 
 
+def mint_tokens(base: str, credential: Credential) -> Tokens:
+    """Two tokens through the owner's session — cookie-borne writes, so with
+    the Origin and CSRF token — one holding write, one read-only."""
+    parts = urlsplit(base)
+    origin = f"{parts.scheme}://{parts.netloc}"
+    minted: list[Bearer] = []
+    for name, scopes in (
+        ("ingress matrix (write)", ["collection:read", "collection:write"]),
+        ("ingress matrix (read)", ["collection:read"]),
+    ):
+        row = Row(
+            "mint token",
+            "POST",
+            "/api/auth/tokens",
+            201,
+            headers={**credential.write(origin), "Content-Type": "application/json"},
+            body=json.dumps({"name": name, "scopes": scopes}).encode(),
+        )
+        resp = send(base, row)
+        if resp.status != 201:
+            raise SystemExit(f"/api/auth/tokens answered {resp.status}: {resp.body[:200]!r}")
+        payload = resp.json()
+        minted.append(Bearer(raw=payload["token"], token_id=payload["id"]))
+    return Tokens(write=minted[0], read=minted[1])
+
+
+def revoke_token(base: str, credential: Credential, bearer: Bearer) -> None:
+    parts = urlsplit(base)
+    row = Row(
+        "revoke token",
+        "DELETE",
+        f"/api/auth/tokens/{bearer.token_id}",
+        204,
+        headers=credential.write(f"{parts.scheme}://{parts.netloc}"),
+    )
+    resp = send(base, row)
+    if resp.status != 204:
+        raise SystemExit(f"revoking a token answered {resp.status}: {resp.body[:200]!r}")
+
+
 def sign_out(base: str, credential: Credential) -> None:
     parts = urlsplit(base)
     row = Row(
@@ -225,8 +307,32 @@ def sign_out(base: str, credential: Credential) -> None:
         print(f"warning: sign-out answered {resp.status}", file=sys.stderr)
 
 
-def rows(allowed_host: str | None, credential: Credential | None = None) -> list[Row]:
+def _wrong_secret(bearer: Bearer) -> dict[str, str]:
+    kind, public_id, _secret = bearer.raw.split("_", 2)
+    return {"Authorization": f"Bearer {kind}_{public_id}_{'A' * 43}"}
+
+
+def mcp_challenge(label: str, path: str, **kw) -> Row:
+    """The transport's refusal of a request with no bearer: FastMCP's 401 with
+    the bare `Bearer` challenge (RFC 6750 §3.1) and an empty body — proof the
+    spelling reached the MCP app (nginx's rejections are 404, the ingress
+    guard's are 403/421)."""
+    return Row(
+        label,
+        "POST",
+        path,
+        401,
+        body=INITIALIZE,
+        www_authenticate="Bearer",
+        **{"headers": MCP_HEADERS, **kw},
+    )
+
+
+def rows(
+    allowed_host: str | None, credential: Credential | None = None, tokens: Tokens | None = None
+) -> list[Row]:
     owner = credential.read() if credential is not None else {}
+    mcp_auth = tokens.write.header() if tokens is not None else {}
 
     def guarded(label: str, path: str, *, content_type: str) -> Row:
         """A collection-read positive: 200 for the signed-in owner, else the
@@ -329,23 +435,33 @@ def rows(allowed_host: str | None, credential: Credential | None = None) -> list
         guarded("api/kits", "/api/kits", content_type="application/json"),
         guarded("api/retailers", "/api/retailers", content_type="application/json"),
         guarded("api/meta", "/api/meta", content_type="application/json"),
-        Row(
-            "mcp/ initialize",
-            "POST",
-            "/mcp/",
-            200,
-            headers=MCP_HEADERS,
-            body=INITIALIZE,
-            content_type="text/event-stream",
-        ),
-        Row(
-            "mcp bare (ingress-only spelling)",
-            "POST",
-            "/mcp",
-            200,
-            headers=MCP_HEADERS,
-            body=INITIALIZE,
-            content_type="text/event-stream",
+        # The MCP transport is bearer-only (§5.5 family 7; #189): with a token
+        # the initialize opens a stream, anonymous it is the transport's own 401.
+        mcp_challenge("mcp/ initialize anonymous → 401", "/mcp/"),
+        mcp_challenge("mcp bare anonymous → 401 (ingress-only spelling)", "/mcp"),
+        *(
+            [
+                Row(
+                    "mcp/ initialize with a token",
+                    "POST",
+                    "/mcp/",
+                    200,
+                    headers={**MCP_HEADERS, **mcp_auth},
+                    body=INITIALIZE,
+                    content_type="text/event-stream",
+                ),
+                Row(
+                    "mcp bare with a token (ingress-only spelling)",
+                    "POST",
+                    "/mcp",
+                    200,
+                    headers={**MCP_HEADERS, **mcp_auth},
+                    body=INITIALIZE,
+                    content_type="text/event-stream",
+                ),
+            ]
+            if tokens is not None
+            else []
         ),
         # --- T3 at the ingress ------------------------------------------------------------
         Row(
@@ -412,14 +528,22 @@ def rows(allowed_host: str | None, credential: Credential | None = None) -> list
                 headers={"Host": allowed_host},
                 json_equals={"status": "ok"},
             ),
-            Row(
-                f"listed name {allowed_host} on MCP → 200",
-                "POST",
-                "/mcp/",
-                200,
-                headers={**MCP_HEADERS, "Host": allowed_host},
-                body=INITIALIZE,
-                content_type="text/event-stream",
+            (
+                Row(
+                    f"listed name {allowed_host} on MCP → 200",
+                    "POST",
+                    "/mcp/",
+                    200,
+                    headers={**MCP_HEADERS, **mcp_auth, "Host": allowed_host},
+                    body=INITIALIZE,
+                    content_type="text/event-stream",
+                )
+                if tokens is not None
+                else mcp_challenge(
+                    f"listed name {allowed_host} on MCP anonymous → 401",
+                    "/mcp/",
+                    headers={**MCP_HEADERS, "Host": allowed_host},
+                )
             ),
             Row(
                 f"listed name {allowed_host} on the SPA → 200",
@@ -516,6 +640,118 @@ def write_rows(
     return results
 
 
+def token_rows(base: str, tokens: Tokens) -> list[Row]:
+    """The bearer through nginx (§5.5; #189): what each grant can and cannot do,
+    and the one answer every failed bearer earns."""
+    port = urlsplit(base).port
+    port = f":{port}" if port else ""
+    invalid = 'Bearer error="invalid_token"'
+    return [
+        Row(
+            "api/kits with a read token → 200",
+            "GET",
+            "/api/kits",
+            200,
+            headers=tokens.read.header(),
+            content_type="application/json",
+        ),
+        Row(
+            "api/retailers write with a read token → 403",
+            "POST",
+            "/api/retailers",
+            403,
+            headers={**tokens.read.header(), "Content-Type": "application/json"},
+            body=b'{"name":"Ingress Matrix Read Token"}',
+            json_code="auth.forbidden",
+        ),
+        Row(
+            "api/auth/tokens with a write token → 403 (a token cannot manage tokens)",
+            "GET",
+            "/api/auth/tokens",
+            403,
+            headers=tokens.write.header(),
+            json_code="auth.forbidden",
+        ),
+        Row(
+            "api/settings PATCH with a write token → 403",
+            "PATCH",
+            "/api/settings",
+            403,
+            headers={**tokens.write.header(), "Content-Type": "application/json"},
+            body=b'{"time_zone":"Australia/Sydney"}',
+            json_code="auth.forbidden",
+        ),
+        Row(
+            "api/auth/login with a token → 403 (a token is not a browser)",
+            "POST",
+            "/api/auth/login",
+            403,
+            headers={
+                **tokens.write.header(),
+                "Content-Type": "application/json",
+                "Origin": f"http://localhost{port}",
+            },
+            body=b'{"password":"irrelevant"}',
+            json_code="auth.forbidden",
+        ),
+        Row(
+            "api/kits?access_token= is anonymous → 401",
+            "GET",
+            f"/api/kits?access_token={tokens.write.raw}",
+            401,
+            json_code="auth.unauthenticated",
+            www_authenticate="Bearer",
+        ),
+        Row(
+            "api/kits with a wrong secret → 401 invalid_token",
+            "GET",
+            "/api/kits",
+            401,
+            headers=_wrong_secret(tokens.write),
+            json_code="auth.bearer_invalid",
+            www_authenticate=invalid,
+        ),
+        Row(
+            "mcp/ initialize with a wrong secret → 401 invalid_token",
+            "POST",
+            "/mcp/",
+            401,
+            headers={**MCP_HEADERS, **_wrong_secret(tokens.write)},
+            body=INITIALIZE,
+            www_authenticate=invalid,
+            www_authenticate_exact=False,
+            content_type="application/json",
+        ),
+    ]
+
+
+def revoked_rows(tokens: Tokens) -> list[Row]:
+    """After the read token is revoked: refused everywhere, in the same shape."""
+    invalid = 'Bearer error="invalid_token"'
+    return [
+        Row(
+            "api/kits with a revoked token → 401",
+            "GET",
+            "/api/kits",
+            401,
+            headers=tokens.read.header(),
+            json_code="auth.bearer_invalid",
+            www_authenticate=invalid,
+        ),
+        Row(
+            "mcp/ initialize with a revoked token → 401",
+            "POST",
+            "/mcp/",
+            401,
+            headers={**MCP_HEADERS, **tokens.read.header()},
+            body=INITIALIZE,
+            www_authenticate=invalid,
+            www_authenticate_exact=False,
+            content_type="application/json",
+        ),
+    ]
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -532,33 +768,57 @@ def main(argv: list[str]) -> int:
         default=None,
         help="the owner password: the one to set with --setup-token, else the one to log in with",
     )
+    parser.add_argument(
+        "--token-out",
+        default=None,
+        help="write the minted write token to this file (mode 0600) and leave it live",
+    )
     args = parser.parse_args(argv)
     if args.setup_token is not None and args.password is None:
         parser.error("--setup-token needs --password (the password the claim sets)")
+    if args.token_out is not None and args.password is None:
+        parser.error("--token-out needs a signed-in owner (--password) to mint the token")
 
     credential = None
+    tokens = None
     if args.password is not None:
         credential = sign_in(args.base, setup_token=args.setup_token, password=args.password)
         print(f"signed in as the owner ({'claimed' if args.setup_token else 'logged in'})")
+        tokens = mint_tokens(args.base, credential)
+        print("minted a write token and a read token for the bearer rows")
     else:
         print("no credential: guarded positives expect the dependency's 401")
 
     failures = 0
-    for row in rows(args.allowed_host, credential):
-        problems = check(row, send(args.base, row))
+
+    def run(row: Row, resp: Response | None = None) -> None:
+        nonlocal failures
+        problems = check(row, resp if resp is not None else send(args.base, row))
         status = "ok " if not problems else "FAIL"
-        print(f"{status} {row.method:6} {row.path:60} {row.label}")
+        # A token in the query string is the row's point, not something to print.
+        shown = row.path.split("?")[0] + ("?…" if "?" in row.path else "")
+        print(f"{status} {row.method:6} {shown:60} {row.label}")
         for problem in problems:
             failures += 1
             print(f"       {problem}")
+
+    for row in rows(args.allowed_host, credential, tokens):
+        run(row)
     for row, resp in write_rows(args.base, args.allowed_host, credential):
-        problems = check(row, resp)
-        status = "ok " if not problems else "FAIL"
-        print(f"{status} {row.method:6} {row.path:60} {row.label}")
-        for problem in problems:
-            failures += 1
-            print(f"       {problem}")
-    if credential is not None:
+        run(row, resp)
+    if credential is not None and tokens is not None:
+        for row in token_rows(args.base, tokens):
+            run(row)
+        revoke_token(args.base, credential, tokens.read)
+        for row in revoked_rows(tokens):
+            run(row)
+        if args.token_out is not None:
+            path = pathlib.Path(args.token_out)
+            path.write_text(tokens.write.raw + "\n")
+            path.chmod(0o600)
+            print(f"write token left live and written to {path}")
+        else:
+            revoke_token(args.base, credential, tokens.write)
         sign_out(args.base, credential)
     print(f"\n{failures} failing check(s)")
     return failures

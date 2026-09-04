@@ -74,6 +74,15 @@ mcp = FastMCP(
 )
 
 
+# Per-tool scope from the registry's tool map (§5.5 family 7; #189): every
+# `tools/call` resolves a principal — the verified bearer over HTTP, the pytest
+# seam in memory — and a tool whose declared scope it lacks is refused before
+# the wrapper runs. One middleware, not thirty checks.
+from app.auth.mcp_auth import ToolScopeMiddleware  # noqa: E402
+
+mcp.add_middleware(ToolScopeMiddleware(mcp))
+
+
 @asynccontextmanager
 async def _tool_session() -> AsyncIterator[AsyncSession]:
     """One transaction per tool call; domain errors surface as MCP tool errors."""

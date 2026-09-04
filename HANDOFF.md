@@ -41,6 +41,44 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) personal access tokens BUILT on `feature/m6-4-personal-access-tokens` — UNCOMMITTED, no PR yet
+
+- **Done (all uncommitted on the branch, tree clean of mutants):** backend — `app/auth/tokens.py`
+  (format `ptk_<12 hex>_<secret>`, `DUMMY_DIGEST`, `bearer_from_headers`), `services/tokens.py`
+  (mint/list/revoke under the write gate, `resolve_bearer` — the one helper both surfaces call),
+  `routers/tokens.py` (`/auth/tokens` GET/POST/DELETE, tag `auth-tokens` → family 6 ADMIN),
+  resolver reads `Authorization` before the cookie (presented-and-failed → 401
+  `auth.bearer_invalid` + `WWW-Authenticate: Bearer error="invalid_token"`; every 401 now carries a
+  challenge via `UnauthenticatedError(challenge=)`), `RoutePolicy.bearer_refused` (family 3 → 403 for
+  a token), `app/auth/mcp_auth.py` (FastMCP `TokenVerifier` + `ToolScopeMiddleware` on `tools/call`
+  reading `MCP_TOOL_SCOPES`; in-memory seam `INJECTED_MCP_PRINCIPAL_ATTR` on the server object,
+  read only with no HTTP request in flight), `build_mcp_app(policy, authorization=)` via
+  `create_streamable_http_app` with the transport route's `methods` cleared so the `RouteBinding`
+  stays the verb boundary; audit `auth.token_minted/revoked/use_after_revoke`; four error codes +
+  fixture + catalogue. Frontend — Settings → Access tokens (`AccessTokensSection.tsx`, route
+  `settings/tokens`), api client/types, e2e `tokens.spec.ts` (passes through the real UI). Matrix —
+  mints two tokens, bearer rows, `--token-out`; CI's MCP probe carries the token and proves the
+  anonymous refusal. Docs — README (alpha warning, MCP wiring with `mcp-remote --header` via env),
+  operations (Access tokens section), design (§5 header; §5.9 item 4 "Shipped" with calls a–h),
+  AGENTS rule 13, procedure doc.
+- **Decisions (design §5.9 item 4 a–h):** no `resource_metadata` pointer in local mode; family-3
+  bearer refusal by registry flag; tool list unfiltered, refusal at call; revoked rows kept; a
+  wrong secret/unknown id writes no audit row (only use-after-revoke does); mount built directly
+  + route methods cleared; T5's "MCP OAuth token on REST" waits for #192; seam order.
+- **State:** backend **1754** (`test_auth_tokens.py` 94), frontend 485, ruff/build/lint clean; e2e
+  `tokens.spec.ts` 2/2 with setup; packaged stack from empty: token read from the log, matrix
+  **0 failing (54 rows)**, `fastmcp` client `tools/list` 30 tools with the token, 401 without;
+  **23 hand-run `pat-` mutants all killed** (tuples in the scratch runner — copy them into the PR
+  body's `<details>` and fold into `mutation_test.py` after merge, `TEST_FILES` +
+  `tests/test_auth_tokens.py`). Dev DB re-claimed with `e2e-owner-password` after the `down -v`.
+  Negative control (which tests go red on unfixed `main`) **not yet measured** — do it in a
+  worktree before opening the PR.
+- **Next:** (1) commit on the branch, negative control in a worktree, open the PR with the
+  What / Deliberate calls / Tests shape, Codex round (M6 security work); (2) fold `pat-` into the
+  harness after merge; (3) the two family-13 hardening items (design §5.9 item 3(b)); (4) #190/#192
+  OAuth spike; (5) **LXC stays put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` into its
+  `.env` before the pull, back up first, it comes up unclaimed (setup token in `docker compose logs api`).
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #188 (M6-3) MERGED (PR #200 → `a84ca48`, Codex round 2 GO); m63- fold-in MERGED (PR #201 → `66bc922`)
 
 - **Done:** Codex round 2 (GPT 5.6 Sol) on `5be4414`: **GO, no new findings** — round-1 f1–f3
@@ -177,32 +215,5 @@ Template:
   revoke in Settings, bearer on REST+MCP as the resolver's next credential, per-tool
   scope, T5/T6/T10 — **not started this session**; (4) the two deferred hardening items;
   (5) **LXC stays put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` into its
-  `.env` before the pull, back up first.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #187 (M6-2) MERGED (PR #198 → `6604658`, Codex round 4 GO)
-
-- **Done:** Codex round 4 (GPT 5.6 Sol) on `0d594d0`: **GO, no remaining or new findings**
-  in the foundation-first scope. PR #198 squash-merged as `6604658` on the owner's call
-  (04/09), branch deleted, **#187 closed**. CI on `0d594d0` green. Rounds 1–3 are in the
-  previous entries; the merged design: the route policy registry + default-deny dependency
-  behind `create_app(authorization=True)`; the response profile bound adjacent to the
-  selecting router (innermost middleware for the app's routes; a `RouteBinding` on each
-  mounted route, which also enforces the transport's declared verbs before the SDK);
-  ambiguous route graphs refused at build; the nginx `/api` rejections generated from the
-  registry; five auth tables (migration `f1058c5de0f3`, additive, owner seeded unclaimed).
-  The shipped app is still **not** default-deny — activation lands with #188.
-- **Decisions:** none new — deliberate calls 1–11 in the PR body all accepted by review.
-- **State:** `main` at `6604658` plus this entry. Backend 1626 / frontend 473 at the merged
-  head. **Not yet done:** the `auth-` mutant fold-in (tuples auth-1…4, 6…23 in the PR body;
-  auth-5 retired) into `mutation_test.py` — harness-only PR, no external review (#197
-  precedent). No release cut — M6 ships as one release at the end (0.2.10 was the M6-1
-  exception). HANDOFF rotated (the 2026-09-02 "M6 begun" entry → `.agents/handoff/2026-09.md`).
-- **Next:** (1) fold the `auth-` tuples into `mutation_test.py` — add the four auth test
-  files to `TEST_FILES`, re-check every anchor at fold-in (the code moved under some in
-  round 3), run `-k auth-`; (2) **#188 (local owner auth)** — flips the `create_app`
-  default, suite-wide injection, e2e login, family 11 re-registered guarded, `apply_import`
-  wired to `plan_requires_admin`, plus the activation checklist (unrouted `/api/*` 404 → 401;
-  the parser-stage 422 before the dependency); #190 (the OAuth spike) can run in parallel.
-  (3) **The LXC stays put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` into its
   `.env` before the pull, back up first.
 

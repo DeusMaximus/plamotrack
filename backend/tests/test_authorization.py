@@ -32,7 +32,7 @@ from starlette.middleware import Middleware
 from starlette.routing import Mount
 
 from app import error_codes
-from app.auth import anonymous, owner, pat
+from app.auth import Scope, anonymous, owner, pat
 from app.auth.dependency import ResponseProfileMiddleware, RouteBinding
 from app.auth.registry import CredentialPolicy, ResponseProfile, RouteIndex, RoutePolicy
 from app.auth.resolver import INJECTED_PRINCIPAL_ATTR
@@ -411,17 +411,35 @@ async def test_a_scope_copy_above_the_middleware_changes_nothing():
         assert denied.headers.get_list("cache-control") == ["no-store"]
 
 
+async def _bearer() -> dict[str, str]:
+    """A real personal access token (#189) — the transport is bearer-only, so
+    the mount's positives carry one; the injected principal never reaches it."""
+    from app.services import tokens as token_service
+
+    async with get_sessionmaker()() as session:
+        raw, _row = await token_service.mint_token(
+            session, name="mount profile", scopes={Scope.WRITE}
+        )
+    return {"Authorization": f"Bearer {raw}"}
+
+
 async def _assert_mount_profile(client):
-    stream = await client.post("/mcp/", json=INITIALIZE, headers=MCP_HEADERS)
+    bearer = await _bearer()
+    stream = await client.post("/mcp/", json=INITIALIZE, headers={**MCP_HEADERS, **bearer})
     assert stream.status_code == 200
     assert stream.headers["content-type"].startswith("text/event-stream")
     assert stream.headers.get_list("cache-control") == ["no-store, no-transform"]
-    not_acceptable = await client.get("/mcp/")  # no Accept: text/event-stream
+    not_acceptable = await client.get("/mcp/", headers=bearer)  # no Accept: text/event-stream
     assert not_acceptable.status_code == 406
     assert not_acceptable.headers.get_list("cache-control") == ["no-store"]
-    wrong_verb = await client.put("/mcp/")
+    wrong_verb = await client.put("/mcp/", headers=bearer)
     assert wrong_verb.status_code == 405
     assert wrong_verb.headers.get_list("cache-control") == ["no-store"]
+    # The SDK's own 401 — no bearer at all — carries the profile too (T10).
+    challenge = await client.post("/mcp/", json=INITIALIZE, headers=MCP_HEADERS)
+    assert challenge.status_code == 401
+    assert challenge.headers["www-authenticate"].startswith("Bearer")
+    assert challenge.headers.get_list("cache-control") == ["no-store"]
 
 
 @pytest.mark.parametrize("copies_scope", [False, True])

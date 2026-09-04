@@ -109,8 +109,10 @@ async def clean_tables(apply_migrations):
 # per request on its own app.
 from app.auth import owner  # noqa: E402
 from app.auth.budget import FailureBudget  # noqa: E402
+from app.auth.mcp_auth import INJECTED_MCP_PRINCIPAL_ATTR  # noqa: E402
 from app.auth.resolver import INJECTED_PRINCIPAL_ATTR  # noqa: E402
 from app.auth.setup_token import setup_token_state  # noqa: E402
+from app.mcp import mcp as mcp_server  # noqa: E402
 from app.routers.auth import BUDGET_ATTR  # noqa: E402
 
 
@@ -121,13 +123,18 @@ def _inject_owner():
     the next test. The process-level auth state that also lives on `app.state` —
     the login/setup failure budget and the announced setup token — is reset too,
     so one test's throttle or issued token cannot reach the next (both persist on
-    the module app otherwise)."""
+    the module app otherwise). The MCP server gets the same owner for in-memory
+    tool calls (`Client(mcp)`), which carry no bearer — the seam the tool-scope
+    middleware reads only when no HTTP request is in flight (#189)."""
     setattr(app.state, INJECTED_PRINCIPAL_ATTR, owner())
+    setattr(mcp_server, INJECTED_MCP_PRINCIPAL_ATTR, owner())
     setattr(app.state, BUDGET_ATTR, FailureBudget())
     setup_token_state(app).consume()
     yield
     if hasattr(app.state, INJECTED_PRINCIPAL_ATTR):
         delattr(app.state, INJECTED_PRINCIPAL_ATTR)
+    if hasattr(mcp_server, INJECTED_MCP_PRINCIPAL_ATTR):
+        delattr(mcp_server, INJECTED_MCP_PRINCIPAL_ATTR)
 
 
 @pytest.fixture

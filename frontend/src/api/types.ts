@@ -513,3 +513,35 @@ export interface AuthSession {
   formatting_locale: string;
   csrf_token: string | null;
 }
+
+/** A personal access token as `GET /auth/tokens` lists it (§5.5 family 6, #189):
+ *  everything but the secret. `token_prefix` is the public id in the middle of
+ *  `ptk_<prefix>_…`, so a row can be matched to a client's configuration;
+ *  `scopes` is the granted set as canonical identifiers. Mirrors
+ *  backend/app/schemas/auth.py. */
+export interface AccessToken {
+  id: string;
+  name: string;
+  token_prefix: string;
+  scopes: TokenScope[];
+  created_at: string;
+  expires_at: string | null;
+  revoked_at: string | null;
+  last_used_at: string | null;
+}
+
+/** The two scopes a token may hold — never `instance:admin` (§5.5). Write
+ *  implies read, and the server stores a write grant with both. */
+export type TokenScope = "collection:read" | "collection:write";
+
+export interface AccessTokenCreate {
+  name: string;
+  scopes: TokenScope[];
+  /** ISO 8601 with an offset, or omitted for a token that never expires. */
+  expires_at?: string;
+}
+
+/** The mint response: the row plus the raw token, shown once. */
+export interface AccessTokenMinted extends AccessToken {
+  token: string;
+}

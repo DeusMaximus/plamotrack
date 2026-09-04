@@ -652,12 +652,15 @@ timeline is planned, only that the columns are cheap now and expensive to retrof
 
 ---
 
-## 5. Auth, Remote Access & Public Mode 🔨 **Planned (M6 + M8) — threat model recorded 02/09/2026; §5.9 item 1 (ingress identity, #186) implemented 03/09/2026, nothing else yet**
+## 5. Auth, Remote Access & Public Mode 🔨 **In progress (M6 + M8) — threat model recorded 02/09/2026; §5.9 items 1–4 implemented (ingress identity #186 03/09; auth foundation #187, local owner auth #188 and personal access tokens #189 04/09/2026)**
 
-Of this section only §5.9 item 1 is built — the Host/Origin guard, the ingress
-topology and the proxy-trust posture (#186, 03/09/2026). Every endpoint is still
-unauthenticated and every endpoint can still write; §5.1 records that state exactly,
-and §10 says what it means for running an alpha. The rest of the section is the M6 threat model and route
+Of this section §5.9 items 1–4 are built: the Host/Origin guard, the ingress
+topology and the proxy-trust posture (#186); the principal model, the route policy
+registry and the default-deny dependency (#187); the owner's setup, login, session
+cookie and CSRF controls, with the shipped app enforcing (#188); and personal access
+tokens as the bearer on REST and MCP with per-tool scope (#189). §5.1 records the
+pre-M6 state the model started from, and §10 says what running an alpha means. The
+rest of the section is the M6 threat model and route
 authorization matrix (#29): the actors, the trust boundaries, the deployment modes
 that will be supported, what every route family requires from whom, which layer
 enforces it, how it fails, and the tests that have to exist before the documentation
@@ -1142,6 +1145,43 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    Integration job is red by construction.
 4. **Personal access tokens** — mint, list and revoke under Settings; bearer validation
    on REST and MCP; per-tool scope enforcement; `mcp-remote` documentation. (T5, T6.)
+   **Shipped (#189):** `ptk_<12 hex>_<secret>`, digest of the whole token stored,
+   looked up by the public id, compared with `compare_digest` — against a dummy digest
+   when the id names no row (T11); one helper, `services/tokens.resolve_bearer`, behind
+   both the REST resolver and the FastMCP `TokenVerifier` on the mount; the per-tool
+   check is one FastMCP middleware on `tools/call` reading `MCP_TOOL_SCOPES`, refusing
+   before arguments are parsed; management is family 6 (`/auth/tokens`, the
+   `auth-tokens` tag); audit events `auth.token_minted`, `auth.token_revoked`,
+   `auth.token_use_after_revoke`; `WWW-Authenticate` on every 401 (bare `Bearer` for
+   an absent credential, `error="invalid_token"` for a presented one, on REST and MCP
+   alike). Calls the item's wording left open, recorded here: (a) **no
+   `resource_metadata` pointer in local mode** — there is no protected-resource
+   document until M6-7 (family 8 is OIDC-only), and a pointer at a 404 would be worse
+   than none; T5's "resource-metadata pointer" lands with item 7. (b) **A bearer on a
+   family-3 action is 403** by a route-policy flag (`bearer_refused`), not by a change
+   to the anonymous credential policy: the actions stay anonymous for browsers and
+   refuse tokens; `GET /auth/session` admits a token and reports the instance state
+   with no CSRF token. (c) **The tool list is not filtered by scope** — a `pat:read`
+   client sees the write tools and is refused at the call, with a message naming the
+   scope; hiding them would make an agent's failure silent. (d) **Revoked rows are
+   kept and listed**, so the owner can see when a leaked token was last used; nothing
+   deletes a token row. (e) **A wrong secret or an unknown id writes no audit row** —
+   it is a guess, and a row per bad request would be write amplification an
+   unauthenticated caller controls; a revoked token presented with its *correct*
+   secret does (that is a leak or an un-rotated client). The login failure budget
+   does not cover bearers — item 8's ingress `limit_req` is the brute-force control
+   for a 256-bit secret. (f) **The mount is built through
+   `create_streamable_http_app` directly**, because `FastMCP.http_app` reads the
+   provider off the shared server object and the pre-auth app (`create_app()`, the
+   harnesses) must keep an open mount in the same process; and the transport route's
+   `methods` — which FastMCP declares once a provider is set — are cleared, so the
+   registry's `RouteBinding` stays the one verb boundary (item 2's round-3 design)
+   rather than a Starlette 405 in a different shape without the profile. (g) T5's
+   "an MCP OAuth token on a REST route → 401" has no token to present until item 7;
+   the resolver's strictness on *every* failed bearer is what will make it true.
+   (h) The in-memory MCP client the tests use carries no header, so the tool-scope
+   middleware reads an injected principal off the server object **only when no HTTP
+   request is in flight** — the `app.state` seam's twin, unreachable from the wire.
 5. **MCP OAuth compatibility spike** — the pinned FastMCP against Google and one
    self-hosted OIDC provider, Claude web, ChatGPT web and MCP Inspector; the exact
    generated route table snapshotted; each named client's version and the discovery

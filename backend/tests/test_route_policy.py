@@ -106,6 +106,10 @@ _REST_SURFACE: dict[tuple[str, str], tuple[int, str]] = {
     ("/auth/logout", "POST"): (3, "anonymous"),
     ("/auth/session", "GET"): (2, "anonymous"),
     ("/auth/setup", "POST"): (3, "anonymous"),
+    # Personal access token management (#189): family 6, the owner's session only.
+    ("/auth/tokens", "GET"): (6, "admin"),
+    ("/auth/tokens", "POST"): (6, "admin"),
+    ("/auth/tokens/{token_id}", "DELETE"): (6, "admin"),
     ("/catalog/search", "GET"): (4, "read"),
     ("/catalog/{catalog_id}/adjust", "POST"): (5, "write"),
     ("/consumables", "GET"): (4, "read"),
@@ -164,7 +168,10 @@ _REST_SURFACE: dict[tuple[str, str], tuple[int, str]] = {
 }
 
 _MOUNTED_SURFACE: dict[tuple[str, str], str] = {
-    ("/mcp/", "*"): "StreamableHTTPASGIApp",
+    # The bearer gate (#189) is the endpoint the enumeration sees; the SDK's
+    # transport sits inside it. `*`: the registry's binding is the verb boundary,
+    # not the route's metadata (`build_mcp_app`).
+    ("/mcp/", "*"): "RequireAuthMiddleware",
 }
 
 

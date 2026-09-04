@@ -5,11 +5,11 @@ Backing up, restoring, and upgrading the bundled Docker Compose stack.
 > **This instance has a single owner login.** Since M6-3 every collection route
 > requires the owner's browser session: a fresh install comes up *unclaimed* and
 > prints a one-time setup token to the API log — see [First run](#first-run-claim-the-instance).
-> There is still **no TLS and no scoped API/MCP tokens** here — a tested HTTPS
-> reverse-proxy path and personal access tokens are the rest of Milestone 6 — so
-> keep an instance on a network you trust. It also answers only to names you list;
-> reach it by any other name and it says `421 Misdirected Request`; see
-> [Names it answers to](#names-it-answers-to).
+> Scripts and MCP clients authenticate with a [personal access token](#access-tokens)
+> instead. There is still **no TLS** here — a tested HTTPS reverse-proxy path is the
+> rest of Milestone 6 — so keep an instance on a network you trust. It also answers
+> only to names you list; reach it by any other name and it says
+> `421 Misdirected Request`; see [Names it answers to](#names-it-answers-to).
 
 ## First run: claim the instance
 
@@ -42,6 +42,36 @@ docker compose exec api python -m app.auth.recovery reset-password
 It prompts for a new password, sets it, and signs every browser out. To sign
 everyone out without changing the password, use `revoke-sessions` instead. Both
 run only where you already have shell access to the host, which is the point.
+Neither touches access tokens — revoke those from Settings once you are back in.
+
+## Access tokens
+
+The browser session is for people. A script, a cron job or an MCP client (Claude
+Desktop, Claude Code, anything else that speaks MCP over HTTP) authenticates with a
+**personal access token** instead: **Settings → Access tokens** in the app, owner
+login required. A token looks like `ptk_<id>_<secret>`, is shown once when it is
+created, and is stored only as a digest — if you lose it, revoke it and make
+another. Send it as an `Authorization: Bearer ptk_…` header on the REST API
+(`/api/…`) and on the MCP endpoint (`/mcp/`); a token in a URL is ignored. The
+README's *Wiring up the MCP server* section has the Claude Desktop and Claude Code
+configuration.
+
+What a token can do is chosen when it is minted and never widens:
+
+- **Read-only** — list and look up: kits, orders, the catalog, retailers, settings,
+  the CSV exports.
+- **Read and write** — the above plus adding kits and catalog items, recording and
+  editing orders, adjusting stock, applying upgrades, and CSV import in `merge` or
+  `add_only` mode.
+
+No token can change the instance settings, run a `replace_all` import, or manage
+tokens — those stay with the owner login, so a leaked token cannot lock you out or
+erase the collection. An optional expiry (30, 90 or 365 days) is offered at
+creation. The list shows when each token was last used; **Revoke** stops it
+immediately and keeps the row as a record. The MCP endpoint takes *only* a token —
+the browser's session cookie never authenticates it, by design, so a page in your
+browser cannot drive an agent's tools. Minting, revoking, and any use of a revoked
+token are recorded in the audit table.
 
 ## What's running
 
@@ -328,12 +358,12 @@ M6 lands.
 > If you do need host-firewall rules to apply to Docker traffic, they belong in
 > the `DOCKER-USER` chain.
 
-### What about HTTPS and scoped tokens?
+### What about HTTPS?
 
-The login landed in M6-3 — see [First run](#first-run-claim-the-instance). What is
-still to come in Milestone 6 is a *tested* TLS reverse-proxy configuration and
-scoped API/MCP tokens (so a script or an MCP client authenticates without the
-browser session). Putting a proxy in front of this today can give you HTTPS, and
+The login landed in M6-3 and access tokens in M6-4 — see
+[First run](#first-run-claim-the-instance) and [Access tokens](#access-tokens).
+What is still to come in Milestone 6 is a *tested* TLS reverse-proxy
+configuration. Putting a proxy in front of this today can give you HTTPS, and
 some people will want that — but a config here that hasn't been tested against the
 MCP streaming path would be a liability rather than a help, so this document won't
 pretend to supply one yet.

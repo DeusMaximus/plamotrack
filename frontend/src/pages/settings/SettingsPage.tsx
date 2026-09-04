@@ -7,6 +7,7 @@ const SECTIONS = [
   { to: "general", label: "settings.sections.general" },
   { to: "language", label: "settings.sections.language" },
   { to: "data", label: "settings.sections.data" },
+  { to: "tokens", label: "settings.sections.tokens" },
   { to: "about", label: "settings.sections.about" },
 ] as const;
 

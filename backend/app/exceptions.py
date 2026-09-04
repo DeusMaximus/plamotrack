@@ -34,8 +34,23 @@ class InvalidInputError(DomainError):
 
 class UnauthenticatedError(DomainError):
     """No credential, or a presented one that fails, on a route that needs one
-    (§5.5). 401. Raised by the authorization dependency (`app/auth/dependency.py`),
-    not by a service — the service layer trusts that a caller reached it."""
+    (§5.5). 401. Raised by the authorization dependency (`app/auth/dependency.py`)
+    and the resolver, not by a service — the service layer trusts that a caller
+    reached it. `challenge`, when set, is the `WWW-Authenticate` value the
+    response carries (RFC 7235 §3.1 — a 401 names the scheme it accepts): the
+    dependency's bare `Bearer` for an absent credential, and RFC 6750's
+    `Bearer error="invalid_token"` for a presented bearer that failed (#189)."""
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        code: str,
+        params: Mapping[str, object] | None = None,
+        challenge: str | None = None,
+    ):
+        super().__init__(detail, code=code, params=params)
+        self.challenge = challenge
 
 
 class ForbiddenError(DomainError):

@@ -7,6 +7,7 @@ import { KitsPage } from "./pages/KitsPage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { RetailersPage } from "./pages/RetailersPage";
 import { AboutSection } from "./pages/settings/AboutSection";
+import { AccessTokensSection } from "./pages/settings/AccessTokensSection";
 import { DataSection } from "./pages/settings/DataSection";
 import { GeneralSection } from "./pages/settings/GeneralSection";
 import { LanguageSection } from "./pages/settings/LanguageSection";
@@ -27,6 +28,7 @@ export default function App() {
           <Route path="general" element={<GeneralSection />} />
           <Route path="language" element={<LanguageSection />} />
           <Route path="data" element={<DataSection />} />
+          <Route path="tokens" element={<AccessTokensSection />} />
           <Route path="about" element={<AboutSection />} />
         </Route>
         {/* The former Data-management route; old links and bookmarks land on

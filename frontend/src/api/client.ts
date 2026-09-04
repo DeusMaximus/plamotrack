@@ -1,4 +1,7 @@
 import type {
+  AccessToken,
+  AccessTokenCreate,
+  AccessTokenMinted,
   CatalogSearchResult,
   Consumable,
   ConsumableCreate,
@@ -234,6 +237,12 @@ export const api = {
   login: (password: string) => request<AuthSession>("/auth/login", post({ password })),
   logout: () => request<void>("/auth/logout", { method: "POST" }),
 
+  /** Personal access tokens (#189) — owner-session only (family 6); the mint
+   *  response is the one time the secret is readable. */
+  listTokens: () => request<AccessToken[]>("/auth/tokens"),
+  createToken: (data: AccessTokenCreate) => request<AccessTokenMinted>("/auth/tokens", post(data)),
+  revokeToken: (id: string) => request<void>(`/auth/tokens/${id}`, { method: "DELETE" }),
+
   getSettings: () => request<InstanceSettings>("/settings"),
   updateSettings: (data: InstanceSettingsUpdate) =>
     request<InstanceSettings>("/settings", patch(data)),
@@ -283,6 +292,14 @@ export const authSessionQuery = {
   queryKey: ["auth-session"],
   queryFn: api.getAuthSession,
   staleTime: 30_000,
+} as const;
+
+/** The owner's access tokens (#189). Fresh on every visit to the section — a
+ * token minted or revoked from another tab should show without a reload. */
+export const tokensQuery = {
+  queryKey: ["auth-tokens"],
+  queryFn: api.listTokens,
+  staleTime: 0,
 } as const;
 
 /** The instance-settings singleton (§6.1). Same shape and reasoning as
