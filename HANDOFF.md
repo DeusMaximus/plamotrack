@@ -41,7 +41,44 @@ Template:
 
 ---
 
-## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) MCP OAuth on `feature/m6-7-mcp-oauth` — **PR #212** open (runtime head `4bd2e88`), Codex round 1 next, in a new session
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 1 (NO-GO, 5 findings) answered on the branch — head `e248a4b`, reply posted (issuecomment-5545491101), PR body amended
+
+- **Done:** all five findings reproduced at `4bd2e88` on their own assertions, then fixed as one
+  state machine (`app/auth/mcp_oauth.py`): **f1** `revoke_token` removes the grant record first
+  (JTI mapping, upstream set, refresh hash) then revokes the provider's refresh token through the
+  injectable client (`auth.mcp_grant_revoked`); **f2** `_one_redemption` — a per-handle
+  transaction-scoped advisory lock (`_GrantLock`, class-based: the SDK's `TokenError` is a frozen
+  dataclass and dies in a generator CM) around the code and refresh exchanges; **f3** the owner
+  binding is grant state (`OwnerBinding` in `upstream_claims`, `_extract_upstream_claims`,
+  `IdTokenOwnerCheck.still_bound` per request in `load_access_token`; `GrantVerifier` is FastMCP's
+  hook, the upstream token bounds the grant); **f4** `RouteBinding` stamps a handler's 500,
+  `ClientMetadataBody` gives a non-JSON registration RFC 7591's 400, nginx `@rate_limited` 429 in
+  the envelope (`ingress.rate_limited` — error_codes + fixture + en-AU catalogue), matrix rows
+  fixed/added (mode-aware challenge, revoke 401, three register bodies, the burst run last);
+  **f5** the three upstream-endpoint attributes are properties over `OidcProvider.cached_metadata`
+  and `_handle_consent` resolves first. Config comment (call 3) corrected. Docs: design §5.5 row,
+  §5.6 outage bullet, §5.8 audit list, §5.9 (b)(d)(e)(f)(f′)(j); operations (ending a link);
+  AGENTS.md rule 13; `.agents/testing-and-review.md` (448/34, moa paragraph, gate burst);
+  `.agents/lessons.md` → "Overriding the entry points, not the state machine (#212, round 1)".
+- **Decisions:** the lock, not a claim row (keeps FastMCP's minting as the one path; upstream
+  failure leaves the refresh token retryable); RFC 6749 revoke-on-code-reuse deliberately not
+  done (a retrying client is the realistic second use); the binding in the proxy's own JWT rather
+  than a stored grant row; the REST-side unhandled-500 profile (the sweep's find) closed in the same branch — `unhandled_error_envelope` in `main.py`, moa-48.
+- **State:** backend **2046 green** (`test_mcp_oauth.py` 90, was 69), lint/format clean,
+  `render_ingress.py --check` clean, frontend build/lint/catalogue green. Mutants: moa-4/6/10/11/23
+  re-anchored, moa-12/14/15 re-pointed at the cold-start tests, moa-34…48 added — **46/46 killed (42 first pass; moa-12/14/15 after the cold-start witnesses were written, moa-47 after the store assertion, moa-48 with its test)**. Packaged matrix from this tree: local **0
+  failing** (71 rows incl. the burst), **OIDC 0 failing** against the Keycloak spike through a
+  loopback socat sidecar in the api container's netns (scratchpad `compose.oidc.yml` — not
+  tracked; `.agents/spikes/190/` is where such an overlay would live if kept). Packaged
+  api/web/sidecar stopped, dev `db` up, Keycloak spike up. Siblings drafted, filed as #213 (A) and #214 (B): (A)
+  explicit-vs-transparent refresh race on a rotating provider, (B) `rebind-oidc` purging
+  `mcp_oauth_state`. LXC untouched (**stays put until M6 is finished**).
+- **Next:** (1) Codex round 2 on PR #212 at `e248a4b` (brief from `.agents/review-brief.md`;
+  push on f2's lock-vs-claim call, f3's binding-in-JWT, the `GrantVerifier` shell); if GO, merge
+  with `Closes #192`; (2) after merge nothing to fold in (tuples tracked); (3) #193, M6-9 TLS docs,
+  the M6 release (gate: `ingress_matrix.py --mode oidc` + the burst), then the LXC upgrade.
+
+## ## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) MCP OAuth on `feature/m6-7-mcp-oauth` — **PR #212** open (runtime head `4bd2e88`), Codex round 1 next, in a new session
 
 - **Done:** the whole of #192 on the branch, committed as `4bd2e88` and pushed on the owner's call; **PR #212** opened from the body drafted this session (12 deliberate calls, the mutant paragraph, the live check).
   `app/auth/mcp_oauth.py` — `PlamotrackOAuthProxy` over FastMCP's `OAuthProxy` (not `OIDCProxy`,
@@ -215,50 +252,3 @@ Template:
   03/09). Release-notes items: `AUTH_MODE=oidc` exists; a mode switch signs every browser out at
   the first start in the new mode (both directions) and a local→oidc switch needs the setup token
   once.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #191 (M6-6) browser OIDC on `feature/m6-6-browser-oidc` — **PR #209** open for Codex review; #190 closed
-
-- **Done:** #190 closed (evidence comment + harness on `main` at `a642d0b`). Owner chose
-  **#191 before #192** (the declared order: #192's owner binding and mode switch are #191's).
-  Branch `feature/m6-6-browser-oidc` off `a642d0b`, committed and pushed (owner's call) as
-  **PR #209** (body carries the deliberate calls and the mutant table). Shape: `AUTH_MODE=local|oidc` + `OIDC_ISSUER/CLIENT_ID/CLIENT_SECRET`
-  (env-only; `PUBLIC_BASE_URL` required in OIDC mode, the callback
-  `<PUBLIC_BASE_URL>/api/auth/oidc/callback` is built from it); `services/oidc.py` (discovery
-  cached lazily and issuer-checked, JWKS, code exchange `client_secret_basic` + PKCE, id_token
-  via **joserfc** — asymmetric algs only — for iss/aud/sub/exp/nonce; `begin_login` /
-  `complete_login` / `recovery_rebind_oidc`); table `oidc_login` (migration `0db6c35d0a7e`:
-  digests of `state` + a browser-binding cookie, nonce, PKCE verifier, `claiming`, 10 min,
-  single use); routes `POST /auth/oidc/start` (JSON → `{authorization_url}` + binding cookie)
-  and `GET /auth/oidc/callback` (302 to the SPA root; `?auth_error=<word>` on refusal); the
-  password pair 404 in OIDC mode and vice versa (`auth.not_in_this_mode`); registry `modes`
-  field; `GET /auth/session` gains `auth_mode`/`oidc_issuer` and reports `unclaimed` while the
-  owner is **unbound** (claimed but no `(issuer, subject)` — a mode switch or a rebind), so the
-  setup token is the claim gate in OIDC mode too; `recovery rebind-oidc`; SPA screens; docs
-  (operations, .env.example, README, design §5.5 row + §5.9 item 6 "Shipped" calls (a)–(e),
-  AGENTS.md rule 13). **Verified against the real Keycloak** (spike realm, `localhost:8081`,
-  API run in OIDC mode with `PUBLIC_BASE_URL=http://localhost:5173`): setup token → provider
-  → bound owner in the SPA; a stranger → `auth_error=oidc_identity_refused` + audit row.
-- **Decisions:** on PR #209's body ("Deliberate calls" 1–10) and design §5.9 item 6 — notably `start` is a POST returning JSON (token never in a URL,
-  Origin-guarded), the transaction is a DB row not a signed cookie (no app secret exists),
-  unbound ⇒ `unclaimed` ⇒ setup token, joserfc over Authlib's deprecated `jose`.
-- **State:** backend **1903 green** (`test_migration_data.py` HEAD bumped to `0db6c35d0a7e`),
-  `tests/test_auth_oidc.py` **35**; frontend 487, build + lint clean. Hand mutants oidc-1…20
-  (exact tuples in a `<details>` block on the PR body): **18 killed, 2 equivalent**
-  (oidc-11 sub fallback — joserfc's essential `sub` refuses first; oidc-13 HS256 — no symmetric
-  key in the JWKS); three first-pass survivors (5, 12, 19) were test gaps, now tests.
-  T2 rows added to `ingress_matrix.py` (CI Integration proves them; packaged stack not run
-  locally). Dev DB: owner is now **bound to the Keycloak `owner` user** in OIDC mode and still
-  holds the local credential (`e2e-owner-password`) — switching the API back to local mode
-  just works; Keycloak spike container is **up** (`.agents/spikes/190/keycloak/`, realm now
-  lists the `localhost:5173` callback). No e2e change (local mode).
-- **Next:** (1) **Codex round 1 on PR #209** — the brief was printed once in the authoring
-  session and is not stored; regenerate it from `.agents/review-brief.md` (Codex footer), the
-  PR body's "Deliberate calls" and its **"Where a reviewer should push"** section; the
-  runtime head is `96f24ab` (every commit after it on the branch is a hand-off entry —
-  brief the reviewer at the branch tip and say so), `main` `a642d0b`, rules 1/6/7.1/9/11/13 in play; answer findings per
-  `.agents/testing-and-review.md` → "Responding to a review". Tree parked on the branch.
-  (2) fold oidc- mutants
-  into `mutation_test.py` after merge (the usual harness-only PR); (3) #192 (M6-7) on top —
-  same issuer/client, the spike's decisions; (4) #193; (5) **LXC stays put until M6 is
-  finished** (owner, 03/09). Release-notes item: `AUTH_MODE=oidc` exists; a local→oidc switch
-  signs everyone out and needs the setup token once.
