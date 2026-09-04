@@ -12,18 +12,18 @@ write to it — comes from configuration (`PUBLIC_BASE_URL`, `ALLOWED_HOSTS`,
   (421 otherwise, the body naming the setting); every *unsafe* request's
   `Origin` — `Referer` as the fallback — must satisfy the three-way rule FastMCP's
   guard applies: listed, loopback-to-loopback, or equal to the request's own
-  origin (403 otherwise). A request with neither header passes in this release:
-  no cookie exists yet, so a missing `Origin` cannot be a cookie-borne
-  cross-site request, and refusing it would refuse every script and MCP client
-  for no gain (a browser cannot omit `Origin` on a cross-origin unsafe request
-  — the worst it sends is `null`, which matches nothing). The session cookie
-  (M6-3) is what tightens that case, per §5.6's CSRF row.
+  origin (403 otherwise). A request with neither header passes this outer guard
+  because scripts and MCP clients legitimately omit both; the authorization
+  dependency separately refuses the missing-Origin case when a session cookie
+  makes an unsafe request browser-borne (§5.6's CSRF row).
 - `ForwardedClientMiddleware`: resolves the client address from
   `X-Forwarded-For` only when the raw TCP peer is in `TRUSTED_PROXIES`, into
   `scope["state"]["client_address"]`, and leaves `scope["client"]` alone. That
   is why uvicorn runs with `--no-proxy-headers`: its own middleware would
   overwrite the raw peer, and the raw peer is what `is_internal_peer` — the
-  `/readyz` gate — reads.
+  `/readyz` gate — reads. In the bundled stack nginx performs that trust walk,
+  overwrites a private address header on every proxied path, and the unpublished
+  API accepts that header only under its compose-only flag.
 
 The helpers mirror FastMCP 3.4.5's `server/http.py` normalisation on purpose
 rather than importing its private functions: the parity that matters is
@@ -33,6 +33,9 @@ library refactor must not silently change what REST accepts.
 
 from __future__ import annotations
 
+import logging
+from collections.abc import Awaitable, Callable
+from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from ipaddress import IPv4Network, IPv6Network, ip_address, ip_network
@@ -62,9 +65,17 @@ HOST_SETTING = "ALLOWED_HOSTS"
 ORIGIN_SETTING = "ALLOWED_ORIGINS"
 
 #: Where the resolved client address lands. `request.state.client_address` is
-#: what rate limiting and audit (later M6 items) read; `request.client` stays
+#: what audit reads; `request.client` stays
 #: the socket's peer.
 CLIENT_ADDRESS_KEY = "client_address"
+BUNDLED_CLIENT_HEADER = "x-plamotrack-client-address"
+_CURRENT_CLIENT_ADDRESS: ContextVar[str | None] = ContextVar(
+    "plamotrack_current_client_address", default=None
+)
+
+IngressRejectionRecorder = Callable[[str, Scope, str], Awaitable[None]]
+
+log = logging.getLogger("plamotrack.audit")
 
 
 # --- normalisation (the host helpers live in app/hostnames.py) --------------------
@@ -149,6 +160,8 @@ class IngressPolicy:
     #: PUBLIC_BASE_URL's origin plus ALLOWED_ORIGINS — FastMCP's `allowed_origins`.
     allowed_origins: tuple[str, ...]
     trusted_proxies: tuple[IPv4Network | IPv6Network, ...]
+    #: Compose-only trust in the internal header the bundled nginx overwrites.
+    bundled_ingress: bool
     #: The instance's own origin, normalised, or None for the loopback install.
     canonical_origin: str | None
 
@@ -178,6 +191,7 @@ class IngressPolicy:
             extra_hosts=tuple(dict.fromkeys(extra_hosts)),
             allowed_origins=tuple(dict.fromkeys(allowed_origins)),
             trusted_proxies=trusted,
+            bundled_ingress=settings.plamotrack_bundled_ingress,
             canonical_origin=canonical_origin,
         )
 
@@ -243,6 +257,47 @@ class IngressPolicy:
         return resolved
 
 
+def client_address_from_scope(scope: Scope, policy: IngressPolicy) -> str | None:
+    """The audit/rate-limit address for a scope, including pre-routing refusals.
+
+    ``ForwardedClientMiddleware`` normally writes the resolved value into state,
+    but the Host/Origin guard is intentionally outside it. Re-applying the same
+    pure policy here lets those early refusals carry the same address without
+    changing middleware order or trusting a new header.
+    """
+    client = scope.get("client")
+    peer = client[0] if client else None
+    headers = Headers(scope=scope)
+    if policy.bundled_ingress:
+        bundled = headers.get(BUNDLED_CLIENT_HEADER)
+        if bundled:
+            candidate = _parse_address(bundled)
+            try:
+                return str(ip_address(candidate))
+            except ValueError:
+                # The bundled proxy always emits an address. A malformed value
+                # from a direct compose-network peer is not trusted as data.
+                return peer
+    forwarded = ", ".join(
+        value.decode("latin1")
+        for name, value in scope.get("headers", [])
+        if name == b"x-forwarded-for"
+    )
+    return policy.resolve_client_address(peer, forwarded)
+
+
+def current_client_address() -> str | None:
+    """The resolved address for code reached without a Starlette ``Request``.
+
+    FastMCP's token verifier is invoked by Starlette's authentication backend,
+    before FastMCP installs its request context. The outer forwarded-client
+    middleware therefore carries only this non-secret address through the
+    current async context so MCP audit rows have the same source identity as
+    REST rows.
+    """
+    return _CURRENT_CLIENT_ADDRESS.get()
+
+
 # --- the peer ----------------------------------------------------------------------
 
 
@@ -275,9 +330,25 @@ class HostOriginGuardMiddleware:
     """421 for a Host outside the allowlist; 403 for an unsafe request whose
     Origin (or Referer) fails the three-way rule. Pure ASGI, outermost."""
 
-    def __init__(self, app: ASGIApp, policy: IngressPolicy) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        policy: IngressPolicy,
+        rejection_recorder: IngressRejectionRecorder | None = None,
+    ) -> None:
         self.app = app
         self.policy = policy
+        self.rejection_recorder = rejection_recorder
+
+    async def _record_rejection(self, event_type: str, scope: Scope, setting: str) -> None:
+        if self.rejection_recorder is None:
+            return
+        try:
+            await self.rejection_recorder(event_type, scope, setting)
+        except Exception:
+            # Audit storage must not turn a security refusal into an allow or a
+            # different response. Keep the operational line free of request data.
+            log.error("Could not persist %s", event_type)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in ("http", "websocket"):
@@ -288,6 +359,7 @@ class HostOriginGuardMiddleware:
         host = headers.get("host", "")
         server = scope.get("server")
         if not self.policy.host_allowed(host, server[0] if server else None):
+            await self._record_rejection("ingress.host_rejected", scope, HOST_SETTING)
             response = _refusal(
                 421,
                 "This instance does not answer to that host name. Add the name you use "
@@ -307,6 +379,7 @@ class HostOriginGuardMiddleware:
             if origin is not None and not self.policy.origin_allowed(
                 origin, scope.get("scheme", "http"), host
             ):
+                await self._record_rejection("ingress.origin_rejected", scope, ORIGIN_SETTING)
                 response = _refusal(
                     403,
                     "This instance does not accept writes from that origin. An origin of "
@@ -329,15 +402,13 @@ class ForwardedClientMiddleware:
         self.policy = policy
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        context_token: Token[str | None] | None = None
         if scope["type"] in ("http", "websocket"):
-            client = scope.get("client")
-            peer = client[0] if client else None
-            forwarded = ", ".join(
-                value.decode("latin1")
-                for name, value in scope.get("headers", [])
-                if name == b"x-forwarded-for"
-            )
-            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = self.policy.resolve_client_address(
-                peer, forwarded
-            )
-        await self.app(scope, receive, send)
+            address = client_address_from_scope(scope, self.policy)
+            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = address
+            context_token = _CURRENT_CLIENT_ADDRESS.set(address)
+        try:
+            await self.app(scope, receive, send)
+        finally:
+            if context_token is not None:
+                _CURRENT_CLIENT_ADDRESS.reset(context_token)

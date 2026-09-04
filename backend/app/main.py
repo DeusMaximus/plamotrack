@@ -357,6 +357,13 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
             render=domain_error_handler,
         )
 
+        async def record_ingress_rejection(event_type: str, scope, setting: str) -> None:
+            # Lazy import keeps the ingress policy independent of persistence;
+            # the service owns the audit transaction (rule 1).
+            from app.services.audit import record_ingress_rejection as record
+
+            await record(event_type, scope, policy=policy, setting=setting)
+
     app.add_exception_handler(DomainError, domain_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_envelope)
     app.add_exception_handler(RequestValidationError, request_validation_handler)
@@ -364,7 +371,11 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
     # Outermost last: the guard answers a hostile Host before anything else
     # runs, and the forwarded-client resolver sees only requests that passed it.
     app.add_middleware(ForwardedClientMiddleware, policy=policy)
-    app.add_middleware(HostOriginGuardMiddleware, policy=policy)
+    app.add_middleware(
+        HostOriginGuardMiddleware,
+        policy=policy,
+        rejection_recorder=record_ingress_rejection if authorization else None,
+    )
     return app
 
 

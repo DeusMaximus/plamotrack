@@ -381,6 +381,23 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     (`PROTOCOL_NAMESPACES`, one declaration with the ingress rejection) is the
     router's 404 for everyone, and a new mutating middleware or a change
     to the resolver owes the once-per-request test (`tests/test_auth_unrouted.py`).
+14. **Security telemetry and throttling (M6-8, §5.6):** security events append
+    through `services/audit.py`, never ad-hoc logging. A row identifies the
+    principal kind and credential id when one exists, the resolved client address,
+    and a route or MCP tool; detail is short structured metadata only — never a
+    credential, request body, or query string. State-change events share the
+    caller's transaction; a pre-routing Host/Origin refusal owns its transaction.
+    Retention goes through the audited `prune_events` service and host-side
+    `prune-audit` command. The bundled nginx has four independent `limit_req`
+    zones for route families 2, 3, 8 and 9, keyed on `$binary_remote_addr` after
+    its `TRUSTED_PROXIES` walk; their maps use the original `$request_uri`, because
+    the `/api/` rewrite runs before nginx's limit phase. nginx overwrites the
+    private client-address header on every API/MCP proxy path and only the
+    unpublished compose API enables trust in it; source-run deployments use the
+    ordinary proxy policy. The login/setup failure budget remains in process only
+    while the Dockerfile pins uvicorn to one worker — move it to a shared store
+    before adding workers. CI's packaged matrix must exercise all four 429s and
+    scan a full login/PAT/MCP run for the password, PAT and session value.
 
 ## Fixing a defect: sweep the class first
 

@@ -85,3 +85,27 @@ def test_every_root_canonical_live_route_is_covered_by_a_rejection():
 
 def test_the_render_is_deterministic():
     assert render_api_alias_rejections(INDENT) == render_api_alias_rejections(INDENT)
+
+
+def test_the_four_declared_rate_limit_families_have_separate_keys_and_bursts():
+    """M6-8 / T8: an empty map key exempts every other family; these literal
+    path maps and server-level directives are the nginx control."""
+    text = TEMPLATE.read_text(encoding="utf-8")
+    expected_paths = {
+        "$plamotrack_family_2_key": "/api/auth/session",
+        "$plamotrack_family_3_key": "/api/auth/(setup|login|logout|oidc/start|oidc/callback)",
+        "$plamotrack_family_8_key": "/mcp/(authorize|token|register|consent|auth/callback|revoke)",
+        "$plamotrack_family_9_key": "/api/healthz",
+    }
+    for key, path in expected_paths.items():
+        assert f"map $request_uri {key} {{" in text
+        assert path in text
+        zone = key.removeprefix("$").removesuffix("_key")
+        assert f"limit_req_zone {key} zone={zone}:" in text
+        assert f"limit_req zone={zone} burst=" in text
+    assert "limit_req_status 429;" in text
+    assert "real_ip_header X-Forwarded-For;" in text
+    assert "real_ip_recursive on;" in text
+    # Every path proxied to the unpublished API overwrites the internal address
+    # header; a client-supplied value can never pass through nginx unchanged.
+    assert text.count("proxy_set_header X-Plamotrack-Client-Address $remote_addr;") == 7

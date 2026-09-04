@@ -40,12 +40,15 @@ import pytest
 from fastmcp.server import http as fastmcp_http
 from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
+from sqlalchemy import select
 from starlette.datastructures import Headers
 
 from app import error_codes
 from app.config import Settings
+from app.db import get_sessionmaker
 from app.hostnames import validate_host_pattern
 from app.ingress import (
+    BUNDLED_CLIENT_HEADER,
     CLIENT_ADDRESS_KEY,
     LOOPBACK_HOSTS,
     ForwardedClientMiddleware,
@@ -56,6 +59,8 @@ from app.ingress import (
     normalize_origin,
 )
 from app.main import build_mcp_app, create_app
+from app.models import AuditEvent
+from app.services import audit
 
 SERVER_NAMES_SCRIPT = (
     Path(__file__).resolve().parents[2] / "frontend/nginx/15-plamotrack-server-names.envsh"
@@ -89,7 +94,13 @@ def make_settings(**overrides) -> Settings:
 
 
 @asynccontextmanager
-async def running_client(settings: Settings | None = None, peer=LOOPBACK_PEER, host="localhost"):
+async def running_client(
+    settings: Settings | None = None,
+    peer=LOOPBACK_PEER,
+    host="localhost",
+    *,
+    authorization: bool = False,
+):
     """The real app for `settings`, lifespan entered (FastMCP's session manager
     lives there), reached through the ASGI transport as `peer` with `Host: host`.
     `raise_app_exceptions=False` so a broken handler reads as its status, not a
@@ -100,13 +111,23 @@ async def running_client(settings: Settings | None = None, peer=LOOPBACK_PEER, h
     address, which the allowlist admits the way FastMCP's guard does — from the
     URL, so a name put there would be admitted as the bind address rather than
     judged as a Host."""
-    app = create_app(settings or make_settings())
+    app = create_app(settings or make_settings(), authorization=authorization)
     async with app.router.lifespan_context(app):
         transport = ASGITransport(app=app, client=peer, raise_app_exceptions=False)
         async with AsyncClient(
             transport=transport, base_url="http://127.0.0.1:8000", headers={"Host": host}
         ) as client:
             yield client
+
+
+async def _audit_rows(*event_types: str) -> list[AuditEvent]:
+    async with get_sessionmaker()() as session:
+        rows = await session.execute(
+            select(AuditEvent)
+            .where(AuditEvent.event_type.in_(event_types))
+            .order_by(AuditEvent.occurred_at, AuditEvent.event_type)
+        )
+        return list(rows.scalars().all())
 
 
 async def mcp_initialize(client: AsyncClient, **headers):
@@ -127,6 +148,75 @@ async def import_preview(client: AsyncClient, **headers):
         data={"mode": "merge"},
         headers=headers,
     )
+
+
+async def test_host_and_origin_rejections_are_audited_without_request_data():
+    """#193 / T10: the pre-routing guards write who/where/what, but neither a
+    query string nor a body. The two proxy states drive T9's address axis too:
+    an untrusted peer's XFF is ignored, a trusted peer's is honoured."""
+    untrusted = make_settings()
+    async with running_client(
+        untrusted,
+        peer=OUTSIDE_PEER,
+        host="evil.example",
+        authorization=True,
+    ) as client:
+        host = await client.get(
+            "/audit-host?token=query-secret",
+            headers={"X-Forwarded-For": "203.0.113.40"},
+        )
+    assert host.status_code == 421
+
+    trusted = make_settings(trusted_proxies=OUTSIDE_PEER[0])
+    async with running_client(
+        trusted,
+        peer=OUTSIDE_PEER,
+        host="localhost",
+        authorization=True,
+    ) as client:
+        origin = await client.post(
+            "/retailers?token=query-secret",
+            json={"name": "body-secret"},
+            headers={
+                "Origin": "https://evil.example",
+                "X-Forwarded-For": "203.0.113.41",
+            },
+        )
+    assert origin.status_code == 403
+
+    rows = await _audit_rows(audit.HOST_REJECTED, audit.ORIGIN_REJECTED)
+    assert [
+        (
+            row.event_type,
+            row.principal_kind,
+            row.principal_subject,
+            row.client_address,
+            row.target,
+            row.detail,
+        )
+        for row in rows
+    ] == [
+        (
+            audit.HOST_REJECTED,
+            "anon",
+            None,
+            OUTSIDE_PEER[0],
+            "/audit-host",
+            "method=GET setting=ALLOWED_HOSTS",
+        ),
+        (
+            audit.ORIGIN_REJECTED,
+            "anon",
+            None,
+            "203.0.113.41",
+            "/retailers",
+            "method=POST setting=ALLOWED_ORIGINS",
+        ),
+    ]
+    for row in rows:
+        stored = f"{row.target} {row.detail}"
+        assert "query-secret" not in stored
+        assert "body-secret" not in stored
 
 
 def _import_apply(mode: str):
@@ -650,6 +740,41 @@ async def test_forwarded_client_lands_in_state_and_leaves_the_raw_peer_alone():
     assert captured["state"][CLIENT_ADDRESS_KEY] == "10.0.0.6"
 
 
+async def test_bundled_ingress_header_is_explicit_and_cannot_forge_the_raw_peer():
+    captured = {}
+
+    async def inner(scope, receive, send):
+        captured["client"] = scope["client"]
+        captured["address"] = scope["state"][CLIENT_ADDRESS_KEY]
+
+    async def send(message):
+        pass
+
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/",
+        "client": ("172.20.0.4", 5000),
+        "headers": [
+            (BUNDLED_CLIENT_HEADER.encode(), b"203.0.113.19"),
+            (b"x-forwarded-for", b"127.0.0.1"),
+            (b"host", b"localhost"),
+        ],
+    }
+    enabled = IngressPolicy.from_settings(make_settings(plamotrack_bundled_ingress=True))
+    await ForwardedClientMiddleware(inner, enabled)(scope, None, send)
+    assert captured == {
+        "client": ("172.20.0.4", 5000),
+        "address": "203.0.113.19",
+    }
+
+    # Source-run deployments do not trust the internal header or the spoofed XFF.
+    scope["state"] = {}
+    disabled = IngressPolicy.from_settings(make_settings())
+    await ForwardedClientMiddleware(inner, disabled)(scope, None, send)
+    assert captured["address"] == "172.20.0.4"
+
+
 async def test_readyz_answers_the_raw_loopback_peer_only():
     async with running_client(peer=LOOPBACK_PEER) as client:
         assert (await client.get("/readyz")).status_code == 200
@@ -923,6 +1048,7 @@ def test_policy_derivation_from_every_setting():
     assert policy.allowed_origins == ("https://app.example:8443", "http://alias.lan:9000")
     assert policy.canonical_origin == "https://app.example:8443"
     assert [str(n) for n in policy.trusted_proxies] == ["10.0.0.0/8"]
+    assert policy.bundled_ingress is False
     # The per-request list adds the loopback names and a bound address that
     # names something; 0.0.0.0 (the container's bind) adds nothing.
     assert policy.allowed_hosts_for("0.0.0.0") == (*LOOPBACK_HOSTS, *policy.extra_hosts)
@@ -939,6 +1065,7 @@ def test_the_loopback_install_derives_an_empty_policy():
     assert policy.allowed_origins == ()
     assert policy.canonical_origin is None
     assert policy.trusted_proxies == ()
+    assert policy.bundled_ingress is False
 
 
 @pytest.mark.parametrize(
@@ -1024,6 +1151,21 @@ def _nginx_server_names(public_base_url: str, web_bind: str, allowed_hosts: str)
     return {normalize_host(name) for name in names}
 
 
+def _nginx_trusted_proxy_directives(value: str) -> str:
+    env = {"PATH": os.environ["PATH"], "TRUSTED_PROXIES": value}
+    command = (
+        f'. "{SERVER_NAMES_SCRIPT}" >/dev/null; printf "%s" "$PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES"'
+    )
+    result = subprocess.run(
+        ["sh", "-c", command],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return result.stdout
+
+
 @pytest.mark.parametrize("public_base_url,web_bind,allowed_hosts", SERVER_NAME_CORPUS)
 def test_nginx_server_names_equal_the_apps_allowlist(public_base_url, web_bind, allowed_hosts):
     # One corpus through both derivations (PR #196 review: the three P3s were
@@ -1045,6 +1187,27 @@ def test_the_generator_drops_a_terminal_dot_and_a_port():
     # The raw-spelling invariants inside _nginx_server_names are what refuse a
     # dotted or port-carrying entry; this pins that the names still arrived.
     assert names == {"localhost", "127.0.0.1", "::1", "nas.lan", "other.lan"}
+
+
+def test_the_generator_renders_only_validated_trusted_proxy_directives():
+    assert _nginx_trusted_proxy_directives("10.0.0.5, 192.0.2.0/24, fd00::/8") == (
+        "set_real_ip_from 10.0.0.5;\nset_real_ip_from 192.0.2.0/24;\nset_real_ip_from fd00::/8;\n"
+    )
+    assert _nginx_trusted_proxy_directives("") == ""
+
+
+@pytest.mark.parametrize("value", ["all", "10.0.0.1;return", "10.0.0.1\nallow", "*"])
+def test_the_generator_refuses_trusted_proxy_config_injection(value):
+    env = {"PATH": os.environ["PATH"], "TRUSTED_PROXIES": value}
+    result = subprocess.run(
+        ["sh", "-c", f'. "{SERVER_NAMES_SCRIPT}" >/dev/null'],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode != 0
+    assert "invalid TRUSTED_PROXIES entry" in result.stderr
 
 
 def test_the_refusal_bodies_are_the_error_envelope():

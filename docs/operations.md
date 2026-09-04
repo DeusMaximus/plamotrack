@@ -75,6 +75,29 @@ the browser's session cookie never authenticates it, by design, so a page in you
 browser cannot drive an agent's tools. Minting, revoking, and any use of a revoked
 token are recorded in the audit table.
 
+## Security audit retention
+
+Security-relevant authentication and ingress events are kept in Postgres's
+`audit_event` table: owner claim, login success/failure/throttling, logout and
+session revocation, token mint/revocation/use-after-revocation, host-side recovery,
+and app-layer Host/Origin refusals. Rows carry the credential's kind and id when
+one exists, the resolved client address, and the route or tool — never a request
+body, query string, or secret. The bundled nginx rejects an unknown Host before
+it can reach the API, so that outer refusal is in nginx's access log; the app's
+defence-in-depth Host refusal is the database event. Collection edits are not
+audited in Milestone 6.
+
+The table is append-only during normal operation. Retention is the operator's
+choice; this host-side command deletes rows older than 180 days and appends a row
+recording the prune itself:
+
+```bash
+docker compose exec api python -m app.auth.recovery prune-audit --older-than-days 180
+```
+
+Use a different positive day count if your policy requires it. Take a database
+backup first if those events must remain available elsewhere.
+
 ## What's running
 
 `docker compose up -d --build --wait` gives you four things:
@@ -225,7 +248,7 @@ the API. `.env.example` documents every key. The ones worth knowing:
 | `ALLOWED_HOSTS` | — | Names you reach the instance by, beyond `localhost`, `127.0.0.1`, `[::1]`, `WEB_BIND` and the host of `PUBLIC_BASE_URL`: a LAN hostname, a container name, what a proxy forwards. Comma-separated, no ports; `*.home.arpa` wildcards work. Any other name gets **421** — [details below](#names-it-answers-to). |
 | `PUBLIC_BASE_URL` | — | The address a browser uses, when it isn't `http://localhost:<WEB_PORT>`: scheme, host and port, nothing after. Its host is allowed automatically; behind an HTTPS proxy it is what makes the browser's `https://` origin the instance's own, and its scheme decides whether the session cookie is `Secure`. The MCP OAuth path (later in M6) will bind to it too, so choose the name you mean to keep. |
 | `ALLOWED_ORIGINS` | — | Extra browser origins allowed to write, beyond the instance's own and loopback ones. Rarely needed. |
-| `TRUSTED_PROXIES` | — | IPs or CIDRs of a reverse proxy whose `X-Forwarded-For` is believed for the client's address. Nothing reads that address in this release; leave it unset. |
+| `TRUSTED_PROXIES` | — | IPs or CIDRs of a reverse proxy whose `X-Forwarded-For` is believed for the client's address. nginx keys its per-client limits on that resolved address and the API records it in security audit events. Leave it empty without an extra proxy. |
 | `REFERENCE_CURRENCY` | `AUD` | Your currency — **first-run bootstrap only**. The migration seeds it into the instance settings; after that the database row is the setting (`PATCH /settings`), and editing the env var does nothing. Changing the setting affects new entries only — stored snapshots keep the currency they were recorded in. |
 | `DATABASE_URL` | — | Set it to use a Postgres you manage yourself; the `POSTGRES_*` values then only configure the bundled `db`. |
 
@@ -380,8 +403,8 @@ behind a TLS proxy and the cookie becomes `Secure` and `__Host-`-prefixed.
 If you do build your own: `frontend/nginx/default.conf.template` documents the two
 settings a proxy in front of MCP has to get right; the name it forwards goes in
 `ALLOWED_HOSTS`; `PUBLIC_BASE_URL=https://…` is what lets the browser's `https://`
-origin write; and `TRUSTED_PROXIES` names the proxy, though nothing reads the
-forwarded address yet.
+origin write; and `TRUSTED_PROXIES` names the proxy so rate limits and audit use
+the client address rather than treating the proxy as one client.
 
 ## When something's wrong
 

@@ -28,7 +28,7 @@ from starlette.requests import Request
 from app import error_codes
 from app.auth import credentials
 from app.auth.budget import FailureBudget
-from app.auth.principal import Principal
+from app.auth.principal import Principal, anonymous, internal
 from app.auth.sessions import LAST_USED_WRITE_INTERVAL, SESSION_ABSOLUTE, SESSION_IDLE
 from app.exceptions import (
     CredentialRejectedError,
@@ -231,6 +231,7 @@ async def refuse_throttled(
     await audit.record_event(
         session,
         audit.LOGIN_THROTTLED,
+        principal=anonymous(),
         request=request,
         target=target,
         detail=f"retry_after={retry_after}",
@@ -250,7 +251,13 @@ async def record_setup_failure(
     """A wrong setup token: counts against the budget, audited, refused as a
     rejected form credential (403 — see `CredentialRejectedError`)."""
     budget.record_failure()
-    await audit.record_event(session, audit.SETUP_FAILED, request=request, target="/auth/setup")
+    await audit.record_event(
+        session,
+        audit.SETUP_FAILED,
+        principal=anonymous(),
+        request=request,
+        target="/auth/setup",
+    )
     await session.commit()
     raise CredentialRejectedError(_SETUP_TOKEN_INVALID, code=error_codes.AUTH_SETUP_TOKEN_INVALID)
 
@@ -279,7 +286,13 @@ async def login(
     )
     if not (verified and credential is not None):
         budget.record_failure()
-        await audit.record_event(session, audit.LOGIN_FAILED, request=request, target="/auth/login")
+        await audit.record_event(
+            session,
+            audit.LOGIN_FAILED,
+            principal=anonymous(),
+            request=request,
+            target="/auth/login",
+        )
         await session.commit()
         raise CredentialRejectedError(_LOGIN_FAILED, code=error_codes.AUTH_LOGIN_FAILED)
     budget.reset()
@@ -327,11 +340,15 @@ async def recovery_reset_password(session: AsyncSession, *, password: str) -> in
         owner.claimed_at = _now()
     await _replace_credential(session, password)
     revoked = await revoke_all_sessions(
-        session, target="recovery reset-password", client_address="host"
+        session,
+        target="recovery reset-password",
+        principal=internal(),
+        client_address="host",
     )
     await audit.record_event(
         session,
         audit.RECOVERY_RUN,
+        principal=internal(),
         target="recovery reset-password",
         detail=f"sessions_revoked={revoked}",
         client_address="host",
@@ -343,11 +360,15 @@ async def recovery_reset_password(session: AsyncSession, *, password: str) -> in
 async def recovery_revoke_sessions(session: AsyncSession) -> int:
     await acquire_write_gate(session)
     revoked = await revoke_all_sessions(
-        session, target="recovery revoke-sessions", client_address="host"
+        session,
+        target="recovery revoke-sessions",
+        principal=internal(),
+        client_address="host",
     )
     await audit.record_event(
         session,
         audit.RECOVERY_RUN,
+        principal=internal(),
         target="recovery revoke-sessions",
         detail=f"sessions_revoked={revoked}",
         client_address="host",

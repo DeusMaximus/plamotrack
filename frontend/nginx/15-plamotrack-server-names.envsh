@@ -14,6 +14,9 @@
 # server_name would never match — PR #196 review, P3-3); duplicates skipped
 # (nginx warns on a repeated server_name); the one wildcard form is `*.domain`,
 # any other `*` placement is ignored here and refused by the API at startup.
+# It also renders TRUSTED_PROXIES into `set_real_ip_from` directives. Only the
+# IP/CIDR character set is admitted here; the API performs the authoritative
+# address validation and nginx itself rejects a malformed address.
 
 set -e
 
@@ -58,4 +61,20 @@ if [ -n "${ALLOWED_HOSTS:-}" ]; then
 fi
 
 export PLAMOTRACK_SERVER_NAMES
+
+PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES=""
+if [ -n "${TRUSTED_PROXIES:-}" ]; then
+    for entry in $(printf '%s' "${TRUSTED_PROXIES}" | tr ',' ' '); do
+        case "$entry" in
+            *[!0-9A-Fa-f.:/]*)
+                echo "plamotrack: invalid TRUSTED_PROXIES entry: $entry" >&2
+                return 1
+                ;;
+        esac
+        PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES="${PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES}set_real_ip_from ${entry};
+"
+    done
+fi
+export PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES
+
 echo "plamotrack: server_name ${PLAMOTRACK_SERVER_NAMES}"

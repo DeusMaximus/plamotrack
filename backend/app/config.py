@@ -78,9 +78,13 @@ class Settings(BaseSettings):
     # reached over a scheme the app does not see. A miss is 403.
     allowed_origins: str = ""
     # Comma-separated IPs or CIDRs whose X-Forwarded-For is believed for the
-    # *client address* (rate limiting and audit, later M6 items). Never for the
+    # *client address* (rate limiting and audit). Never for the
     # app's identity, never for the raw peer `/readyz` reads. Empty: ignored.
     trusted_proxies: str = ""
+    # Internal compose contract: the API port is unpublished and the bundled
+    # nginx overwrites X-Plamotrack-Client-Address with the client address it
+    # resolved. Never set by users; source-run deployments leave it false.
+    plamotrack_bundled_ingress: bool = False
     # The interface the published port binds to (compose reads the same key).
     # A non-loopback bind address is a name the instance answers to, so it joins
     # the Host allowlist; 0.0.0.0 and :: are unspecified and add nothing.

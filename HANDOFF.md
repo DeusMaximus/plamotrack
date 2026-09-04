@@ -99,7 +99,31 @@ Template:
   mapping, Google's two parameters, bare `/mcp` carrying the pointer; (3) #193 audit / rate
   limiting can run in parallel (family-8 `limit_req` on `authorize` matters more now that the
   proxy fetches CIMD URLs); (4) **LXC stays put until M6 is finished** (owner, 03/09).
+## 2026-09-04 — Codex (GPT-5.6 Sol) — #193 rebased onto #205/#207; post-rebase verification green
 
+- **Done:** implemented M6-8 on `codex/193-audit-rate-limit-log-hygiene`: Host/Origin audit
+  recording plus audited retention CLI; explicit anonymous/internal audit principals; resolved
+  client identity through trusted proxies and the bundled nginx; revoked-PAT MCP audit address
+  propagation; independent nginx `limit_req` zones for families 2/3/8/9; full
+  setup→logout→password-login/PAT/MCP log-hygiene scan; operations/design/process docs updated.
+  The packaged test exposed and fixed two nginx traps: `limit_req` takes `zone=...` (not a key
+  argument), and the maps must read `$request_uri` because `/api/` rewrites `$uri` before the
+  limit phase. The local feature commit was rebased onto `main` at `916a337`, after #205 and its
+  f13- harness fold-in #207 merged; the pre-routing gate and audit middleware both remain.
+- **Decisions:** nginx performs the external `TRUSTED_PROXIES` walk and overwrites the internal
+  client-address header on all seven proxied paths; only the unpublished compose API enables
+  trust in it. Source runs leave that flag false. The bundled default-server Host 421 is an nginx
+  access-log event because it never reaches the API; the app's repeated Host refusal is the
+  database event. `auth.oidc_rebound` is reserved now; the OIDC item emits it when that flow exists.
+- **State:** original commit `9f4b204` was fully green before rebase: backend 1772; focused
+  security 286; frontend lint + 485 tests + production build. After rebase: ruff/format/render
+  green; combined auth/audit/ingress 556 passed; packaged matrix 0 failures, including #204's
+  family-13 rows and all four 429s; password/PAT/session absent from non-vacuous logs. Packaged
+  stack is stopped; dev Postgres is healthy on loopback and claimed with `e2e-owner-password`;
+  no disposable matrix PAT remains live.
+- **Next:** push/open a PR only on the owner's instruction, run the security review loop, and fold
+  resulting mutants after merge. #206 (family-7 `Allow` disclosure) is still open. The LXC stays
+  put until M6 is finished.
 ## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) MERGED (PR #205 → `70d6b3d`, Codex round 2 GO); f13- fold-in MERGED (PR #207 → `4366695`)
 
 - **Done:** Codex round 2 (GPT 5.6 Sol) on `388de0b`: **GO, no findings** — replayed f1–f3, instrumented
@@ -166,7 +190,6 @@ Template:
   limiting; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release-notes items for the
   M6 release unchanged plus: anonymous unrouted/wrong-verb/malformed requests under `/api/` are
   401, not 404/405/422.
-
 ## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) MERGED (PR #202 → `f685c30`, Codex round 6 GO); pat- fold-in MERGED (PR #203 → `d237bb3`)
 
 - **Done:** Codex round 6 (GPT 5.6 Sol) on `1479e1c`: **GO, no findings**, nothing open across
@@ -192,22 +215,3 @@ Template:
   03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first, it comes up
   unclaimed (setup token in `docker compose logs api`), and the personal Gunpla skill's
   MCP config will need a token.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 5 (NO-GO, 2×P3, prose/evidence) addressed at `4fb946b`, round 6 pending
-
-- **Done:** Codex round 5 (GPT 5.6 Sol) on `77fb1c9`: NO-GO, two P3s, no bypass; finding-9
-  class gone, "other than 10–11, no remaining P1–P3 across five rounds". (f10) the round-4
-  rewrite overcorrected to "every request / everything is authenticated" — liveness,
-  `GET /auth/session` and login/setup are anonymous by design → both sentences (operations
-  *Reaching it…*, AGENTS.md roadmap note) now say collection and administrative access is
-  authenticated and name the anonymous entry points. (f11) PR body named `622965f` not the
-  final corrective head `09ef061` → opening line now names `4fb946b`, rounds 1–5. Reply posted.
-- **Decisions:** none new. Option 3's "positioned on the path" wording retained (Codex: accurate).
-- **State:** branch head `4fb946b` (docs/process only since `ef7764d`; runtime unchanged since
-  `5aca2e6`); CI on the merged head running when written. Tree parked on `main`. Dev DB
-  claimed with `e2e-owner-password`. **Round 6 pending** (findings from 12).
-- **Next:** (1) Codex round 6 → merge on GO (`Closes #189`), branch delete; (2) harness fold-in
-  PR for pat-1…25; (3) the two family-13 hardening items (design §5.9 item 3(b)); (4) #190/#192
-  OAuth spike; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release notes for
-  the M6 release: wrong password / setup token is 403; `/mcp/` requires a PAT; never a token
-  in a URL.

@@ -3,6 +3,7 @@
 
     uv run python ingress_matrix.py [BASE_URL] [--allowed-host NAME]
                                     [--setup-token TOKEN] [--password PASSWORD]
+                                    [--token-out PATH] [--log-secrets-out PATH]
 
 BASE_URL defaults to http://127.0.0.1:8080. `--allowed-host` names an entry the
 stack's `.env` carries in ALLOWED_HOSTS, which enables T3's "a listed name" rows
@@ -14,7 +15,9 @@ owner, so the matrix signs in first when told how: `--setup-token` with
 is the one the API printed to its log, which is what CI reads out of
 `docker compose logs api`, so the first-run path is exercised through the
 packaged ingress; `--password` alone signs into a claimed instance through
-`/api/auth/login`. Either way the positives then run cookie-borne, with the
+`/api/auth/login`. The claim path signs out and performs a real password login
+before continuing, so CI's log-hygiene control covers the full login flow rather
+than treating setup as a substitute. Either way the positives then run cookie-borne, with the
 `Origin` and `X-CSRF-Token` a cookie-borne write owes (§5.6), and the session
 is signed out at the end. With neither flag the same rows expect the
 dependency's 401 — still a positive control for the ingress (a spelling nginx
@@ -31,6 +34,12 @@ step — CI's MCP `tools/list` probe with a real client; without it both tokens
 are revoked at the end. The token is never printed, and a live token travels
 only in headers: the query-string row uses a fake, because request URIs are
 what access logs record (T10).
+
+After sign-out, the matrix rapidly reads one safe endpoint in each bounded
+family (2, 3, 8 and 9) and requires every nginx zone to answer 429. It does not
+pin the exact admitted count because elapsed time may replenish a request.
+`--log-secrets-out PATH` writes the run's password, PAT and session value to a
+mode-0600 JSON file for the caller's T10 log scan; none is printed.
 
 What it proves, per row: the status; that no response carries a `Location`
 except nginx's own relative `/api` → `/api/` 301; that the security headers are
@@ -108,6 +117,15 @@ class Credential:
         if origin is not None:
             headers["Origin"] = origin
         return headers
+
+
+def write_private(path_value: str, content: str) -> pathlib.Path:
+    """Create/restrict a harness secret file before putting a secret in it."""
+    path = pathlib.Path(path_value)
+    path.touch(mode=0o600, exist_ok=True)
+    path.chmod(0o600)
+    path.write_text(content)
+    return path
 
 
 @dataclass
@@ -777,6 +795,41 @@ def revoked_rows(tokens: Tokens) -> list[Row]:
     ]
 
 
+def rate_limit_checks(base: str) -> list[str]:
+    """T8 at the real ingress: each bounded family eventually answers 429.
+
+    The checks run after sign-out and use safe GETs, so they cannot change auth
+    state or trip the app's separate login-failure budget. We intentionally do
+    not pin the exact accepted count — elapsed time and a worker scheduling gap
+    can replenish a request — only the control's observable boundary.
+    """
+    cases = (
+        ("family 2 auth bootstrap", "/api/auth/session", {200}),
+        ("family 3 auth actions", "/api/auth/login", {405}),
+        ("family 8 protocol", "/.well-known/openid-configuration/mcp", {404}),
+        ("family 9 liveness", "/api/healthz", {200}),
+    )
+    problems: list[str] = []
+    for label, path, admitted in cases:
+        statuses: list[int] = []
+        for _ in range(80):
+            response = send(base, Row(label, "GET", path, 0))
+            statuses.append(response.status)
+            if response.status == 429:
+                break
+            if response.status not in admitted:
+                problems.append(
+                    f"{label} answered {response.status} before throttling; "
+                    f"expected one of {sorted(admitted)}"
+                )
+                break
+        if 429 not in statuses:
+            problems.append(f"{label} never answered 429 across {len(statuses)} requests")
+        else:
+            print(f"ok  RATE   {path:60} {label} → 429 after {len(statuses)} requests")
+    return problems
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -798,17 +851,32 @@ def main(argv: list[str]) -> int:
         default=None,
         help="write the minted write token to this file (mode 0600) and leave it live",
     )
+    parser.add_argument(
+        "--log-secrets-out",
+        default=None,
+        help="write the run's PAT, session id and password to a mode-0600 JSON file for T10",
+    )
     args = parser.parse_args(argv)
     if args.setup_token is not None and args.password is None:
         parser.error("--setup-token needs --password (the password the claim sets)")
     if args.token_out is not None and args.password is None:
         parser.error("--token-out needs a signed-in owner (--password) to mint the token")
+    if args.log_secrets_out is not None and args.password is None:
+        parser.error("--log-secrets-out needs a signed-in owner (--password)")
 
     credential = None
     tokens = None
     if args.password is not None:
         credential = sign_in(args.base, setup_token=args.setup_token, password=args.password)
-        print(f"signed in as the owner ({'claimed' if args.setup_token else 'logged in'})")
+        if args.setup_token is not None:
+            # A fresh-stack run proves both credential-bearing actions: claim,
+            # then sign out and perform a real password login for the full T10
+            # log scan. The credential below is therefore always login-issued.
+            sign_out(args.base, credential)
+            credential = sign_in(args.base, setup_token=None, password=args.password)
+            print("claimed the instance, then logged in as the owner")
+        else:
+            print("logged in as the owner")
         tokens = mint_tokens(args.base, credential)
         print("minted a write token and a read token for the bearer rows")
     else:
@@ -830,19 +898,33 @@ def main(argv: list[str]) -> int:
     for row, resp in write_rows(args.base, args.allowed_host, credential):
         run(row, resp)
     if credential is not None and tokens is not None:
+        if args.log_secrets_out is not None:
+            path = write_private(
+                args.log_secrets_out,
+                json.dumps(
+                    {
+                        "password": args.password,
+                        "pat": tokens.write.raw,
+                        "session": credential.cookie.split("=", 1)[1],
+                    }
+                )
+                + "\n",
+            )
+            print(f"log-scan secrets written to {path}")
         for row in token_rows(args.base, tokens):
             run(row)
         revoke_token(args.base, credential, tokens.read)
         for row in revoked_rows(tokens):
             run(row)
         if args.token_out is not None:
-            path = pathlib.Path(args.token_out)
-            path.write_text(tokens.write.raw + "\n")
-            path.chmod(0o600)
+            path = write_private(args.token_out, tokens.write.raw + "\n")
             print(f"write token left live and written to {path}")
         else:
             revoke_token(args.base, credential, tokens.write)
         sign_out(args.base, credential)
+    for problem in rate_limit_checks(args.base):
+        failures += 1
+        print(f"FAIL {'RATE':6} {'':60} {problem}")
     print(f"\n{failures} failing check(s)")
     return failures
 
