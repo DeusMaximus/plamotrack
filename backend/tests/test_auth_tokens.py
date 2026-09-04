@@ -402,8 +402,12 @@ async def test_a_bearer_beside_a_cookie_is_decided_as_a_bearer(anon_client):
 
 
 async def test_a_token_in_the_query_string_is_not_a_credential(anon_client):
-    raw, _ = await _mint_direct(scopes=(Scope.WRITE,))
-    resp = await anon_client.get("/kits", params={"access_token": raw})
+    """A well-shaped *fake* token — a live one never travels in a URI, not even
+    here (Codex #202 round 2, f5): request lines are what access logs record.
+    The anonymous 401 is the proof the parameter is ignored — an implementation
+    honouring it would answer `auth.bearer_invalid` for this value."""
+    fake = f"ptk_{'0' * 12}_{'A' * 43}"
+    resp = await anon_client.get("/kits", params={"access_token": fake})
     assert resp.status_code == 401
     assert resp.json()["code"] == error_codes.AUTH_UNAUTHENTICATED  # anon, not "invalid"
     assert resp.headers["www-authenticate"] == "Bearer"
@@ -415,16 +419,18 @@ async def test_an_anonymous_401_carries_the_bearer_challenge(anon_client):
     assert resp.headers["www-authenticate"] == "Bearer"
 
 
-async def test_the_form_login_401s_carry_no_challenge(anon_client):
-    """The challenge belongs to the bearer boundary. A wrong setup token and a
-    wrong password are 401s from routes that *refuse* a bearer (family 3), so
-    advertising `Bearer` there would name a credential the route cannot take
-    (Codex #202 round 1, f2) — pinned as the decision, not left to a default."""
+async def test_every_401_carries_a_challenge_and_the_form_failures_are_403(anon_client):
+    """RFC 9110 §15.5.2: a 401 owes a challenge applicable to the resource. The
+    family-3 routes refuse a bearer, so a wrong setup token and a wrong password
+    cannot be 401s at all — they are 403 (`CredentialRejectedError`), with no
+    challenge and the same codes as before (Codex #202 round 2, f4). Every 401
+    the app *does* produce carries one: the scoped-route anon 401, the failed
+    bearer, the MCP transport's."""
     setup_token_state(app).issue()
     wrong_token = await anon_client.post(
         "/auth/setup", json={"token": "not-it", "password": PASSWORD}, headers=ORIGIN
     )
-    assert wrong_token.status_code == 401
+    assert wrong_token.status_code == 403
     assert wrong_token.json()["code"] == error_codes.AUTH_SETUP_TOKEN_INVALID
     assert "www-authenticate" not in wrong_token.headers
     setattr(app.state, BUDGET_ATTR, FailureBudget())
@@ -435,9 +441,15 @@ async def test_the_form_login_401s_carry_no_challenge(anon_client):
         wrong_password = await fresh.post(
             "/auth/login", json={"password": "not-the-password"}, headers=ORIGIN
         )
-    assert wrong_password.status_code == 401
-    assert wrong_password.json()["code"] == error_codes.AUTH_LOGIN_FAILED
-    assert "www-authenticate" not in wrong_password.headers
+        assert wrong_password.status_code == 403
+        assert wrong_password.json()["code"] == error_codes.AUTH_LOGIN_FAILED
+        assert "www-authenticate" not in wrong_password.headers
+        # And every 401 that remains names its scheme.
+        raw, _ = await _mint_direct()
+        for headers in ({}, _bearer(_wrong_secret(raw))):
+            resp = await fresh.get("/kits", headers=headers)
+            assert resp.status_code == 401
+            assert resp.headers["www-authenticate"].startswith("Bearer"), headers
 
 
 async def test_last_used_is_touched_on_use_and_not_on_failure(anon_client):
@@ -514,10 +526,10 @@ async def test_a_failed_bearer_is_not_a_login_attempt(anon_client):
     assert stale.status_code == 401
     assert stale.json()["code"] == error_codes.AUTH_BEARER_INVALID
     assert await _audit_rows(audit.LOGIN_FAILED) == []
-    # Without it: the instance is unclaimed, so the login's own 401 — a
-    # different code, from the login flow.
+    # Without it: the instance is unclaimed, so the login's own refusal — a
+    # different status and code, from the login flow.
     plain = await anon_client.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
-    assert plain.status_code == 401
+    assert plain.status_code == 403
     assert plain.json()["code"] == error_codes.AUTH_LOGIN_FAILED
 
 

@@ -34,14 +34,14 @@ Statuses (§5.5):
 
 The 401/403 travel in the #25 envelope: the dependency raises the domain errors
 `UnauthenticatedError` / `ForbiddenError`, which the registered handler renders
-with `code` `auth.unauthenticated` / `auth.forbidden`. A 401 at the **bearer
-boundary** carries a `WWW-Authenticate: Bearer` challenge (RFC 7235 §3.1, RFC
+with `code` `auth.unauthenticated` / `auth.forbidden`. **Every 401 the app
+produces carries a `WWW-Authenticate: Bearer` challenge** (RFC 9110 §15.5.2, RFC
 6750 §3): bare for an absent credential on a scoped route, `error="invalid_token"`
 for a presented bearer that failed (the resolver's). The family-3 form failures —
-a wrong password, a wrong setup token — are 401 **without** a challenge: those
-routes refuse a bearer (`bearer_refused`), so advertising `Bearer` there would tell
-the client to present a credential the route cannot accept (Codex #202 round 1,
-f2; the RFC's "MUST" is read against what the route can actually take).
+a wrong password, a wrong setup token — are therefore **403**
+(`CredentialRejectedError`), not 401: those routes refuse a bearer
+(`bearer_refused`), so a challenge there would name a credential the route cannot
+take, and a 401 without one breaks the status contract (Codex #202 rounds 1–2).
 """
 
 from __future__ import annotations

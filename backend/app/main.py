@@ -26,6 +26,7 @@ from app.config import Settings, get_settings
 from app.db import SessionDep, get_sessionmaker
 from app.exceptions import (
     ConflictError,
+    CredentialRejectedError,
     DomainError,
     ForbiddenError,
     GoneError,
@@ -74,6 +75,7 @@ _DOMAIN_STATUS: dict[type[DomainError], int] = {
     InvalidInputError: 422,
     UnauthenticatedError: 401,
     ForbiddenError: 403,
+    CredentialRejectedError: 403,
     GoneError: 410,
     RateLimitedError: 429,
 }
@@ -96,10 +98,10 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
     # A throttle refusal names when the caller may retry (§5.6, brute force).
     if isinstance(exc, RateLimitedError):
         headers["Retry-After"] = str(exc.retry_after)
-    # A 401 at the bearer boundary names the scheme it takes (RFC 7235 §3.1):
-    # `Bearer`, or the RFC 6750 `invalid_token` form when a bearer was presented
-    # and failed (#189). The family-3 form failures set no challenge — those
-    # routes refuse a bearer, so there is nothing to advertise (Codex #202, f2).
+    # Every 401 names the scheme it takes (RFC 9110 §15.5.2): `Bearer`, or the
+    # RFC 6750 `invalid_token` form when a bearer was presented and failed
+    # (#189). The family-3 form failures are `CredentialRejectedError` — 403, so
+    # they owe no challenge and advertise none (Codex #202 rounds 1–2, f2/f4).
     if isinstance(exc, UnauthenticatedError) and exc.challenge:
         headers["WWW-Authenticate"] = exc.challenge
     return JSONResponse(

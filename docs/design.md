@@ -863,7 +863,7 @@ bad code with or without one).
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | SPA shell and assets | `/`, `/board`, `/kits`, `/orders`, `/inventory`, `/retailers`, `/settings/*`, `/data`, `/assets/*`, `/favicon*`; `/setup` and `/login` from M6 | allow | allow | — | — | — | nothing: static files, served by nginx (by Vite in dev) | security headers — `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`, a CSP for the bundle |
 | 2 | Auth bootstrap | `GET /api/auth/session` | allow | allow | allow | allow | 401 (presented, wrong audience) | returns `{state: unclaimed \| anonymous \| owner, interface_language, formatting_locale}` and, for `owner`, the CSRF token. No version, no collection data. `Cache-Control: no-store`. | rate limit |
-| 3 | Auth actions | `POST /api/auth/setup` (until claimed, then 410), `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/oidc/start`, `GET /api/auth/oidc/callback` | allow, by necessity | logout only | 403 | 403 | 401 | Origin check on every unsafe method even with no session; failure budget; audit event on every outcome; `state` and `nonce` on OIDC | rate limit |
+| 3 | Auth actions | `POST /api/auth/setup` (until claimed, then 410), `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/oidc/start`, `GET /api/auth/oidc/callback` | allow, by necessity | logout only | 403 | 403 | 401 | Origin check on every unsafe method even with no session; failure budget; audit event on every outcome; `state` and `nonce` on OIDC; a wrong password or setup token is **403** (`auth.login_failed` / `auth.setup_token_invalid`), not 401 — a 401 owes a challenge and these routes accept no HTTP scheme | rate limit |
 | 4 | Collection reads | `GET` on `/api/kits*`, `/api/orders*`, `/api/tools*`, `/api/consumables*`, `/api/upgrades*`, `/api/display-items*`, `/api/retailers*`, `/api/catalog/search`, `/api/settings`, `/api/meta`, `/api/export/*` | 401 | allow | allow | allow | 401 | `collection:read`; `Cache-Control: no-store` | — |
 | 5 | Collection writes | `POST`/`PATCH`/`DELETE` on the family-4 resources; `POST /api/catalog/{id}/adjust`, `/api/upgrades/{id}/apply`, `/api/orders/{id}/receive`, `/api/orders/{id}/ship`; `POST /api/import/preview`; `POST /api/import/apply` with `mode=merge` or `mode=add_only` when the plan's mutations touch collection tables only | 401 | allow (+ CSRF + Origin) | 403 | allow | 401 | `collection:write`; Origin check when the principal is cookie-borne | — |
 | 6 | Instance administration | `PATCH /api/settings`; `POST /api/import/apply` with `mode=replace_all`, or in **any** mode when the plan updates `instance_settings`; `/api/auth/tokens*` (mint, list, revoke); credential change and OIDC rebind | 401 | allow (+ CSRF + Origin) | 403 | 403 | 401 | `instance:admin`; an import's privilege is decided on the **plan's mutations** — an `UPDATE` action on `instance_settings`, not the presence of a settings sheet, so an archive whose settings row is unchanged or skipped needs no admin — checked after the re-plan and before any row is written; `replace_all` keeps `confirm=REPLACE` and the mandatory `plan_hash` on top | — |
@@ -1152,12 +1152,14 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    check is one FastMCP middleware on `tools/call` reading `MCP_TOOL_SCOPES`, refusing
    before arguments are parsed; management is family 6 (`/auth/tokens`, the
    `auth-tokens` tag); audit events `auth.token_minted`, `auth.token_revoked`,
-   `auth.token_use_after_revoke`; `WWW-Authenticate` on every 401 **at the bearer
-   boundary** (bare `Bearer` for an absent credential on a scoped route,
-   `error="invalid_token"` for a presented one, on REST and MCP alike) — and
-   deliberately **not** on the family-3 form failures (a wrong password, a wrong setup
-   token), which refuse a bearer and so have no scheme to advertise (Codex #202 round 1,
-   f2). Calls the item's wording left open, recorded here: (a) **no
+   `auth.token_use_after_revoke`; `WWW-Authenticate` on **every** 401 the app produces
+   (bare `Bearer` for an absent credential on a scoped route, `error="invalid_token"`
+   for a presented one, on REST and MCP alike) — which is why the family-3 form failures
+   (a wrong password, a wrong setup token) are now **403**, `CredentialRejectedError`:
+   RFC 9110 §15.5.2 makes a 401 owe a challenge applicable to the resource, those routes
+   refuse the only scheme the app speaks, and a challenge-less 401 was the round-1
+   narrowing Codex overruled (rounds 1–2, f2/f4). The codes are unchanged. Calls the
+   item's wording left open, recorded here: (a) **no
    `resource_metadata` pointer in local mode** — there is no protected-resource
    document until M6-7 (family 8 is OIDC-only), and a pointer at a 404 would be worse
    than none; T5's "resource-metadata pointer" lands with item 7. (b) **A bearer on a
@@ -1191,9 +1193,11 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    invariant has to hold at the value, not the call (round 1, f1). (j) **A live token
    travels only in headers, in the tests and the matrix too**: request URIs are what
    uvicorn's and nginx's access logs record, so the matrix's query-string row carries a
-   fake token and CI scans the packaged stack's logs for the real one after the run
-   (round 1, f3); the unit T10 attaches its capture to every logger, propagating or
-   not, and says what it cannot see (no access log exists under ASGITransport).
+   fake token — as does the unit query-string test — and CI scans the packaged stack's
+   `api` and `web` output for the real one after the run, refusing a vacuous scan by
+   first requiring an access record from each service (rounds 1–2, f3/f5); the unit
+   T10 attaches its capture to every logger, propagating or not, and says what it
+   cannot see (no access log exists under ASGITransport).
 5. **MCP OAuth compatibility spike** — the pinned FastMCP against Google and one
    self-hosted OIDC provider, Claude web, ChatGPT web and MCP Inspector; the exact
    generated route table snapshotted; each named client's version and the discovery

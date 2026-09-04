@@ -31,10 +31,10 @@ from app.auth.budget import FailureBudget
 from app.auth.principal import Principal
 from app.auth.sessions import LAST_USED_WRITE_INTERVAL, SESSION_ABSOLUTE, SESSION_IDLE
 from app.exceptions import (
+    CredentialRejectedError,
     GoneError,
     InvalidInputError,
     RateLimitedError,
-    UnauthenticatedError,
 )
 from app.models import Credential, Owner
 from app.models import Session as SessionRow
@@ -248,11 +248,11 @@ async def record_setup_failure(
     session: AsyncSession, budget: FailureBudget, *, request: Request | None
 ) -> None:
     """A wrong setup token: counts against the budget, audited, refused as a
-    presented-and-failed credential (401)."""
+    rejected form credential (403 — see `CredentialRejectedError`)."""
     budget.record_failure()
     await audit.record_event(session, audit.SETUP_FAILED, request=request, target="/auth/setup")
     await session.commit()
-    raise UnauthenticatedError(_SETUP_TOKEN_INVALID, code=error_codes.AUTH_SETUP_TOKEN_INVALID)
+    raise CredentialRejectedError(_SETUP_TOKEN_INVALID, code=error_codes.AUTH_SETUP_TOKEN_INVALID)
 
 
 async def login(
@@ -267,7 +267,8 @@ async def login(
     One failure path for both failure kinds (T11): the password is verified
     against the stored verifier or, when there is none — an unclaimed instance —
     against `DUMMY_HASH`, so the work done and the status, code and body
-    returned are identical. Every failure counts against the budget and is
+    returned are identical. The refusal is 403 (`CredentialRejectedError`), not a
+    401 that could carry no honest challenge. Every failure counts against the budget and is
     audited; a success resets the budget and re-hashes a verifier made with
     older parameters."""
     await refuse_throttled(session, budget, request=request, target="/auth/login")
@@ -280,7 +281,7 @@ async def login(
         budget.record_failure()
         await audit.record_event(session, audit.LOGIN_FAILED, request=request, target="/auth/login")
         await session.commit()
-        raise UnauthenticatedError(_LOGIN_FAILED, code=error_codes.AUTH_LOGIN_FAILED)
+        raise CredentialRejectedError(_LOGIN_FAILED, code=error_codes.AUTH_LOGIN_FAILED)
     budget.reset()
     if credentials.password_needs_rehash(credential.secret_hash):
         credential.secret_hash = credentials.hash_password(password)

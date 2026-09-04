@@ -53,6 +53,18 @@ class UnauthenticatedError(DomainError):
         self.challenge = challenge
 
 
+class CredentialRejectedError(DomainError):
+    """A credential presented in a request *body* — the owner password, the
+    setup token — is wrong (§5.5 family 3). **403**, not 401: RFC 9110 §15.5.2
+    makes every 401 owe a challenge applicable to the resource, and these routes
+    refuse the one HTTP scheme the app speaks (`Bearer`, `bearer_refused`), so
+    there is no honest challenge to send; §15.5.4's 403 — credentials were
+    provided and are insufficient — is the status that fits (Codex #202 round 2,
+    f4). The codes (`auth.login_failed`, `auth.setup_token_invalid`) are the
+    contract clients switch on; the status is the same for both failure kinds
+    (T11)."""
+
+
 class ForbiddenError(DomainError):
     """An authenticated principal without the scope the route requires (§5.5).
     403 — the credential is valid, the grant is not enough. Raised by the

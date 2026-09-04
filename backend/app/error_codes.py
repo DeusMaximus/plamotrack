@@ -179,8 +179,9 @@ AUTH_UNAUTHENTICATED = "auth.unauthenticated"
 AUTH_FORBIDDEN = "auth.forbidden"
 
 # --- local owner authentication (M6-3, #188 — §5.5 families 2–3, §5.6) --------
-# 401 `login_failed` / `setup_token_invalid`: the presented secret is wrong (one
-# body for every failure kind, T11). 410 `setup_claimed`: the instance already
+# 403 `login_failed` / `setup_token_invalid`: the presented form secret is wrong
+# (one body for every failure kind, T11; 403 rather than a challenge-less 401 —
+# see `exceptions.CredentialRejectedError`). 410 `setup_claimed`: the instance already
 # has an owner. 429 `too_many_attempts`: the failure budget is shut, `params.
 # retry_after` in seconds. 403 `csrf_failed` / `origin_required`: a cookie-borne
 # unsafe request without the session-bound token, or without an Origin/Referer.

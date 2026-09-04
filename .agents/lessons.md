@@ -516,3 +516,22 @@ acting on a blank `status_updated_at`; the wrong order made the preview lie. Fou
 a review that read both trees; neither branch could test it until one landed. When
 two open branches touch one function, `git merge-tree --write-tree` first, and write
 the resolution down before either merges. → 2026-08-17 (#89 "MERGE NOTE")
+
+## The 401 contract (#202, rounds 1–2)
+
+The PR body for #189 said "`WWW-Authenticate` on every 401". Codex found two 401s
+without one — a wrong password, a wrong setup token — and the author narrowed the
+*claim* ("every 401 at the bearer boundary") rather than the *code*: those routes
+refuse a bearer, so a `Bearer` challenge there would name a credential the route
+cannot take, and the 401 was left challenge-less. Round 2 overruled it: RFC 9110
+§15.5.2 makes every 401 owe an applicable challenge, and "at the boundary" is not
+an exception the status code grants. The fix was the status — a rejected form
+credential is **403** (`CredentialRejectedError`), codes unchanged — after which
+the original claim is simply true. The lesson is the reviewer's own line: when a
+round lands twice in the same contract, the invariant is wrong, not the wording,
+and a claim that needs a qualifier to stay true is a claim the code should be
+made to satisfy instead. Same round, same shape: the T10 "no token in any log"
+proof had one harness still sending a live token in a URI, and a packaged log
+scan that would pass on empty output — a leakage invariant is only as wide as its
+*narrowest* harness, and a scan without a vacuity guard is a scan that can be
+deleted by a logging change nobody reviews.

@@ -318,6 +318,7 @@ def _raise_sites() -> list[tuple[str, str | None, set[str] | None]]:
                 "InvalidInputError",
                 "DomainError",
                 "UnauthenticatedError",
+                "CredentialRejectedError",
                 "ForbiddenError",
                 "GoneError",
                 "RateLimitedError",

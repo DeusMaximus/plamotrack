@@ -143,12 +143,14 @@ async def test_setup_claims_opens_a_working_session_and_then_410s(anon_client):
     assert await _audit_count(audit.SETUP_CLAIMED) == 1
 
 
-async def test_a_wrong_setup_token_is_401_and_leaves_the_instance_unclaimed(anon_client):
+async def test_a_wrong_setup_token_is_403_and_leaves_the_instance_unclaimed(anon_client):
     _issue_setup_token()
     resp = await anon_client.post(
         "/auth/setup", json={"token": "not-the-token", "password": PASSWORD}, headers=ORIGIN
     )
-    assert resp.status_code == 401
+    # 403, not 401: a 401 owes a challenge and this route refuses the only
+    # scheme the app speaks (`CredentialRejectedError`; Codex #202 round 2).
+    assert resp.status_code == 403
     assert resp.json()["code"] == error_codes.AUTH_SETUP_TOKEN_INVALID
     # Still unclaimed, and no session was opened.
     assert (await anon_client.get("/auth/session")).json()["state"] == "unclaimed"
@@ -182,11 +184,12 @@ async def test_login_then_logout_revokes_the_session(anon_client):
         assert (await c.get("/kits")).status_code == 401
 
 
-async def test_a_wrong_password_is_401(anon_client):
+async def test_a_wrong_password_is_403(anon_client):
     await _claim(anon_client)
     async with fresh_client() as c:
         resp = await c.post("/auth/login", json={"password": "wrong-password"}, headers=ORIGIN)
-    assert resp.status_code == 401
+    assert resp.status_code == 403
+    assert "www-authenticate" not in resp.headers
     assert resp.json()["code"] == error_codes.AUTH_LOGIN_FAILED
 
 
@@ -282,7 +285,7 @@ async def test_repeated_failures_throttle_then_a_success_resets(anon_client):
     setattr(app.state, BUDGET_ATTR, FailureBudget(clock=lambda: now["t"]))
     async with fresh_client() as c:
         first = await c.post("/auth/login", json={"password": "nope"}, headers=ORIGIN)
-        assert first.status_code == 401  # the failure is recorded, the gate now shut
+        assert first.status_code == 403  # the failure is recorded, the gate now shut
         throttled = await c.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
         assert throttled.status_code == 429
         assert throttled.headers["retry-after"] == str(int(BASE_DELAY))
@@ -320,7 +323,7 @@ async def test_an_unclaimed_login_and_a_wrong_password_are_byte_identical(anon_c
     await _claim(anon_client)
     async with fresh_client() as c1:
         wrong = await c1.post("/auth/login", json={"password": "the-wrong-one"}, headers=ORIGIN)
-    assert unclaimed.status_code == wrong.status_code == 401
+    assert unclaimed.status_code == wrong.status_code == 403
     assert unclaimed.json() == wrong.json()
 
 
