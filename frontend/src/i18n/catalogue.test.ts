@@ -282,6 +282,24 @@ describe("dynamic keys resolve for every runtime enum member", () => {
     expect(i18n.t("orders.inTransitToday")).toBe("in transit · today");
   });
 
+  it("Japanese copy honours the values composed for quantity suffixes and order totals", () => {
+    const ja = i18n.getFixedT("ja");
+    const promptTail =
+      "の使用記録を取り消しますか？ 在庫に戻すかどうかを選んでください。部品が物理的に残っている場合のみ在庫に戻してください。使用済みまたは破損している場合は在庫に戻せません。";
+
+    // KitsPage passes an empty suffix for one item and the whole preformatted
+    // " (×N)" notation for several. The placeholder is not a bare count.
+    expect(ja("kits.withdrawPrompt", { name: "メタルスラスター", qty: "" })).toBe(
+      `「メタルスラスター」${promptTail}`,
+    );
+    expect(ja("kits.withdrawPrompt", { name: "メタルスラスター", qty: " (×2)" })).toBe(
+      `「メタルスラスター」 (×2)${promptTail}`,
+    );
+    expect(ja("orders.acrossLines", { total: 4, count: 2, countDisplay: "2" })).toBe(
+      "2件、合計4個",
+    );
+  });
+
   it("the pill and totals phrasings diverge exactly where main's did (#163 P3-1)", () => {
     // The one action whose two phrasings differ is the standing proof the two
     // groups are both load-bearing — collapse them and this goes red.

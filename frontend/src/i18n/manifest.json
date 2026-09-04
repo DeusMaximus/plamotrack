@@ -6,6 +6,12 @@
       "nativeName": "English (Australia)",
       "direction": "ltr",
       "enabled": true
+    },
+    {
+      "tag": "ja",
+      "nativeName": "日本語",
+      "direction": "ltr",
+      "enabled": false
     }
   ]
 }
