@@ -78,8 +78,9 @@ Template:
   lists the `localhost:5173` callback). No e2e change (local mode).
 - **Next:** (1) **Codex round 1 on PR #209** — the brief was printed once in the authoring
   session and is not stored; regenerate it from `.agents/review-brief.md` (Codex footer), the
-  PR body's "Deliberate calls" and its **"Where a reviewer should push"** section, head
-  `96f24ab`, `main` `a642d0b`, rules 1/6/7.1/9/11/13 in play; answer findings per
+  PR body's "Deliberate calls" and its **"Where a reviewer should push"** section; the
+  runtime head is `96f24ab` (every commit after it on the branch is a hand-off entry —
+  brief the reviewer at the branch tip and say so), `main` `a642d0b`, rules 1/6/7.1/9/11/13 in play; answer findings per
   `.agents/testing-and-review.md` → "Responding to a review". Tree parked on the branch.
   (2) fold oidc- mutants
   into `mutation_test.py` after merge (the usual harness-only PR); (3) #192 (M6-7) on top —
