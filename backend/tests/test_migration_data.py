@@ -41,11 +41,12 @@ DISPLAY_ITEMS = "2c97a5ced66a"
 INSTANCE_SETTINGS = "f9979ec7b9cb"
 AUTH_TABLES = "f1058c5de0f3"
 OIDC_LOGIN = "0db6c35d0a7e"
+SESSION_AUTH_MODE = "4f3a9c1e7b2d"
 
 # The current migration head, as a literal (this module keeps revision ids as
 # literals on purpose — see the header). The "recovered to head" / "nothing
 # moved" assertions compare against it, so a new migration bumps this one line.
-HEAD = OIDC_LOGIN
+HEAD = SESSION_AUTH_MODE
 
 
 def db(sql: str, **params) -> list[tuple]:
@@ -526,3 +527,33 @@ def test_instance_settings_seeds_one_env_configured_row(bootstrap_currency_jpy, 
 
     walk.down(DISPLAY_ITEMS)
     assert not table_exists("instance_settings")
+
+
+# --- 4f3a9c1e7b2d: session.auth_mode (#191; Codex #209 round 1, f1) -----------------
+
+
+def test_session_auth_mode_backfills_local_and_admits_only_the_two_modes(walk):
+    """A session minted before the column existed was minted by the local
+    password flow — the only flow any released instance had — so it is stamped
+    `local`, not left for the resolver to guess at. The column is then NOT NULL
+    with the two-value CHECK (rule 5); the downgrade drops both and keeps the
+    row."""
+    walk.down(OIDC_LOGIN)
+    db(
+        "INSERT INTO session (id, token_hash) VALUES (:i, 'digest-of-a-local-session')",
+        i=uuid.uuid4(),
+    )
+    walk.up(SESSION_AUTH_MODE)
+    assert db("SELECT auth_mode FROM session") == [("local",)]
+    with pytest.raises(IntegrityError):
+        db("UPDATE session SET auth_mode = 'password'")
+    with pytest.raises(IntegrityError):
+        db("INSERT INTO session (id, token_hash) VALUES (:i, 'unstamped')", i=uuid.uuid4())
+    db(
+        "INSERT INTO session (id, token_hash, auth_mode) VALUES (:i, 'a-provider-session', 'oidc')",
+        i=uuid.uuid4(),
+    )
+    assert db("SELECT count(*) FROM session") == [(2,)]
+    walk.down(OIDC_LOGIN)
+    assert not column_exists("session", "auth_mode")
+    assert db("SELECT count(*) FROM session") == [(2,)]

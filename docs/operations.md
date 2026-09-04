@@ -68,8 +68,13 @@ account you sign in with becomes the owner**, bound to the stable identity the
 provider asserts (its issuer and subject) — not to an email address, which is
 shown in the UI and used for nothing else. Any other account that signs in at
 the same provider is refused and recorded in the audit log. An instance switched
-from local mode keeps its data, sessions are signed out, the old password is
-ignored, and the first provider sign-in with the new setup token binds the owner.
+from local mode keeps its data; the API signs every browser out at its first
+start in the new mode (an `auth.mode_changed` audit row records how many), the
+old password is ignored, and the first provider sign-in with the new setup token
+binds the owner. Switching back to local mode signs everyone out the same way.
+The client you register must be the **only audience** of the id_tokens the
+provider issues for it — a token naming an additional audience is refused, so do
+not attach other clients' audience mappers to it.
 
 If the provider is down, new sign-ins fail with a clear message; sessions that
 already exist, access tokens and MCP clients keep working. The mode never falls

@@ -84,21 +84,26 @@ class FakeIdp:
     def issue(
         self,
         *,
-        sub: str | None = OWNER_SUB,
-        nonce: str,
+        nonce: object,
+        sub: object = OWNER_SUB,
         email: str | None = "owner@example.test",
-        iss: str | None = None,
-        aud: str | None = None,
-        exp: int | None = None,
+        iss: object = None,
+        aud: object = None,
+        exp: object = None,
         key: RSAKey | None = None,
+        omit: tuple[str, ...] = (),
         **extra,
     ) -> str:
+        """A signed id_token in which every claim is a knob: pass any value —
+        a list, a null, a string where a number belongs — to put that shape in
+        the token, or name a claim in `omit` to leave it out (`sub=None` omits
+        it too, the older spelling of the no-subject case)."""
         now = int(time.time())
         claims = {
-            "iss": iss or self.issuer,
-            "aud": aud or CLIENT_ID,
+            "iss": self.issuer if iss is None else iss,
+            "aud": CLIENT_ID if aud is None else aud,
             "iat": now,
-            "exp": exp if exp is not None else now + 300,
+            "exp": now + 300 if exp is None else exp,
             "nonce": nonce,
             **extra,
         }
@@ -106,6 +111,8 @@ class FakeIdp:
             claims["sub"] = sub
         if email is not None:
             claims["email"] = email
+        for name in omit:
+            claims.pop(name, None)
         signing = key or self.key
         return jwt.encode({"alg": "RS256", "kid": signing.kid}, claims, signing)
 
@@ -623,15 +630,55 @@ async def test_the_owner_cancelling_at_the_provider_spends_the_transaction():
 # --- the id_token ------------------------------------------------------------------------
 
 
+_NOW = int(time.time())
+
+
 @pytest.mark.parametrize(
     "tamper",
     [
         pytest.param({"nonce": "some-other-nonce"}, id="nonce"),
         pytest.param({"aud": "another-client"}, id="audience"),
         pytest.param({"iss": "https://other-idp.test"}, id="issuer"),
-        pytest.param({"exp": int(time.time()) - 600}, id="expired"),
+        pytest.param({"exp": _NOW - 600}, id="expired"),
         pytest.param({"key": "other"}, id="signature"),
         pytest.param({"sub": None}, id="no-subject"),
+        # The shapes that name no client, no login, or no issue time (Codex
+        # #209 round 1, f2; OpenID Connect Core §2 and §3.1.3.7 steps 3–5, 9–10):
+        # `nonce` is *the* string, not a list holding it or a null; `aud` is
+        # exactly this client — an additional audience is untrusted whatever
+        # `azp` says — and `azp`, when present, is this client; `iat` is
+        # required and, like `exp` and `nbf`, a number.
+        pytest.param({"nonce": lambda expected: [expected]}, id="nonce-list"),
+        pytest.param({"nonce": None}, id="nonce-null"),
+        pytest.param({"omit": ("nonce",)}, id="nonce-missing"),
+        pytest.param(
+            {"aud": [CLIENT_ID, "another-client"], "azp": "another-client"},
+            id="extra-audience-other-azp",
+        ),
+        pytest.param(
+            {"aud": [CLIENT_ID, "another-client"], "azp": CLIENT_ID}, id="extra-audience-own-azp"
+        ),
+        pytest.param({"aud": [CLIENT_ID, "another-client"]}, id="extra-audience-no-azp"),
+        pytest.param({"aud": ["another-client"]}, id="audience-list-other"),
+        pytest.param({"aud": []}, id="audience-empty"),
+        pytest.param({"aud": [CLIENT_ID, 7]}, id="audience-mixed-types"),
+        pytest.param({"omit": ("aud",)}, id="audience-missing"),
+        pytest.param({"azp": "another-client"}, id="azp-other"),
+        pytest.param({"azp": [CLIENT_ID]}, id="azp-list"),
+        pytest.param({"azp": None}, id="azp-null"),
+        pytest.param({"omit": ("iat",)}, id="iat-missing"),
+        pytest.param({"iat": None}, id="iat-null"),
+        pytest.param({"iat": str(_NOW)}, id="iat-string"),
+        pytest.param({"iat": True}, id="iat-bool"),
+        pytest.param({"iat": _NOW + 3600}, id="iat-future"),
+        pytest.param({"omit": ("exp",)}, id="exp-missing"),
+        pytest.param({"exp": str(_NOW + 300)}, id="exp-string"),
+        pytest.param({"nbf": _NOW + 3600}, id="nbf-future"),
+        pytest.param({"nbf": "soon"}, id="nbf-string"),
+        pytest.param({"iss": [ISSUER]}, id="issuer-list"),
+        pytest.param({"omit": ("iss",)}, id="issuer-missing"),
+        pytest.param({"sub": ""}, id="subject-empty"),
+        pytest.param({"sub": 12345}, id="subject-number"),
     ],
 )
 async def test_an_id_token_that_fails_a_check_opens_no_session(tamper):
@@ -644,6 +691,8 @@ async def test_an_id_token_that_fails_a_check_opens_no_session(tamper):
         if kwargs.get("key") == "other":
             kwargs["key"] = fake.other_key
         nonce = kwargs.pop("nonce", params["nonce"])
+        if callable(nonce):
+            nonce = nonce(params["nonce"])
         fake.next_token = {"id_token": fake.issue(nonce=nonce, **kwargs)}
         response = await _callback(browser, state=params["state"])
         assert _auth_error(response) == CallbackError.FAILED
@@ -651,7 +700,64 @@ async def test_an_id_token_that_fails_a_check_opens_no_session(tamper):
     assert await _session_count() == 0
     assert (await _owner()).claimed_at is None
     (failed,) = await _events(audit.OIDC_LOGIN_FAILED)
-    assert failed.detail in {"id_token_rejected", "no_subject"}
+    # One validator speaks for every claim (the `sub` check included).
+    assert failed.detail == "id_token_rejected"
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        pytest.param({"aud": [CLIENT_ID]}, id="single-audience-as-list"),
+        pytest.param({"azp": CLIENT_ID}, id="azp-this-client"),
+        pytest.param({"aud": [CLIENT_ID], "azp": CLIENT_ID}, id="list-audience-with-azp"),
+        pytest.param({"nbf": _NOW - 5}, id="nbf-past"),
+    ],
+)
+async def test_the_claim_shapes_real_providers_send_are_accepted(shape):
+    """The other half of the matrix — the state axis of the audience: one
+    audience as a string (Keycloak), as a single-element array, with `azp`
+    naming this client (Google). Strictness must not refuse a conforming
+    provider."""
+    fake = FakeIdp()
+    async with oidc_app(fake) as (live, browser):
+        token = _issue_setup_token(live)
+        done = await _sign_in(fake, browser, setup_token=token, **shape)
+        assert _auth_error(done) is None
+        assert (await browser.get("/auth/session")).json()["state"] == "owner"
+    assert await _session_count() == 1
+
+
+def test_the_claim_validator_holds_the_clock_leeway_at_its_edges():
+    """The time boundaries, driven with a pinned clock: `exp` may be up to the
+    leeway in the past, `iat` and `nbf` up to the leeway in the future, and one
+    second beyond each is refused."""
+    from app.services.oidc import CLOCK_LEEWAY, OidcLoginRefused, validate_id_token_claims
+
+    now = 1_800_000_000
+
+    def check(**overrides) -> None:
+        claims = {
+            "iss": ISSUER,
+            "aud": CLIENT_ID,
+            "sub": OWNER_SUB,
+            "iat": now,
+            "exp": now + 300,
+            "nonce": "n",
+            **overrides,
+        }
+        validate_id_token_claims(claims, issuer=ISSUER, client_id=CLIENT_ID, nonce="n", now=now)
+
+    check(exp=now - CLOCK_LEEWAY)
+    check(iat=now + CLOCK_LEEWAY)
+    check(nbf=now + CLOCK_LEEWAY)
+    for edge in (
+        {"exp": now - CLOCK_LEEWAY - 1},
+        {"iat": now + CLOCK_LEEWAY + 1},
+        {"nbf": now + CLOCK_LEEWAY + 1},
+    ):
+        with pytest.raises(OidcLoginRefused) as refused:
+            check(**edge)
+        assert refused.value.code == CallbackError.FAILED
 
 
 async def test_a_provider_that_refuses_the_code_opens_no_session():
@@ -733,6 +839,81 @@ async def test_warm_up_never_raises():
     assert await provider.warm_up() is False
     fake.network_down = False
     assert await provider.warm_up() is True
+
+
+# --- the mode switch (T7's sibling; Codex #209 round 1, f1) ------------------------------
+
+
+async def _claim_locally(anon_client) -> str:
+    """Claim the shipped local-mode app through the password flow; returns the
+    raw session cookie that browser now holds, proven live on a collection route."""
+    token = setup_token_state(local_app).issue()
+    claimed = await anon_client.post(
+        "/auth/setup",
+        json={"token": token, "password": "correct-horse-battery-staple"},
+        headers={"Origin": "http://test"},
+    )
+    assert claimed.status_code == 200, claimed.text
+    assert (await anon_client.get("/kits")).status_code == 200
+    return anon_client.cookies[PLAIN_COOKIE_NAME]
+
+
+async def test_a_local_mode_session_is_not_the_owner_in_oidc_mode(anon_client):
+    """A browser session is authority only in the mode that minted it. The
+    instance switched to OIDC mode with the owner unbound: the retained
+    password-flow cookie is not an owner, `GET /auth/session` reports
+    `unclaimed` (the setup token is the gate), and a collection route is 401."""
+    raw = await _claim_locally(anon_client)
+    async with oidc_app(FakeIdp()) as (_, browser):
+        browser.cookies.set(PLAIN_COOKIE_NAME, raw)
+        assert (await browser.get("/auth/session")).json()["state"] == "unclaimed"
+        assert (await browser.get("/kits")).status_code == 401
+
+
+async def test_an_oidc_session_is_not_the_owner_in_local_mode(anon_client):
+    """The reverse state: bound and signed in at the provider, then the instance
+    switched back to local mode. The owner is claimed but holds no password, so
+    the instance is `anonymous`, and the provider-minted cookie opens nothing."""
+    fake = FakeIdp()
+    async with oidc_app(fake) as (live, browser):
+        token = _issue_setup_token(live)
+        assert _auth_error(await _sign_in(fake, browser, setup_token=token)) is None
+        raw = browser.cookies[PLAIN_COOKIE_NAME]
+    anon_client.cookies.set(PLAIN_COOKIE_NAME, raw)
+    assert (await anon_client.get("/auth/session")).json()["state"] == "anonymous"
+    assert (await anon_client.get("/kits")).status_code == 401
+
+
+async def test_starting_in_the_other_mode_revokes_its_sessions_for_good(anon_client):
+    """The switch is durable, not a per-request refusal alone: the start in the
+    new mode revokes every session the old one minted, with an audit row, so
+    switching back does not resurrect a cookie the operator was told is signed
+    out (docs/operations.md, "sessions are signed out")."""
+    await _claim_locally(anon_client)
+    async with oidc_app(FakeIdp()) as (live, _):
+        async with live.router.lifespan_context(live):
+            pass
+    async with get_sessionmaker()() as session:
+        (row,) = (await session.execute(select(SessionRow))).scalars().all()
+    assert row.revoked_at is not None
+    (changed,) = await _events(audit.AUTH_MODE_CHANGED)
+    assert changed.detail == "auth_mode=oidc sessions_revoked=1"
+    assert changed.client_address == "host"
+    (revoked,) = await _events(audit.SESSIONS_REVOKED)
+    assert revoked.detail == "count=1"
+    # Back in local mode — the shipped app — the cookie is dead, not dormant.
+    assert (await anon_client.get("/auth/session")).json()["state"] == "anonymous"
+    assert (await anon_client.get("/kits")).status_code == 401
+
+
+async def test_a_restart_in_the_same_mode_signs_nobody_out(anon_client):
+    await _claim_locally(anon_client)
+    live = create_app(Settings(), authorization=True)
+    async with live.router.lifespan_context(live):
+        pass
+    assert (await anon_client.get("/kits")).status_code == 200
+    assert await _events(audit.AUTH_MODE_CHANGED) == []
+    assert await _events(audit.SESSIONS_REVOKED) == []
 
 
 # --- rebind (T7) -------------------------------------------------------------------------

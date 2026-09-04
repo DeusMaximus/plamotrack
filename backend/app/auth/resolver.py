@@ -27,6 +27,12 @@ Only the header is read. A token in a query parameter lands in access logs and
 `Referer` (§5.6), so it is never a credential here — it is simply ignored and
 the request resolves as if it carried nothing.
 
+**A session is authority only in the mode that minted it** (#191; Codex #209
+round 1, f1). The cookie is resolved against the mode this app runs in
+(`app.auth.mode`): a password-flow session kept across the switch to OIDC mode,
+or a provider-minted one kept across the switch back, is `anon` here — the same
+stale-cookie rule — and the lifespan's sweep revokes it for good.
+
 The readiness route's `internal` principal is not decided here: it is the raw TCP
 peer, read by the route from `scope["client"]` (`app/ingress.is_internal_peer`),
 because a forwarded header must never be able to claim it (§5.6, proxy trust).
@@ -39,6 +45,7 @@ from starlette.requests import Request
 
 from app import error_codes
 from app.auth import tokens as token_format
+from app.auth.mode import auth_mode_of
 from app.auth.principal import VIA_SESSION, Principal, anonymous, owner
 from app.auth.sessions import cookie_is_secure, cookie_name
 from app.config import get_settings
@@ -94,7 +101,9 @@ async def resolve_principal(request: Request, session: AsyncSession) -> Principa
 
     from app.services import auth as auth_service
 
-    row = await auth_service.resolve_session(session, raw_token)
+    row = await auth_service.resolve_session(
+        session, raw_token, auth_mode=auth_mode_of(request.app)
+    )
     if row is None:
         return anonymous()
     setattr(request.state, RAW_SESSION_TOKEN_ATTR, raw_token)

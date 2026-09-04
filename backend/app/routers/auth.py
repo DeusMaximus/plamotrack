@@ -22,6 +22,7 @@ from fastapi.responses import RedirectResponse
 from app import error_codes
 from app.auth import credentials
 from app.auth.budget import FailureBudget
+from app.auth.mode import OIDC_PROVIDER_ATTR, auth_mode_of
 from app.auth.principal import PrincipalKind
 from app.auth.resolver import RAW_SESSION_TOKEN_ATTR
 from app.auth.sessions import (
@@ -52,10 +53,10 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 #: The attribute on `app.state` holding the one login/setup failure budget.
 BUDGET_ATTR = "login_budget"
-#: The attribute on `app.state` holding the configured `OidcProvider` — set by
-#: `create_app` in OIDC mode, absent in local mode (#191). Its presence *is* the
-#: mode as the routes see it.
-OIDC_PROVIDER_ATTR = "oidc_provider"
+# `OIDC_PROVIDER_ATTR` — the configured `OidcProvider` on `app.state`, whose
+# presence *is* the mode as the routes see it (#191) — lives in `app.auth.mode`
+# with the resolver's reader; re-exported here for the callers that knew it.
+__all__ = ["BUDGET_ATTR", "OIDC_PROVIDER_ATTR", "router"]
 
 _NOT_IN_THIS_MODE = "This instance does not sign in that way; see AUTH_MODE."
 #: The query parameter the callback hands a failed round trip back to the SPA
@@ -252,7 +253,9 @@ async def logout(request: Request, response: Response, session: SessionDep) -> R
     secure = cookie_is_secure(get_settings())
     raw_token = getattr(request.state, RAW_SESSION_TOKEN_ATTR, None)
     if raw_token:
-        row = await auth_service.resolve_session(session, raw_token)
+        row = await auth_service.resolve_session(
+            session, raw_token, auth_mode=auth_mode_of(request.app)
+        )
         if row is not None:
             principal = getattr(request.state, "principal", None)
             await auth_service.logout(session, row, principal=principal, request=request)

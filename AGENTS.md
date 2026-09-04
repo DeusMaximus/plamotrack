@@ -356,8 +356,17 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     every other identity is refused with an audit row, and `recovery rebind-oidc` is
     the host-side way back. The modes are mutually exclusive and env-only; each
     family-3 action declares its mode in the registry and answers 404 in the other.
-    The id_token is verified with joserfc; the login transaction is a database row
-    consumed before any network call (`services/oidc.py`). The matrix
+    The id_token is verified with joserfc for its signature and by **one explicit
+    claim validator** for its contract (`validate_id_token_claims`: each claim's type
+    before its value, `aud` exactly this client, `azp` when present, `iat` required,
+    `nonce` a string) — a generic JWT registry read a list as containing the expected
+    value and opened a session for a token naming another client (Codex #209 round
+    1). The login transaction is a database row consumed before any network call
+    (`services/oidc.py`). **A browser session is authority only in the mode that
+    minted it:** `session.auth_mode` is stamped at mint, the resolver refuses it under
+    the other mode, and the API's start in a new mode revokes the old mode's sessions
+    with an `auth.mode_changed` audit row, so a switch signs everyone out durably and
+    switching back resurrects nothing (same round). The matrix
     (`tests/test_authorization.py`) drives the real route graph through the dependency
     with injected principals; `tests/test_auth_local.py` drives the shipped app through
     the real session cookie; `tests/test_auth_tokens.py` drives it through real bearers

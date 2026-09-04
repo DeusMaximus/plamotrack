@@ -27,8 +27,10 @@ The round trip:
 3. `complete_login` — the transaction is consumed **before** any network call
    (a replay in flight finds it used), the code is exchanged server-side with
    the client secret, the id_token's signature is checked against the provider's
-   JWKS and its `iss`, `aud`, `exp` and `nonce` against what was expected, and
-   only then is the owner row read: bind it if it is unbound and the setup token
+   JWKS and its claims against the contract in `validate_id_token_claims` —
+   `iss`, `sub`, exactly this client in `aud` and `azp`, `exp`/`iat`/`nbf` as
+   numbers against the clock, the transaction's `nonce` as a string — and only
+   then is the owner row read: bind it if it is unbound and the setup token
    matched at start, refuse anything that is not the bound pair, mint a session.
 
 The provider's metadata and keys are fetched lazily and cached in the process,
@@ -48,6 +50,7 @@ import base64
 import hashlib
 import logging
 import secrets
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
@@ -68,6 +71,7 @@ from app.auth.setup_token import SetupToken
 from app.config import Settings
 from app.exceptions import UnavailableError
 from app.models import OidcLogin
+from app.models.enums import AuthMode
 from app.services import audit
 from app.services import auth as auth_service
 from app.services.write_gate import acquire_write_gate
@@ -83,7 +87,7 @@ SCOPES = "openid email profile"
 CALLBACK_PATH = "/api/auth/oidc/callback"
 #: One timeout for discovery, the JWKS fetch and the code exchange.
 HTTP_TIMEOUT = 10.0
-#: Clock skew tolerated on the id_token's `exp`/`iat`.
+#: Clock skew tolerated on the id_token's `exp`, `iat` and `nbf`, in seconds.
 CLOCK_LEEWAY = 60
 #: The signature algorithms accepted on an id_token — asymmetric only, so the
 #: client secret can never sign one.
@@ -133,6 +137,85 @@ class OidcLoginRefused(Exception):
     def __init__(self, code: str) -> None:
         super().__init__(code)
         self.code = code
+
+
+def _numeric_date(value: object) -> bool:
+    """A JWT NumericDate: a number — and not the bool that is also an `int`."""
+    return isinstance(value, int | float) and not isinstance(value, bool)
+
+
+def validate_id_token_claims(
+    claims: dict,
+    *,
+    issuer: str,
+    client_id: str,
+    nonce: str,
+    now: int | None = None,
+    leeway: int = CLOCK_LEEWAY,
+) -> None:
+    """The id_token claim contract, in one place, applied after the signature
+    has verified (OpenID Connect Core 1.0 §2 and §3.1.3.7; Codex #209 round 1,
+    f2). Each claim is checked for its **type** before its value, so a shape a
+    generic JWT validator reads loosely — a list where a string belongs, a
+    null, a bool where a number belongs, an audience list that merely
+    *contains* this client — is refused rather than matched:
+
+    - `iss` is the configured issuer, as a string (step 2);
+    - `sub` is a non-empty string — nothing else can bind an owner, and there
+      is no fall-back to `email` (Keycloak 25+ keeps `sub` in a client scope;
+      without it there is nothing to bind to);
+    - `aud` names exactly this client: the string, or an array whose only
+      member is it. An additional audience is one this client does not trust,
+      whatever `azp` says, so it is refused (step 3);
+    - `azp`, when present, is this client's id (step 5);
+    - `exp` is a NumericDate no more than `leeway` in the past (step 9); `iat`
+      a NumericDate — §2 requires the claim — no more than `leeway` in the
+      future (step 10); `nbf`, when present, likewise;
+    - `nonce` is the string this login sent, not a list holding it (step 11).
+
+    Raises `OidcLoginRefused(FAILED)`; the log line names the claim, never the
+    value (T10)."""
+    clock = int(time.time()) if now is None else now
+
+    def refused(claim: str, why: str) -> OidcLoginRefused:
+        log.warning("OIDC id_token rejected: %s %s", claim, why)
+        return OidcLoginRefused(CallbackError.FAILED)
+
+    iss = claims.get("iss")
+    if not isinstance(iss, str) or iss != issuer:
+        raise refused("iss", "is not the configured issuer")
+    sub = claims.get("sub")
+    if not isinstance(sub, str) or not sub:
+        raise refused("sub", "is missing or not a string")
+    aud = claims.get("aud")
+    audiences = [aud] if isinstance(aud, str) else aud
+    if (
+        not isinstance(audiences, list)
+        or not all(isinstance(member, str) for member in audiences)
+        or set(audiences) != {client_id}
+    ):
+        raise refused("aud", "is not exactly this client")
+    if "azp" in claims and claims["azp"] != client_id:
+        raise refused("azp", "is not this client")
+    exp = claims.get("exp")
+    if not _numeric_date(exp):
+        raise refused("exp", "is missing or not a NumericDate")
+    if exp < clock - leeway:
+        raise refused("exp", "has passed")
+    iat = claims.get("iat")
+    if not _numeric_date(iat):
+        raise refused("iat", "is missing or not a NumericDate")
+    if iat > clock + leeway:
+        raise refused("iat", "is in the future")
+    if "nbf" in claims:
+        nbf = claims["nbf"]
+        if not _numeric_date(nbf):
+            raise refused("nbf", "is not a NumericDate")
+        if nbf > clock + leeway:
+            raise refused("nbf", "is in the future")
+    token_nonce = claims.get("nonce")
+    if not isinstance(token_nonce, str) or token_nonce != nonce:
+        raise refused("nonce", "is not this login's")
 
 
 class OidcProvider:
@@ -322,8 +405,9 @@ class OidcProvider:
 
     async def verify_id_token(self, id_token: object, *, nonce: str) -> dict:
         """The id_token's claims, once its signature verifies against the
-        provider's keys and `iss`, `aud`, `sub`, `exp` and `nonce` are what this
-        login expects. Anything else is a refused login, never a session."""
+        provider's keys on an asymmetric algorithm and the claims meet the
+        contract in `validate_id_token_claims` for this issuer, this client and
+        this login's nonce. Anything else is a refused login, never a session."""
         if not isinstance(id_token, str) or not id_token:
             raise OidcLoginRefused(CallbackError.FAILED)
         keys = await self.keys()
@@ -338,19 +422,9 @@ class OidcProvider:
             except (JoseError, ValueError):
                 log.warning("OIDC id_token rejected: signature or format")
                 raise OidcLoginRefused(CallbackError.FAILED) from None
-        registry = jwt.JWTClaimsRegistry(
-            leeway=CLOCK_LEEWAY,
-            iss={"essential": True, "value": self.issuer},
-            aud={"essential": True, "value": self.client_id},
-            sub={"essential": True},
-            exp={"essential": True},
-            nonce={"essential": True, "value": nonce},
+        validate_id_token_claims(
+            token.claims, issuer=self.issuer, client_id=self.client_id, nonce=nonce
         )
-        try:
-            registry.validate(token.claims)
-        except JoseError as exc:
-            log.warning("OIDC id_token rejected: %s", type(exc).__name__)
-            raise OidcLoginRefused(CallbackError.FAILED) from None
         return dict(token.claims)
 
 
@@ -510,12 +584,9 @@ async def complete_login(
         ) from None
     except OidcLoginRefused as exc:
         raise await _refuse(session, request, code=exc.code, detail="id_token_rejected") from None
-    subject = claims.get("sub")
-    if not isinstance(subject, str) or not subject:
-        # `openid` alone does not guarantee `sub` on every provider (Keycloak
-        # 25+ moves it into a client scope) — and without it there is nothing
-        # to bind to. Never fall back to email.
-        raise await _refuse(session, request, code=CallbackError.FAILED, detail="no_subject")
+    # A non-empty string, or `verify_id_token` would have refused: the claim
+    # contract lives in one validator, and `email` is never a fall-back.
+    subject: str = claims["sub"]
     display_name = _display_name(claims)
 
     await acquire_write_gate(session)
@@ -535,7 +606,7 @@ async def complete_login(
         if owner.claimed_at is None:
             owner.claimed_at = now
         setup_state.consume()
-        raw, session_row = auth_service.new_session_row(now)
+        raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.OIDC)
         session.add(session_row)
         await session.flush()
         await audit.record_event(
@@ -561,7 +632,7 @@ async def complete_login(
         raise OidcLoginRefused(CallbackError.IDENTITY_REFUSED)
     if display_name and owner.display_name != display_name:
         owner.display_name = display_name
-    raw, session_row = auth_service.new_session_row(now)
+    raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.OIDC)
     session.add(session_row)
     await session.flush()
     await audit.record_event(

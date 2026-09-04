@@ -68,6 +68,17 @@ class HourCycle(enum.StrEnum):
     H23 = "h23"
 
 
+class AuthMode(enum.StrEnum):
+    """The credential regime the instance runs in — the operator's `AUTH_MODE`
+    (§5.4; #191). Stamped on every browser session at mint, because a session
+    is authority only in the mode that minted it: the resolver refuses one
+    presented under the other mode, and a start in a new mode revokes them all
+    (Codex #209 round 1, f1)."""
+
+    LOCAL = "local"
+    OIDC = "oidc"
+
+
 def text_enum(enum_cls: type[enum.StrEnum], name: str) -> SAEnum:
     """Text column + CHECK constraint instead of a native Postgres enum, so future
     taxonomy changes are a data migration rather than an ALTER TYPE dance (§9.1)."""

@@ -8,10 +8,11 @@ from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.hostnames import is_loopback_host, validate_host_pattern
+from app.models.enums import AuthMode
 
 #: The two authentication modes (§5.4): a password held here, or an identity a
 #: configured OpenID Connect provider asserts. Never a third, "off" one (§5.6).
-AUTH_MODES = ("local", "oidc")
+AUTH_MODES = tuple(mode.value for mode in AuthMode)
 
 _CURRENCY_RE = re.compile(r"[A-Z]{3}")
 

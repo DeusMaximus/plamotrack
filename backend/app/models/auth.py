@@ -22,6 +22,7 @@ from sqlalchemy import CheckConstraint, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.enums import AuthMode, text_enum
 
 #: The one primary-key value the owner singleton allows — the instance has
 #: exactly one owner (§5.5), the same shape as `instance_settings`.
@@ -75,13 +76,16 @@ class Session(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     The opaque session id lives only in the cookie; `token_hash` is its digest,
     so a database read cannot reconstruct a live session. Rotated on login,
     bounded by idle (`last_used_at`) and absolute (`expires_at`) expiry, and
-    revoked — `revoked_at` set — on logout, credential change and OIDC rebind
-    (§5.6). Never populated by M6-2.
+    revoked — `revoked_at` set — on logout, credential change, OIDC rebind and
+    a start in the other authentication mode (§5.6). `auth_mode` is the mode
+    that minted it (#191): a session is authority only there — the resolver
+    refuses it under the other mode, and the start-up sweep revokes it.
     """
 
     __tablename__ = "session"
 
     token_hash: Mapped[str] = mapped_column(unique=True, index=True)
+    auth_mode: Mapped[AuthMode] = mapped_column(text_enum(AuthMode, "auth_mode"))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

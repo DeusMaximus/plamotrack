@@ -44,6 +44,10 @@ OIDC_LOGIN_FAILED = "auth.oidc_login_failed"
 #: The owner's OIDC binding cleared by the recovery command (T7); the next
 #: provider login with the setup token binds afresh.
 OIDC_REBIND = "auth.oidc_rebind"
+#: The API started in an authentication mode other than the one that minted
+#: the live browser sessions — a mode switch — and revoked them (T7's sibling;
+#: Codex #209 round 1, f1). `detail` names the mode now running and the count.
+AUTH_MODE_CHANGED = "auth.mode_changed"
 
 
 def client_address_of(request: Request | None) -> str | None:

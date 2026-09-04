@@ -21,6 +21,7 @@ from app.auth.dependency import (
     enforce_route_policy,
 )
 from app.auth.mcp_auth import PersonalAccessTokenVerifier
+from app.auth.mode import OIDC_PROVIDER_ATTR, auth_mode_of
 from app.auth.prerouting import DispatchTable, PreRoutingAuthMiddleware
 from app.auth.registry import build_route_index
 from app.config import Settings, get_settings
@@ -56,7 +57,6 @@ from app.routers import (
     settings,
     tokens,
 )
-from app.routers.auth import OIDC_PROVIDER_ATTR
 from app.schemas.errors import ERROR_RESPONSES
 from app.services.oidc import OidcProvider
 
@@ -299,26 +299,35 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
             # operator's only tell when TLS sits in front of an http-configured
             # instance (§5.6; Codex #200 round 1, f1).
             sessions.announce_cookie_mode(config)
-            if oidc_provider is not None:
+            # The provider as the app holds it, not the closure's — a test may
+            # have replaced it with one that talks to a fake (`app.auth.mode`).
+            provider = getattr(app_.state, OIDC_PROVIDER_ATTR, None)
+            if provider is not None:
                 # Discovery and keys now rather than on the first login; a
                 # provider that is down fails logins, never the start.
-                await oidc_provider.warm_up()
+                await provider.warm_up()
             async with get_sessionmaker()() as session:
                 from app.services import auth as auth_service
                 from app.services import oidc as oidc_service
 
+                # A session is authority only in the mode that minted it: a
+                # start in the other mode signs the previous mode's sessions
+                # out for good, audited (#191; Codex #209 round 1, f1).
+                await auth_service.revoke_sessions_of_other_modes(
+                    session, auth_mode=auth_mode_of(app_)
+                )
                 # In OIDC mode a claimed owner with no binding needs the token
                 # too — the next provider login binds (a mode switch, a rebind).
                 needs_setup = (
                     await oidc_service.owner_is_unbound(session)
-                    if oidc_provider is not None
+                    if provider is not None
                     else not await auth_service.is_claimed(session)
                 )
                 if needs_setup:
                     setup_token.announce(
                         app_,
                         setup_url=_setup_url(config),
-                        oidc_issuer=oidc_provider.issuer if oidc_provider is not None else None,
+                        oidc_issuer=provider.issuer if provider is not None else None,
                     )
         async with mcp_app.lifespan(app_):  # the MCP session manager lives here
             yield
