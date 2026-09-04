@@ -41,6 +41,53 @@ Template:
 
 ---
 
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 3 (GPT-6, NO-GO: P2/P3) answered on the branch — head `4b720ec`, reply posted (issuecomment-5547333495), PR body amended, round-4 brief printed
+
+- **Done:** both findings reproduced at `e90550f` on their own assertions (the 12 new rows written
+  first: **5 red / 7 green** — f9's two access-token rows and the rebound-owner sibling red on the
+  record still present behind the 200, f10's two paths red on `200 == 401`; the four refresh-token
+  rows and the race test's four cells green), then fixed one step to either side of round 2's gate
+  (`app/auth/mcp_oauth.py`): **f9** the `/revoke` route is built over `RevocationLookup`
+  (`get_routes`, FastMCP's own seam) — the SDK's handler and client authenticator given a provider
+  whose access-token lookup is `locate_access_token`: the proxy's signature, the client id and
+  binding from the claims, the JTI mapping; no provider call, no upstream set, no owner row — so
+  the locked ending in `revoke_token` runs whatever the provider is doing; `load_access_token` and
+  the `unavailable` policy for requests unchanged. Sibling closed by the same change: a client can
+  end a grant the owner row no longer names (the per-request `still_bound` had made that lookup
+  answer `None` too). **f10** the record gate compares a verified candidate's `(iss, sub)` with the
+  **record's** binding before the write — a mismatch is `_GrantRefused(identity)`, the grant ends.
+  Also per the review's evidence replay: the race test's witness tightened to the `pg_blocking_pids`
+  edge on the grant's own lock key (`_blocked_on_the_grant_lock`; the transparent/access cell is a
+  real witness for the first time, since revocation no longer enters the transparent refresh); the
+  round-2 10/4 breakdown carried into the PR body; the CI `--setup-token` argv edge filed as
+  **#215**. Fake: `FakeIdp.unreachable` (per-path outage). Tests: `test_mcp_oauth.py` **111** (+8).
+  Mutants: moa-57…60 added; **59/59 killed**. Docs: design §5.5 row 8, §5.9 (d)/(e); AGENTS.md rule 13;
+  operations "Ending a link"; procedure moa- paragraph + count (**461/46**); lessons → "Located,
+  not authorized; the record's identity, not the owner's".
+- **Decisions:** a second object for the revocation handler rather than a context flag inside
+  `load_access_token` (two callers with opposite failure semantics get two methods); no second
+  `still_bound` under the lock for f10 (narrows the window, does not close it — the continuity
+  comparison is the invariant); the rebind-mid-transition cells that re-issue the old owner's
+  id_token or omit one still write the old binding forward and are refused at the next request
+  (the lingering record is #214); #215 filed rather than fixed here (Codex's ask, no shared cause).
+- **State:** backend **2067 green** on the final tree, lint/format clean, `render_ingress.py
+  --check` clean; frontend untouched. Mutants **59/59 killed** (scratch runner past the clean-tree
+  refusal, targets hashed, restored). Commit `4b720ec` pushed; PR #212 body amended to that head;
+  the reply is issuecomment-5547333495. Packaged stack not re-run (no route/registry/nginx/matrix change). Dev `db`
+  up, Keycloak spike up. LXC untouched (**stays put until M6 is finished**).
+- **Next:** (1) **Codex round 4 on PR #212, in a new session**: the brief was printed in this
+  session's chat — regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming
+  runtime head `4b720ec` and the branch tip (hand-off commits only above it), `main` `a497481`,
+  rules 1/6/7.1/9/11/12/13. Findings: reproduce at `4b720ec` first, answer per
+  `.agents/testing-and-review.md` → "Responding to a review" (numbering continues from 10),
+  re-verify by mutation (`-k moa-`; the scratch runner shape is in this entry's Done). If GO:
+  squash-merge with `Closes #192`; nothing to fold in — every moa- tuple is tracked. (2) After
+  merge: #215 (one line in `ci.yml`), #193, M6-9 TLS docs, the M6 release — gate
+  `ingress_matrix.py --mode oidc` against a packaged stack with the Keycloak spike (the socat
+  sidecar overlay is not tracked; rebuild under `.agents/spikes/190/` if kept) with the register
+  burst concurrent — then the LXC upgrade; relink any MCP client first (records written before
+  `e90550f` carry no binding and end at their next refresh).
+
 ## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 2 (GPT-6, NO-GO: P1/P2/P3) answered on the branch — head `e90550f`, reply posted (issuecomment-5546424919), PR body amended, round-3 brief printed
 
 - **Done:** all three findings reproduced at `e248a4b` on their own assertions (the 14 new
@@ -240,32 +287,3 @@ Template:
   (gate in `.agents/testing-and-review.md`) and only then the LXC upgrade. Release-notes
   items so far: `AUTH_MODE=oidc`; a mode switch signs every browser out at the first start in
   the new mode; a local→oidc switch needs the setup token once; `session.auth_mode` migration.
-
-## 2026-09-05 — Claude Code (Fable 5.1) — #191 (M6-6) PR #209: Codex round 2 (NO-GO, 2×P3) addressed at `59eb9a4`, round 3 pending
-
-- **Done:** Codex round 2 (GPT 5.6 Sol) on `083ad08`: NO-GO, two P3s, no P1/P2, round-1 P2s
-  confirmed closed, calls 3/6/11/12 not overruled (its provider survey backs call 12's no
-  trusted-audience list). **f3 — non-finite NumericDates:** `_numeric_date` in
-  `services/oidc.py` now names the value domain — an `int` (never the bool) on its own branch,
-  or a `float` that `math.isfinite` — because JSON cannot spell NaN/Infinity (RFC 8259 §6)
-  but Python's parser admits them and every clock comparison against NaN is false.
-  Reproduced first: nine shapes (NaN, ±∞ on each of `exp`/`iat`/`nbf`) added to the matrix,
-  six opened a session at `083ad08`; a pinned-clock unit test drives all nine plus the
-  positive side (`10**400`, negative huge ints, float instants). Mutant **oidc-39** (finite
-  condition removed) killed by `[exp-nan]`. Design §5.9 (f) says "finite". **f4 — PR body
-  provenance:** Tests intro 35 → 70 → 80 by round; the Negative-control paragraph now carries
-  the reviewed-head baselines (`910a335`: 14 red / 56 green; `083ad08`: 7 red / 3 green) and
-  the matrix count (41 refused + 4 accepted), oidc-39 row and tuple.
-- **Decisions:** the domain is stated at the predicate, not by a JSON-strictness layer under
-  joserfc — the three time claims are the only numerically compared values, and the predicate
-  is the one place that admits them.
-- **State:** backend **1949 green**, `tests/test_auth_oidc.py` **80**, frontend untouched
-  (487), lint clean; tree clean at `59eb9a4` + this entry, both pushed. Reply posted on PR #209;
-  body amended. Dev DB at `4f3a9c1e7b2d`. Round-1 state still true: `session.auth_mode` +
-  start-up sweep (`auth.mode_changed`), one claim validator, migration `4f3a9c1e7b2d`.
-- **Next:** (1) Codex **round 3** on PR #209 — brief per `.agents/review-brief.md` (Codex
-  footer) at the new head, pointing at the round-2 reply; if GO, merge with `Closes #191`;
-  (2) after merge, fold oidc-1…39 into `mutation_test.py` (1/2/3/11 superseded by 21–30);
-  (3) #192 (M6-7) on top; (4) #193; (5) **LXC stays put until M6 is finished** (owner, 03/09).
-  Release-notes items unchanged: `AUTH_MODE=oidc`; a mode switch signs every browser out at the
-  first start in the new mode; a local→oidc switch needs the setup token once.
