@@ -207,6 +207,18 @@ AUTH_TOKEN_NOT_FOUND = "auth.token_not_found"
 AUTH_TOKEN_SCOPE_INVALID = "auth.token_scope_invalid"
 AUTH_TOKEN_EXPIRY_IN_PAST = "auth.token_expiry_in_past"
 
+# --- browser OIDC (M6-6, #191 — §5.5 family 3, §5.6 open redirect) ---------------
+# 404 `not_in_this_mode`: the route belongs to the other authentication mode
+# (`POST /auth/login` in OIDC mode, `POST /auth/oidc/start` in local mode) — a
+# 404 rather than a 401 so the anonymous fallback does not turn a mode into a
+# challenge. 503 `oidc_provider_unavailable`: discovery or the code exchange at
+# the provider failed; existing sessions and tokens are untouched (§5.6, safe
+# failure). The callback never answers JSON to a browser navigation — its
+# refusals are the `auth_error` words in `services/oidc.py` (`CallbackError`),
+# carried back to the SPA in the query string; they are not envelope codes.
+AUTH_NOT_IN_THIS_MODE = "auth.not_in_this_mode"
+AUTH_OIDC_PROVIDER_UNAVAILABLE = "auth.oidc_provider_unavailable"
+
 # --- request validation (FastAPI's 422 list shape) -------------------------
 REQUEST_VALIDATION = "request.validation"
 

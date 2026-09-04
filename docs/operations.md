@@ -28,7 +28,9 @@ stops printing one once claimed. Lost the token? Restart the container
 
 After that, one owner password signs you in from any browser on the trusted
 network. Sign out from the sidebar. Forgot the password? See
-[Recovery](#recovery-locked-out).
+[Recovery](#recovery-locked-out). Prefer to sign in with Google or your own
+identity provider instead of a password? See
+[OIDC mode](#signing-in-through-an-identity-provider-oidc-mode).
 
 ### Recovery: locked out
 
@@ -43,6 +45,52 @@ It prompts for a new password, sets it, and signs every browser out. To sign
 everyone out without changing the password, use `revoke-sessions` instead. Both
 run only where you already have shell access to the host, which is the point.
 Neither touches access tokens — revoke those from Settings once you are back in.
+
+### Signing in through an identity provider (OIDC mode)
+
+Instead of a password, the owner can sign in at an OpenID Connect provider —
+Google, or a self-hosted Keycloak or Authentik. It is a mode, not an add-on: an
+instance is either `local` (password) or `oidc`, never both, and the switch is an
+edit to `.env`. Register a client with the provider whose one authorised redirect
+URI is `<PUBLIC_BASE_URL>/api/auth/oidc/callback`, then:
+
+```ini
+AUTH_MODE=oidc
+PUBLIC_BASE_URL=https://plamotrack.example        # required in this mode
+OIDC_ISSUER=https://accounts.google.com           # exactly as the provider's discovery document states it
+OIDC_CLIENT_ID=…
+OIDC_CLIENT_SECRET=…
+```
+
+and `docker compose up -d`. The API prints a setup token at start, as for a fresh
+install; the setup screen asks for it and then sends you to the provider. **The
+account you sign in with becomes the owner**, bound to the stable identity the
+provider asserts (its issuer and subject) — not to an email address, which is
+shown in the UI and used for nothing else. Any other account that signs in at
+the same provider is refused and recorded in the audit log. An instance switched
+from local mode keeps its data; the API signs every browser out at its first
+start in the new mode (an `auth.mode_changed` audit row records how many), the
+old password is ignored, and the first provider sign-in with the new setup token
+binds the owner. Switching back to local mode signs everyone out the same way.
+The client you register must be the **only audience** of the id_tokens the
+provider issues for it — a token naming an additional audience is refused, so do
+not attach other clients' audience mappers to it.
+
+If the provider is down, new sign-ins fail with a clear message; sessions that
+already exist, access tokens and MCP clients keep working. The mode never falls
+back to a password on its own.
+
+**Lost the identity-provider account, or changing provider?** From inside the
+API container:
+
+```bash
+docker compose exec api python -m app.auth.recovery rebind-oidc
+```
+
+It clears the bound identity and signs every browser out. Restart the API
+(`docker compose restart api`), read the new setup token from its log, and sign
+in at the provider — that account is the owner from then on. Access tokens are
+untouched; revoke any you no longer trust from Settings.
 
 ## Access tokens
 
@@ -223,7 +271,10 @@ the API. `.env.example` documents every key. The ones worth knowing:
 | `WEB_BIND` | `127.0.0.1` | The interface the stack listens on. Leave it on loopback unless you have read [Reaching it from another machine](#reaching-it-from-another-machine). A non-loopback address here is also a name the instance answers to. |
 | `WEB_PORT` | `8080` | Host port for the UI, `/api`, and `/mcp`. |
 | `ALLOWED_HOSTS` | — | Names you reach the instance by, beyond `localhost`, `127.0.0.1`, `[::1]`, `WEB_BIND` and the host of `PUBLIC_BASE_URL`: a LAN hostname, a container name, what a proxy forwards. Comma-separated, no ports; `*.home.arpa` wildcards work. Any other name gets **421** — [details below](#names-it-answers-to). |
-| `PUBLIC_BASE_URL` | — | The address a browser uses, when it isn't `http://localhost:<WEB_PORT>`: scheme, host and port, nothing after. Its host is allowed automatically; behind an HTTPS proxy it is what makes the browser's `https://` origin the instance's own, and its scheme decides whether the session cookie is `Secure`. The MCP OAuth path (later in M6) will bind to it too, so choose the name you mean to keep. |
+| `PUBLIC_BASE_URL` | — | The address a browser uses, when it isn't `http://localhost:<WEB_PORT>`: scheme, host and port, nothing after. Its host is allowed automatically; behind an HTTPS proxy it is what makes the browser's `https://` origin the instance's own, and its scheme decides whether the session cookie is `Secure`. In OIDC mode it is required — the provider's callback is built from it — and the MCP OAuth path (later in M6) will bind to it too, so choose the name you mean to keep. |
+| `AUTH_MODE` | `local` | `local`: the setup token and a password. `oidc`: a sign-in at an OpenID Connect provider — see [Signing in through an identity provider](#signing-in-through-an-identity-provider-oidc-mode). Mutually exclusive; there is no "off". |
+| `OIDC_ISSUER` | — | OIDC mode. The provider's issuer URL, exactly as its discovery document states it (`https://accounts.google.com`, `https://keycloak.example/realms/home`). `https`, unless the provider is on loopback. |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | OIDC mode. The client registered with the provider, whose authorised redirect URI is `<PUBLIC_BASE_URL>/api/auth/oidc/callback`. |
 | `ALLOWED_ORIGINS` | — | Extra browser origins allowed to write, beyond the instance's own and loopback ones. Rarely needed. |
 | `TRUSTED_PROXIES` | — | IPs or CIDRs of a reverse proxy whose `X-Forwarded-For` is believed for the client's address. Nothing reads that address in this release; leave it unset. |
 | `REFERENCE_CURRENCY` | `AUD` | Your currency — **first-run bootstrap only**. The migration seeds it into the instance settings; after that the database row is the setting (`PATCH /settings`), and editing the env var does nothing. Changing the setting affects new entries only — stored snapshots keep the currency they were recorded in. |

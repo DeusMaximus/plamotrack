@@ -104,6 +104,8 @@ def test_an_undeclared_route_fails_the_build():
 _REST_SURFACE: dict[tuple[str, str], tuple[int, str]] = {
     ("/auth/login", "POST"): (3, "anonymous"),
     ("/auth/logout", "POST"): (3, "anonymous"),
+    ("/auth/oidc/callback", "GET"): (3, "anonymous"),
+    ("/auth/oidc/start", "POST"): (3, "anonymous"),
     ("/auth/session", "GET"): (2, "anonymous"),
     ("/auth/setup", "POST"): (3, "anonymous"),
     # Personal access token management (#189): family 6, the owner's session only.

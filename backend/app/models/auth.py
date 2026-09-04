@@ -22,6 +22,7 @@ from sqlalchemy import CheckConstraint, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.enums import AuthMode, text_enum
 
 #: The one primary-key value the owner singleton allows — the instance has
 #: exactly one owner (§5.5), the same shape as `instance_settings`.
@@ -75,13 +76,16 @@ class Session(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     The opaque session id lives only in the cookie; `token_hash` is its digest,
     so a database read cannot reconstruct a live session. Rotated on login,
     bounded by idle (`last_used_at`) and absolute (`expires_at`) expiry, and
-    revoked — `revoked_at` set — on logout, credential change and OIDC rebind
-    (§5.6). Never populated by M6-2.
+    revoked — `revoked_at` set — on logout, credential change, OIDC rebind and
+    a start in the other authentication mode (§5.6). `auth_mode` is the mode
+    that minted it (#191): a session is authority only there — the resolver
+    refuses it under the other mode, and the start-up sweep revokes it.
     """
 
     __tablename__ = "session"
 
     token_hash: Mapped[str] = mapped_column(unique=True, index=True)
+    auth_mode: Mapped[AuthMode] = mapped_column(text_enum(AuthMode, "auth_mode"))
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -143,3 +147,31 @@ class AuditEvent(UUIDPrimaryKeyMixin, Base):
     target: Mapped[str | None]
     #: A short structured note the event carries — never a body or a secret.
     detail: Mapped[str | None] = mapped_column(String(500))
+
+
+class OidcLogin(UUIDPrimaryKeyMixin, Base):
+    """One in-flight browser login at the OpenID Connect provider (OIDC mode,
+    §5.6 open redirect and code interception; M6-6, #191).
+
+    Created by `POST /auth/oidc/start`, consumed by `GET /auth/oidc/callback`,
+    single-use and short-lived (`expires_at`, ten minutes). Two values bind the
+    round trip to the browser that began it, both stored as digests: `state`
+    travels through the provider and back in the URL, the **binding** value only
+    in an `HttpOnly` cookie on this host — so a callback URL pasted into another
+    browser, or forced onto the owner's by a hostile page, names no transaction.
+    `nonce` is echoed inside the signed id_token and compared on return; the
+    PKCE `code_verifier` is sent with the code exchange. `claiming` records that
+    the setup token matched at start, so the callback may bind the owner. Never
+    portable (rule 9); expired rows are pruned when a new login starts.
+    """
+
+    __tablename__ = "oidc_login"
+
+    state_hash: Mapped[str] = mapped_column(unique=True, index=True)
+    binding_hash: Mapped[str]
+    nonce: Mapped[str]
+    code_verifier: Mapped[str]
+    claiming: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

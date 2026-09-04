@@ -15,7 +15,9 @@ want it to.
 > **There is a single owner login and personal access tokens, but no TLS yet.** A fresh
 > install comes up unclaimed and prints a one-time setup token to the API log; you claim
 > it in the browser, every REST route then needs that session, and scripts and **MCP
-> clients** authenticate with an access token minted under Settings. Still missing until
+> clients** authenticate with an access token minted under Settings. The owner login can
+> be a password or a sign-in at your own OpenID Connect provider (`AUTH_MODE=oidc`,
+> see `docs/operations.md`). Still missing until
 > the rest of Milestone 6: a tested HTTPS path. Run it on a network you trust — your LAN,
 > a VPN, or plain old localhost — and don't put it on the internet yet.
 >

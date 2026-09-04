@@ -13,6 +13,12 @@
     "auth.login_failed": {
       "params": []
     },
+    "auth.not_in_this_mode": {
+      "params": []
+    },
+    "auth.oidc_provider_unavailable": {
+      "params": []
+    },
     "auth.origin_required": {
       "params": []
     },

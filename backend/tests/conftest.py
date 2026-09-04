@@ -36,13 +36,16 @@ _TABLES = (
     # they still accumulate across tests: setup claims the owner and login/setup
     # write credentials, sessions and audit rows. `owner` is the exception — a
     # singleton like instance_settings, reset below rather than truncated.
-    "credential, session, personal_access_token, audit_event"
+    "credential, session, personal_access_token, audit_event, oidc_login"
 )
 
 #: The owner row is seeded once by the migration and cannot be recreated at
 #: runtime (the singleton CHECK). Between tests it is reset to **unclaimed**, the
 #: fresh-install state, so a setup test starts from the same place every time.
-_RESET_OWNER = "UPDATE owner SET claimed_at = NULL, oidc_issuer = NULL, oidc_subject = NULL"
+_RESET_OWNER = (
+    "UPDATE owner SET claimed_at = NULL, oidc_issuer = NULL, oidc_subject = NULL, "
+    "display_name = NULL"
+)
 
 # The instance_settings singleton is deliberately NOT in _TABLES — truncating it
 # would delete the row migrations created, which nothing at runtime can do (#23).
