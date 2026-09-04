@@ -41,6 +41,32 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) MERGED (PR #202 → `f685c30`, Codex round 6 GO); pat- fold-in MERGED (PR #203 → `d237bb3`)
+
+- **Done:** Codex round 6 (GPT 5.6 Sol) on `1479e1c`: **GO, no findings**, nothing open across
+  six rounds. PR #202 squash-merged as `f685c30` on the owner's call (04/09), branch deleted,
+  **#189 closed**. Then the harness fold-in `chore/fold-pat-mutants` → **PR #203** (harness-only,
+  no external review — the #197/#199/#201 precedent): pat-1…25 into `mutation_test.py` with
+  four new path constants (`TOK_SVC`, `TOK_FMT`, `RESOLVER`, `MCP_AUTH`), `TEST_FILES` +
+  `tests/test_auth_tokens.py`; `-k pat-` → **all 25 killed** at fold-in; procedure doc: 353
+  cases over thirty-one files. Squash-merged as `d237bb3` on green CI. Memory pointer updated.
+- **Decisions:** none new. The six-round record is on PR #202; the two lessons that came out of
+  it are in `.agents/lessons.md` ("The 401 contract").
+- **State:** `main` at `d237bb3` plus this entry. Backend 1760, frontend 485, e2e 43+1 (CI). The
+  shipped app: browser = owner session; REST scripts and MCP = personal access token
+  (`ptk_…`, Settings → Access tokens); `/mcp/` bearer-only; wrong password / setup token = 403;
+  no tested TLS path yet. Dev DB claimed with `e2e-owner-password`. No release cut — M6 ships as
+  one release at the end. **Release-notes items so far:** `ALLOWED_HOSTS` lockout risk (M6-1);
+  the instance comes up unclaimed (M6-3); `/mcp/` requires a PAT, wrong password / setup token
+  is 403, never a token in a URL (M6-4).
+- **Next:** (1) the two family-13 hardening items (design §5.9 item 3(b)): unrouted `/api/*`
+  → 401 for anon, and parse-before-auth → both need a middleware-level check ahead of
+  routing / body parsing; (2) #190/#192 MCP OAuth spike (§5.9 item 5) — can run in parallel;
+  (3) audit/rate limiting (§5.9 item 8); (4) **LXC stays put until M6 is finished** (owner,
+  03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first, it comes up
+  unclaimed (setup token in `docker compose logs api`), and the personal Gunpla skill's
+  MCP config will need a token.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 5 (NO-GO, 2×P3, prose/evidence) addressed at `4fb946b`, round 6 pending
 
 - **Done:** Codex round 5 (GPT 5.6 Sol) on `77fb1c9`: NO-GO, two P3s, no bypass; finding-9
@@ -128,29 +154,4 @@ Template:
   fold-in PR for pat-1…25; (3) the two family-13 hardening items (design §5.9 item 3(b)); (4)
   #190/#192 OAuth spike; (5) **LXC stays put until M6 is finished** (owner, 03/09) —
   `ALLOWED_HOSTS` into its `.env` before the pull, back up first, it comes up unclaimed.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 1 (NO-GO, 3×P3) addressed at `732b8aa`, round 2 pending
-
-- **Done:** Codex round 1 (GPT 5.6 Sol) on `789357d`: NO-GO, three P3s, no bypass, calls 1–7 and 9
-  retained. All reproduced and fixed at `732b8aa` (after merging `main` at `7bd91a1` — HANDOFF
-  conflict, main's entry kept): (f1) `Bearer␠␠<token>` was 200 on REST / 401 on MCP — FastMCP's
-  backend drops one space and passes the rest verbatim → `resolve_bearer` strips the value (the
-  shared helper, not the verifier), header-form matrix through both surfaces (3 red at `789357d`),
-  mutant pat-24 killed; (f2) "WWW-Authenticate on every 401" was false (login/setup 401s carry
-  none) and a blanket default would advertise `Bearer` on routes that refuse a bearer → contract
-  narrowed to the bearer boundary, pinned by a test, design §5.9 item 4 / call 8 / docstrings
-  amended; (f3) the matrix put a live PAT in `?access_token=` (uvicorn + nginx access logs) and
-  the unit T10 captured root only → fake token in that row, CI step greps `docker compose logs`
-  for the `--token-out` token, T10 attaches to every logger and states its bound, docs say never
-  to put a token in a URL. Reply posted, PR body amended (head, call 8, counts, pat-24).
-- **Decisions:** the f2 narrowing keeps the family-3 statuses at 401 (no move to 400/403);
-  design §5.9 item 4 (i)/(j) record f1/f3.
-- **State:** branch head `732b8aa` pushed; backend **1760**, `test_auth_tokens.py` **100**; CI on
-  `732b8aa` was still running when this was written — the new log-scan step is the thing to
-  check. Tree parked on `main`. Dev DB claimed with `e2e-owner-password`. **Round 2 pending.**
-- **Next:** (1) Codex round 2 on `732b8aa` → address in its numbering (4 onward); merge on GO;
-  (2) harness fold-in PR for pat-1…24 (`TEST_FILES` + `tests/test_auth_tokens.py`); (3) the two
-  family-13 hardening items (design §5.9 item 3(b)); (4) #190/#192 OAuth spike; (5) **LXC stays
-  put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull,
-  back up first, it comes up unclaimed.
 
