@@ -28,11 +28,10 @@ know (Codex #198 round 2, f2).
 **What M6-2 populated.** Every route that existed then, plus the MCP tool scope
 map. The family-2/3 auth routes arrived with #188 and the family-6 token routes
 with #189 (their declarations are below, beside the routers that add them); the
-family-8 OAuth routes (#192) and their protocol roles do not exist yet, and the
-registry's job is to already own the shape they slot into. The
-`CredentialPolicy` and `ResponseProfile` types carry the OAuth fields (protocol
-role, redirect destinations, modes) so those items extend rather than reshape
-this.
+family-8 OAuth routes and their protocol roles with #192 (`DISCOVERY_ROUTES`
+for the three root documents, `MCP_OAUTH_ROUTES` for the six routes under the
+mount — declared by path, because the same paths exist in both authentication
+modes: FastMCP's handlers in OIDC mode, a 404 of their own in local mode).
 """
 
 from __future__ import annotations
@@ -66,8 +65,10 @@ class CredentialPolicy:
     - `MCP_TRANSPORT` — bearer only, with the per-tool scope check inside the
       tool wrapper (the REST dependency does not wrap the mount); a cookie never
       authenticates here (§5.5 family 7).
-    - `PROTOCOL` — FastMCP owns the route (family 8, OIDC mode only); the
-      resource-bearer dependency does not wrap it.
+    - `PROTOCOL` — family 8: FastMCP owns the route in OIDC mode, and in local
+      mode the same path answers its own 404 (#192); anonymous by protocol, so
+      the resource-bearer dependency never wraps it and the pre-routing gate
+      resolves no principal under its namespace.
 
     Values are the identifiers used in the matrix and audit; stable.
     """
@@ -79,6 +80,37 @@ class CredentialPolicy:
     INTERNAL = "internal"
     MCP_TRANSPORT = "mcp_transport"
     PROTOCOL = "protocol"
+
+
+class ProtocolRole:
+    """What a route under the MCP mount does in the OAuth protocol (§5.5 family
+    7/8; #192) — declared so the matrix drives each role with its own state (a
+    registered client, a transaction, a binding cookie) rather than one
+    injected `anon`, and so a reader of the registry knows which handler owns
+    which secret:
+
+    - `TRANSPORT` — the streamable-HTTP endpoint, bearer only (family 7).
+    - `DISCOVERY` — the RFC 8414 / RFC 9728 documents at the root; anonymous by
+      protocol, publicly cacheable.
+    - `REGISTRATION` — dynamic client registration (RFC 7591).
+    - `AUTHORIZATION` — the authorization endpoint: client and PKCE validation,
+      the redirect-URI binding per client kind, then the consent page.
+    - `CONSENT` — the consent transaction: its own state cookie and form token.
+    - `CALLBACK` — the provider's return: the binding cookie, the upstream code
+      exchange, the client's code.
+    - `TOKEN` — the token endpoint: codes and refresh tokens for the proxy's own
+      pair; the owner binding is checked here before anything is minted.
+    - `REVOCATION` — RFC 7009, forwarded upstream when the provider offers it.
+    """
+
+    TRANSPORT = "transport"
+    DISCOVERY = "discovery"
+    REGISTRATION = "registration"
+    AUTHORIZATION = "authorization"
+    CONSENT = "consent"
+    CALLBACK = "callback"
+    TOKEN = "token"
+    REVOCATION = "revocation"
 
 
 #: The scope a `READ`/`WRITE`/`ADMIN` credential policy requires. `ANONYMOUS`,
@@ -171,6 +203,9 @@ class RoutePolicy:
     #: reachable only from inside (readiness). Used by the ingress generation and
     #: T2; declared here so the rejection list is not hand-maintained.
     spellings: frozenset[str] = field(default_factory=frozenset)
+    #: The `ProtocolRole` for a route under the MCP mount or a discovery
+    #: document (#192); None for a REST route.
+    role: str | None = None
 
     @property
     def required_scope(self) -> Scope | None:
@@ -371,6 +406,18 @@ def _classify(route: EffectiveRoute) -> RoutePolicy | None:
     api_spelling = frozenset({f"/api{route.path}"})
     tags = set(route.tags)
 
+    # The root discovery documents (family 8; #192): declared by path, in both
+    # modes. The declaration pins the verbs Starlette's metadata serves, so an
+    # SDK release that adds or drops one fails the build, not the matrix.
+    if route.path in DISCOVERY_ROUTES:
+        declared = DISCOVERY_ROUTES[route.path]
+        if route.methods != declared.methods:
+            raise UndeclaredRouteError(
+                f"{route.path} serves {_method_label(route.methods)} but the registry "
+                f"declares {_method_label(declared.methods)}"
+            )
+        return declared
+
     # Liveness and readiness — declared by endpoint name; they carry no tag.
     if route.name == "healthz":
         return RoutePolicy(9, CredentialPolicy.ANONYMOUS, route.methods, spellings=api_spelling)
@@ -466,6 +513,10 @@ LOCAL_MODE_ROUTES: frozenset[str] = frozenset({"/auth/setup", "/auth/login"})
 OIDC_MODE_ROUTES: frozenset[str] = frozenset({"/auth/oidc/start", "/auth/oidc/callback"})
 
 
+#: Where the FastMCP child is mounted (§2). The registry's paths under it are
+#: the external spellings — `/mcp/authorize`, not the child's `/authorize`.
+MCP_MOUNT = "/mcp"
+
 #: The MCP mount (family 7). Declared separately because it is not an
 #: endpoint-keyed FastAPI route: bearer only, the per-tool scope check lives in
 #: the tool wrapper, and a cookie never authenticates here. `/mcp/` is the
@@ -476,19 +527,90 @@ MCP_TRANSPORT_POLICY = RoutePolicy(
     frozenset({"GET", "POST", "DELETE"}),
     _NO_STORE,
     spellings=frozenset({"/mcp/", "/mcp"}),
+    role=ProtocolRole.TRANSPORT,
 )
+
+#: Discovery documents are public by protocol and cacheable (RFC 8414 §3): the
+#: SDK sets exactly this, and the profile pins it (T10 asserts it instead of
+#: `no-store`).
+_PUBLIC_DISCOVERY = ResponseProfile(cache="public, max-age=3600")
+
+
+def _protocol(
+    path: str, methods: Iterable[str], role: str, response: ResponseProfile = _NO_STORE
+) -> RoutePolicy:
+    """A family-8 declaration: anonymous by protocol (FastMCP's handlers decide
+    everything; the REST dependency never runs), `no-store` unless said
+    otherwise, one external spelling — the path itself."""
+    return RoutePolicy(
+        8,
+        CredentialPolicy.PROTOCOL,
+        frozenset(methods),
+        response,
+        spellings=frozenset({path}),
+        role=role,
+    )
+
+
+#: The three root discovery documents (§5.5 family 8; #192), installed on the
+#: **parent** app by `main.py` from FastMCP's `get_well_known_routes(...)` for
+#: `base_url=…/mcp` — the authorization-server document (RFC 8414, path-aware),
+#: its OpenID alias (which ChatGPT web reads), and the protected-resource
+#: document (RFC 9728; the resource is `…/mcp/`, trailing slash included). The
+#: bare `/.well-known/openid-configuration` FastMCP also emits is **pruned**:
+#: its document names `…/mcp` as the issuer, which a bare-root lookup cannot
+#: match, and no client asked for it (the spike). `HEAD` is Starlette's, added
+#: beside `GET`. In local mode the same paths are registered and answer 404
+#: themselves (`mcp_oauth.NotInThisMode`). Anonymous by protocol: the
+#: pre-routing gate resolves no principal under `PROTOCOL_NAMESPACES`.
+DISCOVERY_ROUTES: dict[str, RoutePolicy] = {
+    path: _protocol(path, ("GET", "HEAD", "OPTIONS"), ProtocolRole.DISCOVERY, _PUBLIC_DISCOVERY)
+    for path in (
+        "/.well-known/oauth-authorization-server/mcp",
+        "/.well-known/openid-configuration/mcp",
+        "/.well-known/oauth-protected-resource/mcp/",
+    )
+}
+
+#: The protocol routes under the mount (§5.5 family 8; #192), by external
+#: spelling: FastMCP's handlers in OIDC mode, a 404 of their own in local mode.
+#: The verbs are the declaration — `mcp_oauth.declare_child_verbs` clears the
+#: SDK routes' own metadata so the `RouteBinding` is the one boundary, as for
+#: the transport — and every response is `no-store` (§5.6 credential leakage;
+#: T10): the consent page and its form result, the callback's redirect, the
+#: token and revocation responses, and each one's failures. `HEAD` is declared
+#: nowhere here: none of these is a document. The child's `/mcp/.well-known/*`
+#: aliases are pruned before mounting and so declared nowhere.
+MCP_OAUTH_ROUTES: dict[str, RoutePolicy] = {
+    f"{MCP_MOUNT}/register": _protocol(
+        f"{MCP_MOUNT}/register", ("POST", "OPTIONS"), ProtocolRole.REGISTRATION
+    ),
+    f"{MCP_MOUNT}/authorize": _protocol(
+        f"{MCP_MOUNT}/authorize", ("GET", "POST"), ProtocolRole.AUTHORIZATION
+    ),
+    f"{MCP_MOUNT}/consent": _protocol(
+        f"{MCP_MOUNT}/consent", ("GET", "POST"), ProtocolRole.CONSENT
+    ),
+    f"{MCP_MOUNT}/auth/callback": _protocol(
+        f"{MCP_MOUNT}/auth/callback", ("GET",), ProtocolRole.CALLBACK
+    ),
+    f"{MCP_MOUNT}/token": _protocol(f"{MCP_MOUNT}/token", ("POST", "OPTIONS"), ProtocolRole.TOKEN),
+    f"{MCP_MOUNT}/revoke": _protocol(
+        f"{MCP_MOUNT}/revoke", ("POST", "OPTIONS"), ProtocolRole.REVOCATION
+    ),
+}
 
 
 def _classify_mounted(route: MountedRoute) -> RoutePolicy | None:
-    """The policy for one route under a mount, or None if nothing declares it.
-    Today the child surface is exactly the streamable-HTTP transport at `/mcp/`;
-    #192's protocol routes (family 8) add their declarations here as they land.
-    Until then anything else under a mount is undeclared and fails the build —
-    the round-1 probe route (`/mcp/review-undeclared`) is refused here, not only
-    by the test's snapshot."""
+    """The policy for one route under a mount, or None if nothing declares it:
+    the streamable-HTTP transport at `/mcp/` (family 7) and the six protocol
+    routes of `MCP_OAUTH_ROUTES` (family 8; #192). Anything else under a mount
+    is undeclared and fails the build — the round-1 probe route
+    (`/mcp/review-undeclared`) is refused here, not only by the test's
+    snapshot."""
     if route.path == "/mcp/":
         return MCP_TRANSPORT_POLICY
-    return None
+    return MCP_OAUTH_ROUTES.get(route.path)
 
 
 # --- MCP tool scopes -------------------------------------------------------------
@@ -636,6 +758,22 @@ def build_route_index(app: FastAPI) -> RouteIndex:
             undeclared.append(label)
         else:
             target[leaf.endpoint] = policy
+    # A route under a protocol namespace is anonymous by protocol and the
+    # pre-routing gate resolves no principal there (#204, #192) — so nothing
+    # but a `PROTOCOL` route may live under one, or the gate's pass-through
+    # would let an anonymous caller past a scoped route's 401 to its own
+    # answer (the dependency would still refuse; the route's shape would show).
+    for leaf in routes:
+        policy = by_endpoint.get(leaf.endpoint)
+        if (
+            policy is not None
+            and policy.credential != CredentialPolicy.PROTOCOL
+            and any(leaf.path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES)
+        ):
+            table.conflicts.append(
+                f"{_method_label(leaf.methods)} {leaf.path} is not a protocol route "
+                "under a protocol namespace"
+            )
     if table.conflicts:
         raise DuplicateRouteError(
             "route policy registry refuses an ambiguous route graph: " + "; ".join(table.conflicts)
@@ -706,14 +844,15 @@ API_ALIAS_REJECTIONS: tuple[ApiAliasRejection, ...] = (
 )
 
 #: Root namespaces that are anonymous **by protocol** (§5.5 family 8): OAuth
-#: discovery lives under `/.well-known/`, installed by M6-7 in OIDC mode and
-#: absent — the router's 404 — in local mode. Derived from the family-8 entry
-#: above so the ingress alias rejection and the pre-routing gate (#204) read one
-#: declaration. The gate passes a request under one of these through unresolved:
-#: family 8's anonymous column says "allow, by protocol", and a 401 with a
-#: `Bearer` challenge on a discovery URL would tell an OAuth client the resource
-#: speaks bearer *there* — the packaged stack's T2 rows expect the plain 404
-#: until M6-7 (the CI Integration run on PR #205's first head found exactly that).
+#: discovery lives under `/.well-known/` — FastMCP's documents in OIDC mode, the
+#: same three paths answering 404 themselves in local mode (#192). Derived from
+#: the family-8 entry above so the ingress alias rejection and the pre-routing
+#: gate (#204) read one declaration. The gate passes a request under one of
+#: these through **unresolved**, route or no route: family 8's anonymous column
+#: says "allow, by protocol", and a 401 with a `Bearer` challenge on a discovery
+#: URL would tell an OAuth client the resource speaks bearer *there* (the CI
+#: Integration run on PR #205's first head found exactly that). The index build
+#: refuses any non-protocol route under one of these.
 PROTOCOL_NAMESPACES: tuple[str, ...] = tuple(
     rejection.namespace + "/" for rejection in API_ALIAS_REJECTIONS if rejection.family == 8
 )

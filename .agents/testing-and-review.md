@@ -190,7 +190,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 402 cases over thirty-three target files** — #86's
+- **On `main` at the time of writing: 434 cases over thirty-four target files** — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
   #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
   #118 (`ship-`), #129 (`dsp-`), #130 (`cat-`), #133 (`ref-`), #136
@@ -255,6 +255,10 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   the families with routes; f13-6's sole witness is the resolution-count test, the
   audit-row test being a control that cannot see it (Codex round 1); all 15 killed
   at fold-in, `-k f13-`)
+  and #192 (`moa-` — MCP OAuth, the M6-7 branch: `app/auth/mcp_oauth.py`,
+  `auth/mcp_auth.py`, `auth/registry.py`, `auth/prerouting.py`, `config.py` and
+  `services/oidc.py`; every kill runs against an OIDC-mode app built in-process with
+  the fake provider in `tests/oidc_fake.py`, and the suite is `tests/test_mcp_oauth.py`)
   and #191 (`oidc-` — browser OIDC, PR #209: `app/services/oidc.py`, `services/auth.py`,
   `routers/auth.py`, `auth/registry.py`, `auth/mode.py` and `main.py`; oidc-4…20
   hand-run on the branch, 21…38 from Codex round 1 — a session is authority only in the
@@ -419,6 +423,13 @@ v0.2.4.1, v0.2.4.2), so it is not a formality either.
    ```
    Then export an archive *from the container* and check its manifest carries the
    right `app_version` and schema revision. Four healthy services.
+   **Family 8 in OIDC mode is the hand-run half of T2** (#192): the CI stack is local
+   mode, so once per release run the matrix against a stack configured with a
+   provider — `uv run python ingress_matrix.py http://127.0.0.1:8080 --mode oidc
+   --public-base-url <the stack's PUBLIC_BASE_URL> --password …` — and expect zero
+   failing rows; the three discovery documents, the anonymous `/mcp/` challenge's
+   `resource_metadata` pointer and the six protocol routes' `no-store` are what it
+   proves there and cannot in local mode.
 5. **Restore the dev overlay afterwards** — the packaged stack replaced the dev
    `db` container:
    ```bash

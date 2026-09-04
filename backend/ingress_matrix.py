@@ -42,6 +42,18 @@ forms — are 404 while their canonical spellings and the positives beside them
 answer. Paths are sent verbatim over `http.client`, because an HTTP library
 that normalises `%6d` back to `m` would test the wrong spelling.
 
+Family 8 (M6-7, #192) is the mode axis: `--mode local` (the default, what CI's
+stack runs) expects the three root discovery documents and the six protocol
+routes under `/mcp/` to answer their own 404 naming the mode, the slash-less
+resource path to be nginx's 404 rather than its 301, an undeclared verb to be
+the app's 405 with `Allow`, and no `Location` anywhere; `--mode oidc`, against a
+stack configured with a provider, expects the documents to answer 200 with
+their public caching and this instance's issuer, the protocol routes to be
+FastMCP's, and the anonymous MCP challenge to carry the `resource_metadata`
+pointer. The OIDC run is the release gate's, by hand (`.agents/testing-and-
+review.md`); `--public-base-url` names the stack's `PUBLIC_BASE_URL` when it
+differs from the address the matrix connects to.
+
 Snapshots responses, never a route table (§5.5). Exit status is the number of
 failing rows; every failure is printed with what was expected.
 """
@@ -132,6 +144,12 @@ class Row:
     #: `www_authenticate_exact` is False (FastMCP appends an error description).
     www_authenticate: str | None = None
     www_authenticate_exact: bool = True
+    #: Response headers that must carry exactly these values (lower-case names):
+    #: the family-8 profile (`cache-control`) and the verb boundary (`allow`).
+    expect_headers: dict[str, str] = field(default_factory=dict)
+    #: Keys the JSON body must carry with these values — a discovery document's
+    #: `issuer`, a resource document's `resource` — beside whatever else it holds.
+    json_has: dict[str, object] | None = None
 
 
 @dataclass
@@ -180,7 +198,7 @@ def check(row: Row, resp: Response) -> list[str]:
         problems.append(f"Location {location!r}, expected {row.location!r}")
     if row.content_type and not resp.headers.get("content-type", "").startswith(row.content_type):
         problems.append(f"content-type {resp.headers.get('content-type')!r}")
-    if row.json_equals is not None or row.json_code is not None:
+    if row.json_equals is not None or row.json_code is not None or row.json_has is not None:
         try:
             parsed = resp.json()
         except ValueError:
@@ -190,6 +208,14 @@ def check(row: Row, resp: Response) -> list[str]:
             problems.append(f"body {parsed!r}, expected {row.json_equals!r}")
         if parsed is not None and row.json_code is not None and parsed.get("code") != row.json_code:
             problems.append(f"code {parsed.get('code')!r}, expected {row.json_code!r}")
+        if parsed is not None and row.json_has is not None:
+            for key, value in row.json_has.items():
+                if not isinstance(parsed, dict) or parsed.get(key) != value:
+                    got = parsed.get(key) if isinstance(parsed, dict) else parsed
+                    problems.append(f"body[{key!r}] {got!r}, expected {value!r}")
+    for name, value in row.expect_headers.items():
+        if resp.headers.get(name) != value:
+            problems.append(f"{name}: {resp.headers.get(name)!r}, expected {value!r}")
     if row.www_authenticate is not None:
         got = resp.headers.get("www-authenticate")
         matched = (
@@ -318,16 +344,180 @@ def mcp_challenge(label: str, path: str, **kw) -> Row:
     """The transport's refusal of a request with no bearer: FastMCP's 401 with
     the bare `Bearer` challenge (RFC 6750 §3.1) and an empty body — proof the
     spelling reached the MCP app (nginx's rejections are 404, the ingress
-    guard's are 403/421)."""
+    guard's are 403/421). In OIDC mode the challenge names the resource
+    document (`family_8_rows` passes the exact value)."""
     return Row(
         label,
         "POST",
         path,
         401,
         body=INITIALIZE,
-        www_authenticate="Bearer",
-        **{"headers": MCP_HEADERS, **kw},
+        **{"headers": MCP_HEADERS, "www_authenticate": "Bearer", **kw},
     )
+
+
+#: The three root discovery documents and the six protocol routes (§5.5 family
+#: 8; #192), as the registry declares them — `app/auth/registry.py`'s
+#: `DISCOVERY_ROUTES` and `MCP_OAUTH_ROUTES` — typed here as literals, the way
+#: every other row is: the matrix is the independent snapshot of the ingress
+#: surface, not a reading of the registry.
+DISCOVERY_DOCUMENTS = (
+    "/.well-known/oauth-authorization-server/mcp",
+    "/.well-known/openid-configuration/mcp",
+    "/.well-known/oauth-protected-resource/mcp/",
+)
+PROTOCOL_ROUTES: dict[str, tuple[str, str]] = {
+    # path: (a declared verb to send, the `Allow` set an undeclared verb earns)
+    "/mcp/register": ("POST", "POST, OPTIONS"),
+    "/mcp/authorize": ("GET", "GET, POST"),
+    "/mcp/consent": ("GET", "GET, POST"),
+    "/mcp/auth/callback": ("GET", "GET"),
+    "/mcp/token": ("POST", "POST, OPTIONS"),
+    "/mcp/revoke": ("POST", "POST, OPTIONS"),
+}
+NO_STORE = {"cache-control": "no-store"}
+PUBLIC = {"cache-control": "public, max-age=3600"}
+
+
+def family_8_rows(mode: str, public_base_url: str) -> list[Row]:
+    """The family-8 surface through nginx, on the mode axis (T2, #192). Local
+    mode: every path exists and answers its own 404 naming the mode. OIDC
+    mode: the documents name this instance and the protocol routes are
+    FastMCP's — driven here only as far as an anonymous caller with no
+    transaction can go (a bare authorize is its 400, a bare token request its
+    401, a bare registration its 400), each with the `no-store` profile. Both
+    modes: no `Location` anywhere, the slash-less resource path is nginx's 404
+    (its 301 suppressed), the bare OpenID document and the child aliases are
+    404, and an undeclared verb is the app's 405 with `Allow` and the profile."""
+    issuer = f"{public_base_url}/mcp"
+    rows: list[Row] = []
+    for path in DISCOVERY_DOCUMENTS:
+        if mode == "oidc":
+            has = (
+                {"resource": issuer + "/", "authorization_servers": [issuer]}
+                if path.endswith("/mcp/")
+                else {"issuer": issuer, "authorization_endpoint": f"{issuer}/authorize"}
+            )
+            rows.append(
+                Row(
+                    f"discovery {path} → 200, public",
+                    "GET",
+                    path,
+                    200,
+                    content_type="application/json",
+                    expect_headers=PUBLIC,
+                    json_has=has,
+                )
+            )
+        else:
+            rows.append(
+                Row(
+                    f"discovery {path} in local mode → 404 naming the mode",
+                    "GET",
+                    path,
+                    404,
+                    json_code="auth.not_in_this_mode",
+                    content_type="application/json",
+                )
+            )
+    rows += [
+        # nginx's own 404, not its 301 onto the slash form (§5.6: the /api
+        # redirect is the one ingress-produced redirect).
+        rejected(
+            "slash-less resource path → nginx 404, not 301",
+            "GET",
+            "/.well-known/oauth-protected-resource/mcp",
+        ),
+        rejected("bare openid-configuration (pruned)", "GET", "/.well-known/openid-configuration"),
+        rejected(
+            "bare oauth-authorization-server (pruned)",
+            "GET",
+            "/.well-known/oauth-authorization-server",
+        ),
+        rejected("root .well-known unknown", "GET", "/.well-known/anything"),
+        Row(
+            "mcp/.well-known child alias (pruned) → 404",
+            "GET",
+            "/mcp/.well-known/oauth-authorization-server",
+            404,
+        ),
+    ]
+    for path, (verb, allow) in PROTOCOL_ROUTES.items():
+        query = "?code=x&state=y" if path.endswith("callback") else ""
+        if mode == "oidc":
+            expected = {"/mcp/token": 401, "/mcp/auth/callback": 400}.get(path, 400)
+            if path == "/mcp/consent":
+                expected = 400
+            rows.append(
+                Row(
+                    f"{path} bare {verb} in OIDC mode → {expected}, no-store, no Location",
+                    verb,
+                    path + query,
+                    expected,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    body=b"",
+                    expect_headers=NO_STORE,
+                )
+            )
+        else:
+            rows.append(
+                Row(
+                    f"{path} in local mode → 404 naming the mode, no Location",
+                    verb,
+                    path + query,
+                    404,
+                    headers={"Content-Type": "application/x-www-form-urlencoded"},
+                    body=b"",
+                    json_code="auth.not_in_this_mode",
+                    content_type="application/json",
+                    expect_headers=NO_STORE,
+                )
+            )
+        rows.append(
+            Row(
+                f"{path} undeclared verb → 405 with Allow, no-store",
+                "PUT" if "PUT" not in allow else "TRACE",
+                path,
+                405,
+                expect_headers={**NO_STORE, "allow": allow},
+            )
+        )
+    rows += [
+        Row(
+            "mcp/authorize/ trailing slash → 404, no Location",
+            "GET",
+            "/mcp/authorize/",
+            404,
+        ),
+        Row(
+            "mcp/auth/callback/ trailing slash with a code → 404, no Location",
+            "GET",
+            "/mcp/auth/callback/?code=x&state=y",
+            404,
+        ),
+        Row(
+            "mcp/token/ trailing slash → 404, no Location",
+            "POST",
+            "/mcp/token/",
+            404,
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            body=b"",
+        ),
+        # The transport's challenge: bare in local mode (no document to point
+        # at); in OIDC mode it names the resource document, built from
+        # PUBLIC_BASE_URL (§5.5 family 7; T5's pointer).
+        mcp_challenge(
+            f"mcp/ initialize anonymous → 401 with{'' if mode == 'oidc' else 'out'} the pointer",
+            "/mcp/",
+            www_authenticate=(
+                f'Bearer resource_metadata="{public_base_url}'
+                '/.well-known/oauth-protected-resource/mcp/"'
+                if mode == "oidc"
+                else "Bearer"
+            ),
+        ),
+    ]
+    return rows
 
 
 def rows(
@@ -394,18 +584,8 @@ def rows(
         rejected(
             "api/mcp/.well-known alias", "GET", "/api/mcp/.well-known/oauth-authorization-server"
         ),
-        # --- the root .well-known namespace is not the SPA ---------------------------
-        rejected("root .well-known unknown", "GET", "/.well-known/anything"),
-        rejected(
-            "root .well-known discovery (404 until M6-7)",
-            "GET",
-            "/.well-known/openid-configuration/mcp",
-        ),
-        rejected(
-            "root .well-known resource (404 until M6-7)",
-            "GET",
-            "/.well-known/oauth-protected-resource/mcp/",
-        ),
+        # --- the root .well-known namespace is not the SPA: family 8's rows are
+        # --- `family_8_rows`, on the mode axis ----------------------------------------
         # --- nginx's one redirect ---------------------------------------------------
         Row(
             "api?x=1 relative 301",
@@ -818,6 +998,17 @@ def main(argv: list[str]) -> int:
         default=None,
         help="write the minted write token to this file (mode 0600) and leave it live",
     )
+    parser.add_argument(
+        "--mode",
+        choices=("local", "oidc"),
+        default="local",
+        help="the stack's AUTH_MODE: decides what family 8 (MCP OAuth) is expected to answer",
+    )
+    parser.add_argument(
+        "--public-base-url",
+        default=None,
+        help="the stack's PUBLIC_BASE_URL when it differs from BASE_URL (OIDC mode names it)",
+    )
     args = parser.parse_args(argv)
     if args.setup_token is not None and args.password is None:
         parser.error("--setup-token needs --password (the password the claim sets)")
@@ -846,6 +1037,8 @@ def main(argv: list[str]) -> int:
             print(f"       {problem}")
 
     for row in rows(args.allowed_host, credential, tokens):
+        run(row)
+    for row in family_8_rows(args.mode, (args.public_base_url or args.base).rstrip("/")):
         run(row)
     for row, resp in write_rows(args.base, args.allowed_host, credential):
         run(row, resp)

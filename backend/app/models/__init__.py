@@ -1,10 +1,12 @@
 from app.models.auth import (
+    MCP_OAUTH_STATE_TABLE,
     AuditEvent,
     Credential,
     OidcLogin,
     Owner,
     PersonalAccessToken,
     Session,
+    mcp_oauth_state,
 )
 from app.models.base import Base
 from app.models.catalog import Consumable, DisplayItem, Tool, Upgrade, UpgradeApplication
@@ -24,6 +26,7 @@ __all__ = [
     "Kit",
     "KitPhoto",
     "KitStatus",
+    "MCP_OAUTH_STATE_TABLE",
     "OidcLogin",
     "Order",
     "OrderItem",
@@ -34,4 +37,5 @@ __all__ = [
     "Tool",
     "Upgrade",
     "UpgradeApplication",
+    "mcp_oauth_state",
 ]

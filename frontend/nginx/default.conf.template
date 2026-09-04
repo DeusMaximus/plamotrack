@@ -9,6 +9,16 @@
 # assembled by 15-plamotrack-server-names.envsh from PUBLIC_BASE_URL, WEB_BIND and
 # ALLOWED_HOSTS — the same inputs the API derives its allowlist from.
 
+# Per-client rate limit for the OAuth endpoints an unauthenticated party can
+# drive (§5.5 family 8, §5.6 denial of service; M6-7): the authorization
+# endpoint fetches a CIMD client's metadata document from a client-chosen URL,
+# registration writes a row, the token endpoint takes guesses at codes. Keyed
+# on the peer address — behind a further proxy that is the proxy's, which is a
+# coarser limit, not a bypass. The zone has to sit at http level, which is
+# where conf.d/ files are included.
+limit_req_zone $binary_remote_addr zone=plamotrack_oauth:1m rate=10r/s;
+limit_req_status 429;
+
 # Default deny (§5.6, Host spoofing and DNS rebinding). A request whose Host is
 # not a name this instance answers to is refused here, before any location is
 # considered and before it reaches the API process; the app repeats the check
@@ -120,9 +130,18 @@ server {
     }
 
     # OAuth discovery (§5.5, family 8) lives at the root, installed on the API by
-    # M6-7; until then the API answers these 404. Exact locations, so nothing
-    # else under /.well-known/ is ever handed the SPA's index.html as a 200.
+    # M6-7 — three documents in OIDC mode, the same three paths answering 404
+    # themselves in local mode. Exact locations, so nothing else under
+    # /.well-known/ is ever handed the SPA's index.html as a 200.
     location ^~ /.well-known/ {
+        return 404;
+    }
+    # The resource is `…/mcp/`, slash included, and clients ask for exactly that
+    # (the pointer in the 401 challenge names it). Without this block nginx
+    # answers the slash-less spelling with its own 301 onto the proxied location
+    # — a second ingress-produced redirect the design allows only for /api
+    # (§5.6, proxy trust; the #190 spike measured it), so it is 404 instead.
+    location = /.well-known/oauth-protected-resource/mcp {
         return 404;
     }
     location = /.well-known/oauth-protected-resource/mcp/ {
@@ -172,6 +191,39 @@ server {
         proxy_http_version 1.1;
         proxy_buffering off;
         proxy_set_header Host $http_host;
+    }
+
+    # The three OAuth endpoints an unauthenticated party can drive (§5.5
+    # family 8): rate-limited per peer, then proxied exactly as /mcp/ below —
+    # nginx does not inherit proxy_pass into a nested location, so the block
+    # repeats. The consent page, the callback and revocation are reached only
+    # with a transaction or a token in hand and ride the generic location.
+    location = /mcp/authorize {
+        limit_req zone=plamotrack_oauth burst=20 nodelay;
+        set $upstream http://api:8000;
+        proxy_pass $upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    location = /mcp/token {
+        limit_req zone=plamotrack_oauth burst=20 nodelay;
+        set $upstream http://api:8000;
+        proxy_pass $upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    location = /mcp/register {
+        limit_req zone=plamotrack_oauth burst=20 nodelay;
+        set $upstream http://api:8000;
+        proxy_pass $upstream;
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
     # Streamable HTTP. proxy_buffering must stay off — with it on, nginx holds

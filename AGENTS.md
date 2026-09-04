@@ -398,6 +398,35 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     (`PROTOCOL_NAMESPACES`, one declaration with the ingress rejection) is the
     router's 404 for everyone, and a new mutating middleware or a change
     to the resolver owes the once-per-request test (`tests/test_auth_unrouted.py`).
+    **MCP OAuth landed with M6-7 (#192):** in OIDC mode the `/mcp` mount is built with
+    `PlamotrackOAuthProxy` (`app/auth/mcp_oauth.py`) — FastMCP's `OAuthProxy` in front
+    of the **same provider and client** as the browser login, every plamotrack rule on a
+    documented extension point: the upstream identity must be the bound owner, checked
+    **at issuance** (`exchange_authorization_code` — a stranger gets `invalid_grant`, an
+    `auth.mcp_identity_refused` row and nothing minted) and on every request (the token
+    verifier, over the **id_token** through the same `validate_id_token_claims`, with
+    `nonce=None`); every issued token maps to a **fixed** `collection:read` +
+    `collection:write` by its `kind` (the OAuth scope vocabulary is the provider's,
+    `openid`), never `instance:admin`; the mount requires no OAuth scope, so a personal
+    access token stays valid on `/mcp/` in that mode; the redirect-URI binding is per
+    client kind — a DCR client to its registration (`BoundDCRClient`: exact, loopback
+    port free, *then* the operator allowlist, which FastMCP alone would check instead),
+    the synthesised upstream-id client refused, a CIMD client (Claude web, ChatGPT web)
+    by its document — and the allowlist, when set, applies to every kind. The upstream
+    endpoints resolve **lazily** from `OidcProvider.metadata()` at each entry point, so a
+    provider down at start never fails the start. State lives in `mcp_oauth_state`, a
+    table Alembic owns (never portable), Fernet-encrypted under a key derived from
+    `MCP_OAUTH_SIGNING_KEY`, which OIDC mode requires — as it now requires an **https or
+    loopback** `PUBLIC_BASE_URL`, the MCP OAuth issuer being `<PUBLIC_BASE_URL>/mcp` (RFC
+    8414, enforced by the SDK). Family 8 is declared in the registry by **path**
+    (`DISCOVERY_ROUTES`, `MCP_OAUTH_ROUTES`, each with a `ProtocolRole`), because the
+    same nine paths exist in both modes — FastMCP's handlers in OIDC mode, a 404 of
+    their own naming the mode in local mode — with the child routes' method metadata
+    cleared so the `RouteBinding` is their verb boundary too; the pre-routing gate passes
+    the whole `/.well-known/` namespace through unresolved, and the index build refuses
+    any non-protocol route under it. A change to any of this owes
+    `tests/test_mcp_oauth.py` (the fake provider is `tests/oidc_fake.py`) and, for the
+    ingress half, `ingress_matrix.py --mode oidc` against a packaged stack with a provider.
 
 ## Fixing a defect: sweep the class first
 

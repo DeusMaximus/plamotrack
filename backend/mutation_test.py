@@ -130,6 +130,8 @@ AUTH_MIG = VERS / "20260903_f1058c5de0f3_auth_foundation_tables_m6_2_187.py"
 OIDC_SVC = ROOT / "app/services/oidc.py"
 AUTH_ROUTER = ROOT / "app/routers/auth.py"
 MODE = ROOT / "app/auth/mode.py"
+# #192 (M6-7): the moa- set — MCP OAuth.
+MCP_OAUTH = ROOT / "app/auth/mcp_oauth.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -3290,6 +3292,235 @@ CASES = [
         "    return isinstance(value, float)\n",
         "exp-nan",
     ),
+    # --- #192 (M6-7): MCP OAuth — the moa- set ------------------------------------------
+    # The proxy's policy on FastMCP's extension points (app/auth/mcp_oauth.py), the
+    # family-8 registry declarations, the pre-routing gate's namespace rule, the
+    # principal mapping and the settings contract. Every kill runs against an
+    # OIDC-mode app built in-process with the fake provider (tests/oidc_fake.py).
+    (
+        "moa-1. the synthesised upstream-id client admitted",
+        MCP_OAUTH,
+        "        if client_id == self._upstream_client_id:\n            # The synthesised",
+        "        if False:\n            # The synthesised",
+        "synthesised_upstream_id_client_is_refused",
+    ),
+    (
+        "moa-2. a DCR client not wrapped in the registration binding",
+        MCP_OAUTH,
+        "        return BoundDCRClient(**client.model_dump(), allow_unregistered_redirect_uris=False)",
+        "        return client",
+        "allowlist_narrows_registration_and_keeps_the_registration_binding",
+    ),
+    (
+        "moa-3. the registration check inside BoundDCRClient removed",
+        MCP_OAUTH,
+        "        if redirect_uri is not None and self.cimd_document is None:\n            if not _matches_registered_redirect_uri(redirect_uri, self.redirect_uris):",
+        "        if False:\n            if not _matches_registered_redirect_uri(redirect_uri, self.redirect_uris):",
+        "allowlist_narrows_registration_and_keeps_the_registration_binding",
+    ),
+    (
+        "moa-4. the owner check at issuance skipped",
+        MCP_OAUTH,
+        "        if verdict.token is None:\n            # Consume the code first",
+        "        if False:\n            # Consume the code first",
+        "stranger_is_refused_at_the_token_endpoint or unbound_instance_issues_nothing",
+    ),
+    (
+        "moa-5. the binding comparison always passes",
+        MCP_OAUTH,
+        '        if bound != (provider.issuer, subject):\n            return OwnerVerdict(None, "identity", subject)',
+        '        if False:\n            return OwnerVerdict(None, "identity", subject)',
+        "stranger_is_refused_at_the_token_endpoint or rebind_refuses_an_issued_token",
+    ),
+    (
+        "moa-6. the verifier sees the upstream access token, not the id_token",
+        MCP_OAUTH,
+        '        return upstream_token_set.raw_token_data.get("id_token")',
+        "        return upstream_token_set.access_token",
+        "owner_links_a_client_and_the_token_drives_the_tools",
+    ),
+    (
+        "moa-7. a personal access token no longer routed to its verifier on the mount",
+        MCP_OAUTH,
+        '        if token.startswith(f"{token_format.TOKEN_KIND}_"):',
+        "        if False:",
+        "personal_access_token_still_works_on_the_mount_in_oidc_mode",
+    ),
+    (
+        "moa-8. the mcp grant mapped read-only",
+        MCP_AUTH,
+        '        return mcp(write=True, subject=token.claims.get("sub"))',
+        '        return mcp(write=False, subject=token.claims.get("sub"))',
+        "owner_links_a_client_and_the_token_drives_the_tools or mcp_kind_maps_to_the_fixed_scopes",
+    ),
+    (
+        "moa-9. any kind maps to the mcp principal",
+        MCP_AUTH,
+        "    if kind == PrincipalKind.MCP.value:\n        return mcp(",
+        "    if True:\n        return mcp(",
+        "mcp_kind_maps_to_the_fixed_scopes_and_nothing_else_is_a_principal",
+    ),
+    (
+        "moa-10. the identity refusal not audited as one",
+        MCP_OAUTH,
+        "                await self._record(\n                    audit.MCP_IDENTITY_REFUSED,",
+        "                await self._record(\n                    audit.OIDC_LOGIN_FAILED,",
+        "stranger_is_refused_at_the_token_endpoint",
+    ),
+    (
+        "moa-11. the grant not audited as one",
+        MCP_OAUTH,
+        "        await self._record(\n            audit.MCP_GRANT_ISSUED,",
+        "        await self._record(\n            audit.OIDC_LOGIN_FAILED,",
+        "owner_links_a_client_and_the_token_drives_the_tools",
+    ),
+    (
+        "moa-12. authorize does not resolve the upstream endpoints",
+        MCP_OAUTH,
+        "    async def authorize(self, client, params) -> str:\n        try:\n            await self._resolve_upstream()",
+        "    async def authorize(self, client, params) -> str:\n        try:\n            pass",
+        "upstream_authorization_request_is_built_from_configuration",
+    ),
+    (
+        "moa-13. a provider outage at authorize escapes as an exception",
+        MCP_OAUTH,
+        '        except UnavailableError as exc:\n            raise AuthorizeError(\n                error="temporarily_unavailable", error_description=_PROVIDER_UNAVAILABLE\n            ) from exc',
+        "        except UnavailableError as exc:\n            raise exc",
+        "provider_down_at_authorize_is_temporarily_unavailable",
+    ),
+    (
+        "moa-14. the callback does not resolve the upstream endpoints",
+        MCP_OAUTH,
+        "    async def _handle_idp_callback(self, request: Request):\n        try:\n            await self._resolve_upstream()",
+        "    async def _handle_idp_callback(self, request: Request):\n        try:\n            pass",
+        "transaction_started_before_a_restart_completes_after_it",
+    ),
+    (
+        "moa-15. the refresh exchange does not resolve the upstream endpoints",
+        MCP_OAUTH,
+        '        try:\n            await self._resolve_upstream()\n        except UnavailableError as exc:\n            raise TokenError("invalid_request", _PROVIDER_UNAVAILABLE) from exc',
+        '        try:\n            pass\n        except UnavailableError as exc:\n            raise TokenError("invalid_request", _PROVIDER_UNAVAILABLE) from exc',
+        "refresh_can_be_the_first_thing_a_fresh_process_hears",
+    ),
+    (
+        "moa-17. the child's well-known aliases not pruned",
+        MCP_OAUTH,
+        '        if not (isinstance(route, Route) and route.path.startswith("/.well-known/"))',
+        "        if True",
+        "mounted_surface_in_oidc_mode_matches_its_snapshot",
+    ),
+    (
+        "moa-18. the protocol routes keep the SDK's own method metadata",
+        MCP_OAUTH,
+        "        if isinstance(route, Route) and MCP_MOUNT + route.path in MCP_OAUTH_ROUTES:\n            route.methods = None",
+        "        if False:\n            route.methods = None",
+        "each_protocol_route_accepts_exactly_its_declared_verbs",
+    ),
+    (
+        "moa-19. the bare OpenID document installed at the root",
+        MCP_OAUTH,
+        "        if route.path not in DISCOVERY_ROUTES:\n            continue",
+        "        if False:\n            continue",
+        "mounted_surface_in_oidc_mode_matches_its_snapshot or three_root_documents_name_this_instance",
+    ),
+    (
+        "moa-20. the local-mode stub answers 200",
+        MCP_OAUTH,
+        "            status_code=404,\n        )\n        await response(scope, receive, send)",
+        "            status_code=200,\n        )\n        await response(scope, receive, send)",
+        "every_family_8_path_is_404_in_local_mode",
+    ),
+    (
+        "moa-21. no protocol routes registered in local mode",
+        MCP_OAUTH,
+        "    return [Route(_child_path(path), endpoint=NotInThisMode(path)) for path in MCP_OAUTH_ROUTES]",
+        "    return []",
+        "mounted_surface_matches_the_snapshot or every_family_8_path_is_404_in_local_mode",
+    ),
+    (
+        "moa-22. the storage key is the signing key",
+        MCP_OAUTH,
+        "    return base64.urlsafe_b64encode(derived)",
+        "    return base64.urlsafe_b64encode(signing_key)",
+        "storage_key_differs_from_the_signing_key",
+    ),
+    (
+        "moa-23. the audit rows name the wrong route",
+        MCP_OAUTH,
+        '                target=f"{MCP_MOUNT}/token",',
+        '                target=f"{MCP_MOUNT}/authorize",',
+        "id_token_that_fails_the_claim_contract_issues_nothing or owner_links_a_client",
+    ),
+    (
+        "moa-24. discovery declared no-store",
+        REG,
+        '    path: _protocol(path, ("GET", "HEAD", "OPTIONS"), ProtocolRole.DISCOVERY, _PUBLIC_DISCOVERY)',
+        '    path: _protocol(path, ("GET", "HEAD", "OPTIONS"), ProtocolRole.DISCOVERY)',
+        "three_root_documents_name_this_instance or every_transaction_and_credential_response",
+    ),
+    (
+        "moa-25. the authorization endpoint declared with PUT",
+        REG,
+        '        f"{MCP_MOUNT}/authorize", ("GET", "POST"), ProtocolRole.AUTHORIZATION',
+        '        f"{MCP_MOUNT}/authorize", ("GET", "POST", "PUT"), ProtocolRole.AUTHORIZATION',
+        "each_protocol_route_accepts_exactly_its_declared_verbs",
+    ),
+    (
+        "moa-26. the gate resolves a principal under the protocol namespace",
+        PRE,
+        "        if any(route_path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES):\n            # Family 8's namespace is the protocol's, route or no route (#192):",
+        "        if False:\n            # Family 8's namespace is the protocol's, route or no route (#192):",
+        "discovery_resolves_no_principal or gate_and_the_router_agree",
+    ),
+    (
+        "moa-27. a scoped route admitted under the protocol namespace",
+        REG,
+        "            and policy.credential != CredentialPolicy.PROTOCOL\n            and any(leaf.path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES)",
+        "            and False",
+        "non_protocol_route_under_the_protocol_namespace_fails_the_build",
+    ),
+    (
+        "moa-28. a discovery route's verbs not pinned",
+        REG,
+        "        if route.methods != declared.methods:\n            raise UndeclaredRouteError(",
+        "        if False:\n            raise UndeclaredRouteError(",
+        "discovery_route_serving_other_verbs_than_declared_fails_the_build",
+    ),
+    (
+        "moa-29. the signing key optional in OIDC mode",
+        CFG,
+        '                ("MCP_OAUTH_SIGNING_KEY", self.mcp_oauth_signing_key),\n',
+        "",
+        "oidc_mode_requires_the_signing_key_and_an_https_or_loopback_base_url",
+    ),
+    (
+        "moa-30. a plain-http LAN base URL admitted in OIDC mode",
+        CFG,
+        '        if parsed.scheme != "https" and parsed.hostname not in MCP_OAUTH_PLAIN_HTTP_HOSTS:',
+        "        if False:",
+        "oidc_mode_requires_the_signing_key_and_an_https_or_loopback_base_url",
+    ),
+    (
+        "moa-31. the signing key's shape not checked",
+        CFG,
+        '        if not re.fullmatch(r"[0-9a-f]{64}", value):',
+        "        if False:",
+        "oidc_mode_requires_the_signing_key_and_an_https_or_loopback_base_url",
+    ),
+    (
+        "moa-32. the nonce check no longer skippable — the proxy's tokens refused",
+        OIDC_SVC,
+        '    if nonce is None:\n        return\n    token_nonce = claims.get("nonce")',
+        '    token_nonce = claims.get("nonce")',
+        "owner_links_a_client_and_the_token_drives_the_tools",
+    ),
+    (
+        "moa-33. the nonce check skipped for the browser login too",
+        OIDC_SVC,
+        '    if nonce is None:\n        return\n    token_nonce = claims.get("nonce")',
+        '    if True:\n        return\n    token_nonce = claims.get("nonce")',
+        "id_token_that_fails_a_check_opens_no_session and nonce",
+    ),
 ]
 
 
@@ -4278,6 +4509,9 @@ TEST_FILES = [
     # witness in test_authorization.py (already listed).
     "tests/test_auth_unrouted.py",
     "tests/test_auth_oidc.py",
+    # The #192 (moa-) set: MCP OAuth — every moa- kill lives here or in the
+    # route-policy / unrouted / oidc suites above.
+    "tests/test_mcp_oauth.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.

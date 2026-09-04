@@ -432,6 +432,20 @@ apply, so a snapshot there would make every apply fail with
 The snapshot is fixed by the transaction's *first SQL statement*, not request entry.
 → 2026-08-16 (#48)
 
+### Building on the parent of the class the spike measured
+The #190 spike measured FastMCP's `OIDCProxy`; #192 built on its parent `OAuthProxy`,
+because `OIDCProxy` fetches the provider's discovery document synchronously at
+construction and a provider down at start would have failed the start (§5.6 safe
+failure). The parent verifies the *upstream access token*; the child's two small
+hooks (`_get_verification_token`, `_uses_alternate_verification`) are what make the
+**id_token** the verified token — the whole basis of the owner binding — and the
+first head silently lost both: every token the proxy issued was refused at the first
+MCP request. The full-link test caught it (`401 == 200` on initialize) before any
+review did. When you subclass one level up from the class the evidence was taken on,
+enumerate the overrides the measured class carried and re-provide each one
+deliberately, or the measured behaviour is gone without a line of the diff saying so.
+→ 2026-09-05 (#192)
+
 ### Deterministic lock ordering, not delta aggregation, fixes the deadlock
 #36 proposed aggregating per-target deltas in `update_order`; the fix was
 `_lock_catalog_targets`, draining an order write's catalog locks up front in uuid

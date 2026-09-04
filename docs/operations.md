@@ -80,6 +80,12 @@ If the provider is down, new sign-ins fail with a clear message; sessions that
 already exist, access tokens and MCP clients keep working. The mode never falls
 back to a password on its own.
 
+OIDC mode needs an **https** `PUBLIC_BASE_URL` — TLS in front of the stack — or
+`localhost` / `127.0.0.1` while developing. The reason is the MCP side below: in
+this mode the instance is an OAuth authorization server at `<PUBLIC_BASE_URL>/mcp`,
+which the standard requires to be https. A plain-http address on your LAN stays on
+local mode.
+
 **Lost the identity-provider account, or changing provider?** From inside the
 API container:
 
@@ -90,7 +96,43 @@ docker compose exec api python -m app.auth.recovery rebind-oidc
 It clears the bound identity and signs every browser out. Restart the API
 (`docker compose restart api`), read the new setup token from its log, and sign
 in at the provider — that account is the owner from then on. Access tokens are
-untouched; revoke any you no longer trust from Settings.
+untouched; revoke any you no longer trust from Settings. MCP clients linked
+through the provider stop working at their next request until the new owner
+signs in through them again.
+
+### MCP clients that sign in through the provider (OIDC mode)
+
+In OIDC mode, MCP clients that speak OAuth — **Claude web, ChatGPT web, MCP
+Inspector**, any client that can register itself — connect to
+`<PUBLIC_BASE_URL>/mcp/` with no token pasted: they discover the instance as an
+OAuth server, show you a consent page, send you to the same identity provider
+the browser login uses, and receive access tokens of their own. Two more lines
+in `.env`, and the provider's client needs a second redirect URI:
+
+```ini
+MCP_OAUTH_SIGNING_KEY=…                          # 32 random bytes as 64 hex characters: openssl rand -hex 32
+# MCP_OAUTH_ALLOWED_REDIRECT_URIS=…              # optional, see .env.example before setting it
+```
+
+Register `<PUBLIC_BASE_URL>/mcp/auth/callback` with the provider beside the browser
+callback. Then add the connector in the client — Claude web and ChatGPT web take the
+URL `<PUBLIC_BASE_URL>/mcp/` in their custom-connector dialog and handle the rest —
+and sign in when asked. Only the **bound owner's** account is accepted: anyone else
+who signs in at the provider is refused before any token is issued, and the refusal
+is recorded in the audit log (`auth.mcp_identity_refused`). Every token a client
+receives acts as the owner with read *and* write access to the collection — never
+the instance settings, imports or token management, which stay with the browser —
+so link a client only where you would paste a read-and-write access token.
+Personal access tokens keep working on `/mcp/` in this mode too; a client that can
+send a header needs nothing new.
+
+What the signing key is: installation identity, like `PUBLIC_BASE_URL`. Rotate it
+(or change `PUBLIC_BASE_URL`) and every linked client asks you to sign in again;
+nothing else is lost. The proxy's state — registered clients, the provider's
+tokens, encrypted — lives in the database (`mcp_oauth_state`), so a database
+backup plus `.env` is the whole backup and there is no second volume. Restore a
+dump taken before a client was linked, or lose the key, and that client relinks;
+data, browser sessions and access tokens are untouched.
 
 ## Access tokens
 
@@ -146,7 +188,9 @@ MCP at `http://localhost:8080/mcp/`.
 Two kinds, and they answer different questions.
 
 **`pg_dump` — exact restore.** Everything, byte for byte, including ids and
-timestamps. This is your disaster-recovery copy.
+timestamps — the browser sessions, the access-token digests and, in OIDC mode, the
+MCP clients' encrypted OAuth state, which lives in the same database. This is your
+disaster-recovery copy; with `.env` beside it, it is the whole backup.
 
 ```bash
 docker compose exec -T db sh -c \
@@ -271,10 +315,12 @@ the API. `.env.example` documents every key. The ones worth knowing:
 | `WEB_BIND` | `127.0.0.1` | The interface the stack listens on. Leave it on loopback unless you have read [Reaching it from another machine](#reaching-it-from-another-machine). A non-loopback address here is also a name the instance answers to. |
 | `WEB_PORT` | `8080` | Host port for the UI, `/api`, and `/mcp`. |
 | `ALLOWED_HOSTS` | — | Names you reach the instance by, beyond `localhost`, `127.0.0.1`, `[::1]`, `WEB_BIND` and the host of `PUBLIC_BASE_URL`: a LAN hostname, a container name, what a proxy forwards. Comma-separated, no ports; `*.home.arpa` wildcards work. Any other name gets **421** — [details below](#names-it-answers-to). |
-| `PUBLIC_BASE_URL` | — | The address a browser uses, when it isn't `http://localhost:<WEB_PORT>`: scheme, host and port, nothing after. Its host is allowed automatically; behind an HTTPS proxy it is what makes the browser's `https://` origin the instance's own, and its scheme decides whether the session cookie is `Secure`. In OIDC mode it is required — the provider's callback is built from it — and the MCP OAuth path (later in M6) will bind to it too, so choose the name you mean to keep. |
+| `PUBLIC_BASE_URL` | — | The address a browser uses, when it isn't `http://localhost:<WEB_PORT>`: scheme, host and port, nothing after. Its host is allowed automatically; behind an HTTPS proxy it is what makes the browser's `https://` origin the instance's own, and its scheme decides whether the session cookie is `Secure`. In OIDC mode it is required and must be `https` (or `localhost` / `127.0.0.1`): the provider's callbacks and the MCP OAuth issuer (`<PUBLIC_BASE_URL>/mcp`) are built from it, and linked MCP clients are bound to it, so choose the name you mean to keep. |
 | `AUTH_MODE` | `local` | `local`: the setup token and a password. `oidc`: a sign-in at an OpenID Connect provider — see [Signing in through an identity provider](#signing-in-through-an-identity-provider-oidc-mode). Mutually exclusive; there is no "off". |
 | `OIDC_ISSUER` | — | OIDC mode. The provider's issuer URL, exactly as its discovery document states it (`https://accounts.google.com`, `https://keycloak.example/realms/home`). `https`, unless the provider is on loopback. |
-| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | OIDC mode. The client registered with the provider, whose authorised redirect URI is `<PUBLIC_BASE_URL>/api/auth/oidc/callback`. |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | — | OIDC mode. The client registered with the provider, whose authorised redirect URIs are `<PUBLIC_BASE_URL>/api/auth/oidc/callback` (the browser) and `<PUBLIC_BASE_URL>/mcp/auth/callback` (MCP clients). |
+| `MCP_OAUTH_SIGNING_KEY` | — | OIDC mode, required. 32 random bytes as 64 hex characters (`openssl rand -hex 32`): signs the tokens MCP clients receive and encrypts the proxy's state in the database. Installation identity — rotating it means every MCP client re-authorises. See [MCP clients that sign in through the provider](#mcp-clients-that-sign-in-through-the-provider-oidc-mode). |
+| `MCP_OAUTH_ALLOWED_REDIRECT_URIS` | — | OIDC mode, optional. Comma-separated patterns a dynamically registering MCP client may use as its callback (`http://localhost:*`). Narrows registration, never replaces it; applies to every client kind when set, so it must also admit the web clients' callbacks. Leave unset unless you have a reason. |
 | `ALLOWED_ORIGINS` | — | Extra browser origins allowed to write, beyond the instance's own and loopback ones. Rarely needed. |
 | `TRUSTED_PROXIES` | — | IPs or CIDRs of a reverse proxy whose `X-Forwarded-For` is believed for the client's address. Nothing reads that address in this release; leave it unset. |
 | `REFERENCE_CURRENCY` | `AUD` | Your currency — **first-run bootstrap only**. The migration seeds it into the instance settings; after that the database row is the setting (`PATCH /settings`), and editing the env var does nothing. Changing the setting affects new entries only — stored snapshots keep the currency they were recorded in. |

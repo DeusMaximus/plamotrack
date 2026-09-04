@@ -41,6 +41,70 @@ Template:
 
 ---
 
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) MCP OAuth built on `feature/m6-7-mcp-oauth`; UNCOMMITTED, awaiting the owner's commit + PR
+
+- **Done:** the whole of #192 on the branch, uncommitted (AGENTS.md: commit only when asked).
+  `app/auth/mcp_oauth.py` — `PlamotrackOAuthProxy` over FastMCP's `OAuthProxy` (not `OIDCProxy`,
+  whose constructor fetches discovery synchronously): owner binding **at issuance**
+  (`exchange_authorization_code` → `invalid_grant` + `auth.mcp_identity_refused`, nothing minted)
+  and per request (`OwnerBoundIdTokenVerifier`: the id_token through `validate_id_token_claims`
+  with the new `nonce=None`, then `(iss, sub)` against the owner row); the two `OIDCProxy` hooks
+  that make the id_token the verified token; lazy upstream endpoints from `OidcProvider.metadata()`
+  at authorize/callback/refresh/revoke; `BoundDCRClient` (registration *then* allowlist), the
+  upstream-id client refused, CIMD by its document; PATs routed to their verifier on the OIDC-mode
+  mount (the mount requires no OAuth scope; `valid_scopes=["openid"]` is what is advertised); the
+  Postgres state store (`mcp_oauth_state`, migration **`d5e9362140ea`**, Alembic-owned DDL, Fernet
+  under an HKDF of `MCP_OAUTH_SIGNING_KEY`); root discovery routes on the parent (bare OpenID pruned),
+  `NotInThisMode` stubs for the nine paths in local mode, `declare_child_verbs`. Registry:
+  `ProtocolRole`, `RoutePolicy.role`, `DISCOVERY_ROUTES` + `MCP_OAUTH_ROUTES` by path, the
+  protocol-namespace build check; the gate decides `/.well-known/` first (no principal resolved,
+  route or no route). Settings: `MCP_OAUTH_SIGNING_KEY` (64 hex, required in OIDC mode),
+  `MCP_OAUTH_ALLOWED_REDIRECT_URIS`; **OIDC mode now requires an https or loopback
+  `PUBLIC_BASE_URL`** (RFC 8414 via the SDK). Audit: `auth.mcp_grant_issued`,
+  `auth.mcp_identity_refused`. nginx: slash-less PRM path → 404 (not 301), `limit_req` on
+  authorize/token/register. `ingress_matrix.py --mode local|oidc` + `family_8_rows` (24 rows);
+  run green (0 failing) against the packaged stack built from this branch, local mode. Docs:
+  design §5 header/§5.5/§5.6/§5.8/§5.9 items 5+7 ("Shipped" calls (a)–(i)), operations (new MCP
+  OAuth section, config rows, backup note), `.env.example`, README, AGENTS.md rule 13,
+  `.agents/testing-and-review.md` (OIDC matrix as a release-gate step; moa- paragraph, 434/34),
+  `.agents/lessons.md` ("Building on the parent of the class the spike measured").
+- **Decisions:** in the PR body draft (`/private/tmp/claude-501/-Users-tlgja-Code-plamotrack/7973cb93-c332-4a35-89ab-976d6ea434b4/scratchpad/pr_body.md`, 12 deliberate calls) and design
+  §5.9 item 7 — notably: https-or-loopback in OIDC mode rather than a degraded third state; the
+  allowlist applies to **every** client kind when set (FastMCP re-checks it at the callback where
+  the kind is unknown), documented rather than special-cased; `HEAD` declared on no protocol route;
+  `access_type=offline&prompt=consent` forwarded to every provider; `/revoke` registered
+  unconditionally. Reviewer for the PR: **Codex** (M6 security work, per the roster).
+- **State:** backend **2024 green** (`tests/test_mcp_oauth.py` **69**, fake provider
+  moved to `tests/oidc_fake.py`, OIDC tests' `BASE` → `http://localhost`), lint + format clean,
+  `render_ingress.py --check` clean, frontend untouched (nginx template only). **32 `moa-` mutants
+  queued in `mutation_test.py` and hand-run: 32/32 killed** — three first-pass survivors were test
+  gaps, now tests (moa-1 the upstream-id refusal shadowed by the registration binding on loopback
+  rows; moa-15 no refresh-first-in-a-fresh-process test; moa-25 the verbs test read its expectation
+  off the registry). Dev DB at `d5e9362140ea` (the packaged migrate ran it); its owner is still
+  bound to the Keycloak `owner`; **the live run against the real Keycloak is done and green**:
+  the API source-run in OIDC mode on `http://127.0.0.1:8000` (a scratchpad runner for this
+  session; `.claude/launch.json` reverted), a DCR client registered, authorize → consent → the
+  owner's Keycloak sign-in → callback → `POST /mcp/token` 200 (`expires_in` 3600, `scope`
+  `openid profile email`, `no-store`) → MCP initialize 200 → `list_kit_series` answered → the same
+  token on `GET /kits` 401 `invalid_token` → refresh 200 → one `auth.mcp_grant_issued` row
+  (`mcp:write`, `client=<dcr id>`), five state collections in `mcp_oauth_state`. One trap met on
+  the way, worth knowing: the consent transaction lives 15 minutes, so a sign-in long after
+  "Allow" is FastMCP's "Invalid or expired authorization transaction" 400 at the callback —
+  start over from `/mcp/authorize`, not from the provider. Packaged `api`/`web` containers stopped, dev `db` up. Keycloak
+  spike container up. LXC untouched (**stays put until M6 is finished**, owner 03/09).
+- **Next:** (1) owner: commit the branch, push, open the PR from `pr_body.md` (fill the head sha;
+  the mutant table is the 32 `moa-` tuples in `mutation_test.py`), then a **Codex round 1** brief
+  per `.agents/review-brief.md` — where to push: call 1 (https-or-loopback), call 3 (allowlist on
+  every kind), the `_handle_idp_callback` private override, the `mcp_oauth_state` DDL parity with
+  the store's, the mount requiring no scope; (2) the live Keycloak run's output above is what the PR body's
+  "Live check" reports; the `stranger` refusal path was not driven live (the suite covers it);
+  (3) after merge nothing to fold in — the tuples are already tracked; (4)
+  #193 audit/rate limiting (the app's budget for `/mcp/token`; the ingress `limit_req` landed
+  here); (5) M6-9 TLS docs, the M6 release (gate now includes `ingress_matrix.py --mode oidc`),
+  then the LXC upgrade. Release-notes items so far: `AUTH_MODE=oidc`; the mode switch sign-out;
+  the setup token once on local→oidc; `session.auth_mode`; **`MCP_OAUTH_SIGNING_KEY` required in
+  OIDC mode and OIDC mode needs an https `PUBLIC_BASE_URL`**; MCP clients can link by signing in.
+
 ## 2026-09-05 — Claude Code (Fable 5.1) — #191 (M6-6) MERGED (PR #209 → `b84f757`, Codex round 3 GO); oidc- fold-in MERGED (PR #211 → `ffaddd4`)
 
 - **Done:** Codex round 3 (GPT 5.6 Sol) on `59eb9a4`: **GO, no findings**. PR #209 squash-merged
@@ -195,62 +259,3 @@ Template:
   same issuer/client, the spike's decisions; (4) #193; (5) **LXC stays put until M6 is
   finished** (owner, 03/09). Release-notes item: `AUTH_MODE=oidc` exists; a local→oidc switch
   signs everyone out and needs the setup token once.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #190 spike: EVERY leg run (Keycloak, Google, MCP Inspector, Claude web, ChatGPT web, nginx, T13); evidence comment POSTED
-
-- **Done:** #190's spike, every leg that needs no external account, against the pinned
-  FastMCP 3.4.5 / MCP SDK 1.29.0. Harness + raw outputs in **`.agents/spikes/190/`**
-  (untracked — owner decides whether it is committed; `.agents/README.md` gained a line for
-  `spikes/`); **`findings.md` there is the #190 evidence comment, posted** as
-  https://github.com/DeusMaximus/plamotrack/issues/190#issuecomment-5538814198 (owner's call). Phase A
-  (in-process, no network): raw child + parent well-known route tables — exactly §5.5's four;
-  the response profile per route; the redirect-binding matrix (every §5.6 claim reproduced:
-  pattern replaces registration, synthesised upstream-id client → consent for any URI) and the
-  **thin constraint** (`BoundProxy`, 15 lines: registration AND allowlist, upstream id refused).
-  Phase B: **Keycloak 26.6.4** (realm import, `basic` scope needed for `sub`) + **MCP Inspector
-  2.5.0** (DCR public client, callback `http://127.0.0.1:6274/oauth/callback`, negotiated MCP
-  2025-11-25, requested only the PRM from the 401 pointer + path-aware AS doc — **never the bare
-  `openid-configuration`**); scripted client end to end; **T13 matrix**: same store+key → refresh
-  200 / 0 registrations; empty store or other key → 401 `invalid_client` (the DCR record is in
-  the store) → clients relink, nothing else lost. **Postgres adapter proven** (py-key-value-aio
-  `PostgreSQLStore` over asyncpg, one table `mcp_oauth_state`, values Fernet-encrypted, link →
-  restart → refresh 200). Phase C: packaged nginx (built from `frontend/`) in front of the probe —
-  the family-8 T2 surface matches §5.5 except two new facts: nginx **301**s the slash-less
-  `/.well-known/oauth-protected-resource/mcp`, and `PUT /mcp/authorize` is Starlette's 405 +
-  `Allow` (#206's family-8 sibling). **Then the owner-supplied legs, same session**, through a
-  Cloudflare tunnel `https://testing.gunp.la` → the packaged nginx (built from `frontend/`, tunnel
-  host in its allowlist) → the probe: **Google** (`verify_id_token=True`; scopes come back as
-  URIs so require `openid` only, else 403 `insufficient_scope`; **no refresh token without
-  `access_type=offline&prompt=consent`**), **Claude web = CIMD**
-  (`https://claude.ai/oauth/mcp-oauth-client-metadata`, callback `…/api/mcp/auth_callback`;
-  it **strips the trailing slash and posts to bare `/mcp`** — source-run it stalled on a
-  404/no-pointer fallback chain, so nginx's rewrite is load-bearing), **ChatGPT web = CIMD**
-  (per-connector `client.json`, callback `chatgpt.com/connector/oauth/<id>`; it reads the
-  **path-aware `openid-configuration/mcp`** after 404 on the pruned child alias). Nobody used
-  the bare OpenID document or the upstream-client-id path.
-- **Decisions (proposed in `findings.md` §10, not yet in `docs/design.md`):** CIMD **on** (both
-  web clients chose it), the synthesised upstream-id client refused, the allowlist narrows DCR
-  only; path-aware OpenID doc kept, bare one pruned; bare `/mcp` is a client-facing spelling; Postgres adapter
-  for proxy state, table owned by Alembic, backup set becomes DB + `.env`; explicit
-  `MCP_OAUTH_SIGNING_KEY` as 32 random bytes (the default store crashes on non-UTF-8 key bytes,
-  so always pass `client_storage`); `verify_id_token=True` as the one verifier shape (Google's
-  access tokens are opaque; proven on Keycloak); **owner binding at issuance** via an
-  `exchange_authorization_code` override (the verifier alone refuses a stranger only at the first
-  MCP call — they still get a token pair); refuse a token without `sub`; **the MCP scope
-  vocabulary is the IdP's** — `collection:*` cannot be per-grant scopes on 3.4.5 without
-  translating both directions (outbound is a private method) → fixed rw mapping for every
-  proxy-issued token; CIMD off until a named client needs it; FastMCP token lifetime = upstream
-  `expires_in` (Keycloak 300 s) unless pinned.
-- **State:** `main` at `4366695` + this entry, `.agents/README.md` edited, `.agents/spikes/190/`
-  untracked (its `.gitignore` keeps `secrets.env` — the owner's Google client — plus stores,
-  state and key out); **nothing committed** (owner's call). Spike containers: Keycloak stopped
-  (realm inside), nginx spike stack removed, image `plamotrack-web-spike` kept, scratch DB
-  dropped; ports 8000 / 8001 / 6274 / 8082 free. The tunnel `testing.gunp.la` → `10.86.64.128:8000`
-  route has been deleted by the owner; both web-client connectors removed (the Claude one may
-  linger as "Reconnect" — harmless, points nowhere). No code change in
-  `backend/` or `frontend/`. Dev DB still claimed with `e2e-owner-password`.
-- **Next:** (1) owner closes #190 when satisfied; (2) the §5 amendments (`findings.md` §10) and #192 (M6-7) on a
-  branch: CIMD on, owner binding at issuance, Postgres store under Alembic, fixed rw scope
-  mapping, Google's two parameters, bare `/mcp` carrying the pointer; (3) #193 audit / rate
-  limiting can run in parallel (family-8 `limit_req` on `authorize` matters more now that the
-  proxy fetches CIMD URLs); (4) **LXC stays put until M6 is finished** (owner, 03/09).

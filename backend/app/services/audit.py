@@ -49,6 +49,17 @@ OIDC_REBIND = "auth.oidc_rebind"
 #: Codex #209 round 1, f1). `detail` names the mode now running and the count.
 AUTH_MODE_CHANGED = "auth.mode_changed"
 
+# --- the M6-7 vocabulary (#192) -------------------------------------------------
+#: The MCP OAuth proxy issued an access/refresh token pair to a client after the
+#: bound owner signed in at the provider (§5.5 family 8). `detail` names the
+#: MCP client id — a DCR id or a CIMD URL — never a token.
+MCP_GRANT_ISSUED = "auth.mcp_grant_issued"
+#: A provider identity other than the bound owner completed the MCP OAuth
+#: round trip and was refused at issuance — nothing minted, nothing stored
+#: (§5.6 open redirect; T6). `detail` names the subject, as the browser login's
+#: refusal does.
+MCP_IDENTITY_REFUSED = "auth.mcp_identity_refused"
+
 
 def client_address_of(request: Request | None) -> str | None:
     if request is None:
