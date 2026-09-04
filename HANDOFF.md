@@ -41,12 +41,12 @@ Template:
 
 ---
 
-## 2026-09-04 — Claude Code (Fable 5.1) — #191 (M6-6) browser OIDC on `feature/m6-6-browser-oidc`, PR opened for Codex review; #190 closed
+## 2026-09-04 — Claude Code (Fable 5.1) — #191 (M6-6) browser OIDC on `feature/m6-6-browser-oidc` — **PR #209** open for Codex review; #190 closed
 
 - **Done:** #190 closed (evidence comment + harness on `main` at `a642d0b`). Owner chose
   **#191 before #192** (the declared order: #192's owner binding and mode switch are #191's).
-  Branch `feature/m6-6-browser-oidc` off `a642d0b`, committed and pushed (owner's call);
-  the PR number is in the next entry's title once known — `gh pr list` meanwhile. Shape: `AUTH_MODE=local|oidc` + `OIDC_ISSUER/CLIENT_ID/CLIENT_SECRET`
+  Branch `feature/m6-6-browser-oidc` off `a642d0b`, committed and pushed (owner's call) as
+  **PR #209** (body carries the deliberate calls and the mutant table). Shape: `AUTH_MODE=local|oidc` + `OIDC_ISSUER/CLIENT_ID/CLIENT_SECRET`
   (env-only; `PUBLIC_BASE_URL` required in OIDC mode, the callback
   `<PUBLIC_BASE_URL>/api/auth/oidc/callback` is built from it); `services/oidc.py` (discovery
   cached lazily and issuer-checked, JWKS, code exchange `client_secret_basic` + PKCE, id_token
@@ -77,7 +77,7 @@ Template:
   holds the local credential (`e2e-owner-password`) — switching the API back to local mode
   just works; Keycloak spike container is **up** (`.agents/spikes/190/keycloak/`, realm now
   lists the `localhost:5173` callback). No e2e change (local mode).
-- **Next:** (1) Codex review of the PR (M6 security work; brief printed in the session);
+- **Next:** (1) Codex round 1 on PR #209 (M6 security work; brief printed in the session);
   (2) fold oidc- mutants
   into `mutation_test.py` after merge (the usual harness-only PR); (3) #192 (M6-7) on top —
   same issuer/client, the spike's decisions; (4) #193; (5) **LXC stays put until M6 is
