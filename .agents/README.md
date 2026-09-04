@@ -13,6 +13,9 @@ humans working alongside them) need *between* sessions, kept out of the always-l
 - `testing-and-review.md` — procedure, edited in place: how to write a regression
   test here, the fixtures, the mutation harness, e2e hygiene, the release gate,
   which reviewer for what, and how to answer a review.
+- `spikes/NNN/` — the harness and raw outputs behind an issue's spike (#190 first):
+  evidence a later leg re-runs, never code the app imports. The issue comment is
+  the record; the directory is what lets a different model reproduce it.
 - `review-brief.md` — the fill-in template for briefing an external reviewer
   (Cursor / Codex / Claude), the PR-body shape it points at, and the checklist
   that produces the per-PR "where I'd push" section. Edited in place.

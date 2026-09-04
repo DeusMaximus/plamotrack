@@ -1,0 +1,50 @@
+{
+  "realm": "plamotrack",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "users": [
+    {
+      "username": "owner",
+      "enabled": true,
+      "email": "owner@example.test",
+      "emailVerified": true,
+      "firstName": "Owner",
+      "lastName": "Person",
+      "credentials": [{"type": "password", "value": "owner-password", "temporary": false}]
+    },
+    {
+      "username": "stranger",
+      "enabled": true,
+      "email": "stranger@example.test",
+      "emailVerified": true,
+      "firstName": "Not",
+      "lastName": "Owner",
+      "credentials": [{"type": "password", "value": "stranger-password", "temporary": false}]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "plamotrack-mcp",
+      "name": "plamotrack MCP proxy (spike)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "plamotrack-mcp-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://127.0.0.1:8000/mcp/auth/callback", "https://testing.gunp.la/mcp/auth/callback"],
+      "webOrigins": ["+"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "+"
+      },
+      "defaultClientScopes": ["basic", "openid", "email", "profile"],
+      "optionalClientScopes": ["offline_access"]
+    }
+  ]
+}

@@ -41,6 +41,65 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #190 spike: EVERY leg run (Keycloak, Google, MCP Inspector, Claude web, ChatGPT web, nginx, T13); evidence comment POSTED
+
+- **Done:** #190's spike, every leg that needs no external account, against the pinned
+  FastMCP 3.4.5 / MCP SDK 1.29.0. Harness + raw outputs in **`.agents/spikes/190/`**
+  (untracked — owner decides whether it is committed; `.agents/README.md` gained a line for
+  `spikes/`); **`findings.md` there is the #190 evidence comment, posted** as
+  https://github.com/DeusMaximus/plamotrack/issues/190#issuecomment-5538814198 (owner's call). Phase A
+  (in-process, no network): raw child + parent well-known route tables — exactly §5.5's four;
+  the response profile per route; the redirect-binding matrix (every §5.6 claim reproduced:
+  pattern replaces registration, synthesised upstream-id client → consent for any URI) and the
+  **thin constraint** (`BoundProxy`, 15 lines: registration AND allowlist, upstream id refused).
+  Phase B: **Keycloak 26.6.4** (realm import, `basic` scope needed for `sub`) + **MCP Inspector
+  2.5.0** (DCR public client, callback `http://127.0.0.1:6274/oauth/callback`, negotiated MCP
+  2025-11-25, requested only the PRM from the 401 pointer + path-aware AS doc — **never the bare
+  `openid-configuration`**); scripted client end to end; **T13 matrix**: same store+key → refresh
+  200 / 0 registrations; empty store or other key → 401 `invalid_client` (the DCR record is in
+  the store) → clients relink, nothing else lost. **Postgres adapter proven** (py-key-value-aio
+  `PostgreSQLStore` over asyncpg, one table `mcp_oauth_state`, values Fernet-encrypted, link →
+  restart → refresh 200). Phase C: packaged nginx (built from `frontend/`) in front of the probe —
+  the family-8 T2 surface matches §5.5 except two new facts: nginx **301**s the slash-less
+  `/.well-known/oauth-protected-resource/mcp`, and `PUT /mcp/authorize` is Starlette's 405 +
+  `Allow` (#206's family-8 sibling). **Then the owner-supplied legs, same session**, through a
+  Cloudflare tunnel `https://testing.gunp.la` → the packaged nginx (built from `frontend/`, tunnel
+  host in its allowlist) → the probe: **Google** (`verify_id_token=True`; scopes come back as
+  URIs so require `openid` only, else 403 `insufficient_scope`; **no refresh token without
+  `access_type=offline&prompt=consent`**), **Claude web = CIMD**
+  (`https://claude.ai/oauth/mcp-oauth-client-metadata`, callback `…/api/mcp/auth_callback`;
+  it **strips the trailing slash and posts to bare `/mcp`** — source-run it stalled on a
+  404/no-pointer fallback chain, so nginx's rewrite is load-bearing), **ChatGPT web = CIMD**
+  (per-connector `client.json`, callback `chatgpt.com/connector/oauth/<id>`; it reads the
+  **path-aware `openid-configuration/mcp`** after 404 on the pruned child alias). Nobody used
+  the bare OpenID document or the upstream-client-id path.
+- **Decisions (proposed in `findings.md` §10, not yet in `docs/design.md`):** CIMD **on** (both
+  web clients chose it), the synthesised upstream-id client refused, the allowlist narrows DCR
+  only; path-aware OpenID doc kept, bare one pruned; bare `/mcp` is a client-facing spelling; Postgres adapter
+  for proxy state, table owned by Alembic, backup set becomes DB + `.env`; explicit
+  `MCP_OAUTH_SIGNING_KEY` as 32 random bytes (the default store crashes on non-UTF-8 key bytes,
+  so always pass `client_storage`); `verify_id_token=True` as the one verifier shape (Google's
+  access tokens are opaque; proven on Keycloak); **owner binding at issuance** via an
+  `exchange_authorization_code` override (the verifier alone refuses a stranger only at the first
+  MCP call — they still get a token pair); refuse a token without `sub`; **the MCP scope
+  vocabulary is the IdP's** — `collection:*` cannot be per-grant scopes on 3.4.5 without
+  translating both directions (outbound is a private method) → fixed rw mapping for every
+  proxy-issued token; CIMD off until a named client needs it; FastMCP token lifetime = upstream
+  `expires_in` (Keycloak 300 s) unless pinned.
+- **State:** `main` at `4366695` + this entry, `.agents/README.md` edited, `.agents/spikes/190/`
+  untracked (its `.gitignore` keeps `secrets.env` — the owner's Google client — plus stores,
+  state and key out); **nothing committed** (owner's call). Spike containers: Keycloak stopped
+  (realm inside), nginx spike stack removed, image `plamotrack-web-spike` kept, scratch DB
+  dropped; ports 8000 / 8001 / 6274 / 8082 free. The tunnel `testing.gunp.la` → `10.86.64.128:8000`
+  route has been deleted by the owner; both web-client connectors removed (the Claude one may
+  linger as "Reconnect" — harmless, points nowhere). No code change in
+  `backend/` or `frontend/`. Dev DB still claimed with `e2e-owner-password`.
+- **Next:** (1) owner closes #190 when satisfied; (2) the §5 amendments (`findings.md` §10) and #192 (M6-7) on a
+  branch: CIMD on, owner binding at issuance, Postgres store under Alembic, fixed rw scope
+  mapping, Google's two parameters, bare `/mcp` carrying the pointer; (3) #193 audit / rate
+  limiting can run in parallel (family-8 `limit_req` on `authorize` matters more now that the
+  proxy fetches CIMD URLs); (4) **LXC stays put until M6 is finished** (owner, 03/09).
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) MERGED (PR #205 → `70d6b3d`, Codex round 2 GO); f13- fold-in MERGED (PR #207 → `4366695`)
 
 - **Done:** Codex round 2 (GPT 5.6 Sol) on `388de0b`: **GO, no findings** — replayed f1–f3, instrumented
@@ -152,24 +211,3 @@ Template:
   OAuth spike; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release notes for
   the M6 release: wrong password / setup token is 403; `/mcp/` requires a PAT; never a token
   in a URL.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 4 (NO-GO, 1×P3, docs only) addressed at `09ef061`, round 5 pending
-
-- **Done:** Codex round 4 (GPT 5.6 Sol) on `98a82b2`: NO-GO, one P3, no bypass; f6/f7/f8 held,
-  "other than finding 9, no remaining P1–P3 across the four rounds". f9 = the posture sweep's
-  last class: operations' *Reaching it from another machine* + its `WEB_BIND`/`PUBLIC_BASE_URL`
-  rows, design §5.4 mode P and §10's alpha disclosures still said nothing was authenticated —
-  plus two siblings the sweep found (AGENTS.md roadmap note, `.agents/review-brief.md` context
-  line). All rewritten at `622965f` (+ `09ef061` fixing a "Nothing is authenticated" wording
-  slip): owner session for the browser, PAT for REST/MCP automation, no tested TLS path, plain
-  HTTP exposes cookie/token to a device on the path, SSH/VPN preferred, internet waits for
-  §5.9 item 9. §5.1 stays the dated record. Reply + addendum posted; PR body head updated.
-- **Decisions:** none new.
-- **State:** branch head `09ef061` (docs/process only since `ef7764d`; runtime unchanged since
-  `5aca2e6`); CI on the merged head running when written. Tree parked on `main`. Dev DB
-  claimed with `e2e-owner-password`. **Round 5 pending** (findings from 10) — expected GO.
-- **Next:** (1) Codex round 5 → merge on GO (`Closes #189`), branch delete; (2) harness fold-in
-  PR for pat-1…25; (3) the two family-13 hardening items (design §5.9 item 3(b)); (4) #190/#192
-  OAuth spike; (5) **LXC stays put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS`
-  into its `.env` before the pull, back up first, it comes up unclaimed. Release notes for the
-  M6 release: wrong password / setup token is 403; `/mcp/` requires a PAT; never a token in a URL.

@@ -1,0 +1,23 @@
+# The packaged ingress (frontend/Dockerfile → plamotrack-web-spike) alone, in
+# front of the phase-B probe server running on the host. `api` is a socat
+# forwarder so the template's `api:8000` upstream resolves through docker's DNS
+# exactly as in the real stack. PROBE_PORT / WEB_PUBLISH / PUBLIC_BASE_URL come
+# from the environment (defaults: local phase-C run on 8082 → probe on 8000).
+services:
+  api:
+    image: alpine/socat
+    container_name: plamotrack-spike-api-fwd
+    command: ["tcp-listen:8000,fork,reuseaddr", "tcp:host.docker.internal:${PROBE_PORT:-8000}"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+  web:
+    image: plamotrack-web-spike
+    container_name: plamotrack-spike-web
+    environment:
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      ALLOWED_HOSTS: ""
+      WEB_BIND: 127.0.0.1
+    ports:
+      - "${WEB_PUBLISH:-127.0.0.1:8082}:80"
+    depends_on:
+      - api
