@@ -615,3 +615,42 @@ byte-identical to the one issued at link time whenever both fell in the same sec
 red at the reviewed head only because the clock ticked between the link and the
 refresh. A fake that re-issues a credential must make it distinct on purpose (a
 `jti`), not by luck of the clock; the mutant, not the red run, is what noticed.
+
+## Located, not authorized; the record's identity, not the owner's (#212, round 3)
+
+Round 2 put the invariant on the grant record and gated its writes; round 3 landed
+one step to either side of that gate, and both findings were about *which question*
+a check answers rather than whether it runs. **Finding 9:** the SDK's revocation
+handler locates the presented token through the provider's `load_access_token` —
+the same method the bearer middleware calls — and on this proxy that method is the
+whole per-request authorization: the upstream set read, refreshed when near or past
+expiry, the new id_token verified against the provider's keys, the owner row
+consulted. Each of those is right for a *request*. For a *revocation* every one of
+them is a reason to fail to find a grant that is there: a provider whose key had
+rotated while its JWKS was unreachable made the refresh's verdict `unavailable`, the
+round-2 rule correctly left the verified grant standing, the lookup answered
+`None`, and RFC 7009's "unknown token → 200" covered a live grant. The fix is a
+second object the handler talks to (`RevocationLookup`), whose access-token lookup
+*locates* — the proxy's own signature, the client id and binding from the claims,
+the JTI mapping — and nothing else. A revocation reduces authority; it owes none of
+the verification a request owes, and it has to reach the grant precisely when the
+provider cannot be reached. When a framework reuses one provider method for two
+callers with opposite failure semantics ("refuse if unsure" versus "find it
+regardless"), give the second caller its own method rather than tuning the shared
+one. **Finding 10:** the gate verified a refresh's new id_token with the owner
+check — "does this name the owner?" — and a rebind in the window between a
+transition's owner check and its write made the answer yes for the *new* owner,
+so the record's binding moved from A to B and B was minted a successor on A's
+grant. The check the record needed was continuity: "does this name the identity
+that authorized *this* grant?" (OpenID Connect Core §12.2), which is the record's
+own `(iss, sub)`, not the owner row's. The two questions agree in every state but
+one, and that state lasts as long as a rebind. A check that consults mutable
+global state (the owner row) to validate a transition of a specific record is
+asking the wrong question whenever the two can be updated independently; compare
+with the record. Two smaller things: the tightened race witness — a namespace-wide
+count of advisory waiters is an observation a decoy can satisfy (the stg-5 lesson,
+re-learned on this branch); the test now asserts the `pg_blocking_pids` edge from
+the session holding *this grant's* lock to the one parked on it — and the
+revocation lookup's change made the transparent/access cell of that race a real
+witness for the first time (before, revocation's lookup itself entered the locked
+transparent refresh, so the cell was green for a reason other than the lock).

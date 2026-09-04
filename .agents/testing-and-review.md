@@ -190,7 +190,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` after #212: 457 cases over 46 target files** — counted the way the
+- **On `main` after #212: 461 cases over 46 target files** — counted the way the
   harness itself counts, `len(CASES)` and the distinct paths those cases mutate
   (migrations, the one test file and the two `frontend/` files included; the
   one-liner is `uv run python -c "import mutation_test as m, pathlib; print(len(m.CASES), len({pathlib.Path(c[1]).resolve() for c in m.CASES}))"`
@@ -277,10 +277,16 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   ending on a refused refresh response, the transparent path's outcome carried to
   the request — with 34/36/37/38/39/42 re-anchored by that round (37/38 are now the
   transition's lock, 42 the gate's digest check pointed at the f7 matrix, the retry
-  test it named withdrawn with the retry it asserted); all 55 killed on the branch,
-  `-k moa-` — three first-pass survivors, each fixed outside the tuple: moa-47 a
-  redundant second delete, moa-56 a fallback re-check masking the gate, moa-49 the
-  fake's re-issued id_token identical to the original within one second)
+  test it named withdrawn with the retry it asserted); 57…60 from round 3 —
+  revocation's own credential lookup (the `/revoke` route built over
+  `RevocationLookup`, the shell's client binding, no owner-row read) and the gate's
+  continuity check (a candidate must name the record's `(iss, sub)`, not merely the
+  owner now), with moa-56 re-anchored by that round — the continuity check now sits
+  inside its old anchor, so it replaces the verifier's call with the record's own
+  verdict instead; all 59 killed on the branch, `-k moa-` — three first-pass survivors in
+  round 2, each fixed outside the tuple: moa-47 a redundant second delete, moa-56 a
+  fallback re-check masking the gate, moa-49 the fake's re-issued id_token identical
+  to the original within one second)
   and #191 (`oidc-` — browser OIDC, PR #209: `app/services/oidc.py`, `services/auth.py`,
   `routers/auth.py`, `auth/registry.py`, `auth/mode.py` and `main.py`; oidc-4…20
   hand-run on the branch, 21…38 from Codex round 1 — a session is authority only in the

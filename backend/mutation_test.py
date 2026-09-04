@@ -3680,9 +3680,38 @@ CASES = [
     (
         "moa-56. a new id_token stored unverified (the record's binding taken for it)",
         MCP_OAUTH,
-        "            verdict = await self._proxy._owner_check.check(id_token)\n            if verdict.binding is None:\n                raise _GrantRefused(verdict)\n            binding = verdict.binding",
-        "            binding = established",
+        "            verdict = await self._proxy._owner_check.check(id_token)\n            if verdict.binding is None:\n                raise _GrantRefused(verdict)\n            if (verdict.binding.issuer",
+        '            verdict = OwnerVerdict(established, "ok", established.subject)\n            if verdict.binding is None:\n                raise _GrantRefused(verdict)\n            if (verdict.binding.issuer',
         "becomes_the_grant_only_once and explicit and forged",
+    ),
+    # --- Codex #212 round 3: revocation's own lookup; the grant's identity (f9–f10) ------
+    (
+        "moa-57. revocation's lookup is the bearer's (the /revoke route not rebuilt over it)",
+        MCP_OAUTH,
+        "        routes = super().get_routes(mcp_path)\n        handler = RevocationHandler(",
+        "        routes = super().get_routes(mcp_path)\n        return routes\n        handler = RevocationHandler(",
+        "locates_its_grant_without_asking_the_provider and access_token",
+    ),
+    (
+        "moa-58. the lookup consults the owner row (a grant the row no longer names cannot be ended)",
+        MCP_OAUTH,
+        '        jti = payload["jti"]\n        if await self._jti_mapping_store.get(key=jti) is None:\n            return None\n',
+        '        jti = payload["jti"]\n        if not await self._owner_check.still_bound(binding):\n            return None\n        if await self._jti_mapping_store.get(key=jti) is None:\n            return None\n',
+        "end_a_grant_the_owner_row_no_longer_names and access_token",
+    ),
+    (
+        "moa-59. the gate adopts a candidate that names the owner now, not the grant's identity",
+        MCP_OAUTH,
+        "            if (verdict.binding.issuer, verdict.binding.subject) != (\n                established.issuer,\n                established.subject,\n            ):",
+        "            if False:",
+        "keeps_the_identity_that_authorized_the_grant",
+    ),
+    (
+        "moa-60. the lookup's shell carries no client binding (the handler's ownership check never matches)",
+        MCP_OAUTH,
+        "        return AccessToken(\n            token=_reference(token),\n            client_id=client_id,",
+        '        return AccessToken(\n            token=_reference(token),\n            client_id="",',
+        "successful_revocation_kills_every_credential_of_the_grant and access_token",
     ),
 ]
 

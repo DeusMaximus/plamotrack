@@ -32,10 +32,13 @@ revocation) rather than to the entry points one at a time:
   verified), and the record gate (`GrantRecords`) admits a refresh's upstream
   set — the client's exchange or the transparent refresh behind a request —
   only with an identity that binding names: the id_token already verified, or
-  a new one that passes the same check in full and names the same owner, else
-  the grant **ends** with nothing of the response stored (round 2, f7); a
-  refresh that validly omits one (OpenID Connect Core §12.2) carries the
-  binding forward. What bounds a grant is the provider's own access token,
+  a new one that passes the same check in full and names **the same `(iss,
+  sub)` the record holds** — continuity with the identity that authorized
+  this grant, not merely the owner now (round 3, f10: the two differ for
+  the length of a rebind) — else the grant **ends** with nothing of the
+  response stored (round 2, f7); a refresh that validly omits one (OpenID
+  Connect Core §12.2) carries the binding forward. What bounds a grant is
+  the provider's own access token,
   re-read per request and refreshed transparently; when the provider cannot
   refresh it, the grant ends with it (Codex #212 round 1, f3).
 - **One transition per grant** (RFC 6749 §4.1.2, RFC 9700 §4.14.2, RFC 7009
@@ -58,7 +61,15 @@ revocation) rather than to the entry points one at a time:
   (`ended_by=upstream_refresh`) when a refresh response that was not the
   owner's is what ended the grant. FastMCP alone deleted a refresh token's
   hash entry, left every access mapping to its hour-long TTL, and posted the
-  `AccessToken.token` field upstream (f1).
+  `AccessToken.token` field upstream (f1). And the presented token is
+  **located, not authorized** (round 3, f9): the SDK's revocation handler
+  finds a token through the provider's `load_access_token`, which here is the
+  bearer path — the upstream set refreshed, the id_token re-verified — so a
+  provider whose keys could not be fetched made the lookup answer "not mine"
+  and the handler's silent 200 left the grant standing. The `/revoke` route
+  is built over `RevocationLookup`: the proxy's own signature and the JTI
+  mapping locate the grant, the provider is asked nothing, no owner row is
+  read, and the locked ending runs whatever the provider is doing.
 - **Fixed scope mapping** (7c). The scope vocabulary the proxy advertises and
   forwards is the provider's (`openid`); `collection:read`/`collection:write`
   cannot be per-grant OAuth scopes on FastMCP 3.4.5 without translating in both
@@ -149,12 +160,15 @@ from fastmcp.utilities.ui import create_secure_html_response
 from key_value.aio.adapters.pydantic import PydanticAdapter
 from key_value.aio.stores.postgresql import PostgreSQLStore
 from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
+from mcp.server.auth.handlers.revoke import RevocationHandler
+from mcp.server.auth.middleware.client_auth import ClientAuthenticator
 from mcp.server.auth.provider import (
     AuthorizationCode,
     AuthorizeError,
     RefreshToken,
     TokenError,
 )
+from mcp.server.auth.routes import REVOCATION_PATH, cors_middleware
 from mcp.shared.auth import (
     InvalidRedirectUriError,
     OAuthClientInformationFull,
@@ -513,7 +527,13 @@ class GrantRecords:
     persist, then extract claims — let a refused set become the active one,
     its transparent refresh never asked (Codex #212 round 2, f7), and its
     revocation and refresh writers shared nothing, so a stale refresh
-    recreated a revoked grant through the store's upsert (f6)."""
+    recreated a revoked grant through the store's upsert (f6). A new id_token
+    that verifies and names the owner *now* is still not enough: it must name
+    the `(iss, sub)` the record holds — the owner check answers who the owner
+    is, the record answers who authorized this grant, and between a
+    transition's owner check and its write the two can differ (a rebind and
+    the next owner's login in that window: round 3, f10, the reviewed head's
+    gate adopting the new owner's identity onto the old owner's grant)."""
 
     def __init__(self, proxy: PlamotrackOAuthProxy, inner: PydanticAdapter[GrantRecord]) -> None:
         self._proxy = proxy
@@ -562,11 +582,48 @@ class GrantRecords:
             verdict = await self._proxy._owner_check.check(id_token)
             if verdict.binding is None:
                 raise _GrantRefused(verdict)
+            if (verdict.binding.issuer, verdict.binding.subject) != (
+                established.issuer,
+                established.subject,
+            ):
+                # Verified, and the owner now — but not the identity that
+                # authorized this grant (OpenID Connect Core §12.2): the
+                # grant is the previous owner's and ends here.
+                raise _GrantRefused(OwnerVerdict(None, "identity", verdict.subject))
             binding = verdict.binding
         transition.binding = binding
         record = value if isinstance(value, GrantRecord) else GrantRecord(**value.model_dump())
         record.owner = binding
         await self._inner.put(key=key, value=record, collection=collection, ttl=ttl)
+
+
+class RevocationLookup:
+    """The provider as the SDK's revocation handler sees it (RFC 7009 §2.1).
+    The handler locates the presented token through `load_access_token` and
+    `load_refresh_token`, then checks it is the authenticated client's and
+    calls `revoke_token`; on this proxy `load_access_token` is the **bearer
+    path** — the grant's upstream set read and refreshed, a new id_token
+    verified against the provider's keys, the owner row consulted — and a
+    lookup that answers `None` there is, to the handler, a token it does not
+    hold: RFC 7009's silent 200 with nothing revoked. A provider whose keys
+    could not be fetched left a live grant behind a 200 that way (Codex #212
+    round 3, f9). Here the access token is **located, not authorized**
+    (`locate_access_token`); the refresh-token lookup was always local and
+    stays the proxy's; revocation itself is the proxy's."""
+
+    def __init__(self, proxy: PlamotrackOAuthProxy) -> None:
+        self._proxy = proxy
+
+    async def load_access_token(self, token: str) -> AccessToken | None:
+        return await self._proxy.locate_access_token(token)
+
+    async def load_refresh_token(
+        self, client: OAuthClientInformationFull, refresh_token: str
+    ) -> RefreshToken | None:
+        return await self._proxy.load_refresh_token(client, refresh_token)
+
+    async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
+        await self._proxy.revoke_token(token)
 
 
 # --- the redirect binding -----------------------------------------------------------
@@ -707,6 +764,26 @@ class PlamotrackOAuthProxy(OAuthProxy):
             token_endpoint_auth_method=self._token_endpoint_auth_method,
             transport=self.upstream_transport,
         )
+
+    # -- the routes ------------------------------------------------------------------
+
+    def get_routes(self, mcp_path: str | None = None) -> list[Route]:
+        """FastMCP's protocol routes, with `/revoke` handled over
+        `RevocationLookup` — the SDK's own handler and client authenticator,
+        given a provider whose token lookup locates rather than authorizes.
+        The same seam FastMCP uses to replace `/authorize` and `/token`."""
+        routes = super().get_routes(mcp_path)
+        handler = RevocationHandler(RevocationLookup(self), ClientAuthenticator(self))  # type: ignore[arg-type]
+        return [
+            Route(
+                path=route.path,
+                endpoint=cors_middleware(handler.handle, ["POST", "OPTIONS"]),
+                methods=["POST", "OPTIONS"],
+            )
+            if isinstance(route, Route) and route.path == REVOCATION_PATH
+            else route
+            for route in routes
+        ]
 
     # -- the client kinds ------------------------------------------------------------
 
@@ -991,14 +1068,52 @@ class PlamotrackOAuthProxy(OAuthProxy):
 
     # -- revocation ------------------------------------------------------------------------
 
+    async def locate_access_token(self, token: str) -> AccessToken | None:
+        """The revocation handler's lookup of a presented access token
+        (`RevocationLookup`): the proxy's own signature proves the token is
+        ours, its claims name the client and the grant's binding, and the JTI
+        mapping says a grant is behind it — and that is all. The provider is
+        not asked, the upstream set is neither read nor refreshed, and the
+        owner row is not consulted: a revocation reduces authority and needs
+        none of what a request needs, and it must reach the grant whatever
+        the provider is doing (RFC 7009 §2.1) — a grant the owner row no
+        longer names included, which its client may still end. The shell
+        carries what `revoke_token` reads (`_grant_handle`) and the client id
+        the handler compares; a token behind which nothing of ours remains
+        is `None`, the RFC's silent 200."""
+        try:
+            payload = self.jwt_issuer.verify_token(token.strip())
+        except Exception:
+            return None
+        binding = OwnerBinding.from_claims(payload.get("upstream_claims"))
+        if binding is None:
+            return None
+        jti = payload["jti"]
+        if await self._jti_mapping_store.get(key=jti) is None:
+            return None
+        client_id = str(payload.get("client_id") or "")
+        return AccessToken(
+            token=_reference(token),
+            client_id=client_id,
+            scopes=[],
+            claims={
+                "kind": "mcp",
+                "iss": binding.issuer,
+                "sub": binding.subject,
+                "client_id": client_id,
+                "jti": jti,
+            },
+        )
+
     async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
-        """RFC 7009 §2.1 for the grant: whichever half is presented — the SDK
-        has already loaded it and checked it is this client's — the grant
-        record goes, locally and first, so the presented token, its sibling
-        and every token minted on the same grant are refused from here on
-        whatever the provider is doing; then the provider is asked, best
-        effort, to revoke *its* refresh token. A token behind which nothing of
-        ours remains is the RFC's silent 200 and no audit row."""
+        """RFC 7009 §2.1 for the grant: whichever half is presented — located
+        by `RevocationLookup`, checked by the SDK's handler to be this
+        client's — the grant record goes, locally and first, so the presented
+        token, its sibling and every token minted on the same grant are
+        refused from here on whatever the provider is doing; then the provider
+        is asked, best effort, to revoke *its* refresh token. A token behind
+        which nothing of ours remains is the RFC's silent 200 and no audit
+        row."""
         presented = "refresh_token" if isinstance(token, RefreshToken) else "access_token"
         handle = self._grant_handle(token)
         grant: UpstreamTokenSet | None = None

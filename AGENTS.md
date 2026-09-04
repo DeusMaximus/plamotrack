@@ -410,12 +410,18 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     against: the record gate (`GrantRecords`) admits a refresh's upstream set, on the
     client's exchange or the transparent refresh behind a request, only with an
     identity that binding names — the id_token already verified, or a new one verified
-    in full naming the same owner — else the grant ends (`ended_by=upstream_refresh`);
+    in full naming the **record's** `(iss, sub)`, not merely the owner now (round 3,
+    f10: the two differ for the length of a rebind) — else the grant ends
+    (`ended_by=upstream_refresh`);
     one validly omitted carries the binding forward; **one transition per grant** —
     issuance, both refreshes and revocation serialize on a Postgres advisory lock per
     grant, the write gate's shape, so a second redemption is `invalid_grant` and a
     revocation and a refresh never interleave; **revocation is the grant's** — either
-    half presented ends the whole grant locally first, then the provider's refresh
+    half presented is **located, not authorized** (`RevocationLookup`: the proxy's own
+    signature and the JTI mapping, the provider asked nothing, no owner row read — the
+    SDK's handler otherwise finds a token through the bearer path, and a provider whose
+    keys could not be fetched turned that into a silent 200 over a live grant; round 3,
+    f9), ends the whole grant locally first, then the provider's refresh
     token best effort (`auth.mcp_grant_revoked`); what bounds a grant is the
     provider's own token, refreshed transparently while it can be (Codex #212 rounds
     1–2, f1–f3 and f6–f7); every issued token maps to a **fixed** `collection:read` +

@@ -67,6 +67,10 @@ class FakeIdp:
         self.discovery_status = 200
         self.token_status: int | None = None  # None → decided by the code
         self.network_down = False
+        #: Paths that raise a connection error while the rest answer — a
+        #: provider whose JWKS cannot be fetched while its token endpoint
+        #: works (a key rotation met during an outage; #212 round 3).
+        self.unreachable: set[str] = set()
         self.calls: list[str] = []
 
     def issue(
@@ -109,9 +113,9 @@ class FakeIdp:
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.calls.append(f"{request.method} {request.url.path}")
-        if self.network_down:
-            raise httpx.ConnectError("provider down", request=request)
         path = request.url.path
+        if self.network_down or path in self.unreachable:
+            raise httpx.ConnectError("provider down", request=request)
         if path == "/.well-known/openid-configuration":
             if self.discovery_status != 200:
                 return httpx.Response(self.discovery_status, text="nope")
