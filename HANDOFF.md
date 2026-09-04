@@ -41,6 +41,39 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) family-13 hardening: branch `feature/m6-3b-family-13-hardening` PUSHED, PR OPEN, Codex round 1 pending
+
+- **Done:** Issue **#204** filed (M6 milestone) for §5.9 item 3(b)'s two deferred items, then the
+  branch. The fix is **the pre-routing gate** `app/auth/prerouting.py`: one middleware directly
+  above `ResponseProfileMiddleware`, inside the ingress guards, that resolves the principal once
+  per REST request (own short session), stashes it on `request.state` (the dependency reuses it —
+  no double `last_used_at` touch / audit row), and refuses `anon` with the dependency's 401
+  envelope (bare `Bearer`, `no-store`, no `Allow`) wherever the router would answer 404, 405 or a
+  scoped 401 — read off the registry's `iter_dispatch_order` walk + `compile_path`, never the URL.
+  Never grants; the dependency stays the authority. Calls recorded in design §5.9 item 3(b):
+  anonymous families keep their 405/422; `INTERNAL` admitted on full, refused on partial; the
+  `/mcp` mount is the child's; bare `/mcp` at the source-run app is now 401 anon / 404 owner.
+  Also: `ingress_matrix.py` trailing-slash rows → family-13 rows (+ `/api/no-such-route`,
+  `DELETE /api/kits`); design §5 header + family-7 row; AGENTS.md rule 13 paragraph.
+- **Decisions:** the gate renders through `domain_error_handler` passed in by `create_app` (one
+  envelope author, no circular import). `PUT /mcp/` → 405 with `Allow` to anon (the
+  `RouteBinding`) is **out of scope, recorded on #204** for the reviewer to classify.
+- **State:** committed and pushed on the owner's instruction; PR open (number in the entry title's
+  follow-up commit). New suite
+  `tests/test_auth_unrouted.py` **97 green**; negative control on unfixed `main` (trimmed copy,
+  worktree, own DB) **23 red / 65 green**, every red an anon-side 404/405/422; **13 hand mutants
+  f13-1…13 all killed** (runner + verdicts in the session scratchpad; tuples in the PR-body draft
+  `scratchpad/pr-body-204.md`, to be folded into `mutation_test.py` by the usual harness-only PR
+  after merge). Auth/ingress suites green (523); full backend run **1855 green** (started before the last two pins landed; the final file's own run is 97 green → 1857). T2's new rows are
+  CI Integration's to prove (packaged stack not run locally — `up` would recreate the dev `db`).
+  Dev DB still claimed with `e2e-owner-password`.
+- **Next:** (1) **Codex review** round 1 (M6 security → Codex per `.agents/testing-and-review.md`);
+  (2) on GO, merge
+  (`Closes #204`), then the f13- fold-in PR; (3) #190/#192 OAuth spike; (4) #193 audit/rate
+  limiting; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release-notes items for the
+  M6 release unchanged plus: anonymous unrouted/wrong-verb/malformed requests under `/api/` are
+  401, not 404/405/422.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) MERGED (PR #202 → `f685c30`, Codex round 6 GO); pat- fold-in MERGED (PR #203 → `d237bb3`)
 
 - **Done:** Codex round 6 (GPT 5.6 Sol) on `1479e1c`: **GO, no findings**, nothing open across
@@ -130,28 +163,3 @@ Template:
   (design §5.9 item 3(b)); (4) #190/#192 OAuth spike; (5) **LXC stays put until M6 is
   finished** (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first,
   it comes up unclaimed.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 2 (NO-GO, 2×P3) addressed at `5aca2e6`, round 3 pending
-
-- **Done:** Codex round 2 (GPT 5.6 Sol) on `51a7366`: NO-GO, two P3s, no bypass; f1 confirmed
-  fixed, calls 1–7, 9, (i) retained, 8 and (j) overruled. Fixed at `5aca2e6`: (f4) the round-1
-  narrowing ("challenge only at the bearer boundary") left challenge-less 401s on wrong
-  password / wrong setup token, which RFC 9110 §15.5.2 forbids → those are now **403** via a new
-  `CredentialRejectedError` (§15.5.4), codes unchanged, T11 intact; every remaining 401 carries
-  `WWW-Authenticate`; prose aligned in `exceptions.py`, `services/auth.py`, `error_codes.py`,
-  `dependency.py`, `main.py`, design §5.5 family 3 + §5.9 item 4, PR body (What + call 8); the
-  envelope walker learned the class; `.agents/lessons.md` → "The 401 contract". (f5) the unit
-  query-string test still sent a live PAT in a URI → fixed fake; CI's log scan was vacuous →
-  captures `api`+`web` logs once, requires an access record from each (`GET /healthz` /
-  `GET /api/healthz`), then greps for the token. Mutant pat-25 (403→401) killed; replay at
-  `51a7366`: 6 red / 1 green. Reply posted, PR body amended.
-- **Decisions:** 403 (not 400) for rejected form credentials — "credentials provided and
-  insufficient" is the closest RFC fit and the codes stay the client contract.
-- **State:** branch head `5aca2e6` pushed; backend **1760**, `test_auth_tokens.py` 100; CI on
-  `5aca2e6` running when written — the non-vacuous scan step is the one to check. Tree parked
-  on `main`. Dev DB claimed with `e2e-owner-password`. **Round 3 pending.**
-- **Next:** (1) Codex round 3 on `5aca2e6` (findings numbered from 6) → merge on GO; (2) harness
-  fold-in PR for pat-1…25; (3) the two family-13 hardening items (design §5.9 item 3(b)); (4)
-  #190/#192 OAuth spike; (5) **LXC stays put until M6 is finished** (owner, 03/09) —
-  `ALLOWED_HOSTS` into its `.env` before the pull, back up first, it comes up unclaimed.
-

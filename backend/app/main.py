@@ -21,6 +21,7 @@ from app.auth.dependency import (
     enforce_route_policy,
 )
 from app.auth.mcp_auth import PersonalAccessTokenVerifier
+from app.auth.prerouting import DispatchTable, PreRoutingAuthMiddleware
 from app.auth.registry import build_route_index
 from app.config import Settings, get_settings
 from app.db import SessionDep, get_sessionmaker
@@ -118,7 +119,9 @@ async def http_exception_envelope(request: Request, exc: StarletteHTTPException)
     runs, so they escaped both handlers above. Every other HTTPException —
     Starlette's own 404/405 for unrouted paths and bad verbs — keeps the stock
     `{"detail": ...}` body by delegating to FastAPI's default handler: unrouted
-    paths are deliberately outside the API's machine contract."""
+    paths are deliberately outside the API's machine contract. An anonymous
+    caller never sees those: the pre-routing gate answers 401 first (§5.5
+    family 13, #204), so the 404/405 here is an authenticated principal's."""
     if exc.status_code == 400:
         return JSONResponse(
             status_code=400,
@@ -342,6 +345,17 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
         # responses all carry no-store (Codex #198 f1; round 2 f1; round 3 f1/f2).
         bind_route_policies(app, route_index)
         app.add_middleware(ResponseProfileMiddleware, index=route_index)
+        # Directly above it, the pre-routing gate (§5.5 family 13, #204): the
+        # principal resolved once, before Starlette routes and FastAPI parses,
+        # so an anonymous caller is refused ahead of the router's 404/405 and
+        # the parser's 422 — none of which the dependency can reach. It renders
+        # through the same envelope handler the dependency's errors take.
+        app.add_middleware(
+            PreRoutingAuthMiddleware,
+            index=route_index,
+            table=DispatchTable.from_app(app),
+            render=domain_error_handler,
+        )
 
     app.add_exception_handler(DomainError, domain_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_envelope)

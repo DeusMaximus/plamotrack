@@ -369,6 +369,16 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     route graph a declaration cannot describe — two routes on one dispatch entry,
     one endpoint on two routes, an undeclared route under a mount, a route type the
     walk does not know.
+    **Family 13 is closed by the pre-routing gate (M6-3b, #204):** one middleware
+    directly above the response-profile layer (`app/auth/prerouting.py`) resolves the
+    principal **once** per request the REST app owns, before Starlette routes and
+    FastAPI parses, stashes it for the dependency to reuse, and refuses `anon` wherever
+    the router would have answered 404, 405 or the dependency's 401 — an unrouted path,
+    a wrong verb (no `Allow`), a malformed body — reading what the request would reach
+    from the registry's dispatch walk, never the URL. It never grants; the dependency
+    stays the authority on every matched route. The anonymous families keep their own
+    405/422, the `/mcp` mount is the child's, and a new mutating middleware or a change
+    to the resolver owes the once-per-request test (`tests/test_auth_unrouted.py`).
 
 ## Fixing a defect: sweep the class first
 
