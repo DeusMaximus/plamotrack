@@ -41,6 +41,50 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #191 (M6-6) PR #209: Codex round 1 (NO-GO, 2×P2) addressed at `083ad08`, round 2 pending
+
+- **Done:** Codex round 1 (GPT 5.6 Sol) on `910a335`: NO-GO, two P2s on the authorization
+  boundary, both **reproduced first** (the new tests went red on the review's own assertions),
+  then fixed, then mutated. **f1 — superseded sessions across `AUTH_MODE` changes:** the
+  invariant is *a session is authority only in the mode that minted it* — `session.auth_mode`
+  (`AuthMode` in `models/enums.py`; migration **`4f3a9c1e7b2d`**, text + CHECK, backfilled
+  `local`), `new_session_row(..., auth_mode=)` stamps it, `resolve_session(..., auth_mode=)`
+  refuses the other mode's row (→ `anon`), and the lifespan calls
+  `revoke_sessions_of_other_modes` (write gate; `auth.sessions_revoked` + new
+  `auth.mode_changed` audit rows, target `startup`, client `host`; a log line) so the switch is
+  durable in both directions. The mode is read off the provider's presence on `app.state`
+  (new **`app/auth/mode.py`**: `OIDC_PROVIDER_ATTR`, `auth_mode_of`; `routers/auth.py` re-exports
+  the attr); the lifespan now reads the provider from `app_.state`, not the closure (so a test's
+  fake-backed provider is what warms). **f2 — id_token claim shapes:** the joserfc
+  `JWTClaimsRegistry` is gone; `validate_id_token_claims` (module-level in `services/oidc.py`,
+  pinned-clock `now=`) is the one contract — types before values, `aud` exactly this client
+  (string or single-member list; any extra audience refused whatever `azp`), `azp` == client id
+  when present, `iat` required, `exp`/`iat`/`nbf` NumericDates with bools excluded, `nonce` a
+  string; `complete_login` reads `claims["sub"]` (the `no_subject` branch and audit detail are
+  gone — every shape is `id_token_rejected`). Docs: design §5.6 (session row, audit list), §5.8
+  T7, §5.9 item 6 calls **(f)** and **(g)**; `docs/operations.md` (sign-out at the first start in
+  the new mode, both directions; the client must be the token's only audience); AGENTS.md rule 13.
+- **Decisions:** stamp-and-sweep, not an auth-epoch column (the mode switch was the only regime
+  change that did not already write the DB; reset/rebind revoke as before); no trusted-audience
+  setting (single owner, nothing to trust); `read_session`'s ordering unchanged (owner-and-unbound
+  is now unreachable, a reorder would be a dead branch); backfill `local` is a fact for every
+  released instance, disclosed in the migration docstring (the dev DB's OIDC-minted sessions get
+  `local` too — one sign-out on a throwaway DB).
+- **State:** backend **1939 green** (`test_migration_data.py` HEAD → `4f3a9c1e7b2d`),
+  `tests/test_auth_oidc.py` **70** (matrix 6 → 32 refused + 4 accepted shapes, a leeway-edge
+  unit test, four mode-switch tests), frontend untouched (487). Mutants oidc-21…38 (18, one site
+  each): **18 killed, 0 survived (oidc-30 killed as a 500 from the comparison, not a refusal — the type check is what makes it one)**; runner + tuples in the session scratchpad and in the PR body's
+  `<details>`. `uv run alembic check` on the dev DB reports "removed check constraint" for every
+  text-enum CHECK in the schema (pre-existing autogenerate noise; `ck_session_auth_mode` joins the
+  list) and no column difference. Dev DB is at `4f3a9c1e7b2d`. Tree: clean at `083ad08` (the fix) + this entry; both pushed.
+- **Next:** (1) Codex **round 2** on PR #209 — brief per `.agents/review-brief.md` (Codex footer)
+  at the new head, pointing at the round-1 reply and the two new `<details>` rows; (2) after merge,
+  fold oidc-1…38 into `mutation_test.py` (the four registry-anchored tuples are superseded by
+  21–30); (3) #192 (M6-7) on top; (4) #193; (5) **LXC stays put until M6 is finished** (owner,
+  03/09). Release-notes items: `AUTH_MODE=oidc` exists; a mode switch signs every browser out at
+  the first start in the new mode (both directions) and a local→oidc switch needs the setup token
+  once.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #191 (M6-6) browser OIDC on `feature/m6-6-browser-oidc` — **PR #209** open for Codex review; #190 closed
 
 - **Done:** #190 closed (evidence comment + harness on `main` at `a642d0b`). Owner chose
@@ -213,29 +257,3 @@ Template:
   limiting; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release-notes items for the
   M6 release unchanged plus: anonymous unrouted/wrong-verb/malformed requests under `/api/` are
   401, not 404/405/422.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) MERGED (PR #202 → `f685c30`, Codex round 6 GO); pat- fold-in MERGED (PR #203 → `d237bb3`)
-
-- **Done:** Codex round 6 (GPT 5.6 Sol) on `1479e1c`: **GO, no findings**, nothing open across
-  six rounds. PR #202 squash-merged as `f685c30` on the owner's call (04/09), branch deleted,
-  **#189 closed**. Then the harness fold-in `chore/fold-pat-mutants` → **PR #203** (harness-only,
-  no external review — the #197/#199/#201 precedent): pat-1…25 into `mutation_test.py` with
-  four new path constants (`TOK_SVC`, `TOK_FMT`, `RESOLVER`, `MCP_AUTH`), `TEST_FILES` +
-  `tests/test_auth_tokens.py`; `-k pat-` → **all 25 killed** at fold-in; procedure doc: 353
-  cases over thirty-one files. Squash-merged as `d237bb3` on green CI. Memory pointer updated.
-- **Decisions:** none new. The six-round record is on PR #202; the two lessons that came out of
-  it are in `.agents/lessons.md` ("The 401 contract").
-- **State:** `main` at `d237bb3` plus this entry. Backend 1760, frontend 485, e2e 43+1 (CI). The
-  shipped app: browser = owner session; REST scripts and MCP = personal access token
-  (`ptk_…`, Settings → Access tokens); `/mcp/` bearer-only; wrong password / setup token = 403;
-  no tested TLS path yet. Dev DB claimed with `e2e-owner-password`. No release cut — M6 ships as
-  one release at the end. **Release-notes items so far:** `ALLOWED_HOSTS` lockout risk (M6-1);
-  the instance comes up unclaimed (M6-3); `/mcp/` requires a PAT, wrong password / setup token
-  is 403, never a token in a URL (M6-4).
-- **Next:** (1) the two family-13 hardening items (design §5.9 item 3(b)): unrouted `/api/*`
-  → 401 for anon, and parse-before-auth → both need a middleware-level check ahead of
-  routing / body parsing; (2) #190/#192 MCP OAuth spike (§5.9 item 5) — can run in parallel;
-  (3) audit/rate limiting (§5.9 item 8); (4) **LXC stays put until M6 is finished** (owner,
-  03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first, it comes up
-  unclaimed (setup token in `docker compose logs api`), and the personal Gunpla skill's
-  MCP config will need a token.
