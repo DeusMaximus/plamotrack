@@ -41,6 +41,31 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 1 (NO-GO, 3×P3) addressed at `732b8aa`, round 2 pending
+
+- **Done:** Codex round 1 (GPT 5.6 Sol) on `789357d`: NO-GO, three P3s, no bypass, calls 1–7 and 9
+  retained. All reproduced and fixed at `732b8aa` (after merging `main` at `7bd91a1` — HANDOFF
+  conflict, main's entry kept): (f1) `Bearer␠␠<token>` was 200 on REST / 401 on MCP — FastMCP's
+  backend drops one space and passes the rest verbatim → `resolve_bearer` strips the value (the
+  shared helper, not the verifier), header-form matrix through both surfaces (3 red at `789357d`),
+  mutant pat-24 killed; (f2) "WWW-Authenticate on every 401" was false (login/setup 401s carry
+  none) and a blanket default would advertise `Bearer` on routes that refuse a bearer → contract
+  narrowed to the bearer boundary, pinned by a test, design §5.9 item 4 / call 8 / docstrings
+  amended; (f3) the matrix put a live PAT in `?access_token=` (uvicorn + nginx access logs) and
+  the unit T10 captured root only → fake token in that row, CI step greps `docker compose logs`
+  for the `--token-out` token, T10 attaches to every logger and states its bound, docs say never
+  to put a token in a URL. Reply posted, PR body amended (head, call 8, counts, pat-24).
+- **Decisions:** the f2 narrowing keeps the family-3 statuses at 401 (no move to 400/403);
+  design §5.9 item 4 (i)/(j) record f1/f3.
+- **State:** branch head `732b8aa` pushed; backend **1760**, `test_auth_tokens.py` **100**; CI on
+  `732b8aa` was still running when this was written — the new log-scan step is the thing to
+  check. Tree parked on `main`. Dev DB claimed with `e2e-owner-password`. **Round 2 pending.**
+- **Next:** (1) Codex round 2 on `732b8aa` → address in its numbering (4 onward); merge on GO;
+  (2) harness fold-in PR for pat-1…24 (`TEST_FILES` + `tests/test_auth_tokens.py`); (3) the two
+  family-13 hardening items (design §5.9 item 3(b)); (4) #190/#192 OAuth spike; (5) **LXC stays
+  put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull,
+  back up first, it comes up unclaimed.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) personal access tokens: PR #202 OPEN at `789357d`, Codex round 1 pending
 
 - **Done:** #189 built on `feature/m6-4-personal-access-tokens`, one commit (`789357d`),
@@ -164,46 +189,4 @@ Template:
   this entry's e2e/CI design); (3) **#189 (M6-4) PATs**; (4) the two deferred family-13
   hardening items (design §5.9 item 3(b)); (5) **LXC stays put until M6 is finished**
   (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first.
-
-## 2026-09-04 — Claude Code (Opus 4.8) — auth- fold-in (PR #199) + #188 (M6-3) local owner auth OPEN (PR #200, default-deny flip landed)
-
-- **Done:** (1) **auth- mutant fold-in → PR #199** (harness-only, branched off `main`):
-  the 22 tuples queued on #198 (auth-1…4, 6…23; auth-5 retired) plus the round-1 set
-  written at fold-in (auth-24…42 — principal/scope algebra, the dependency's 401/403 +
-  family branches, the classifications, the MCP tool scope map, `plan_requires_admin`,
-  the owner seed, the generated nginx rejections). Four auth test files → `TEST_FILES`.
-  Two fold-in findings: auth-22 as queued *appended* a 2nd profile middleware outermost
-  and survived → re-anchored as one block move; auth-37 survived because the
-  collection-only import test planned a CREATE, never an UPDATE → the test now seeds the
-  retailer (state-axis). **All 42 killed**; backend 1626. Doc count 277→318/30 files.
-  (2) **#188 (M6-3) → PR #200** off `feature/m6-3-local-owner-auth`: local owner auth,
-  shipped app now **default-deny** (`create_app(authorization=True)`). New under
-  `app/auth`: credentials, budget, sessions, setup_token, recovery; `services/auth` +
-  `services/audit`; `routers/auth` (family 2/3, anonymous+self-checking); `schemas/auth`.
-  Resolver reads the session cookie on the *request's own session*; dependency enforces
-  CSRF (Origin presence + `X-CSRF-Token`) on cookie-borne unsafe requests. Docs/schema
-  re-registered as guarded APIRoutes (OAuth2 redirect dropped); GoneError 410 +
-  RateLimitedError 429; `apply_import` wired to `plan_requires_admin`. Frontend AuthGate
-  (setup/login/owner) + CSRF-aware client + sidebar sign-out. Backend **1653**, frontend
-  **481**, ruff + build clean, `render_ingress --check` ok. `argon2-cffi` added; no new
-  migration (inherits #187's `f1058c5de0f3`).
-- **Decisions (PR #200 body + design §5.9 item 3):** a non-resolving session cookie → `anon`,
-  not 401 (an `HttpOnly` cookie can't be cleared out of a 401 loop on `/auth/session`;
-  the strict rule is the bearer's, #189); resolve on the request session (a 2nd
-  connection deadlocked vs the teardown TRUNCATE); CSRF cookie-borne-only; docs always
-  re-registered as APIRoutes; conftest injects an owner by default so the ~1600 pre-auth
-  tests pass; `test_auth_local.py` uses `anon_client` + real cookies.
-- **State:** both PRs **OPEN, unmerged, unreviewed**. **CI Integration on #200 is red by
-  construction** — the Playwright e2e specs hit the API anonymously and now 401; the flip
-  needs an e2e global-setup (claim via the recovery command, reuse storage state) + auth
-  on the specs' own `request.newContext` calls, **NOT done** (no Chromium / dev stack in
-  this env). **Merge ordering: #199 before #188** — else #199's anchors need re-checking
-  after #188 moves `dependency.py`/`main.py`/`registry.py`. Two family-13 hardening items
-  deferred (unrouted `/api/*` → 401; parse-before-auth), design §5.9 item 3(b).
-- **Next:** (1) the e2e/CI-Integration auth adaptation for #200 (the one blocker to green);
-  (2) review + merge **#199 then #200** (order above); (3) **#189 (M6-4) PATs** — mint/list/
-  revoke in Settings, bearer on REST+MCP as the resolver's next credential, per-tool
-  scope, T5/T6/T10 — **not started this session**; (4) the two deferred hardening items;
-  (5) **LXC stays put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS` into its
-  `.env` before the pull, back up first.
 
