@@ -41,6 +41,35 @@ Template:
 
 ---
 
+## 2026-09-05 — Claude Code (Fable 5.1) — #191 (M6-6) PR #209: Codex round 2 (NO-GO, 2×P3) addressed at `59eb9a4`, round 3 pending
+
+- **Done:** Codex round 2 (GPT 5.6 Sol) on `083ad08`: NO-GO, two P3s, no P1/P2, round-1 P2s
+  confirmed closed, calls 3/6/11/12 not overruled (its provider survey backs call 12's no
+  trusted-audience list). **f3 — non-finite NumericDates:** `_numeric_date` in
+  `services/oidc.py` now names the value domain — an `int` (never the bool) on its own branch,
+  or a `float` that `math.isfinite` — because JSON cannot spell NaN/Infinity (RFC 8259 §6)
+  but Python's parser admits them and every clock comparison against NaN is false.
+  Reproduced first: nine shapes (NaN, ±∞ on each of `exp`/`iat`/`nbf`) added to the matrix,
+  six opened a session at `083ad08`; a pinned-clock unit test drives all nine plus the
+  positive side (`10**400`, negative huge ints, float instants). Mutant **oidc-39** (finite
+  condition removed) killed by `[exp-nan]`. Design §5.9 (f) says "finite". **f4 — PR body
+  provenance:** Tests intro 35 → 70 → 80 by round; the Negative-control paragraph now carries
+  the reviewed-head baselines (`910a335`: 14 red / 56 green; `083ad08`: 7 red / 3 green) and
+  the matrix count (41 refused + 4 accepted), oidc-39 row and tuple.
+- **Decisions:** the domain is stated at the predicate, not by a JSON-strictness layer under
+  joserfc — the three time claims are the only numerically compared values, and the predicate
+  is the one place that admits them.
+- **State:** backend **1949 green**, `tests/test_auth_oidc.py` **80**, frontend untouched
+  (487), lint clean; tree clean at `59eb9a4` + this entry, both pushed. Reply posted on PR #209;
+  body amended. Dev DB at `4f3a9c1e7b2d`. Round-1 state still true: `session.auth_mode` +
+  start-up sweep (`auth.mode_changed`), one claim validator, migration `4f3a9c1e7b2d`.
+- **Next:** (1) Codex **round 3** on PR #209 — brief per `.agents/review-brief.md` (Codex
+  footer) at the new head, pointing at the round-2 reply; if GO, merge with `Closes #191`;
+  (2) after merge, fold oidc-1…39 into `mutation_test.py` (1/2/3/11 superseded by 21–30);
+  (3) #192 (M6-7) on top; (4) #193; (5) **LXC stays put until M6 is finished** (owner, 03/09).
+  Release-notes items unchanged: `AUTH_MODE=oidc`; a mode switch signs every browser out at the
+  first start in the new mode; a local→oidc switch needs the setup token once.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #191 (M6-6) PR #209: Codex round 1 (NO-GO, 2×P2) addressed at `083ad08`, round 2 pending
 
 - **Done:** Codex round 1 (GPT 5.6 Sol) on `910a335`: NO-GO, two P2s on the authorization
@@ -216,44 +245,3 @@ Template:
   release: `ALLOWED_HOSTS` lockout risk (M6-1); the instance comes up unclaimed (M6-3); `/mcp/`
   requires a PAT, wrong password / setup token is 403, never a token in a URL (M6-4); anonymous
   probes under `/api/` are 401, not 404/405/422 (M6-3b).
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) PR #205: Codex round 1 (NO-GO, 3×P3, record only) addressed at `5df44bc`, round 2 pending
-
-- **Done:** Issue **#204** filed (M6 milestone) for §5.9 item 3(b)'s two deferred items, then the
-  branch. The fix is **the pre-routing gate** `app/auth/prerouting.py`: one middleware directly
-  above `ResponseProfileMiddleware`, inside the ingress guards, that resolves the principal once
-  per REST request (own short session), stashes it on `request.state` (the dependency reuses it —
-  one lookup per request, pinned by counting), and refuses `anon` with the dependency's 401
-  envelope (bare `Bearer`, `no-store`, no `Allow`) wherever the router would answer 404, 405 or a
-  scoped 401 — read off the registry's `iter_dispatch_order` walk + `compile_path`, never the URL.
-  Never grants; the dependency stays the authority. Calls recorded in design §5.9 item 3(b):
-  anonymous families keep their 405/422; `INTERNAL` admitted on full, refused on partial; the
-  `/mcp` mount is the child's; bare `/mcp` at the source-run app is now 401 anon / 404 owner;
-  **family 8's `/.well-known/` namespace passes through** (`PROTOCOL_NAMESPACES`, derived from
-  the family-8 `API_ALIAS_REJECTIONS` entry) — the first head's sweep missed it and CI
-  Integration's three root-discovery T2 rows (404 until M6-7) went red with the gate's 401.
-  Also: `ingress_matrix.py` trailing-slash rows → family-13 rows (+ `/api/no-such-route`,
-  `DELETE /api/kits`); design §5 header + family-7 row; AGENTS.md rule 13 paragraph.
-- **Round 1** (Codex, GPT 5.6 Sol, on `543f4eb`): NO-GO, three P3s, no bypass, calls 1–9 accepted.
-  f1 `resolve_principal` docstring still said pre-gate session contract → rewritten; f2 the
-  "two audit rows under double resolution" witness for f13-6 was false (a revoked token is refused
-  at the gate, never reaches the dependency) → the count test is the kill, prose corrected in
-  comment/test/design/PR body; f3 PR-body trailing total 1857 → 1866 (CI). All at `5df44bc`,
-  runtime unchanged since `dfd6e16`. Reply posted; PR body has a round-1 section.
-- **Decisions:** the gate renders through `domain_error_handler` passed in by `create_app` (one
-  envelope author, no circular import). `PUT /mcp/` → 405 with `Allow` to anon (the
-  `RouteBinding`): Codex classed it same disclosure class, different boundary → **filed as #206**
-  (family-7 follow-up, non-blocking).
-- **State:** **PR #205** open at `dfd6e16` (gate `ec77ff8`, hand-off `1912fbe`, family-8 fix). New
-  suite `tests/test_auth_unrouted.py` **106 green**; negative control on unfixed `main` (trimmed
-  copy, worktree, own DB) **23 red / 73 green**, every red an anon-side 404/405/422; **15 hand mutants
-  f13-1…15 all killed** (runner + verdicts in the session scratchpad; tuples in the PR-body draft
-  `scratchpad/pr-body-204.md`, to be folded into `mutation_test.py` by the usual harness-only PR
-  after merge). Auth/ingress suites green; full backend run **1855 green** at `ec77ff8` (before the last pins) → 1866 by count at the head; CI Backend and Frontend green at `1912fbe`, Integration red there on exactly the family-8 rows (fixed at `dfd6e16` — check `gh pr checks 205`). T2's new rows are
-  CI Integration's to prove (packaged stack not run locally — `up` would recreate the dev `db`).
-  Dev DB still claimed with `e2e-owner-password`.
-- **Next:** (1) **Codex round 2** on `5df44bc` (findings from 4) → expected GO; (2) on GO, merge
-  (`Closes #204`), then the f13- fold-in PR; (3) #190/#192 OAuth spike; (4) #193 audit/rate
-  limiting; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release-notes items for the
-  M6 release unchanged plus: anonymous unrouted/wrong-verb/malformed requests under `/api/` are
-  401, not 404/405/422.
