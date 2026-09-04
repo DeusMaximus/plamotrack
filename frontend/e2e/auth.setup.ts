@@ -41,13 +41,20 @@ setup("claim the owner (if unclaimed) and sign in", async ({ request }) => {
     data: { password: OWNER_PASSWORD },
     headers: { Origin: APP },
   });
-  if (login.status() === 401) {
-    throw new Error(
-      "This instance already has an owner and E2E_OWNER_PASSWORD is not their password. " +
-        "Either export E2E_OWNER_PASSWORD=<the owner password>, or reset it " +
-        "(cd backend && uv run python -m app.auth.recovery reset-password) — " +
-        "the suite will not overwrite a credential it did not create.",
-    );
+  // Keyed on the envelope's code, not the status: a wrong password is 403
+  // `auth.login_failed` since #202 round 2 (a rejected form credential), and
+  // family 3 has other 403s — a hostile Origin, a CSRF failure — that deserve
+  // the generic assertion below, not this diagnosis (Codex #202 round 3, f6).
+  if (!login.ok()) {
+    const body = (await login.json().catch(() => null)) as { code?: string } | null;
+    if (body?.code === "auth.login_failed") {
+      throw new Error(
+        "This instance already has an owner and E2E_OWNER_PASSWORD is not their password. " +
+          "Either export E2E_OWNER_PASSWORD=<the owner password>, or reset it " +
+          "(cd backend && uv run python -m app.auth.recovery reset-password) — " +
+          "the suite will not overwrite a credential it did not create.",
+      );
+    }
   }
   expect(login.status(), await login.text()).toBe(200);
   const { state: signedIn, csrf_token: csrfToken } = (await login.json()) as {

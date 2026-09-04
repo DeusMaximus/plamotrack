@@ -331,9 +331,10 @@ yours needs something unusual.
 Import and export deliberately have **no** MCP tools. An agent that can silently replace
 your entire collection is not a feature.
 
-> ⚠️ The MCP endpoint is not yet behind the owner login — scoped bearer tokens for MCP
-> and REST scripts are the next Milestone 6 release. Keep it on localhost or a trusted
-> network until then.
+> ⚠️ The MCP endpoint takes only a personal access token (see *First, mint a token*
+> above) — never the browser session — and a token's reach is fixed when it is minted.
+> There is no tested TLS path yet, so keep the instance on localhost or a trusted
+> network for now.
 
 ### Teach your agent your hobby's conventions
 
