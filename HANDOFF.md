@@ -41,6 +41,30 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 2 (NO-GO, 2×P3) addressed at `5aca2e6`, round 3 pending
+
+- **Done:** Codex round 2 (GPT 5.6 Sol) on `51a7366`: NO-GO, two P3s, no bypass; f1 confirmed
+  fixed, calls 1–7, 9, (i) retained, 8 and (j) overruled. Fixed at `5aca2e6`: (f4) the round-1
+  narrowing ("challenge only at the bearer boundary") left challenge-less 401s on wrong
+  password / wrong setup token, which RFC 9110 §15.5.2 forbids → those are now **403** via a new
+  `CredentialRejectedError` (§15.5.4), codes unchanged, T11 intact; every remaining 401 carries
+  `WWW-Authenticate`; prose aligned in `exceptions.py`, `services/auth.py`, `error_codes.py`,
+  `dependency.py`, `main.py`, design §5.5 family 3 + §5.9 item 4, PR body (What + call 8); the
+  envelope walker learned the class; `.agents/lessons.md` → "The 401 contract". (f5) the unit
+  query-string test still sent a live PAT in a URI → fixed fake; CI's log scan was vacuous →
+  captures `api`+`web` logs once, requires an access record from each (`GET /healthz` /
+  `GET /api/healthz`), then greps for the token. Mutant pat-25 (403→401) killed; replay at
+  `51a7366`: 6 red / 1 green. Reply posted, PR body amended.
+- **Decisions:** 403 (not 400) for rejected form credentials — "credentials provided and
+  insufficient" is the closest RFC fit and the codes stay the client contract.
+- **State:** branch head `5aca2e6` pushed; backend **1760**, `test_auth_tokens.py` 100; CI on
+  `5aca2e6` running when written — the non-vacuous scan step is the one to check. Tree parked
+  on `main`. Dev DB claimed with `e2e-owner-password`. **Round 3 pending.**
+- **Next:** (1) Codex round 3 on `5aca2e6` (findings numbered from 6) → merge on GO; (2) harness
+  fold-in PR for pat-1…25; (3) the two family-13 hardening items (design §5.9 item 3(b)); (4)
+  #190/#192 OAuth spike; (5) **LXC stays put until M6 is finished** (owner, 03/09) —
+  `ALLOWED_HOSTS` into its `.env` before the pull, back up first, it comes up unclaimed.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 1 (NO-GO, 3×P3) addressed at `732b8aa`, round 2 pending
 
 - **Done:** Codex round 1 (GPT 5.6 Sol) on `789357d`: NO-GO, three P3s, no bypass, calls 1–7 and 9
@@ -148,45 +172,4 @@ Template:
   (`TEST_FILES` + `tests/test_auth_local.py`); (4) **#189 (M6-4) PATs**; (5) the two family-13
   hardening items (design §5.9 item 3(b)); (6) **LXC stays put until M6 is finished** (owner,
   03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #188 (M6-3) PR #200: e2e + CI Integration adapted to default-deny (PR #199 merged as `f713c8c`)
-
-- **Done:** (1) **PR #199 merged** (`f713c8c`, auth- mutant fold-in) — found merged at session
-  start. (2) On `feature/m6-3-local-owner-auth` (PR #200), the adaptation the flip owed:
-  **Playwright** — a `setup` project (`e2e/auth.setup.ts`) that claims an *unclaimed*
-  instance through the recovery command (`E2E_OWNER_PASSWORD`, default `e2e-owner-password`)
-  and only ever *signs into* a claimed one (refuses, with the two ways out, rather than reset
-  a credential it didn't create); signs in through the Vite proxy so the cookie lands on
-  `localhost`; storage state + an `e2e/.auth/api.json` (gitignored) that `e2e/api.ts`'s
-  `apiContext()` turns into Cookie + `Origin` + `X-CSRF-Token` for the specs' own API calls
-  (every `request.newContext({ baseURL: API })` replaced; screenshots.spec too). New
-  `e2e/auth.spec.ts`: signed-out browser → sign-in screen, wrong password refused (waits out
-  `BASE_DELAY`), right one opens the app + a cookie-borne write, sign out → sign-in screen,
-  reload stays out. **It caught a real bug:** `Layout.signOut` cleared the query cache *then*
-  invalidated the session query — nothing left to invalidate, the gate kept rendering the app.
-  Fixed (invalidate first, then `removeQueries` everything but the session). **Ingress
-  matrix** — `--setup-token`/`--password`: claims (or logs into) the stack through
-  `/api/auth/setup|login` and runs the positives cookie-borne (docs/openapi/kits/retailers/
-  meta 200; writes 201 with the CSRF token; the absent-Origin write is now the app's 403
-  `auth.origin_required`); with no credential the same rows expect the dependency's 401; an
-  anonymous `/api/kits → 401` and `/api/auth/session → 200` row always. **CI** — the smoke
-  curl on `/openapi.json` (now guarded) became `/api/auth/session` asserting `unclaimed`; a
-  new step reads the setup token out of `docker compose logs api` (masked) and the matrix
-  claims with it — the first-run path proven through the packaged nginx. Docs: procedure
-  E2E + Integration rows and the matrix command, README e2e line, design §5.5 T2 sentence.
-- **Decisions:** the suite never overwrites an existing owner credential; the matrix's
-  anonymous mode stays meaningful (401 ≠ nginx's 404 / ingress 403) rather than requiring a
-  credential; the packaged CI stack is claimed with a disposable password on argv.
-- **State:** local: e2e **42 passed / 1 skipped** on one worker from an empty DB, zero rows
-  left, owner claimed; frontend build/lint/481 unit green; backend ruff clean, pytest
-  **1655 passed**; packaged stack (`up -d --build --wait` locally): token read from `docker compose logs api` (43 chars), matrix **0 failing** claimed / logged-in / anonymous, MCP `tools/list` ok. The pre-order spec flaked once locally
-  under 10 workers (row not yet in the table) — passes alone and on one worker (CI's
-  setting); not a regression. Committed as `27e4d32`, then `641b214` (CI: `docker compose down -v` before the packaged
-  stack — the e2e had claimed the owner in the same Compose project's database, so the stack
-  came up claimed with no token to read; locally the two used different databases). **CI green
-  on `641b214`** (Backend / Frontend / Integration); PR #200 body updated. PR #200 body still says CI is red by construction — update it on push.
-- **Next:** (1) review + merge #200 (Codex, high-stakes — the PR body's deliberate calls plus
-  this entry's e2e/CI design); (3) **#189 (M6-4) PATs**; (4) the two deferred family-13
-  hardening items (design §5.9 item 3(b)); (5) **LXC stays put until M6 is finished**
-  (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first.
 
