@@ -41,6 +41,30 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 3 (NO-GO, 3×P3) addressed at `ef7764d`, round 4 pending
+
+- **Done:** Codex round 3 (GPT 5.6 Sol) on `9ad3d4d`: NO-GO, three P3s, no bypass; f4/f5
+  confirmed fixed, every call retained. Fixed at `ef7764d`: (f6) `e2e/auth.setup.ts` diagnosed
+  "already has an owner" on `status === 401`, obsolete since the round-2 403 → keyed on the
+  envelope code `auth.login_failed`, generic assertion for every other refusal; replayed by hand
+  against the claimed dev DB with `E2E_OWNER_PASSWORD=definitely-wrong-password` (the intended
+  message on the `auth.login_failed` branch) and with the right one (setup + `tokens.spec.ts`
+  green). (f7) four stale "no MCP tokens yet" statements — `.env.example`, two
+  `docker-compose.yml` comments, the README warning after the tool list — now state the real
+  boundary (owner login for the browser, PAT for REST/MCP automation, no tested TLS path).
+  (f8) PR-body counts corrected: `tokens.spec.ts` is 1 test (the "2/2" counted the setup
+  project), matrix 54 rows locally without `--allowed-host`, 58 in CI with it. Reply posted.
+- **Decisions:** none new. Release-notes item for the M6 release: **wrong password / setup
+  token is 403** (was 401 in #188, never released), `/mcp/` requires a PAT, never a token in a URL.
+- **State:** branch head `ef7764d` pushed (plus this hand-off merged in); backend 1760, frontend
+  485, e2e tokens 1/1; CI on the merged head running when written. Tree parked on `main`. Dev DB
+  claimed with `e2e-owner-password`. **Round 4 pending** (findings numbered from 9).
+- **Next:** (1) Codex round 4 → merge on GO (`Closes #189`); (2) harness fold-in PR for
+  pat-1…25 (`TEST_FILES` + `tests/test_auth_tokens.py`); (3) the two family-13 hardening items
+  (design §5.9 item 3(b)); (4) #190/#192 OAuth spike; (5) **LXC stays put until M6 is
+  finished** (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first,
+  it comes up unclaimed.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 2 (NO-GO, 2×P3) addressed at `5aca2e6`, round 3 pending
 
 - **Done:** Codex round 2 (GPT 5.6 Sol) on `51a7366`: NO-GO, two P3s, no bypass; f1 confirmed
@@ -142,34 +166,4 @@ Template:
   item 3(b); (3) #190 (OAuth spike) can run in parallel; (4) **LXC stays put until M6 is
   finished** (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first, and
   it will come up **unclaimed**: read the setup token from `docker compose logs api`.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #188 (M6-3) PR #200: Codex round 1 (NO-GO, 3×P3) addressed at `5be4414`, CI green, round-2 brief handed over
-
-- **Done:** Codex round 1 (GPT 5.6 Sol) on `641b214`: **NO-GO**, three P3s, no bypass, calls 1–5
-  retained. All three reproduced at `641b214` and fixed at `5be4414` (backend only): (f1) the
-  promised plain-http cookie-mode startup line didn't exist → `sessions.announce_cookie_mode`
-  from the lifespan at every auth-enabled start (warning on plain http, info on https); (f2)
-  `auth.sessions_revoked` declared, never recorded → `revoke_all_sessions` records it with
-  `count=N` in the caller's transaction (target/address from the caller; both recovery commands
-  pass `"host"`); (f3) three M6-3 security mutants survived (CSRF `==`, `verify_password(None)`
-  short-circuit, unconditional `claimed_at` re-stamp) + stale PR-body counts → tests spy on the
-  verifier's argument (`DUMMY_HASH`, via a wrapper — argon2's methods are read-only) and on
-  `hmac.compare_digest`, pin `claimed_at` across recovery, assert the audit rows; **ten** M6-3
-  mutants replayed by hand at `5be4414`, all killed, tuples in the PR body for the post-merge
-  harness fold-in. Reply posted, PR body amended (head, counts, mutant table, e2e work out of
-  "Deferred", token prose narrowed). Round-2 brief printed for the owner.
-- **Decisions:** the cookie-mode tests patch the module logger with a recorder, not `caplog` —
-  alembic's `fileConfig` in the session conftest disables already-imported app loggers
-  (`test_integrity.py`'s note; re-verified). The https line is `info`, so under uvicorn's default
-  logging (no root handler; last-resort prints WARNING+) it is **invisible in the shipped
-  container** while the plain-http warning shows — put to Codex as deliberate call 6, not changed.
-- **State:** `main` at this entry; branch head `5be4414`, **CI green** (Backend / Frontend /
-  Integration). Backend **1658**, `test_auth_local.py` **28**; negative control of the round-1
-  tests on `641b214`: 4 red / 24 green. Tree parked on `main` for the review window; dev DB owner
-  password is `e2e-owner-password` (reset so the suite's default works). **Round 2 pending.**
-- **Next:** (1) Codex round 2 on `5be4414` → address in the reviewer's numbering (4 onward);
-  (2) merge #200 on GO; (3) harness-only PR folding m63-1…10 into `mutation_test.py`
-  (`TEST_FILES` + `tests/test_auth_local.py`); (4) **#189 (M6-4) PATs**; (5) the two family-13
-  hardening items (design §5.9 item 3(b)); (6) **LXC stays put until M6 is finished** (owner,
-  03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first.
 
