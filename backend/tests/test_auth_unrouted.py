@@ -15,7 +15,7 @@ presented-and-failed bearer, a stale cookie) — every anonymous refusal is the
 401 envelope with the bare `Bearer` challenge and `no-store`, and every
 authenticated principal keeps the framework's own 404/405/422/400, `Allow`
 included. Then the two things a gate can get wrong without a status changing:
-resolving the principal **twice** (an audit row per stage), and disagreeing
+resolving the principal **twice** (pinned by counting where it happens), and disagreeing
 with the router about what a request reaches (pinned route by route).
 """
 
@@ -336,9 +336,13 @@ async def _audit_count(event_type: str) -> int:
 
 
 async def test_a_revoked_token_writes_one_audit_row_per_request():
-    """The observable cost of resolving twice: a revoked token presented with
-    its correct secret writes `auth.token_use_after_revoke` — once. A gate that
-    resolved and a dependency that resolved again would write two."""
+    """The resolver's audit contract holds at the gate: a revoked token
+    presented with its correct secret writes `auth.token_use_after_revoke`
+    exactly once, from the gate's own session (the commit-then-raise path in
+    `_resolve_bearer`). A control, not a double-resolution witness — the gate
+    refuses the token, so the dependency never runs for it; the once-per-request
+    property is pinned by the resolution-count test below (Codex #205 round 1,
+    f2)."""
     async with get_sessionmaker()() as session:
         raw, row = await token_service.mint_token(session, name="leaked", scopes={Scope.READ})
         await token_service.revoke_token(session, row.id)

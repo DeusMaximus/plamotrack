@@ -47,7 +47,7 @@ Template:
   branch. The fix is **the pre-routing gate** `app/auth/prerouting.py`: one middleware directly
   above `ResponseProfileMiddleware`, inside the ingress guards, that resolves the principal once
   per REST request (own short session), stashes it on `request.state` (the dependency reuses it —
-  no double `last_used_at` touch / audit row), and refuses `anon` with the dependency's 401
+  one lookup per request, pinned by counting), and refuses `anon` with the dependency's 401
   envelope (bare `Bearer`, `no-store`, no `Allow`) wherever the router would answer 404, 405 or a
   scoped 401 — read off the registry's `iter_dispatch_order` walk + `compile_path`, never the URL.
   Never grants; the dependency stays the authority. Calls recorded in design §5.9 item 3(b):

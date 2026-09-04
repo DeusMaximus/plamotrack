@@ -1143,8 +1143,8 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    (`app/auth/prerouting.py`), one middleware directly above the response-profile
    layer and inside the ingress guards, resolves the principal **once** per request the
    REST app owns — stashed on the request state, so the dependency reads it rather than
-   resolving again (a second resolution would write a use-after-revoke audit row per
-   stage) — and refuses `anon` before the router runs wherever the router would have
+   resolving again (a second lookup and `last_used_at` touch per request; the count is
+   pinned by test) — and refuses `anon` before the router runs wherever the router would have
    answered 404, 405 or the dependency's 401, reading what the request *would* reach
    from the registry's own dispatch walk, never the URL string. It never grants: the
    dependency stays the authority on every matched route, so a disagreement between the

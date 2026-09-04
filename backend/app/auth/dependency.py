@@ -121,9 +121,11 @@ async def enforce_route_policy(request: Request, session: SessionDep) -> Princip
     policy = index.policy_for(endpoint) if endpoint is not None else None
     # The pre-routing gate (`app/auth/prerouting.py`, #204) resolved the
     # principal once, ahead of routing and body parsing, and stashed it; a
-    # second resolution here would touch `last_used_at` twice and write a
-    # use-after-revoke audit row per stage. Resolving is the fallback for an
-    # app built without the gate — the dependency alone is still default-deny.
+    # second resolution here would be a second lookup and `last_used_at` touch
+    # for a valid bearer (a failed one never reaches this far — the gate
+    # refused it — so no audit row is at stake). The resolution-count test is
+    # what pins the once. Resolving is the fallback for an app built without
+    # the gate — the dependency alone is still default-deny.
     principal = getattr(request.state, REQUEST_PRINCIPAL_ATTR, None)
     if principal is None:
         principal = await resolve_principal(request, session)
