@@ -78,7 +78,7 @@ Template:
   with `Closes #192`; (2) after merge nothing to fold in (tuples tracked); (3) #193, M6-9 TLS docs,
   the M6 release (gate: `ingress_matrix.py --mode oidc` + the burst), then the LXC upgrade.
 
-## ## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) MCP OAuth on `feature/m6-7-mcp-oauth` — **PR #212** open (runtime head `4bd2e88`), Codex round 1 next, in a new session
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) MCP OAuth on `feature/m6-7-mcp-oauth` — **PR #212** open (runtime head `4bd2e88`), Codex round 1 next, in a new session
 
 - **Done:** the whole of #192 on the branch, committed as `4bd2e88` and pushed on the owner's call; **PR #212** opened from the body drafted this session (12 deliberate calls, the mutant paragraph, the live check).
   `app/auth/mcp_oauth.py` — `PlamotrackOAuthProxy` over FastMCP's `OAuthProxy` (not `OIDCProxy`,
