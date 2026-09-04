@@ -41,6 +41,55 @@ Template:
 
 ---
 
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 2 (GPT-6, NO-GO: P1/P2/P3) answered on the branch — head `e90550f`, reply posted (issuecomment-5546424919), PR body amended, round-3 brief printed
+
+- **Done:** all three findings reproduced at `e248a4b` on their own assertions (the 14 new
+  rows written first: 10 red on `200 == 401`/`401 == 200`, 4 controls green), then fixed as
+  the review's closing paragraph asked — on the **grant record**, not the transitions
+  (`app/auth/mcp_oauth.py`): **f6** every transition of a grant (issuance, the refresh
+  exchange, the transparent refresh, revocation) runs under one advisory lock keyed on the
+  record's id (`_one_transition`/`_GrantTransition`; the per-JTI lock is gone),
+  `_try_transparent_refresh` overridden as a transition whose outcome `load_access_token`
+  reads (the SDK answers a failed refresh from the set it had loaded); **f7** `GrantRecords`,
+  one gate on every write to `mcp-upstream-tokens` — a declared `_Transition` only, the
+  record read back under the lock, the identity checked against the record's own binding
+  (`GrantRecord.owner`, the digest of the id_token last verified) before the SDK's `put`;
+  a stranger's or forged id_token on either path **ends the grant** (`_refuse_transition`:
+  record + mapping + hash gone, `auth.mcp_grant_revoked` `ended_by=upstream_refresh` beside
+  the refusal) — round 1's retry withdrawn; `unavailable` verdicts leave the grant standing;
+  **f8** counts corrected to what `CASES` yields, rule stated in the procedure. Sibling
+  found by the sweep and closed here (same root cause): a binding renewed by a transparent
+  refresh drifted from the tokens' digest and the next exchange re-verified an expired
+  id_token. Tests: `test_mcp_oauth.py` **103** (+14, −1 superseded retry test). Mutants:
+  moa-49…56 added, 34/36/37/38/39/42 re-anchored — **55/55 killed** (first pass 52: moa-47 a redundant hash delete in `revoke_token` — fixed; moa-56 masked
+  by the round-1 fallback in `_extract_upstream_claims` — the hook now raises on a digest the gate did
+  not leave; moa-49 the fake's "same" id_token byte-identical within one second — `jti` added, the drift
+  test had been red at `e248a4b` by the clock). Docs:
+  design §5.5 row 8, §5.9 (d) + new (f″); AGENTS.md rule 13; operations "Ending a link";
+  procedure counts (457/46 with the one-liner), moa- paragraph, roster + brief footer
+  (**Codex is GPT-6 since 2026-09-05**); lessons → "The record, not the transitions".
+- **Decisions:** the gate over the SDK's adapter rather than reimplementing the two refresh
+  transitions (the SDK's arithmetic stays the SDK's; a future writer meets the gate or
+  fails loudly); no tombstone — serialization plus the read under the lock is the boundary
+  and the gate refuses undeclared writes; the binding on the record, the tokens keep theirs
+  for the per-request owner-row check; terminate-and-relink on a hostile refresh response
+  (Codex's "defensible policy"); call 10's concurrent burst noted for the release-gate work,
+  not done (matrix unchanged this round — no route/ingress change).
+- **State:** backend **2059 green** on the final tree (`test_mcp_oauth.py` 103), lint/format
+  clean, `render_ingress.py --check` clean; frontend untouched. Mutants **55/55 killed** (54 in the
+  final full run plus moa-47 re-run alone after its anchor moved under a new comment). Commit
+  `e90550f` pushed; PR #212 body amended to that head; the reply is issuecomment-5546424919. Records written before this head have no `owner` and end at
+  their next refresh (relink) — dev DB only. Packaged stack not re-run (nothing under
+  `frontend/nginx/`, the registry or the routes changed). Dev `db` up, Keycloak spike up.
+  LXC untouched (**stays put until M6 is finished**).
+- **Next:** (1) the owner pastes the round-3 brief (printed in this session's chat; regenerate from
+  `.agents/review-brief.md` with the GPT-6 footer if lost) into Codex; (2) Codex round 3 on PR #212 (brief from `.agents/review-brief.md`,
+  GPT-6 footer; push on: the gate as the one writer, the `unavailable` exception leaving the
+  grant standing, the transparent outcome path, `raise_on_validation_error=True` parity);
+  if GO, merge with `Closes #192`; (3) #193, M6-9 TLS docs, the M6 release (gate:
+  `ingress_matrix.py --mode oidc` + the burst — make the burst concurrent there), then the
+  LXC upgrade.
+
 ## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 1 (NO-GO, 5 findings) answered on the branch — head `e248a4b`, reply posted (issuecomment-5545491101), PR body amended
 
 - **Done:** all five findings reproduced at `4bd2e88` on their own assertions, then fixed as one
@@ -208,47 +257,3 @@ Template:
   (3) #192 (M6-7) on top; (4) #193; (5) **LXC stays put until M6 is finished** (owner, 03/09).
   Release-notes items unchanged: `AUTH_MODE=oidc`; a mode switch signs every browser out at the
   first start in the new mode; a local→oidc switch needs the setup token once.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #191 (M6-6) PR #209: Codex round 1 (NO-GO, 2×P2) addressed at `083ad08`, round 2 pending
-
-- **Done:** Codex round 1 (GPT 5.6 Sol) on `910a335`: NO-GO, two P2s on the authorization
-  boundary, both **reproduced first** (the new tests went red on the review's own assertions),
-  then fixed, then mutated. **f1 — superseded sessions across `AUTH_MODE` changes:** the
-  invariant is *a session is authority only in the mode that minted it* — `session.auth_mode`
-  (`AuthMode` in `models/enums.py`; migration **`4f3a9c1e7b2d`**, text + CHECK, backfilled
-  `local`), `new_session_row(..., auth_mode=)` stamps it, `resolve_session(..., auth_mode=)`
-  refuses the other mode's row (→ `anon`), and the lifespan calls
-  `revoke_sessions_of_other_modes` (write gate; `auth.sessions_revoked` + new
-  `auth.mode_changed` audit rows, target `startup`, client `host`; a log line) so the switch is
-  durable in both directions. The mode is read off the provider's presence on `app.state`
-  (new **`app/auth/mode.py`**: `OIDC_PROVIDER_ATTR`, `auth_mode_of`; `routers/auth.py` re-exports
-  the attr); the lifespan now reads the provider from `app_.state`, not the closure (so a test's
-  fake-backed provider is what warms). **f2 — id_token claim shapes:** the joserfc
-  `JWTClaimsRegistry` is gone; `validate_id_token_claims` (module-level in `services/oidc.py`,
-  pinned-clock `now=`) is the one contract — types before values, `aud` exactly this client
-  (string or single-member list; any extra audience refused whatever `azp`), `azp` == client id
-  when present, `iat` required, `exp`/`iat`/`nbf` NumericDates with bools excluded, `nonce` a
-  string; `complete_login` reads `claims["sub"]` (the `no_subject` branch and audit detail are
-  gone — every shape is `id_token_rejected`). Docs: design §5.6 (session row, audit list), §5.8
-  T7, §5.9 item 6 calls **(f)** and **(g)**; `docs/operations.md` (sign-out at the first start in
-  the new mode, both directions; the client must be the token's only audience); AGENTS.md rule 13.
-- **Decisions:** stamp-and-sweep, not an auth-epoch column (the mode switch was the only regime
-  change that did not already write the DB; reset/rebind revoke as before); no trusted-audience
-  setting (single owner, nothing to trust); `read_session`'s ordering unchanged (owner-and-unbound
-  is now unreachable, a reorder would be a dead branch); backfill `local` is a fact for every
-  released instance, disclosed in the migration docstring (the dev DB's OIDC-minted sessions get
-  `local` too — one sign-out on a throwaway DB).
-- **State:** backend **1939 green** (`test_migration_data.py` HEAD → `4f3a9c1e7b2d`),
-  `tests/test_auth_oidc.py` **70** (matrix 6 → 32 refused + 4 accepted shapes, a leeway-edge
-  unit test, four mode-switch tests), frontend untouched (487). Mutants oidc-21…38 (18, one site
-  each): **18 killed, 0 survived (oidc-30 killed as a 500 from the comparison, not a refusal — the type check is what makes it one)**; runner + tuples in the session scratchpad and in the PR body's
-  `<details>`. `uv run alembic check` on the dev DB reports "removed check constraint" for every
-  text-enum CHECK in the schema (pre-existing autogenerate noise; `ck_session_auth_mode` joins the
-  list) and no column difference. Dev DB is at `4f3a9c1e7b2d`. Tree: clean at `083ad08` (the fix) + this entry; both pushed.
-- **Next:** (1) Codex **round 2** on PR #209 — brief per `.agents/review-brief.md` (Codex footer)
-  at the new head, pointing at the round-1 reply and the two new `<details>` rows; (2) after merge,
-  fold oidc-1…38 into `mutation_test.py` (the four registry-anchored tuples are superseded by
-  21–30); (3) #192 (M6-7) on top; (4) #193; (5) **LXC stays put until M6 is finished** (owner,
-  03/09). Release-notes items: `AUTH_MODE=oidc` exists; a mode switch signs every browser out at
-  the first start in the new mode (both directions) and a local→oidc switch needs the setup token
-  once.
