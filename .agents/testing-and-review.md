@@ -190,7 +190,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 318 cases over thirty target files** — #86's
+- **On `main` at the time of writing: 353 cases over thirty-one target files** — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
   #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
   #118 (`ship-`), #129 (`dsp-`), #130 (`cat-`), #133 (`ref-`), #136
