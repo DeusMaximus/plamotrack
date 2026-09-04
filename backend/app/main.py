@@ -6,6 +6,8 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastmcp import settings as fastmcp_settings
+from fastmcp.server.http import create_streamable_http_app
 from sqlalchemy import text
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
@@ -18,11 +20,13 @@ from app.auth.dependency import (
     bind_route_policies,
     enforce_route_policy,
 )
+from app.auth.mcp_auth import PersonalAccessTokenVerifier
 from app.auth.registry import build_route_index
 from app.config import Settings, get_settings
 from app.db import SessionDep, get_sessionmaker
 from app.exceptions import (
     ConflictError,
+    CredentialRejectedError,
     DomainError,
     ForbiddenError,
     GoneError,
@@ -48,6 +52,7 @@ from app.routers import (
     portability,
     retailers,
     settings,
+    tokens,
 )
 from app.schemas.errors import ERROR_RESPONSES
 
@@ -61,6 +66,7 @@ ROUTERS = (
     meta.router,
     settings.router,
     auth.router,
+    tokens.router,
 )
 
 _DOMAIN_STATUS: dict[type[DomainError], int] = {
@@ -69,6 +75,7 @@ _DOMAIN_STATUS: dict[type[DomainError], int] = {
     InvalidInputError: 422,
     UnauthenticatedError: 401,
     ForbiddenError: 403,
+    CredentialRejectedError: 403,
     GoneError: 410,
     RateLimitedError: 429,
 }
@@ -87,12 +94,20 @@ async def domain_error_handler(request: Request, exc: DomainError) -> JSONRespon
             (status for cls, status in _DOMAIN_STATUS.items() if isinstance(exc, cls)),
             400,
         )
+    headers: dict[str, str] = {}
     # A throttle refusal names when the caller may retry (§5.6, brute force).
-    headers = {"Retry-After": str(exc.retry_after)} if isinstance(exc, RateLimitedError) else None
+    if isinstance(exc, RateLimitedError):
+        headers["Retry-After"] = str(exc.retry_after)
+    # Every 401 names the scheme it takes (RFC 9110 §15.5.2): `Bearer`, or the
+    # RFC 6750 `invalid_token` form when a bearer was presented and failed
+    # (#189). The family-3 form failures are `CredentialRejectedError` — 403, so
+    # they owe no challenge and advertise none (Codex #202 rounds 1–2, f2/f4).
+    if isinstance(exc, UnauthenticatedError) and exc.challenge:
+        headers["WWW-Authenticate"] = exc.challenge
     return JSONResponse(
         status_code=status_code,
         content={"detail": exc.detail, "code": exc.code, "params": jsonable_encoder(exc.params)},
-        headers=headers,
+        headers=headers or None,
     )
 
 
@@ -165,7 +180,7 @@ async def readyz(request: Request, session: SessionDep) -> dict:
     return {"status": "ok"}
 
 
-def build_mcp_app(policy: IngressPolicy):
+def build_mcp_app(policy: IngressPolicy, *, authorization: bool = False):
     """The FastMCP ASGI child for the `/mcp` mount, guarded with the same lists
     as REST (§5.6, Host spoofing): `host_origin_protection=True` is FastMCP's
     strict mode — Host validated on every request, Origin whenever present —
@@ -173,18 +188,45 @@ def build_mcp_app(policy: IngressPolicy):
     each DNS name dotted as well) / `allowed_origins`, to which the guard adds
     the loopback names itself.
 
+    `authorization` puts the transport behind FastMCP's bearer middleware with
+    `PersonalAccessTokenVerifier` (§5.5 family 7; #189): a request with no valid
+    `Authorization: Bearer` is the SDK's 401 with `WWW-Authenticate: Bearer`, a
+    cookie is never read, and the verified token is what the per-tool scope
+    middleware reads. Built through `create_streamable_http_app` rather than
+    `mcp.http_app(...)` — the latter reads the provider off the shared server
+    object, and the pre-auth app (`create_app()`, the harnesses) must keep an
+    open mount in the same process as the enforced one; the arguments are the
+    ones `http_app` would pass, with `auth` decided per app.
+
     Slash redirects are off (§5.6, proxy trust): Starlette builds a redirect's
     `Location` from the request's scheme and Host, query string included, which
     behind TLS would bounce an OAuth code to a plain-http URL (M6-7). A
     non-canonical spelling is 404, never 3xx.
     """
-    mcp_app = mcp.http_app(
-        path="/",
+    mcp_app = create_streamable_http_app(
+        server=mcp,
+        streamable_http_path="/",
+        auth=PersonalAccessTokenVerifier() if authorization else None,
+        json_response=fastmcp_settings.json_response,
+        stateless_http=fastmcp_settings.stateless_http,
+        debug=fastmcp_settings.debug,
         host_origin_protection=True,
         allowed_hosts=list(policy.mcp_allowed_hosts),
         allowed_origins=list(policy.allowed_origins),
     )
     mcp_app.router.redirect_slashes = False
+    if authorization:
+        # With a provider, FastMCP registers the transport with `methods=[GET,
+        # POST, DELETE]` (and Starlette adds HEAD) where the open route declares
+        # none. Left as is, Starlette's own 405 — plain text, `Allow` naming
+        # HEAD, sent without passing through the route's binding, so without the
+        # profile — would answer an undeclared verb in front of the registry's
+        # `RouteBinding`, which is the declared verb boundary for this mount
+        # (Codex #198 round 3, f2). Declare none here too, so the binding stays
+        # the one boundary and answers in the SDK's shape with `no-store`.
+        for route in mcp_app.router.routes:
+            if getattr(route, "path", None) == "/":
+                route.methods = None  # type: ignore[attr-defined]
     return mcp_app
 
 
@@ -234,7 +276,7 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
     # REST and MCP share one process and one service layer (§2). The MCP
     # endpoint is mounted at /mcp on the same port — a deliberate simplification
     # of §8's two-port layout; split later if operating them separately matters.
-    mcp_app = build_mcp_app(policy)
+    mcp_app = build_mcp_app(policy, authorization=authorization)
 
     @asynccontextmanager
     async def lifespan(app_: FastAPI):

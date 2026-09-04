@@ -337,10 +337,23 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     ingress and packaged-stack harnesses build, and the test suite drives the shipped
     app with an injected owner (`tests/conftest.py`). The staged sequencing ("foundation
     M6-2, activate once a credential works", owner's call 2026-09-03) is complete for the
-    browser; the bearer (#189) is the next credential the resolver adds. The matrix
+    browser, and **the bearer landed with M6-4 (#189):** a personal access token
+    (`ptk_<id>_<secret>`, digest stored, `compare_digest` against a dummy for an unknown
+    id) in `Authorization` only — never a query parameter — resolved by **one** helper,
+    `services/tokens.resolve_bearer`, from both the REST resolver and the FastMCP
+    `TokenVerifier` on the `/mcp` mount, so a token is valid on both surfaces or on
+    neither; a presented-and-failed bearer is 401 `auth.bearer_invalid` on every route,
+    the anonymous families included, and a bearer on a family-3 action is 403. Per-tool
+    scope is one FastMCP middleware on `tools/call` (`app/auth/mcp_auth.py`) reading
+    `MCP_TOOL_SCOPES`, refusing before arguments are parsed; the in-memory test client
+    carries no header, so it reads an injected principal off the server object only
+    when no HTTP request is in flight (`tests/conftest.py` sets it). Token management
+    is family 6 (`/auth/tokens`): the owner's session alone, so a token cannot mint a
+    token. The matrix
     (`tests/test_authorization.py`) drives the real route graph through the dependency
     with injected principals; `tests/test_auth_local.py` drives the shipped app through
-    the real session cookie.
+    the real session cookie; `tests/test_auth_tokens.py` drives it through real bearers
+    and the MCP transport by hand.
     The registry's **response profile is enforced, not defaulted, adjacent to the
     router that selects the route**: for the app's own routes the response
     middleware — added *first*, so it is the innermost user middleware, with only
@@ -451,5 +464,8 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
 The repo goes public at 4.5 as an alpha (§10, revised) rather than waiting for
 milestones 1–6. Consequence for anything written from here on: **the audience is
 strangers.** No internal references, no assumed context, and disclose what isn't
-built rather than describing planned endpoints as if they exist. Nothing is
-authenticated yet (M6) — an alpha instance belongs on a trusted network.
+built rather than describing planned endpoints as if they exist. Collection and
+administrative access is authenticated — the owner login for the browser, personal
+access tokens for REST scripts and MCP clients (M6-3/M6-4); only liveness and the
+auth bootstrap answer anonymously — but there is no tested TLS path yet, so an alpha
+instance belongs on a trusted network.

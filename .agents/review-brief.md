@@ -45,7 +45,8 @@ in play) and `.agents/testing-and-review.md` ("Writing a regression test", "Exte
 review → Responding to a review") before the diff.
 
 **Context, one paragraph.** plamotrack is a single-owner, self-hosted model-kit
-collection tracker, pre-adoption alpha, no authentication yet (milestone 6), on a
+collection tracker, pre-adoption alpha, owner login + personal access tokens but no
+tested TLS path yet (milestone 6 in progress), on a
 trusted network. ‹Two or three sentences: the defect or feature in the issue's terms,
 and what this branch does about it — file names, not adjectives.› No migration /
 ‹one migration, additive›. Inventory counts and purchase records, not access control.

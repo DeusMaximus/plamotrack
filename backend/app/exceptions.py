@@ -34,8 +34,35 @@ class InvalidInputError(DomainError):
 
 class UnauthenticatedError(DomainError):
     """No credential, or a presented one that fails, on a route that needs one
-    (§5.5). 401. Raised by the authorization dependency (`app/auth/dependency.py`),
-    not by a service — the service layer trusts that a caller reached it."""
+    (§5.5). 401. Raised by the authorization dependency (`app/auth/dependency.py`)
+    and the resolver, not by a service — the service layer trusts that a caller
+    reached it. `challenge`, when set, is the `WWW-Authenticate` value the
+    response carries (RFC 7235 §3.1 — a 401 names the scheme it accepts): the
+    dependency's bare `Bearer` for an absent credential, and RFC 6750's
+    `Bearer error="invalid_token"` for a presented bearer that failed (#189)."""
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        code: str,
+        params: Mapping[str, object] | None = None,
+        challenge: str | None = None,
+    ):
+        super().__init__(detail, code=code, params=params)
+        self.challenge = challenge
+
+
+class CredentialRejectedError(DomainError):
+    """A credential presented in a request *body* — the owner password, the
+    setup token — is wrong (§5.5 family 3). **403**, not 401: RFC 9110 §15.5.2
+    makes every 401 owe a challenge applicable to the resource, and these routes
+    refuse the one HTTP scheme the app speaks (`Bearer`, `bearer_refused`), so
+    there is no honest challenge to send; §15.5.4's 403 — credentials were
+    provided and are insufficient — is the status that fits (Codex #202 round 2,
+    f4). The codes (`auth.login_failed`, `auth.setup_token_invalid`) are the
+    contract clients switch on; the status is the same for both failure kinds
+    (T11)."""
 
 
 class ForbiddenError(DomainError):

@@ -14,12 +14,15 @@ the foundation (M6-2), activate once a credential exists (M6-3)" completes here.
 `create_app()` (the default off) is still what the ingress and packaged-stack
 harnesses build, and the suite drives the shipped app with an injected owner
 (`tests/conftest.py`); the authorization matrix (`tests/test_authorization.py`)
-injects each principal against the real route graph. The bearer (#189) is the
-next credential the resolver will add.
+injects each principal against the real route graph. The resolver's credentials
+are the session cookie (#188) and the personal access token as a bearer (#189);
+a presented-and-failed bearer is the resolver's 401 before this runs.
 
 Statuses (§5.5):
 
-- `ANONYMOUS` route → always allowed.
+- `ANONYMOUS` route → always allowed — except that a family-3 action refuses a
+  bearer-borne principal with **403** (`bearer_refused`): a token cannot log in,
+  log out or claim.
 - scoped route (`READ`/`WRITE`/`ADMIN`) → `anon` is **401**, an authenticated
   principal without the scope is **403**, otherwise allowed.
 - `INTERNAL` route (readiness) → allowed through here; the route self-guards on
@@ -31,7 +34,14 @@ Statuses (§5.5):
 
 The 401/403 travel in the #25 envelope: the dependency raises the domain errors
 `UnauthenticatedError` / `ForbiddenError`, which the registered handler renders
-with `code` `auth.unauthenticated` / `auth.forbidden`.
+with `code` `auth.unauthenticated` / `auth.forbidden`. **Every 401 the app
+produces carries a `WWW-Authenticate: Bearer` challenge** (RFC 9110 §15.5.2, RFC
+6750 §3): bare for an absent credential on a scoped route, `error="invalid_token"`
+for a presented bearer that failed (the resolver's). The family-3 form failures —
+a wrong password, a wrong setup token — are therefore **403**
+(`CredentialRejectedError`), not 401: those routes refuse a bearer
+(`bearer_refused`), so a challenge there would name a credential the route cannot
+take, and a 401 without one breaks the status contract (Codex #202 rounds 1–2).
 """
 
 from __future__ import annotations
@@ -58,6 +68,11 @@ ROUTE_INDEX_ATTR = "route_index"
 
 #: Also stashed on `request.state` for downstream use (audit, #193).
 REQUEST_PRINCIPAL_ATTR = "principal"
+
+#: The challenge an absent credential earns on a scoped route (RFC 7235 §3.1;
+#: RFC 6750 §3). A browser does not prompt on `Bearer`, so the SPA's 401s are
+#: unaffected; a script sees which scheme the API takes.
+BEARER_CHALLENGE = "Bearer"
 
 #: Methods that carry no CSRF risk — a cross-site GET is unreadable by the page
 #: that sent it (mirrors `ingress.SAFE_METHODS`).
@@ -104,12 +119,19 @@ async def enforce_route_policy(request: Request, session: SessionDep) -> Princip
     if policy is None:
         # An app-level dependency runs only for a matched route, and every
         # declared route resolves — so this is defence in depth. Fail closed.
-        raise UnauthenticatedError(_UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED)
+        raise UnauthenticatedError(
+            _UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED, challenge=BEARER_CHALLENGE
+        )
 
     # CSRF applies to any cookie-borne unsafe request, whatever the route's
     # credential policy — a family-3 logout is anonymous-classified but still
     # cookie-borne, so the check lives here, before the scope switch.
     _enforce_csrf(request, principal)
+
+    # A token is not a browser (§5.5 family 3): the auth actions refuse a
+    # bearer-borne principal whatever the credential policy admits.
+    if policy.bearer_refused and principal.bearer_borne:
+        raise ForbiddenError(_FORBIDDEN, code=error_codes.AUTH_FORBIDDEN)
 
     credential = policy.credential
     if credential == CredentialPolicy.ANONYMOUS:
@@ -121,9 +143,13 @@ async def enforce_route_policy(request: Request, session: SessionDep) -> Princip
     scope = policy.required_scope
     if scope is None:
         # MCP_TRANSPORT / PROTOCOL do not belong on a REST route. Fail closed.
-        raise UnauthenticatedError(_UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED)
+        raise UnauthenticatedError(
+            _UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED, challenge=BEARER_CHALLENGE
+        )
     if principal.kind is PrincipalKind.ANON:
-        raise UnauthenticatedError(_UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED)
+        raise UnauthenticatedError(
+            _UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED, challenge=BEARER_CHALLENGE
+        )
     if not principal.has_scope(scope):
         raise ForbiddenError(_FORBIDDEN, code=error_codes.AUTH_FORBIDDEN)
     return principal

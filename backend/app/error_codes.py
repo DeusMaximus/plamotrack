@@ -179,8 +179,9 @@ AUTH_UNAUTHENTICATED = "auth.unauthenticated"
 AUTH_FORBIDDEN = "auth.forbidden"
 
 # --- local owner authentication (M6-3, #188 — §5.5 families 2–3, §5.6) --------
-# 401 `login_failed` / `setup_token_invalid`: the presented secret is wrong (one
-# body for every failure kind, T11). 410 `setup_claimed`: the instance already
+# 403 `login_failed` / `setup_token_invalid`: the presented form secret is wrong
+# (one body for every failure kind, T11; 403 rather than a challenge-less 401 —
+# see `exceptions.CredentialRejectedError`). 410 `setup_claimed`: the instance already
 # has an owner. 429 `too_many_attempts`: the failure budget is shut, `params.
 # retry_after` in seconds. 403 `csrf_failed` / `origin_required`: a cookie-borne
 # unsafe request without the session-bound token, or without an Origin/Referer.
@@ -193,6 +194,18 @@ AUTH_CSRF_FAILED = "auth.csrf_failed"
 AUTH_ORIGIN_REQUIRED = "auth.origin_required"
 AUTH_PASSWORD_TOO_SHORT = "auth.password_too_short"
 AUTH_PASSWORD_TOO_LONG = "auth.password_too_long"
+
+# --- personal access tokens (M6-4, #189 — §5.5 family 6, §5.6) -----------------
+# 401 `bearer_invalid`: an `Authorization` header was presented and failed —
+# unknown, wrong secret, expired, revoked, malformed, or not a bearer at all; one
+# body for every kind (T11). 404 `token_not_found`: no token with that id. 422
+# `token_scope_invalid`: the requested scopes are empty, unknown, or include
+# `instance:admin` (no admin tokens in M6). 422 `token_expiry_in_past`: the
+# requested expiry has already passed.
+AUTH_BEARER_INVALID = "auth.bearer_invalid"
+AUTH_TOKEN_NOT_FOUND = "auth.token_not_found"
+AUTH_TOKEN_SCOPE_INVALID = "auth.token_scope_invalid"
+AUTH_TOKEN_EXPIRY_IN_PAST = "auth.token_expiry_in_past"
 
 # --- request validation (FastAPI's 422 list shape) -------------------------
 REQUEST_VALIDATION = "request.validation"

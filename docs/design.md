@@ -652,12 +652,15 @@ timeline is planned, only that the columns are cheap now and expensive to retrof
 
 ---
 
-## 5. Auth, Remote Access & Public Mode 🔨 **Planned (M6 + M8) — threat model recorded 02/09/2026; §5.9 item 1 (ingress identity, #186) implemented 03/09/2026, nothing else yet**
+## 5. Auth, Remote Access & Public Mode 🔨 **In progress (M6 + M8) — threat model recorded 02/09/2026; §5.9 items 1–4 implemented (ingress identity #186 03/09; auth foundation #187, local owner auth #188 and personal access tokens #189 04/09/2026)**
 
-Of this section only §5.9 item 1 is built — the Host/Origin guard, the ingress
-topology and the proxy-trust posture (#186, 03/09/2026). Every endpoint is still
-unauthenticated and every endpoint can still write; §5.1 records that state exactly,
-and §10 says what it means for running an alpha. The rest of the section is the M6 threat model and route
+Of this section §5.9 items 1–4 are built: the Host/Origin guard, the ingress
+topology and the proxy-trust posture (#186); the principal model, the route policy
+registry and the default-deny dependency (#187); the owner's setup, login, session
+cookie and CSRF controls, with the shipped app enforcing (#188); and personal access
+tokens as the bearer on REST and MCP with per-tool scope (#189). §5.1 records the
+pre-M6 state the model started from, and §10 says what running an alpha means. The
+rest of the section is the M6 threat model and route
 authorization matrix (#29): the actors, the trust boundaries, the deployment modes
 that will be supported, what every route family requires from whom, which layer
 enforces it, how it fails, and the tests that have to exist before the documentation
@@ -810,7 +813,7 @@ authenticates — §5.6 (route bypass) says why no unauthenticated mode ships.
 | Mode | Configuration | Reachable by | Live adversaries | Supported for |
 |---|---|---|---|---|
 | **L — loopback** (default) | `WEB_BIND=127.0.0.1`, plain HTTP, `PUBLIC_BASE_URL` unset or `http://localhost:8080` | The host only | B | Everything, local MCP clients included. The install path stays `docker compose up -d --build --wait` followed by one setup form (§5.7). |
-| **P — private network** | `WEB_BIND=<VPN or LAN address>` (or `0.0.0.0` on a network the owner trusts), plain HTTP, `PUBLIC_BASE_URL=http://<name>:<port>`, `ALLOWED_HOSTS` naming every name it is reached by | Every device on that network | A (on that network), B | Home use over a WireGuard-class mesh, where the tunnel supplies confidentiality. On a raw LAN the session cookie and bearer tokens cross the wire in clear; the docs will say so and leave it the operator's call. Strictly better than today, where no credential is needed at all. |
+| **P — private network** | `WEB_BIND=<VPN or LAN address>` (or `0.0.0.0` on a network the owner trusts), plain HTTP, `PUBLIC_BASE_URL=http://<name>:<port>`, `ALLOWED_HOSTS` naming every name it is reached by | Every device on that network | A (on that network), B | Home use over a WireGuard-class mesh, where the tunnel supplies confidentiality. On a raw LAN the session cookie and bearer tokens cross the wire in clear; the docs say so and leave it the operator's call. The credential itself is required since #188/#189; confidentiality on the wire is what this mode lacks. |
 | **R — remote, behind TLS** | `WEB_BIND=127.0.0.1` on the same host as a TLS-terminating proxy (the reference configuration is Caddy → nginx → api), `PUBLIC_BASE_URL=https://…`, `TRUSTED_PROXIES` naming the proxy | The internet | A, B, C, D, E | The only mode the README may describe as internet deployment, and only once every test in §5.8 passes against it. |
 | **Dev — source-run** | uvicorn on `127.0.0.1:8000`, Vite on `:5173`, no nginx | The developer's machine | B | Development and the e2e suite. Loopback origins are accepted against loopback hosts (§5.6, host and origin), so the Vite proxy trap recorded on #29 needs no permanent exception. |
 
@@ -860,7 +863,7 @@ bad code with or without one).
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | SPA shell and assets | `/`, `/board`, `/kits`, `/orders`, `/inventory`, `/retailers`, `/settings/*`, `/data`, `/assets/*`, `/favicon*`; `/setup` and `/login` from M6 | allow | allow | — | — | — | nothing: static files, served by nginx (by Vite in dev) | security headers — `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`, a CSP for the bundle |
 | 2 | Auth bootstrap | `GET /api/auth/session` | allow | allow | allow | allow | 401 (presented, wrong audience) | returns `{state: unclaimed \| anonymous \| owner, interface_language, formatting_locale}` and, for `owner`, the CSRF token. No version, no collection data. `Cache-Control: no-store`. | rate limit |
-| 3 | Auth actions | `POST /api/auth/setup` (until claimed, then 410), `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/oidc/start`, `GET /api/auth/oidc/callback` | allow, by necessity | logout only | 403 | 403 | 401 | Origin check on every unsafe method even with no session; failure budget; audit event on every outcome; `state` and `nonce` on OIDC | rate limit |
+| 3 | Auth actions | `POST /api/auth/setup` (until claimed, then 410), `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/oidc/start`, `GET /api/auth/oidc/callback` | allow, by necessity | logout only | 403 | 403 | 401 | Origin check on every unsafe method even with no session; failure budget; audit event on every outcome; `state` and `nonce` on OIDC; a wrong password or setup token is **403** (`auth.login_failed` / `auth.setup_token_invalid`), not 401 — a 401 owes a challenge and these routes accept no HTTP scheme | rate limit |
 | 4 | Collection reads | `GET` on `/api/kits*`, `/api/orders*`, `/api/tools*`, `/api/consumables*`, `/api/upgrades*`, `/api/display-items*`, `/api/retailers*`, `/api/catalog/search`, `/api/settings`, `/api/meta`, `/api/export/*` | 401 | allow | allow | allow | 401 | `collection:read`; `Cache-Control: no-store` | — |
 | 5 | Collection writes | `POST`/`PATCH`/`DELETE` on the family-4 resources; `POST /api/catalog/{id}/adjust`, `/api/upgrades/{id}/apply`, `/api/orders/{id}/receive`, `/api/orders/{id}/ship`; `POST /api/import/preview`; `POST /api/import/apply` with `mode=merge` or `mode=add_only` when the plan's mutations touch collection tables only | 401 | allow (+ CSRF + Origin) | 403 | allow | 401 | `collection:write`; Origin check when the principal is cookie-borne | — |
 | 6 | Instance administration | `PATCH /api/settings`; `POST /api/import/apply` with `mode=replace_all`, or in **any** mode when the plan updates `instance_settings`; `/api/auth/tokens*` (mint, list, revoke); credential change and OIDC rebind | 401 | allow (+ CSRF + Origin) | 403 | 403 | 401 | `instance:admin`; an import's privilege is decided on the **plan's mutations** — an `UPDATE` action on `instance_settings`, not the presence of a settings sheet, so an archive whose settings row is unchanged or skipped needs no admin — checked after the re-plan and before any row is written; `replace_all` keeps `confirm=REPLACE` and the mandatory `plan_hash` on top | — |
@@ -1142,6 +1145,59 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    Integration job is red by construction.
 4. **Personal access tokens** — mint, list and revoke under Settings; bearer validation
    on REST and MCP; per-tool scope enforcement; `mcp-remote` documentation. (T5, T6.)
+   **Shipped (#189):** `ptk_<12 hex>_<secret>`, digest of the whole token stored,
+   looked up by the public id, compared with `compare_digest` — against a dummy digest
+   when the id names no row (T11); one helper, `services/tokens.resolve_bearer`, behind
+   both the REST resolver and the FastMCP `TokenVerifier` on the mount; the per-tool
+   check is one FastMCP middleware on `tools/call` reading `MCP_TOOL_SCOPES`, refusing
+   before arguments are parsed; management is family 6 (`/auth/tokens`, the
+   `auth-tokens` tag); audit events `auth.token_minted`, `auth.token_revoked`,
+   `auth.token_use_after_revoke`; `WWW-Authenticate` on **every** 401 the app produces
+   (bare `Bearer` for an absent credential on a scoped route, `error="invalid_token"`
+   for a presented one, on REST and MCP alike) — which is why the family-3 form failures
+   (a wrong password, a wrong setup token) are now **403**, `CredentialRejectedError`:
+   RFC 9110 §15.5.2 makes a 401 owe a challenge applicable to the resource, those routes
+   refuse the only scheme the app speaks, and a challenge-less 401 was the round-1
+   narrowing Codex overruled (rounds 1–2, f2/f4). The codes are unchanged. Calls the
+   item's wording left open, recorded here: (a) **no
+   `resource_metadata` pointer in local mode** — there is no protected-resource
+   document until M6-7 (family 8 is OIDC-only), and a pointer at a 404 would be worse
+   than none; T5's "resource-metadata pointer" lands with item 7. (b) **A bearer on a
+   family-3 action is 403** by a route-policy flag (`bearer_refused`), not by a change
+   to the anonymous credential policy: the actions stay anonymous for browsers and
+   refuse tokens; `GET /auth/session` admits a token and reports the instance state
+   with no CSRF token. (c) **The tool list is not filtered by scope** — a `pat:read`
+   client sees the write tools and is refused at the call, with a message naming the
+   scope; hiding them would make an agent's failure silent. (d) **Revoked rows are
+   kept and listed**, so the owner can see when a leaked token was last used; nothing
+   deletes a token row. (e) **A wrong secret or an unknown id writes no audit row** —
+   it is a guess, and a row per bad request would be write amplification an
+   unauthenticated caller controls; a revoked token presented with its *correct*
+   secret does (that is a leak or an un-rotated client). The login failure budget
+   does not cover bearers — item 8's ingress `limit_req` is the brute-force control
+   for a 256-bit secret. (f) **The mount is built through
+   `create_streamable_http_app` directly**, because `FastMCP.http_app` reads the
+   provider off the shared server object and the pre-auth app (`create_app()`, the
+   harnesses) must keep an open mount in the same process; and the transport route's
+   `methods` — which FastMCP declares once a provider is set — are cleared, so the
+   registry's `RouteBinding` stays the one verb boundary (item 2's round-3 design)
+   rather than a Starlette 405 in a different shape without the profile. (g) T5's
+   "an MCP OAuth token on a REST route → 401" has no token to present until item 7;
+   the resolver's strictness on *every* failed bearer is what will make it true.
+   (h) The in-memory MCP client the tests use carries no header, so the tool-scope
+   middleware reads an injected principal off the server object **only when no HTTP
+   request is in flight** — the `app.state` seam's twin, unreachable from the wire.
+   (i) **The token value is normalised in the shared helper** (`resolve_bearer` strips
+   it): the REST parser and FastMCP's bearer backend cut the header differently
+   (`Bearer  <token>` reached the verifier with a leading space), and the one-helper
+   invariant has to hold at the value, not the call (round 1, f1). (j) **A live token
+   travels only in headers, in the tests and the matrix too**: request URIs are what
+   uvicorn's and nginx's access logs record, so the matrix's query-string row carries a
+   fake token — as does the unit query-string test — and CI scans the packaged stack's
+   `api` and `web` output for the real one after the run, refusing a vacuous scan by
+   first requiring an access record from each service (rounds 1–2, f3/f5); the unit
+   T10 attaches its capture to every logger, propagating or not, and says what it
+   cannot see (no access log exists under ASGITransport).
 5. **MCP OAuth compatibility spike** — the pinned FastMCP against Google and one
    self-hosted OIDC provider, Claude web, ChatGPT web and MCP Inspector; the exact
    generated route table snapshotted; each named client's version and the discovery
@@ -1608,12 +1664,16 @@ the remaining gaps become things to disclose rather than things to hide.
 
 **What "alpha" honestly means here — the things to disclose:**
 
-- **No auth on the write path** (M6). Anyone who can reach the API can write to it. Run
-  it on a network you trust — LAN, VPN, localhost. Do not put it on the public internet.
+- **Authentication without transport security** (M6, in progress). The owner login
+  gates the browser and a personal access token gates every REST script and MCP
+  client (§5.9 items 3–4), but there is no tested TLS path yet: on plain HTTP a device
+  on the network path can read the session cookie or a token in transit. Run it on a
+  network you trust — localhost, a VPN, a LAN you control. Do not put it on the public
+  internet until the reference TLS deployment (§5.9 item 9) ships.
 - **The packaged stack binds to loopback by default** (M5). `docker compose up -d`
   brings up the whole thing, but that default is a convenience, not a security
-  boundary — moving the published port does not make an unauthenticated instance
-  safe to expose.
+  boundary — moving the published port does not make a plain-HTTP instance safe to
+  expose.
 - **Only `en-AU` ships today** (M5.1). The interface, diagnostics, direction metadata,
   and locale-aware presentation are ready for reviewed catalogues, but no non-English
   catalogue has been contributed. Amounts still use plamotrack's ISO 4217 exponent,

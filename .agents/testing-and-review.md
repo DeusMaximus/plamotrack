@@ -24,7 +24,7 @@ last edited, so a large jump either way is worth a look.
 
 | What | Command | Notes |
 | --- | --- | --- |
-| Backend (~1405) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
+| Backend (~1750) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
 | Lint + format | `uv run ruff check --fix . && uv run ruff format .` | Before every commit. CI checks both. |
 | Frontend unit (~471) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. Also the compile-time check on every static `t("…")` key. |
@@ -270,7 +270,7 @@ no secrets to forks, stale runs cancelled.
 | --- | --- |
 | Backend | ruff check + format check, pytest against Postgres 16 |
 | Frontend | oxlint, vitest, translation coverage report to the step summary, `tsc -b` + Vite build |
-| Integration | Playwright e2e (one worker, one retry, trace on first retry, HTML report uploaded **only on failure**), then the packaged Compose stack **from an empty volume** (`down -v` first — the e2e claimed the owner in the same project's database, and a claimed instance prints no token): UI/liveness/`/api/auth/session` probes (a fresh stack must say `unclaimed`), the **setup token read from `docker compose logs api`** the way an operator would, **`backend/ingress_matrix.py`** (T2 — claims the stack with that token through nginx, then the `/api/` alias rejections in their normalised spellings, the canonical positives signed in beside an anonymous `401`, the cookie-borne writes with the absent-Origin `403`, no `Location` but nginx's relative 301, security headers, hostile Host/Origin and the listed name `ci.plamotrack.test` from the CI `.env`), and an MCP `tools/list` through nginx |
+| Integration | Playwright e2e (one worker, one retry, trace on first retry, HTML report uploaded **only on failure**), then the packaged Compose stack **from an empty volume** (`down -v` first — the e2e claimed the owner in the same project's database, and a claimed instance prints no token): UI/liveness/`/api/auth/session` probes (a fresh stack must say `unclaimed`), the **setup token read from `docker compose logs api`** the way an operator would, **`backend/ingress_matrix.py`** (T2 — claims the stack with that token through nginx, then the `/api/` alias rejections in their normalised spellings, the canonical positives signed in beside an anonymous `401`, the cookie-borne writes with the absent-Origin `403`, no `Location` but nginx's relative 301, security headers, hostile Host/Origin and the listed name `ci.plamotrack.test` from the CI `.env`; since #189 it also mints two personal access tokens and proves the bearer rows — the MCP positives carry one, an anonymous MCP initialize is the bare `Bearer` challenge, a read token cannot write, a write token cannot manage tokens, a wrong secret and a revoked token are `invalid_token` on REST and MCP — and writes the write token to `$RUNNER_TEMP` with `--token-out`), and an MCP `tools/list` through nginx **with that token** by a real `fastmcp` client, plus the same client refused without one |
 
 - **A pass on retry reports as `flaky` with exit 0.** Deliberate: instability is
   surfaced without blocking a PR. The lever, if it hides a real intermittent, is the
@@ -287,6 +287,9 @@ no secrets to forks, stale runs cancelled.
   stack with `--password`; `--password` alone signs into a claimed one; with
   neither, the guarded positives expect the dependency's 401 and no write lands.
   The claim is real — a stack claimed by the matrix is claimed with that password.
+  Signed in, it mints two access tokens for the bearer rows and revokes them at
+  the end; `--token-out PATH` keeps the write one live and writes it there (mode
+  0600) for a following MCP-client step — never printed.
 
 ---
 

@@ -1,8 +1,12 @@
 """Request and response shapes for the auth routes (§5.5 families 2–3; M6-3, #188)."""
 
+import uuid
+from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.auth.principal import Scope
 
 
 class SessionRead(BaseModel):
@@ -28,3 +32,50 @@ class SetupRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=4096)
+
+
+# --- personal access tokens (§5.5 family 6; M6-4, #189) ------------------------
+
+
+class TokenCreate(BaseModel):
+    """`POST /auth/tokens`: a name for the owner's own reference, the scopes —
+    `collection:read`, or `collection:read` and `collection:write`; never
+    `instance:admin` — and an optional expiry (offset-bearing ISO 8601)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    scopes: list[Scope] = Field(min_length=1, max_length=3)
+    expires_at: datetime | None = None
+
+
+class TokenRead(BaseModel):
+    """One token as the list and the mint response show it: everything but the
+    secret. `token_prefix` is the public id (`ptk_<prefix>_…`) so the owner can
+    match a token in a client's configuration to a row here; `scopes` is the
+    granted set as canonical identifiers."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    name: str
+    token_prefix: str
+    scopes: list[str]
+    created_at: datetime
+    expires_at: datetime | None
+    revoked_at: datetime | None
+    last_used_at: datetime | None
+
+    @field_validator("scopes", mode="before")
+    @classmethod
+    def _split_scopes(cls, value: object) -> object:
+        if isinstance(value, str):
+            return [part for part in value.split(",") if part]
+        return value
+
+
+class TokenMinted(TokenRead):
+    """The mint response: the row plus the raw token — shown once, stored as a
+    digest, never returned again (`no-store` on the route)."""
+
+    token: str

@@ -80,6 +80,10 @@ class Principal:
     def cookie_borne(self) -> bool:
         return self.via == VIA_SESSION
 
+    @property
+    def bearer_borne(self) -> bool:
+        return self.via == VIA_BEARER
+
     def has_scope(self, scope: Scope) -> bool:
         """Whether this principal satisfies a required scope. The one implication
         is `write` ⇒ `read`: a write token can read. Admin is not an implication —
@@ -133,11 +137,13 @@ def owner(subject: str | None = None, *, via: str | None = None) -> Principal:
     )
 
 
-def pat(*, write: bool, subject: str | None = None) -> Principal:
+def pat(*, write: bool, subject: str | None = None, via: str | None = None) -> Principal:
     """A personal access token — the owner's own credential for scripts and local
-    MCP clients (#189). `read`, or `read`+`write`; never admin (§5.5)."""
+    MCP clients (#189). `read`, or `read`+`write`; never admin (§5.5). `via` is
+    `VIA_BEARER` when a real `Authorization` header produced it (the resolver's
+    and the MCP verifier's call); the test seam leaves it None."""
     scopes = {Scope.READ, Scope.WRITE} if write else {Scope.READ}
-    return Principal(kind=PrincipalKind.PAT, scopes=frozenset(scopes), subject=subject)
+    return Principal(kind=PrincipalKind.PAT, scopes=frozenset(scopes), subject=subject, via=via)
 
 
 def mcp(*, write: bool, subject: str | None = None) -> Principal:

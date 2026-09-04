@@ -28,6 +28,13 @@ LOGGED_OUT = "auth.logged_out"
 SESSIONS_REVOKED = "auth.sessions_revoked"
 RECOVERY_RUN = "auth.recovery_run"
 
+# --- the M6-4 vocabulary (#189) -------------------------------------------------
+TOKEN_MINTED = "auth.token_minted"
+TOKEN_REVOKED = "auth.token_revoked"
+#: A revoked token presented with its correct secret: the credential leaked or a
+#: client was never updated — either way worth a row (§5.6, log and audit).
+TOKEN_USE_AFTER_REVOKE = "auth.token_use_after_revoke"
+
 
 def client_address_of(request: Request | None) -> str | None:
     if request is None:

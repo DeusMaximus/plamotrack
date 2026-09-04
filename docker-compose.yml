@@ -13,8 +13,9 @@
 #
 # Only `web` is published. The API and the database stay on the compose network,
 # so an instance has exactly one door, bound to loopback by default. That makes
-# this a convenient local install and NOT an internet deployment — there is an
-# owner login (M6-3) but no TLS or MCP tokens yet (rest of Milestone 6).
+# this a convenient local install and NOT an internet deployment — the browser
+# needs the owner login (M6-3), REST scripts and MCP clients need a personal
+# access token (M6-4), but there is no tested TLS path yet (rest of Milestone 6).
 #
 # Developing on it instead? Add `docker-compose.dev.yml` explicitly; it publishes
 # only Postgres on loopback while the API and frontend run from source.
@@ -94,8 +95,9 @@ services:
     ports:
       # The one published port. WEB_BIND decides who can connect; ALLOWED_HOSTS
       # decides which names the instance answers to (a request for any other
-      # name is 421). There is an owner login (M6-3), but no TLS or MCP tokens
-      # yet, so keep this on a trusted network. Loopback by default; see "Reaching
+      # name is 421). The browser needs the owner login and MCP/REST automation
+      # needs a personal access token, but there is no tested TLS path yet, so
+      # keep this on a trusted network. Loopback by default; see "Reaching
       # it from another machine" in docs/operations.md before widening it, on Linux
       # where a published port is not covered by the host firewall.
       - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:-8080}:80"

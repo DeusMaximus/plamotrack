@@ -291,24 +291,61 @@ jobs:
           uv run python ingress_matrix.py http://127.0.0.1:8080
           --allowed-host ci.plamotrack.test
           --setup-token "$SETUP_TOKEN" --password ingress-matrix-ci-password
+          --token-out "$RUNNER_TEMP/plamotrack-pat"
 
-      - name: Smoke-test MCP through nginx
+      # The transport is bearer-only (§5.5 family 7; #189): a real MCP client
+      # with the token the matrix minted lists the tools through nginx, and
+      # the same client without one is refused at the handshake.
+      - name: Smoke-test MCP through nginx with a personal access token
         working-directory: backend
         run: |
-          uv run python - <<'PY'
+          PAT="$(cat "$RUNNER_TEMP/plamotrack-pat")"
+          test -n "$PAT" || { echo "the matrix wrote no token"; exit 1; }
+          echo "::add-mask::$PAT"
+          PLAMOTRACK_PAT="$PAT" uv run python - <<'PY'
           import asyncio
+          import os
 
           from fastmcp import Client
 
 
           async def check() -> None:
-              async with Client("http://127.0.0.1:8080/mcp/") as client:
+              async with Client(
+                  "http://127.0.0.1:8080/mcp/", auth=os.environ["PLAMOTRACK_PAT"]
+              ) as client:
                   tools = await client.list_tools()
                   assert any(tool.name == "list_kits" for tool in tools)
+              try:
+                  async with Client("http://127.0.0.1:8080/mcp/") as client:
+                      await client.list_tools()
+              except Exception as exc:  # the handshake is refused: 401
+                  assert "401" in str(exc), exc
+              else:
+                  raise AssertionError("the MCP endpoint answered without a token")
 
 
           asyncio.run(check())
           PY
+
+      # T10 at the packaged layer: the token travelled only in headers, so
+      # neither uvicorn's nor nginx's access log — both write request URIs to
+      # stdout — may hold it (Codex #202 round 1, f3). The scan is not allowed
+      # to be vacuous (round 2, f5): the captured output must first show an
+      # access record from EACH service for the liveness probe above — the API
+      # sees `GET /healthz`, nginx `GET /api/healthz` — so a future redirection
+      # of either access log to a file fails here instead of deleting the proof.
+      - name: Scan the Compose access logs for the token
+        run: |
+          PAT="$(cat "$RUNNER_TEMP/plamotrack-pat")"
+          docker compose logs --no-color api web > "$RUNNER_TEMP/compose-access.log"
+          grep -F '"GET /healthz HTTP/1.1" 200' "$RUNNER_TEMP/compose-access.log" | grep -q 'api' \
+            || { echo "no uvicorn access record from the api service"; exit 1; }
+          grep -F '"GET /api/healthz HTTP/1.1" 200' "$RUNNER_TEMP/compose-access.log" | grep -q 'web' \
+            || { echo "no nginx access record from the web service"; exit 1; }
+          if grep -qF "$PAT" "$RUNNER_TEMP/compose-access.log"; then
+            echo "the personal access token appears in a container log"; exit 1
+          fi
+          echo "access records from api and web seen; no token in them"
 
       - name: Show Compose logs on failure
         if: failure()
