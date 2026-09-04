@@ -42,6 +42,7 @@ from mcp import types as mt
 from app.auth.principal import VIA_BEARER, Principal, PrincipalKind, Scope, pat
 from app.auth.registry import MCP_TOOL_SCOPES
 from app.db import session_scope
+from app.ingress import current_client_address
 
 #: The attribute on the FastMCP server object the pytest harness sets to force a
 #: principal for in-memory tool calls — the twin of `resolver.INJECTED_PRINCIPAL_ATTR`.
@@ -66,7 +67,12 @@ class PersonalAccessTokenVerifier(TokenVerifier):
         from app.services import tokens as token_service
 
         async with session_scope() as session:
-            resolution = await token_service.resolve_bearer(session, token, request=None)
+            resolution = await token_service.resolve_bearer(
+                session,
+                token,
+                request=None,
+                client_address=current_client_address(),
+            )
             if not resolution.ok:
                 # The use-after-revoke audit row (if any) commits with the scope.
                 return None

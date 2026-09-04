@@ -171,10 +171,12 @@ jobs:
           assert base["services"]["api"]["environment"]["POSTGRES_HOST"] == "db"
           assert base["services"]["api"]["environment"]["POSTGRES_PORT"] == "5432"
           assert base["services"]["migrate"]["environment"]["POSTGRES_PORT"] == "5432"
-          # The ingress builds its Host allowlist from exactly these, and gets
-          # nothing else — the web container has no business with the password.
+          # The ingress builds its Host allowlist and trusted-proxy/rate-limit
+          # key from exactly these; it has no business with the password.
           web_env = base["services"]["web"]["environment"]
-          assert set(web_env) == {"PUBLIC_BASE_URL", "ALLOWED_HOSTS", "WEB_BIND"}, web_env
+          assert set(web_env) == {
+              "PUBLIC_BASE_URL", "ALLOWED_HOSTS", "TRUSTED_PROXIES", "WEB_BIND"
+          }, web_env
           assert web_env["ALLOWED_HOSTS"] == "ci.plamotrack.test", web_env
 
           [port] = development["services"]["db"]["ports"]
@@ -292,6 +294,7 @@ jobs:
           --allowed-host ci.plamotrack.test
           --setup-token "$SETUP_TOKEN" --password ingress-matrix-ci-password
           --token-out "$RUNNER_TEMP/plamotrack-pat"
+          --log-secrets-out "$RUNNER_TEMP/plamotrack-log-secrets"
 
       # The transport is bearer-only (§5.5 family 7; #189): a real MCP client
       # with the token the matrix minted lists the tools through nginx, and
@@ -327,25 +330,34 @@ jobs:
           asyncio.run(check())
           PY
 
-      # T10 at the packaged layer: the token travelled only in headers, so
-      # neither uvicorn's nor nginx's access log — both write request URIs to
-      # stdout — may hold it (Codex #202 round 1, f3). The scan is not allowed
+      # T10 at the packaged layer: neither uvicorn's nor nginx's log may hold
+      # the password, PAT or session id from the full login/PAT/MCP run. The
+      # scan is not allowed
       # to be vacuous (round 2, f5): the captured output must first show an
       # access record from EACH service for the liveness probe above — the API
       # sees `GET /healthz`, nginx `GET /api/healthz` — so a future redirection
       # of either access log to a file fails here instead of deleting the proof.
       - name: Scan the Compose access logs for the token
         run: |
-          PAT="$(cat "$RUNNER_TEMP/plamotrack-pat")"
           docker compose logs --no-color api web > "$RUNNER_TEMP/compose-access.log"
           grep -F '"GET /healthz HTTP/1.1" 200' "$RUNNER_TEMP/compose-access.log" | grep -q 'api' \
             || { echo "no uvicorn access record from the api service"; exit 1; }
           grep -F '"GET /api/healthz HTTP/1.1" 200' "$RUNNER_TEMP/compose-access.log" | grep -q 'web' \
             || { echo "no nginx access record from the web service"; exit 1; }
-          if grep -qF "$PAT" "$RUNNER_TEMP/compose-access.log"; then
-            echo "the personal access token appears in a container log"; exit 1
-          fi
-          echo "access records from api and web seen; no token in them"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+
+          temp = Path(os.environ["RUNNER_TEMP"])
+          secrets = json.loads((temp / "plamotrack-log-secrets").read_text())
+          logs = (temp / "compose-access.log").read_text()
+          for kind, secret in secrets.items():
+              if secret in logs:
+                  raise SystemExit(f"the {kind} appears in a container log")
+          print("access records from api and web seen; no password, PAT or session id in them")
+          PY
 
       - name: Show Compose logs on failure
         if: failure()

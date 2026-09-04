@@ -34,6 +34,7 @@ from starlette.routing import Mount
 from app import error_codes
 from app.auth import Scope, anonymous, owner, pat
 from app.auth.dependency import ResponseProfileMiddleware, RouteBinding
+from app.auth.prerouting import PreRoutingAuthMiddleware
 from app.auth.registry import CredentialPolicy, ResponseProfile, RouteIndex, RoutePolicy
 from app.auth.resolver import INJECTED_PRINCIPAL_ATTR
 from app.db import get_sessionmaker
@@ -97,6 +98,22 @@ async def test_an_anonymous_read_is_the_unauthenticated_envelope():
     resp = await _request(anonymous(), "GET", "/kits")
     assert resp.status_code == 401
     assert resp.json()["code"] == error_codes.AUTH_UNAUTHENTICATED
+
+
+async def test_the_dependency_alone_refuses_anonymous_reads():
+    """The pre-routing gate never replaces the dependency's own default deny."""
+    live = create_app(authorization=True)
+    live.user_middleware = [
+        middleware
+        for middleware in live.user_middleware
+        if middleware.cls is not PreRoutingAuthMiddleware
+    ]
+    transport = ASGITransport(app=live, client=OUTSIDE, raise_app_exceptions=False)
+    async with AsyncClient(transport=transport, base_url="http://localhost") as client:
+        response = await client.get("/kits")
+    assert response.status_code == 401
+    assert response.json()["code"] == error_codes.AUTH_UNAUTHENTICATED
+    assert response.headers["www-authenticate"] == "Bearer"
 
 
 # --- writes (family 5): write scope, read is 403 --------------------------------

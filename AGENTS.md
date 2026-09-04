@@ -243,7 +243,7 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    conversion are already wired — don't raise HTTP exceptions from services.
 7. **Stock mutations** use row locks (`with_for_update`) — three concurrent writer
    types exist by design (UI, REST, MCP agents).
-7.1. **Every mutating service takes the write gate first** —
+7.1. **Every state-decided mutating service takes the write gate first** —
    `await acquire_write_gate(session)` from `services/write_gate.py`, before it
    *reads the state it will decide from*, not merely before it writes. Row locks
    only serialize writers touching the same row; they cannot protect a
@@ -252,6 +252,10 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    not after). The gate is collection-wide and transaction-scoped: it releases on
    commit or rollback, so there is nothing to release by hand. Reads never take
    it — import preview and every list/detail path stay unlocked and concurrent.
+   Append-only audit recording is the sole exception: it has no read-decide-write
+   span, and a standalone pre-routing refusal must not take the collection gate or
+   a refusal flood could block the owner's real writes. Audit rows emitted by a
+   state change still share that caller's transaction (rule 14).
    A new mutating service that skips it reopens a class this repo paid seven
    review rounds for on #79; the failure modes are 500s and silent data loss, not
    conflicts (`.agents/lessons.md` → "Why the write gate exists").
@@ -398,6 +402,25 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     (`PROTOCOL_NAMESPACES`, one declaration with the ingress rejection) is the
     router's 404 for everyone, and a new mutating middleware or a change
     to the resolver owes the once-per-request test (`tests/test_auth_unrouted.py`).
+14. **Security telemetry and throttling (M6-8, §5.6):** security events append
+    through `services/audit.py`, never ad-hoc logging. A row identifies the
+    principal kind and credential id when one exists, the resolved client address,
+    and a route or MCP tool; detail is short structured metadata only — never a
+    credential, request body, or query string. State-change events share the
+    caller's transaction; a pre-routing Host/Origin refusal owns its transaction.
+    Retention goes through the audited `prune_events` service and host-side
+    `prune-audit` command. The bundled nginx has four independent `limit_req`
+    zones for route families 2, 3, 8 and 9, keyed on `$binary_remote_addr` after
+    its `TRUSTED_PROXIES` walk; their maps use a server-rewrite snapshot of nginx's
+    normalised `$uri`, taken before the `/api/` rewrite. Raw `$request_uri` lets
+    alternative spellings bypass the key, while live `$uri` has already lost the
+    prefix by nginx's limit phase. nginx overwrites the
+    private client-address header on every API/MCP proxy path and only the
+    unpublished compose API enables trust in it; source-run deployments use the
+    ordinary proxy policy. The login/setup failure budget remains in process only
+    while the Dockerfile pins uvicorn to one worker — move it to a shared store
+    before adding workers. CI's packaged matrix must exercise all four 429s and
+    scan a full login/PAT/MCP run for the password, PAT and session value.
 
 ## Fixing a defect: sweep the class first
 

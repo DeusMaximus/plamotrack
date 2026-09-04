@@ -1105,12 +1105,14 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    CSRF row conditions the missing-`Origin` denial on a cookie-borne principal, and
    item 3 tightens the absent case when the session cookie arrives; the claim is not
    proved for every legacy engine or privileged extension, which is one more reason
-   the credential-aware rule follows. (b) `TRUSTED_PROXIES` ships as the mechanism alone — the
-   compose file sets no value for the bundled nginx, because nothing consumes the
-   resolved address until item 8 and the compose network's range is not known
-   statically; item 8 decides how the bundled hop declares itself, and until then the
-   client address the app records behind nginx is nginx's own, which is a degradation
-   in a value nobody reads, not a bypass. Also: T2's rows are typed in
+   the credential-aware rule follows. (b) `TRUSTED_PROXIES` originally shipped as
+   the mechanism alone. **Resolved by item 8:** the bundled nginx now performs the
+   trusted-proxy walk for both its per-client limit key and audit, then overwrites a
+   private client-address header on every proxied path; the unpublished API accepts
+   that header only under a compose-only flag. A source-run API leaves the flag false
+   and continues to resolve `X-Forwarded-For` directly from `TRUSTED_PROXIES`. This
+   avoids pretending the compose network has a static CIDR and prevents a caller from
+   supplying the private header through nginx. Also: T2's rows are typed in
    `backend/ingress_matrix.py` (CI Integration runs it against the packaged stack)
    until item 2's registry generates them.
 2. **Auth foundation** — owner, credential, session, personal-token and audit tables;
@@ -1304,7 +1306,26 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    the raw route set and the set nginx exposes, trailing slashes included. (T2, T5,
    T6, T9, T10, T12.)
 8. **Audit, rate limiting and log hygiene** — the event table and its prune, ingress
-   `limit_req`, the app's budget, the log-grep test. (T8, T10.)
+   `limit_req`, the app's budget, the log-grep test. (T8, T10.) **Shipped (#193):**
+   security events are appended through `services/audit.py`; state-changing events
+   share the mutation transaction, while pre-routing Host/Origin refusals own a small
+   transaction because no request-scoped session exists yet. Each row carries the
+   principal kind and credential id when one exists, the resolved client address and
+   path/tool, with fixed structured detail only — no request body, query string or
+   secret. The bundled nginx's outer unknown-Host 421 necessarily remains an access-log
+   event because it refuses the request before the API; the app's repeated Host check
+   is the database-audited event. The host-side `prune-audit --older-than-days N`
+   command uses a strict cutoff and records its own result. OIDC recovery emits
+   `auth.oidc_rebind` alongside its session-revocation and recovery events. Four independent nginx zones key
+   families 2, 3, 8 and 9 by `$binary_remote_addr` after the trusted-proxy walk; their
+   maps read a server-rewrite snapshot of nginx's normalised `$uri`, taken before the
+   generic `/api/` location strips the prefix; raw `$request_uri` lets alternative
+   spellings bypass the key, while live `$uri` has already lost the prefix by the limit
+   phase. Uvicorn stays at one worker while the
+   login/setup failure budget is in process. CI drives setup, sign-out, a real password
+   login, PAT mint/use/revoke, REST and MCP, proves all four zones eventually return
+   429, requires access records from both containers, and scans their complete output
+   for the run's password, PAT and session value.
 9. **Reference TLS deployment and documentation** — the Caddy configuration,
    `docs/operations.md` rewritten around the modes and its backup section around the
    three-part set (database, OAuth state store, `.env`), the README's alpha warning

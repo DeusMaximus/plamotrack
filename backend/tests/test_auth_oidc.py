@@ -324,8 +324,10 @@ async def test_start_on_an_unbound_instance_needs_the_setup_token():
     assert wrong.json()["code"] == error_codes.AUTH_TOO_MANY_ATTEMPTS
     (failure,) = await _events(audit.SETUP_FAILED)
     assert failure.target == "/auth/oidc/start"
+    assert failure.principal_kind == "anon"
     (throttled,) = await _events(audit.LOGIN_THROTTLED)
     assert throttled.target == "/auth/oidc/start"
+    assert throttled.principal_kind == "anon"
     assert getattr(live.state, BUDGET_ATTR).failures == 1
     async with get_sessionmaker()() as session:
         assert (await session.execute(select(OidcLogin))).scalars().all() == []
@@ -477,6 +479,7 @@ async def test_a_different_identity_is_refused_with_an_audit_row_and_no_session(
     assert await _session_count() == 1
     (refused,) = await _events(audit.OIDC_IDENTITY_REFUSED)
     assert refused.detail == f"subject={STRANGER_SUB}"
+    assert refused.principal_kind == "anon"
     assert refused.target == "/auth/oidc/callback"
     assert (await _owner()).oidc_subject == OWNER_SUB
 
@@ -624,6 +627,7 @@ async def test_the_owner_cancelling_at_the_provider_spends_the_transaction():
         assert _auth_error(replay) == CallbackError.EXPIRED
     (event, _) = await _events(audit.OIDC_LOGIN_FAILED)
     assert event.detail == "provider_error=access_denied"
+    assert event.principal_kind == "anon"
     assert fake.token_requests == []
 
 
@@ -943,8 +947,10 @@ async def test_starting_in_the_other_mode_revokes_its_sessions_for_good(anon_cli
     (changed,) = await _events(audit.AUTH_MODE_CHANGED)
     assert changed.detail == "auth_mode=oidc sessions_revoked=1"
     assert changed.client_address == "host"
+    assert changed.principal_kind == "internal"
     (revoked,) = await _events(audit.SESSIONS_REVOKED)
     assert revoked.detail == "count=1"
+    assert revoked.principal_kind == "internal"
     # Back in local mode — the shipped app — the cookie is dead, not dormant.
     assert (await anon_client.get("/auth/session")).json()["state"] == "anonymous"
     assert (await anon_client.get("/kits")).status_code == 401
@@ -984,9 +990,13 @@ async def test_rebind_revokes_every_session_and_the_next_login_needs_the_token()
         assert _auth_error(rebound) is None
     owner = await _owner()
     assert owner.oidc_subject == STRANGER_SUB and owner.claimed_at is not None
-    assert await _events(audit.OIDC_REBIND)
+    (rebind,) = await _events(audit.OIDC_REBIND)
+    assert rebind.principal_kind == "internal"
+    (revoked,) = await _events(audit.SESSIONS_REVOKED)
+    assert revoked.principal_kind == "internal"
     (run,) = await _events(audit.RECOVERY_RUN)
     assert run.target == "recovery rebind-oidc" and run.detail == "sessions_revoked=1"
+    assert run.principal_kind == "internal"
 
 
 async def test_the_recovery_command_rebinds(capsys):

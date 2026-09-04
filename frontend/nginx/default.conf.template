@@ -9,6 +9,43 @@
 # assembled by 15-plamotrack-server-names.envsh from PUBLIC_BASE_URL, WEB_BIND and
 # ALLOWED_HOSTS — the same inputs the API derives its allowlist from.
 
+# TRUSTED_PROXIES is rendered as validated `set_real_ip_from` directives by the
+# same startup script. Only those peers may supply X-Forwarded-For; after nginx's
+# real-ip module resolves the chain, `$binary_remote_addr` is the per-client key
+# for the four deliberately bounded route families (§5.6, T8). The maps read a
+# server-rewrite snapshot of nginx's normalised URI: raw `$request_uri` lets
+# doubled-slash, dot-segment and percent-encoded spellings reach a real handler
+# with an empty key, while live `$uri` has already lost `/api/` by the limit phase.
+${PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES}
+real_ip_header X-Forwarded-For;
+real_ip_recursive on;
+
+map $plamotrack_normalized_request_uri $plamotrack_family_2_key {
+    default "";
+    ~^/api/auth/session$ $binary_remote_addr;
+}
+
+map $plamotrack_normalized_request_uri $plamotrack_family_3_key {
+    default "";
+    ~^/api/auth/(setup|login|logout|oidc/start|oidc/callback)$ $binary_remote_addr;
+}
+
+map $plamotrack_normalized_request_uri $plamotrack_family_8_key {
+    default "";
+    ~^/\.well-known/(oauth-protected-resource/mcp/|oauth-authorization-server/mcp|openid-configuration/mcp)$ $binary_remote_addr;
+    ~^/mcp/(authorize|token|register|consent|auth/callback|revoke)$ $binary_remote_addr;
+}
+
+map $plamotrack_normalized_request_uri $plamotrack_family_9_key {
+    default "";
+    ~^/api/healthz$ $binary_remote_addr;
+}
+
+limit_req_zone $plamotrack_family_2_key zone=plamotrack_family_2:1m rate=10r/s;
+limit_req_zone $plamotrack_family_3_key zone=plamotrack_family_3:1m rate=5r/m;
+limit_req_zone $plamotrack_family_8_key zone=plamotrack_family_8:1m rate=10r/s;
+limit_req_zone $plamotrack_family_9_key zone=plamotrack_family_9:1m rate=5r/s;
+
 # Default deny (§5.6, Host spoofing and DNS rebinding). A request whose Host is
 # not a name this instance answers to is refused here, before any location is
 # considered and before it reaches the API process; the app repeats the check
@@ -24,6 +61,11 @@ server {
 server {
     listen 80;
     server_name ${PLAMOTRACK_SERVER_NAMES};
+
+    # Server-level rewrite directives run before location selection and the
+    # `/api/` prefix rewrite. This captures nginx's already-normalised path for
+    # the limiter maps without losing the public namespace.
+    set $plamotrack_normalized_request_uri $uri;
 
     root /usr/share/nginx/html;
     index index.html;
@@ -51,6 +93,16 @@ server {
     # The API's own 10 MB limit should be the thing that rejects an oversized
     # import, with its explanatory error — not a bare 413 from the proxy.
     client_max_body_size 32m;
+
+    # Empty map keys are not accounted, so these four directives affect only
+    # families 2, 3, 8 and 9. `nodelay` refuses excess work immediately; the
+    # app's separate global failure budget still makes password guesses pay an
+    # exponential delay even when they arrive from several addresses.
+    limit_req_status 429;
+    limit_req zone=plamotrack_family_2 burst=20 nodelay;
+    limit_req zone=plamotrack_family_3 burst=10 nodelay;
+    limit_req zone=plamotrack_family_8 burst=20 nodelay;
+    limit_req zone=plamotrack_family_9 burst=10 nodelay;
 
     # Security headers on everything served here (§5.5, family 1; §5.6,
     # clickjacking). `always` so error responses carry them too. nginx's
@@ -117,6 +169,7 @@ server {
         proxy_pass $upstream;
         proxy_http_version 1.1;
         proxy_set_header Host $http_host;
+        proxy_set_header X-Plamotrack-Client-Address $remote_addr;
     }
 
     # OAuth discovery (§5.5, family 8) lives at the root, installed on the API by
@@ -130,18 +183,21 @@ server {
         proxy_pass $upstream;
         proxy_http_version 1.1;
         proxy_set_header Host $http_host;
+        proxy_set_header X-Plamotrack-Client-Address $remote_addr;
     }
     location = /.well-known/oauth-authorization-server/mcp {
         set $upstream http://api:8000;
         proxy_pass $upstream;
         proxy_http_version 1.1;
         proxy_set_header Host $http_host;
+        proxy_set_header X-Plamotrack-Client-Address $remote_addr;
     }
     location = /.well-known/openid-configuration/mcp {
         set $upstream http://api:8000;
         proxy_pass $upstream;
         proxy_http_version 1.1;
         proxy_set_header Host $http_host;
+        proxy_set_header X-Plamotrack-Client-Address $remote_addr;
     }
 
     # Strips the /api prefix, exactly as the Vite dev proxy does — so the
@@ -158,6 +214,7 @@ server {
         proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Plamotrack-Client-Address $remote_addr;
     }
 
     # MCP clients that forget the trailing slash get served rather than
@@ -172,6 +229,7 @@ server {
         proxy_http_version 1.1;
         proxy_buffering off;
         proxy_set_header Host $http_host;
+        proxy_set_header X-Plamotrack-Client-Address $remote_addr;
     }
 
     # Streamable HTTP. proxy_buffering must stay off — with it on, nginx holds
@@ -191,5 +249,6 @@ server {
         proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Plamotrack-Client-Address $remote_addr;
     }
 }

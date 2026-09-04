@@ -68,6 +68,7 @@ from starlette.requests import Request
 from app import error_codes
 from app.auth import credentials
 from app.auth.budget import FailureBudget
+from app.auth.principal import anonymous, internal
 from app.auth.setup_token import SetupToken
 from app.config import Settings
 from app.exceptions import UnavailableError
@@ -531,6 +532,7 @@ async def _refuse(
     await audit.record_event(
         session,
         audit.OIDC_LOGIN_FAILED,
+        principal=anonymous(),
         request=request,
         target="/auth/oidc/callback",
         detail=detail,
@@ -636,6 +638,7 @@ async def complete_login(
         await audit.record_event(
             session,
             audit.OIDC_IDENTITY_REFUSED,
+            principal=anonymous(),
             request=request,
             target="/auth/oidc/callback",
             detail=f"subject={subject}",
@@ -681,14 +684,19 @@ async def recovery_rebind_oidc(session: AsyncSession) -> int:
     owner.oidc_issuer = None
     owner.oidc_subject = None
     revoked = await auth_service.revoke_all_sessions(
-        session, target="recovery rebind-oidc", client_address="host"
+        session, target="recovery rebind-oidc", principal=internal(), client_address="host"
     )
     await audit.record_event(
-        session, audit.OIDC_REBIND, target="recovery rebind-oidc", client_address="host"
+        session,
+        audit.OIDC_REBIND,
+        principal=internal(),
+        target="recovery rebind-oidc",
+        client_address="host",
     )
     await audit.record_event(
         session,
         audit.RECOVERY_RUN,
+        principal=internal(),
         target="recovery rebind-oidc",
         detail=f"sessions_revoked={revoked}",
         client_address="host",

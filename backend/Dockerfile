@@ -51,4 +51,7 @@ EXPOSE 8000
 # on its trust list, and request.client is the raw socket peer that /readyz's
 # `internal` check reads. The app resolves the forwarded address itself, from
 # TRUSTED_PROXIES, into a separate key (app/ingress.py).
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers"]
+# Pin one worker explicitly: WEB_CONCURRENCY and UVICORN_WORKERS can override
+# uvicorn's default. The in-process global login failure budget requires this
+# pin; adding workers requires a shared store first (design notes §5.6, T8).
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-proxy-headers", "--workers", "1"]
