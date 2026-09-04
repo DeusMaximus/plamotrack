@@ -190,7 +190,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 353 cases over thirty-one target files** — #86's
+- **On `main` at the time of writing: 368 cases over thirty-two target files** — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
   #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
   #118 (`ship-`), #129 (`dsp-`), #130 (`cat-`), #133 (`ref-`), #136
@@ -247,7 +247,14 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   `app/services/tokens.py`, `app/auth/resolver.py`, `app/auth/mcp_auth.py`, plus
   `dependency.py`, `registry.py` and `main.py`; pat-1…23 hand-run on the branch, pat-24
   and pat-25 added by the Codex rounds — the value normalised in the shared helper and
-  rejected form credentials mapped to 403; all 25 killed at fold-in, `-k pat-`).
+  rejected form credentials mapped to 403; all 25 killed at fold-in, `-k pat-`)
+  and #204 (`f13-` — the pre-routing gate, PR #205: `app/auth/prerouting.py`, plus
+  `dependency.py` and `main.py`; f13-1…13 hand-run on the branch, f13-14/15 added when
+  CI Integration caught the family-8 namespace miss the sweep had skipped — the
+  standing example that a sweep enumerates the *families the ingress forwards*, not
+  the families with routes; f13-6's sole witness is the resolution-count test, the
+  audit-row test being a control that cannot see it (Codex round 1); all 15 killed
+  at fold-in, `-k f13-`).
   **A message-restructuring change rots anchors silently**: #25 rewrote 81
   raise sites and six anchors (n5, n6a, n6b, cat-13, cat-14, wdr-8) sat
   SKIP-broken until #26's full run — a fold-in that runs only its own `-k`
