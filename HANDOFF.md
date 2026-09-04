@@ -41,6 +41,31 @@ Template:
 
 ---
 
+## 2026-09-04 — Codex (GPT-5.6 Sol) — #193 review GO; four P3s addressed, PR #208 held for #191/#192
+
+- **Done:** GLM 5.3 Flash reviewed PR #208 at `6a3c4ff`: **GO, four P3s, no P1/P2**.
+  Reproduced all four before editing. At `f91a643`, nginx snapshots its normalised `$uri` in
+  the server rewrite phase before `/api/` is stripped, so doubled-slash, dot-segment and
+  percent-encoded spellings cannot bypass family 2/3/8/9 limit keys. The packaged matrix now
+  drives all three spellings for all four families (12 cases). Documented that every private
+  Compose-network peer is inside the client-address-header trust boundary. Rule 7.1 now names
+  append-only audit recording as the sole no-write-gate exception. The unbounded pre-routing
+  audit-volume sibling is filed as #210. PR body and numbered review reply are updated.
+- **Decisions:** #210 is storage/commit pressure, not an auth bypass; do not put the audit
+  recorder behind the collection write gate. Keep PR #208 open while Fable finishes #191 and
+  starts #192, because #192 activates the family-8 surface and overlaps MCP/ingress. No merge
+  now; the P3-1 normalisation fix must be present no later than #192's endpoint activation.
+- **State:** feature fix pushed at `f91a643`; this hand-off commit follows. Local verification:
+  backend **1878 passed**, focused auth/audit/ingress **556 passed**, Ruff/format/render green;
+  frontend lint + **485 passed** + build; packaged matrix 0 failures across canonical routes and
+  all 12 alternate spellings; non-vacuous password/PAT/session log scan clean. Runtime aud-17
+  mutant (`$uri` snapshot → raw `$request_uri`) killed: all 12 spellings remained unthrottled.
+  Scratch stack/worktree and disposable volume removed; packaged stack stopped; dev Postgres
+  healthy on loopback. CI at `f91a643`: Frontend and Integration green; Backend running.
+- **Next:** wait for #191/#192 integration state, rebase #208 if main moves, rerun the packaged
+  ingress gate after any conflict resolution, and only then choose review/merge timing. After
+  merge, fold aud-1…17 into `mutation_test.py`. The LXC stays put until M6 is finished.
+
 ## 2026-09-04 — Codex (GPT-5.6 Sol) — #193 PR #208 open; ready for external review
 
 - **Done:** rebased `codex/193-audit-rate-limit-log-hygiene` onto `main` `a642d0b` after
@@ -172,44 +197,3 @@ Template:
   release: `ALLOWED_HOSTS` lockout risk (M6-1); the instance comes up unclaimed (M6-3); `/mcp/`
   requires a PAT, wrong password / setup token is 403, never a token in a URL (M6-4); anonymous
   probes under `/api/` are 401, not 404/405/422 (M6-3b).
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) PR #205: Codex round 1 (NO-GO, 3×P3, record only) addressed at `5df44bc`, round 2 pending
-
-- **Done:** Issue **#204** filed (M6 milestone) for §5.9 item 3(b)'s two deferred items, then the
-  branch. The fix is **the pre-routing gate** `app/auth/prerouting.py`: one middleware directly
-  above `ResponseProfileMiddleware`, inside the ingress guards, that resolves the principal once
-  per REST request (own short session), stashes it on `request.state` (the dependency reuses it —
-  one lookup per request, pinned by counting), and refuses `anon` with the dependency's 401
-  envelope (bare `Bearer`, `no-store`, no `Allow`) wherever the router would answer 404, 405 or a
-  scoped 401 — read off the registry's `iter_dispatch_order` walk + `compile_path`, never the URL.
-  Never grants; the dependency stays the authority. Calls recorded in design §5.9 item 3(b):
-  anonymous families keep their 405/422; `INTERNAL` admitted on full, refused on partial; the
-  `/mcp` mount is the child's; bare `/mcp` at the source-run app is now 401 anon / 404 owner;
-  **family 8's `/.well-known/` namespace passes through** (`PROTOCOL_NAMESPACES`, derived from
-  the family-8 `API_ALIAS_REJECTIONS` entry) — the first head's sweep missed it and CI
-  Integration's three root-discovery T2 rows (404 until M6-7) went red with the gate's 401.
-  Also: `ingress_matrix.py` trailing-slash rows → family-13 rows (+ `/api/no-such-route`,
-  `DELETE /api/kits`); design §5 header + family-7 row; AGENTS.md rule 13 paragraph.
-- **Round 1** (Codex, GPT 5.6 Sol, on `543f4eb`): NO-GO, three P3s, no bypass, calls 1–9 accepted.
-  f1 `resolve_principal` docstring still said pre-gate session contract → rewritten; f2 the
-  "two audit rows under double resolution" witness for f13-6 was false (a revoked token is refused
-  at the gate, never reaches the dependency) → the count test is the kill, prose corrected in
-  comment/test/design/PR body; f3 PR-body trailing total 1857 → 1866 (CI). All at `5df44bc`,
-  runtime unchanged since `dfd6e16`. Reply posted; PR body has a round-1 section.
-- **Decisions:** the gate renders through `domain_error_handler` passed in by `create_app` (one
-  envelope author, no circular import). `PUT /mcp/` → 405 with `Allow` to anon (the
-  `RouteBinding`): Codex classed it same disclosure class, different boundary → **filed as #206**
-  (family-7 follow-up, non-blocking).
-- **State:** **PR #205** open at `dfd6e16` (gate `ec77ff8`, hand-off `1912fbe`, family-8 fix). New
-  suite `tests/test_auth_unrouted.py` **106 green**; negative control on unfixed `main` (trimmed
-  copy, worktree, own DB) **23 red / 73 green**, every red an anon-side 404/405/422; **15 hand mutants
-  f13-1…15 all killed** (runner + verdicts in the session scratchpad; tuples in the PR-body draft
-  `scratchpad/pr-body-204.md`, to be folded into `mutation_test.py` by the usual harness-only PR
-  after merge). Auth/ingress suites green; full backend run **1855 green** at `ec77ff8` (before the last pins) → 1866 by count at the head; CI Backend and Frontend green at `1912fbe`, Integration red there on exactly the family-8 rows (fixed at `dfd6e16` — check `gh pr checks 205`). T2's new rows are
-  CI Integration's to prove (packaged stack not run locally — `up` would recreate the dev `db`).
-  Dev DB still claimed with `e2e-owner-password`.
-- **Next:** (1) **Codex round 2** on `5df44bc` (findings from 4) → expected GO; (2) on GO, merge
-  (`Closes #204`), then the f13- fold-in PR; (3) #190/#192 OAuth spike; (4) #193 audit/rate
-  limiting; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release-notes items for the
-  M6 release unchanged plus: anonymous unrouted/wrong-verb/malformed requests under `/api/` are
-  401, not 404/405/422.
