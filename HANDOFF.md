@@ -41,6 +41,32 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) MERGED (PR #205 → `70d6b3d`, Codex round 2 GO); f13- fold-in next
+
+- **Done:** Codex round 2 (GPT 5.6 Sol) on `388de0b`: **GO, no findings** — replayed f1–f3, instrumented
+  the gate's session order (open → resolve → commit/rollback → close → router/render, so "no
+  overlap" holds), confirmed #206 as the right family-7 cut. PR #205 squash-merged as `70d6b3d` on
+  the owner's call, branch deleted, **#204 closed**. Shipped: `app/auth/prerouting.py` (the
+  pre-routing gate), `PROTOCOL_NAMESPACES` + `iter_dispatch_order` in the registry, the dependency
+  reusing the stashed principal, T2 family-13 rows, `tests/test_auth_unrouted.py` (106).
+- **Decisions:** none new; the nine deliberate calls are recorded in design §5.9 item 3(b) (i)–(vi)
+  and on the PR. `.agents/lessons.md` owes nothing: the family-8 miss is the sweep rule as written
+  (enumerate the families the ingress forwards, not just the ones with routes) — the hand-off
+  entries below carry the case.
+- **State:** `main` at `70d6b3d` plus this entry. Backend 1866, frontend 485, e2e 43+1 (CI). The
+  shipped app: anonymous unrouted / wrong-verb / malformed requests under `/api/` are 401 with the
+  bare `Bearer` challenge; `/.well-known/*` stays the router's 404 until M6-7; `/mcp/*` untouched.
+  **Not yet done:** the f13- fold-in (15 tuples, in PR #205's body under `<details>`) into
+  `mutation_test.py` — harness-only PR, no external review (#199/#201/#203 precedent); `TEST_FILES`
+  gains `tests/test_auth_unrouted.py`; procedure doc count 353 → 368 over thirty-two files. Dev DB
+  claimed with `e2e-owner-password`. No release cut — M6 ships as one release at the end.
+- **Next:** (1) f13- fold-in PR; (2) #190/#192 MCP OAuth spike (§5.9 item 5); (3) #193 audit/rate
+  limiting (item 8); (4) #206 (family-7 `Allow` to anon) rides with whichever of those touches the
+  mount; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release-notes items for the M6
+  release: `ALLOWED_HOSTS` lockout risk (M6-1); the instance comes up unclaimed (M6-3); `/mcp/`
+  requires a PAT, wrong password / setup token is 403, never a token in a URL (M6-4); anonymous
+  probes under `/api/` are 401, not 404/405/422 (M6-3b).
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) PR #205: Codex round 1 (NO-GO, 3×P3, record only) addressed at `5df44bc`, round 2 pending
 
 - **Done:** Issue **#204** filed (M6 milestone) for §5.9 item 3(b)'s two deferred items, then the
@@ -147,27 +173,3 @@ Template:
   OAuth spike; (5) **LXC stays put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS`
   into its `.env` before the pull, back up first, it comes up unclaimed. Release notes for the
   M6 release: wrong password / setup token is 403; `/mcp/` requires a PAT; never a token in a URL.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 3 (NO-GO, 3×P3) addressed at `ef7764d`, round 4 pending
-
-- **Done:** Codex round 3 (GPT 5.6 Sol) on `9ad3d4d`: NO-GO, three P3s, no bypass; f4/f5
-  confirmed fixed, every call retained. Fixed at `ef7764d`: (f6) `e2e/auth.setup.ts` diagnosed
-  "already has an owner" on `status === 401`, obsolete since the round-2 403 → keyed on the
-  envelope code `auth.login_failed`, generic assertion for every other refusal; replayed by hand
-  against the claimed dev DB with `E2E_OWNER_PASSWORD=definitely-wrong-password` (the intended
-  message on the `auth.login_failed` branch) and with the right one (setup + `tokens.spec.ts`
-  green). (f7) four stale "no MCP tokens yet" statements — `.env.example`, two
-  `docker-compose.yml` comments, the README warning after the tool list — now state the real
-  boundary (owner login for the browser, PAT for REST/MCP automation, no tested TLS path).
-  (f8) PR-body counts corrected: `tokens.spec.ts` is 1 test (the "2/2" counted the setup
-  project), matrix 54 rows locally without `--allowed-host`, 58 in CI with it. Reply posted.
-- **Decisions:** none new. Release-notes item for the M6 release: **wrong password / setup
-  token is 403** (was 401 in #188, never released), `/mcp/` requires a PAT, never a token in a URL.
-- **State:** branch head `ef7764d` pushed (plus this hand-off merged in); backend 1760, frontend
-  485, e2e tokens 1/1; CI on the merged head running when written. Tree parked on `main`. Dev DB
-  claimed with `e2e-owner-password`. **Round 4 pending** (findings numbered from 9).
-- **Next:** (1) Codex round 4 → merge on GO (`Closes #189`); (2) harness fold-in PR for
-  pat-1…25 (`TEST_FILES` + `tests/test_auth_tokens.py`); (3) the two family-13 hardening items
-  (design §5.9 item 3(b)); (4) #190/#192 OAuth spike; (5) **LXC stays put until M6 is
-  finished** (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first,
-  it comes up unclaimed.
