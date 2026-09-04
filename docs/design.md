@@ -813,7 +813,7 @@ authenticates — §5.6 (route bypass) says why no unauthenticated mode ships.
 | Mode | Configuration | Reachable by | Live adversaries | Supported for |
 |---|---|---|---|---|
 | **L — loopback** (default) | `WEB_BIND=127.0.0.1`, plain HTTP, `PUBLIC_BASE_URL` unset or `http://localhost:8080` | The host only | B | Everything, local MCP clients included. The install path stays `docker compose up -d --build --wait` followed by one setup form (§5.7). |
-| **P — private network** | `WEB_BIND=<VPN or LAN address>` (or `0.0.0.0` on a network the owner trusts), plain HTTP, `PUBLIC_BASE_URL=http://<name>:<port>`, `ALLOWED_HOSTS` naming every name it is reached by | Every device on that network | A (on that network), B | Home use over a WireGuard-class mesh, where the tunnel supplies confidentiality. On a raw LAN the session cookie and bearer tokens cross the wire in clear; the docs will say so and leave it the operator's call. Strictly better than today, where no credential is needed at all. |
+| **P — private network** | `WEB_BIND=<VPN or LAN address>` (or `0.0.0.0` on a network the owner trusts), plain HTTP, `PUBLIC_BASE_URL=http://<name>:<port>`, `ALLOWED_HOSTS` naming every name it is reached by | Every device on that network | A (on that network), B | Home use over a WireGuard-class mesh, where the tunnel supplies confidentiality. On a raw LAN the session cookie and bearer tokens cross the wire in clear; the docs say so and leave it the operator's call. The credential itself is required since #188/#189; confidentiality on the wire is what this mode lacks. |
 | **R — remote, behind TLS** | `WEB_BIND=127.0.0.1` on the same host as a TLS-terminating proxy (the reference configuration is Caddy → nginx → api), `PUBLIC_BASE_URL=https://…`, `TRUSTED_PROXIES` naming the proxy | The internet | A, B, C, D, E | The only mode the README may describe as internet deployment, and only once every test in §5.8 passes against it. |
 | **Dev — source-run** | uvicorn on `127.0.0.1:8000`, Vite on `:5173`, no nginx | The developer's machine | B | Development and the e2e suite. Loopback origins are accepted against loopback hosts (§5.6, host and origin), so the Vite proxy trap recorded on #29 needs no permanent exception. |
 
@@ -1664,12 +1664,16 @@ the remaining gaps become things to disclose rather than things to hide.
 
 **What "alpha" honestly means here — the things to disclose:**
 
-- **No auth on the write path** (M6). Anyone who can reach the API can write to it. Run
-  it on a network you trust — LAN, VPN, localhost. Do not put it on the public internet.
+- **Authentication without transport security** (M6, in progress). The owner login
+  gates the browser and a personal access token gates every REST script and MCP
+  client (§5.9 items 3–4), but there is no tested TLS path yet: on plain HTTP a device
+  on the network path can read the session cookie or a token in transit. Run it on a
+  network you trust — localhost, a VPN, a LAN you control. Do not put it on the public
+  internet until the reference TLS deployment (§5.9 item 9) ships.
 - **The packaged stack binds to loopback by default** (M5). `docker compose up -d`
   brings up the whole thing, but that default is a convenience, not a security
-  boundary — moving the published port does not make an unauthenticated instance
-  safe to expose.
+  boundary — moving the published port does not make a plain-HTTP instance safe to
+  expose.
 - **Only `en-AU` ships today** (M5.1). The interface, diagnostics, direction metadata,
   and locale-aware presentation are ready for reviewed catalogues, but no non-English
   catalogue has been contributed. Amounts still use plamotrack's ISO 4217 exponent,

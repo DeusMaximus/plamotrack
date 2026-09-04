@@ -465,4 +465,6 @@ The repo goes public at 4.5 as an alpha (§10, revised) rather than waiting for
 milestones 1–6. Consequence for anything written from here on: **the audience is
 strangers.** No internal references, no assumed context, and disclose what isn't
 built rather than describing planned endpoints as if they exist. Nothing is
-authenticated yet (M6) — an alpha instance belongs on a trusted network.
+authenticated: the owner login for the browser and personal access tokens for REST
+scripts and MCP clients (M6-3/M6-4), but there is no tested TLS path yet — an alpha
+instance belongs on a trusted network.

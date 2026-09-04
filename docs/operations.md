@@ -220,10 +220,10 @@ the API. `.env.example` documents every key. The ones worth knowing:
 | Key | Default | Notes |
 | --- | --- | --- |
 | `POSTGRES_PASSWORD` | — | Required. Only read when the database volume is first created. |
-| `WEB_BIND` | `127.0.0.1` | The interface the stack listens on. Leave it here until M6. A non-loopback address here is also a name the instance answers to. |
+| `WEB_BIND` | `127.0.0.1` | The interface the stack listens on. Leave it on loopback unless you have read [Reaching it from another machine](#reaching-it-from-another-machine). A non-loopback address here is also a name the instance answers to. |
 | `WEB_PORT` | `8080` | Host port for the UI, `/api`, and `/mcp`. |
 | `ALLOWED_HOSTS` | — | Names you reach the instance by, beyond `localhost`, `127.0.0.1`, `[::1]`, `WEB_BIND` and the host of `PUBLIC_BASE_URL`: a LAN hostname, a container name, what a proxy forwards. Comma-separated, no ports; `*.home.arpa` wildcards work. Any other name gets **421** — [details below](#names-it-answers-to). |
-| `PUBLIC_BASE_URL` | — | The address a browser uses, when it isn't `http://localhost:<WEB_PORT>`: scheme, host and port, nothing after. Its host is allowed automatically; behind an HTTPS proxy it is what makes the browser's `https://` origin the instance's own. Later M6 releases bind sessions and MCP links to it, so choose the name you mean to keep. |
+| `PUBLIC_BASE_URL` | — | The address a browser uses, when it isn't `http://localhost:<WEB_PORT>`: scheme, host and port, nothing after. Its host is allowed automatically; behind an HTTPS proxy it is what makes the browser's `https://` origin the instance's own, and its scheme decides whether the session cookie is `Secure`. The MCP OAuth path (later in M6) will bind to it too, so choose the name you mean to keep. |
 | `ALLOWED_ORIGINS` | — | Extra browser origins allowed to write, beyond the instance's own and loopback ones. Rarely needed. |
 | `TRUSTED_PROXIES` | — | IPs or CIDRs of a reverse proxy whose `X-Forwarded-For` is believed for the client's address. Nothing reads that address in this release; leave it unset. |
 | `REFERENCE_CURRENCY` | `AUD` | Your currency — **first-run bootstrap only**. The migration seeds it into the instance settings; after that the database row is the setting (`PATCH /settings`), and editing the env var does nothing. Changing the setting affects new entries only — stored snapshots keep the currency they were recorded in. |
@@ -297,11 +297,13 @@ Running it on a NAS, a home server, or a VM and wanting to use it from your lapt
 is the normal case. The default `WEB_BIND=127.0.0.1` means only the machine
 *running* it can connect, so this needs a decision from you rather than a flag.
 
-Start from what's actually true: **nothing in plamotrack is authenticated yet.**
-There is no login, and `/api` and `/mcp` accept writes and deletes from anyone who
-can reach the port. So the question isn't "how do I open the port", it's "who
-should be able to reach this, and what's doing the deciding". Three answers, best
-first.
+Start from what's actually true. Every request is authenticated: the browser
+needs the owner login, and `/api` scripts and `/mcp` clients need a
+[personal access token](#access-tokens). What plamotrack does **not** have yet is a
+tested TLS path, so it speaks plain HTTP — and on a network you don't control, a
+device on the path can read the session cookie or a token off the wire and use it.
+So the question isn't only "who can reach the port", it's "who can see the
+traffic". Three answers, best first.
 
 ### 1. Don't open it — tunnel to it
 
@@ -312,8 +314,9 @@ ssh -N -L 8080:127.0.0.1:8080 you@your-server
 ```
 
 `http://localhost:8080` on your laptop is now the instance. `WEB_BIND` stays on
-loopback. SSH is doing the authentication, which is the part plamotrack can't do
-yet. Best option for occasional use from one or two machines.
+loopback. plamotrack still asks for the login and the token; SSH keeps them, and
+everything else, off the network. Best option for occasional use from one or two
+machines.
 
 ### 2. Put it on a private network
 
@@ -326,11 +329,11 @@ WEB_BIND=100.x.y.z    # the server's address on the private network, not 0.0.0.0
 ALLOWED_HOSTS=nas.tail1234.ts.net   # only if you'll use the mesh's DNS name rather than the address
 ```
 
-Now the app is reachable from your phone and laptop, and from nothing else, with
-the VPN deciding who's in. The bind address is a name the instance answers to on
-its own; a mesh hostname is not, hence the second line. This is the best fit if you want it always-available on
-your own devices. It's also the shape M6's authentication will slot into rather
-than replace.
+Now the app is reachable from your phone and laptop, and from nothing else, and
+the tunnel supplies the confidentiality plain HTTP lacks — the session cookie and
+any token cross the wire encrypted. The bind address is a name the instance
+answers to on its own; a mesh hostname is not, hence the second line. This is the
+best fit if you want it always-available on your own devices.
 
 ### 3. Bind to the LAN
 
@@ -341,11 +344,12 @@ ALLOWED_HOSTS=nas.lan,192.168.1.10   # whatever you'll type into the address bar
 
 `0.0.0.0` names nothing, so the second line is not optional: without it every
 request from another machine is `421`. Every device on the network can now reach
-it, and there is nothing to stop any of them writing to it — a guest phone, a smart TV, anything that joins your Wi-Fi.
-Reasonable on a network where you trust every device and every person; a bad idea
-on a shared, office, or student-house network. **Never route this in from the
-internet or put it on a public-facing interface.** Use option 1 or 2 instead until
-M6 lands.
+the login — a guest phone, a smart TV, anything that joins your Wi-Fi — and, because
+this is plain HTTP, any of them positioned on the path can read your session cookie
+or a token in transit and use it. Reasonable on a network where you trust every
+device and every person; a bad idea on a shared, office, or student-house network.
+**Never route this in from the internet or put it on a public-facing interface.**
+Use option 1 or 2 instead until the tested TLS path lands.
 
 > ### ⚠️ On Linux, a published port ignores your firewall
 >
