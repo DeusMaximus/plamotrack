@@ -41,6 +41,29 @@ Template:
 
 ---
 
+## 2026-09-04 — Codex (GPT-5.6 Sol) — #193 PR #208 open; ready for external review
+
+- **Done:** rebased `codex/193-audit-rate-limit-log-hygiene` onto `main` `a642d0b` after
+  the #190 spike archive, preserving #204's pre-routing gate; opened PR #208. M6-8 adds
+  Host/Origin audit recording and audited pruning; explicit anonymous/internal actors; trusted
+  client-address propagation through the bundled nginx and FastMCP verifier; four independent
+  nginx limit zones for families 2/3/8/9; and a non-vacuous full-login/PAT/MCP container-log scan.
+  The PR body carries the numbered calls, negative control, and exact hand-mutant table.
+- **Decisions:** nginx owns the external `TRUSTED_PROXIES` walk and overwrites its private address
+  header on all seven proxy paths; only the unpublished Compose API trusts it. Rate maps read
+  `$request_uri` because `/api/` rewriting precedes nginx's limit phase. Retention is explicit,
+  strict-before, and self-auditing. No migration: #187 supplied the table. `auth.oidc_rebound` is
+  reserved until OAuth ships. #206's family-7/family-8 `Allow` disclosure remains separate.
+- **State:** PR #208 is open at feature head `20eb1d0` plus this hand-off commit; CI is running.
+  Post-rebase: backend **1878 passed**, ruff/format green; frontend lint + **485 tests** + build
+  green. Changed-test negative control on `main` `a642d0b`: **14 red / 2 green**; branch 16/16.
+  All **16** single-site `aud-` hand mutants killed. Packaged matrix previously passed with all
+  four 429s, zero failures, and password/PAT/session absent from non-vacuous logs. Packaged stack
+  is stopped; dev Postgres is healthy on loopback and claimed with `e2e-owner-password`.
+- **Next:** wait for CI, then give the prepared round-1 brief to GLM 5.3 Flash (different family
+  from the Codex author); reproduce and answer every finding before another round. After merge,
+  fold `aud-1…16` into `mutation_test.py`. The LXC stays put until M6 is finished.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #190 spike: EVERY leg run (Keycloak, Google, MCP Inspector, Claude web, ChatGPT web, nginx, T13); evidence comment POSTED
 
 - **Done:** #190's spike, every leg that needs no external account, against the pinned
@@ -190,28 +213,3 @@ Template:
   limiting; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release-notes items for the
   M6 release unchanged plus: anonymous unrouted/wrong-verb/malformed requests under `/api/` are
   401, not 404/405/422.
-## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) MERGED (PR #202 → `f685c30`, Codex round 6 GO); pat- fold-in MERGED (PR #203 → `d237bb3`)
-
-- **Done:** Codex round 6 (GPT 5.6 Sol) on `1479e1c`: **GO, no findings**, nothing open across
-  six rounds. PR #202 squash-merged as `f685c30` on the owner's call (04/09), branch deleted,
-  **#189 closed**. Then the harness fold-in `chore/fold-pat-mutants` → **PR #203** (harness-only,
-  no external review — the #197/#199/#201 precedent): pat-1…25 into `mutation_test.py` with
-  four new path constants (`TOK_SVC`, `TOK_FMT`, `RESOLVER`, `MCP_AUTH`), `TEST_FILES` +
-  `tests/test_auth_tokens.py`; `-k pat-` → **all 25 killed** at fold-in; procedure doc: 353
-  cases over thirty-one files. Squash-merged as `d237bb3` on green CI. Memory pointer updated.
-- **Decisions:** none new. The six-round record is on PR #202; the two lessons that came out of
-  it are in `.agents/lessons.md` ("The 401 contract").
-- **State:** `main` at `d237bb3` plus this entry. Backend 1760, frontend 485, e2e 43+1 (CI). The
-  shipped app: browser = owner session; REST scripts and MCP = personal access token
-  (`ptk_…`, Settings → Access tokens); `/mcp/` bearer-only; wrong password / setup token = 403;
-  no tested TLS path yet. Dev DB claimed with `e2e-owner-password`. No release cut — M6 ships as
-  one release at the end. **Release-notes items so far:** `ALLOWED_HOSTS` lockout risk (M6-1);
-  the instance comes up unclaimed (M6-3); `/mcp/` requires a PAT, wrong password / setup token
-  is 403, never a token in a URL (M6-4).
-- **Next:** (1) the two family-13 hardening items (design §5.9 item 3(b)): unrouted `/api/*`
-  → 401 for anon, and parse-before-auth → both need a middleware-level check ahead of
-  routing / body parsing; (2) #190/#192 MCP OAuth spike (§5.9 item 5) — can run in parallel;
-  (3) audit/rate limiting (§5.9 item 8); (4) **LXC stays put until M6 is finished** (owner,
-  03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first, it comes up
-  unclaimed (setup token in `docker compose logs api`), and the personal Gunpla skill's
-  MCP config will need a token.
