@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) family-13 hardening: branch `feature/m6-3b-family-13-hardening` PUSHED, PR OPEN, Codex round 1 pending
+## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) family-13 hardening: PR #205 OPEN at `ec77ff8`, Codex round 1 pending
 
 - **Done:** Issue **#204** filed (M6 milestone) for §5.9 item 3(b)'s two deferred items, then the
   branch. The fix is **the pre-routing gate** `app/auth/prerouting.py`: one middleware directly
@@ -58,8 +58,7 @@ Template:
 - **Decisions:** the gate renders through `domain_error_handler` passed in by `create_app` (one
   envelope author, no circular import). `PUT /mcp/` → 405 with `Allow` to anon (the
   `RouteBinding`) is **out of scope, recorded on #204** for the reviewer to classify.
-- **State:** committed and pushed on the owner's instruction; PR open (number in the entry title's
-  follow-up commit). New suite
+- **State:** committed and pushed on the owner's instruction as `ec77ff8`; **PR #205** open. New suite
   `tests/test_auth_unrouted.py` **97 green**; negative control on unfixed `main` (trimmed copy,
   worktree, own DB) **23 red / 65 green**, every red an anon-side 404/405/422; **13 hand mutants
   f13-1…13 all killed** (runner + verdicts in the session scratchpad; tuples in the PR-body draft
