@@ -7,7 +7,13 @@ principal's scopes. Because it matches on `scope["endpoint"]` — the callable
 Starlette resolved — and never on the URL string, no encoding, doubled slash or
 traversal can select a different policy than the handler it reaches.
 
-**Installed on the shipped app since M6-3 (#188).** `create_app(authorization=
+**Installed on the shipped app since M6-3 (#188)**, with the pre-routing gate
+(`app/auth/prerouting.py`, #204) in front of it since M6-3b: the gate resolves
+the principal once, before Starlette routes and FastAPI parses, and refuses an
+anonymous caller wherever the router would have answered 404, 405 or this
+dependency's 401 — so an unrouted path, a wrong verb and a malformed body all
+read 401 to `anon` (§5.5 family 13); this dependency reads the principal the
+gate stashed and stays the authority on every matched route. `create_app(authorization=
 True)` installs it and the module-level `app` runs with it on: local owner
 authentication (#188) is what makes default-deny usable, so the sequencing "build
 the foundation (M6-2), activate once a credential exists (M6-3)" completes here.
@@ -113,8 +119,17 @@ async def enforce_route_policy(request: Request, session: SessionDep) -> Princip
     index: RouteIndex = getattr(request.app.state, ROUTE_INDEX_ATTR)
     endpoint = request.scope.get("endpoint")
     policy = index.policy_for(endpoint) if endpoint is not None else None
-    principal = await resolve_principal(request, session)
-    setattr(request.state, REQUEST_PRINCIPAL_ATTR, principal)
+    # The pre-routing gate (`app/auth/prerouting.py`, #204) resolved the
+    # principal once, ahead of routing and body parsing, and stashed it; a
+    # second resolution here would be a second lookup and `last_used_at` touch
+    # for a valid bearer (a failed one never reaches this far — the gate
+    # refused it — so no audit row is at stake). The resolution-count test is
+    # what pins the once. Resolving is the fallback for an app built without
+    # the gate — the dependency alone is still default-deny.
+    principal = getattr(request.state, REQUEST_PRINCIPAL_ATTR, None)
+    if principal is None:
+        principal = await resolve_principal(request, session)
+        setattr(request.state, REQUEST_PRINCIPAL_ATTR, principal)
 
     if policy is None:
         # An app-level dependency runs only for a matched route, and every
@@ -233,8 +248,10 @@ class ResponseProfileMiddleware:
     reasoning cannot cover is a *mounted* child, whose own middleware may sit
     between its router and this layer — so `policy_for` answers only for the
     app's own routes, and every mounted route carries a `RouteBinding` on the
-    route itself instead. A response produced before any route is matched — the
-    unrouted 404, the outer 500 — has no endpoint and carries nothing.
+    route itself instead. A response produced before any route is matched — an
+    authenticated caller's unrouted 404, the outer 500 — has no endpoint and
+    carries nothing; the pre-routing gate's own refusals (#204), produced
+    above this layer, stamp the family-13 profile themselves.
 
     Why *replace* and not default (round 2, f1): a handler- or library-set
     `Cache-Control` — `public`, `private, no-cache` — would otherwise stand, and

@@ -66,13 +66,20 @@ async def resolve_principal(request: Request, session: AsyncSession) -> Principa
     set one; otherwise the bearer if an `Authorization` header is present (401
     if it fails); otherwise the owner's session cookie, or `anon`.
 
-    Resolves on the **request's own session** (the one the handler will use), not a
-    session of its own — a second connection per request both costs a connection
-    and, holding a read lock on `session`/`owner` while the handler's transaction
-    runs, deadlocks against anything taking `ACCESS EXCLUSIVE` on those tables
-    (the test teardown's TRUNCATE found it immediately). The `last_used_at` touch
-    `resolve_session`/`resolve_bearer` may make is committed by the request's own
-    transaction teardown; a read never takes the write gate (rule 7.1)."""
+    Resolves on the session the caller passes, and takes none of its own. On the
+    shipped app that caller is the **pre-routing gate** (`app/auth/prerouting.py`,
+    #204): a short `session_scope()` opened before the router runs and closed —
+    committing the `last_used_at` touch `resolve_session`/`resolve_bearer` may
+    make — before the handler's transaction opens, with the principal stashed on
+    the request state for the dependency to reuse. The dependency resolves here
+    itself only as the fallback for an app built without the gate, on the
+    request's own session, where the touch is committed by that transaction's
+    teardown. What must hold either way is **no overlap**: a second session left
+    open across the handler holds a read lock on `session`/`owner` while the
+    handler's transaction runs and deadlocks against anything taking `ACCESS
+    EXCLUSIVE` on those tables (the test teardown's TRUNCATE found it
+    immediately when this was first tried as a second session per request). A
+    read never takes the write gate (rule 7.1)."""
     injected = getattr(request.app.state, INJECTED_PRINCIPAL_ATTR, None)
     if injected is not None:
         return injected

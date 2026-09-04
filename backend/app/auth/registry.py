@@ -304,6 +304,24 @@ def iter_effective_routes(app: FastAPI) -> Iterator[EffectiveRoute]:
             yield leaf
 
 
+def iter_dispatch_order(app: FastAPI) -> Iterator[EffectiveRoute | Mount]:
+    """The app's own dispatch order, one entry per thing Starlette's router
+    tries in turn: an included router expanded to its effective leaves in
+    place, a plain route as a leaf, a `Mount` as itself — the child owns
+    everything beneath it, so for dispatch the mount is the unit, not its
+    routes. Read by the pre-routing gate (`app/auth/prerouting.py`, #204) to
+    decide what a request *would* reach before the router runs; the same walk
+    the registry enumerates, so the gate cannot describe a route the registry
+    does not."""
+    for route in app.routes:
+        if isinstance(route, Mount):
+            yield route
+        else:
+            for leaf in _walk([route], "", mounted=False):
+                if isinstance(leaf, EffectiveRoute):
+                    yield leaf
+
+
 def iter_mounted_routes(app: FastAPI) -> Iterator[MountedRoute]:
     """Every leaf route under every `Mount`, nested mounts descended, so the
     enumeration covers the child HTTP surface as well as the REST leaves. The
@@ -329,6 +347,14 @@ _COLLECTION_TAGS = frozenset({"kits", "inventory", "catalog", "retailers", "orde
 _SAFE = frozenset({"GET", "HEAD"})
 
 _NO_STORE = ResponseProfile(no_store=True)
+
+#: Family 13 (§5.5): everything else under `/api/` — an unrouted path, a wrong
+#: verb, a scoped route reached with no credential. Not a route, so not a
+#: `RoutePolicy`: the pre-routing gate (`app/auth/prerouting.py`, #204) refuses
+#: an anonymous caller there with the dependency's own 401, and this is the
+#: profile that refusal carries — the router never ran, so the innermost
+#: middleware has no endpoint to stamp from.
+UNROUTED_PROFILE = _NO_STORE
 
 
 def _classify(route: EffectiveRoute) -> RoutePolicy | None:
@@ -656,6 +682,19 @@ API_ALIAS_REJECTIONS: tuple[ApiAliasRejection, ...] = (
             "probe whether the database is up. Liveness (/api/healthz) stays open."
         ),
     ),
+)
+
+#: Root namespaces that are anonymous **by protocol** (§5.5 family 8): OAuth
+#: discovery lives under `/.well-known/`, installed by M6-7 in OIDC mode and
+#: absent — the router's 404 — in local mode. Derived from the family-8 entry
+#: above so the ingress alias rejection and the pre-routing gate (#204) read one
+#: declaration. The gate passes a request under one of these through unresolved:
+#: family 8's anonymous column says "allow, by protocol", and a 401 with a
+#: `Bearer` challenge on a discovery URL would tell an OAuth client the resource
+#: speaks bearer *there* — the packaged stack's T2 rows expect the plain 404
+#: until M6-7 (the CI Integration run on PR #205's first head found exactly that).
+PROTOCOL_NAMESPACES: tuple[str, ...] = tuple(
+    rejection.namespace + "/" for rejection in API_ALIAS_REJECTIONS if rejection.family == 8
 )
 
 #: The nginx template lines between these markers are generated. Do not edit them

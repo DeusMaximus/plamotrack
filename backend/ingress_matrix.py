@@ -343,6 +343,16 @@ def rows(
             return unauthenticated(f"{label} (anonymous)", "GET", path)
         return Row(label, "GET", path, 200, headers=owner, content_type=content_type)
 
+    def family_13(label: str, method: str, path: str, status: int) -> Row:
+        """Everything else under `/api/` (§5.5 family 13; #204): the app's
+        pre-routing gate answers an anonymous caller 401 with the bare
+        `Bearer` challenge before the router's own 404/405 — proof the spelling
+        reached the app, and that the route table is not enumerable without a
+        credential; the signed-in owner gets the router's plain answer."""
+        if credential is None:
+            return unauthenticated(f"{label} (anonymous)", method, path, www_authenticate="Bearer")
+        return Row(label, method, path, status, headers=owner, content_type="application/json")
+
     matrix: list[Row] = [
         # --- one spelling per family: the rejections ------------------------------
         rejected("api/mcp literal", "GET", "/api/mcp"),
@@ -372,8 +382,15 @@ def rows(
             headers={"X-Forwarded-For": "127.0.0.1"},
         ),
         # --- no request-derived redirects -------------------------------------------
-        rejected("api/kits/ trailing slash", "GET", "/api/kits/"),
-        rejected("api/orders/?x=1 trailing slash with query", "GET", "/api/orders/?x=1"),
+        # These reach the app through the generic `/api/` location, so the app
+        # decides: family 13 (#204) — 401 with the bare challenge for an
+        # anonymous caller, the plain 404 for the signed-in owner; never a
+        # Location either way.
+        family_13("api/kits/ trailing slash", "GET", "/api/kits/", 404),
+        family_13("api/orders/?x=1 trailing slash with query", "GET", "/api/orders/?x=1", 404),
+        # --- family 13: unrouted paths and wrong verbs under /api/ -----------------
+        family_13("api/no-such-route", "GET", "/api/no-such-route", 404),
+        family_13("api/kits wrong verb", "DELETE", "/api/kits", 405),
         rejected(
             "api/mcp/.well-known alias", "GET", "/api/mcp/.well-known/oauth-authorization-server"
         ),
