@@ -464,7 +464,8 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
 The repo goes public at 4.5 as an alpha (§10, revised) rather than waiting for
 milestones 1–6. Consequence for anything written from here on: **the audience is
 strangers.** No internal references, no assumed context, and disclose what isn't
-built rather than describing planned endpoints as if they exist. Everything is
-authenticated — the owner login for the browser, personal access tokens for REST
-scripts and MCP clients (M6-3/M6-4) — but there is no tested TLS path yet, so an
-alpha instance belongs on a trusted network.
+built rather than describing planned endpoints as if they exist. Collection and
+administrative access is authenticated — the owner login for the browser, personal
+access tokens for REST scripts and MCP clients (M6-3/M6-4); only liveness and the
+auth bootstrap answer anonymously — but there is no tested TLS path yet, so an alpha
+instance belongs on a trusted network.

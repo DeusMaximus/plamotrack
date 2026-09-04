@@ -297,9 +297,10 @@ Running it on a NAS, a home server, or a VM and wanting to use it from your lapt
 is the normal case. The default `WEB_BIND=127.0.0.1` means only the machine
 *running* it can connect, so this needs a decision from you rather than a flag.
 
-Start from what's actually true. Every request is authenticated: the browser
-needs the owner login, and `/api` scripts and `/mcp` clients need a
-[personal access token](#access-tokens). What plamotrack does **not** have yet is a
+Start from what's actually true. Collection and administrative access is
+authenticated: the browser needs the owner login, and `/api` scripts and `/mcp`
+clients need a [personal access token](#access-tokens) — only liveness and the
+login/setup entry points answer without one. What plamotrack does **not** have yet is a
 tested TLS path, so it speaks plain HTTP — and on a network you don't control, a
 device on the path can read the session cookie or a token off the wire and use it.
 So the question isn't only "who can reach the port", it's "who can see the
