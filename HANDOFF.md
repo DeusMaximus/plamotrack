@@ -41,6 +41,27 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 4 (NO-GO, 1×P3, docs only) addressed at `09ef061`, round 5 pending
+
+- **Done:** Codex round 4 (GPT 5.6 Sol) on `98a82b2`: NO-GO, one P3, no bypass; f6/f7/f8 held,
+  "other than finding 9, no remaining P1–P3 across the four rounds". f9 = the posture sweep's
+  last class: operations' *Reaching it from another machine* + its `WEB_BIND`/`PUBLIC_BASE_URL`
+  rows, design §5.4 mode P and §10's alpha disclosures still said nothing was authenticated —
+  plus two siblings the sweep found (AGENTS.md roadmap note, `.agents/review-brief.md` context
+  line). All rewritten at `622965f` (+ `09ef061` fixing a "Nothing is authenticated" wording
+  slip): owner session for the browser, PAT for REST/MCP automation, no tested TLS path, plain
+  HTTP exposes cookie/token to a device on the path, SSH/VPN preferred, internet waits for
+  §5.9 item 9. §5.1 stays the dated record. Reply + addendum posted; PR body head updated.
+- **Decisions:** none new.
+- **State:** branch head `09ef061` (docs/process only since `ef7764d`; runtime unchanged since
+  `5aca2e6`); CI on the merged head running when written. Tree parked on `main`. Dev DB
+  claimed with `e2e-owner-password`. **Round 5 pending** (findings from 10) — expected GO.
+- **Next:** (1) Codex round 5 → merge on GO (`Closes #189`), branch delete; (2) harness fold-in
+  PR for pat-1…25; (3) the two family-13 hardening items (design §5.9 item 3(b)); (4) #190/#192
+  OAuth spike; (5) **LXC stays put until M6 is finished** (owner, 03/09) — `ALLOWED_HOSTS`
+  into its `.env` before the pull, back up first, it comes up unclaimed. Release notes for the
+  M6 release: wrong password / setup token is 403; `/mcp/` requires a PAT; never a token in a URL.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 3 (NO-GO, 3×P3) addressed at `ef7764d`, round 4 pending
 
 - **Done:** Codex round 3 (GPT 5.6 Sol) on `9ad3d4d`: NO-GO, three P3s, no bypass; f4/f5
@@ -141,29 +162,4 @@ Template:
   item 3(b)); (4) #190/#192 OAuth spike; (5) **LXC stays put until M6 is finished** (owner,
   03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first, it comes up
   unclaimed (setup token in `docker compose logs api`).
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #188 (M6-3) MERGED (PR #200 → `a84ca48`, Codex round 2 GO); m63- fold-in MERGED (PR #201 → `66bc922`)
-
-- **Done:** Codex round 2 (GPT 5.6 Sol) on `5be4414`: **GO, no new findings** — round-1 f1–f3
-  confirmed fixed by replay (4 red / 24 green on `641b214`, 28/28 and 1658/1658 at head, five
-  mutants independently killed), calls 1–7 retained. PR #200 squash-merged as `a84ca48` on the
-  owner's call (04/09), branch deleted, **#188 closed**. **The shipped app is default-deny from
-  `a84ca48`:** an unclaimed instance prints a setup token; the owner claims and signs in through
-  the browser; CSRF on cookie-borne writes; docs/schema behind `collection:read`. Then the
-  harness fold-in: `chore/fold-m63-mutants` → **PR #201** (harness-only, no external review —
-  the #197/#199 precedent): m63-1…10 into `mutation_test.py`, `TEST_FILES` +
-  `tests/test_auth_local.py`, four file constants; `-k m63-` → all 10 killed at fold-in.
-- **Decisions:** none new; #201 rides CI only.
-- **State:** `main` at `66bc922` plus this entry (#201 squash-merged on green, owner's call).
-  Dev DB is claimed with the e2e default password (`e2e-owner-password`); the packaged stack
-  (`docker compose up`) on this Mac reuses the same volume — to see the first-run token locally,
-  `docker compose down -v` first. No release cut — M6 ships as one release at the end.
-- **Next:** (1) **#189 (M6-4) PATs** — mint/list/revoke in Settings,
-  bearer on REST+MCP as the resolver's next credential (the strict presented-and-failed → 401
-  rule applies there; design §5.9 item 3(a)), per-tool scope, T5/T6/T10; `revoke_all_sessions`
-  callers from a request should pass `principal`/`request` (Codex round 2 note); (2) the two
-  family-13 hardening items (unrouted `/api/*` → 401 for anon; parse-before-auth) — design §5.9
-  item 3(b); (3) #190 (OAuth spike) can run in parallel; (4) **LXC stays put until M6 is
-  finished** (owner, 03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first, and
-  it will come up **unclaimed**: read the setup token from `docker compose logs api`.
 
