@@ -41,9 +41,9 @@ Template:
 
 ---
 
-## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) MCP OAuth built on `feature/m6-7-mcp-oauth`; UNCOMMITTED, awaiting the owner's commit + PR
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) MCP OAuth on `feature/m6-7-mcp-oauth` — **PR #212** open (runtime head `4bd2e88`), Codex round 1 next, in a new session
 
-- **Done:** the whole of #192 on the branch, uncommitted (AGENTS.md: commit only when asked).
+- **Done:** the whole of #192 on the branch, committed as `4bd2e88` and pushed on the owner's call; **PR #212** opened from the body drafted this session (12 deliberate calls, the mutant paragraph, the live check).
   `app/auth/mcp_oauth.py` — `PlamotrackOAuthProxy` over FastMCP's `OAuthProxy` (not `OIDCProxy`,
   whose constructor fetches discovery synchronously): owner binding **at issuance**
   (`exchange_authorization_code` → `invalid_grant` + `auth.mcp_identity_refused`, nothing minted)
@@ -68,7 +68,7 @@ Template:
   OAuth section, config rows, backup note), `.env.example`, README, AGENTS.md rule 13,
   `.agents/testing-and-review.md` (OIDC matrix as a release-gate step; moa- paragraph, 434/34),
   `.agents/lessons.md` ("Building on the parent of the class the spike measured").
-- **Decisions:** in the PR body draft (`/private/tmp/claude-501/-Users-tlgja-Code-plamotrack/7973cb93-c332-4a35-89ab-976d6ea434b4/scratchpad/pr_body.md`, 12 deliberate calls) and design
+- **Decisions:** on PR #212's body ("Deliberate calls" 1–12) and design
   §5.9 item 7 — notably: https-or-loopback in OIDC mode rather than a degraded third state; the
   allowlist applies to **every** client kind when set (FastMCP re-checks it at the callback where
   the kind is unknown), documented rather than special-cased; `HEAD` declared on no protocol route;
@@ -92,9 +92,12 @@ Template:
   "Allow" is FastMCP's "Invalid or expired authorization transaction" 400 at the callback —
   start over from `/mcp/authorize`, not from the provider. Packaged `api`/`web` containers stopped, dev `db` up. Keycloak
   spike container up. LXC untouched (**stays put until M6 is finished**, owner 03/09).
-- **Next:** (1) owner: commit the branch, push, open the PR from `pr_body.md` (fill the head sha;
-  the mutant table is the 32 `moa-` tuples in `mutation_test.py`), then a **Codex round 1** brief
-  per `.agents/review-brief.md` — where to push: call 1 (https-or-loopback), call 3 (allowlist on
+- **Next:** (1) **Codex round 1 on PR #212, in a new session** (this one closed at ~77%
+  context): the brief was printed in this session's chat and is not stored — regenerate it from
+  `.agents/review-brief.md` (Codex footer) if needed; the runtime head is `4bd2e88` (every commit
+  after it on the branch is a hand-off entry — brief at the branch tip and say so), `main`
+  `a497481`, rules 1/6/7.1/9/11/12/13 in play; answer findings per `.agents/testing-and-review.md`
+  → "Responding to a review"; if GO, merge with `Closes #192`. Where to push: call 1 (https-or-loopback), call 3 (allowlist on
   every kind), the `_handle_idp_callback` private override, the `mcp_oauth_state` DDL parity with
   the store's, the mount requiring no scope; (2) the live Keycloak run's output above is what the PR body's
   "Live check" reports; the `stranger` refusal path was not driven live (the suite covers it);
