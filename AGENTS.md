@@ -350,6 +350,14 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     when no HTTP request is in flight (`tests/conftest.py` sets it). Token management
     is family 6 (`/auth/tokens`): the owner's session alone, so a token cannot mint a
     token. The matrix
+    **Browser OIDC landed with M6-6 (#191):** `AUTH_MODE=oidc` replaces the password
+    with a sign-in at one configured OpenID Connect provider; the owner is bound to the
+    provider's `(issuer, subject)` at the first login that presents the setup token,
+    every other identity is refused with an audit row, and `recovery rebind-oidc` is
+    the host-side way back. The modes are mutually exclusive and env-only; each
+    family-3 action declares its mode in the registry and answers 404 in the other.
+    The id_token is verified with joserfc; the login transaction is a database row
+    consumed before any network call (`services/oidc.py`). The matrix
     (`tests/test_authorization.py`) drives the real route graph through the dependency
     with injected principals; `tests/test_auth_local.py` drives the shipped app through
     the real session cookie; `tests/test_auth_tokens.py` drives it through real bearers

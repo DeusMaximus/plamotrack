@@ -40,11 +40,12 @@ SHIPPED_AT = "bcdb375e32d0"
 DISPLAY_ITEMS = "2c97a5ced66a"
 INSTANCE_SETTINGS = "f9979ec7b9cb"
 AUTH_TABLES = "f1058c5de0f3"
+OIDC_LOGIN = "0db6c35d0a7e"
 
 # The current migration head, as a literal (this module keeps revision ids as
 # literals on purpose — see the header). The "recovered to head" / "nothing
 # moved" assertions compare against it, so a new migration bumps this one line.
-HEAD = AUTH_TABLES
+HEAD = OIDC_LOGIN
 
 
 def db(sql: str, **params) -> list[tuple]:

@@ -20,6 +20,7 @@ dependencies = [
     # current zone list even on an image whose OS tzdata is absent or ancient.
     "tzdata>=2025.1",
     "argon2-cffi>=25.1.0",
+    "joserfc>=1.7",
 ]
 
 [dependency-groups]

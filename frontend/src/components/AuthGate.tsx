@@ -31,6 +31,18 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (isPending) {
     return <Centered>{t("auth.checking")}</Centered>;
   }
+  if (session?.auth_mode === "oidc") {
+    // OIDC mode (#191): no password anywhere. `unclaimed` is also a claimed
+    // owner with no binding yet, which the same screen handles — the setup
+    // token plus a sign-in at the provider binds whoever completes it.
+    if (session.state === "unclaimed") {
+      return <OidcSetupScreen issuer={session.oidc_issuer} />;
+    }
+    if (session.state !== "owner") {
+      return <OidcLoginScreen issuer={session.oidc_issuer} />;
+    }
+    return <>{children}</>;
+  }
   if (session?.state === "unclaimed") {
     return <SetupScreen onDone={onAuthed} />;
   }
@@ -38,6 +50,148 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return <LoginScreen onDone={onAuthed} />;
   }
   return <>{children}</>;
+}
+
+/** The `auth_error` code the OIDC callback sends the browser back with (#191),
+ *  read once from the query string and then removed from the address bar so a
+ *  reload does not show it again. */
+function useOidcCallbackError(): string | null {
+  const [code] = useState<string | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const value = params.get("auth_error");
+    if (value !== null) {
+      params.delete("auth_error");
+      const query = params.toString();
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${query ? `?${query}` : ""}${window.location.hash}`,
+      );
+    }
+    return value;
+  });
+  return code;
+}
+
+const OIDC_ERROR_KEYS = {
+  oidc_denied: "auth.oidcError_denied",
+  oidc_expired: "auth.oidcError_expired",
+  oidc_failed: "auth.oidcError_failed",
+  oidc_setup_required: "auth.oidcError_setupRequired",
+  oidc_identity_refused: "auth.oidcError_identityRefused",
+} as const;
+type OidcErrorKey = (typeof OIDC_ERROR_KEYS)[keyof typeof OIDC_ERROR_KEYS];
+
+/** The catalogue key for a callback error code; an unknown code (a newer API)
+ *  reads as the generic failure rather than as nothing. */
+function oidcErrorKey(code: string): OidcErrorKey {
+  return (OIDC_ERROR_KEYS as Record<string, OidcErrorKey | undefined>)[code] ?? "auth.oidcError_failed";
+}
+
+function providerName(issuer: string | null): string {
+  if (!issuer) return "your identity provider";
+  try {
+    return new URL(issuer).host;
+  } catch {
+    return issuer;
+  }
+}
+
+/** Ask the API for the provider's authorization URL and go there. The response
+ *  sets the login-binding cookie, so the navigation happens in this tab; the
+ *  callback brings the browser back to `/` with the session cookie, or with
+ *  `?auth_error=…`. */
+async function startOidcLogin(setupToken?: string): Promise<void> {
+  const { authorization_url } = await api.oidcStart(setupToken);
+  window.location.assign(authorization_url);
+}
+
+function OidcSetupScreen({ issuer }: { issuer: string | null }) {
+  const { t } = useTranslation();
+  const callbackError = useOidcCallbackError();
+  const [error, setError] = useState<string | null>(
+    callbackError ? t(oidcErrorKey(callbackError)) : null,
+  );
+  const [redirecting, setRedirecting] = useState(false);
+  const {
+    register,
+    handleSubmit,
+    watch,
+    formState: { errors, isSubmitting },
+  } = useForm<{ token: string }>();
+  const provider = providerName(issuer);
+
+  const onSubmit = handleSubmit(async (values) => {
+    setError(null);
+    try {
+      setRedirecting(true);
+      await startOidcLogin(values.token.trim());
+    } catch (err) {
+      setRedirecting(false);
+      setError(messageFor(err, t("common.requestFailed")));
+    }
+  });
+
+  return (
+    <Centered>
+      <Wordmark />
+      <Card title={t("auth.setupTitle")} description={t("auth.oidcSetupIntro")}>
+        <form onSubmit={onSubmit} className="space-y-3">
+          <ErrorBanner message={error} />
+          <Field label={t("auth.setupTokenLabel")} required error={errors.token?.message}>
+            <Input autoFocus autoComplete="off" {...register("token", { required: true })} />
+            <p className="mt-1 text-xs text-zinc-400">{t("auth.setupTokenHint")}</p>
+          </Field>
+          <Button
+            type="submit"
+            disabled={isSubmitting || redirecting || !watch("token")}
+            className="w-full"
+          >
+            {redirecting
+              ? t("auth.redirecting", { provider })
+              : t("auth.continueWithProvider", { provider })}
+          </Button>
+        </form>
+      </Card>
+    </Centered>
+  );
+}
+
+function OidcLoginScreen({ issuer }: { issuer: string | null }) {
+  const { t } = useTranslation();
+  const callbackError = useOidcCallbackError();
+  const [error, setError] = useState<string | null>(
+    callbackError ? t(oidcErrorKey(callbackError)) : null,
+  );
+  const [redirecting, setRedirecting] = useState(false);
+  const provider = providerName(issuer);
+
+  const onClick = async () => {
+    setError(null);
+    try {
+      setRedirecting(true);
+      await startOidcLogin();
+    } catch (err) {
+      setRedirecting(false);
+      setError(messageFor(err, t("common.requestFailed")));
+    }
+  };
+
+  return (
+    <Centered>
+      <Wordmark />
+      <Card title={t("auth.loginTitle")} description={t("auth.oidcLoginIntro")}>
+        <div className="space-y-3">
+          <ErrorBanner message={error} />
+          <Button type="button" onClick={onClick} disabled={redirecting} className="w-full">
+            {redirecting
+              ? t("auth.redirecting", { provider })
+              : t("auth.continueWithProvider", { provider })}
+          </Button>
+        </div>
+      </Card>
+    </Centered>
+  );
 }
 
 function Centered({ children }: { children: ReactNode }) {

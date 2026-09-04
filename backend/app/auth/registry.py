@@ -46,6 +46,7 @@ from fastapi.routing import APIRoute
 from starlette.routing import BaseRoute, Mount, Route
 
 from app.auth.principal import Principal, Scope
+from app.config import AUTH_MODES
 
 # --- the policy value ------------------------------------------------------------
 
@@ -158,6 +159,12 @@ class RoutePolicy:
     #: log in, log out or claim the instance; those are a browser's, and a
     #: `pat:*` column in the matrix reads 403 there while family 2 admits it.
     bearer_refused: bool = False
+    #: The authentication modes the route exists in (§5.4; #191). A route
+    #: outside its mode is registered and answers 404 itself — the local
+    #: password actions in OIDC mode, the OIDC start/callback in local mode —
+    #: so the anonymous fallback never turns a mode into a challenge (§5.5).
+    #: Declared so the matrix can drive the mode axis (T1) rather than infer it.
+    modes: frozenset[str] = field(default_factory=lambda: frozenset(AUTH_MODES))
     #: The external spellings nginx forwards here. For a family-4/5/6 route this
     #: is `/api/<path>`; for the root-canonical routes (`/openapi.json`, the MCP
     #: mount, `/.well-known/*`) it is the root spelling; `internal` marks a route
@@ -401,6 +408,12 @@ def _classify(route: EffectiveRoute) -> RoutePolicy | None:
         # the read, family 3 the actions; both are anonymous, so the split is
         # documentation the matrix asserts, not a scope difference.
         family = 2 if route.path == "/auth/session" else 3
+        if route.path in LOCAL_MODE_ROUTES:
+            modes = frozenset({"local"})
+        elif route.path in OIDC_MODE_ROUTES:
+            modes = frozenset({"oidc"})
+        else:
+            modes = frozenset(AUTH_MODES)
         return RoutePolicy(
             family,
             CredentialPolicy.ANONYMOUS,
@@ -410,6 +423,7 @@ def _classify(route: EffectiveRoute) -> RoutePolicy | None:
             # A token is not a browser: the actions refuse a bearer (403), the
             # session read admits one and reports `anonymous` (§5.5, #189).
             bearer_refused=(family == 3),
+            modes=modes,
         )
 
     if "auth-tokens" in tags:
@@ -443,6 +457,13 @@ def _classify(route: EffectiveRoute) -> RoutePolicy | None:
         return RoutePolicy(family, credential, route.methods, _NO_STORE, spellings=api_spelling)
 
     return None
+
+
+#: Family-3 actions that exist in one authentication mode only (§5.4; #191):
+#: the password claim and login are local mode's, the provider round trip is
+#: OIDC mode's. Everything else in families 2–3 exists in both.
+LOCAL_MODE_ROUTES: frozenset[str] = frozenset({"/auth/setup", "/auth/login"})
+OIDC_MODE_ROUTES: frozenset[str] = frozenset({"/auth/oidc/start", "/auth/oidc/callback"})
 
 
 #: The MCP mount (family 7). Declared separately because it is not an

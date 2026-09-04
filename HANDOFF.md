@@ -41,6 +41,49 @@ Template:
 
 ---
 
+## 2026-09-04 — Claude Code (Fable 5.1) — #191 (M6-6) browser OIDC on `feature/m6-6-browser-oidc`, PR opened for Codex review; #190 closed
+
+- **Done:** #190 closed (evidence comment + harness on `main` at `a642d0b`). Owner chose
+  **#191 before #192** (the declared order: #192's owner binding and mode switch are #191's).
+  Branch `feature/m6-6-browser-oidc` off `a642d0b`, committed and pushed (owner's call);
+  the PR number is in the next entry's title once known — `gh pr list` meanwhile. Shape: `AUTH_MODE=local|oidc` + `OIDC_ISSUER/CLIENT_ID/CLIENT_SECRET`
+  (env-only; `PUBLIC_BASE_URL` required in OIDC mode, the callback
+  `<PUBLIC_BASE_URL>/api/auth/oidc/callback` is built from it); `services/oidc.py` (discovery
+  cached lazily and issuer-checked, JWKS, code exchange `client_secret_basic` + PKCE, id_token
+  via **joserfc** — asymmetric algs only — for iss/aud/sub/exp/nonce; `begin_login` /
+  `complete_login` / `recovery_rebind_oidc`); table `oidc_login` (migration `0db6c35d0a7e`:
+  digests of `state` + a browser-binding cookie, nonce, PKCE verifier, `claiming`, 10 min,
+  single use); routes `POST /auth/oidc/start` (JSON → `{authorization_url}` + binding cookie)
+  and `GET /auth/oidc/callback` (302 to the SPA root; `?auth_error=<word>` on refusal); the
+  password pair 404 in OIDC mode and vice versa (`auth.not_in_this_mode`); registry `modes`
+  field; `GET /auth/session` gains `auth_mode`/`oidc_issuer` and reports `unclaimed` while the
+  owner is **unbound** (claimed but no `(issuer, subject)` — a mode switch or a rebind), so the
+  setup token is the claim gate in OIDC mode too; `recovery rebind-oidc`; SPA screens; docs
+  (operations, .env.example, README, design §5.5 row + §5.9 item 6 "Shipped" calls (a)–(e),
+  AGENTS.md rule 13). **Verified against the real Keycloak** (spike realm, `localhost:8081`,
+  API run in OIDC mode with `PUBLIC_BASE_URL=http://localhost:5173`): setup token → provider
+  → bound owner in the SPA; a stranger → `auth_error=oidc_identity_refused` + audit row.
+- **Decisions:** in the PR-body draft (`scratchpad/pr-body-191.md`, "Deliberate calls" 1–10)
+  and design §5.9 item 6 — notably `start` is a POST returning JSON (token never in a URL,
+  Origin-guarded), the transaction is a DB row not a signed cookie (no app secret exists),
+  unbound ⇒ `unclaimed` ⇒ setup token, joserfc over Authlib's deprecated `jose`.
+- **State:** backend **1903 green** (`test_migration_data.py` HEAD bumped to `0db6c35d0a7e`),
+  `tests/test_auth_oidc.py` **35**; frontend 487, build + lint clean. Hand mutants oidc-1…20
+  (runner in the session scratchpad, tuples in the PR-body draft): **18 killed, 2 equivalent**
+  (oidc-11 sub fallback — joserfc's essential `sub` refuses first; oidc-13 HS256 — no symmetric
+  key in the JWKS); three first-pass survivors (5, 12, 19) were test gaps, now tests.
+  T2 rows added to `ingress_matrix.py` (CI Integration proves them; packaged stack not run
+  locally). Dev DB: owner is now **bound to the Keycloak `owner` user** in OIDC mode and still
+  holds the local credential (`e2e-owner-password`) — switching the API back to local mode
+  just works; Keycloak spike container is **up** (`.agents/spikes/190/keycloak/`, realm now
+  lists the `localhost:5173` callback). No e2e change (local mode).
+- **Next:** (1) Codex review of the PR (M6 security work; brief printed in the session);
+  (2) fold oidc- mutants
+  into `mutation_test.py` after merge (the usual harness-only PR); (3) #192 (M6-7) on top —
+  same issuer/client, the spike's decisions; (4) #193; (5) **LXC stays put until M6 is
+  finished** (owner, 03/09). Release-notes item: `AUTH_MODE=oidc` exists; a local→oidc switch
+  signs everyone out and needs the setup token once.
+
 ## 2026-09-04 — Claude Code (Fable 5.1) — #190 spike: EVERY leg run (Keycloak, Google, MCP Inspector, Claude web, ChatGPT web, nginx, T13); evidence comment POSTED
 
 - **Done:** #190's spike, every leg that needs no external account, against the pinned
@@ -192,22 +235,3 @@ Template:
   03/09) — `ALLOWED_HOSTS` into its `.env` before the pull, back up first, it comes up
   unclaimed (setup token in `docker compose logs api`), and the personal Gunpla skill's
   MCP config will need a token.
-
-## 2026-09-04 — Claude Code (Fable 5.1) — #189 (M6-4) PR #202: Codex round 5 (NO-GO, 2×P3, prose/evidence) addressed at `4fb946b`, round 6 pending
-
-- **Done:** Codex round 5 (GPT 5.6 Sol) on `77fb1c9`: NO-GO, two P3s, no bypass; finding-9
-  class gone, "other than 10–11, no remaining P1–P3 across five rounds". (f10) the round-4
-  rewrite overcorrected to "every request / everything is authenticated" — liveness,
-  `GET /auth/session` and login/setup are anonymous by design → both sentences (operations
-  *Reaching it…*, AGENTS.md roadmap note) now say collection and administrative access is
-  authenticated and name the anonymous entry points. (f11) PR body named `622965f` not the
-  final corrective head `09ef061` → opening line now names `4fb946b`, rounds 1–5. Reply posted.
-- **Decisions:** none new. Option 3's "positioned on the path" wording retained (Codex: accurate).
-- **State:** branch head `4fb946b` (docs/process only since `ef7764d`; runtime unchanged since
-  `5aca2e6`); CI on the merged head running when written. Tree parked on `main`. Dev DB
-  claimed with `e2e-owner-password`. **Round 6 pending** (findings from 12).
-- **Next:** (1) Codex round 6 → merge on GO (`Closes #189`), branch delete; (2) harness fold-in
-  PR for pat-1…25; (3) the two family-13 hardening items (design §5.9 item 3(b)); (4) #190/#192
-  OAuth spike; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release notes for
-  the M6 release: wrong password / setup token is 403; `/mcp/` requires a PAT; never a token
-  in a URL.

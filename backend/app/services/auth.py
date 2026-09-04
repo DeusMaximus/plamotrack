@@ -114,7 +114,10 @@ async def _the_credential(session: AsyncSession) -> Credential | None:
 # --- sessions -------------------------------------------------------------------
 
 
-def _new_session_row(now: datetime) -> tuple[str, SessionRow]:
+def new_session_row(now: datetime) -> tuple[str, SessionRow]:
+    """A fresh session: the raw token for the cookie and the row holding its
+    digest. Shared with the OIDC flow (`services/oidc.py`), which mints sessions
+    the same way after its own credential check."""
     raw = credentials.new_token()
     row = SessionRow(
         token_hash=credentials.digest(raw),
@@ -196,13 +199,13 @@ async def claim_instance(
     now = _now()
     await _replace_credential(session, password)
     owner.claimed_at = now
-    raw, row = _new_session_row(now)
+    raw, row = new_session_row(now)
     session.add(row)
     await session.flush()
     await audit.record_event(
         session,
         audit.SETUP_CLAIMED,
-        principal=_owner_principal(row),
+        principal=owner_principal(row),
         request=request,
         target="/auth/setup",
     )
@@ -210,7 +213,7 @@ async def claim_instance(
     return raw
 
 
-def _owner_principal(row: SessionRow) -> Principal:
+def owner_principal(row: SessionRow) -> Principal:
     from app.auth.principal import owner
 
     return owner(subject=str(row.id), via="session")
@@ -245,12 +248,17 @@ async def refuse_throttled(
 
 
 async def record_setup_failure(
-    session: AsyncSession, budget: FailureBudget, *, request: Request | None
+    session: AsyncSession,
+    budget: FailureBudget,
+    *,
+    request: Request | None,
+    target: str = "/auth/setup",
 ) -> None:
     """A wrong setup token: counts against the budget, audited, refused as a
-    rejected form credential (403 — see `CredentialRejectedError`)."""
+    rejected form credential (403 — see `CredentialRejectedError`). The OIDC
+    start presents the same token (#191) and names its own route as `target`."""
     budget.record_failure()
-    await audit.record_event(session, audit.SETUP_FAILED, request=request, target="/auth/setup")
+    await audit.record_event(session, audit.SETUP_FAILED, request=request, target=target)
     await session.commit()
     raise CredentialRejectedError(_SETUP_TOKEN_INVALID, code=error_codes.AUTH_SETUP_TOKEN_INVALID)
 
@@ -285,13 +293,13 @@ async def login(
     budget.reset()
     if credentials.password_needs_rehash(credential.secret_hash):
         credential.secret_hash = credentials.hash_password(password)
-    raw, row = _new_session_row(_now())
+    raw, row = new_session_row(_now())
     session.add(row)
     await session.flush()
     await audit.record_event(
         session,
         audit.LOGIN_SUCCEEDED,
-        principal=_owner_principal(row),
+        principal=owner_principal(row),
         request=request,
         target="/auth/login",
     )

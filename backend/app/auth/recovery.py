@@ -10,8 +10,14 @@ request, so no network path can reach it (§5.6, route bypass).
     python -m app.auth.recovery reset-password        # prompts for a new password
     python -m app.auth.recovery reset-password --password-stdin < secret
     python -m app.auth.recovery revoke-sessions       # sign every browser out
+    python -m app.auth.recovery rebind-oidc           # OIDC mode: forget the bound identity
 
-Both print what they did and append an audit event (`auth.recovery_run`).
+All print what they did and append an audit event (`auth.recovery_run`).
+`rebind-oidc` (#191) clears the owner's `(issuer, subject)` and revokes every
+session; the instance then prints a setup token at its next start, and the next
+provider login that presents it becomes the owner — the operator never types a
+subject. It is how a lost identity-provider account, or a change of provider,
+is recovered from.
 """
 
 from __future__ import annotations
@@ -24,6 +30,12 @@ import sys
 from app.db import get_sessionmaker
 from app.exceptions import InvalidInputError
 from app.services import auth as auth_service
+from app.services import oidc as oidc_service
+
+
+async def _rebind_oidc() -> int:
+    async with get_sessionmaker()() as session:
+        return await oidc_service.recovery_rebind_oidc(session)
 
 
 async def _reset_password(password: str) -> int:
@@ -61,6 +73,11 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser(
         "revoke-sessions", help="revoke every browser session without changing the password"
     )
+    sub.add_parser(
+        "rebind-oidc",
+        help="OIDC mode: clear the bound identity and revoke sessions; the next start "
+        "prints a setup token and the next provider login binds",
+    )
 
     args = parser.parse_args(argv)
 
@@ -71,6 +88,15 @@ def main(argv: list[str] | None = None) -> int:
         except InvalidInputError as exc:
             raise SystemExit(str(exc)) from exc
         print(f"Owner password reset. {revoked} session(s) revoked. Sign in with the new password.")
+        return 0
+
+    if args.command == "rebind-oidc":
+        revoked = asyncio.run(_rebind_oidc())
+        print(
+            f"OIDC binding cleared. {revoked} session(s) revoked. Restart the API to get a "
+            "setup token, then sign in at the identity provider with it — that identity "
+            "becomes the owner."
+        )
         return 0
 
     revoked = asyncio.run(_revoke_sessions())

@@ -652,7 +652,7 @@ timeline is planned, only that the columns are cheap now and expensive to retrof
 
 ---
 
-## 5. Auth, Remote Access & Public Mode 🔨 **In progress (M6 + M8) — threat model recorded 02/09/2026; §5.9 items 1–4 implemented (ingress identity #186 03/09; auth foundation #187, local owner auth #188 and personal access tokens #189 04/09/2026), plus item 3(b)'s deferred family-13 hardening (#204)**
+## 5. Auth, Remote Access & Public Mode 🔨 **In progress (M6 + M8) — threat model recorded 02/09/2026; §5.9 items 1–4 implemented (ingress identity #186 03/09; auth foundation #187, local owner auth #188 and personal access tokens #189 04/09/2026), plus item 3(b)'s deferred family-13 hardening (#204); item 6 browser OIDC (#191)**
 
 Of this section §5.9 items 1–4 are built: the Host/Origin guard, the ingress
 topology and the proxy-trust posture (#186); the principal model, the route policy
@@ -863,7 +863,7 @@ bad code with or without one).
 |---|---|---|---|---|---|---|---|---|---|
 | 1 | SPA shell and assets | `/`, `/board`, `/kits`, `/orders`, `/inventory`, `/retailers`, `/settings/*`, `/data`, `/assets/*`, `/favicon*`; `/setup` and `/login` from M6 | allow | allow | — | — | — | nothing: static files, served by nginx (by Vite in dev) | security headers — `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`, a CSP for the bundle |
 | 2 | Auth bootstrap | `GET /api/auth/session` | allow | allow | allow | allow | 401 (presented, wrong audience) | returns `{state: unclaimed \| anonymous \| owner, interface_language, formatting_locale}` and, for `owner`, the CSRF token. No version, no collection data. `Cache-Control: no-store`. | rate limit |
-| 3 | Auth actions | `POST /api/auth/setup` (until claimed, then 410), `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/oidc/start`, `GET /api/auth/oidc/callback` | allow, by necessity | logout only | 403 | 403 | 401 | Origin check on every unsafe method even with no session; failure budget; audit event on every outcome; `state` and `nonce` on OIDC; a wrong password or setup token is **403** (`auth.login_failed` / `auth.setup_token_invalid`), not 401 — a 401 owes a challenge and these routes accept no HTTP scheme | rate limit |
+| 3 | Auth actions | `POST /api/auth/setup` (until claimed, then 410), `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/oidc/start`, `GET /api/auth/oidc/callback` — the password actions exist in local mode only and the OIDC pair in OIDC mode only, each answering **404** (`auth.not_in_this_mode`) in the other, registered rather than absent so the anonymous fallback cannot turn a mode into a challenge | allow, by necessity | logout only | 403 | 403 | 401 | Origin check on every unsafe method even with no session; failure budget; audit event on every outcome; `state` and `nonce` on OIDC; a wrong password or setup token is **403** (`auth.login_failed` / `auth.setup_token_invalid`), not 401 — a 401 owes a challenge and these routes accept no HTTP scheme | rate limit |
 | 4 | Collection reads | `GET` on `/api/kits*`, `/api/orders*`, `/api/tools*`, `/api/consumables*`, `/api/upgrades*`, `/api/display-items*`, `/api/retailers*`, `/api/catalog/search`, `/api/settings`, `/api/meta`, `/api/export/*` | 401 | allow | allow | allow | 401 | `collection:read`; `Cache-Control: no-store` | — |
 | 5 | Collection writes | `POST`/`PATCH`/`DELETE` on the family-4 resources; `POST /api/catalog/{id}/adjust`, `/api/upgrades/{id}/apply`, `/api/orders/{id}/receive`, `/api/orders/{id}/ship`; `POST /api/import/preview`; `POST /api/import/apply` with `mode=merge` or `mode=add_only` when the plan's mutations touch collection tables only | 401 | allow (+ CSRF + Origin) | 403 | allow | 401 | `collection:write`; Origin check when the principal is cookie-borne | — |
 | 6 | Instance administration | `PATCH /api/settings`; `POST /api/import/apply` with `mode=replace_all`, or in **any** mode when the plan updates `instance_settings`; `/api/auth/tokens*` (mint, list, revoke); credential change and OIDC rebind | 401 | allow (+ CSRF + Origin) | 403 | 403 | 401 | `instance:admin`; an import's privilege is decided on the **plan's mutations** — an `UPDATE` action on `instance_settings`, not the presence of a settings sheet, so an archive whose settings row is unchanged or skipped needs no admin — checked after the re-plan and before any row is written; `replace_all` keeps `confirm=REPLACE` and the mandatory `plan_hash` on top | — |
@@ -1241,6 +1241,38 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
 6. **Browser OIDC** — the Authlib discovery flow, `state` and `nonce`, owner binding to
    `(issuer, subject)`, rebind recovery, the mutually exclusive `local`/`oidc` mode
    switch. (T6, T7.)
+   **Shipped (#191):** `AUTH_MODE=local|oidc` with `OIDC_ISSUER`, `OIDC_CLIENT_ID`,
+   `OIDC_CLIENT_SECRET` (env-only; `PUBLIC_BASE_URL` required in OIDC mode, since the
+   one registered redirect URI, `<PUBLIC_BASE_URL>/api/auth/oidc/callback`, is built
+   from it and never from `Host`); discovery from `<issuer>/.well-known/openid-
+   configuration`, refused unless its `issuer` equals the setting, fetched lazily and
+   cached so a provider outage is a 503 on new logins and nothing else (§5.6 safe
+   failure); the authorization code exchanged server-side (`client_secret_basic`,
+   PKCE S256) and the id_token verified against the provider's JWKS for signature,
+   `iss`, `aud`, `exp` and the transaction's `nonce`; the owner bound at the callback
+   to `(issuer, sub)`, a token without `sub` refused (the spike's Keycloak finding);
+   `recovery rebind-oidc` clears the binding and revokes every session. Calls the
+   item's wording left open, recorded here: (a) **`start` is a `POST` returning the
+   authorization URL as JSON, not a redirecting `GET`** — the setup token an unbound
+   instance needs travels in a body, never a query string (T10), the unsafe method
+   gets the Origin guard, and the SPA navigates; the transaction is a database row
+   (`oidc_login`, digests of `state` and of a browser-binding cookie, the `nonce`,
+   the PKCE verifier, ten minutes, single use) rather than a signed cookie, because
+   the app holds no signing secret and sessions are opaque rows already. (b) **The
+   claim in OIDC mode is the setup token plus the first provider login**, the same
+   single-use token local mode uses, and "unbound" — a claimed owner with no
+   `(issuer, subject)`, which is what a switch from local mode or a rebind leaves —
+   is reported as `unclaimed` and prints a token at start, so one mechanism serves
+   the fresh install, the mode switch and the recovery, and the operator never types
+   a subject. (c) **The transaction is consumed before the network calls**, so a
+   replayed callback finds it used and the write gate is never held across the
+   provider round trip; every refusal clears the binding cookie and sends the browser
+   to the SPA root with `?auth_error=<code>` (a word, never a description), while
+   the refusal itself is the audit row. (d) **The id_token is verified with joserfc**,
+   not Authlib's `jose` module, which the pinned Authlib deprecates in its favour; the
+   two HTTP calls are plain httpx — nothing Authlib-specific was needed. (e) The
+   registry's `modes` field declares which mode each family-3 action exists in; the
+   routes of the other mode are registered and answer 404 themselves.
 7. **MCP OAuth** — the FastMCP proxy wired with the spike's decisions, owner
    restriction, scope mapping, persistence, the root discovery routes installed on the
    parent app, the child's `/mcp/.well-known/*` aliases pruned, the per-route

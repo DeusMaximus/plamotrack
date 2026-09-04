@@ -512,6 +512,19 @@ export interface AuthSession {
   interface_language: string;
   formatting_locale: string;
   csrf_token: string | null;
+  /** Which way in this instance offers (#191): a password (`local`), or a sign-in
+   *  at the configured OpenID Connect provider (`oidc`). In OIDC mode `unclaimed`
+   *  also means a claimed owner with no binding yet — the setup screen with the
+   *  provider button, and the setup token from the API log. */
+  auth_mode: "local" | "oidc";
+  /** The provider's issuer URL, for naming it on the login screen. OIDC mode only. */
+  oidc_issuer: string | null;
+}
+
+/** `POST /auth/oidc/start` (#191): where the browser goes next. The response also
+ *  sets the login-binding cookie, so the navigation must happen in this tab. */
+export interface OidcStart {
+  authorization_url: string;
 }
 
 /** A personal access token as `GET /auth/tokens` lists it (§5.5 family 6, #189):

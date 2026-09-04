@@ -21,6 +21,13 @@ class SessionRead(BaseModel):
     interface_language: str
     formatting_locale: str
     csrf_token: str | None = None
+    #: Which way in this instance offers (§5.4; #191): a password, or a sign-in
+    #: at the configured provider. In OIDC mode `unclaimed` also covers a claimed
+    #: owner with no binding yet (a switch from local mode, or after
+    #: `recovery rebind-oidc`) — the setup screen with the provider button.
+    auth_mode: Literal["local", "oidc"] = "local"
+    #: The provider's issuer URL, so the login screen can name it. OIDC mode only.
+    oidc_issuer: str | None = None
 
 
 class SetupRequest(BaseModel):
@@ -32,6 +39,24 @@ class SetupRequest(BaseModel):
 
 class LoginRequest(BaseModel):
     password: str = Field(min_length=1, max_length=4096)
+
+
+class OidcStartRequest(BaseModel):
+    """`POST /auth/oidc/start`: begin a login at the provider. `setup_token` is
+    required only while the owner is unbound (the instance reports `unclaimed`):
+    it is what lets the identity that completes this login become the owner."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    setup_token: str | None = Field(default=None, min_length=1, max_length=256)
+
+
+class OidcStartRead(BaseModel):
+    """Where the browser goes next: the provider's authorization endpoint with
+    this login's `state`, `nonce` and PKCE challenge. The transaction is bound to
+    the browser by the cookie the same response sets."""
+
+    authorization_url: str
 
 
 # --- personal access tokens (§5.5 family 6; M6-4, #189) ------------------------

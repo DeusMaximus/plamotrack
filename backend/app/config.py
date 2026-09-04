@@ -7,7 +7,11 @@ from urllib.parse import quote, urlsplit
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.hostnames import validate_host_pattern
+from app.hostnames import is_loopback_host, validate_host_pattern
+
+#: The two authentication modes (§5.4): a password held here, or an identity a
+#: configured OpenID Connect provider asserts. Never a third, "off" one (§5.6).
+AUTH_MODES = ("local", "oidc")
 
 _CURRENCY_RE = re.compile(r"[A-Z]{3}")
 
@@ -86,6 +90,25 @@ class Settings(BaseSettings):
     # the Host allowlist; 0.0.0.0 and :: are unspecified and add nothing.
     web_bind: str = "127.0.0.1"
 
+    # --- Authentication mode (§5.4–§5.6, M6-6 / #191) ---------------------------
+    # `local` (the default): the owner claims the instance with the setup token
+    # and a password. `oidc`: the owner signs in at an OpenID Connect provider
+    # and is bound to the stable (issuer, subject) that provider asserts; no
+    # password exists. The two are mutually exclusive and the switch is this
+    # setting — an explicit operator action, never a fallback. Env-only, never
+    # a settings row (§5.6, route bypass): the Settings page cannot change it.
+    auth_mode: str = "local"
+    # OIDC mode only. The issuer URL exactly as the provider's discovery document
+    # states it (`https://accounts.google.com`, `https://keycloak.example/realms/x`);
+    # the document is fetched from `<issuer>/.well-known/openid-configuration`
+    # and refused if its `issuer` differs. https, unless the host is loopback.
+    oidc_issuer: str = ""
+    # The client registered with the provider. Its authorised redirect URI must
+    # be `<PUBLIC_BASE_URL>/api/auth/oidc/callback`, so PUBLIC_BASE_URL is
+    # required in this mode — the callback is built from it, never from Host.
+    oidc_client_id: str = ""
+    oidc_client_secret: str = ""
+
     @field_validator("public_base_url")
     @classmethod
     def _validate_public_base_url(cls, value: str) -> str:
@@ -134,6 +157,33 @@ class Settings(BaseSettings):
         validate_host_pattern(value, setting="WEB_BIND", allow_wildcard=False)
         return value
 
+    @field_validator("auth_mode")
+    @classmethod
+    def _validate_auth_mode(cls, value: str) -> str:
+        mode = value.strip().lower()
+        if mode not in AUTH_MODES:
+            raise ValueError(f"AUTH_MODE must be one of {', '.join(AUTH_MODES)} (got {value!r})")
+        return mode
+
+    @field_validator("oidc_issuer")
+    @classmethod
+    def _validate_oidc_issuer(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            return value
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError(
+                f"OIDC_ISSUER must be an absolute http:// or https:// URL (got {value!r})"
+            )
+        if parsed.query or parsed.fragment:
+            raise ValueError(f"OIDC_ISSUER carries no query or fragment (got {value!r})")
+        if parsed.scheme == "http" and not is_loopback_host(parsed.hostname):
+            raise ValueError(
+                f"OIDC_ISSUER must be https unless the provider is on loopback (got {value!r})"
+            )
+        return value
+
     @field_validator("allowed_origins")
     @classmethod
     def _validate_allowed_origins(cls, value: str) -> str:
@@ -169,6 +219,27 @@ class Settings(BaseSettings):
         if not _CURRENCY_RE.fullmatch(code):
             raise ValueError(f"REFERENCE_CURRENCY must be a 3-letter ISO 4217 code (got {value!r})")
         return code
+
+    @model_validator(mode="after")
+    def _require_oidc_settings(self) -> "Settings":
+        if self.auth_mode != "oidc":
+            return self
+        missing = [
+            name
+            for name, value in (
+                ("OIDC_ISSUER", self.oidc_issuer),
+                ("OIDC_CLIENT_ID", self.oidc_client_id),
+                ("OIDC_CLIENT_SECRET", self.oidc_client_secret),
+                ("PUBLIC_BASE_URL", self.public_base_url),
+            )
+            if not value
+        ]
+        if missing:
+            raise ValueError(
+                "AUTH_MODE=oidc needs " + ", ".join(missing) + " — the callback URL is built "
+                "from PUBLIC_BASE_URL and the provider from OIDC_ISSUER (docs/operations.md)"
+            )
+        return self
 
     @model_validator(mode="after")
     def _assemble_database_url(self) -> "Settings":

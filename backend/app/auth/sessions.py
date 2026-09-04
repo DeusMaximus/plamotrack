@@ -36,6 +36,14 @@ log = logging.getLogger("plamotrack.auth")
 SECURE_COOKIE_NAME = "__Host-plamotrack_session"
 PLAIN_COOKIE_NAME = "plamotrack_session"
 
+#: The OIDC login-binding cookie (#191): set by `POST /auth/oidc/start`, read and
+#: cleared by `GET /auth/oidc/callback`. Same attributes and scheme split as the
+#: session cookie; ten minutes, the transaction's lifetime. `SameSite=Lax` still
+#: sends it on the provider's top-level redirect back — that is a navigation.
+SECURE_OIDC_COOKIE_NAME = "__Host-plamotrack_oidc_login"
+PLAIN_OIDC_COOKIE_NAME = "plamotrack_oidc_login"
+OIDC_COOKIE_MAX_AGE = 600
+
 #: The header a cookie-borne unsafe request carries the session-bound token in
 #: (§5.6, CSRF control 3). Obtained from `GET /auth/session`.
 CSRF_HEADER = "X-CSRF-Token"
@@ -96,4 +104,28 @@ def set_session_cookie(response: Response, raw_token: str, *, secure: bool) -> N
 def clear_session_cookie(response: Response, *, secure: bool) -> None:
     response.delete_cookie(
         cookie_name(secure), path="/", secure=secure, httponly=True, samesite="lax"
+    )
+
+
+def oidc_cookie_name(secure: bool) -> str:
+    return SECURE_OIDC_COOKIE_NAME if secure else PLAIN_OIDC_COOKIE_NAME
+
+
+def set_oidc_login_cookie(response: Response, raw_binding: str, *, secure: bool) -> None:
+    """The binding half of an OIDC login transaction (#191): only the browser
+    that started the login holds it, so only that browser can complete it."""
+    response.set_cookie(
+        oidc_cookie_name(secure),
+        raw_binding,
+        max_age=OIDC_COOKIE_MAX_AGE,
+        path="/",
+        secure=secure,
+        httponly=True,
+        samesite="lax",
+    )
+
+
+def clear_oidc_login_cookie(response: Response, *, secure: bool) -> None:
+    response.delete_cookie(
+        oidc_cookie_name(secure), path="/", secure=secure, httponly=True, samesite="lax"
     )

@@ -91,3 +91,9 @@ class RateLimitedError(DomainError):
     ):
         super().__init__(detail, code=code, params=params)
         self.retry_after = retry_after
+
+
+class UnavailableError(DomainError):
+    """A dependency the request needs is unreachable — the OpenID Connect
+    provider during a login (§5.6, safe failure: new logins fail, existing
+    sessions and tokens are untouched). 503."""
