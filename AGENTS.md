@@ -403,9 +403,16 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     of the **same provider and client** as the browser login, every plamotrack rule on a
     documented extension point: the upstream identity must be the bound owner, checked
     **at issuance** (`exchange_authorization_code` — a stranger gets `invalid_grant`, an
-    `auth.mcp_identity_refused` row and nothing minted) and on every request (the token
-    verifier, over the **id_token** through the same `validate_id_token_claims`, with
-    `nonce=None`); every issued token maps to a **fixed** `collection:read` +
+    `auth.mcp_identity_refused` row and nothing minted — the id_token through the same
+    `validate_id_token_claims`, with `nonce=None`) and carried as **grant state** in
+    every token the proxy issues, compared with the owner row on every request and
+    never re-expired (a refresh's new id_token is verified in full; one validly omitted
+    carries the binding forward); **one redemption per grant handle** — the code and
+    refresh exchanges serialize on a Postgres advisory lock, the write gate's shape;
+    **revocation is the grant's** — either half presented ends the whole grant locally
+    first, then the provider's refresh token best effort (`auth.mcp_grant_revoked`);
+    what bounds a grant is the provider's own token, refreshed transparently while it
+    can be (Codex #212 round 1, f1–f3); every issued token maps to a **fixed** `collection:read` +
     `collection:write` by its `kind` (the OAuth scope vocabulary is the provider's,
     `openid`), never `instance:admin`; the mount requires no OAuth scope, so a personal
     access token stays valid on `/mcp/` in that mode; the redirect-URI binding is per
@@ -413,8 +420,13 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     port free, *then* the operator allowlist, which FastMCP alone would check instead),
     the synthesised upstream-id client refused, a CIMD client (Claude web, ChatGPT web)
     by its document — and the allowlist, when set, applies to every kind. The upstream
-    endpoints resolve **lazily** from `OidcProvider.metadata()` at each entry point, so a
-    provider down at start never fails the start. State lives in `mcp_oauth_state`, a
+    endpoints are **properties over `OidcProvider.cached_metadata`** — no reader in
+    FastMCP can hold a stale copy — and every entry point that reaches the provider
+    fetches first (authorize, consent, the callback, the exchanges), so a provider down
+    at start never fails the start and a restart mid-flow completes on the fresh process
+    (round 1, f5). A protocol route's failure is the `RouteBinding`'s stamped 500, a
+    non-JSON registration body RFC 7591's 400, and nginx's `limit_req` 429 carries the
+    envelope and `no-store` (round 1, f4). State lives in `mcp_oauth_state`, a
     table Alembic owns (never portable), Fernet-encrypted under a key derived from
     `MCP_OAUTH_SIGNING_KEY`, which OIDC mode requires — as it now requires an **https or
     loopback** `PUBLIC_BASE_URL`, the MCP OAuth issuer being `<PUBLIC_BASE_URL>/mcp` (RFC

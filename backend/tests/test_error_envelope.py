@@ -250,6 +250,9 @@ _HANDLER_CODES = {
     "request.body_invalid",
     "ingress.host_not_allowed",
     "ingress.origin_not_allowed",
+    # nginx alone emits this one — `limit_req` on the three OAuth endpoints
+    # (frontend/nginx/default.conf.template); the app has no raise site for it.
+    "ingress.rate_limited",
 }
 
 # The two bridge helpers whose `Diagnostic(code=exc.code, params={**...})` the

@@ -312,6 +312,13 @@ class OidcProvider:
             )
         return body
 
+    @property
+    def cached_metadata(self) -> ProviderMetadata | None:
+        """The discovery document if this process has fetched it, else `None`.
+        The MCP OAuth proxy reads its upstream endpoints through this view, so
+        no copy of them can go stale (#192; Codex #212 round 1, f5)."""
+        return self._metadata
+
     async def metadata(self) -> ProviderMetadata:
         """The discovery document, fetched once and cached. Its `issuer` must
         equal the configured one (OpenID Discovery §4.3) — a document that says

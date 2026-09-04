@@ -549,3 +549,32 @@ proof had one harness still sending a live token in a URI, and a packaged log
 scan that would pass on empty output — a leakage invariant is only as wide as its
 *narrowest* harness, and a scan without a vacuity guard is a scan that can be
 deleted by a logging change nobody reviews.
+
+## Overriding the entry points, not the state machine (#212, round 1)
+
+The M6-7 head applied every plamotrack rule on a documented FastMCP extension
+point — the owner check in `exchange_authorization_code`, the id_token hooks, the
+lazy endpoint resolution in `authorize`, the callback and the refresh — and the
+suite drove each entry point green. Codex then drove the *neighbouring
+transitions* the overrides delegated: a revoked access token was accepted for an
+hour (FastMCP's `revoke_token` never touched the access mapping and posted our
+reference string upstream), two concurrent redemptions of one code or one refresh
+token both minted (FastMCP's get→mint→delete is not atomic), a refresh that validly
+omitted an id_token left a fresh grant refused (the old id_token, still the thing
+verified per request, expired), and a restart between the consent page and its
+approval sent the browser to the placeholder endpoint (FastMCP's consent submission
+reads the attribute the entry-point overrides had not reached). Four findings, one
+shape: an invariant applied where the author looked, delegated where the author
+did not. The fixes were one level up in each case — the binding as *grant state*
+carried in our own tokens, a per-handle lock around the whole redemption, a
+revocation that removes the grant record, endpoint *properties* no reader can miss
+— and the reply's sweep enumerated the state machine (issuance, refresh,
+verification, revocation, resolution) rather than the call sites. When a feature is
+built on a framework's hooks, list the framework's transitions the hooks do **not**
+cover and test each from the outside, as a client would; the hook you override is
+the part you can already see. Two smaller traps from the same round: the SDK's
+`TokenError` is a frozen dataclass, and a generator-based context manager
+re-raising it dies with `FrozenInstanceError` (a 500 where `invalid_grant` was
+meant) — a class-based `__aexit__` re-raises cleanly; and a secret bound as a SQL
+parameter is a secret in the engine's DEBUG log, which the log-grep test caught
+when the lock key was the authorization code itself.

@@ -7,23 +7,47 @@ DCR-capable native client — discovers this instance as an authorization server
 (the three root documents `main.py` installs), registers or presents its
 metadata document, and is sent through a consent page to the **same provider
 and client** the browser login uses (#191). The provider's tokens never leave
-the process: FastMCP issues its own access/refresh pair to the client, keeps
-the upstream set encrypted in the state table, and re-verifies the upstream
-identity on every request. What this module adds to FastMCP's `OAuthProxy` is
-the plamotrack policy, each piece on a documented extension point (#30's
-failure rule — the #190 spike measured that nothing needs protocol code):
+the process: FastMCP issues its own access/refresh pair to the client and keeps
+the upstream set encrypted in the state table. What this module adds to
+FastMCP's `OAuthProxy` is the plamotrack policy, each piece on a documented
+extension point (#30's failure rule — the #190 spike measured that nothing
+needs protocol code) — and, since the Codex review of PR #212, the policy is
+applied to the **grant as one state machine** (issuance, refresh, verification,
+revocation) rather than to the entry points one at a time:
 
-- **Owner binding, at issuance and per request** (§5.6 open redirect; T6).
-  `OwnerBoundIdTokenVerifier` verifies the provider's **id_token** — signature
-  against the provider's JWKS, claims through the one validator the browser
-  login uses (`validate_id_token_claims`, with no nonce: the proxy sends none)
-  — and then requires `(iss, sub)` to equal the bound owner. It is the proxy's
-  token verifier, so every MCP request re-checks; and
-  `exchange_authorization_code` runs it **before** any token is minted, so a
-  stranger who signs in at the provider gets `invalid_grant` at `/token`, an
-  audit row, and nothing stored — the verifier alone would have handed them a
-  token pair and refused the first tool call (the spike's finding 7a). A
-  token without `sub` is refused, never mapped by email (7b).
+- **The owner binding is grant state** (§5.6 open redirect; T6). At issuance
+  `IdTokenOwnerCheck` verifies the provider's **id_token** — signature against
+  the provider's JWKS, claims through the one validator the browser login uses
+  (`validate_id_token_claims`, with no nonce: the proxy sends none) — and
+  requires `(iss, sub)` to equal the bound owner **before** any token is minted
+  (`exchange_authorization_code`): a stranger who signs in at the provider gets
+  `invalid_grant` at `/token`, an audit row, and nothing stored (the spike's
+  finding 7a); a token without `sub` is refused, never mapped by email (7b).
+  The verified `(iss, sub)` — an `OwnerBinding` — is then carried in every
+  token the proxy issues (FastMCP's `upstream_claims`, under its own
+  signature) and compared with the owner row on **every request**
+  (`load_access_token`), so a rebind refuses an issued token at the next
+  request. The id_token is never re-expired: a refresh that brings a new one
+  verifies it in full and requires the same owner; a refresh that validly
+  omits one (OpenID Connect Core §12.2) carries the binding forward
+  (`_extract_upstream_claims`). What bounds a grant is the provider's own
+  access token, re-read per request and refreshed transparently; when the
+  provider cannot refresh it, the grant ends with it (Codex #212 round 1, f3).
+- **One redemption per grant handle** (RFC 6749 §4.1.2, RFC 9700 §4.14.2).
+  FastMCP's get→mint→delete of an authorization code, and its
+  get→refresh→rotate of a refresh token, are not atomic across requests or
+  processes; `_one_redemption` serializes every redemption of one handle on
+  a transaction-scoped Postgres advisory lock — the write gate's shape (rule
+  7.1: taken *before* the read the decision is made from) — so the second
+  redeemer reads the first's deletion and gets `invalid_grant`, whichever
+  process it landed on (f2).
+- **Revocation is the grant's** (RFC 7009 §2.1). Whichever half a client
+  presents at `/revoke`, the grant record goes — locally, first, so the answer
+  does not depend on the provider — and the provider is then asked, best
+  effort, to revoke *its* refresh token through the injectable upstream
+  client; `auth.mcp_grant_revoked` names the client. FastMCP alone deleted a
+  refresh token's hash entry, left every access mapping to its hour-long TTL,
+  and posted the `AccessToken.token` field upstream (f1).
 - **Fixed scope mapping** (7c). The scope vocabulary the proxy advertises and
   forwards is the provider's (`openid`); `collection:read`/`collection:write`
   cannot be per-grant OAuth scopes on FastMCP 3.4.5 without translating in both
@@ -31,7 +55,7 @@ failure rule — the #190 spike measured that nothing needs protocol code):
   owner's delegated grant with **both** collection scopes and never
   `instance:admin` — `mcp_auth.principal_from_access_token` maps `kind=mcp`
   to that, whatever the token's `scope` claim says. The mount itself requires
-  no scope (the verifier declares none), so a personal access token — whose
+  no scope (`GrantVerifier` declares none), so a personal access token — whose
   scopes are its own — stays valid on `/mcp/` in OIDC mode: `load_access_token`
   routes a `ptk_` bearer to `PersonalAccessTokenVerifier` unchanged.
 - **Client-redirect binding per client kind** (§5.6 proxy trust; T9).
@@ -45,15 +69,22 @@ failure rule — the #190 spike measured that nothing needs protocol code):
   configured, which is FastMCP's rule for every kind and is documented as
   such (`MCP_OAUTH_ALLOWED_REDIRECT_URIS`). Registration is narrowed by the
   allowlist in `register_client` already.
-- **Lazy upstream endpoints** (§5.6 safe failure). `OIDCProxy` fetches the
-  provider's discovery document synchronously at construction — a provider
-  that is down at start would fail the start. This subclass is an
-  `OAuthProxy` built with placeholder endpoints and resolves the real ones
-  from `OidcProvider.metadata()` — the browser login's cached, issuer-checked
-  document — at each entry point: `authorize` (a down provider is
-  `temporarily_unavailable` to the client, per RFC 6749), the upstream
-  callback, the refresh exchange and revocation. The lifespan's warm-up fills
-  the cache; nothing here blocks the start.
+- **The upstream endpoints are a view of the provider's document** (§5.6 safe
+  failure). `OIDCProxy` fetches discovery synchronously at construction — a
+  provider that is down at start would fail the start. This subclass is an
+  `OAuthProxy` whose three upstream-endpoint attributes are **properties**
+  over `OidcProvider.cached_metadata` — the browser login's cached,
+  issuer-checked document — so no reader in FastMCP, enumerated here or not,
+  can hold a stale copy; until the document has been fetched they read as a
+  name that resolves nowhere. Each entry point that reaches the provider
+  resolves (fetches, if this process has not yet) before it acts and maps a
+  provider it cannot reach to the protocol's own failure: `authorize` is
+  `temporarily_unavailable` to the client (RFC 6749), the consent page and
+  its approval and the upstream callback are a 503, a refresh exchange is
+  `invalid_request`, a revocation and a transparent refresh carry on without
+  the upstream half. The lifespan's warm-up fills the cache; nothing here
+  blocks the start (f5: the consent approval was the reader the first head
+  had not enumerated).
 - **Persistence and keys** (§5.9 item 5, decided by the spike). State lives in
   `mcp_oauth_state`, a Postgres table Alembic owns with the store's own DDL,
   through `py-key-value-aio`'s adapter — so the backup set is the database plus
@@ -68,20 +99,25 @@ failure rule — the #190 spike measured that nothing needs protocol code):
 The response profile — `no-store` on every transaction and credential
 response, `public, max-age=3600` on discovery — and the accepted verbs are the
 registry's (`MCP_OAUTH_ROUTES`, `DISCOVERY_ROUTES`), enforced by the
-`RouteBinding` on each mounted route (M6-2's design); `declare_child_verbs`
-clears the SDK routes' own method metadata so that binding is the one boundary,
-as `build_mcp_app` does for the transport. In local mode the same paths are
-registered and answer 404 themselves (`NotInThisMode`), so a mode is never a
-challenge (§5.5).
+`RouteBinding` on each mounted route (M6-2's design), a handler's own failure
+included; `declare_child_verbs` clears the SDK routes' own method metadata so
+that binding is the one boundary, as `build_mcp_app` does for the transport,
+and `guard_registration_body` answers RFC 7591's `invalid_client_metadata` for
+a registration body that is not JSON, which the SDK's handler would otherwise
+raise on (f4). In local mode the same paths are registered and answer 404
+themselves (`NotInThisMode`), so a mode is never a challenge (§5.5).
 """
 
 from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import logging
 from collections.abc import Callable
+from contextvars import ContextVar
 from dataclasses import dataclass
+from typing import Any
 
 import asyncpg
 import httpx
@@ -93,6 +129,8 @@ from fastmcp.server.auth import AccessToken, TokenVerifier
 from fastmcp.server.auth.oauth_proxy import OAuthProxy
 from fastmcp.server.auth.oauth_proxy.models import (
     ProxyDCRClient,
+    UpstreamTokenSet,
+    _hash_token,
     _matches_registered_redirect_uri,
 )
 from fastmcp.server.dependencies import get_http_request
@@ -111,12 +149,13 @@ from mcp.shared.auth import (
     OAuthToken,
 )
 from pydantic import AnyUrl
+from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.routing import Route
-from starlette.types import Receive, Scope, Send
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import error_codes
 from app.auth import tokens as token_format
@@ -125,7 +164,7 @@ from app.auth.mode import OIDC_PROVIDER_ATTR
 from app.auth.principal import mcp as mcp_principal
 from app.auth.registry import DISCOVERY_ROUTES, MCP_MOUNT, MCP_OAUTH_ROUTES
 from app.config import Settings
-from app.db import session_scope
+from app.db import get_sessionmaker, session_scope
 from app.exceptions import UnavailableError
 from app.models import MCP_OAUTH_STATE_TABLE
 from app.services import audit
@@ -152,8 +191,8 @@ ADVERTISED_SCOPES: tuple[str, ...] = ("openid",)
 UPSTREAM_AUTHORIZE_PARAMS: dict[str, str] = {"access_type": "offline", "prompt": "consent"}
 #: Lifetime of the access token the proxy issues to a client — pinned rather
 #: than inherited from the provider's (Keycloak's default is 300 s, which some
-#: clients cannot refresh gracefully). The upstream token is re-validated on
-#: every request and refreshed transparently, so this extends nothing upstream.
+#: clients cannot refresh gracefully). The upstream token is re-read on every
+#: request and refreshed transparently, so this extends nothing upstream.
 ACCESS_TOKEN_LIFETIME = 3600
 #: Refresh the upstream token this many seconds before it expires, so a request
 #: that passes the expiry check does not meet an expired token a moment later.
@@ -164,11 +203,18 @@ STATE_STORE_POOL_SIZE = 2
 #: HKDF salt for the storage key — distinct from anything FastMCP derives from
 #: the same material, so the signing key and the encryption key differ.
 STORAGE_KEY_SALT = b"plamotrack-mcp-oauth-state"
-#: What the proxy holds for an upstream endpoint until `_resolve_upstream` has
-#: read the provider's document: a name that resolves nowhere (`.invalid`, RFC
-#: 2606). Never reached — every entry point resolves first — but a bug that
-#: did reach it would fail loudly rather than reach a wrong server.
+#: What an upstream-endpoint property reads as until the provider's document
+#: has been fetched: a name that resolves nowhere (`.invalid`, RFC 2606). Never
+#: reached — every entry point resolves first — but a bug that did reach it
+#: would fail loudly rather than reach a wrong server.
 UNRESOLVED_ENDPOINT = "https://oidc-provider-unresolved.invalid/"
+#: The key under `upstream_claims` in every token the proxy issues that holds
+#: the owner binding the grant was issued to.
+BINDING_CLAIM = "plamotrack_owner"
+#: Postgres advisory-lock namespace for the grant lock — the two-int4 form,
+#: which cannot collide with the write gate's single int8 key; spells "moa",
+#: so it is recognisable in `pg_locks`.
+_GRANT_LOCK_NAMESPACE = 0x6D6F61
 
 _NOT_IN_THIS_MODE = "This instance does not sign in that way; see AUTH_MODE."
 _NOT_OWNER = "The signed-in identity is not this instance's owner."
@@ -177,6 +223,7 @@ _PROVIDER_UNAVAILABLE_HTML = (
     "<h1>Identity provider unavailable</h1>"
     "<p>The identity provider could not be reached. Try again shortly.</p>"
 )
+_NOT_JSON = "The registration request body is not a JSON document."
 
 
 def _reference(token: str) -> str:
@@ -185,6 +232,15 @@ def _reference(token: str) -> str:
     accidental repr should leak nothing (the `PersonalAccessTokenVerifier`
     precedent)."""
     return "sha256:" + hashlib.sha256(token.encode()).hexdigest()[:16]
+
+
+def _digest(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def _lock_key(handle: str) -> int:
+    """A grant handle as the int4 half of an advisory-lock key."""
+    return int.from_bytes(hashlib.sha256(handle.encode()).digest()[:4], "big", signed=True)
 
 
 def _current_request() -> Request | None:
@@ -198,26 +254,60 @@ def _current_request() -> Request | None:
 
 
 @dataclass(frozen=True)
-class OwnerVerdict:
-    """What the verifier decided about one id_token: the access token for the
-    owner, or why not — `invalid` (signature, shape, expiry: the browser login's
-    contract), `unavailable` (the provider's keys could not be fetched),
-    `identity` (verified, but not the bound owner — `subject` names who)."""
+class OwnerBinding:
+    """The identity a grant was issued to: the provider's `(iss, sub)` as the
+    verified id_token asserted it, and a digest of that id_token so a refresh
+    can tell the token it already verified from a new one. Carried under
+    `BINDING_CLAIM` in the `upstream_claims` of every token the proxy issues —
+    the proxy's own signature covers it — and compared with the owner row on
+    every request."""
 
-    token: AccessToken | None
+    issuer: str
+    subject: str
+    id_token_digest: str
+
+    @classmethod
+    def from_claims(cls, upstream_claims: object) -> OwnerBinding | None:
+        if not isinstance(upstream_claims, dict):
+            return None
+        binding = upstream_claims.get(BINDING_CLAIM)
+        if not isinstance(binding, dict):
+            return None
+        values = (binding.get("iss"), binding.get("sub"), binding.get("id_token_sha256"))
+        if not all(isinstance(value, str) and value for value in values):
+            return None
+        return cls(*values)  # type: ignore[arg-type]
+
+    def as_claims(self) -> dict[str, Any]:
+        return {
+            BINDING_CLAIM: {
+                "iss": self.issuer,
+                "sub": self.subject,
+                "id_token_sha256": self.id_token_digest,
+            }
+        }
+
+
+@dataclass(frozen=True)
+class OwnerVerdict:
+    """What the id_token check decided about one token: the binding it
+    establishes for the owner, or why not — `invalid` (signature, shape,
+    expiry: the browser login's contract), `unavailable` (the provider's keys
+    could not be fetched), `identity` (verified, but not the bound owner —
+    `subject` names who)."""
+
+    binding: OwnerBinding | None
     reason: str
     subject: str | None = None
 
 
-class OwnerBoundIdTokenVerifier(TokenVerifier):
-    """The proxy's token verifier: the provider's id_token, verified through
-    `OidcProvider` and bound to the owner row. Declares no required scope — the
-    mount then requires none, which is what keeps personal access tokens valid
-    on `/mcp/` in OIDC mode; the advertised scopes are the proxy's
-    `valid_scopes`."""
+class IdTokenOwnerCheck:
+    """The provider's id_token, verified through `OidcProvider` and bound to
+    the owner row: run at issuance, and again whenever a refresh brings a new
+    id_token. `still_bound` is the per-request half — a binding a grant
+    carries, against the owner row as it is now."""
 
     def __init__(self, provider: Callable[[], OidcProvider]) -> None:
-        super().__init__(required_scopes=[])
         self._provider = provider
 
     async def check(self, id_token: object) -> OwnerVerdict:
@@ -235,20 +325,81 @@ class OwnerBoundIdTokenVerifier(TokenVerifier):
         if bound != (provider.issuer, subject):
             return OwnerVerdict(None, "identity", subject)
         assert isinstance(id_token, str)
-        return OwnerVerdict(
-            AccessToken(
-                token=_reference(id_token),
-                client_id=provider.client_id,
-                scopes=[],
-                expires_at=int(claims["exp"]),
-                claims={"kind": "mcp", "iss": claims["iss"], "sub": subject},
-            ),
-            "ok",
-            subject,
-        )
+        return OwnerVerdict(OwnerBinding(claims["iss"], subject, _digest(id_token)), "ok", subject)
+
+    async def still_bound(self, binding: OwnerBinding) -> bool:
+        async with session_scope() as session:
+            owner = await auth_service.owner_row(session)
+        return (owner.oidc_issuer, owner.oidc_subject) == (binding.issuer, binding.subject)
+
+
+class GrantVerifier(TokenVerifier):
+    """FastMCP's verifier hook on this proxy. FastMCP calls it, per request,
+    with the upstream access token of a grant record it has already loaded
+    and, when the provider's token was near expiry, refreshed; it answers with
+    the grant's `AccessToken` shell, into which FastMCP patches the upstream
+    token's expiry (`_uses_alternate_verification`) — which is what bounds the
+    grant by the provider. Whose grant it is — the proxy's signature on its own
+    token, the carried binding against the owner row — is decided around it,
+    in `load_access_token`. Declares no required scope: the mount then
+    requires none, which is what keeps personal access tokens valid on `/mcp/`
+    in OIDC mode; the advertised scopes are the proxy's `valid_scopes`."""
+
+    def __init__(self) -> None:
+        super().__init__(required_scopes=[])
 
     async def verify_token(self, token: str) -> AccessToken | None:
-        return (await self.check(token)).token
+        return AccessToken(token=token, client_id="", scopes=[], claims={"kind": "mcp"})
+
+
+@dataclass(frozen=True)
+class _Exchange:
+    """The token exchange in flight on this task: the binding it holds (the one
+    established a moment ago at issuance, or the one the presented refresh
+    token carries) and the client it is for, read by `_extract_upstream_claims`
+    inside the SDK's minting code."""
+
+    binding: OwnerBinding
+    client_id: str
+
+
+_exchange_in_flight: ContextVar[_Exchange | None] = ContextVar("mcp_oauth_exchange", default=None)
+
+
+class _GrantLock:
+    """`_one_redemption`'s lock: one transaction holding the advisory lock for
+    the handle, committed or rolled back — either releases it — when the
+    exchange leaves. A class, not `@asynccontextmanager` over `session_scope`:
+    the SDK's `TokenError` is a frozen dataclass, and a generator-based
+    context manager re-raising it assigns `__traceback__` and dies with
+    `FrozenInstanceError` — a 500 where `invalid_grant` was meant."""
+
+    def __init__(self, handle: str) -> None:
+        self._handle = handle
+        self._session = None
+
+    async def __aenter__(self) -> None:
+        self._session = get_sessionmaker()()
+        # The key is derived here, not by `hashtext` in SQL: the handle is a
+        # secret (an authorization code), and the engine's DEBUG log would
+        # otherwise print it as a bound parameter (T10).
+        await self._session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock(CAST(:namespace AS integer), CAST(:key AS integer))"
+            ),
+            {"namespace": _GRANT_LOCK_NAMESPACE, "key": _lock_key(self._handle)},
+        )
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        assert self._session is not None
+        try:
+            if exc_type is None:
+                await self._session.commit()
+            else:
+                await self._session.rollback()
+        finally:
+            await self._session.close()
+        return False
 
 
 # --- the redirect binding -----------------------------------------------------------
@@ -288,21 +439,23 @@ class PlamotrackOAuthProxy(OAuthProxy):
         storage: FernetEncryptionWrapper,
     ) -> None:
         self._provider = provider
-        self._owner_verifier = OwnerBoundIdTokenVerifier(provider)
+        self._owner_check = IdTokenOwnerCheck(provider)
         self._pat_verifier = pat_verifier
-        #: Test seam: an httpx transport the upstream code exchange and refresh
-        #: go through instead of the network, so the suite can play the
-        #: provider. None on the shipped app — nothing sets it.
+        #: Test seam: an httpx transport the upstream code exchange, refresh
+        #: and revocation go through instead of the network, so the suite can
+        #: play the provider. None on the shipped app — nothing sets it.
         self.upstream_transport: httpx.AsyncBaseTransport | None = None
         super().__init__(
+            # The SDK keeps these as attributes; on this class they are the
+            # properties below, and the constructor's values are not kept.
             upstream_authorization_endpoint=UNRESOLVED_ENDPOINT,
             upstream_token_endpoint=UNRESOLVED_ENDPOINT,
-            # Registers `/revoke` unconditionally; resolved to the provider's
-            # endpoint, or to None (nothing upstream to revoke), on first use.
+            # Registers `/revoke` unconditionally; the provider's endpoint, or
+            # none, is what the property reads once the document is cached.
             upstream_revocation_endpoint=UNRESOLVED_ENDPOINT,
             upstream_client_id=settings.oidc_client_id,
             upstream_client_secret=settings.oidc_client_secret,
-            token_verifier=self._owner_verifier,
+            token_verifier=GrantVerifier(),
             base_url=f"{settings.public_base_url}{MCP_MOUNT}",
             valid_scopes=list(ADVERTISED_SCOPES),
             allowed_client_redirect_uris=settings.mcp_oauth_allowed_redirect_uri_patterns,
@@ -315,21 +468,46 @@ class PlamotrackOAuthProxy(OAuthProxy):
             enable_cimd=True,
         )
 
-    # -- the upstream, resolved lazily ------------------------------------------
+    # -- the upstream: a view of the provider's document ---------------------------
+
+    @property
+    def _upstream_authorization_endpoint(self) -> str:
+        metadata = self._provider().cached_metadata
+        return metadata.authorization_endpoint if metadata is not None else UNRESOLVED_ENDPOINT
+
+    @_upstream_authorization_endpoint.setter
+    def _upstream_authorization_endpoint(self, value: str) -> None:
+        pass  # the SDK's constructor assigns its argument; the document decides
+
+    @property
+    def _upstream_token_endpoint(self) -> str:
+        metadata = self._provider().cached_metadata
+        return metadata.token_endpoint if metadata is not None else UNRESOLVED_ENDPOINT
+
+    @_upstream_token_endpoint.setter
+    def _upstream_token_endpoint(self, value: str) -> None:
+        pass
+
+    @property
+    def _upstream_revocation_endpoint(self) -> str | None:
+        metadata = self._provider().cached_metadata
+        return metadata.revocation_endpoint if metadata is not None else UNRESOLVED_ENDPOINT
+
+    @_upstream_revocation_endpoint.setter
+    def _upstream_revocation_endpoint(self, value: str | None) -> None:
+        pass
 
     async def _resolve_upstream(self) -> None:
-        """Read the provider's endpoints off the (cached, issuer-checked)
-        discovery document. Raises `UnavailableError` when the provider cannot
-        be reached and nothing is cached yet."""
-        metadata = await self._provider().metadata()
-        self._upstream_authorization_endpoint = metadata.authorization_endpoint
-        self._upstream_token_endpoint = metadata.token_endpoint
-        self._upstream_revocation_endpoint = metadata.revocation_endpoint
+        """Make sure this process holds the provider's discovery document (the
+        cached, issuer-checked one the browser login reads) before an entry
+        point that needs an upstream endpoint acts. Raises `UnavailableError`
+        when the provider cannot be reached and nothing is cached yet."""
+        await self._provider().metadata()
 
     async def _resolve_upstream_softly(self) -> None:
         """For paths that only *may* need the upstream (a refresh behind a
-        request, a revocation): a down provider leaves the endpoints as they
-        are and the upstream call fails on its own."""
+        request, a revocation): a down provider leaves the endpoints unresolved
+        and the upstream half fails, or is skipped, on its own."""
         try:
             await self._resolve_upstream()
         except UnavailableError:
@@ -373,6 +551,19 @@ class PlamotrackOAuthProxy(OAuthProxy):
             ) from exc
         return await super().authorize(client, params)
 
+    async def _handle_consent(self, request: Request):
+        """The consent page and its submission (FastMCP's `ConsentMixin`, the
+        registered endpoint): an approval builds the provider's authorization
+        URL, so on a fresh process — a restart between the page and the
+        approval — this can be the first request that needs the endpoints
+        (Codex #212 round 1, f5). A provider that cannot be reached is a 503,
+        never a redirect to the placeholder."""
+        try:
+            await self._resolve_upstream()
+        except UnavailableError:
+            return create_secure_html_response(_PROVIDER_UNAVAILABLE_HTML, status_code=503)
+        return await super()._handle_consent(request)
+
     async def _handle_idp_callback(self, request: Request):
         try:
             await self._resolve_upstream()
@@ -380,66 +571,117 @@ class PlamotrackOAuthProxy(OAuthProxy):
             return create_secure_html_response(_PROVIDER_UNAVAILABLE_HTML, status_code=503)
         return await super()._handle_idp_callback(request)
 
+    def _one_redemption(self, handle: str) -> _GrantLock:
+        """Serialize every redemption of one grant handle — an authorization
+        code, a refresh token's JTI — across requests and processes: a
+        transaction-scoped Postgres advisory lock (`pg_advisory_xact_lock`, the
+        write gate's shape), taken before the SDK reads the handle and held
+        through its get→mint→delete, so a second redeemer reads the first's
+        deletion and gets `invalid_grant`. Released at commit or rollback, so
+        nothing survives the exchange; a refresh holds it across one upstream
+        call, bounded by the SDK's HTTP timeout."""
+        return _GrantLock(handle)
+
     async def exchange_authorization_code(
         self, client: OAuthClientInformationFull, authorization_code: AuthorizationCode
     ) -> OAuthToken:
-        code_model = await self._code_store.get(key=authorization_code.code)
-        if code_model is None:
-            # The SDK's own `invalid_grant` for a code it does not hold.
-            return await super().exchange_authorization_code(client, authorization_code)
-        verdict = await self._owner_verifier.check(code_model.idp_tokens.get("id_token"))
-        if verdict.token is None:
-            # Consume the code first: a retry must not find it.
-            await self._code_store.delete(key=authorization_code.code)
-            if verdict.reason == "identity":
-                await self._record(
-                    audit.MCP_IDENTITY_REFUSED,
-                    detail=f"subject={verdict.subject} client={client.client_id}",
-                )
-                raise TokenError("invalid_grant", _NOT_OWNER)
+        async with self._one_redemption(authorization_code.code):
+            code_model = await self._code_store.get(key=authorization_code.code)
+            if code_model is None:
+                # The SDK's own `invalid_grant` for a code it does not hold —
+                # including the second redemption of a code the first consumed.
+                return await super().exchange_authorization_code(client, authorization_code)
+            verdict = await self._owner_check.check(code_model.idp_tokens.get("id_token"))
+            if verdict.binding is None:
+                # Consume the code first: a retry must not find it.
+                await self._code_store.delete(key=authorization_code.code)
+                await self._refuse(verdict, client.client_id)
+            token = _exchange_in_flight.set(_Exchange(verdict.binding, client.client_id))
+            try:
+                tokens = await super().exchange_authorization_code(client, authorization_code)
+            finally:
+                _exchange_in_flight.reset(token)
             await self._record(
-                audit.OIDC_LOGIN_FAILED,
-                detail=f"id_token_{verdict.reason} client={client.client_id}",
+                audit.MCP_GRANT_ISSUED,
+                principal=mcp_principal(write=True, subject=verdict.subject),
+                detail=f"client={client.client_id}",
             )
-            raise TokenError(
-                "invalid_grant",
-                _PROVIDER_UNAVAILABLE if verdict.reason == "unavailable" else _NOT_OWNER,
-            )
-        tokens = await super().exchange_authorization_code(client, authorization_code)
-        await self._record(
-            audit.MCP_GRANT_ISSUED,
-            principal=mcp_principal(write=True, subject=verdict.subject),
-            detail=f"client={client.client_id}",
-        )
-        return tokens
+            return tokens
 
     async def exchange_refresh_token(
         self, client: OAuthClientInformationFull, refresh_token: RefreshToken, scopes: list[str]
     ) -> OAuthToken:
         try:
+            payload = self.jwt_issuer.verify_token(
+                refresh_token.token, expected_token_use="refresh"
+            )
+        except Exception as exc:
+            raise TokenError("invalid_grant", "Invalid refresh token") from exc
+        carried = OwnerBinding.from_claims(payload.get("upstream_claims"))
+        if carried is None:
+            raise TokenError("invalid_grant", "The refresh token carries no owner binding.")
+        if not await self._owner_check.still_bound(carried):
+            # The owner was rebound since this grant was issued: the grant is
+            # the previous owner's and ends here, as its access token does at
+            # the next request.
+            raise TokenError("invalid_grant", _NOT_OWNER)
+        try:
             await self._resolve_upstream()
         except UnavailableError as exc:
             raise TokenError("invalid_request", _PROVIDER_UNAVAILABLE) from exc
-        return await super().exchange_refresh_token(client, refresh_token, scopes)
+        async with self._one_redemption(payload["jti"]):
+            token = _exchange_in_flight.set(_Exchange(carried, client.client_id or ""))
+            try:
+                return await super().exchange_refresh_token(client, refresh_token, scopes)
+            finally:
+                _exchange_in_flight.reset(token)
 
-    async def revoke_token(self, token) -> None:
-        await self._resolve_upstream_softly()
-        await super().revoke_token(token)
+    async def _extract_upstream_claims(self, idp_tokens: dict[str, Any]) -> dict[str, Any] | None:
+        """FastMCP's hook for what its issued tokens carry — here the owner
+        binding. Called inside the SDK's minting code, at issuance with the
+        code's provider tokens and at a refresh with the stored set merged
+        with the provider's response. The exchange in flight holds the binding
+        it established or carries: the id_token that established it, re-sent
+        or merely still stored, is carried forward; a **new** id_token is
+        verified in full and must name the bound owner, else the exchange is
+        `invalid_grant` with the same audit rows as a refusal at issuance."""
+        exchange = _exchange_in_flight.get()
+        id_token = idp_tokens.get("id_token")
+        if (
+            exchange is not None
+            and isinstance(id_token, str)
+            and _digest(id_token) == exchange.binding.id_token_digest
+        ):
+            return exchange.binding.as_claims()
+        verdict = await self._owner_check.check(id_token)
+        if verdict.binding is None:
+            await self._refuse(verdict, exchange.client_id if exchange is not None else None)
+        return verdict.binding.as_claims()
+
+    async def _refuse(self, verdict: OwnerVerdict, client_id: str | None) -> None:
+        """A verdict other than the owner's, at issuance or on a refresh's new
+        id_token: the audit row, then `invalid_grant` (never raised for the
+        owner)."""
+        if verdict.reason == "identity":
+            await self._record(
+                audit.MCP_IDENTITY_REFUSED, detail=f"subject={verdict.subject} client={client_id}"
+            )
+            raise TokenError("invalid_grant", _NOT_OWNER)
+        await self._record(
+            audit.OIDC_LOGIN_FAILED, detail=f"id_token_{verdict.reason} client={client_id}"
+        )
+        raise TokenError(
+            "invalid_grant",
+            _PROVIDER_UNAVAILABLE if verdict.reason == "unavailable" else _NOT_OWNER,
+        )
 
     # -- the bearer, per request ---------------------------------------------------------
 
-    def _get_verification_token(self, upstream_token_set) -> str | None:
-        """What the verifier sees on every request: the provider's **id_token**,
-        never its access token — Google's are opaque and Keycloak's carry no
-        claim this instance can bind an owner to (the spike's one verifier
-        shape). `OIDCProxy`'s hook, reproduced here because this proxy is built
-        on `OAuthProxy` for the lazy upstream (see the module docstring)."""
-        return upstream_token_set.raw_token_data.get("id_token")
-
     def _uses_alternate_verification(self) -> bool:
-        """Tells FastMCP the verified token is not the upstream access token, so
-        the returned `AccessToken` carries the upstream set's expiry rather than
-        the id_token's (the other `OIDCProxy` hook)."""
+        """Tells FastMCP the verifier's answer is a shell for the grant, so the
+        returned `AccessToken` carries the upstream set's expiry — the
+        provider's token, refreshed transparently while it can be, is what
+        bounds a grant."""
         return True
 
     async def load_access_token(self, token: str) -> AccessToken | None:
@@ -447,28 +689,117 @@ class PlamotrackOAuthProxy(OAuthProxy):
         if token.startswith(f"{token_format.TOKEN_KIND}_"):
             # The owner's own credential, valid in every mode (§5.5).
             return await self._pat_verifier.verify_token(token)
-        await self._resolve_upstream_softly()
-        validated = await super().load_access_token(token)
-        if validated is None:
-            return None
         try:
             payload = self.jwt_issuer.verify_token(token)
         except Exception:
             return None
+        binding = OwnerBinding.from_claims(payload.get("upstream_claims"))
+        if binding is None:
+            log.warning("MCP OAuth: an issued token carries no owner binding; refused")
+            return None
+        if not await self._owner_check.still_bound(binding):
+            log.warning("MCP OAuth: an issued token's owner binding no longer holds; refused")
+            return None
+        # The transparent refresh behind this may need the token endpoint.
+        await self._resolve_upstream_softly()
+        validated = await super().load_access_token(token)
+        if validated is None:
+            return None
         client_id = str(payload.get("client_id") or validated.client_id)
         # FastMCP hands back the *upstream* access token in `token`; a reference
-        # stands in for it here, and the MCP client's id rides along for audit.
+        # stands in for it here. The MCP client's id and the grant's JTI ride
+        # along — the audit row and a revocation read them.
         return validated.model_copy(
             update={
                 "token": _reference(token),
                 "client_id": client_id,
-                "claims": {**(validated.claims or {}), "client_id": client_id},
+                "claims": {
+                    "kind": "mcp",
+                    "iss": binding.issuer,
+                    "sub": binding.subject,
+                    "client_id": client_id,
+                    "jti": payload["jti"],
+                },
             }
         )
 
+    # -- revocation ------------------------------------------------------------------------
+
+    async def revoke_token(self, token: AccessToken | RefreshToken) -> None:
+        """RFC 7009 §2.1 for the grant: whichever half is presented — the SDK
+        has already loaded it and checked it is this client's — the grant
+        record goes, locally and first, so the presented token, its sibling
+        and every token minted on the same grant are refused from here on
+        whatever the provider is doing; then the provider is asked, best
+        effort, to revoke *its* refresh token. A token behind which nothing of
+        ours remains is the RFC's silent 200 and no audit row."""
+        presented = "refresh_token" if isinstance(token, RefreshToken) else "access_token"
+        handle = self._grant_handle(token)
+        grant: UpstreamTokenSet | None = None
+        if handle is not None:
+            jti, binding = handle
+            mapping = await self._jti_mapping_store.get(key=jti)
+            if mapping is not None:
+                grant = await self._upstream_token_store.get(key=mapping.upstream_token_id)
+                await self._upstream_token_store.delete(key=mapping.upstream_token_id)
+            await self._jti_mapping_store.delete(key=jti)
+        if isinstance(token, RefreshToken):
+            await self._refresh_token_store.delete(key=_hash_token(token.token))
+        if grant is None or handle is None:
+            return
+        await self._record(
+            audit.MCP_GRANT_REVOKED,
+            principal=mcp_principal(write=True, subject=handle[1].subject),
+            detail=f"client={token.client_id} presented={presented}",
+            target=f"{MCP_MOUNT}/revoke",
+        )
+        await self._revoke_upstream(grant)
+
+    def _grant_handle(self, token: AccessToken | RefreshToken) -> tuple[str, OwnerBinding] | None:
+        """The JTI and binding behind a presented token: an access token's are
+        the claims `load_access_token` stamped; a refresh token's are read off
+        the proxy's own signed JWT."""
+        if isinstance(token, RefreshToken):
+            try:
+                payload = self.jwt_issuer.verify_token(token.token, expected_token_use="refresh")
+            except Exception:
+                return None
+            binding = OwnerBinding.from_claims(payload.get("upstream_claims"))
+            return (payload["jti"], binding) if binding is not None else None
+        claims = token.claims or {}
+        jti, issuer, subject = claims.get("jti"), claims.get("iss"), claims.get("sub")
+        if not (isinstance(jti, str) and isinstance(issuer, str) and isinstance(subject, str)):
+            return None
+        return jti, OwnerBinding(issuer, subject, "")
+
+    async def _revoke_upstream(self, grant: UpstreamTokenSet) -> None:
+        """Best effort, after the local record is gone: the provider's own
+        refresh token (RFC 7009 says a server revoking one should revoke the
+        access tokens of the grant) — or its access token when there is none —
+        through the injectable upstream client, at the endpoint the document
+        names. No endpoint, or a provider that cannot be reached, leaves the
+        local revocation standing."""
+        await self._resolve_upstream_softly()
+        endpoint = self._upstream_revocation_endpoint
+        if endpoint is None or endpoint == UNRESOLVED_ENDPOINT:
+            log.info("MCP OAuth: no revocation endpoint at the provider; local revocation stands")
+            return
+        credential, hint = (
+            (grant.refresh_token, "refresh_token")
+            if grant.refresh_token
+            else (grant.access_token, "access_token")
+        )
+        try:
+            async with self._upstream_oauth_client() as oauth_client:
+                await oauth_client.revoke_token(endpoint, token=credential, token_type_hint=hint)
+        except Exception as exc:  # the provider's problem, not the client's
+            log.warning("MCP OAuth: upstream revocation failed: %s", type(exc).__name__)
+
     # -- audit ---------------------------------------------------------------------------
 
-    async def _record(self, event: str, *, detail: str, principal=None) -> None:
+    async def _record(
+        self, event: str, *, detail: str, principal=None, target: str = f"{MCP_MOUNT}/token"
+    ) -> None:
         request = _current_request()
         async with session_scope() as session:
             await audit.record_event(
@@ -476,7 +807,7 @@ class PlamotrackOAuthProxy(OAuthProxy):
                 event,
                 principal=principal,
                 request=request,
-                target=f"{MCP_MOUNT}/token",
+                target=target,
                 detail=detail,
             )
 
@@ -588,6 +919,38 @@ class DiscoveryDocument:
         await self.inner(scope, receive, send)
 
 
+class ClientMetadataBody:
+    """In front of the SDK's registration handler: a body that is not a JSON
+    document is RFC 7591 §3.2.2's `invalid_client_metadata` (400), where the
+    handler's unconditional `request.json()` would raise and the child app
+    would answer 500 without the profile (Codex #212 round 1, f4). The body is
+    read once here and replayed to the handler; a JSON document that is not
+    client metadata is the handler's own 400."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        body = await Request(scope, receive).body()
+        try:
+            json.loads(body)
+        except ValueError:
+            response = JSONResponse(
+                {"error": "invalid_client_metadata", "error_description": _NOT_JSON},
+                status_code=400,
+            )
+            await response(scope, receive, send)
+            return
+
+        async def replay() -> dict[str, Any]:
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        await self.app(scope, replay, send)
+
+
 def root_discovery_routes(oauth: McpOAuth | None) -> list[Route]:
     """The three root documents for the parent app (§5.5 family 8): FastMCP's
     for `base_url=…/mcp` with the bare `/.well-known/openid-configuration`
@@ -627,6 +990,15 @@ def prune_child_well_known(mcp_app: Starlette) -> None:
         for route in mcp_app.router.routes
         if not (isinstance(route, Route) and route.path.startswith("/.well-known/"))
     ]
+
+
+def guard_registration_body(mcp_app: Starlette) -> None:
+    """Put `ClientMetadataBody` in front of the SDK's registration route, under
+    the `RouteBinding` the registry adds later (the route's endpoint, which the
+    registry keys on, is untouched)."""
+    for route in mcp_app.router.routes:
+        if isinstance(route, Route) and route.path == _child_path(f"{MCP_MOUNT}/register"):
+            route.app = ClientMetadataBody(route.app)
 
 
 def declare_child_verbs(mcp_app: Starlette) -> None:

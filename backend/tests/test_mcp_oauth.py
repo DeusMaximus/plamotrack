@@ -25,12 +25,14 @@ included, with discovery asserted to be the public exception (T10).
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
 import logging
 import re
 import secrets
+import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlsplit
@@ -43,6 +45,7 @@ from fastmcp.server.auth.cimd import CIMDDocument, CIMDFetcher
 from httpx import ASGITransport, AsyncClient
 from joserfc import jwk, jwt
 from sqlalchemy import select, text
+from starlette.routing import Mount
 
 from app import error_codes
 from app.auth.mcp_auth import principal_from_access_token
@@ -63,6 +66,7 @@ from app.main import create_app
 from app.models import AuditEvent
 from app.services import audit
 from app.services import auth as auth_service
+from app.services import oidc as oidc_module
 from app.services import tokens as token_service
 from app.services.oidc import OidcProvider
 from tests.oidc_fake import (
@@ -217,13 +221,18 @@ async def consent(client, consent_location: str, *, action: str = "approve") -> 
     )
 
 
-def _provider_tokens(fake: FakeIdp, *, sub: str = OWNER_SUB, **claims) -> dict:
+def _provider_tokens(
+    fake: FakeIdp, *, sub: str = OWNER_SUB, expires_in: int = 300, **claims
+) -> dict:
+    """The provider's token response for a code: `expires_in` is the upstream
+    access token's lifetime (what bounds a grant); everything else is an
+    id_token claim knob."""
     id_token = fake.issue(sub=sub, nonce=None, omit=("nonce",), **claims)
     return {
         "id_token": id_token,
         "access_token": "upstream-access-" + secrets.token_hex(8),
         "token_type": "Bearer",
-        "expires_in": 300,
+        "expires_in": expires_in,
         "refresh_token": "upstream-refresh-" + secrets.token_hex(8),
     }
 
@@ -1373,4 +1382,472 @@ def test_the_allowlist_setting_is_patterns_or_nothing():
 
 def test_the_verdict_names_its_reason():
     assert OwnerVerdict(None, "identity", "s").subject == "s"
-    assert OwnerVerdict(None, "invalid").token is None
+    assert OwnerVerdict(None, "invalid").binding is None
+
+
+# --- the grant as one state machine: issuance, refresh, verification, revocation
+# --- (Codex #212 round 1, f1–f3, f5) ------------------------------------------------------
+
+
+async def refresh(client, client_id: str, refresh_token: str) -> httpx.Response:
+    return await client.post(
+        "/mcp/token",
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+            "client_id": client_id,
+        },
+    )
+
+
+async def revoke(client, client_id: str, token: str, *, hint: str | None = None) -> httpx.Response:
+    """RFC 7009 through the SDK's model: `client_secret` is a required form
+    field even for a public client, so a native client sends it empty."""
+    form = {"token": token, "client_id": client_id, "client_secret": ""}
+    if hint is not None:
+        form["token_type_hint"] = hint
+    return await client.post("/mcp/revoke", data=form)
+
+
+async def initialize(client, access_token: str) -> httpx.Response:
+    return await client.post(
+        "/mcp/", json=INITIALIZE, headers={**MCP_HEADERS, **_bearer(access_token)}
+    )
+
+
+def _provider_refresh(fake: FakeIdp, *, id_token: object = "same", **overrides) -> dict:
+    """A refresh response the fake will honour: a new upstream pair, and an
+    id_token when the provider chooses to send one — `"same"` re-issues the
+    owner's, `None` omits it (OpenID Connect Core §12.2 allows both)."""
+    response = {
+        "access_token": "upstream-access-" + secrets.token_hex(8),
+        "token_type": "Bearer",
+        "expires_in": 3600,
+        "refresh_token": "upstream-refresh-" + secrets.token_hex(8),
+        "scope": "openid",
+    }
+    if id_token == "same":
+        response["id_token"] = fake.issue(sub=OWNER_SUB, nonce=None, omit=("nonce",))
+    elif id_token is not None:
+        response["id_token"] = id_token
+    response.update(overrides)
+    fake.refresh_tokens.add(response["refresh_token"])
+    return response
+
+
+def _advance_id_token_clock(monkeypatch, seconds: int) -> None:
+    """Move only the id_token claim validator's clock — the proxy's own JWT,
+    the upstream token's expiry and the store's TTLs keep real time — so an
+    id_token verified at issuance is now past its `exp` and nothing else is."""
+    original = oidc_module.validate_id_token_claims
+
+    def later(claims, **kw):
+        return original(claims, **{**kw, "now": int(time.time()) + seconds})
+
+    monkeypatch.setattr(oidc_module, "validate_id_token_claims", later)
+
+
+@pytest.mark.parametrize("presented", ["access_token", "refresh_token"])
+async def test_a_successful_revocation_kills_every_credential_of_the_grant(presented):
+    """RFC 7009 §2.1: after a 200 from `/revoke` the token is unusable, and
+    revoking either half of the pair takes the whole grant with it — the
+    access token, the refresh token, and the provider's own refresh token,
+    revoked upstream through the injectable client (a witness, at last) after
+    the local record is gone. FastMCP alone left the access mapping to its
+    hour-long TTL and posted a reference string upstream (Codex #212 f1)."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        outcome = await link(client, fake)
+        tokens, client_id = outcome["body"], outcome["client_id"]
+        upstream_refresh = fake.next_token["refresh_token"]
+        assert (await initialize(client, tokens["access_token"])).status_code == 200
+        revoked = await revoke(client, client_id, tokens[presented])
+        assert revoked.status_code == 200, revoked.text
+        assert revoked.headers.get_list("cache-control") == ["no-store"]
+        refused = await initialize(client, tokens["access_token"])
+        assert refused.status_code == 401, refused.text
+        assert 'error="invalid_token"' in refused.headers["www-authenticate"]
+        fake.next_refresh = _provider_refresh(fake)
+        replay = await refresh(client, client_id, tokens["refresh_token"])
+        assert replay.status_code == 401, replay.text
+        assert replay.json()["error"] == "invalid_grant"
+        # The provider was told about *its* credential, not ours.
+        assert [r["token"] for r in fake.revoked] == [upstream_refresh]
+        assert fake.revoked[0].get("token_type_hint") == "refresh_token"
+        assert not [f for f in fake.token_requests if f.get("grant_type") == "refresh_token"]
+    collections = {collection for collection, _ in await _state_rows()}
+    assert "mcp-upstream-tokens" not in collections
+    if presented == "refresh_token":
+        # Its own hash entry goes too (an access token cannot name it; that
+        # row is dead weight until its TTL, refused through the missing set).
+        assert "mcp-refresh-tokens" not in collections
+    rows = await _events(audit.MCP_GRANT_REVOKED)
+    assert len(rows) == 1
+    assert rows[0].principal_kind == "mcp:write"
+    assert rows[0].principal_subject == OWNER_SUB
+    assert rows[0].detail == f"client={client_id} presented={presented}"
+    assert rows[0].target == "/mcp/revoke"
+    for secret in (tokens["access_token"], tokens["refresh_token"], upstream_refresh):
+        assert secret not in (rows[0].detail or "")
+
+
+async def test_revocation_is_local_first_so_a_provider_outage_changes_nothing_for_the_client():
+    """§5.6 safe failure: the local record goes before the provider is asked,
+    so a provider that is down still leaves the client with a dead token and
+    a 200 — the upstream half is best effort and is simply not witnessed."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        outcome = await link(client, fake)
+        tokens, client_id = outcome["body"], outcome["client_id"]
+        fake.network_down = True
+        revoked = await revoke(client, client_id, tokens["access_token"])
+        assert revoked.status_code == 200, revoked.text
+        assert (await initialize(client, tokens["access_token"])).status_code == 401
+        fake.network_down = False
+        fake.next_refresh = _provider_refresh(fake)
+        assert (await refresh(client, client_id, tokens["refresh_token"])).status_code == 401
+        assert fake.revoked == []
+    assert len(await _events(audit.MCP_GRANT_REVOKED)) == 1
+
+
+async def test_a_client_cannot_revoke_another_clients_grant():
+    """RFC 7009 §2.1 the other way: a client may revoke only its own tokens.
+    The SDK answers 200 either way (an unknown token is not an error); what
+    matters is that the other client's grant is untouched and nothing is
+    recorded as revoked."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        first = await link(client, fake)
+        second = await link(client, fake)
+        assert first["status"] == 200 and second["status"] == 200
+        crossed = await revoke(client, second["client_id"], first["body"]["access_token"])
+        assert crossed.status_code == 200
+        assert (await initialize(client, first["body"]["access_token"])).status_code == 200
+        assert fake.revoked == []
+    assert not await _events(audit.MCP_GRANT_REVOKED)
+
+
+def _barrier(parties: int):
+    """A two-party gate: each caller parks until every party has arrived, then
+    all proceed together — an occurrence, not an opportunity (the concurrency
+    note in `.agents/testing-and-review.md`). It sits **in front of** the
+    exchange, where nothing is held yet, so it cannot be half of a cycle
+    with the grant lock the fix takes inside."""
+    arrived = 0
+    released = asyncio.Event()
+
+    async def wait() -> None:
+        nonlocal arrived
+        arrived += 1
+        if arrived == parties:
+            released.set()
+        await released.wait()
+
+    return wait
+
+
+def _gate(proxy, method: str, wait) -> None:
+    original = getattr(proxy, method)
+
+    async def gated(*args, **kwargs):
+        await wait()
+        return await original(*args, **kwargs)
+
+    setattr(proxy, method, gated)
+
+
+async def test_two_redemptions_of_one_authorization_code_yield_one_grant():
+    """RFC 6749 §4.1.2: a code is used once. Two processes (two apps on the
+    one Postgres store) both load the code and both reach the exchange — the
+    barrier releases them together — and exactly one mints; the other is
+    `invalid_grant` with nothing stored for it. FastMCP's own get→mint→delete
+    is not atomic and minted twice (Codex #212 f2)."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (first_app, first), oauth_app(fake) as (second_app, second):
+        client_id = (await register(first)).json()["client_id"]
+        verifier, challenge = _pkce()
+        started = await authorize(first, client_id, challenge=challenge)
+        approved = await consent(first, started.headers["location"])
+        returned = await idp_return(first, fake, approved.headers["location"])
+        code = _query(returned.headers["location"])["code"]
+        wait = _barrier(2)
+        for live in (first_app, second_app):
+            _gate(getattr(live.state, MCP_OAUTH_ATTR).proxy, "exchange_authorization_code", wait)
+        outcomes = await asyncio.gather(
+            exchange(first, client_id, code, verifier), exchange(second, client_id, code, verifier)
+        )
+        statuses = sorted(r.status_code for r in outcomes)
+        assert statuses == [200, 401], [(r.status_code, r.text[:120]) for r in outcomes]
+        loser = next(r for r in outcomes if r.status_code == 401)
+        assert loser.json()["error"] == "invalid_grant"
+        winner = next(r for r in outcomes if r.status_code == 200)
+        assert (await initialize(first, winner.json()["access_token"])).status_code == 200
+    assert len(await _events(audit.MCP_GRANT_ISSUED)) == 1
+    rows = await _state_rows()
+    assert len([c for c, _ in rows if c == "mcp-upstream-tokens"]) == 1
+    assert len([c for c, _ in rows if c == "mcp-refresh-tokens"]) == 1
+
+
+async def test_two_redemptions_of_one_refresh_token_yield_one_successor_lineage():
+    """RFC 9700 §4.14.2: rotation is replay detection, so two winners defeat
+    it. Two processes present the same refresh token and reach the exchange
+    together; one gets the new pair, the other `invalid_grant`, the provider
+    was asked once — and afterwards only the winner's lineage continues: its
+    new refresh token refreshes again, the presented one is dead."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (first_app, first), oauth_app(fake) as (second_app, second):
+        outcome = await link(first, fake)
+        tokens, client_id = outcome["body"], outcome["client_id"]
+        fake.next_refresh = _provider_refresh(fake)
+        wait = _barrier(2)
+        for live in (first_app, second_app):
+            _gate(getattr(live.state, MCP_OAUTH_ATTR).proxy, "exchange_refresh_token", wait)
+        outcomes = await asyncio.gather(
+            refresh(first, client_id, tokens["refresh_token"]),
+            refresh(second, client_id, tokens["refresh_token"]),
+        )
+        statuses = sorted(r.status_code for r in outcomes)
+        assert statuses == [200, 401], [(r.status_code, r.text[:120]) for r in outcomes]
+        assert next(r for r in outcomes if r.status_code == 401).json()["error"] == "invalid_grant"
+        upstream = [f for f in fake.token_requests if f.get("grant_type") == "refresh_token"]
+        assert len(upstream) == 1
+        successor = next(r for r in outcomes if r.status_code == 200).json()
+        assert (await initialize(second, successor["access_token"])).status_code == 200
+        fake.next_refresh = _provider_refresh(fake)
+        assert (await refresh(first, client_id, successor["refresh_token"])).status_code == 200
+        assert (await refresh(second, client_id, tokens["refresh_token"])).status_code == 401
+    rows = await _state_rows()
+    assert len([c for c, _ in rows if c == "mcp-refresh-tokens"]) == 1
+
+
+async def test_a_refresh_without_a_new_id_token_keeps_the_grant_usable(monkeypatch):
+    """OpenID Connect Core §12.2 permits a refresh response with no id_token.
+    The binding is grant state established at issuance and carried by the
+    proxy's own tokens, so the refreshed grant keeps working after the original
+    id_token's `exp` — FastMCP had kept the old id_token as the thing verified
+    per request, and the one validator correctly refused it (Codex #212 f3)."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        outcome = await link(client, fake)
+        tokens, client_id = outcome["body"], outcome["client_id"]
+        fake.next_refresh = _provider_refresh(fake, id_token=None)
+        refreshed = await refresh(client, client_id, tokens["refresh_token"])
+        assert refreshed.status_code == 200, refreshed.text
+        new = refreshed.json()
+        _advance_id_token_clock(monkeypatch, 600)
+        ok = await initialize(client, new["access_token"])
+        assert ok.status_code == 200, ok.text
+        # And the sibling: the original pair, no refresh at all, past the
+        # id_token's expiry — the upstream token is what bounds a grant.
+        assert (await initialize(client, tokens["access_token"])).status_code == 200
+
+
+async def test_a_new_id_token_on_refresh_is_verified_and_must_name_the_owner():
+    """When the provider does send a new id_token with a refresh, it is
+    verified in full — signature and the claim contract — and must name the
+    bound owner: another subject is `invalid_grant` with the identity refusal
+    audited, a token that fails the contract is `invalid_grant` audited as a
+    failed round trip, and the owner's own re-issued token carries on."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        outcome = await link(client, fake)
+        tokens, client_id = outcome["body"], outcome["client_id"]
+        stranger = fake.issue(sub=STRANGER_SUB, nonce=None, omit=("nonce",))
+        fake.next_refresh = _provider_refresh(fake, id_token=stranger)
+        refused = await refresh(client, client_id, tokens["refresh_token"])
+        assert refused.status_code == 401, refused.text
+        assert refused.json()["error"] == "invalid_grant"
+        # The presented refresh token was not consumed by a refusal the
+        # provider caused: the same token tries again with a bad signature.
+        forged = fake.issue(sub=OWNER_SUB, nonce=None, omit=("nonce",), key=fake.other_key)
+        fake.next_refresh = _provider_refresh(fake, id_token=forged)
+        refused = await refresh(client, client_id, tokens["refresh_token"])
+        assert refused.status_code == 401, refused.text
+        assert refused.json()["error"] == "invalid_grant"
+        fake.next_refresh = _provider_refresh(fake)
+        renewed = await refresh(client, client_id, tokens["refresh_token"])
+        assert renewed.status_code == 200, renewed.text
+        assert (await initialize(client, renewed.json()["access_token"])).status_code == 200
+    refused_rows = await _events(audit.MCP_IDENTITY_REFUSED)
+    assert [row.detail for row in refused_rows] == [f"subject={STRANGER_SUB} client={client_id}"]
+    failed = await _events(audit.OIDC_LOGIN_FAILED)
+    assert len(failed) == 1 and failed[0].detail.startswith("id_token_invalid")
+    assert len(await _events(audit.MCP_GRANT_ISSUED)) == 1
+
+
+async def test_a_restart_between_the_consent_page_and_its_approval_still_reaches_the_provider():
+    """The consent page is shown by one process and approved on a fresh one —
+    a container restart in the window. The approval builds the provider's
+    authorization URL, so it resolves the endpoints itself; FastMCP's consent
+    submission read the placeholder and sent the browser to `.invalid` (Codex
+    #212 f5). A provider that is down at that moment is the callback's 503,
+    not a redirect anywhere."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, first):
+        client_id = (await register(first)).json()["client_id"]
+        _, challenge = _pkce()
+        started = await authorize(first, client_id, challenge=challenge)
+        location = started.headers["location"]
+        page = await first.get(location)
+        assert page.status_code == 200
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+        txn_id = _query(location)["txn_id"]
+        jar = first.cookies
+    form = {"txn_id": txn_id, "csrf_token": csrf, "action": "approve"}
+    async with oauth_app(fake) as (_, second):
+        second.cookies.update(jar)
+        approved = await second.post("/mcp/consent", data=form, headers={"Origin": BASE})
+        assert approved.status_code == 302, approved.text[:300]
+        assert approved.headers["location"].startswith(f"{ISSUER}/authorize?"), approved.headers[
+            "location"
+        ]
+    # The same window with the provider unreachable on the fresh process.
+    async with oauth_app(fake) as (_, first):
+        client_id = (await register(first)).json()["client_id"]
+        _, challenge = _pkce()
+        started = await authorize(first, client_id, challenge=challenge)
+        location = started.headers["location"]
+        page = await first.get(location)
+        csrf = re.search(r'name="csrf_token" value="([^"]+)"', page.text).group(1)
+        txn_id = _query(location)["txn_id"]
+        jar = first.cookies
+    form = {"txn_id": txn_id, "csrf_token": csrf, "action": "approve"}
+    fake.network_down = True
+    async with oauth_app(fake) as (_, second):
+        second.cookies.update(jar)
+        down = await second.post("/mcp/consent", data=form, headers={"Origin": BASE})
+        assert down.status_code == 503, down.text[:300]
+        assert "location" not in down.headers, _NO_LOCATION
+        assert "Identity provider unavailable" in down.text
+        assert down.headers.get_list("cache-control") == ["no-store"]
+
+
+# --- malformed requests on the protocol routes keep the profile (f4) ------------------------
+
+
+@pytest.mark.parametrize(
+    "body, content_type",
+    [
+        pytest.param(b"", "application/json", id="empty-json"),
+        pytest.param(b"", None, id="empty-no-type"),
+        pytest.param(b"not json", "application/json", id="not-json"),
+        pytest.param(b"[]", "application/json", id="array"),
+        pytest.param(b"null", "application/json", id="null"),
+        pytest.param(b'"a string"', "application/json", id="string"),
+        pytest.param(b"{}", "application/json", id="empty-object"),
+    ],
+)
+async def test_a_registration_body_that_is_not_client_metadata_is_the_dcr_400(body, content_type):
+    """RFC 7591 §3.2.2: a registration the server cannot read is
+    `invalid_client_metadata`, 400, with the declared `no-store` — never the
+    child app's 500 without it, which is what an empty or non-JSON body reached
+    through the SDK's unconditional `request.json()` (Codex #212 f4)."""
+    fake = FakeIdp()
+    async with oauth_app(fake) as (_, client):
+        headers = {"Content-Type": content_type} if content_type else {}
+        resp = await client.post("/mcp/register", content=body, headers=headers)
+        assert resp.status_code == 400, (resp.status_code, resp.text[:200])
+        assert resp.headers.get_list("cache-control") == ["no-store"]
+        assert resp.json()["error"] == "invalid_client_metadata"
+
+
+async def test_an_exception_under_a_protocol_route_still_carries_the_profile():
+    """The binding owns the route's response, its failure included: an
+    exception escaping a protocol handler is a 500 stamped with the declared
+    profile, not the child error layer's plain text without it (Codex #212
+    f4 — the generic half; the DCR 400 above is the specific one)."""
+    fake = FakeIdp()
+
+    async def boom(scope, receive, send):
+        raise RuntimeError("a protocol handler failed")
+
+    async with oauth_app(fake) as (live, client):
+        mount = next(r for r in live.routes if isinstance(r, Mount) and r.path == "/mcp")
+        route = next(r for r in mount.routes if getattr(r, "path", None) == "/register")
+        route.app.app = boom  # inside the RouteBinding
+        resp = await client.post("/mcp/register", json={})
+        assert resp.status_code == 500
+        assert resp.headers.get_list("cache-control") == ["no-store"]
+        assert resp.json() == {"detail": "Internal Server Error"}
+
+
+async def test_the_upstream_token_bounds_a_grant_the_provider_cannot_refresh():
+    """What ends a grant once the id_token is no longer re-verified: the
+    provider's access token. Expired and unrefreshable (the provider is down),
+    the grant's token is refused — the SDK's bearer check on the expiry FastMCP
+    patches in from the upstream set — and comes back once a refresh succeeds."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        outcome = await link(client, fake, expires_in=-5)
+        assert outcome["status"] == 200, outcome["body"]
+        access = outcome["body"]["access_token"]
+        fake.network_down = True
+        refused = await initialize(client, access)
+        assert refused.status_code == 401, refused.text
+        fake.network_down = False
+        fake.next_refresh = _provider_refresh(fake)
+        assert (await initialize(client, access)).status_code == 200
+
+
+async def test_a_rebind_refuses_the_refresh_token_too():
+    """The state axis of the rebind test: the grant's other half. A refresh
+    token issued to the previous owner is `invalid_grant` after the owner row
+    names another identity, with the provider never asked."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        outcome = await link(client, fake)
+        await _bind_owner(sub="somebody-else")
+        fake.next_refresh = _provider_refresh(fake)
+        refused = await refresh(client, outcome["client_id"], outcome["body"]["refresh_token"])
+        assert refused.status_code == 401, refused.text
+        assert refused.json()["error"] == "invalid_grant"
+        assert not [f for f in fake.token_requests if f.get("grant_type") == "refresh_token"]
+
+
+@pytest.mark.parametrize("entry", ["callback", "refresh"])
+async def test_a_process_whose_start_missed_the_provider_resolves_at_its_first_request(entry):
+    """§5.6 safe failure, the recovery half: a process that started while the
+    provider was down (the lifespan's warm-up fails, the start does not) meets
+    the provider again at its **first** request — the provider's return, or a
+    refresh — because each entry point resolves the endpoints itself rather
+    than trusting the warm-up (moa-14/15's witness: with the endpoints a view
+    of the cache, the warm-up had made every other test's entry point a
+    bystander). A cold `authorize` is the down-at-authorize test's territory —
+    its own resolution is what turns the outage into `temporarily_unavailable`
+    before a transaction is stored — and a cold consent approval the restart
+    test's."""
+    fake = FakeIdp()
+    await _bind_owner()
+    # The state a cold process inherits, made by a warm one.
+    async with oauth_app(fake) as (_, warm):
+        if entry == "callback":
+            client_id = (await register(warm)).json()["client_id"]
+            _, challenge = _pkce()
+            started = await authorize(warm, client_id, challenge=challenge)
+            approved = await consent(warm, started.headers["location"])
+            upstream, jar = approved.headers["location"], warm.cookies
+        else:
+            outcome = await link(warm, fake)
+            client_id, tokens = outcome["client_id"], outcome["body"]
+    fake.network_down = True
+    async with oauth_app(fake) as (_, cold):  # the warm-up failed; the start did not
+        fake.network_down = False
+        if entry == "callback":
+            cold.cookies.update(jar)
+            resp = await idp_return(cold, fake, upstream)
+            assert resp.status_code == 302, resp.text[:200]
+            assert resp.headers["location"].startswith(NATIVE_CB + "?")
+        else:
+            fake.next_refresh = _provider_refresh(fake)
+            resp = await refresh(cold, client_id, tokens["refresh_token"])
+            assert resp.status_code == 200, resp.text

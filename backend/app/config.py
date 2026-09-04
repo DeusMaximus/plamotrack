@@ -130,9 +130,11 @@ class Settings(BaseSettings):
     # registered MCP client may register (`http://localhost:*`,
     # `https://*.example.com/*`). It NARROWS registration and never replaces the
     # registration binding: a client is still sent only to a URI it registered.
-    # It does not apply to CIMD clients (Claude web, ChatGPT web), whose binding
-    # is their published metadata document. Empty: any safe URI may be
-    # registered, and the registration is the binding.
+    # When set it applies to EVERY client kind (FastMCP re-checks it at the
+    # callback, where the kind is no longer known), so it must also admit the
+    # callbacks of the CIMD clients in use — Claude web, ChatGPT web — whose
+    # binding is otherwise their published metadata document. Empty: any safe
+    # URI may be registered, and the registration is the binding.
     mcp_oauth_allowed_redirect_uris: str = ""
 
     @field_validator("public_base_url")

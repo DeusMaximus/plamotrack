@@ -79,6 +79,23 @@ server {
         return 404 '{"detail":"Not Found"}';
     }
 
+    # limit_req's refusal (the OAuth locations below), in the envelope and with
+    # the family-8 profile: a rate-limited OAuth request is still an OAuth
+    # failure response, and `no-store` is what the registry declares for every
+    # one of those (Codex #212 round 1, f4). add_header does not inherit, so
+    # the security headers repeat here.
+    error_page 429 = @rate_limited;
+    location @rate_limited {
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header Retry-After 1 always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options DENY always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        return 429 '{"detail":"Too many requests to this endpoint from your address; try again in a moment.","code":"ingress.rate_limited","params":{}}';
+    }
+
     # react-router owns the path space: a deep link like /orders is not a file,
     # and must return the app rather than a 404.
     location / {

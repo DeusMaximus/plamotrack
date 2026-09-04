@@ -26,6 +26,7 @@ from app.auth.mcp_oauth import (
     McpOAuth,
     build_mcp_oauth,
     declare_child_verbs,
+    guard_registration_body,
     local_mode_child_routes,
     prune_child_well_known,
     root_discovery_routes,
@@ -148,6 +149,21 @@ async def http_exception_envelope(request: Request, exc: StarletteHTTPException)
     return await http_exception_handler(request, exc)
 
 
+async def unhandled_error_envelope(request: Request, exc: Exception) -> JSONResponse:
+    """An exception no handler caught, as the parent's `ServerErrorMiddleware`
+    renders it — which sits *above* the response-profile layer, so the stock
+    plain-text 500 carried no `Cache-Control` (the REST sibling of the mounted
+    routes' failure, Codex #212 round 1, f4). Every 500 the app produces is
+    `no-store`: nothing in one is worth a cache, and the app's own routes all
+    declare that profile. The exception still propagates, so the server logs
+    it as before."""
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error"},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 async def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """FastAPI's 422, in the envelope. `detail` stays the default list body —
     its list-vs-string shape against a service 422 is load-bearing for clients
@@ -253,6 +269,7 @@ def build_mcp_app(
     mcp_app.router.redirect_slashes = False
     if oauth is not None:
         prune_child_well_known(mcp_app)
+        guard_registration_body(mcp_app)
     else:
         mcp_app.router.routes.extend(local_mode_child_routes())
     declare_child_verbs(mcp_app)
@@ -451,6 +468,7 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
     app.add_exception_handler(DomainError, domain_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_envelope)
     app.add_exception_handler(RequestValidationError, request_validation_handler)
+    app.add_exception_handler(Exception, unhandled_error_envelope)
 
     # Outermost last: the guard answers a hostile Host before anything else
     # runs, and the forwarded-client resolver sees only requests that passed it.

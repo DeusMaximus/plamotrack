@@ -190,7 +190,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 434 cases over thirty-four target files** — #86's
+- **On `main` at the time of writing: 448 cases over thirty-four target files** — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
   #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
   #118 (`ship-`), #129 (`dsp-`), #130 (`cat-`), #133 (`ref-`), #136
@@ -256,9 +256,17 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   audit-row test being a control that cannot see it (Codex round 1); all 15 killed
   at fold-in, `-k f13-`)
   and #192 (`moa-` — MCP OAuth, the M6-7 branch: `app/auth/mcp_oauth.py`,
-  `auth/mcp_auth.py`, `auth/registry.py`, `auth/prerouting.py`, `config.py` and
-  `services/oidc.py`; every kill runs against an OIDC-mode app built in-process with
-  the fake provider in `tests/oidc_fake.py`, and the suite is `tests/test_mcp_oauth.py`)
+  `auth/mcp_auth.py`, `auth/registry.py`, `auth/prerouting.py`, `auth/dependency.py`,
+  `main.py`, `config.py` and `services/oidc.py`; every kill runs against an OIDC-mode
+  app built in-process with the fake provider in `tests/oidc_fake.py`, and the suite is
+  `tests/test_mcp_oauth.py`; moa-1…33 hand-run on the branch (moa-16 withdrawn),
+  34…48 from Codex round 1 — the grant as one state machine: revocation, one
+  redemption per handle, the binding as grant state, the consent path's resolution,
+  the profile on a handler's failure on both sides of the mount; moa-4/6/10/11/23
+  re-anchored in place by that round, moa-6 now the upstream token bounding a grant,
+  moa-12/14/15 re-pointed at the cold-start tests because the endpoints as a view of
+  the cache made the lifespan's warm-up every warm test's resolver; moa-39's kill is
+  the log-grep test seeing the lock's key when it is the authorization code itself)
   and #191 (`oidc-` — browser OIDC, PR #209: `app/services/oidc.py`, `services/auth.py`,
   `routers/auth.py`, `auth/registry.py`, `auth/mode.py` and `main.py`; oidc-4…20
   hand-run on the branch, 21…38 from Codex round 1 — a session is authority only in the
@@ -428,8 +436,11 @@ v0.2.4.1, v0.2.4.2), so it is not a formality either.
    provider — `uv run python ingress_matrix.py http://127.0.0.1:8080 --mode oidc
    --public-base-url <the stack's PUBLIC_BASE_URL> --password …` — and expect zero
    failing rows; the three discovery documents, the anonymous `/mcp/` challenge's
-   `resource_metadata` pointer and the six protocol routes' `no-store` are what it
-   proves there and cannot in local mode.
+   `resource_metadata` pointer, the six protocol routes' `no-store` (a registration
+   body the SDK cannot read included) are what it proves there and cannot in local
+   mode. In either mode the matrix ends with a burst at `/mcp/register` that trips
+   nginx's limiter and checks its 429s carry the envelope and `no-store` — run it
+   last, and expect the peer to be rate-limited for a moment afterwards.
 5. **Restore the dev overlay afterwards** — the packaged stack replaced the dev
    `db` container:
    ```bash

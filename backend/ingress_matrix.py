@@ -445,7 +445,11 @@ def family_8_rows(mode: str, public_base_url: str) -> list[Row]:
     for path, (verb, allow) in PROTOCOL_ROUTES.items():
         query = "?code=x&state=y" if path.endswith("callback") else ""
         if mode == "oidc":
-            expected = {"/mcp/token": 401, "/mcp/auth/callback": 400}.get(path, 400)
+            # token and revoke authenticate the client first (401 with no
+            # client_id); the callback with no transaction is its 400.
+            expected = {"/mcp/token": 401, "/mcp/revoke": 401, "/mcp/auth/callback": 400}.get(
+                path, 400
+            )
             if path == "/mcp/consent":
                 expected = 400
             rows.append(
@@ -509,19 +513,82 @@ def family_8_rows(mode: str, public_base_url: str) -> list[Row]:
         mcp_challenge(
             f"mcp/ initialize anonymous → 401 with{'' if mode == 'oidc' else 'out'} the pointer",
             "/mcp/",
-            www_authenticate=(
-                f'Bearer resource_metadata="{public_base_url}'
-                '/.well-known/oauth-protected-resource/mcp/"'
-                if mode == "oidc"
-                else "Bearer"
-            ),
+            www_authenticate=mcp_challenge_value(mode, public_base_url),
         ),
     ]
+    if mode == "oidc":
+        # A registration the SDK cannot read is RFC 7591's 400 with the
+        # profile, never the child app's 500 without it (Codex #212 f4): an
+        # empty JSON body, a body that is not JSON, and — the SDK's own
+        # refusal — a JSON document that is not client metadata.
+        for label, body in (
+            ("empty JSON body", b""),
+            ("body that is not JSON", b"not json"),
+            ("empty object", b"{}"),
+        ):
+            rows.append(
+                Row(
+                    f"mcp/register {label} → 400 invalid_client_metadata, no-store",
+                    "POST",
+                    "/mcp/register",
+                    400,
+                    headers={"Content-Type": "application/json"},
+                    body=body,
+                    content_type="application/json",
+                    json_has={"error": "invalid_client_metadata"},
+                    expect_headers=NO_STORE,
+                )
+            )
     return rows
 
 
+#: Requests fired at `/mcp/register` back to back to trip nginx's per-peer
+#: limit (10 r/s, burst 20, nodelay): well over the burst, so some are refused
+#: however fast the API answers the rest.
+RATE_LIMIT_BURST = 60
+
+
+def rate_limit_rows(base: str) -> list[tuple[Row, Response]]:
+    """nginx's `limit_req` on the OAuth endpoints, in either mode: a burst at
+    `/mcp/register` earns some 429s, and every one of them is the envelope with
+    `Cache-Control: no-store` and the security headers — the ingress-generated
+    family-8 failure keeps the declared profile (Codex #212 f4). Run **last**:
+    the peer is rate-limited for a moment afterwards."""
+    burst = Row(
+        "mcp/register burst → some 429s, each no-store in the envelope",
+        "POST",
+        "/mcp/register",
+        429,
+        headers={"Content-Type": "application/json"},
+        body=b"{}",
+        content_type="application/json",
+        json_code="ingress.rate_limited",
+        expect_headers={**NO_STORE, "retry-after": "1"},
+    )
+    refused = [
+        resp for resp in (send(base, burst) for _ in range(RATE_LIMIT_BURST)) if resp.status == 429
+    ]
+    if not refused:
+        return [(burst, Response(0, {}, b"the limiter never engaged across the burst"))]
+    return [(burst, resp) for resp in refused[:3]]
+
+
+def mcp_challenge_value(mode: str, public_base_url: str) -> str:
+    """The `WWW-Authenticate` an anonymous MCP request earns: bare in local
+    mode (no document to point at); in OIDC mode it names the resource
+    document, built from PUBLIC_BASE_URL (§5.5 family 7; T5's pointer)."""
+    if mode == "oidc":
+        document = f"{public_base_url}/.well-known/oauth-protected-resource/mcp/"
+        return f'Bearer resource_metadata="{document}"'
+    return "Bearer"
+
+
 def rows(
-    allowed_host: str | None, credential: Credential | None = None, tokens: Tokens | None = None
+    allowed_host: str | None,
+    credential: Credential | None = None,
+    tokens: Tokens | None = None,
+    *,
+    challenge: str = "Bearer",
 ) -> list[Row]:
     owner = credential.read() if credential is not None else {}
     mcp_auth = tokens.write.header() if tokens is not None else {}
@@ -636,8 +703,10 @@ def rows(
         guarded("api/meta", "/api/meta", content_type="application/json"),
         # The MCP transport is bearer-only (§5.5 family 7; #189): with a token
         # the initialize opens a stream, anonymous it is the transport's own 401.
-        mcp_challenge("mcp/ initialize anonymous → 401", "/mcp/"),
-        mcp_challenge("mcp bare anonymous → 401 (ingress-only spelling)", "/mcp"),
+        mcp_challenge("mcp/ initialize anonymous → 401", "/mcp/", www_authenticate=challenge),
+        mcp_challenge(
+            "mcp bare anonymous → 401 (ingress-only spelling)", "/mcp", www_authenticate=challenge
+        ),
         *(
             [
                 Row(
@@ -1036,9 +1105,15 @@ def main(argv: list[str]) -> int:
             failures += 1
             print(f"       {problem}")
 
-    for row in rows(args.allowed_host, credential, tokens):
+    public_base_url = (args.public_base_url or args.base).rstrip("/")
+    for row in rows(
+        args.allowed_host,
+        credential,
+        tokens,
+        challenge=mcp_challenge_value(args.mode, public_base_url),
+    ):
         run(row)
-    for row in family_8_rows(args.mode, (args.public_base_url or args.base).rstrip("/")):
+    for row in family_8_rows(args.mode, public_base_url):
         run(row)
     for row, resp in write_rows(args.base, args.allowed_host, credential):
         run(row, resp)
@@ -1056,6 +1131,8 @@ def main(argv: list[str]) -> int:
         else:
             revoke_token(args.base, credential, tokens.write)
         sign_out(args.base, credential)
+    for row, resp in rate_limit_rows(args.base):
+        run(row, resp)
     print(f"\n{failures} failing check(s)")
     return failures
 

@@ -59,6 +59,11 @@ MCP_GRANT_ISSUED = "auth.mcp_grant_issued"
 #: (§5.6 open redirect; T6). `detail` names the subject, as the browser login's
 #: refusal does.
 MCP_IDENTITY_REFUSED = "auth.mcp_identity_refused"
+#: A client revoked one of its issued tokens at `/mcp/revoke` and the whole grant
+#: went with it — the access token, the refresh token and, best effort, the
+#: provider's own refresh token (RFC 7009 §2.1; Codex #212 round 1, f1).
+#: `detail` names the client and which half was presented, never a token.
+MCP_GRANT_REVOKED = "auth.mcp_grant_revoked"
 
 
 def client_address_of(request: Request | None) -> str | None:
