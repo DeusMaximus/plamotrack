@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) MERGED (PR #205 → `70d6b3d`, Codex round 2 GO); f13- fold-in next
+## 2026-09-04 — Claude Code (Fable 5.1) — #204 (M6-3b) MERGED (PR #205 → `70d6b3d`, Codex round 2 GO); f13- fold-in MERGED (PR #207 → `4366695`)
 
 - **Done:** Codex round 2 (GPT 5.6 Sol) on `388de0b`: **GO, no findings** — replayed f1–f3, instrumented
   the gate's session order (open → resolve → commit/rollback → close → router/render, so "no
@@ -53,15 +53,15 @@ Template:
   and on the PR. `.agents/lessons.md` owes nothing: the family-8 miss is the sweep rule as written
   (enumerate the families the ingress forwards, not just the ones with routes) — the hand-off
   entries below carry the case.
-- **State:** `main` at `70d6b3d` plus this entry. Backend 1866, frontend 485, e2e 43+1 (CI). The
+- **State:** `main` at `4366695` plus this entry. Backend 1866, frontend 485, e2e 43+1 (CI). The
   shipped app: anonymous unrouted / wrong-verb / malformed requests under `/api/` are 401 with the
   bare `Bearer` challenge; `/.well-known/*` stays the router's 404 until M6-7; `/mcp/*` untouched.
-  **Not yet done:** the f13- fold-in (15 tuples, in PR #205's body under `<details>`) into
-  `mutation_test.py` — harness-only PR, no external review (#199/#201/#203 precedent); `TEST_FILES`
-  gains `tests/test_auth_unrouted.py`; procedure doc count 353 → 368 over thirty-two files. Dev DB
+  The f13- fold-in landed as **PR #207 → `4366695`** (harness-only, no external review): `PRE`
+  path constant, `TEST_FILES` + `tests/test_auth_unrouted.py`, `-k f13-` → all 15 killed on a
+  clean tree; procedure doc: 368 cases over thirty-two files. Dev DB
   claimed with `e2e-owner-password`. No release cut — M6 ships as one release at the end.
-- **Next:** (1) f13- fold-in PR; (2) #190/#192 MCP OAuth spike (§5.9 item 5); (3) #193 audit/rate
-  limiting (item 8); (4) #206 (family-7 `Allow` to anon) rides with whichever of those touches the
+- **Next:** (1) #190/#192 MCP OAuth spike (§5.9 item 5); (2) #193 audit/rate limiting (item 8);
+  (3) #206 (family-7 `Allow` to anon) rides with whichever of those touches the
   mount; (5) **LXC stays put until M6 is finished** (owner, 03/09). Release-notes items for the M6
   release: `ALLOWED_HOSTS` lockout risk (M6-1); the instance comes up unclaimed (M6-3); `/mcp/`
   requires a PAT, wrong password / setup token is 403, never a token in a URL (M6-4); anonymous
