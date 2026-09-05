@@ -41,6 +41,43 @@ Template:
 
 ---
 
+## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 13 (GPT-6 Astra, NO-GO: 1×P3, the fallback counts records, not cache slots) answered on the branch — head `ff8a5ec`, reply posted (issuecomment-5553924170), PR body + coverage record amended, round-14 brief printed
+
+- **Done:** f37 reproduced at `2a786a6` on its own assertions first (20 new contract rows in a
+  worktree at that head: **4 red / 16 green** — Codex's four fetched cells, two unnamed records
+  × token/revoke, on `200 == 401`; the inline, mixed and sole-record rows controls), then
+  fixed at `ff8a5ec`. Cause: the fetched path kept records by the SDK's cache slots (`kid or
+  "_default"`), so two unnamed records were one and the fallback counted slots. **The invariant
+  is now one function, `select_records`, over usable records, for both paths** (procedure 6:
+  rounds 10–13 all landed in this seam): a named `kid` → the records carrying it, none a
+  refusal; no `kid` → the only usable record, two ambiguous. `RestrictedKeyVerifier` keeps
+  every usable record of the fetch in order (`_jwks_records`), the SDK's selection runs
+  behind it (refuse-only), its PEM the disagreement check and the same-`kid` tie-break (last —
+  the documented boundary, unchanged); the inline path takes `[0]`. Tests: contract suite
+  **295** (+20); mutants moa-113/114, moa-108/110/112 re-anchored; harness **513/46**. Docs:
+  module docstring, design §5.9 (k) + row 8, AGENTS.md rule 13, procedure (moa- paragraph +
+  count), lessons → "The cache is not the set". PR body: opening line, What, By file, calls
+  12/17/18 (revised as overruled), Tests, negative control, mutants, coverage record (Codex's
+  r13 untracked coverage folded in; a record's non-string `kid` stays untested here).
+- **Decisions:** the SDK's remote selection stays in front on the fetched path (its cache,
+  TTL and fetch are its own) as a refuse-only layer, ours the owner of cardinality; the
+  same-`kid` collision stays inline-first / fetched-last (Codex asked to preserve it); the
+  corrected set on the fetched path is met by dropping the cached verifier (round 10's idiom).
+- **State:** backend **2362 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants **111/111 killed** at `ff8a5ec` (tracked harness, committed tree,
+  ~13 min; the two new killed first pass). Commit `ff8a5ec` pushed; PR #212 body amended;
+  the reply is issuecomment-5553924170. Codex's r12 material at `/private/tmp/plamotrack-212-r12/`
+  (untracked; r13 named no directory). Dev `db` up, Keycloak spike up. LXC untouched (**stays
+  put until M6 is finished**).
+- **Next:** (1) **Codex round 14 on PR #212** — the brief was printed in this session's chat;
+  regenerate from `.agents/review-brief.md` (Codex footer; the reviewer names its model) if
+  needed, naming runtime head `ff8a5ec`, the branch tip (hand-off only above it), `main`
+  `a497481`, rules 1/6/7.1/9/11/12/13; findings from 38; reproduce at `ff8a5ec` first; update
+  the coverage record in the reply (procedure 7.1). If GO: squash-merge with `Closes #192`;
+  nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
+  `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak spike, the register
+  burst concurrent — then the LXC upgrade; relink any MCP client first.
+
 ## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 12 (GPT-6 Astra, NO-GO: 1×P3, a named `kid` must match) answered on the branch — head `2a786a6`, reply posted (issuecomment-5553421733), PR body + coverage record amended, round-13 brief printed
 
 - **Done:** f36 reproduced at `5ecef8f` on its own assertions first (28 new contract rows in a
@@ -208,46 +245,3 @@ Template:
   merge: #215, #193, M6-9 TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a
   packaged stack with the Keycloak spike, the register burst concurrent — then the LXC
   upgrade; relink any MCP client first.
-
-## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 8 (GPT-6, NO-GO: 4×P3, "admitted once" at the SDK seam) answered on the branch — head `d2e1297`, reply posted (issuecomment-5551101166), PR body + coverage record amended, round-9 brief printed
-
-- **Done:** all four reproduced at `9bf1925` on their own assertions first (45 new contract rows in
-  a worktree at that head: **35 red / 10 green**), then fixed at `d2e1297` to the invariant Codex
-  named — a request is admitted once, from its recognised fields and every credential occurrence,
-  against one client snapshot, with the resource decision carried through the hand-off. **f27**
-  `resource_identity` (own comparison over `urlsplit`: a fragment or no scheme malformed → direct
-  400; whole path with `;parameters`; trailing slash and query the only equivalences; scheme and
-  authority *as written*, call 16) under `accepts_resource`, and `authorize` applies it before
-  FastMCP's looser check; the two private FastMCP helpers removed. **f28** `RECOGNISED_PARAMETERS`
-  per endpoint; unknown parameters dropped before the repetition rule (erratum 5708). **f29**
-  `ClientAssertionAuthenticator` rewritten over the SDK's base `ClientAuthenticator`: every
-  `Authorization` occurrence (`getlist`) inventoried first and any one refused `invalid_client`
-  with the challenge, with or without an assertion; `presented_scheme` over every occurrence.
-  **f30** one `get_client` per request; dispatch by the snapshot's method through FastMCP's
-  `validate_private_key_jwt`. Corrections adopted: NumericDate ±2^53 described as local policy;
-  call 15's claim now true; CI's `test_archive_structure_is_processed_in_linear_time` (1.5 s
-  budget, 2.49 s on the runner) noted as unrelated — owner to re-run/file. Tests: contract suite
-  **180** (+45); mutants moa-92…99, moa-71/86/87/90 re-anchored; harness **500/46**. Docs:
-  module docstring, design §5.9 (k) + §5.5 row 8, AGENTS.md rule 13, procedure, lessons →
-  "Admitted once". PR body: What, By file, calls 12/14/15, **new call 16**, Tests, controls,
-  mutants, coverage record (Codex's r8 untracked probes and "still unexamined" folded in).
-- **Decisions:** scheme/authority compared as written (an equivalence FastMCP's normaliser
-  behind the hand-off lacks would let it refuse what we accepted → `server_error`); a
-  scheme-less resource is *malformed* (direct 400), not foreign (redirect); any `Authorization`
-  header at `/token`/`/revoke` refused even on a public client (no HTTP scheme admitted);
-  unknown parameters dropped before the SDK (its models ignore them anyway); the FastMCP
-  authenticator no longer a base class — its cryptographic validator is called directly.
-- **State:** backend **2247 green**, lint/format clean, `render_ingress.py --check` clean;
-  frontend untouched. Mutants ****98/98 killed** first pass (tracked harness on the committed tree, ~12 min)** (tracked harness, committed tree, detached with
-  `nohup`). Commit `d2e1297` pushed; PR #212 body amended; the reply is issuecomment-5551101166. Codex's r8
-  material at `/private/tmp/plamotrack-212-r8/` (untracked). Dev `db` up, Keycloak spike up.
-  LXC untouched (**stays put until M6 is finished**).
-- **Next:** (1) **Codex round 9 on PR #212** — the brief was printed in this session's chat;
-  regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming runtime head
-  `d2e1297`, the branch tip (hand-off only above it), `main` `a497481`, rules 1/6/7.1/9/11/12/13;
-  findings from 31; reproduce at `d2e1297` first; update the coverage record in the reply
-  (procedure 7.1). If GO: squash-merge with `Closes #192`; nothing to fold in; re-run the tip's
-  Backend CI if the timing test is the only red (or file it). (2) After merge: #215, #193, M6-9
-  TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a packaged stack with the
-  Keycloak spike, the register burst concurrent — then the LXC upgrade; relink any MCP client
-  first.
