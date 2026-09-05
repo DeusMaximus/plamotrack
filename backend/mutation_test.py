@@ -3377,8 +3377,10 @@ CASES = [
     (
         "moa-12. authorize does not resolve the upstream endpoints",
         MCP_OAUTH,
-        "    async def authorize(self, client, params) -> str:\n        try:\n            await self._resolve_upstream()",
-        "    async def authorize(self, client, params) -> str:\n        try:\n            pass",
+        # Re-anchored in round 7 (the docstring `authorize` gained sits between the
+        # `def` line and the `try:` the old anchor spanned).
+        "        try:\n            await self._resolve_upstream()\n        except UnavailableError as exc:\n            raise AuthorizeError(",
+        "        try:\n            pass\n        except UnavailableError as exc:\n            raise AuthorizeError(",
         "provider_down_at_authorize_is_temporarily_unavailable",
     ),
     (
@@ -3810,8 +3812,9 @@ CASES = [
     (
         "moa-74. a boolean taken for a NumericDate",
         MCP_OAUTH,
-        "    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):",
-        "    if not isinstance(value, (int, float)) or not math.isfinite(value):",
+        # Re-anchored in round 7 (f21 moved the finiteness check onto the range line).
+        "    if isinstance(value, bool) or not isinstance(value, (int, float)):",
+        "    if not isinstance(value, (int, float)):",
         "claim_that_fails_the_contract_is_refused_first and iat_bool",
     ),
     (

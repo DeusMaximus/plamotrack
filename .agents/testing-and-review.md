@@ -313,7 +313,9 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   eleven killed in the contract suite; and moa-76 **repaired** by that round (Codex
   f25: its replacement had left an unmatched `)`, a SyntaxError at import that the
   harness reported as ERROR and the PR body had counted as killed — a tuple is a
-  program, so compile the mutant before counting it); all 90 killed on the branch,
+  program, so compile the mutant before counting it), and moa-12 and moa-74 re-anchored in
+  place by that round (the `authorize` docstring and the f21 range line moved their
+  anchors); all 90 killed on the branch by the tracked harness on the committed tree,
   `-k moa-` — three first-pass survivors in
   round 2, each fixed outside the tuple: moa-47 a redundant second delete, moa-56 a
   fallback re-check masking the gate, moa-49 the fake's re-issued id_token identical
