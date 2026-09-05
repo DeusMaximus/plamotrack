@@ -41,6 +41,46 @@ Template:
 
 ---
 
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 6 (GPT-6, NO-GO: P2 + 3×P3, the SDK boundary field by field) answered on the branch — head `855c0e1`, reply posted (issuecomment-5549938526), PR body + coverage record amended, round-7 brief printed
+
+- **Done:** the two-jobs brief found four pre-existing boundary gaps, none in the grant machinery.
+  **f16** `validate_client_assertion_claims` + `ClientAssertionAuthenticator` (one class, built per
+  endpoint by `_client_authenticator`, on `/token` via FastMCP's `TokenHandler` and `/revoke`): the
+  claim contract on the unverified assertion *before* the SDK's validator — `alg` advertised, object
+  payload, string `iss`/`sub`/`jti`, `aud` str|list, `exp` required, finite non-bool NumericDates,
+  `nbf` with 30 s skew — refuse-only, `401 invalid_client`, spends no `jti`. **f17** `register_client`
+  canonicalises the whole metadata and stores that object (`null` redirect list →
+  `invalid_client_metadata`; response/grant types substituted; blank scope → default; display fields
+  kept). **f18** `ProtocolRequest` (ASGI guard, `guard_protocol_requests` in `build_mcp_app`) on
+  `/authorize` `/token` `/revoke`: repeated parameter → 400 direct; empties omitted; unknown
+  `grant_type` → `unsupported_grant_type`; omitted `code_challenge_method` → `plain` for the SDK to
+  refuse (error redirect for a registered client, RFC 7636 §4.4.1). **f19**
+  `UnregisteredClientGuidance` → root discovery URL. Tests: contract suite **88** (+54); control at
+  `8cae6c7`: **54 rows, 37 red / 17 green**. Mutants moa-71…80, moa-64 re-anchored; **79/79 killed**.
+  Docs: design §5.5 row 8, §5.9 (k) (per-field ownership rows); AGENTS.md rule 13; procedure
+  moa- paragraph + count (**481/46**); lessons → "The seam has an owner per field, not per
+  endpoint"; PR body call 14 (decoding decisions), call 12/13 amended, coverage record updated
+  with Codex's ten-surface inventory (checked / untracked / untested).
+- **Decisions:** the PKCE omission handed to the SDK as `plain` rather than answered by the guard
+  (the SDK knows whether to redirect; §4.4.1 wants the redirect for a registered client); a client
+  presenting an assertion is judged by it whatever its method (a stray secret stays ignored); the
+  guard does not touch `/consent`/callback, unknown extension params, or non-form bodies; null
+  redirect list refused, not defaulted; call 11's "SSRF guard makes remote-JWKS tests impossible"
+  withdrawn (Codex drove it with played DNS/transport — the tracked suite still plays the fetch).
+- **State:** backend **2155 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants **79/79 killed** (scratch runner, targets hashed, restored). Commit
+  `855c0e1` pushed; PR #212 body amended; the reply is issuecomment-5549938526. Codex's r6 material at
+  `/private/tmp/plamotrack-212-r6/` (README, `coverage-plan.md` — its ten-surface inventory —
+  and four probe files; untracked). Dev `db` up, Keycloak spike up. LXC untouched (**stays put
+  until M6 is finished**).
+- **Next:** (1) **Codex round 7 on PR #212** (same session or fresh — owner's call; the brief was
+  printed in this session's chat; regenerate from `.agents/review-brief.md` if needed, naming
+  runtime head `855c0e1`, the tip, `main` `a497481`, rules 1/6/7.1/9/11/12/13; findings from 20;
+  reproduce at `855c0e1` first; update the coverage record in the reply, procedure 7.1). If GO:
+  squash-merge with `Closes #192`; nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs,
+  the M6 release — gate `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak
+  spike, the register burst concurrent — then the LXC upgrade; relink any MCP client first.
+
 ## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 5 (GPT-6, NO-GO: P2/P3, discovery + the hint) answered on the branch — head `8cae6c7`, reply posted (issuecomment-5549456569), PR body amended with a **coverage record**, brief template changed, round-6 brief printed
 
 - **Done:** **f14** discovery owned by the contract — `discovery_metadata` (SDK `build_metadata`
@@ -238,40 +278,3 @@ Template:
   `.agents/spikes/190/` if kept) and make the register burst concurrent there (Codex's call-10
   remark) — then the LXC upgrade; relink any MCP client first, since records written before
   `e90550f` carry no binding and end at their next refresh.
-
-## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 1 (NO-GO, 5 findings) answered on the branch — head `e248a4b`, reply posted (issuecomment-5545491101), PR body amended
-
-- **Done:** all five findings reproduced at `4bd2e88` on their own assertions, then fixed as one
-  state machine (`app/auth/mcp_oauth.py`): **f1** `revoke_token` removes the grant record first
-  (JTI mapping, upstream set, refresh hash) then revokes the provider's refresh token through the
-  injectable client (`auth.mcp_grant_revoked`); **f2** `_one_redemption` — a per-handle
-  transaction-scoped advisory lock (`_GrantLock`, class-based: the SDK's `TokenError` is a frozen
-  dataclass and dies in a generator CM) around the code and refresh exchanges; **f3** the owner
-  binding is grant state (`OwnerBinding` in `upstream_claims`, `_extract_upstream_claims`,
-  `IdTokenOwnerCheck.still_bound` per request in `load_access_token`; `GrantVerifier` is FastMCP's
-  hook, the upstream token bounds the grant); **f4** `RouteBinding` stamps a handler's 500,
-  `ClientMetadataBody` gives a non-JSON registration RFC 7591's 400, nginx `@rate_limited` 429 in
-  the envelope (`ingress.rate_limited` — error_codes + fixture + en-AU catalogue), matrix rows
-  fixed/added (mode-aware challenge, revoke 401, three register bodies, the burst run last);
-  **f5** the three upstream-endpoint attributes are properties over `OidcProvider.cached_metadata`
-  and `_handle_consent` resolves first. Config comment (call 3) corrected. Docs: design §5.5 row,
-  §5.6 outage bullet, §5.8 audit list, §5.9 (b)(d)(e)(f)(f′)(j); operations (ending a link);
-  AGENTS.md rule 13; `.agents/testing-and-review.md` (448/34, moa paragraph, gate burst);
-  `.agents/lessons.md` → "Overriding the entry points, not the state machine (#212, round 1)".
-- **Decisions:** the lock, not a claim row (keeps FastMCP's minting as the one path; upstream
-  failure leaves the refresh token retryable); RFC 6749 revoke-on-code-reuse deliberately not
-  done (a retrying client is the realistic second use); the binding in the proxy's own JWT rather
-  than a stored grant row; the REST-side unhandled-500 profile (the sweep's find) closed in the same branch — `unhandled_error_envelope` in `main.py`, moa-48.
-- **State:** backend **2046 green** (`test_mcp_oauth.py` 90, was 69), lint/format clean,
-  `render_ingress.py --check` clean, frontend build/lint/catalogue green. Mutants: moa-4/6/10/11/23
-  re-anchored, moa-12/14/15 re-pointed at the cold-start tests, moa-34…48 added — **46/46 killed (42 first pass; moa-12/14/15 after the cold-start witnesses were written, moa-47 after the store assertion, moa-48 with its test)**. Packaged matrix from this tree: local **0
-  failing** (71 rows incl. the burst), **OIDC 0 failing** against the Keycloak spike through a
-  loopback socat sidecar in the api container's netns (scratchpad `compose.oidc.yml` — not
-  tracked; `.agents/spikes/190/` is where such an overlay would live if kept). Packaged
-  api/web/sidecar stopped, dev `db` up, Keycloak spike up. Siblings drafted, filed as #213 (A) and #214 (B): (A)
-  explicit-vs-transparent refresh race on a rotating provider, (B) `rebind-oidc` purging
-  `mcp_oauth_state`. LXC untouched (**stays put until M6 is finished**).
-- **Next:** (1) Codex round 2 on PR #212 at `e248a4b` (brief from `.agents/review-brief.md`;
-  push on f2's lock-vs-claim call, f3's binding-in-JWT, the `GrantVerifier` shell); if GO, merge
-  with `Closes #192`; (2) after merge nothing to fold in (tuples tracked); (3) #193, M6-9 TLS docs,
-  the M6 release (gate: `ingress_matrix.py --mode oidc` + the burst), then the LXC upgrade.
