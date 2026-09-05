@@ -652,7 +652,7 @@ timeline is planned, only that the columns are cheap now and expensive to retrof
 
 ---
 
-## 5. Auth, Remote Access & Public Mode 🔨 **In progress (M6 + M8) — threat model recorded 02/09/2026; §5.9 items 1–4 implemented (ingress identity #186 03/09; auth foundation #187, local owner auth #188 and personal access tokens #189 04/09/2026), plus item 3(b)'s deferred family-13 hardening (#204); item 6 browser OIDC (#191)**
+## 5. Auth, Remote Access & Public Mode 🔨 **In progress (M6 + M8) — threat model recorded 02/09/2026; §5.9 items 1–4 implemented (ingress identity #186 03/09; auth foundation #187, local owner auth #188 and personal access tokens #189 04/09/2026), plus item 3(b)'s deferred family-13 hardening (#204); item 6 browser OIDC (#191); item 7 MCP OAuth (#192, 05/09/2026)**
 
 Of this section §5.9 items 1–4 are built: the Host/Origin guard, the ingress
 topology and the proxy-trust posture (#186); the principal model, the route policy
@@ -834,7 +834,7 @@ instance with linked MCP clients without relinking them (§5.6, safe failure).
 | `anon` | No credential | none |
 | `owner` | Session cookie, **plus** the CSRF token on unsafe methods | `collection:read`, `collection:write`, `instance:admin` |
 | `pat:read` / `pat:write` | `Authorization: Bearer` personal access token | `collection:read` / `collection:read` + `collection:write` |
-| `mcp` | `Authorization: Bearer` access token issued by the MCP OAuth path (OIDC mode only), audience-bound to `/mcp` | `collection:read` and, if granted, `collection:write`; never `instance:admin` |
+| `mcp` | `Authorization: Bearer` access token issued by the MCP OAuth path (OIDC mode only), audience-bound to `/mcp` | `collection:read` **and** `collection:write` — a fixed mapping, not per-grant OAuth scopes (the scope vocabulary on that path is the identity provider's; #190 spike 7c, #192); never `instance:admin` |
 | `internal` | A request whose **raw TCP peer** — the socket's, read before any forwarded-header processing — is loopback inside the API's own network namespace: the container healthcheck, source-run development | Readiness only; grants nothing else |
 
 Three scopes, one implication (`write` implies `read`). `instance:admin` is held by the
@@ -868,7 +868,7 @@ bad code with or without one).
 | 5 | Collection writes | `POST`/`PATCH`/`DELETE` on the family-4 resources; `POST /api/catalog/{id}/adjust`, `/api/upgrades/{id}/apply`, `/api/orders/{id}/receive`, `/api/orders/{id}/ship`; `POST /api/import/preview`; `POST /api/import/apply` with `mode=merge` or `mode=add_only` when the plan's mutations touch collection tables only | 401 | allow (+ CSRF + Origin) | 403 | allow | 401 | `collection:write`; Origin check when the principal is cookie-borne | — |
 | 6 | Instance administration | `PATCH /api/settings`; `POST /api/import/apply` with `mode=replace_all`, or in **any** mode when the plan updates `instance_settings`; `/api/auth/tokens*` (mint, list, revoke); credential change and OIDC rebind | 401 | allow (+ CSRF + Origin) | 403 | 403 | 401 | `instance:admin`; an import's privilege is decided on the **plan's mutations** — an `UPDATE` action on `instance_settings`, not the presence of a settings sheet, so an archive whose settings row is unchanged or skipped needs no admin — checked after the re-plan and before any row is written; `replace_all` keeps `confirm=REPLACE` and the mandatory `plan_hash` on top | — |
 | 7 | MCP transport | `POST`/`GET`/`DELETE` `/mcp/`; bare `/mcp` is an **ingress-only** spelling — nginx rewrites it to `/mcp/` internally (§8), and with slash redirects off the source-run app treats it as family 13: 404 to a signed-in caller, 401 to `anon` (#204) | 401 + `WWW-Authenticate: Bearer` | **401** — a cookie is never a credential here, a valid one included | allow; write tools refused | allow | allow per scope | bearer only; Host/Origin guard (421/403); per-tool scope check in the tool wrapper; no tool holds `instance:admin` | buffering off, long timeouts (§8); the Host allowlist; **one spelling** — `/api/mcp` and `/api/mcp/*` return 404 from an exact-prefix `location` placed before the generic `/api/` one, matched after nginx's normalisation (slashes merged, percent-decoded), so the alias cannot shed these settings or family 8's limits |
-| 8 | OAuth / OIDC protocol routes (OIDC mode only; 404 in local mode) | at the root, **installed by the parent app** with FastMCP's `get_well_known_routes(...)` — for `base_url=…/mcp` the helper emits exactly `/.well-known/oauth-protected-resource/mcp/` (trailing slash — the resource is `…/mcp/`), `/.well-known/oauth-authorization-server/mcp`, `/.well-known/openid-configuration/mcp` and the bare `/.well-known/openid-configuration` — **pruned too**: FastMCP adds it for root deployments and prefix-stripping proxies, and this installation is neither; its document declares `issuer=…/mcp`, which a bare-root lookup cannot match (RFC 8414 §3.3, OIDC Discovery §4.3), so it stays off unless the spike shows a client that needs it, and the spike records each named client's version and the discovery URLs it actually requests — and **not** the bare `oauth-authorization-server`, so three root documents are served; under the mount, generated by the child: `/mcp/authorize`, `/mcp/token`, `/mcp/register`, `/mcp/consent`, `/mcp/auth/callback`, and `/mcp/revoke` when the upstream offers revocation. The child also generates `/mcp/.well-known/oauth-authorization-server` and `/mcp/.well-known/oauth-protected-resource/mcp/`; those are **pruned before mounting** and never forwarded. Read by mounting a probe on FastMCP 3.4.5 / MCP SDK 1.29.0 (02/09/2026); the spike snapshots the raw route set and the set nginx exposes, trailing slashes included | allow, by protocol | allow | — | — | — | FastMCP's handlers; PKCE; exact redirect-URI matching; the upstream identity must equal the bound owner | **exact** `location` blocks at the root for the `.well-known` paths — today the SPA fallback answers them with HTML — and rate limits on `authorize`, `token`, `register`; the family-7 `/api/mcp/*` rejection covers their aliases, and `/api/.well-known` is rejected the same way — the parent-root registration is otherwise reachable under `/api/`, which pruning the child cannot prevent |
+| 8 | OAuth / OIDC protocol routes (OIDC mode only; 404 in local mode) | at the root, **installed by the parent app** with FastMCP's `get_well_known_routes(...)` — for `base_url=…/mcp` the helper emits exactly `/.well-known/oauth-protected-resource/mcp/` (trailing slash — the resource is `…/mcp/`), `/.well-known/oauth-authorization-server/mcp`, `/.well-known/openid-configuration/mcp` and the bare `/.well-known/openid-configuration` — **pruned too**: FastMCP adds it for root deployments and prefix-stripping proxies, and this installation is neither; its document declares `issuer=…/mcp`, which a bare-root lookup cannot match (RFC 8414 §3.3, OIDC Discovery §4.3), so it stays off unless the spike shows a client that needs it, and the spike records each named client's version and the discovery URLs it actually requests — and **not** the bare `oauth-authorization-server`, so three root documents are served; under the mount, generated by the child: `/mcp/authorize`, `/mcp/token`, `/mcp/register`, `/mcp/consent`, `/mcp/auth/callback`, and `/mcp/revoke` when the upstream offers revocation. The child also generates `/mcp/.well-known/oauth-authorization-server` and `/mcp/.well-known/oauth-protected-resource/mcp/`; those are **pruned before mounting** and never forwarded. Read by mounting a probe on FastMCP 3.4.5 / MCP SDK 1.29.0 (02/09/2026); the spike snapshotted the raw route set and the set nginx exposes, and #192 pins both by test (`tests/test_route_policy.py`'s mounted snapshots per mode; `backend/ingress_matrix.py`'s `--mode`). **Shipped (#192):** the same nine paths exist in local mode and answer their own 404 naming the mode, so a mode is never a challenge; the child routes' method metadata is cleared and the registry's `RouteBinding` is their verb boundary as for the transport (an undeclared verb is its 405 with `Allow` and `no-store`, the family-8 sibling of #206 closed here); the pre-routing gate passes the whole `/.well-known/` namespace through unresolved, route or no route, and the registry refuses any non-protocol route under it | allow, by protocol | allow | — | — | — | FastMCP's handlers; PKCE; the redirect-URI binding per client kind (§5.6); **one downstream client contract** — every dynamically registered client is public (`none` + PKCE) whatever it asked for and the registration response says so, a CIMD client authenticates as its document says (`none` or `private_key_jwt`) on `/token` and `/revoke` alike with the assertion bound to the endpoint, a public client sends no secret, a failed client authentication is `401 invalid_client` on both endpoints, discovery publishes exactly those two methods for both endpoints and `RS256` (rounds 4–5), an unrecognised `token_type_hint` is ignored (RFC 7009 §2.2), and the boundary is owned field by field — the assertion's claims judged before the SDK spends its `jti`, registration metadata canonicalised and stored as returned, a repeated parameter refused and an empty one omitted, an omitted PKCE method read as `plain` and refused, the recovery URL the root document (round 6); admission, decoding, cardinality and the SDK hand-off one decision — every body representation guarded and a non-form body refused, `resource` a set collapsed and judged by the proxy's own predicate with `invalid_target` in each endpoint's form, a NumericDate within ±2^53, one client-authentication mechanism per request and the registered method required for an assertion, the `WWW-Authenticate` challenge on a 401 to a header-authenticating client, `jwks` with `jwks_uri` refused (round 7); a request admitted once — the resource compared on the whole URI by this server's own rule at both endpoints, only recognised parameters judged for multiplicity, every `Authorization` occurrence inventoried and any one refused, one client snapshot per request (round 8); the resource judged against RFC 3986's grammar before it is parsed and the inline key set's shape checked before it is read (round 9); the selected key's `alg`/`use`/`key_ops` enforced through FastMCP's own verification on both key paths (round 10), the record carried by the `kid` the selection used and the inline set filtered by the remote path's usability predicate (round 11), a named `kid` that matches nothing refused on both paths and the single-key fallback only for a header naming none (round 12), the fallback counting the set's usable records rather than a cache's slots, one rule for both paths (round 13); the upstream identity must equal the bound owner, checked **at issuance** (`exchange_authorization_code` — a stranger gets `invalid_grant`, an audit row and nothing minted); the verified `(iss, sub)` is then **grant state**, carried in every token the proxy issues and compared with the owner row on every request, so a rebind ends the grant at the next request, and held on the **grant record** itself as the binding every refresh is checked against: the record gate admits a refresh's upstream set — the client's exchange or the transparent refresh behind a request — only with an identity that binding names (the id_token already verified, or a new one verified in full and naming the same `(iss, sub)` the record holds — continuity with the identity that authorized the grant, not merely the owner now, the two differing for the length of a rebind), else the grant ends with `auth.mcp_grant_revoked` naming the upstream; the id_token is never re-expired, and one validly omitted carries the binding forward (Codex #212 rounds 1–3); a token without `sub` refused; **one transition per grant** — issuance, the refresh exchange, the transparent refresh and revocation serialize on a Postgres advisory lock per grant, so a second redemption is `invalid_grant` whichever process it lands on and a revocation and a refresh never interleave; **revocation is the grant's** — either half presented at `/revoke` is **located, not authorized** (the proxy's own signature and the JTI mapping, the provider asked nothing, no owner row read: the SDK's handler finds a token through the bearer path otherwise, and a provider whose keys could not be fetched turned that into a silent 200 with the grant standing — round 3), ends the whole grant locally first and asks the provider, best effort, to revoke its refresh token (`auth.mcp_grant_revoked`); the issued token is the proxy's own HS256 pair (`MCP_OAUTH_SIGNING_KEY`), `iss=…/mcp`, `aud=…/mcp/`, one hour, bounded by the provider's own token, which is refreshed against the provider transparently | **exact** `location` blocks at the root for the three documents and a 404 for the slash-less resource path (nginx would otherwise 301 it — the one ingress redirect stays `/api`), `limit_req` per peer on `authorize`, `token` and `register` (10 r/s, burst 20); the family-7 `/api/mcp/*` rejection covers their aliases, and `/api/.well-known` is rejected the same way — the parent-root registration is otherwise reachable under `/api/`, which pruning the child cannot prevent |
 | 9 | Liveness | `GET /api/healthz` | allow | allow | allow | allow | 401 | `{"status":"ok"}` and nothing else | rate limit |
 | 10 | Readiness | `GET /readyz` in-container; `GET /api/readyz` at the ingress | `internal` only; any other peer 404 | 404 | 404 | 404 | 404 | the raw TCP peer must be loopback — the healthcheck is `python -c … 127.0.0.1:8000/readyz` inside the container, and nginx arrives from the compose network | `location = /api/readyz { return 404; }` — the same decision, duplicated |
 | 11 | Schema and docs | `/openapi.json`, `/api/docs`, `/api/redoc`; `/api/docs/oauth2-redirect` (Swagger's OAuth helper) is **disabled** — 404 everywhere | 401 | allow | allow | allow | 401 | `collection:read` — FastAPI's generated handlers are disabled (`openapi_url`, `docs_url`, `redoc_url` set to `None`) and re-registered through the route policy registry as guarded routes, because the app-level dependency never runs for `add_route` handlers (§5.1); the OAuth2 helper is not registered | passes; `/openapi.json` keeps its root location and is the only spelling — `/api/openapi.json` returns 404 at the ingress |
@@ -1005,15 +1005,15 @@ Each row names the control, the layer that owns it, and the §5.8 tests that pro
 | **Host spoofing and DNS rebinding** — a page whose hostname resolves to the instance, so `Origin` and `Host` are both the attacker's | L, P, Dev | A Host allowlist: the host of `PUBLIC_BASE_URL`, the loopback names, the bind address, and `ALLOWED_HOSTS`. A miss is `421 Misdirected Request` with a body naming the setting. Applied to REST and MCP alike; FastMCP's guard runs in `strict` mode with the same lists, because the MCP transport specification requires Origin validation on the MCP app itself. Loopback origins are accepted against loopback hosts — the rule FastMCP already applies — which is what lets the Vite proxy (`Origin: localhost:5173` against `Host: 127.0.0.1:8000`) work with no permanent development exception. The REST middleware applies the same three-way rule as that guard — an origin in the list, loopback-to-loopback, or an `Origin` equal to the request's own origin for any allowed Host — and the canonical origin from `PUBLIC_BASE_URL` is always in the list: behind TLS the app sees `http` while the browser sends `https://…`, which is exactly the entry the canonical origin supplies (probed on the pinned guard: an allowed `https://app.example` passes with an `http` ASGI scheme). `ALLOWED_ORIGINS` is needed only for a non-canonical alias reached over a scheme the app does not see. **This is the one control that can lock an operator out** (#39): anything reached by a LAN hostname, a container name or a proxy has to be in the list. The setting, a default that covers the loopback names and the bind address, the 421 body and the release note ship together, and the change ships as its own release so nobody upgrading for a data fix meets it by surprise. | both — nginx's default `server` returns 421 before any `location`; the app repeats it | T3 |
 | **Clickjacking** of the SPA | P, R | `Content-Security-Policy: frame-ancestors 'none'` and `X-Frame-Options: DENY` on the SPA; the API sets both on the few HTML responses it has (docs pages, OAuth consent) | ingress for static files, app for its own HTML | T2 |
 | **Brute force** against login, setup and token endpoints | P, R | Argon2id for the local password; a per-IP rate limit at the ingress; at the app a global failure budget with exponential delay rather than a lockout an attacker could use against the owner; identical response and timing for "no such user" and "wrong password" (there is one user); a high-entropy single-use setup token; an audit event per attempt. The app's limiter is in-process, which is correct while the API runs one worker, as it does; more workers means a shared store, and the Dockerfile is where that is pinned. | both | T8 |
-| **Credential and token leakage** | all | Bearer tokens only in the `Authorization` header — never a query parameter, which lands in access logs and `Referer`; PATs shown once, stored as digests, looked up by a public prefix, compared with `hmac.compare_digest`; session ids opaque, only a digest stored; `Cache-Control: no-store` on every authenticated response and on every OAuth transaction and credential response — the consent page and its form result, the callback, the token endpoint, failures included: the MCP SDK sets it on token, revoke and authorize-error responses, but FastMCP's consent page, consent redirect and callback redirect carry no `Cache-Control` at all (read from the pinned handlers, 03/09/2026), so plamotrack adds it as a thin response middleware on the mount, while public discovery keeps its declared `public, max-age=3600`; no credential or token in any log line, enforced by a test that greps captured logs; the setup token printed to the API's log at startup while the instance is unclaimed and nowhere else (the log stream is the host operator's, §5.3); the CSV archive **never** carries auth tables — rule 9's registry does not gain them, so an export cannot become a credential dump; a backup of auth state is three things — the database, the OAuth proxy's state store wherever the spike puts it (FastMCP's default is an encrypted file tree under its home directory, so a named volume unless the spike chooses a Postgres adapter), and the matching env secrets; restoring without the secrets yields intact data with credentials to re-mint, and restoring without the store yields intact data, sessions and PATs with MCP links to re-establish. | app | T10, T11, T13 |
+| **Credential and token leakage** | all | Bearer tokens only in the `Authorization` header — never a query parameter, which lands in access logs and `Referer`; PATs shown once, stored as digests, looked up by a public prefix, compared with `hmac.compare_digest`; session ids opaque, only a digest stored; `Cache-Control: no-store` on every authenticated response and on every OAuth transaction and credential response — the consent page and its form result, the callback, the token endpoint, failures included: the MCP SDK sets it on token, authorize-error and *successful* revoke responses, but FastMCP's consent page, consent redirect and callback redirect carry no `Cache-Control` at all and revocation's own error paths carry none either (read from the pinned handlers 03/09/2026, the revocation fact measured by the #190 spike), so plamotrack stamps it from the registry's declaration on every mounted route's own send (the `RouteBinding`, M6-2's mechanism — #192 declares the six protocol routes `no-store`), while public discovery keeps its declared `public, max-age=3600`; no credential or token in any log line, enforced by a test that greps captured logs; the setup token printed to the API's log at startup while the instance is unclaimed and nowhere else (the log stream is the host operator's, §5.3); the CSV archive **never** carries auth tables — rule 9's registry does not gain them, so an export cannot become a credential dump; a backup of auth state is **two** things — the database, which since #192 also holds the OAuth proxy's state (`mcp_oauth_state`, a table Alembic owns, every value Fernet-encrypted under a key derived from `MCP_OAUTH_SIGNING_KEY`, so a dump never carries an upstream token in clear), and `.env` with its secrets; restoring without the secrets yields intact data with credentials to re-mint and MCP links to re-establish, and restoring a dump alone yields intact data, sessions and PATs with the same relinking (the #190 spike chose the Postgres adapter over FastMCP's default file tree for exactly this: no second volume, no second restore step). | app | T10, T11, T13 |
 | **Session fixation and theft** | P, R | Session id rotated on login; `HttpOnly`; `Secure` and the `__Host-` prefix when `PUBLIC_BASE_URL` is `https`. On plain HTTP — modes L and P — the cookie cannot be `Secure` (Chrome 152 and Firefox 153 store a `Secure` cookie set over `http://localhost` and `http://127.0.0.1`; WebKit 26.5 does not — WebKit bug 232088, still open), so its name changes with the scheme and its confidentiality rests on the network being the owner's own; the startup log says which it is. Idle and absolute expiry; logout, credential change, OIDC rebind and a start in the other authentication mode revoke every session, and a session is refused under any mode but the one that minted it (`session.auth_mode`). | app | T7 |
-| **Proxy-header trust** | R | The app's own identity — scheme and host for cookies, redirect URIs, the OAuth issuer and resource — comes from `PUBLIC_BASE_URL` and never from `X-Forwarded-*` or `Host`. Forwarded headers influence only the client address used for rate limiting and audit, and are honoured only from `TRUSTED_PROXIES`; the bundled nginx is a trusted hop by construction. `PUBLIC_BASE_URL` is installation identity: changing it invalidates every linked MCP client (the issuer changed) and is documented as a migration, not a config edit. uvicorn is started with `--no-proxy-headers`: its default middleware is on, trusts `127.0.0.1`, and replaces `request.client` from `X-Forwarded-For` for any address added to its trust list — so wiring `TRUSTED_PROXIES` through it would let a trusted proxy forge the loopback peer that `internal` reads. The app's own middleware resolves the forwarded client address into a separate scope key and leaves the raw peer alone. Router-generated slash redirects are **off** on both the parent and the child (`redirect_slashes=False`): Starlette 1.4.0 builds a slash redirect's `Location` from the request's scheme and Host and keeps the query string, so `/mcp/auth/callback/?code=…` would otherwise bounce an authorization code to `http://…` from behind TLS. A non-canonical spelling is 404, never 3xx; the redirects that remain are classified by destination, and only *request-derived* ones are forbidden: **self** URLs — consent, callbacks, a login return — are built from `PUBLIC_BASE_URL`; the **provider's** authorization endpoint comes from configuration validated at startup (discovery or explicit), never from a request; a **client's** redirect URI is bound **per client kind**, and that binding is a plamotrack policy constraint on FastMCP, not something registration supplies on its own: a DCR client may be sent only to a URI it registered — exact match, with RFC 8252 §7.3's loopback-port exception for native clients; an operator allowlist, if configured, narrows what may be registered and does **not** replace the registration binding (FastMCP 3.4.5 checks the patterns *instead of* the registration once patterns are set); the client FastMCP synthesises for the **upstream client id** — created with `allow_unregistered_redirect_uris=True`, so anyone who knows the public upstream id can be sent to an arbitrary destination carrying `error=access_denied` and their state (probed at `9e72a77`: 302 to consent for an unregistered URI, where an unknown client id is 400) — is refused or given an explicitly configured callback; CIMD and any static client get their own declared binding, subject to #30's compatibility ceiling. An unbound `redirect_uri` is 400 with no `Location`. The two producers of request-derived redirects — Starlette's slash fallback and uvicorn's forwarded-scheme rewriting — are both off. nginx's own prefix redirect (`/api` → `/api/`, 301) is relative (`absolute_redirect off`) and is retained deliberately as the one ingress-produced redirect, listed as such in T2. | both | T9 |
+| **Proxy-header trust** | R | The app's own identity — scheme and host for cookies, redirect URIs, the OAuth issuer and resource — comes from `PUBLIC_BASE_URL` and never from `X-Forwarded-*` or `Host`. Forwarded headers influence only the client address used for rate limiting and audit, and are honoured only from `TRUSTED_PROXIES`; the bundled nginx is a trusted hop by construction. `PUBLIC_BASE_URL` is installation identity: changing it invalidates every linked MCP client (the issuer changed) and is documented as a migration, not a config edit. uvicorn is started with `--no-proxy-headers`: its default middleware is on, trusts `127.0.0.1`, and replaces `request.client` from `X-Forwarded-For` for any address added to its trust list — so wiring `TRUSTED_PROXIES` through it would let a trusted proxy forge the loopback peer that `internal` reads. The app's own middleware resolves the forwarded client address into a separate scope key and leaves the raw peer alone. Router-generated slash redirects are **off** on both the parent and the child (`redirect_slashes=False`): Starlette 1.4.0 builds a slash redirect's `Location` from the request's scheme and Host and keeps the query string, so `/mcp/auth/callback/?code=…` would otherwise bounce an authorization code to `http://…` from behind TLS. A non-canonical spelling is 404, never 3xx; the redirects that remain are classified by destination, and only *request-derived* ones are forbidden: **self** URLs — consent, callbacks, a login return — are built from `PUBLIC_BASE_URL`; the **provider's** authorization endpoint comes from configuration validated at startup (discovery or explicit), never from a request; a **client's** redirect URI is bound **per client kind**, and that binding is a plamotrack policy constraint on FastMCP, not something registration supplies on its own: a DCR client may be sent only to a URI it registered — exact match, with RFC 8252 §7.3's loopback-port exception for native clients; an operator allowlist, if configured, narrows what may be registered and does **not** replace the registration binding (FastMCP 3.4.5 checks the patterns *instead of* the registration once patterns are set); the client FastMCP synthesises for the **upstream client id** — created with `allow_unregistered_redirect_uris=True`, so anyone who knows the public upstream id can be sent to an arbitrary destination carrying `error=access_denied` and their state (probed at `9e72a77`: 302 to consent for an unregistered URI, where an unknown client id is 400) — is refused or given an explicitly configured callback; CIMD and any static client get their own declared binding, subject to #30's compatibility ceiling. An unbound `redirect_uri` is 400 with no `Location`. **Measured and shipped (#190, #192):** MCP Inspector is a DCR client (loopback callback, the port-varies exception is what it relies on); Claude web and ChatGPT web are **CIMD** clients (an `https` client id naming a metadata document; callbacks `https://claude.ai/api/mcp/auth_callback` and `https://chatgpt.com/connector/oauth/<id>`), so CIMD stays enabled and the document's `redirect_uris` are their binding; nobody used the synthesised upstream-id client, so it is refused outright (`get_client` answers "unknown client" for the upstream id). The operator allowlist (`MCP_OAUTH_ALLOWED_REDIRECT_URIS`) is FastMCP's rule for **every** kind — it narrows what a DCR client may register (and, through `BoundDCRClient`, never replaces the registration) and it also has to admit a CIMD client's declared callback, so an operator who lists only loopback locks the web clients out; the documentation says so rather than the code special-casing CIMD, because FastMCP also re-checks the stored transaction's redirect URI against the allowlist at the callback, where the client kind is no longer known. The two producers of request-derived redirects — Starlette's slash fallback and uvicorn's forwarded-scheme rewriting — are both off. nginx's own prefix redirect (`/api` → `/api/`, 301) is relative (`absolute_redirect off`) and is retained deliberately as the one ingress-produced redirect, listed as such in T2. | both | T9 |
 | **Route bypass and exposed admin** | all | Default deny with an enumerated allowlist (§5.5); policy matched on the resolved endpoint; `api:8000` unpublished; the `.well-known` and `/api/readyz` locations exact; **no unauthenticated mode in the shipped image** — there is no `AUTH_MODE=disabled`, and the test suites use an in-process principal injection the packaged image does not contain (the alternative, "refuse to start when auth is off and the bind is not loopback", still ships the bypass and relies on a check being right); auth configuration is env-only and never a settings row, so the Settings page cannot grow a "disable auth" toggle; `/public/*` absent until M8. | both | T1, T2 |
 | **Scope escalation** | R, and any leaked token | One principal shape for REST and MCP; scope checks in the route dependency and the tool wrapper through the same helper, so a tool cannot be more permissive than its REST twin; a PAT cannot mint a PAT; MCP OAuth grants never include `instance:admin`; the enumeration test pairs every write tool with `collection:write`; an import's required privilege is read off its plan's content, so the mode cannot smuggle an admin-owned table past a write token. | app | T1, T6 |
 | **Prompt injection through an agent** (adversary D) | any mode with MCP | Not solvable in the server; bounded instead: scope, no import or export tools ever (§12.7), no admin tools, the rule-2 guards on destructive order edits, `remove_missing_lines` (§7), and audit lines naming the credential so a rogue session can be found and revoked. | app | T6 |
-| **Open redirect and code interception** in OIDC flows | R | Authlib's `state` and `nonce`; exact redirect-URI matching; PKCE on the MCP proxy path; the upstream identity required to equal the bound `(issuer, subject)`; a non-owner identity refused with an audit event and no session. | app | T6, T7 |
+| **Open redirect and code interception** in OIDC flows | R | The browser login's `state` and `nonce`; exact redirect-URI matching; PKCE on the MCP proxy path — the client's, verified by the proxy, and the proxy's own, forwarded upstream; the upstream identity required to equal the bound `(issuer, subject)`; a non-owner identity refused with an audit event and no session — and on the MCP path refused **at issuance**, before any token is minted, because a verifier that refuses only per request would still have handed a stranger a token pair (#190 spike 7a); the proxy's consent transaction carries its own state cookie and form token, and the provider's return is accepted only from the browser that consented (FastMCP's binding cookie, proven on). | app | T6, T7 |
 | **Version and topology disclosure** | R | `/meta`, the OpenAPI schema and the docs pages behind `collection:read`; anonymous unrouted paths answer 401 rather than 404; `/healthz` says only `ok`. | app | T2 |
-| **Log and audit hygiene** | all | Audit events for: setup claimed, login success and failure, logout, session revoked, PAT minted, revoked and used after revocation, OIDC rebind, authentication mode changed (the previous mode's sessions revoked at start), recovery run, Host/Origin rejection. Each carries the principal id, credential kind, client address and route or tool — never a secret, never a request body. Retention is a table with a documented prune. Collection-change auditing is not M6. | app | T10 |
+| **Log and audit hygiene** | all | Audit events for: setup claimed, login success and failure, logout, session revoked, PAT minted, revoked and used after revocation, an MCP OAuth grant issued, refused and revoked, OIDC rebind, authentication mode changed (the previous mode's sessions revoked at start), recovery run, Host/Origin rejection. Each carries the principal id, credential kind, client address and route or tool — never a secret, never a request body. Retention is a table with a documented prune. Collection-change auditing is not M6. | app | T10 |
 | **Denial of service** | P, R | Out of scope beyond: per-IP `limit_req` at the ingress on families 2, 3, 8 and 9; the app's failure budget; `client_max_body_size` as today; readiness hidden from outside so strangers cannot probe the database. | both | T2 |
 
 **Safe failure.** The first rule is that a failure denies; the second is that it denies
@@ -1032,11 +1032,28 @@ Each row names the control, the layer that owns it, and the §5.8 tests that pro
   operator who missed it restarts the container rather than editing the database.
 - **Host not in the allowlist:** 421 with the setting named in the body. Recoverable by
   editing `.env` and `docker compose up -d`; nothing is written.
-- **Secrets lost or rotated** (the session secret, the OAuth signing key): every
-  session and MCP link invalid, all data intact, PATs survive (they are digests, not
-  signatures).
-- **OAuth state store lost** (the volume, or the adapter's rows): MCP clients must
-  relink; data, sessions and PATs are untouched.
+- **Secrets lost or rotated** (the OAuth signing key `MCP_OAUTH_SIGNING_KEY`): every
+  MCP link invalid — the issued tokens fail their signature and the state rows no
+  longer decrypt, so a client's refresh is `invalid_client` and it re-registers and
+  re-consents — all data intact, sessions and PATs survive (digests, not signatures;
+  the browser session holds no signing secret at all).
+- **OAuth state store lost** (the `mcp_oauth_state` rows): MCP clients must relink;
+  data, sessions and PATs are untouched. Proved by `tests/test_mcp_oauth.py`'s
+  restart rows (T13): a second process on the same database and key accepts and
+  refreshes the first's tokens with no registration; one with another key reads
+  nothing and the client relinks.
+- **Identity provider unavailable, on the MCP path:** discovery still answers
+  (nothing upstream in it); a new authorization is sent back to the client with
+  `temporarily_unavailable`; an issued token keeps working until the provider's
+  own token needs a refresh the provider cannot give (the owner binding is grant
+  state, not a re-verified id_token); a refresh exchange fails and the client
+  relinks later; a revocation ends the grant locally whatever the provider is
+  doing. The provider's endpoints are a view of the browser login's cached
+  discovery document — every reader, FastMCP's included, sees the same one — and
+  every entry point that needs them fetches first, so a provider that is down at
+  start never fails the start and a restart mid-flow (between the consent page and
+  its approval, between the approval and the provider's return) completes on the
+  fresh process.
 - **Credentials lost:** a host-side command resets the local password or rebinds the
   OIDC identity and revokes every session; it is never an HTTP endpoint.
 
@@ -1060,7 +1077,7 @@ feeling.
 | # | Test | Where it runs |
 |---|---|---|
 | T1 | **The matrix, app layer.** One table of (family, method, principal, mode) → status and response profile (cookies, caching, challenge, security headers), driven by injected principals through the ASGI client, with each route's effective methods compared against its declaration and local-versus-OIDC as an explicit axis; family 8's rows drive each protocol role with its own state — a transaction, a binding cookie, a registered client — because one injected `anon` cannot exercise them; plus the enumeration test: every route in `app.routes` and every registered MCP tool is allowlisted or scoped, or the test fails naming it — the rows are generated from the route policy registry, and an undeclared effective route or mount (included routers expanded) fails before any row runs. Imports carry a plan-mutation axis across all three modes: a collection-only `merge` and an `add_only` upload succeed for `pat:write`, as does an archive whose settings sheet is present but unchanged; a plan with an `instance_settings` `UPDATE` is refused for `pat:write` before any row is written and succeeds for `owner`. | pytest |
-| T2 | **The matrix, ingress layer.** The same table through the packaged nginx: `/api/readyz` 404, `/openapi.json` 401 anonymous, `/.well-known/oauth-*` 404 in local mode, the SPA fallback still 200 for `/orders`, security headers present, `/api/../mcp` and `//api` normalised, one spelling per family — `/api/mcp/`, `/api//mcp/`, `//api/mcp/`, `/api/%6dcp/`, `/api/mcp%2f` and `/api/openapi.json` all 404 while `/mcp/` and `/openapi.json` answer; in OIDC mode the three root discovery documents answer and the bare `/.well-known/openid-configuration` is 404, while `/mcp/.well-known/*`, `/api/mcp/.well-known/*`, `/api/.well-known/oauth-protected-resource/mcp/`, `/api/%2ewell-known/…` and `/api//.well-known/…` are 404; the rejection list is generated from the registry's declared spellings, with positive controls (`/api/docs` and `/api/healthz` answer for their principals) beside the negative ones; `/api/docs/oauth2-redirect` 404; bare `/mcp` reaches the bearer challenge as an ingress-only spelling; no response in the matrix carries a `Location` header except the auth flows' own and nginx's relative `/api` → `/api/` 301, and `/api/kits/` and `/mcp/auth/callback/?code=x&state=y` are 404 with none; the rows are the ingress spellings, not T1's copied across, and they assert the response profile and the declared methods as T1 does; collection-route and MCP positives sit beside `/api/docs` and `/api/healthz`, since two positives are not exhaustive protection against an over-broad `location`; and the CI job's existing MCP `tools/list` probe now carrying a token. | CI Integration, against `docker compose up` |
+| T2 | **The matrix, ingress layer.** The same table through the packaged nginx: `/api/readyz` 404, `/openapi.json` 401 anonymous, `/.well-known/oauth-*` 404 in local mode, the SPA fallback still 200 for `/orders`, security headers present, `/api/../mcp` and `//api` normalised, one spelling per family — `/api/mcp/`, `/api//mcp/`, `//api/mcp/`, `/api/%6dcp/`, `/api/mcp%2f` and `/api/openapi.json` all 404 while `/mcp/` and `/openapi.json` answer; the mode axis is `--mode`: in local mode the three root documents and the six protocol routes answer their own 404 naming the mode; in OIDC mode the three root documents answer 200 with `public, max-age=3600` and this instance's issuer, the protocol routes are FastMCP's (a bare authorize 400, a bare token request 401, a bare registration 400, each `no-store`) and the anonymous MCP challenge carries the `resource_metadata` pointer; in both modes the bare `/.well-known/openid-configuration` is 404, the slash-less `/.well-known/oauth-protected-resource/mcp` is nginx's 404 and not its 301, an undeclared verb on a protocol route is the app's 405 with `Allow` and `no-store`, and `/mcp/.well-known/*`, `/api/mcp/.well-known/*`, `/api/.well-known/oauth-protected-resource/mcp/`, `/api/%2ewell-known/…` and `/api//.well-known/…` are 404; the rejection list is generated from the registry's declared spellings, with positive controls (`/api/docs` and `/api/healthz` answer for their principals) beside the negative ones; `/api/docs/oauth2-redirect` 404; bare `/mcp` reaches the bearer challenge as an ingress-only spelling; no response in the matrix carries a `Location` header except the auth flows' own and nginx's relative `/api` → `/api/` 301, and `/api/kits/` and `/mcp/auth/callback/?code=x&state=y` are 404 with none; the rows are the ingress spellings, not T1's copied across, and they assert the response profile and the declared methods as T1 does; collection-route and MCP positives sit beside `/api/docs` and `/api/healthz`, since two positives are not exhaustive protection against an over-broad `location`; and the CI job's existing MCP `tools/list` probe now carrying a token. | CI Integration, against `docker compose up` |
 | T3 | **Hostile Host and Origin.** For MCP initialize, a JSON write, `POST /import/preview` and `POST /import/apply` (multipart, both modes): hostile Host → 421; hostile Origin → 403; missing Origin on a cookie-borne write → 403; loopback origin against a loopback host → 200; a name in `ALLOWED_HOSTS` → 200. At both layers. | pytest + CI Integration |
 | T4 | **CSRF.** A valid session without the CSRF token → 403; the token with a hostile Origin → 403; a bearer with a hostile Origin → 200; the multipart routes named individually. | pytest |
 | T5 | **MCP never takes a cookie.** A valid session cookie and no bearer → 401 with `WWW-Authenticate: Bearer` and the resource-metadata pointer; the same request with a PAT → 200; an MCP OAuth token on a REST route → 401. | pytest |
@@ -1071,7 +1088,7 @@ feeling.
 | T10 | **Leakage.** Captured logs contain no token, password or session id across a full login, PAT and MCP run; `Cache-Control: no-store` on families 2–7 and on family 8's transaction and credential responses — consent GET and POST, callback, token, revoke, and their failure paths — with discovery asserted to carry its declared public caching instead; the archive's table registry contains no auth table (a rule-9 spec test); `GET /auth/session` and `/healthz` carry no version. | pytest |
 | T11 | **Timing shape.** An unknown token prefix and a wrong secret produce identical status and body; the compare is `compare_digest` by construction, and the test asserts the code path, not a stopwatch. | pytest |
 | T12 | **The deployment path.** The documented Caddy + compose configuration on a fresh VM: TLS, setup, login, a PAT REST call, MCP initialize through the proxy with a stream held open past 60 s, OAuth discovery through Caddy → nginx → api, `/api/readyz` 404 from outside, an `ALLOWED_HOSTS` lockout and its recovery. Scripted where possible; results recorded in the release notes. | release gate |
-| T13 | **Recovery.** The break-glass reset revokes sessions and restores access; a restore from the complete set — database, OAuth state store, `.env` — brings back sessions, PATs and an *existing* MCP link — proved through public behaviour: the old client's refresh token returns 200 from `POST /mcp/token`, the access token completes an MCP initialize, and zero registrations occur after the restore; a restore without the env secrets leaves data intact and credentials re-mintable; a restore without the store leaves data, sessions and PATs intact and MCP links to re-establish, as documented. | release gate |
+| T13 | **Recovery.** The break-glass reset revokes sessions and restores access; a restore from the complete set — database (the OAuth state is a table in it, #192) and `.env` — brings back sessions, PATs and an *existing* MCP link — proved through public behaviour: the old client's refresh token returns 200 from `POST /mcp/token`, the access token completes an MCP initialize, and zero registrations occur after the restore; a restore without the env secrets leaves data intact and credentials re-mintable; a restore without the store — a dump taken before the link, or a signing key rotated — leaves data, sessions and PATs intact and MCP links to re-establish, as documented; `tests/test_mcp_oauth.py` proves the store-and-key rows in-process. | release gate |
 
 ### 5.9 Implementation split
 
@@ -1238,6 +1255,18 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    adapter) and the explicit signing key decided on evidence, and whichever store is
    chosen joins the documented backup set — the backup contract is storage-independent.
    Spike before schema; the failure rule from #30 applies verbatim.
+   **Done (#190, 04/09/2026; evidence on the issue):** Keycloak 26.6 and Google as
+   providers; MCP Inspector (DCR), Claude web and ChatGPT web (both CIMD) as clients,
+   nobody using the upstream-id client or the bare OpenID document, ChatGPT reading
+   the path-aware one; the **Postgres adapter** for proxy state, the table owned by
+   Alembic; an **explicit** `MCP_OAUTH_SIGNING_KEY` of 32 random bytes (FastMCP's
+   default store cannot even take random bytes — it decodes them as UTF-8 — and a
+   key derived from the client secret would empty the store on a secret rotation);
+   `verify_id_token=True` as the one verifier shape (Google's access tokens are
+   opaque); the MCP scope vocabulary is the provider's, so the collection scopes are
+   a fixed mapping; Google needs `access_type=offline&prompt=consent` for a refresh
+   token and `openid` alone as the required scope. Nothing measured needed protocol
+   code — every adapter is a documented extension point.
 6. **Browser OIDC** — the Authlib discovery flow, `state` and `nonce`, owner binding to
    `(issuer, subject)`, rebind recovery, the mutually exclusive `local`/`oidc` mode
    switch. (T6, T7.)
@@ -1303,11 +1332,384 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    refused or pinned to a configured callback, CIMD declared), and snapshots of both
    the raw route set and the set nginx exposes, trailing slashes included. (T2, T5,
    T6, T9, T10, T12.)
+   **Shipped (#192):** `app/auth/mcp_oauth.py` — a `PlamotrackOAuthProxy` over
+   FastMCP's `OAuthProxy`, built in OIDC mode on the enforced app and reading the
+   provider off `app.state`; the registry's `DISCOVERY_ROUTES` (three root documents,
+   family 8, `public, max-age=3600`) and `MCP_OAUTH_ROUTES` (six protocol routes with
+   a `ProtocolRole`, `no-store`), declared by path because the same paths exist in
+   both modes; `mcp_oauth_state` (migration `d5e9362140ea`) behind the
+   `py-key-value-aio` Postgres adapter under a Fernet wrapper; `MCP_OAUTH_SIGNING_KEY`
+   and `MCP_OAUTH_ALLOWED_REDIRECT_URIS` in `.env`. Calls the item's wording left
+   open, recorded here: (a) **OIDC mode requires an `https` `PUBLIC_BASE_URL`, or
+   `localhost`/`127.0.0.1`** — the MCP OAuth issuer is `<PUBLIC_BASE_URL>/mcp`, RFC
+   8414 requires https and the MCP SDK enforces it at route creation, and an
+   authorization server on plain http would hand bearer tokens to clients in the
+   clear; so a plain-http private-network deployment (§5.4 mode P) stays on local
+   mode, and the settings validator says so at start rather than the SDK at app
+   build. (b) **The proxy is an `OAuthProxy`, not an `OIDCProxy`**, because the
+   latter fetches discovery synchronously at construction and a provider down at
+   start would fail the start (§5.6); the three upstream-endpoint attributes are
+   **properties over `OidcProvider.cached_metadata`** — a name that resolves
+   nowhere until the document is fetched, the document's endpoints after — so no
+   reader in FastMCP can hold a stale copy, and each entry point that reaches the
+   provider fetches first (Codex #212 round 1 reproduced a restart between the
+   consent page and its approval: FastMCP's consent submission read the placeholder
+   the first head had left as a plain attribute). (c) **The mount requires no OAuth scope**:
+   the verifier declares none and the proxy advertises `openid` through
+   `valid_scopes`, which is what keeps a personal access token valid on `/mcp/` in
+   OIDC mode — `load_access_token` routes a `ptk_` bearer to the token verifier
+   unchanged — while an issued token maps to the fixed collection scopes by its
+   `kind`. (d) **The owner binding at issuance reuses the browser login's claim
+   validator** with `nonce=None` — the proxy's upstream request carries no nonce,
+   its transaction being bound by `state`, PKCE and the consent cookie — so one
+   contract decides what an id_token is on both paths; an identity that is not the
+   owner is `auth.mcp_identity_refused` with the subject, a token that fails the
+   contract is `auth.oidc_login_failed` on `/mcp/token`, and a grant is
+   `auth.mcp_grant_issued` naming the client. The verified `(iss, sub)` is then
+   **grant state** (Codex #212 round 1, f3): carried under the proxy's own signature
+   in every token it issues (`upstream_claims`) and compared with the owner row on
+   every request, never re-derived from the stored id_token — FastMCP kept that
+   id_token as the thing verified per request, and a standards-conforming refresh
+   that omits a new one (OpenID Connect Core §12.2) left a freshly issued grant
+   refused once the old token's `exp` passed. A refresh that brings a new id_token
+   verifies it in full and requires the same owner — and (round 2, f7) the check
+   sits where the provider's response **becomes** the grant's upstream set, not
+   after it: the binding lives on the grant record too (`GrantRecord.owner`, the
+   digest of the id_token last verified), and the record gate (`GrantRecords`)
+   admits a refresh's set, on the client's exchange or the transparent refresh
+   behind a request, only with an identity that binding names; a stranger's, or an
+   owner-shaped token under the wrong key, ends the grant (`auth.mcp_grant_revoked`
+   with `ended_by=upstream_refresh`, beside the refusal) and stores nothing —
+   FastMCP persisted the set first and asked the hook afterwards on the exchange,
+   and never asked on the transparent path, so a refused set was the active one the
+   moment it arrived. Round 1's retry after such an answer is withdrawn: a provider
+   that answers a refresh with another identity is not one to retry against, and
+   restoring the previous upstream refresh token is unsafe once the provider may
+   have rotated it. And (round 3, f10) "the same owner" is the **record's** `(iss,
+   sub)`, not the owner row's: the owner check answers who the owner is, the
+   record answers who authorized this grant, and between a transition's owner
+   check and its write the two differ for the length of a rebind — the reviewed
+   head's gate verified a refresh's new id_token against the current owner and
+   adopted it, moving the record's binding from the old owner to the new one and
+   minting the new owner a successor on the old owner's grant. A candidate that
+   verifies and names the owner now but not the record's identity ends the grant
+   (OpenID Connect Core §12.2: a refreshed id_token keeps the issuer and
+   subject). (e) **`/revoke` is registered
+   unconditionally** and resolves to the provider's endpoint, or to none, on first
+   use, so the route table does not depend on the provider's document — and
+   **revocation is the grant's** (round 1, f1): FastMCP's own handler deleted a
+   refresh token's hash entry, left every access mapping to its TTL and posted the
+   `AccessToken.token` field upstream, so a revoked access token stayed usable for
+   the hour; now either half presented ends the grant record locally first, then
+   the provider is asked, best effort and through the injectable client, to revoke
+   *its* refresh token, and `auth.mcp_grant_revoked` names the client. And the
+   presented token is **located, not authorized** (round 3, f9): the SDK's
+   revocation handler finds a token through the provider's `load_access_token`,
+   which on this proxy is the bearer path — the upstream set read and refreshed
+   when near or past expiry, a new id_token verified against the provider's keys,
+   the owner row consulted — and a lookup that answers `None` is, to the handler,
+   a token it does not hold: RFC 7009's silent 200 with nothing revoked. A provider
+   whose signing key had rotated while its JWKS was unreachable produced exactly
+   that — an `unavailable` verdict, rightly leaving the verified grant standing for
+   a *request*, and a revocation that reported success over a live grant. The
+   `/revoke` route is now built over `RevocationLookup` (the SDK's handler and
+   client authenticator, given a provider whose access-token lookup is
+   `locate_access_token`: the proxy's signature, the client id and binding from
+   its claims, the JTI mapping — the provider asked nothing, no owner row read),
+   so the locked ending runs whatever the provider is doing, and a grant the
+   owner row no longer names can still be ended by its client. The policy for an
+   access token past its own hour (round 4's measurement): its JTI mapping lives the
+   same hour and expires under a second after the JWT, so an expired access token is
+   unknown to revocation — RFC 7009 §2.2's permitted 200 — while the grant record
+   and the refresh token remain; the refresh token is the handle that ends the
+   grant, and its revocation removes the record. No claim is made that the two
+   expire in the same instant or that an expired access token can reach the grant.
+   (f) The
+   issued access token lives **one hour** whatever the provider's `expires_in`
+   (Keycloak's 300 s would have some clients re-authorising every idle period);
+   what bounds a grant is the provider's own token — re-read on every request,
+   refreshed 30 s ahead of its expiry, and the end of the grant when the provider
+   cannot refresh it. (f′) **One redemption per grant handle** (round 1, f2):
+   FastMCP's get→mint→delete of a code and get→refresh→rotate of a refresh token
+   are not atomic across requests or processes, so both minted twice under a
+   concurrent double redemption; every redemption of one handle now runs under a
+   transaction-scoped Postgres advisory lock — the write gate's shape — and the
+   second redeemer reads the first's deletion and gets `invalid_grant`. (f″) **One
+   transition per grant, revocation included** (round 2, f6): the lock is the
+   grant's — its record id once one exists, the code before — and revocation takes
+   it too, so a refresh that holds the provider's answer and a revocation never
+   interleave; whichever lands first, the record is gone afterwards. The reviewed
+   head's revocation deleted the record while a refresh writer — the client's
+   exchange under its per-token lock, the transparent refresh under FastMCP's
+   in-process one — wrote it back through the store's upsert. Every write to the
+   record now passes one gate; a writer this module has not enumerated meets the
+   same rule or fails loudly; and the transparent refresh, which the SDK answers
+   from the set it had already loaded when its refresh fails, leaves what it learned
+   on the transition for `load_access_token` to refuse the request. (g) `access_type=offline&prompt=consent` are forwarded to **every**
+   provider: Google issues no refresh token without them, an unknown parameter is
+   ignored (RFC 6749 §3.1), and a re-consent prompt at the rare moment of linking a
+   client is acceptable. (h) In local mode the nine paths are `NotInThisMode`
+   routes answering the `auth.not_in_this_mode` envelope, the family-3 shape;
+   T2's rows that expected the router's plain 404 "until M6-7" now expect that.
+   (i) FastMCP hands the *upstream* access token back in `AccessToken.token`; the
+   proxy replaces it with a digest reference on the request scope, as the token
+   verifier does for a PAT's public id. (j) **The binding owns a protocol route's
+   failure too** (round 1, f4): an exception escaping a mounted handler is the
+   `RouteBinding`'s 500 with the declared profile, not the child error layer's
+   plain text without it; a registration body that is not JSON is RFC 7591's
+   `invalid_client_metadata` in front of the SDK's unconditional `request.json()`;
+   and nginx's own `limit_req` refusal carries the envelope and `no-store`, with the
+   packaged matrix bursting the limiter to prove it. The sweep found the REST half
+   of the same class — an exception no handler caught is rendered by the parent's
+   `ServerErrorMiddleware`, above the profile layer, as a plain-text 500 with no
+   `Cache-Control` — closed by the app's own `Exception` handler, which stamps every
+   500 `no-store`. Not done here: a `resource_metadata`
+   pointer on the source-run bare `/mcp` 401 (still item 3(b)(iv)'s developer-only
+   gap; the packaged stack rewrites it); the CIMD fetch is not exercised
+   end-to-end in pytest (the SSRF guard refuses anything a test could serve — the
+   fetch is played, the manager's client construction and the binding are real).
+   (k) **One downstream client contract** (Codex #212 round 4, f11–f13) — the
+   same in the registration response, the stored client, the code exchange, the
+   refresh and the revocation, and tested from the wire (`tests/test_mcp_oauth_clients.py`:
+   the forms and headers a client sends, built by hand, never through the SDK's
+   models or the lifecycle suite's helpers). **Every dynamically registered client
+   is a public client** — `token_endpoint_auth_method=none`, PKCE — whatever it
+   asked for, and the registration response says so with no `client_secret` and no
+   `client_secret_expires_at` (RFC 7591 §3.2.1: substituted metadata, described
+   truthfully). The choice is one of scope, not a claim that a secret would protect
+   nothing — a confidential registration's secret would guard that registration's
+   stolen refresh token (round 5's correction) — but the measured clients (#190) are
+   a public DCR client and two CIMD clients, and confidential DCR would mean storing
+   and comparing shared secrets, repairing the SDK authenticator's Basic branch and a
+   second lifecycle matrix, for clients nobody has brought; the authority remains the
+   owner's upstream login and the grant machinery. The
+   reviewed head answered `client_secret_post` (the SDK's default for an absent or
+   null method) and a generated secret while storing a public client, so a client
+   held a credential the server never read. Both MCP SDK clients adapt: they send a
+   secret only when the response carries one, by its method (the Python client's
+   *request* defaults to `client_secret_post`, which is why the method is
+   substituted rather than refused). **A CIMD client authenticates as its document
+   says** — `none`, or `private_key_jwt` with the document's keys — on `/token` and
+   on `/revoke` alike, each assertion bound to the endpoint it is sent to (RFC 7523
+   §3) and usable once **per process** (the SDK validator's replay cache is in
+   memory: a restart or a second API process accepts an assertion again — RFC 7523
+   §3 makes replay tracking optional, and the grant itself is still redeemed once
+   under its lock whatever the process; round 5 measured both); the reviewed head's
+   `/revoke` used the plain SDK authenticator, which refused the method the client
+   had linked with. **The wire forms**: `client_id` in the form on both endpoints for
+   every kind — RFC 6749 §3.2.1 requires it of a public client; beside an assertion
+   it is a **compatibility restriction of this server** (RFC 7521 §4.2 makes it
+   optional; FastMCP's token endpoint requires it and the revocation endpoint
+   matches) — no secret from a public client (one sent anyway is ignored, as the
+   SDK does), the assertion fields for `private_key_jwt`; the SDK's revocation form
+   model made `client_secret` a required field, so the public form was `400
+   invalid_request` — and the suite's own helper had been sending an empty secret on
+   every revocation, adapting every test to the defect. A failed client
+   authentication is `401 invalid_client` on either endpoint (RFC 6749 §5.2, adopted
+   by RFC 7009 §2.2.1; the SDK's token handler said so and its revocation handler
+   said `unauthorized_client`). There are no `client_secret_*` clients under this
+   contract, so the SDK authenticator's Basic branch — which wants the client id in
+   the form beside the header — is unreachable. **Discovery says the same** (round
+   5, f14): the two authorization-server documents — the RFC 8414 spelling and its
+   OpenID alias under `/mcp` — are built here (`discovery_metadata`: the SDK's
+   `build_metadata` for the endpoints, PKCE, scopes and grant types, FastMCP's CIMD
+   flag, then the contract) and publish exactly `none` and `private_key_jwt` for the
+   token endpoint *and* for the revocation endpoint, and `RS256` as the one assertion
+   algorithm the pinned verifier accepts (an ES256 assertion under the document's own
+   EC key is refused — measured); the SDK's metadata had advertised both shared-secret
+   methods at the token endpoint, *only* the shared-secret methods at the revocation
+   endpoint, and no algorithm, so a client choosing from discovery had no usable way
+   to revoke. **And every field's value space is the protocol's**, unrecognised
+   values included (round 5, f15): a `token_type_hint` the server does not know is
+   ignored (RFC 7009 §2.2), never refused — the form's two-value enum had turned a
+   valid, authenticated revocation into `400 invalid_request`. **The boundary, field
+   by field** (round 6, f16–f19 — fixing the one field a review names leaves its
+   siblings inherited, so each of these has an owner): *assertion claims* —
+   `ClientAssertionAuthenticator` on both endpoints runs
+   `validate_client_assertion_claims` on the assertion *before* the SDK's validator
+   (RFC 7523 §3, RFC 7519 §4.1: an advertised `alg`, an object payload, string
+   `iss`/`sub`/`jti`, `aud` a string or a list of strings, `exp` required, every
+   NumericDate finite and never a boolean, `nbf` honoured with the SDK's 30 s skew),
+   so a refusal is `401 invalid_client` and spends nothing — the same assertion is
+   accepted once its `nbf` arrives; the SDK's validator never checked `nbf`, took
+   booleans and strings for dates, and used the raw `jti` as a dictionary key (a 500
+   for a list); *registration* — `register_client` canonicalises the admitted
+   metadata once and stores that same object (a `null` redirect list refused where
+   FastMCP invented `http://localhost/`; `response_types` and `grant_types` what the
+   server offers; a blank or padded `scope` the default; the display and software
+   fields kept); *request decoding* — `ProtocolRequest`, an ASGI guard on
+   `/authorize`, `/token` and `/revoke` (RFC 6749 §3.1–§3.2): a repeated parameter
+   is `invalid_request` before anything is redeemed, redirected or spent (the SDK's
+   `dict(form)` kept the last value), an empty value is an omitted one, a
+   `grant_type` the server does not offer is `unsupported_grant_type`, and an
+   omitted `code_challenge_method` is `plain` (RFC 7636 §4.3), which the SDK's
+   S256-only model then refuses as it refuses `plain` — an error redirect for a
+   registered client (RFC 7636 §4.4.1), where its default had read the omission as
+   `S256` and opened a transaction; *the generated URL* — `UnregisteredClientGuidance`
+   points an unknown client at the root authorization-server document, where FastMCP
+   named the child alias this instance prunes. **Admission, decoding, cardinality and
+   the SDK hand-off are one decision** (round 7, f20–f24 and f26 — round 6's guard had
+   chosen *whether to run* by a case-sensitive prefix of the media type, applied one
+   multiplicity rule to a field the protocol lets a client repeat, and let the SDK
+   select an assertion beside a second credential or, on a public client, ignore it):
+   *the body* — the media type is read as HTTP defines it (RFC 9110 §8.3.1) and a POST
+   whose body is anything but `application/x-www-form-urlencoded` is `400
+   invalid_request` before the SDK parses it (RFC 6749 §4.1.3), where
+   `Application/X-Www-Form-Urlencoded` and `multipart/form-data`, both of which the
+   SDK parses, had reached the handlers unguarded; *`resource` is a set* (RFC 8707 §2)
+   — exempt from the repetition rule, identical values collapsed, every member judged
+   by the proxy's own `accepts_resource` (FastMCP's comparison at `/authorize` as a
+   predicate), a set naming only this server one effective target, a set naming any
+   other target `invalid_target` — at `/authorize` the SDK's error redirect to the
+   registered callback, which the proxy's `authorize` renders itself because the SDK's
+   response vocabulary lacks the code and its catch-all had said `server_error`; at
+   `/token` a direct 400, where the SDK reads the field and judges nothing, so a foreign
+   target had been accepted there — and a value that does not parse refused directly;
+   handing the SDK the last value alone would discard the other requested target;
+   *a NumericDate's range* — ±2^53 (RFC 7493 §2.2), judged on the parsed value before
+   any float conversion, where `math.isfinite` on a 401-digit integer overflowed into a
+   500; *one mechanism per request* — an assertion beside a `client_secret` or an
+   `Authorization` header is `401 invalid_client` (RFC 6749 §2.3, RFC 7521 §4.2.1)
+   before the SDK selects anything, the same assertion then usable on a corrected
+   request, and a 401 to a client that used the header carries `WWW-Authenticate` in
+   its scheme (RFC 6749 §5.2); *the registered method* — an assertion from a client not
+   registered for `private_key_jwt` is refused, where the SDK's `none` branch accepted
+   the request with the assertion unread (so "judged in full whatever its method" had
+   been true of a private client only); *the metadata's cross-field rule* — `jwks` and
+   `jwks_uri` together are `invalid_client_metadata` (RFC 7591 §2). **And a request is
+   admitted once** (round 8, f27–f30): each of round 7's decisions had been a
+   refuse-only precheck in front of something that decided again — a comparison
+   borrowed from FastMCP that erased the fragment and the path's `;parameters`
+   before comparing (`…/mcp/#other` and `…/mcp/;different-resource` were this server,
+   and the guard's hand-off at `/authorize` was re-judged by that same normaliser); a
+   repetition rule over every name where RFC 6749 §3.1 (erratum 5708) limits it to the
+   parameters the protocol defines and says to ignore the rest; an authenticator that
+   read one `Authorization` occurrence and returned to an SDK branch that read none
+   (a public client with `Basic`, `Bearer` or an unknown scheme beside its valid
+   handle succeeded); and a client looked up twice, so a document served with
+   `no-store` could say `private_key_jwt` to the precheck and `none` to the SDK, which
+   accepted an assertion under a key the document never published. The invariant: a
+   request is admitted once, from its recognised fields and every credential
+   occurrence, against one client snapshot, with the resource decision carried through
+   the hand-off. *The resource* — `resource_identity` is this server's comparison: a
+   fragment (any `#`) or a missing scheme is malformed (a direct 400 on both
+   endpoints), otherwise scheme, authority and the whole path with its parameters,
+   with two equivalences and no other — a trailing slash ignored, the query not
+   compared (RFC 8707 says a client should not send one; FastMCP allows those that
+   do) — the scheme case-folded (RFC 3986 §6.2.2.1; `urlsplit` and FastMCP's
+   `urlparse` both fold it — round 9's correction of "as written") and the authority
+   as the protected-resource document spelled it; `authorize` applies it again behind
+   the hand-off, so FastMCP's looser check decides nothing (it cannot refuse what this
+   accepted). *And parsing is not validation* (round 9, f31–f32): the value is judged
+   against RFC 3986's `absolute-URI` grammar (`ABSOLUTE_URI`, Appendix A's rules) on
+   the decoded string before `urlsplit` — a parser, which admitted a tab in the
+   authority, a carriage return in the path and a leading NUL (some silently stripped),
+   and never looked at the query the comparison ignores (an invalid percent-escape, an
+   unescaped space) — with a valid percent-escape admitted; and the inline key set of a
+   CIMD document has a contract where FastMCP's extraction read it (`keys` must be an
+   array, entries that cannot be processed are ignored as RFC 7517 §5.1 says, and a
+   set with no usable entry is a client refusal), where a `keys` object or string or a
+   null entry had been a 500 on both endpoints — round 9 filtered a copy of the record
+   in front of the SDK's extraction; since round 11 the validator's own inline
+   selection owns usability and selection together, as the SDK's remote path does,
+   and the copy retired. *And the selected key keeps its authorization* (round 10, f33): a
+   JWK's `alg`, `use` and `key_ops` are the key's authorization for an operation (RFC
+   7517 §4.2–§4.4; RFC 8725 §3.1 requires the key–algorithm association checked), and
+   FastMCP converted the JWK it selected to a PEM before verifying, on the inline and
+   the fetched path alike, so a mathematically valid RS256 signature authenticated
+   under a key published as `alg: RS512`, `use: enc` or `key_ops: ["sign"]`. The
+   repair keeps one cryptographic validator and the SDK's selection: the JWK whose
+   material the SDK selected — identified by the PEM the SDK produced from it, which
+   is the same whatever metadata the JWK carries — is handed to FastMCP's verifier in
+   place of that PEM (`RestrictedKeyAssertionValidator` for the inline set,
+   `RestrictedKeyVerifier` for the fetched one, keeping the JWKs beside the SDK's own
+   PEM cache and so within its cache lifetime), and joserfc enforces the restrictions
+   in the very decode that verifies the signature. A set publishing one material
+   twice is judged by its first entry; a set changed after it was fetched is seen at
+   the cache's expiry, as key material would be. *Round 11 (f34–f35) withdrew the
+   first-entry rule:* the record is carried by the identity the selection used — the
+   assertion's `kid`, or the only key when it names none — so two `kid`s publishing
+   one material are two records, each judged by its own metadata (the SDK's cache
+   keeps them by `kid` too; the inline selection is written out by the SDK's rule and
+   returns the record it selects; a fetched record whose material is not the PEM the
+   SDK selected is refused as a disagreement, never degraded to the PEM); and the
+   inline set is filtered by the remote path's own usability predicate — an object
+   whose material FastMCP cannot import is ignored, as RFC 7517 §5 says — before the
+   single-key fallback counts it, where counting it had denied that fallback to an
+   assertion naming no `kid` inline while the fetched path allowed it. *Round 12 (f36)
+   made the rule the SDK's remote one on both paths:* a named `kid` that matches nothing
+   is a refusal, and the single-key fallback is for an assertion naming none — absent or
+   empty, the SDK's remote reading of both — where the SDK's inline extraction, which
+   round 11 had written out, fell back to the only key whenever no record matched, so an
+   assertion signed by the only published key but naming a `kid` the set does not hold
+   authenticated inline and was refused fetched; a `kid` that is not a string is refused
+   by joserfc's decode of the header on both paths, in the call that verifies the
+   signature, and no type guard stands in front of that decision as a second owner. *Round
+   13 (f37) stated the rule once, over usable records:* `select_records` is the selection
+   for both paths — a named `kid` the records carrying it, none a refusal; no `kid` the
+   only usable record, two an ambiguous set — before either representation is consulted;
+   the fetched path keeps every usable record of the fetch in the set's order, where it
+   had kept them by the SDK's cache slots (`kid or "_default"`) and a fallback that
+   counted slots saw one key where the set held two unnamed records, accepting fetched
+   what the inline set refused; the SDK's own selection runs behind it, able to refuse
+   but not to admit, its PEM the disagreement check and the tie-break where one `kid` is
+   published twice (the last, its cache's; the inline set's first — the documented
+   boundary, unchanged). *The recognised fields* —
+   `RECOGNISED_PARAMETERS` per endpoint; an unknown parameter is discarded before its
+   multiplicity is judged, a recognised credential repeated is still refused. *The
+   credential inventory* — every raw `Authorization` occurrence counts, and any one is a
+   failed HTTP attempt (`invalid_client`, the challenge in its scheme) since no HTTP
+   scheme is admitted, with or without an assertion; a `client_secret` beside an
+   assertion is the second mechanism; a stray one with no assertion is ignored as the
+   SDK ignores it. *One snapshot* — `ClientAssertionAuthenticator` is the SDK's base
+   class with admission written out: the client resolved once, the method it names,
+   the document whose keys verify the assertion (FastMCP's own validator, unchanged)
+   and the authenticated client the handler receives all that record. **Who owns what,
+   per endpoint** (the audit the round asked for; a documented extension point says
+   where code runs, not what surrounds it): the **request decoding** of the three
+   client-driven endpoints — ours (`ProtocolRequest`: the body representation, the
+   recognised fields, multiplicity, the `resource` set, emptiness, the protocol's own
+   errors, the PKCE default); **client authentication** — ours end to end
+   (`ClientAssertionAuthenticator`: the credential inventory, the claim contract, one
+   snapshot, dispatch by its method), signature, key, issuer, audience, lifetime and
+   replay the SDK's validator behind it; the **resource decision and its
+   `invalid_target` redirect** — ours (`resource_identity`, `authorize`), the client and
+   redirect-URI validation before it the SDK's; the **challenge** on a 401 — ours; the
+   **inline key set's shape and selection** — ours (the validator's own inline
+   selection); the **selected key's
+   authorization** — ours in the sense that the JWK itself reaches the verifier
+   (`RestrictedKeyAssertionValidator`, `RestrictedKeyVerifier`), the selection, the
+   fetch, the cache and the signature FastMCP's and the restriction check joserfc's
+   (round 10); the **discovery documents** — ours
+   (`discovery_metadata`, served through the SDK's `MetadataHandler` on the routes
+   `get_routes` rebuilds; the root documents are that list filtered), the
+   protected-resource document FastMCP's; `/register` — validation the SDK's handler (metadata
+   model, grant and response types, scopes), persistence FastMCP's `register_client`
+   under the proxy's override that canonicalises the whole object before it is
+   stored or returned and stores that object (pinned by the contract suite, field
+   for field), the response the SDK's from that same object, the non-JSON body
+   ours (`guard_registration_body`), the unregistered-client guidance's discovery
+   URL ours (`UnregisteredClientGuidance`); `/authorize` — client lookup
+   and redirect binding ours (`get_client`, `BoundDCRClient`, the CIMD document),
+   PKCE and the transaction FastMCP's, endpoint resolution ours; `/consent` and
+   `/auth/callback` — FastMCP's, with the resolution and the 503 ours; `/token` —
+   client authentication FastMCP's `PrivateKeyJWTClientAuthenticator` (`none`,
+   `private_key_jwt`; the shared-secret branches unreachable), the form the SDK's
+   token models, grant lookup and issuance FastMCP's inside the proxy's transitions
+   (owner check, lock, record gate, minting hook), errors the SDK's; `/revoke` —
+   client authentication the same class bound to the revocation URL
+   (`_revocation_authenticator`), the form ours (`RevocationForm`), the steps the
+   SDK's in the SDK's order (`GrantRevocation`), token lookup ours
+   (`RevocationLookup`, `locate_access_token`, the SDK's refresh-token hash lookup),
+   revocation ours under the grant lock; `/mcp/` — bearer authorization ours over
+   FastMCP's token swap (`load_access_token`), the transparent refresh a transition;
+   the response profile everywhere the `RouteBinding`'s.
 8. **Audit, rate limiting and log hygiene** — the event table and its prune, ingress
    `limit_req`, the app's budget, the log-grep test. (T8, T10.)
 9. **Reference TLS deployment and documentation** — the Caddy configuration,
    `docs/operations.md` rewritten around the modes and its backup section around the
-   three-part set (database, OAuth state store, `.env`), the README's alpha warning
+   two-part set (database — the OAuth state is a table in it since #192 — and
+   `.env`), the README's alpha warning
    rewritten, the `.env.example` keys. (T12, T13.)
 10. **Release** — notes leading with `ALLOWED_HOSTS`, then the client-visible changes
     in §5.5; the upgrade path for existing instances (they come up unclaimed and fail

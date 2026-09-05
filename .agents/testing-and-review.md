@@ -73,7 +73,11 @@ that produced each line.
    before it is fixed; a fix for a defect nobody reproduced is a guess.
 2. **Enumerate the field's values before writing assertions:** null, empty,
    whitespace, the derived or default value, and something that genuinely differs.
-   Drive at least the null and the default.
+   Drive at least the null and the default. For a field a **protocol** defines, the
+   value space is the protocol's, *unrecognised values included* — RFC 7009's
+   `token_type_hint` is ignored when the server does not know it, never refused, and a
+   two-value enum on that field turned a valid revocation into a 400 through four
+   review rounds (#212 round 5).
 3. **Enumerate the row's states.** The action (create / update / error / skip), the
    mode (merge / add_only / replace_all), the status — whatever classification
    decides the shape of the structure the fix touches. Drive at least two, and
@@ -190,7 +194,12 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` at the time of writing: 402 cases over thirty-three target files** — #86's
+- **On `main` after #212: 513 cases over 46 target files** — counted the way the
+  harness itself counts, `len(CASES)` and the distinct paths those cases mutate
+  (migrations, the one test file and the two `frontend/` files included; the
+  one-liner is `uv run python -c "import mutation_test as m, pathlib; print(len(m.CASES), len({pathlib.Path(c[1]).resolve() for c in m.CASES}))"`
+  — the number in this sentence has been wrong twice in one PR body, so re-derive
+  it rather than edit it by hand; Codex #212 round 2) — #86's
   `cell-`/`merge-`/`inv-`/`stamp-`/`fut-` set plus the folded queues from
   #109 (`n`/`o`/`c`), #111 (`rcpt-`), #113 (`bd-`/`ser-`), #115 (`moe-`),
   #118 (`ship-`), #129 (`dsp-`), #130 (`cat-`), #133 (`ref-`), #136
@@ -255,6 +264,97 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   the families with routes; f13-6's sole witness is the resolution-count test, the
   audit-row test being a control that cannot see it (Codex round 1); all 15 killed
   at fold-in, `-k f13-`)
+  and #192 (`moa-` — MCP OAuth, the M6-7 branch: `app/auth/mcp_oauth.py`,
+  `auth/mcp_auth.py`, `auth/registry.py`, `auth/prerouting.py`, `auth/dependency.py`,
+  `main.py`, `config.py` and `services/oidc.py`; every kill runs against an OIDC-mode
+  app built in-process with the fake provider in `tests/oidc_fake.py`, and the suite is
+  `tests/test_mcp_oauth.py`; moa-1…33 hand-run on the branch (moa-16 withdrawn),
+  34…48 from Codex round 1 — the grant as one state machine: revocation, one
+  redemption per handle, the binding as grant state, the consent path's resolution,
+  the profile on a handler's failure on both sides of the mount; moa-4/6/10/11/23
+  re-anchored in place by that round, moa-6 now the upstream token bounding a grant,
+  moa-12/14/15 re-pointed at the cold-start tests because the endpoints as a view of
+  the cache made the lifespan's warm-up every warm test's resolver; moa-39's kill is
+  the log-grep test seeing the lock's key when it is the authorization code itself;
+  49…56 from round 2 — the grant record as the unit of authority: the record gate,
+  one lock per grant that revocation takes too, the binding on the record, the
+  ending on a refused refresh response, the transparent path's outcome carried to
+  the request — with 34/36/37/38/39/42 re-anchored by that round (37/38 are now the
+  transition's lock, 42 the gate's digest check pointed at the f7 matrix, the retry
+  test it named withdrawn with the retry it asserted); 57…60 from round 3 —
+  revocation's own credential lookup (the `/revoke` route built over
+  `RevocationLookup`, the shell's client binding, no owner-row read) and the gate's
+  continuity check (a candidate must name the record's `(iss, sub)`, not merely the
+  owner now), with moa-56 re-anchored by that round — the continuity check now sits
+  inside its old anchor, so it replaces the verifier's call with the record's own
+  verdict instead; 61…66 from round 4 — one downstream client contract, killed by the
+  **wire-level contract suite** `tests/test_mcp_oauth_clients.py` (the first cases whose
+  kills live in a file that builds every request by hand rather than through a helper:
+  the registration response left as the SDK built it, the revocation form requiring a
+  secret, the plain authenticator at `/revoke`, the assertion audience, the ownership
+  check, a 200 on a failed client authentication — five of the six kill in the contract
+  suite, moa-65 in the lifecycle suite's cross-client test), with moa-57 re-anchored on
+  the handler class that replaced the SDK's; 67…70 from round 5 — discovery says the
+  contract (the AS document not rebuilt, the revocation methods advertised as the SDK's
+  pair, no algorithm beside a JWT method) and the hint as advice (an unknown value a 400
+  again), all four killed in the contract suite, and moa-57 re-anchored a second time on
+  the rewritten `get_routes`; 71…80 from round 6 — the protocol boundary field by field:
+  the assertion claim contract (not applied, `nbf`, a non-string `jti`, a boolean date),
+  registration canonicalisation (a null redirect list, the stored record), request
+  decoding (a repeated parameter, an empty value, the PKCE default) and the recovery
+  URL, all ten killed in the contract suite, with moa-64 re-anchored on the
+  per-endpoint authenticator factory; 81…91 from round 7 — admission, decoding,
+  cardinality and the SDK hand-off as one decision: the media type read by a
+  case-sensitive prefix, the NumericDate range, `resource` under the repetition rule,
+  a foreign set handed to the SDK as its first value, a foreign target at `/token`
+  passed to an SDK that judges nothing, a second mechanism beside an assertion, an
+  assertion from a public client, the missing challenge, `jwks` with `jwks_uri`,
+  `invalid_target` left to the SDK's vocabulary, an unparseable resource — all
+  eleven killed in the contract suite; and moa-76 **repaired** by that round (Codex
+  f25: its replacement had left an unmatched `)`, a SyntaxError at import that the
+  harness reported as ERROR and the PR body had counted as killed — a tuple is a
+  program, so compile the mutant before counting it), and moa-12 and moa-74 re-anchored in
+  place by that round (the `authorize` docstring and the f21 range line moved their
+  anchors); 92…99 from round 8 — admitted once: a fragment not refused, the path
+  compared without its parameters, the owned resource decision not applied at
+  `/authorize`, unknown parameters counted, an `Authorization` header ignored without
+  an assertion, only the first occurrence inventoried, the client looked up a second
+  time before dispatch, the challenge read from the first occurrence only — all eight
+  killed in the contract suite, with moa-71/86/87/90 re-anchored by that round (the
+  authenticator owns admission end to end, so "the SDK's alone" became the claim
+  contract skipped; the header inventory moved in front of the secret rule; dispatch
+  is by the snapshot's method; the refusal is the proxy's own, so the vocabulary
+  mutant is its code); 100…103 from round 9 — parsing is not validation: the URI
+  grammar not applied, the inline key set handed to the SDK's extraction unchecked,
+  unusable entries not dropped, the filtered copy not handed to the validator — all
+  four killed in the contract suite, and moa-92 **redesigned** by that round: the grammar
+  refuses a fragment on its own, so "the explicit check removed" had become an
+  equivalent mutant (GREEN on the full pass — the procedure's take-it-out-or-make-it-
+  killable rule); it is now the fragment *stripped* before comparing, FastMCP's original
+  erasure, killed by the fragment rows; 104…106 from round 10 — the selected key's
+  authorization: the inline selection converted to a PEM again, the remote verifier
+  left as FastMCP's, the remote selection handed on as its PEM — all three killed in
+  the contract suite; 107…109 from round 11 — the record the `kid` named: the inline
+  and the remote record re-identified by material (the first copy judged), an
+  object-shaped unusable inline key counted before the fallback — all three killed in
+  the contract suite, with moa-102/104/106 re-anchored by that round (the usability
+  predicate, the inline selection written out, the record checked against the PEM)
+  and **moa-101 and moa-103 retired** by it: once the inline selection was the
+  validator's own, round 9's copy-based filter was a second owner of the same decision
+  and its three mutants went equivalent (GREEN on the full pass — the procedure's
+  take-it-out rule); the filter retired into the selection and moa-102 followed it;
+  110…112 from round 12 — a named `kid` must match: the inline fallback restored for a
+  named `kid` (the SDK's inline rule, which round 11 had written out), an empty `kid`
+  read as a name, the inline `kid` compared case-insensitively — all three killed in
+  the contract suite; 113…114 from round 13 — the fallback counts records: the fetched
+  records kept by cache slot again, the no-`kid` fallback taking the last of several —
+  both killed in the contract suite, with moa-108/110/112 re-anchored by that round (the
+  rule is one function, `select_records`, for both paths);
+  all 111 killed on the branch by the tracked harness on the committed tree,
+  `-k moa-` — three first-pass survivors in
+  round 2, each fixed outside the tuple: moa-47 a redundant second delete, moa-56 a
+  fallback re-check masking the gate, moa-49 the fake's re-issued id_token identical
+  to the original within one second)
   and #191 (`oidc-` — browser OIDC, PR #209: `app/services/oidc.py`, `services/auth.py`,
   `routers/auth.py`, `auth/registry.py`, `auth/mode.py` and `main.py`; oidc-4…20
   hand-run on the branch, 21…38 from Codex round 1 — a session is authority only in the
@@ -332,7 +432,7 @@ the release gate instead. State the call and the reason in the hand-off entry.
 | Reviewer | Fits | Notes |
 | --- | --- | --- |
 | **GLM 5.3 Flash (Zhipu AI, via T3 Code on OpenRouter)** | **The default** for feature and fix rounds, any size | 1M context — holds a 2,000-insertion PR, its body and the process docs at once. Three rounds on 2026-08-28 (#171 GO+3P3, #173 GO+1P3, #174 GO+4P3): re-measures claims rather than reading them (its negative-control breakdowns have been exact), sweeps systematically (an AST prose-diff caught an author overclaim), probes empirically (injected a mutant to test an audit's pin), and discloses scope honestly. ~20 min and ~$0.07 a round (11.1M tokens ≈ $0.22 across all three, 96 % cache hit, OpenRouter billing). **Calibration: its findings have been reliable; its *remedies* are not pre-verified — measure a suggested fix like any claim** (#174 P3-1's suggested remedy failed measurement; the finding itself was right and subtle). It has not yet caught a hidden P2 on a branch that wasn't already exhaustively self-verified — widen its lane when it does. Replaced Cursor / Grok 4.6 (retired 2026-08-28, owner's call: the 256K context ceiling made large PRs a truncation risk; GLM holds them whole). |
-| **Codex (GPT 5.6 Sol)** | The highest-stakes shared mechanisms; second opinions | Has absorbed #86 (4,442 insertions) across four rounds, and its NO-GO rounds have caught hidden P2s (#159's isalpha currency, #169's parser-stage envelope). Reserve it for anything touching the write gate, money/stock semantics, migrations, and the M6 security work — and as a second opinion when a GO on an unpolished branch feels too easy. Subscription upped 2026-08-28; routine rounds need no meter check. |
+| **Codex (GPT-6 since 2026-09-05; GPT 5.6 Sol before; from #212 round 11, 2026-09-06, ChatGPT's Daybreak Blue — GPT 5.6 Sol-based — after GPT-6 Astra's refusals)** | The highest-stakes shared mechanisms; second opinions | Its first GPT-6 round (#212 round 2) reproduced two grant-lifecycle defects round 1 had not, each with an independent control, and corrected the author's mutant count. Has absorbed #86 (4,442 insertions) across four rounds, and its NO-GO rounds have caught hidden P2s (#159's isalpha currency, #169's parser-stage envelope). Reserve it for anything touching the write gate, money/stock semantics, migrations, and the M6 security work — and as a second opinion when a GO on an unpolished branch feels too easy. Subscription upped 2026-08-28; routine rounds need no meter check. |
 | **Copilot auto-review** | Off | Disabled by the owner on 2026-08-11 to conserve credits until 1 September. Its useful finds have been API-state semantics readable off a diff, not value-space defects. Don't request one casually. |
 
 Match the tool to the size of the work rather than forcing everything through one
@@ -356,6 +456,24 @@ what they say:
   prompt inside the review.
 - **Tell it where to post:** `gh pr comment N --body-file <path>` — `--body-file`,
   not `--body`, because a shell string mangles backticks and `$`.
+- **Give the reviewer two jobs, in order: the whole contract first, the fixes
+  second.** The template says it in fixed words. A brief that specifies exactly how
+  to verify the reported fixes — heads, failing assertions, mutants, the author's
+  assumptions — is very good at getting those verified and steers the reviewer past
+  everything outside the author's test plan; on #212, discovery metadata and the
+  value space of an optional revocation field sat unchecked through four rounds of
+  such briefs, and the reviewer said so (round 5). Killing every listed mutant proves
+  those tests detect those defects, not completeness. So the reviewer first writes its
+  own list of the feature's surfaces and each field's protocol-defined value space,
+  compares it with the PR body's **coverage record**, and probes the gap before it
+  verifies anything the author claimed.
+- **Carry a coverage record in the PR body**, updated every round: surface by surface,
+  what was checked, by what, at which head; what is unresolved; what is explicitly
+  untested. Findings survive in the thread; tentative concerns, unexplored paths and
+  the reasons particular checks were chosen do not — and a fresh reviewer session
+  otherwise rebuilds its understanding from the newest brief alone. Where practical,
+  keep one reviewer session through a PR's corrective rounds and open a fresh one
+  deliberately, for an independent pass, with the record in front of it.
 - **Point it at the test claim, and tell it to re-measure.** The PR body lists
   which tests fail against unfixed `main` and why; that is the claim most worth
   checking, and the author's counts are the first thing to get wrong (#109's body
@@ -390,6 +508,9 @@ what they say:
    for the invariant one level up.
 7. **File the siblings a review turns up** as their own issues; do not fold them in
    unless they share the root cause and the branch says so.
+7.1. **Update the coverage record** in the PR body: what this round checked and at
+   which head, what it opened, what stays explicitly untested. The next reviewer reads
+   it before the reply.
 8. **After merge, `Closes #A, closes #B`** — one `closes` per reference; GitHub binds
    only the first otherwise.
 
@@ -419,6 +540,16 @@ v0.2.4.1, v0.2.4.2), so it is not a formality either.
    ```
    Then export an archive *from the container* and check its manifest carries the
    right `app_version` and schema revision. Four healthy services.
+   **Family 8 in OIDC mode is the hand-run half of T2** (#192): the CI stack is local
+   mode, so once per release run the matrix against a stack configured with a
+   provider — `uv run python ingress_matrix.py http://127.0.0.1:8080 --mode oidc
+   --public-base-url <the stack's PUBLIC_BASE_URL> --password …` — and expect zero
+   failing rows; the three discovery documents, the anonymous `/mcp/` challenge's
+   `resource_metadata` pointer, the six protocol routes' `no-store` (a registration
+   body the SDK cannot read included) are what it proves there and cannot in local
+   mode. In either mode the matrix ends with a burst at `/mcp/register` that trips
+   nginx's limiter and checks its 429s carry the envelope and `no-store` — run it
+   last, and expect the peer to be rate-limited for a moment afterwards.
 5. **Restore the dev overlay afterwards** — the packaged stack replaced the dev
    `db` container:
    ```bash

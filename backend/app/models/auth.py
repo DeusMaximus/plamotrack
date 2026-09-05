@@ -18,7 +18,19 @@ an Argon2id verifier (#188), `session.token_hash` and
 
 from datetime import datetime
 
-from sqlalchemy import CheckConstraint, DateTime, String, func
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    Double,
+    Index,
+    String,
+    Table,
+    Text,
+    func,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -175,3 +187,34 @@ class OidcLogin(UUIDPrimaryKeyMixin, Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+#: The MCP OAuth proxy's state store (§5.5 family 8, §5.6 credential leakage;
+#: M6-7, #192): one key-value table FastMCP's proxy reads and writes through
+#: the `py-key-value-aio` PostgreSQL adapter — its dynamically registered
+#: clients, consent transactions, authorization codes, the provider's upstream
+#: tokens, the issued-token id mapping and refresh-token metadata, one
+#: `collection` each. Every `value` is Fernet-encrypted by the app before it
+#: reaches the row (`app/auth/mcp_oauth.py`), so the database never holds an
+#: upstream token in clear. A `Table`, not a mapped class: no service reads it
+#: by column — the store owns the row semantics — but the schema has one owner
+#: (Alembic, `d5e9362140ea`), whose DDL is the store's own so its
+#: `CREATE TABLE IF NOT EXISTS` is a no-op. Never portable (rule 9): absent
+#: from `services/portability/spec.py` like every auth table.
+MCP_OAUTH_STATE_TABLE = "mcp_oauth_state"
+
+mcp_oauth_state = Table(
+    MCP_OAUTH_STATE_TABLE,
+    Base.metadata,
+    Column("collection", Text, primary_key=True),
+    Column("key", Text, primary_key=True),
+    Column("value", JSONB, nullable=False),
+    Column("ttl", Double),
+    Column("created_at", DateTime(timezone=True)),
+    Column("expires_at", DateTime(timezone=True)),
+    Index(
+        "idx_mcp_oauth_state_expires_at",
+        "expires_at",
+        postgresql_where=text("expires_at IS NOT NULL"),
+    ),
+)

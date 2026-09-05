@@ -36,7 +36,10 @@ _TABLES = (
     # they still accumulate across tests: setup claims the owner and login/setup
     # write credentials, sessions and audit rows. `owner` is the exception — a
     # singleton like instance_settings, reset below rather than truncated.
-    "credential, session, personal_access_token, audit_event, oidc_login"
+    "credential, session, personal_access_token, audit_event, oidc_login, "
+    # The MCP OAuth proxy's state store (M6-7, #192): registrations, transactions
+    # and encrypted upstream tokens an OIDC-mode test leaves behind.
+    "mcp_oauth_state"
 )
 
 #: The owner row is seeded once by the migration and cannot be recreated at

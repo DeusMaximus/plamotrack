@@ -432,6 +432,20 @@ apply, so a snapshot there would make every apply fail with
 The snapshot is fixed by the transaction's *first SQL statement*, not request entry.
 → 2026-08-16 (#48)
 
+### Building on the parent of the class the spike measured
+The #190 spike measured FastMCP's `OIDCProxy`; #192 built on its parent `OAuthProxy`,
+because `OIDCProxy` fetches the provider's discovery document synchronously at
+construction and a provider down at start would have failed the start (§5.6 safe
+failure). The parent verifies the *upstream access token*; the child's two small
+hooks (`_get_verification_token`, `_uses_alternate_verification`) are what make the
+**id_token** the verified token — the whole basis of the owner binding — and the
+first head silently lost both: every token the proxy issued was refused at the first
+MCP request. The full-link test caught it (`401 == 200` on initialize) before any
+review did. When you subclass one level up from the class the evidence was taken on,
+enumerate the overrides the measured class carried and re-provide each one
+deliberately, or the measured behaviour is gone without a line of the diff saying so.
+→ 2026-09-05 (#192)
+
 ### Deterministic lock ordering, not delta aggregation, fixes the deadlock
 #36 proposed aggregating per-target deltas in `update_order`; the fix was
 `_lock_catalog_targets`, draining an order write's catalog locks up front in uuid
@@ -535,3 +549,361 @@ proof had one harness still sending a live token in a URI, and a packaged log
 scan that would pass on empty output — a leakage invariant is only as wide as its
 *narrowest* harness, and a scan without a vacuity guard is a scan that can be
 deleted by a logging change nobody reviews.
+
+## Overriding the entry points, not the state machine (#212, round 1)
+
+The M6-7 head applied every plamotrack rule on a documented FastMCP extension
+point — the owner check in `exchange_authorization_code`, the id_token hooks, the
+lazy endpoint resolution in `authorize`, the callback and the refresh — and the
+suite drove each entry point green. Codex then drove the *neighbouring
+transitions* the overrides delegated: a revoked access token was accepted for an
+hour (FastMCP's `revoke_token` never touched the access mapping and posted our
+reference string upstream), two concurrent redemptions of one code or one refresh
+token both minted (FastMCP's get→mint→delete is not atomic), a refresh that validly
+omitted an id_token left a fresh grant refused (the old id_token, still the thing
+verified per request, expired), and a restart between the consent page and its
+approval sent the browser to the placeholder endpoint (FastMCP's consent submission
+reads the attribute the entry-point overrides had not reached). Four findings, one
+shape: an invariant applied where the author looked, delegated where the author
+did not. The fixes were one level up in each case — the binding as *grant state*
+carried in our own tokens, a per-handle lock around the whole redemption, a
+revocation that removes the grant record, endpoint *properties* no reader can miss
+— and the reply's sweep enumerated the state machine (issuance, refresh,
+verification, revocation, resolution) rather than the call sites. When a feature is
+built on a framework's hooks, list the framework's transitions the hooks do **not**
+cover and test each from the outside, as a client would; the hook you override is
+the part you can already see. Two smaller traps from the same round: the SDK's
+`TokenError` is a frozen dataclass, and a generator-based context manager
+re-raising it dies with `FrozenInstanceError` (a 500 where `invalid_grant` was
+meant) — a class-based `__aexit__` re-raises cleanly; and a secret bound as a SQL
+parameter is a secret in the engine's DEBUG log, which the log-grep test caught
+when the lock key was the authorization code itself.
+
+## The record, not the transitions (#212, round 2)
+
+Round 1's fix applied the plamotrack rules to the grant "as one state machine" —
+issuance, refresh, verification, revocation — and the reply's sweep enumerated those
+transitions. Round 2 landed in the same function again ("When rounds keep landing in
+one function", above): revocation deleted the grant record while a refresh that
+already held the provider's answer wrote it back through the store's upsert (the
+client's exchange under its per-token lock, the transparent refresh behind a request
+under FastMCP's in-process one — two locks, neither the revocation's); and the SDK's
+refresh persisted the provider's set *before* calling the hook that verified it, and
+its transparent refresh never called the hook at all, so a stranger's id_token on a
+refresh was refused at the token endpoint and yet the set it came with was the one
+every existing access token then read. Each transition had been made correct; what
+none of them owned was the **record** — the one row every transition reads and
+writes. The fix is a gate on that row's writes (`GrantRecords`: a write only from a
+declared transition, only against the binding the record itself holds, only with an
+identity that binding names) and one lock per grant that every transition takes,
+revocation included. The lesson, one level above round 1's: when a framework's
+transitions share a piece of state, enumerate the **writers of the state**, not the
+transitions, and put the invariant where the writes land — grep for the store's
+`put` and `delete`, and make every hit either pass through your gate or be provably
+under your lock. Two smaller things from the same round: the binding on the record
+also closed a sibling the sweep predicted — a binding renewed by a transparent
+refresh (which mints nothing) drifted from the digest the client's tokens carried,
+and the next exchange re-verified a token that had since expired, round 1's f3 by
+another road; and the SDK answers a failed transparent refresh from the object it
+had already loaded, so a refusal inside the refresh has to reach the request by a
+route other than the exception (`_Transition.outcome`), or the fallback answers 200.
+And one from the mutation pass, filed under "green for the wrong reason": the drift
+test passed on its mutant because the fake provider's *re-issued* id_token was
+byte-identical to the one issued at link time whenever both fell in the same second
+— identical claims, and RS256 is deterministic — so the test that meant to bring a
+*new* id_token brought the old one back and had nothing to drift on; it had gone
+red at the reviewed head only because the clock ticked between the link and the
+refresh. A fake that re-issues a credential must make it distinct on purpose (a
+`jti`), not by luck of the clock; the mutant, not the red run, is what noticed.
+
+## Located, not authorized; the record's identity, not the owner's (#212, round 3)
+
+Round 2 put the invariant on the grant record and gated its writes; round 3 landed
+one step to either side of that gate, and both findings were about *which question*
+a check answers rather than whether it runs. **Finding 9:** the SDK's revocation
+handler locates the presented token through the provider's `load_access_token` —
+the same method the bearer middleware calls — and on this proxy that method is the
+whole per-request authorization: the upstream set read, refreshed when near or past
+expiry, the new id_token verified against the provider's keys, the owner row
+consulted. Each of those is right for a *request*. For a *revocation* every one of
+them is a reason to fail to find a grant that is there: a provider whose key had
+rotated while its JWKS was unreachable made the refresh's verdict `unavailable`, the
+round-2 rule correctly left the verified grant standing, the lookup answered
+`None`, and RFC 7009's "unknown token → 200" covered a live grant. The fix is a
+second object the handler talks to (`RevocationLookup`), whose access-token lookup
+*locates* — the proxy's own signature, the client id and binding from the claims,
+the JTI mapping — and nothing else. A revocation reduces authority; it owes none of
+the verification a request owes, and it has to reach the grant precisely when the
+provider cannot be reached. When a framework reuses one provider method for two
+callers with opposite failure semantics ("refuse if unsure" versus "find it
+regardless"), give the second caller its own method rather than tuning the shared
+one. **Finding 10:** the gate verified a refresh's new id_token with the owner
+check — "does this name the owner?" — and a rebind in the window between a
+transition's owner check and its write made the answer yes for the *new* owner,
+so the record's binding moved from A to B and B was minted a successor on A's
+grant. The check the record needed was continuity: "does this name the identity
+that authorized *this* grant?" (OpenID Connect Core §12.2), which is the record's
+own `(iss, sub)`, not the owner row's. The two questions agree in every state but
+one, and that state lasts as long as a rebind. A check that consults mutable
+global state (the owner row) to validate a transition of a specific record is
+asking the wrong question whenever the two can be updated independently; compare
+with the record. Two smaller things: the tightened race witness — a namespace-wide
+count of advisory waiters is an observation a decoy can satisfy (the stg-5 lesson,
+re-learned on this branch); the test now asserts the `pg_blocking_pids` edge from
+the session holding *this grant's* lock to the one parked on it — and the
+revocation lookup's change made the transparent/access cell of that race a real
+witness for the first time (before, revocation's lookup itself entered the locked
+transparent refresh, so the cell was green for a reason other than the lock).
+
+## The helper that padded the form (#212, round 4)
+
+Three rounds of grant-lifecycle findings had been fixed and were holding; round 4
+landed on the client-authentication boundary, and every one of its three findings was
+a requirement no test had expressed. The clearest: the suite's `revoke()` helper sent
+`client_secret=""` on every call, because the SDK's revocation form model required the
+field — so every revocation test in the lifecycle suite passed against a server that
+answered `400 invalid_request` to the form a public client actually sends. **Fifty-nine
+mutants, all killed, cannot expose a requirement the tests never state**; a helper
+that adapts a request to a defect makes the defect invisible to every test that uses
+it. Two more of the same shape: the registration helper always asked for `none`, so
+the SDK's response advertising `client_secret_post` and a secret over a stored public
+client was never seen; and the CIMD fixture only ever declared `none`, so the
+`private_key_jwt` method a CIMD document may declare was authenticated at `/token`
+(FastMCP installs its authenticator there) and refused at `/revoke` (the plain SDK one
+there) without a test noticing. The rule that came out of it, per the reviewer's
+brief: **define the client contract before editing, then test it from the wire** —
+which client kinds and authentication methods are supported, the exact forms and
+headers for each, on every endpoint that authenticates a client, through the whole
+lifecycle including absent, wrong and correct credentials, with the persisted state
+and the bearer's later fate asserted, and with the requests built by hand rather than
+through the SDK's models or a convenience helper. The contract suite
+(`tests/test_mcp_oauth_clients.py`) is that; its first run against the reviewed head
+went red on 32 of 39 rows, on the three findings' own assertions, and green on the
+seven controls. Choosing the contract also simplified the code: registration is open,
+so a downstream client secret authenticates nothing that PKCE and the rotating
+refresh token do not — every dynamically registered client is public, the registration
+response says so, and the SDK authenticator's Basic branch (which wants the client id
+in the form beside the header) becomes unreachable rather than something to repair.
+The companion rule for the SDK seam: **a documented extension point says where your
+code runs, not what surrounds it** — list, per endpoint, who owns client
+authentication, the request form, the lookup, persistence and error handling, and
+test each boundary you do not own from outside. The SDK's registration handler
+returns the very object it hands to `register_client`; the SDK's token handler and
+revocation handler disagree on the error code for a failed client authentication
+(`invalid_client` versus `unauthorized_client`); its revocation form and its token
+forms disagree on whether `client_secret` is optional. None of that is visible from
+the extension point's signature.
+
+## Verifying the fixes is not examining the contract (#212, round 5)
+
+Five rounds in, the reviewer put it plainly: the briefs were very good at specifying
+how to verify the reported fixes — exact heads, the assertion each red row should fail
+on, the mutants to re-run, the author's assumptions to challenge — and gave almost no
+structure to what remained unexplored across the whole feature. A reviewer given that
+brief validates the author's test plan thoroughly and inherits its blind spots; a
+*fresh* reviewer session given the same brief inherits them just as well, because the
+thread carries the findings and not the tentative concerns or the paths nobody walked.
+Two findings had sat unexamined through four rounds: the discovery documents a client
+reads *before* it registers still advertised the SDK's shared-secret methods and no
+assertion algorithm, disagreeing with the endpoints the contract had just been written
+for; and an optional field inside a supported request — RFC 7009's hint, which the
+protocol says to ignore when unrecognised — was a two-value enum that turned a valid
+revocation into a 400. Neither needed the grant machinery; both were outside every
+brief's frame. Sixty-five mutants, all killed, could not have shown either: killing
+every listed mutant proves those tests detect those defects and says nothing about
+completeness. Three changes followed, in the template and the procedure: the reviewer
+has **two jobs in a fixed order** — write its own list of the feature's surfaces and
+each field's protocol-defined value space and probe the gap against the PR body first,
+verify the fixes second; the PR body carries a **coverage record** — checked, by what,
+at which head; unresolved; explicitly untested — updated every round as the continuity
+findings alone are not; and where practical **one reviewer session stays through a
+PR's corrective rounds**, a fresh one being opened deliberately for an independent
+pass with the record in front of it. The rule for the author is the mirror image: when
+the fix for a finding is a *contract* (round 4's), the sweep is the contract's whole
+surface — the documents that describe it as well as the endpoints that enforce it —
+and every field's value space is the protocol's, including the values nobody defined.
+
+## The seam has an owner per field, not per endpoint (#212, round 6)
+
+Round 5's process change worked as designed: given two jobs in order — the whole
+contract first, the fixes second — the reviewer wrote a ten-surface field inventory
+before reading the coverage record and found four pre-existing gaps in one pass, all
+at the SDK-to-application boundary and none in the grant machinery: the SDK's
+client-assertion validator never checked `nbf` and used the raw `jti` as a dictionary
+key; FastMCP's registration stored a record built from a few of the fields while the
+SDK returned the object it was handed, so three more fields disagreed after round 4
+had fixed one; the SDK's `dict(form)` kept the last of a repeated parameter and minted,
+revoked or opened a consent transaction on it; and a generated recovery URL named the
+child discovery alias this instance prunes. The pattern across the four: **fixing the
+one field a review names leaves its siblings inherited.** Round 4 made
+`token_endpoint_auth_method` truthful and left `response_types`, `grant_types`,
+`scope` and the display fields to FastMCP; round 3 gave revocation its own lookup and
+left its *form parsing* to the SDK; the assertion had an audience and a replay check
+and no claim contract. The rule that came out: when an adapter takes over a field at
+a seam, enumerate every field the same message carries and decide, per field, who
+owns its value space — the SDK, or you — and write the owner down (design §5.9 (k)'s
+audit is per endpoint *and* per field now). The second half of the lesson is about
+where the guard sits: a repeated parameter cannot be seen once a framework has
+parsed the form into a dict, so the request-decoding contract is an ASGI guard on the
+raw query and body in front of the handler (the registration-body guard's shape),
+not a check inside a Pydantic model; and a claim contract that must not spend the
+replay identifier runs before the validator that caches it, on the unverified
+payload — refuse-only, granting nothing, with the SDK's verification still behind it.
+
+## Admission, decoding, cardinality and the hand-off are one decision (#212, round 7)
+
+Round 6 gave every field at the SDK seam an owner and the reviewer's next pass found
+that two of the new owners had been written one axis at a time. The request-decoding
+guard decided *whether to run* by a case-sensitive `startswith` on the media type,
+so `Application/X-Www-Form-Urlencoded` — which the SDK parses, media-type names
+being case-insensitive — and a `multipart/form-data` body walked around the whole
+multiplicity contract; and the multiplicity rule itself was universal where the
+protocol has one exception (`resource`, RFC 8707 §2), so a client that sent the same
+resource twice, as the RFC allows, was refused — and the obvious repair, exempting
+the name and letting the SDK keep the last value, would have discarded the other
+requested target. The assertion admission had the same shape: it judged the claims
+and then let the SDK *select* the assertion beside a `client_secret` or a Basic
+header, or — on a public client — ignore it entirely, so "judged in full whatever its
+method" was true of a private client only. And the NumericDate check that refused a
+boolean converted the value to a float first, which overflowed on a 401-digit integer
+into a 500. The lesson: **a guard is not a filter on one axis.** Deciding what a
+field's value space is (round 6) is half of it; the other half is deciding, in the
+same place, *which requests the guard sees* (every representation of the body, or
+none), *what the field's cardinality is per the protocol that defines it* (one, or a
+set with its own collapse and refusal), *what the refusal's form is at each endpoint*
+(the SDK's redirect at `/authorize`, which the proxy has to render itself when the
+SDK's vocabulary lacks the code; a direct 400 at `/token`, where the SDK reads the
+field and judges nothing), and *what the SDK does with what is handed to it* (selects
+by the client's registered method, so the guard must refuse the method conflict the
+SDK will not). Two smaller lessons rode along. A mutant tuple is a program: moa-76's
+replacement left an unmatched `)` and the harness reported an import ERROR the PR body
+had counted as killed — compile the mutated source before counting, and keep the
+harness's refusal to count setup errors. And a test fixture that computes "now" at
+import is aged by however long the suite takes to reach it: CI's full run failed the
+`nbf`-in-the-future rows on `200 == 401` after 210 seconds while the focused run
+passed — date the fixture when the test runs.
+
+## Admitted once (#212, round 8)
+
+Round 7 gave each decision at the SDK seam an owner and the eighth round found that
+every one of them had been written as a *precheck*: a refuse-only check in front of a
+parser, a comparison or a lookup that then decided again. The resource comparison was
+borrowed from FastMCP's normaliser — which erased the fragment and the path's
+`;parameters` before comparing, so `…/mcp/#other` was this server — and the guard's
+hand-off at `/authorize` was re-judged by that same normaliser, so owning the
+predicate alone fixed `/token` and left `/authorize` opening a transaction. The
+repetition rule counted every name, where RFC 6749's prohibition (erratum 5708)
+covers the parameters it defines and says to ignore the rest. The authenticator read
+one `Authorization` occurrence, then returned to an SDK branch that read none — a
+public client with `Basic` beside its valid code succeeded, and an empty first
+occurrence hid a `Basic` second. And the client was looked up twice, once by the
+precheck and once by the SDK, so a document served with `no-store` could say
+`private_key_jwt` to the first and `none` to the second, which accepted an assertion
+under a key the document never published — neither complete record authorised the
+request; mixing them did. The reviewer named the invariant and it is the lesson: **a
+request is admitted once** — from its recognised fields and every credential
+occurrence, against one client snapshot, with the decision carried through whatever
+the SDK does next. When the fix is "check X before the SDK", ask what the SDK will
+read, compare or fetch *again* afterwards; if the answer is anything, the check is
+not the decision, and the repair is to own the decision — resolve once, dispatch on
+that, hand the SDK only what it cannot re-judge. Two smaller ones rode along: a
+borrowed comparison inherits the borrowed permissiveness (sharing FastMCP's helper
+proved consistency with FastMCP, not correctness against the RFC), and a range chosen
+from a spec's discussion should be described as the local policy it is (the
+NumericDate bound), not as the spec's contract.
+
+## Parsing is not validation (#212, round 9)
+
+The ninth round's two findings were the same shape on two boundaries. The resource
+comparison, owned in round 8, read its value through `urlsplit` and treated "it
+parsed and has a scheme" as "it is an absolute URI": a parser's job is to make sense
+of what it is given, so it admitted a tab in the authority, a carriage return in the
+path and a leading NUL (stripping some of them on the way), and the query the
+comparison ignores was never looked at, so an invalid percent-escape and an unescaped
+space passed too. FastMCP's inline key extraction did the same with the key set: it
+iterated whatever `keys` was and called `.get` on whatever each entry was, so a `keys`
+object, a string or a null entry was a 500. The rule: **a value's grammar is judged on
+the string, before any parser sees it, and a container's shape is judged before
+anything reads it** — RFC 3986's `absolute-URI` as a regular expression on the decoded
+value, RFC 7517's "an array of JWK objects" as an `isinstance` check per entry — and
+only then is the parsed or read result compared or used. A parser that strips what it
+cannot represent has already decided for you; a comparison that ignores a component
+has left that component unchecked. The corollary for borrowed helpers is the same as
+round 8's: a library's tolerance is its own, and the seam that owns the decision owns
+the grammar too.
+
+## The selected key keeps its authorization (#212, round 10)
+
+FastMCP's assertion validator selects the client's JWK by `kid`, converts it to a PEM,
+and verifies with the PEM — on the inline set and on the fetched one, where the PEMs
+are what it caches. A PEM is key material and nothing else: the JWK's `alg`, `use` and
+`key_ops` — the key's declared authorization for an operation (RFC 7517 §4.2–§4.4),
+which RFC 8725 §3.1 says a verifier must honour — are gone before joserfc sees the key,
+so a mathematically valid RS256 signature authenticated under a key published as
+`alg: RS512`, `use: enc` or `key_ops: ["sign"]`. joserfc enforces all three when given
+the JWK object. The lesson extends round 9's: a conversion is a parser in reverse — it
+keeps what its output format can represent and silently discards the rest — and the
+seam that owns a decision has to check what the library's *intermediate
+representation* dropped, not only what its parser admitted. The repair's shape is
+worth keeping: not a second verifier, not a refetch, not a metadata check bolted on
+before the SDK (which would have to reproduce the SDK's selection, cache and fallback
+to be judging the same key) — but the JWK itself handed to FastMCP's verifier in place
+of the PEM it selected, identified by that PEM (identical whatever metadata the JWK
+carries), so the SDK's own decode enforces the restriction on the key it chose, cache
+lifetime included. When the library's selection is right and its representation is
+lossy, replace the representation, not the selection.
+
+## The record the selection named (#212, round 11)
+
+Round 10 carried the selected JWK to the verifier by finding it through the PEM the
+SDK had selected — material as identity — and named the assumption in the brief: a set
+publishing one material twice is judged by its first entry. The eleventh round
+measured it: two `kid`s, one material, one copy `use: sig` and one `use: enc`, the
+assertion naming the `enc` copy — accepted when the `sig` copy came first, refused when
+it came second. The outcome followed array order, which RFC 7517 §5.1 says implies
+nothing, instead of the `kid`, which §4.5 says is how a key is selected. The lesson
+completes round 10's: when you replace a library's lossy representation, carry the
+record by **the identity the selection used**, not by the material the representation
+kept — the material is exactly the part two records can share. And the smaller one
+beside it: a usability predicate copied from a library has to be the library's whole
+predicate — "is an object" was round 9's, "can be imported" is the remote path's, and
+the gap between them denied the single-key fallback to an inline set the fetched set
+would have accepted.
+
+## The library had two rules (#212, round 12)
+
+Round 11 replaced the SDK's inline key extraction with the validator's own, "written
+out by the SDK's rule" — and copied the rule from the function it replaced. The SDK
+has two. Its inline extraction falls back to the only key whenever no record matched
+the assertion's `kid`, named or not; its remote selection falls back only when the
+assertion names no `kid` at all. The docs described the remote one, the code carried
+the inline one, and the twelfth round measured the gap: an assertion signed by the
+only published key but naming a `kid` the set does not hold was accepted inline and
+refused fetched — a refresh reaching the provider and a grant deleted under a header
+that names no published record. The lesson: when a library's function is rewritten in
+place, the rule to write out is the one the *contract* names, not the one the replaced
+function happened to carry; where the library holds the same decision in two places,
+say which one you copied and drive the difference between them. And a control that
+passes *through* the defect is not a control: round 11's own rows linked the client
+with an assertion naming `client-key` against sets that published the key under
+another name or none, and every link succeeded — by the fallback under test. Re-linked
+under a published name, they still pass; the row that showed the defect was the one
+whose `kid` named nothing published, which no earlier row had sent.
+
+## The cache is not the set (#212, round 13)
+
+Rounds 10, 11 and 12 each repaired one representation of the key selection: the PEM
+that lost the metadata, the material that two records could share, the rule copied from
+the wrong of the SDK's two functions. Round 13 found the representation under all three.
+The fetched path kept its records exactly as FastMCP keeps its PEM cache — by `kid`,
+with every unnamed record under one `_default` slot — and the single-key fallback
+counted slots: two usable records without a `kid` were one key fetched, and the fallback
+returned the last of them while the inline set, which counts records, refused the same
+set as ambiguous. Faithfully mirroring the library's cache reproduced the library's
+loss. The lesson is the one the three earlier rounds circled: when a library's
+representation is lossy, the invariant has to be stated over the thing the
+representation is *of* — here the usable records of the set — in one place, before
+either representation is consulted, with the library's own answer behind it able to
+refuse but never to admit. And the procedure's rule 6 applies to the author as much as
+the reviewer: four rounds in one function is the signal to stop repairing
+representations and write the rule they were all approximating.

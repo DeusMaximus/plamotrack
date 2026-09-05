@@ -130,6 +130,8 @@ AUTH_MIG = VERS / "20260903_f1058c5de0f3_auth_foundation_tables_m6_2_187.py"
 OIDC_SVC = ROOT / "app/services/oidc.py"
 AUTH_ROUTER = ROOT / "app/routers/auth.py"
 MODE = ROOT / "app/auth/mode.py"
+# #192 (M6-7): the moa- set — MCP OAuth.
+MCP_OAUTH = ROOT / "app/auth/mcp_oauth.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -3290,6 +3292,836 @@ CASES = [
         "    return isinstance(value, float)\n",
         "exp-nan",
     ),
+    # --- #192 (M6-7): MCP OAuth — the moa- set ------------------------------------------
+    # The proxy's policy on FastMCP's extension points (app/auth/mcp_oauth.py), the
+    # family-8 registry declarations, the pre-routing gate's namespace rule, the
+    # principal mapping and the settings contract. Every kill runs against an
+    # OIDC-mode app built in-process with the fake provider (tests/oidc_fake.py).
+    (
+        "moa-1. the synthesised upstream-id client admitted",
+        MCP_OAUTH,
+        "        if client_id == self._upstream_client_id:\n            # The synthesised",
+        "        if False:\n            # The synthesised",
+        "synthesised_upstream_id_client_is_refused",
+    ),
+    (
+        "moa-2. a DCR client not wrapped in the registration binding",
+        MCP_OAUTH,
+        "        return BoundDCRClient(**client.model_dump(), allow_unregistered_redirect_uris=False)",
+        "        return client",
+        "allowlist_narrows_registration_and_keeps_the_registration_binding",
+    ),
+    (
+        "moa-3. the registration check inside BoundDCRClient removed",
+        MCP_OAUTH,
+        "        if redirect_uri is not None and self.cimd_document is None:\n            if not _matches_registered_redirect_uri(redirect_uri, self.redirect_uris):",
+        "        if False:\n            if not _matches_registered_redirect_uri(redirect_uri, self.redirect_uris):",
+        "allowlist_narrows_registration_and_keeps_the_registration_binding",
+    ),
+    (
+        "moa-4. the owner check at issuance skipped",
+        MCP_OAUTH,
+        "            if verdict.binding is None:\n                # Consume the code first",
+        "            if False:\n                # Consume the code first",
+        "stranger_is_refused_at_the_token_endpoint or unbound_instance_issues_nothing",
+    ),
+    (
+        "moa-5. the binding comparison always passes",
+        MCP_OAUTH,
+        '        if bound != (provider.issuer, subject):\n            return OwnerVerdict(None, "identity", subject)',
+        '        if False:\n            return OwnerVerdict(None, "identity", subject)',
+        "stranger_is_refused_at_the_token_endpoint or rebind_refuses_an_issued_token",
+    ),
+    (
+        "moa-6. the grant no longer bounded by the upstream token's expiry",
+        MCP_OAUTH,
+        '        bounds a grant."""\n        return True',
+        '        bounds a grant."""\n        return False',
+        "upstream_token_bounds_a_grant_the_provider_cannot_refresh",
+    ),
+    (
+        "moa-7. a personal access token no longer routed to its verifier on the mount",
+        MCP_OAUTH,
+        '        if token.startswith(f"{token_format.TOKEN_KIND}_"):',
+        "        if False:",
+        "personal_access_token_still_works_on_the_mount_in_oidc_mode",
+    ),
+    (
+        "moa-8. the mcp grant mapped read-only",
+        MCP_AUTH,
+        '        return mcp(write=True, subject=token.claims.get("sub"))',
+        '        return mcp(write=False, subject=token.claims.get("sub"))',
+        "owner_links_a_client_and_the_token_drives_the_tools or mcp_kind_maps_to_the_fixed_scopes",
+    ),
+    (
+        "moa-9. any kind maps to the mcp principal",
+        MCP_AUTH,
+        "    if kind == PrincipalKind.MCP.value:\n        return mcp(",
+        "    if True:\n        return mcp(",
+        "mcp_kind_maps_to_the_fixed_scopes_and_nothing_else_is_a_principal",
+    ),
+    (
+        "moa-10. the identity refusal not audited as one",
+        MCP_OAUTH,
+        "            await self._record(\n                audit.MCP_IDENTITY_REFUSED,",
+        "            await self._record(\n                audit.OIDC_LOGIN_FAILED,",
+        "stranger_is_refused_at_the_token_endpoint",
+    ),
+    (
+        "moa-11. the grant not audited as one",
+        MCP_OAUTH,
+        "            await self._record(\n                audit.MCP_GRANT_ISSUED,",
+        "            await self._record(\n                audit.OIDC_LOGIN_FAILED,",
+        "owner_links_a_client_and_the_token_drives_the_tools",
+    ),
+    (
+        "moa-12. authorize does not resolve the upstream endpoints",
+        MCP_OAUTH,
+        # Re-anchored in round 7 (the docstring `authorize` gained sits between the
+        # `def` line and the `try:` the old anchor spanned).
+        "        try:\n            await self._resolve_upstream()\n        except UnavailableError as exc:\n            raise AuthorizeError(",
+        "        try:\n            pass\n        except UnavailableError as exc:\n            raise AuthorizeError(",
+        "provider_down_at_authorize_is_temporarily_unavailable",
+    ),
+    (
+        "moa-13. a provider outage at authorize escapes as an exception",
+        MCP_OAUTH,
+        '        except UnavailableError as exc:\n            raise AuthorizeError(\n                error="temporarily_unavailable", error_description=_PROVIDER_UNAVAILABLE\n            ) from exc',
+        "        except UnavailableError as exc:\n            raise exc",
+        "provider_down_at_authorize_is_temporarily_unavailable",
+    ),
+    (
+        "moa-14. the callback does not resolve the upstream endpoints",
+        MCP_OAUTH,
+        "    async def _handle_idp_callback(self, request: Request):\n        try:\n            await self._resolve_upstream()",
+        "    async def _handle_idp_callback(self, request: Request):\n        try:\n            pass",
+        "process_whose_start_missed_the_provider",
+    ),
+    (
+        "moa-15. the refresh exchange does not resolve the upstream endpoints",
+        MCP_OAUTH,
+        '        try:\n            await self._resolve_upstream()\n        except UnavailableError as exc:\n            raise TokenError("invalid_request", _PROVIDER_UNAVAILABLE) from exc',
+        '        try:\n            pass\n        except UnavailableError as exc:\n            raise TokenError("invalid_request", _PROVIDER_UNAVAILABLE) from exc',
+        "process_whose_start_missed_the_provider",
+    ),
+    (
+        "moa-17. the child's well-known aliases not pruned",
+        MCP_OAUTH,
+        '        if not (isinstance(route, Route) and route.path.startswith("/.well-known/"))',
+        "        if True",
+        "mounted_surface_in_oidc_mode_matches_its_snapshot",
+    ),
+    (
+        "moa-18. the protocol routes keep the SDK's own method metadata",
+        MCP_OAUTH,
+        "        if isinstance(route, Route) and MCP_MOUNT + route.path in MCP_OAUTH_ROUTES:\n            route.methods = None",
+        "        if False:\n            route.methods = None",
+        "each_protocol_route_accepts_exactly_its_declared_verbs",
+    ),
+    (
+        "moa-19. the bare OpenID document installed at the root",
+        MCP_OAUTH,
+        "        if route.path not in DISCOVERY_ROUTES:\n            continue",
+        "        if False:\n            continue",
+        "mounted_surface_in_oidc_mode_matches_its_snapshot or three_root_documents_name_this_instance",
+    ),
+    (
+        "moa-20. the local-mode stub answers 200",
+        MCP_OAUTH,
+        "            status_code=404,\n        )\n        await response(scope, receive, send)",
+        "            status_code=200,\n        )\n        await response(scope, receive, send)",
+        "every_family_8_path_is_404_in_local_mode",
+    ),
+    (
+        "moa-21. no protocol routes registered in local mode",
+        MCP_OAUTH,
+        "    return [Route(_child_path(path), endpoint=NotInThisMode(path)) for path in MCP_OAUTH_ROUTES]",
+        "    return []",
+        "mounted_surface_matches_the_snapshot or every_family_8_path_is_404_in_local_mode",
+    ),
+    (
+        "moa-22. the storage key is the signing key",
+        MCP_OAUTH,
+        "    return base64.urlsafe_b64encode(derived)",
+        "    return base64.urlsafe_b64encode(signing_key)",
+        "storage_key_differs_from_the_signing_key",
+    ),
+    (
+        "moa-23. the audit rows name the wrong route",
+        MCP_OAUTH,
+        '        self, event: str, *, detail: str, principal=None, target: str = f"{MCP_MOUNT}/token"',
+        '        self, event: str, *, detail: str, principal=None, target: str = f"{MCP_MOUNT}/authorize"',
+        "id_token_that_fails_the_claim_contract_issues_nothing or owner_links_a_client",
+    ),
+    (
+        "moa-24. discovery declared no-store",
+        REG,
+        '    path: _protocol(path, ("GET", "HEAD", "OPTIONS"), ProtocolRole.DISCOVERY, _PUBLIC_DISCOVERY)',
+        '    path: _protocol(path, ("GET", "HEAD", "OPTIONS"), ProtocolRole.DISCOVERY)',
+        "three_root_documents_name_this_instance or every_transaction_and_credential_response",
+    ),
+    (
+        "moa-25. the authorization endpoint declared with PUT",
+        REG,
+        '        f"{MCP_MOUNT}/authorize", ("GET", "POST"), ProtocolRole.AUTHORIZATION',
+        '        f"{MCP_MOUNT}/authorize", ("GET", "POST", "PUT"), ProtocolRole.AUTHORIZATION',
+        "each_protocol_route_accepts_exactly_its_declared_verbs",
+    ),
+    (
+        "moa-26. the gate resolves a principal under the protocol namespace",
+        PRE,
+        "        if any(route_path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES):\n            # Family 8's namespace is the protocol's, route or no route (#192):",
+        "        if False:\n            # Family 8's namespace is the protocol's, route or no route (#192):",
+        "discovery_resolves_no_principal or gate_and_the_router_agree",
+    ),
+    (
+        "moa-27. a scoped route admitted under the protocol namespace",
+        REG,
+        "            and policy.credential != CredentialPolicy.PROTOCOL\n            and any(leaf.path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES)",
+        "            and False",
+        "non_protocol_route_under_the_protocol_namespace_fails_the_build",
+    ),
+    (
+        "moa-28. a discovery route's verbs not pinned",
+        REG,
+        "        if route.methods != declared.methods:\n            raise UndeclaredRouteError(",
+        "        if False:\n            raise UndeclaredRouteError(",
+        "discovery_route_serving_other_verbs_than_declared_fails_the_build",
+    ),
+    (
+        "moa-29. the signing key optional in OIDC mode",
+        CFG,
+        '                ("MCP_OAUTH_SIGNING_KEY", self.mcp_oauth_signing_key),\n',
+        "",
+        "oidc_mode_requires_the_signing_key_and_an_https_or_loopback_base_url",
+    ),
+    (
+        "moa-30. a plain-http LAN base URL admitted in OIDC mode",
+        CFG,
+        '        if parsed.scheme != "https" and parsed.hostname not in MCP_OAUTH_PLAIN_HTTP_HOSTS:',
+        "        if False:",
+        "oidc_mode_requires_the_signing_key_and_an_https_or_loopback_base_url",
+    ),
+    (
+        "moa-31. the signing key's shape not checked",
+        CFG,
+        '        if not re.fullmatch(r"[0-9a-f]{64}", value):',
+        "        if False:",
+        "oidc_mode_requires_the_signing_key_and_an_https_or_loopback_base_url",
+    ),
+    (
+        "moa-32. the nonce check no longer skippable — the proxy's tokens refused",
+        OIDC_SVC,
+        '    if nonce is None:\n        return\n    token_nonce = claims.get("nonce")',
+        '    token_nonce = claims.get("nonce")',
+        "owner_links_a_client_and_the_token_drives_the_tools",
+    ),
+    (
+        "moa-33. the nonce check skipped for the browser login too",
+        OIDC_SVC,
+        '    if nonce is None:\n        return\n    token_nonce = claims.get("nonce")',
+        '    if True:\n        return\n    token_nonce = claims.get("nonce")',
+        "id_token_that_fails_a_check_opens_no_session and nonce",
+    ),
+    # --- Codex #212 round 1: the grant as one state machine (f1–f5) ------------------
+    (
+        "moa-34. revocation leaves the grant record (the presented token stays live)",
+        MCP_OAUTH,
+        "                    grant = await self._upstream_token_store.get(key=mapping.upstream_token_id)\n                    await self._upstream_token_store.delete(key=mapping.upstream_token_id)",
+        "                    grant = await self._upstream_token_store.get(key=mapping.upstream_token_id)",
+        "successful_revocation_kills_every_credential_of_the_grant",
+    ),
+    (
+        "moa-35. the provider not asked to revoke its refresh token",
+        MCP_OAUTH,
+        "        await self._revoke_upstream(grant)",
+        "        pass",
+        "successful_revocation_kills_every_credential_of_the_grant",
+    ),
+    (
+        "moa-36. revocation audited as issuance",
+        MCP_OAUTH,
+        "            audit.MCP_GRANT_REVOKED,\n            principal=mcp_principal(write=True, subject=handle[1].subject),",
+        "            audit.MCP_GRANT_ISSUED,\n            principal=mcp_principal(write=True, subject=handle[1].subject),",
+        "successful_revocation_kills_every_credential_of_the_grant",
+    ),
+    (
+        "moa-37. no transition takes its lock (two redemptions of a code mint)",
+        MCP_OAUTH,
+        "        await self._lock.__aenter__()\n        self._declared = _transition_in_flight.set(self._transition)",
+        "        self._lock._session = get_sessionmaker()()\n        self._declared = _transition_in_flight.set(self._transition)",
+        "two_redemptions_of_one_authorization_code_yield_one_grant",
+    ),
+    (
+        "moa-38. no transition takes its lock (two redemptions of a refresh token mint)",
+        MCP_OAUTH,
+        "        await self._lock.__aenter__()\n        self._declared = _transition_in_flight.set(self._transition)",
+        "        self._lock._session = get_sessionmaker()()\n        self._declared = _transition_in_flight.set(self._transition)",
+        "two_redemptions_of_one_refresh_token_yield_one_successor_lineage",
+    ),
+    (
+        "moa-39. the lock key is the handle itself, as a SQL parameter (the code in the log)",
+        MCP_OAUTH,
+        '                "SELECT pg_advisory_xact_lock(CAST(:namespace AS integer), CAST(:key AS integer))"\n            ),\n            {"namespace": GRANT_LOCK_NAMESPACE, "key": _lock_key(self._handle)},',
+        '                "SELECT pg_advisory_xact_lock(CAST(:namespace AS integer), hashtext(CAST(:key AS text)))"\n            ),\n            {"namespace": GRANT_LOCK_NAMESPACE, "key": self._handle},',
+        "full_link_and_tool_run_leaves_no_secret_in_the_logs",
+    ),
+    (
+        "moa-40. the per-request owner check skipped (a rebind changes nothing)",
+        MCP_OAUTH,
+        "        if not await self._owner_check.still_bound(binding):\n            log.warning",
+        "        if False:\n            log.warning",
+        "rebind_refuses_an_issued_token_at_the_next_request",
+    ),
+    (
+        "moa-41. the rebind check on a refresh skipped",
+        MCP_OAUTH,
+        "        if not await self._owner_check.still_bound(carried):",
+        "        if False:",
+        "rebind_refuses_the_refresh_token_too",
+    ),
+    (
+        "moa-42. a refresh's new id_token carried forward unverified",
+        MCP_OAUTH,
+        "        if isinstance(id_token, str) and _digest(id_token) == established.id_token_digest:\n            binding = established",
+        "        if True:\n            binding = established",
+        "refresh_response_becomes_the_grant_only_once_it_is_verified",
+    ),
+    (
+        "moa-43. the consent handler does not resolve the upstream endpoints",
+        MCP_OAUTH,
+        "    async def _handle_consent(self, request: Request):",
+        "    async def _handle_consent_unused(self, request: Request):",
+        "restart_between_the_consent_page_and_its_approval",
+    ),
+    (
+        "moa-44. the endpoint properties read the placeholder even once resolved",
+        MCP_OAUTH,
+        "        return metadata.authorization_endpoint if metadata is not None else UNRESOLVED_ENDPOINT",
+        "        return UNRESOLVED_ENDPOINT",
+        "upstream_authorization_request_is_built_from_configuration",
+    ),
+    (
+        "moa-45. the registration body guard not installed",
+        MAIN,
+        "        prune_child_well_known(mcp_app)\n        guard_registration_body(mcp_app)",
+        "        prune_child_well_known(mcp_app)",
+        "registration_body_that_is_not_client_metadata_is_the_dcr_400",
+    ),
+    (
+        "moa-46. a protocol route's failure not stamped with the profile",
+        DEP,
+        "            if not started:\n                await JSONResponse",
+        "            if False:\n                await JSONResponse",
+        "exception_under_a_protocol_route_still_carries_the_profile",
+    ),
+    (
+        "moa-48. an unhandled 500 on a REST route without the profile",
+        MAIN,
+        '        content={"detail": "Internal Server Error"},\n        headers={"Cache-Control": "no-store"},',
+        '        content={"detail": "Internal Server Error"},',
+        "no_store_on_an_unhandled_500_too",
+    ),
+    (
+        "moa-47. a revoked refresh token's own hash entry left behind",
+        MCP_OAUTH,
+        "        if isinstance(token, RefreshToken):\n            # Its own hash entry",
+        "        if False:\n            # Its own hash entry",
+        "successful_revocation_kills_every_credential_of_the_grant",
+    ),
+    # --- Codex #212 round 2: the grant record as the unit of authority (f6–f7) ---------
+    (
+        "moa-49. the gate takes the binding off the client's tokens, not the record",
+        MCP_OAUTH,
+        "            current = await self._inner.get(key=key)\n            if current is None or current.owner is None:\n                raise _GrantEnded()\n            established = current.owner",
+        "            established = transition.binding",
+        "binding_verified_on_a_transparent_refresh_carries_to_the_next_exchange",
+    ),
+    (
+        "moa-50. revocation not under the grant's lock (a refresh in flight recreates the record)",
+        MCP_OAUTH,
+        "                async with _GrantLock(mapping.upstream_token_id):",
+        "                if True:",
+        "refresh_in_flight_cannot_recreate_a_grant_that_revocation_removed",
+    ),
+    (
+        "moa-51. the transparent refresh not a transition of the grant (the SDK's own runs)",
+        MCP_OAUTH,
+        "    async def _try_transparent_refresh(\n        self, upstream_token_set: UpstreamTokenSet\n    ) -> UpstreamTokenSet:",
+        "    async def _try_transparent_refresh_unused(\n        self, upstream_token_set: UpstreamTokenSet\n    ) -> UpstreamTokenSet:",
+        "transparent_refresh_that_finds_the_grant_gone or (becomes_the_grant_only_once and transparent and stranger)",
+    ),
+    (
+        "moa-52. load_access_token ignores what the transition learned (the SDK's fallback answers)",
+        MCP_OAUTH,
+        "        if validated is None or transition.outcome is not None:",
+        "        if validated is None:",
+        "transparent_refresh_that_finds_the_grant_gone",
+    ),
+    (
+        "moa-53. a refused refresh response leaves the grant standing",
+        MCP_OAUTH,
+        '        if verdict.reason != "unavailable":',
+        "        if False:",
+        "becomes_the_grant_only_once and stranger",
+    ),
+    (
+        "moa-54. the upstream ending audited as a client revocation",
+        MCP_OAUTH,
+        '                detail=f"client={transition.client_id} ended_by={ENDED_BY_UPSTREAM}",',
+        '                detail=f"client={transition.client_id} presented=refresh_token",',
+        "becomes_the_grant_only_once and forged",
+    ),
+    (
+        "moa-55. the verified binding not written to the record (every refresh finds an unbound grant)",
+        MCP_OAUTH,
+        "        record.owner = binding\n",
+        "        record.owner = None\n",
+        "refresh_issues_a_new_pair_through_the_provider",
+    ),
+    (
+        "moa-56. a new id_token stored unverified (the record's binding taken for it)",
+        MCP_OAUTH,
+        "            verdict = await self._proxy._owner_check.check(id_token)\n            if verdict.binding is None:\n                raise _GrantRefused(verdict)\n            if (verdict.binding.issuer",
+        '            verdict = OwnerVerdict(established, "ok", established.subject)\n            if verdict.binding is None:\n                raise _GrantRefused(verdict)\n            if (verdict.binding.issuer',
+        "becomes_the_grant_only_once and explicit and forged",
+    ),
+    # --- Codex #212 round 3: revocation's own lookup; the grant's identity (f9–f10) ------
+    (
+        "moa-57. revocation's lookup is the bearer's (the /revoke route not rebuilt over it)",
+        MCP_OAUTH,
+        "        routes = super().get_routes(mcp_path)\n        revocation = GrantRevocation(",
+        "        routes = super().get_routes(mcp_path)\n        return routes\n        revocation = GrantRevocation(",
+        "locates_its_grant_without_asking_the_provider and access_token",
+    ),
+    (
+        "moa-58. the lookup consults the owner row (a grant the row no longer names cannot be ended)",
+        MCP_OAUTH,
+        '        jti = payload["jti"]\n        if await self._jti_mapping_store.get(key=jti) is None:\n            return None\n',
+        '        jti = payload["jti"]\n        if not await self._owner_check.still_bound(binding):\n            return None\n        if await self._jti_mapping_store.get(key=jti) is None:\n            return None\n',
+        "end_a_grant_the_owner_row_no_longer_names and access_token",
+    ),
+    (
+        "moa-59. the gate adopts a candidate that names the owner now, not the grant's identity",
+        MCP_OAUTH,
+        "            if (verdict.binding.issuer, verdict.binding.subject) != (\n                established.issuer,\n                established.subject,\n            ):",
+        "            if False:",
+        "keeps_the_identity_that_authorized_the_grant",
+    ),
+    (
+        "moa-60. the lookup's shell carries no client binding (the handler's ownership check never matches)",
+        MCP_OAUTH,
+        "        return AccessToken(\n            token=_reference(token),\n            client_id=client_id,",
+        '        return AccessToken(\n            token=_reference(token),\n            client_id="",',
+        "successful_revocation_kills_every_credential_of_the_grant and access_token",
+    ),
+    # --- Codex #212 round 4: one downstream client contract (f11–f13) -------------------------
+    (
+        "moa-61. the registration response left as the SDK built it (a secret advertised over a public client)",
+        MCP_OAUTH,
+        '        client_info.token_endpoint_auth_method = "none"\n        client_info.client_secret = None\n        client_info.client_secret_expires_at = None\n',
+        "        pass\n",
+        "every_dynamic_registration_is_a_public_client and client_secret_post",
+    ),
+    (
+        "moa-62. the revocation form requires a secret again (the public form is 400)",
+        MCP_OAUTH,
+        "    token: str\n    token_type_hint:",
+        "    token: str\n    client_secret: str\n    token_type_hint:",
+        "every_dynamic_registration_is_a_public_client and absent",
+    ),
+    (
+        "moa-63. the revocation authenticator is the SDK's plain one (private_key_jwt refused at /revoke)",
+        MCP_OAUTH,
+        "        if self._cimd_manager is None:  # pragma: no cover — CIMD is always on here",
+        "        if True:  # pragma: no cover — CIMD is always on here",
+        "cimd_client_authenticates_as_its_document_says and private_key_jwt",
+    ),
+    (
+        "moa-64. a revocation assertion's audience is the token endpoint",
+        MCP_OAUTH,
+        "            self._client_authenticator(REVOCATION_PATH),\n        )\n        token = TokenHandler(",
+        "            self._client_authenticator(TOKEN_PATH),\n        )\n        token = TokenHandler(",
+        "private_key_jwt_client_is_refused_without_a_valid_assertion and revoke and wrong_audience",
+    ),
+    (
+        "moa-65. the revocation handler skips the client-ownership check",
+        MCP_OAUTH,
+        "        if token is not None and token.client_id == client.client_id:",
+        "        if token is not None:",
+        "client_cannot_revoke_another_clients_grant",
+    ),
+    (
+        "moa-66. a failed client authentication at /revoke answers 200",
+        MCP_OAUTH,
+        '            return PydanticJSONResponse(\n                status_code=401,\n                content=RevocationRefused(error="invalid_client", error_description=exc.message),',
+        '            return PydanticJSONResponse(\n                status_code=200,\n                content=RevocationRefused(error="invalid_client", error_description=exc.message),',
+        "private_key_jwt_client_is_refused_without_a_valid_assertion and revoke and absent",
+    ),
+    # --- Codex #212 round 5: discovery says the contract; the hint is advice (f14–f15) ------
+    (
+        "moa-67. discovery left as the SDK built it (the AS document not rebuilt over the contract)",
+        MCP_OAUTH,
+        '            elif isinstance(route, Route) and route.path.startswith(\n                "/.well-known/oauth-authorization-server"\n            ):',
+        "            elif False:",
+        "discovery_advertises_exactly_the_admitted_client_authentication",
+    ),
+    (
+        "moa-68. the revocation endpoint's methods advertised as the SDK's shared-secret pair",
+        MCP_OAUTH,
+        "        metadata.revocation_endpoint_auth_methods_supported = list(CLIENT_AUTH_METHODS)",
+        '        metadata.revocation_endpoint_auth_methods_supported = ["client_secret_post", "client_secret_basic"]',
+        "discovery_advertises_exactly_the_admitted_client_authentication and openid",
+    ),
+    (
+        "moa-69. no assertion algorithm advertised beside a JWT method",
+        MCP_OAUTH,
+        "        metadata.token_endpoint_auth_signing_alg_values_supported = list(\n            CLIENT_ASSERTION_ALGORITHMS\n        )",
+        "        metadata.token_endpoint_auth_signing_alg_values_supported = None",
+        "discovery_advertises_exactly_the_admitted_client_authentication and oauth-authorization",
+    ),
+    (
+        "moa-70. the hint a requirement again (an unknown value is a 400)",
+        MCP_OAUTH,
+        "    token: str\n    token_type_hint: str | None = None",
+        '    token: str\n    token_type_hint: Literal["access_token", "refresh_token"] | None = None',
+        "hint_is_advice_and_either_half_ends_the_grant and unknown_type",
+    ),
+    # --- Codex #212 round 6: the protocol boundary, field by field (f16–f19) ------------------
+    (
+        "moa-71. the claim contract not applied (the SDK's authenticator alone judges the assertion)",
+        MCP_OAUTH,
+        # Re-anchored in round 8: the authenticator owns admission end to end now
+        # (f29/f30), so "the SDK's alone" is the claim contract skipped in it.
+        "                validate_client_assertion_claims(assertion, now=time.time())\n",
+        "                pass\n",
+        "claim_that_fails_the_contract_is_refused_first and nbf_future",
+    ),
+    (
+        "moa-72. nbf not enforced",
+        MCP_OAUTH,
+        "    if not_before is not None and not_before > now + CLIENT_ASSERTION_SKEW:",
+        "    if False:",
+        "assertion_not_yet_valid_is_the_same_assertion_later and revoke",
+    ),
+    (
+        "moa-73. jti not required to be a string (a list reaches the SDK's dictionary key)",
+        MCP_OAUTH,
+        '    for name in ("iss", "sub", "jti"):',
+        '    for name in ("iss", "sub"):',
+        "claim_that_fails_the_contract_is_refused_first and jti_list",
+    ),
+    (
+        "moa-74. a boolean taken for a NumericDate",
+        MCP_OAUTH,
+        # Re-anchored in round 7 (f21 moved the finiteness check onto the range line).
+        "    if isinstance(value, bool) or not isinstance(value, (int, float)):",
+        "    if not isinstance(value, (int, float)):",
+        "claim_that_fails_the_contract_is_refused_first and iat_bool",
+    ),
+    (
+        "moa-75. a null redirect list not refused (FastMCP's localhost default invented)",
+        MCP_OAUTH,
+        "        if not client_info.redirect_uris:\n            raise RegistrationError(",
+        "        if False:\n            raise RegistrationError(",
+        "registration_response_describes_the_stored_client and null_redirects",
+    ),
+    (
+        # Repaired in round 7 (f25): the previous replacement closed the `get`
+        # call and left the `put`'s outer `)` behind — a SyntaxError at import,
+        # counted as killed by nothing. The tuple below keeps the constructor's
+        # closing parentheses by binding the two arguments to a name instead.
+        "moa-76. the stored client not the admitted contract (FastMCP's record left standing)",
+        MCP_OAUTH,
+        "        await self._client_store.put(\n            key=client_info.client_id,\n            value=ProxyDCRClient(",
+        "        _unwritten = (\n            client_info.client_id,\n            ProxyDCRClient(",
+        "registration_response_describes_the_stored_client and display",
+    ),
+    (
+        "moa-77. a repeated parameter not refused (the SDK's last value wins again)",
+        MCP_OAUTH,
+        "        if repeated:\n            return (",
+        "        if False:\n            return (",
+        "repeated_token_parameter_is_refused and client_id",
+    ),
+    (
+        "moa-78. empty values not treated as omitted",
+        MCP_OAUTH,
+        '        pairs = [(name, value) for name, value in pairs if value != ""]',
+        "        pairs = list(pairs)",
+        "empty_value_is_an_omitted_one",
+    ),
+    (
+        "moa-79. an omitted code_challenge_method left to the SDK's S256 default",
+        MCP_OAUTH,
+        '            pairs.append(("code_challenge_method", "plain"))',
+        "            pass",
+        "pkce_must_be_declared_s256 and absent",
+    ),
+    (
+        "moa-80. the unregistered-client guidance left pointing at the pruned child alias",
+        MCP_OAUTH,
+        '        if "authorization_server_metadata" in body:\n            body["authorization_server_metadata"] = self._discovery_url',
+        '        if False:\n            body["authorization_server_metadata"] = self._discovery_url',
+        "unregistered_client_is_pointed_at_the_root_discovery_document",
+    ),
+    # --- Codex #212 round 7 (f20–f22, f24, f26, and the call-14 qualification):
+    # --- admission, decoding, cardinality and the SDK hand-off together. -------
+    (
+        "moa-81. the media type read by a case-sensitive prefix, any other body passed through",
+        MCP_OAUTH,
+        "            if media_type.strip().lower() != FORM_MEDIA_TYPE:\n                await self._refuse(",
+        '            if not media_type.startswith("application/x-www-form-urlencoded"):\n                await self.app(scope, self._replay(body), send)\n                return\n            if False:\n                await self._refuse(',
+        "body_representation and mixed_case",
+    ),
+    (
+        "moa-82. the NumericDate range not applied (the float conversion overflows)",
+        MCP_OAUTH,
+        "    if not (-NUMERIC_DATE_BOUND <= value <= NUMERIC_DATE_BOUND):",
+        "    if not (-NUMERIC_DATE_BOUND <= value <= NUMERIC_DATE_BOUND) and False:",
+        "claim_that_fails_the_contract_is_refused_first and exp_huge",
+    ),
+    (
+        "moa-83. resource counted under the repetition rule again",
+        MCP_OAUTH,
+        "            name for name, count in counts.items() if count > 1 and name != RESOURCE_PARAMETER",
+        "            name for name, count in counts.items() if count > 1",
+        "resource_indicator_is_a_set and identical",
+    ),
+    (
+        "moa-84. a set with a foreign target handed to the SDK as its first value (the wrong repair)",
+        MCP_OAUTH,
+        "        chosen = foreign[0] if foreign else resources[0]",
+        "        chosen = resources[0]",
+        "resource_indicator_is_a_set and authorize and foreign_last",
+    ),
+    (
+        "moa-85. a foreign target at /token handed to the SDK, which reads the field and judges nothing",
+        MCP_OAUTH,
+        "        if foreign and self.endpoint == TOKEN_PATH:",
+        "        if False:",
+        "resource_indicator_is_a_set and token and foreign_only",
+    ),
+    (
+        "moa-86. a second client authentication mechanism beside an assertion admitted",
+        MCP_OAUTH,
+        # Re-anchored in round 8 (the header inventory moved in front; f29).
+        '        if presented and form.get("client_secret"):\n            raise AuthenticationError(',
+        "        if False:\n            raise AuthenticationError(",
+        "second_mechanism_beside_an_assertion and secret",
+    ),
+    (
+        "moa-87. an assertion from a client not registered for private_key_jwt accepted unread",
+        MCP_OAUTH,
+        # Re-anchored in round 8 (dispatch by the snapshot's method; f30).
+        "            if presented:\n                raise AuthenticationError(",
+        "            if False:\n                raise AuthenticationError(",
+        "assertion_from_a_client_not_registered_for_it and dcr",
+    ),
+    (
+        "moa-88. the 401 to an HTTP-authenticating client without its challenge",
+        MCP_OAUTH,
+        "            if response.status_code == 401 and scheme is not None:",
+        "            if False:",
+        "second_mechanism_beside_an_assertion and basic",
+    ),
+    (
+        "moa-89. jwks and jwks_uri admitted together",
+        MCP_OAUTH,
+        "        if client_info.jwks is not None and client_info.jwks_uri is not None:\n            raise RegistrationError(",
+        "        if False:\n            raise RegistrationError(",
+        "registration_response_describes_the_stored_client and both_key_sources",
+    ),
+    (
+        "moa-90. invalid_target left to the SDK's vocabulary (server_error on the redirect)",
+        MCP_OAUTH,
+        # Re-anchored in round 8: the refusal is the proxy's own now (f27), so the
+        # vocabulary mutant is its code.
+        '                    error="invalid_target",\n                    error_description="this server issues tokens for its own resource only",',
+        '                    error="server_error",\n                    error_description="this server issues tokens for its own resource only",',
+        "resource_indicator_is_a_set and authorize and foreign_first",
+    ),
+    (
+        "moa-91. a resource that does not parse handed to the SDK",
+        MCP_OAUTH,
+        "        if any(verdict is None for verdict in verdicts.values()):",
+        "        if False:",
+        "resource_indicator_is_a_set and authorize and unparseable",
+    ),
+    # --- Codex #212 round 8 (f27–f30): admitted once — recognised fields, every
+    # --- credential occurrence, one client snapshot, the resource on the whole URI.
+    (
+        # Redesigned in round 9: the URI grammar (f31) refuses a fragment on its own,
+        # so "the check removed" became an equivalent mutant (GREEN on the full pass).
+        # The behaviour worth catching is FastMCP's original erasure — the fragment
+        # stripped before comparing — which the grammar then never sees.
+        "moa-92. a fragment stripped before comparing (the normaliser's erasure again)",
+        MCP_OAUTH,
+        '    if "#" in value:\n        raise ValueError("a resource indicator must not include a fragment (RFC 8707 §2)")',
+        '    if "#" in value:\n        value = value.split("#", 1)[0]\n    if False:\n        raise ValueError("a resource indicator must not include a fragment (RFC 8707 §2)")',
+        "resource_is_compared_on_the_whole_uri and token and fragment",
+    ),
+    (
+        "moa-93. the path compared without its parameters",
+        MCP_OAUTH,
+        '    return parsed.scheme, parsed.netloc, parsed.path.rstrip("/")',
+        '    return parsed.scheme, parsed.netloc, parsed.path.split(";", 1)[0].rstrip("/")',
+        "resource_is_compared_on_the_whole_uri and token and path_parameter",
+    ),
+    (
+        "moa-94. the owned resource decision not applied at /authorize (FastMCP's looser one decides)",
+        MCP_OAUTH,
+        "            if not accepted:\n                return construct_redirect_uri(",
+        "            if False:\n                return construct_redirect_uri(",
+        "resource_is_compared_on_the_whole_uri and authorize and path_parameter",
+    ),
+    (
+        "moa-95. unknown parameters counted under the repetition rule",
+        MCP_OAUTH,
+        "        pairs = [(name, value) for name, value in pairs if name in self.recognised]",
+        "        pairs = list(pairs)",
+        "unknown_parameter_is_ignored and token",
+    ),
+    (
+        "moa-96. an Authorization header ignored when no assertion is presented",
+        MCP_OAUTH,
+        "        if header_attempts:\n            raise AuthenticationError(",
+        "        if header_attempts and presented:\n            raise AuthenticationError(",
+        "http_authentication_attempt_is_refused and dcr and token and Basic",
+    ),
+    (
+        "moa-97. only the first Authorization occurrence inventoried",
+        MCP_OAUTH,
+        '        header_attempts = request.headers.getlist("authorization")',
+        '        header_attempts = [h for h in [request.headers.get("authorization", "")] if h]',
+        "every_authorization_occurrence_counts and empty_first",
+    ),
+    (
+        "moa-98. the client looked up a second time before dispatch",
+        MCP_OAUTH,
+        '        method = client.token_endpoint_auth_method\n        if method == "private_key_jwt":',
+        '        client = await self.provider.get_client(client_id) or client\n        method = client.token_endpoint_auth_method\n        if method == "private_key_jwt":',
+        "one_snapshot_per_request and none_then_private",
+    ),
+    (
+        "moa-99. the challenge read from the first Authorization occurrence only",
+        MCP_OAUTH,
+        '    for header in request.headers.getlist("authorization"):',
+        '    for header in [request.headers.get("authorization", "")]:',
+        "every_authorization_occurrence_counts and empty_first",
+    ),
+    # --- Codex #212 round 9 (f31–f32): parsing is not validation; the inline key
+    # --- set's contract in front of the SDK's extraction. ------------------------
+    # moa-101 (the inline key set handed to the SDK's extraction unchecked) and
+    # moa-103 (the filtered copy not handed to the validator) retired in round 11:
+    # once the inline selection was the validator's own, the copy-based filter
+    # they mutated was a second owner of the same decision and both went
+    # equivalent (GREEN on the full pass); the filter retired into the selection.
+    (
+        "moa-100. the URI grammar not applied (urlsplit as validation again)",
+        MCP_OAUTH,
+        "    if not ABSOLUTE_URI.fullmatch(value):\n        raise ValueError(",
+        "    if False:\n        raise ValueError(",
+        "resource_is_compared_on_the_whole_uri and token and bad_percent",
+    ),
+    (
+        # Re-anchored in round 11 (f35 made the predicate the remote path's).
+        "moa-102. unusable entries not dropped from the set (RFC 7517 §5.1 not applied)",
+        MCP_OAUTH,
+        "        usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]",
+        "        usable = list(keys)",
+        "malformed_inline_key_set and revoke and null_beside_key",
+    ),
+    # --- Codex #212 round 10 (f33): the selected key keeps its authorization — the
+    # --- JWK itself, not its PEM, through FastMCP's verifier on both paths. ----------
+    (
+        # Re-anchored in round 11 (the inline selection is ours and returns the record).
+        "moa-104. the inline selection converted to a PEM again (the metadata lost)",
+        MCP_OAUTH,
+        "        return selected\n\n    async def validate_assertion(",
+        "        return _pem_of(selected)\n\n    async def validate_assertion(",
+        "published_key_s_restrictions_are_enforced and token and inline and use_enc",
+    ),
+    (
+        "moa-105. the remote verifier left as FastMCP's (PEMs cached by kid)",
+        MCP_OAUTH,
+        "            if not isinstance(self._verifier_cache.get(cache_key), RestrictedKeyVerifier):",
+        "            if False:",
+        "published_key_s_restrictions_are_enforced and token and remote and use_enc",
+    ),
+    (
+        # Re-anchored in round 11 (the record the kid named, checked against the PEM).
+        "moa-106. the remote selection handed on as its PEM (the JWK kept but not used)",
+        MCP_OAUTH,
+        "        return chosen\n",
+        "        return pem\n",
+        "published_key_s_restrictions_are_enforced and revoke and remote and alg_rs512",
+    ),
+    # --- Codex #212 round 11 (f34–f35): the record the kid named, not the first with its
+    # --- material; the inline usability predicate the remote path's. -------------------
+    (
+        "moa-107. the inline record re-identified by material (the first copy judged)",
+        MCP_OAUTH,
+        "        return selected\n\n    async def validate_assertion(",
+        "        return next(key for key in keys if _pem_of(key) == _pem_of(selected))\n\n    async def validate_assertion(",
+        "key_selected_by_kid_is_the_one_judged and inline and allowed_first",
+    ),
+    (
+        # Re-anchored in round 13 (the candidates named over records, the SDK's PEM the tie-break).
+        "moa-108. the remote record re-identified by material (the first copy judged)",
+        MCP_OAUTH,
+        "        chosen = next((key for key in reversed(candidates) if _pem_of(key) == pem), None)",
+        "        chosen = next((key for key in self._jwks_records if _pem_of(key) == pem), None)",
+        "key_selected_by_kid_is_the_one_judged and remote and allowed_first",
+    ),
+    (
+        "moa-109. an object-shaped unusable inline key counted before the fallback",
+        MCP_OAUTH,
+        "        usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]",
+        "        usable = [key for key in keys if isinstance(key, dict)]",
+        "unusable_inline_key_is_ignored and inline and token and unsupported_kty",
+    ),
+    # --- Codex #212 round 12 (f36): a named kid must match; the single-key fallback is
+    # --- for a header naming none — the SDK's remote rule on both paths. -----------------
+    (
+        # Re-anchored in round 13 (the rule is `select_records`, one owner for both paths).
+        "moa-110. the inline fallback restored for a named kid (the SDK's inline rule)",
+        MCP_OAUTH,
+        "        if not named:\n            raise ValueError(f\"Key ID '{kid}' not found in JWKS\")",
+        "        if not named and len(usable) == 1:\n            return usable\n        if not named:\n            raise ValueError(f\"Key ID '{kid}' not found in JWKS\")",
+        "named_kid_must_match and inline and token and unknown",
+    ),
+    (
+        "moa-111. an empty kid read as a name (the sole key refused on both paths)",
+        MCP_OAUTH,
+        "    return kid if isinstance(kid, str) and kid else None",
+        "    return kid if isinstance(kid, str) else None",
+        "naming_no_kid and empty and token",
+    ),
+    (
+        # Re-anchored in round 13 (the comparison is the one rule's).
+        "moa-112. the inline kid compared case-insensitively",
+        MCP_OAUTH,
+        '        named = [key for key in usable if key.get("kid") == kid]',
+        '        named = [key for key in usable if str(key.get("kid")).lower() == kid.lower()]',
+        "named_kid_must_match and inline and token and case_variant",
+    ),
+    # --- Codex #212 round 13 (f37): the fallback counts usable records, not the slots a
+    # --- cache keeps them in — one rule over records for both paths. ---------------------
+    (
+        "moa-113. the fetched records kept by cache slot again (two unnamed records one)",
+        MCP_OAUTH,
+        "        self._jwks_records = [\n            key for key in keys if isinstance(key, dict) and _pem_of(key) is not None\n        ]",
+        '        by_slot = {\n            key.get("kid") or "_default": key\n            for key in keys\n            if isinstance(key, dict) and _pem_of(key) is not None\n        }\n        self._jwks_records = list(by_slot.values())',
+        "two_unnamed_records and remote and token and missing",
+    ),
+    (
+        "moa-114. the no-kid fallback taking the last of several usable records",
+        MCP_OAUTH,
+        "    if len(usable) == 1:\n        return usable",
+        "    if usable:\n        return usable[-1:]",
+        "two_unnamed_records and inline and token and missing",
+    ),
 ]
 
 
@@ -4278,6 +5110,11 @@ TEST_FILES = [
     # witness in test_authorization.py (already listed).
     "tests/test_auth_unrouted.py",
     "tests/test_auth_oidc.py",
+    # The #192 (moa-) set: MCP OAuth — every moa- kill lives here or in the
+    # route-policy / unrouted / oidc suites above; moa-61…66 (the client
+    # contract, Codex round 4) kill in the wire-level contract suite.
+    "tests/test_mcp_oauth.py",
+    "tests/test_mcp_oauth_clients.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.

@@ -36,7 +36,7 @@ from app.auth.prerouting import (
     PreRoutingAuthMiddleware,
     refuses_anonymous,
 )
-from app.auth.registry import CredentialPolicy, iter_effective_routes
+from app.auth.registry import PROTOCOL_NAMESPACES, CredentialPolicy, iter_effective_routes
 from app.auth.resolver import INJECTED_PRINCIPAL_ATTR, INVALID_TOKEN_CHALLENGE
 from app.auth.sessions import cookie_is_secure, cookie_name
 from app.config import get_settings
@@ -236,24 +236,28 @@ async def test_the_mount_is_the_child_s():
     assert "www-authenticate" not in resp.headers
 
 
-#: Family 8's namespace (§5.5): the three root discovery documents M6-7 will
-#: install, and an arbitrary sibling. Anonymous by protocol, absent in local
-#: mode — the router's 404 for everyone, never a `Bearer` challenge (the CI
-#: Integration run on PR #205's first head found the 401).
-PROTOCOL_PATHS = [
+#: Family 8's namespace (§5.5): the three root discovery documents — registered
+#: in local mode too, answering their own 404 (#192) — and an arbitrary sibling
+#: nothing serves. Anonymous by protocol: 404 for everyone, never a `Bearer`
+#: challenge (the CI Integration run on PR #205's first head found the 401).
+DISCOVERY_PATHS = [
     "/.well-known/openid-configuration/mcp",
     "/.well-known/oauth-authorization-server/mcp",
     "/.well-known/oauth-protected-resource/mcp/",
-    "/.well-known/anything",
 ]
+PROTOCOL_PATHS = [*DISCOVERY_PATHS, "/.well-known/anything"]
 
 
 @pytest.mark.parametrize("path", PROTOCOL_PATHS)
 @pytest.mark.parametrize("principal", [anonymous(), owner()], ids=lambda p: p.label)
-async def test_the_protocol_namespace_is_the_router_s_404_in_local_mode(path, principal):
+async def test_the_protocol_namespace_is_a_404_for_everyone_in_local_mode(path, principal):
     resp = await _request(principal, "GET", path)
     assert resp.status_code == 404, resp.text
-    assert resp.json() == {"detail": "Not Found"}
+    if path in DISCOVERY_PATHS:
+        # The registered document's own answer: the envelope naming the mode.
+        assert resp.json()["code"] == error_codes.AUTH_NOT_IN_THIS_MODE
+    else:
+        assert resp.json() == {"detail": "Not Found"}
     assert "www-authenticate" not in resp.headers
 
 
@@ -474,10 +478,16 @@ async def test_the_gate_and_the_router_agree_on_every_declared_route():
     def scope_for(method: str, path: str) -> dict:
         return {"type": "http", "method": method, "path": path, "root_path": ""}
 
+    protocol_routes = [
+        r for r in routes if any(r.path.startswith(ns) for ns in PROTOCOL_NAMESPACES)
+    ]
+    assert len(protocol_routes) == len(DISCOVERY_PATHS)
     async with AsyncClient(
         transport=transport, base_url="http://127.0.0.1:8000", headers={"Host": "localhost"}
     ) as client:
         for route in routes:
+            if route in protocol_routes:
+                continue  # the namespace is the protocol's, asserted below
             path = _fill(route.path)
             for method in sorted(route.methods):
                 outcome = table.resolve(scope_for(method, path))
@@ -498,10 +508,15 @@ async def test_the_gate_and_the_router_agree_on_every_declared_route():
         await client.get("/no-such-route")
         assert recorder[-1].seen[-1] is None
         assert table.resolve(scope_for("POST", "/mcp/")).kind is Dispatch.MOUNT
+        # Family 8's namespace: the table says "protocol" route or no route
+        # (#192), and the router then records the registered document's own
+        # endpoint for the three that exist and nothing for a sibling.
+        by_path = {r.path: r.endpoint for r in protocol_routes}
         for path in PROTOCOL_PATHS:
             assert table.resolve(scope_for("GET", path)).kind is Dispatch.PROTOCOL, path
-            await client.get(path)
-            assert recorder[-1].seen[-1] is None, path
+            resp = await client.get(path)
+            assert resp.status_code == 404, path
+            assert recorder[-1].seen[-1] is by_path.get(path), path
 
 
 def test_refuses_anonymous_is_decided_by_policy_not_path():

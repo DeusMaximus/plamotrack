@@ -41,216 +41,207 @@ Template:
 
 ---
 
-## 2026-09-05 — Claude Code (Fable 5.1) — #191 (M6-6) MERGED (PR #209 → `b84f757`, Codex round 3 GO); oidc- fold-in MERGED (PR #211 → `ffaddd4`)
+## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 13 (GPT-6 Astra, NO-GO: 1×P3, the fallback counts records, not cache slots) answered on the branch — head `ff8a5ec`, reply posted (issuecomment-5553924170), PR body + coverage record amended, round-14 brief printed
 
-- **Done:** Codex round 3 (GPT 5.6 Sol) on `59eb9a4`: **GO, no findings**. PR #209 squash-merged
-  to `main` as `b84f757` (`Closes #191` — issue closed), branch deleted. Then the usual
-  harness-only fold-in, PR #211 → `ffaddd4`: 34 `oidc-` cases in `backend/mutation_test.py`
-  (constants `OIDC_SVC`, `AUTH_ROUTER`, `MODE`; `TEST_FILES` + `tests/test_auth_oidc.py`;
-  procedure count 368/32 → 402/33 with the oidc- paragraph). Not folded: oidc-1/2/3/11
-  (anchored on the joserfc registry round 1 replaced; superseded by 23/22/27/26) and oidc-13
-  (equivalent — no symmetric key in the JWKS); oidc-20 and oidc-25 re-anchored. `-k oidc-`
-  all 34 killed on the fold-in head, no external review (the #199/#201/#203/#207 precedent).
-- **Decisions:** owner's — #192 (M6-7, MCP OAuth) starts in a **new session** (context, not
-  scope); this session closes here. Memory (agent-side): the owner switches sessions at
-  ~80–90% context after a hand-off update and never relies on compaction.
-- **State:** `main` at `ffaddd4` + this entry; tree clean. Backend 1949 green at the merge,
-  frontend 487. Dev DB at `4f3a9c1e7b2d` (head), owner bound to the Keycloak `owner` user
-  (spike realm) in OIDC mode and still holding the local credential — note the migration
-  stamped its existing sessions `local`, so the next OIDC-mode start of the API signs that
-  browser out once (sweep + `auth.mode_changed` row); local-mode starts are unaffected.
-  Keycloak spike container state as the #190 entry left it (`.agents/spikes/190/`, tracked at
-  `a642d0b`). The LXC is on the pre-M6 reset and **stays put until M6 is finished** (owner,
-  03/09) — it will need `ALLOWED_HOSTS` and, if it ever switches modes, expect the one-time
-  sign-out.
-- **Next:** (1) **#192 (M6-7) MCP OAuth** on a branch off `main` — build from design §5.9
-  item 7 and the #190 spike's decisions (`.agents/spikes/190/findings.md` §10: CIMD on,
-  synthesised upstream-id client refused, allowlist narrows DCR only, path-aware OpenID doc
-  kept and the bare one pruned, Postgres adapter for proxy state with the table owned by
-  Alembic, explicit `MCP_OAUTH_SIGNING_KEY`, `verify_id_token=True`, owner binding at
-  issuance, fixed rw scope mapping); same issuer/client as #191, so `services/oidc.py`'s
-  provider/discovery is the thing to reuse, and family 8's registry declarations + the
-  generated ingress rejections are where `test_route_policy.py` / `test_ingress_generation.py`
-  will push back first; (2) #193 audit/rate limiting; (3) M6-9 TLS docs, then the M6 release
-  (gate in `.agents/testing-and-review.md`) and only then the LXC upgrade. Release-notes
-  items so far: `AUTH_MODE=oidc`; a mode switch signs every browser out at the first start in
-  the new mode; a local→oidc switch needs the setup token once; `session.auth_mode` migration.
+- **Done:** f37 reproduced at `2a786a6` on its own assertions first (20 new contract rows in a
+  worktree at that head: **4 red / 16 green** — Codex's four fetched cells, two unnamed records
+  × token/revoke, on `200 == 401`; the inline, mixed and sole-record rows controls), then
+  fixed at `ff8a5ec`. Cause: the fetched path kept records by the SDK's cache slots (`kid or
+  "_default"`), so two unnamed records were one and the fallback counted slots. **The invariant
+  is now one function, `select_records`, over usable records, for both paths** (procedure 6:
+  rounds 10–13 all landed in this seam): a named `kid` → the records carrying it, none a
+  refusal; no `kid` → the only usable record, two ambiguous. `RestrictedKeyVerifier` keeps
+  every usable record of the fetch in order (`_jwks_records`), the SDK's selection runs
+  behind it (refuse-only), its PEM the disagreement check and the same-`kid` tie-break (last —
+  the documented boundary, unchanged); the inline path takes `[0]`. Tests: contract suite
+  **295** (+20); mutants moa-113/114, moa-108/110/112 re-anchored; harness **513/46**. Docs:
+  module docstring, design §5.9 (k) + row 8, AGENTS.md rule 13, procedure (moa- paragraph +
+  count), lessons → "The cache is not the set". PR body: opening line, What, By file, calls
+  12/17/18 (revised as overruled), Tests, negative control, mutants, coverage record (Codex's
+  r13 untracked coverage folded in; a record's non-string `kid` stays untested here).
+- **Decisions:** the SDK's remote selection stays in front on the fetched path (its cache,
+  TTL and fetch are its own) as a refuse-only layer, ours the owner of cardinality; the
+  same-`kid` collision stays inline-first / fetched-last (Codex asked to preserve it); the
+  corrected set on the fetched path is met by dropping the cached verifier (round 10's idiom).
+- **State:** backend **2362 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants **111/111 killed** at `ff8a5ec` (tracked harness, committed tree,
+  ~13 min; the two new killed first pass). Commit `ff8a5ec` pushed; PR #212 body amended;
+  the reply is issuecomment-5553924170. Codex's r12 material at `/private/tmp/plamotrack-212-r12/`
+  (untracked; r13 named no directory). Dev `db` up, Keycloak spike up. LXC untouched (**stays
+  put until M6 is finished**).
+- **Next:** (1) **Codex round 14 on PR #212** — the brief was printed in this session's chat;
+  regenerate from `.agents/review-brief.md` (Codex footer; the reviewer names its model) if
+  needed, naming runtime head `ff8a5ec`, the branch tip (hand-off only above it), `main`
+  `a497481`, rules 1/6/7.1/9/11/12/13; findings from 38; reproduce at `ff8a5ec` first; update
+  the coverage record in the reply (procedure 7.1). If GO: squash-merge with `Closes #192`;
+  nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
+  `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak spike, the register
+  burst concurrent — then the LXC upgrade; relink any MCP client first.
 
-## 2026-09-05 — Claude Code (Fable 5.1) — #191 (M6-6) PR #209: Codex round 2 (NO-GO, 2×P3) addressed at `59eb9a4`, round 3 pending
+## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 12 (GPT-6 Astra, NO-GO: 1×P3, a named `kid` must match) answered on the branch — head `2a786a6`, reply posted (issuecomment-5553421733), PR body + coverage record amended, round-13 brief printed
 
-- **Done:** Codex round 2 (GPT 5.6 Sol) on `083ad08`: NO-GO, two P3s, no P1/P2, round-1 P2s
-  confirmed closed, calls 3/6/11/12 not overruled (its provider survey backs call 12's no
-  trusted-audience list). **f3 — non-finite NumericDates:** `_numeric_date` in
-  `services/oidc.py` now names the value domain — an `int` (never the bool) on its own branch,
-  or a `float` that `math.isfinite` — because JSON cannot spell NaN/Infinity (RFC 8259 §6)
-  but Python's parser admits them and every clock comparison against NaN is false.
-  Reproduced first: nine shapes (NaN, ±∞ on each of `exp`/`iat`/`nbf`) added to the matrix,
-  six opened a session at `083ad08`; a pinned-clock unit test drives all nine plus the
-  positive side (`10**400`, negative huge ints, float instants). Mutant **oidc-39** (finite
-  condition removed) killed by `[exp-nan]`. Design §5.9 (f) says "finite". **f4 — PR body
-  provenance:** Tests intro 35 → 70 → 80 by round; the Negative-control paragraph now carries
-  the reviewed-head baselines (`910a335`: 14 red / 56 green; `083ad08`: 7 red / 3 green) and
-  the matrix count (41 refused + 4 accepted), oidc-39 row and tuple.
-- **Decisions:** the domain is stated at the predicate, not by a JSON-strictness layer under
-  joserfc — the three time claims are the only numerically compared values, and the predicate
-  is the one place that admits them.
-- **State:** backend **1949 green**, `tests/test_auth_oidc.py` **80**, frontend untouched
-  (487), lint clean; tree clean at `59eb9a4` + this entry, both pushed. Reply posted on PR #209;
-  body amended. Dev DB at `4f3a9c1e7b2d`. Round-1 state still true: `session.auth_mode` +
-  start-up sweep (`auth.mode_changed`), one claim validator, migration `4f3a9c1e7b2d`.
-- **Next:** (1) Codex **round 3** on PR #209 — brief per `.agents/review-brief.md` (Codex
-  footer) at the new head, pointing at the round-2 reply; if GO, merge with `Closes #191`;
-  (2) after merge, fold oidc-1…39 into `mutation_test.py` (1/2/3/11 superseded by 21–30);
-  (3) #192 (M6-7) on top; (4) #193; (5) **LXC stays put until M6 is finished** (owner, 03/09).
-  Release-notes items unchanged: `AUTH_MODE=oidc`; a mode switch signs every browser out at the
-  first start in the new mode; a local→oidc switch needs the setup token once.
+- **Done:** f36 reproduced at `5ecef8f` on its own assertions first (28 new contract rows in a
+  worktree at that head: **4 red / 24 green** — Codex's two inline cells plus the two
+  case-variant rows red on `200 == 401`; every fetched-path, fallback and non-string row a
+  control), then fixed at `2a786a6`. Cause: **FastMCP has two selection rules** — its inline
+  extraction falls back to the only key whenever no record matched the `kid`, named or not;
+  its remote selection only when no `kid` is named — and round 11 wrote out the inline one
+  while the docs described the remote one. `RestrictedKeyAssertionValidator.
+  _extract_public_key_from_jwks` now applies the remote rule with its texts (`Key ID '…' not
+  found in JWKS`; `Multiple keys in JWKS but no key ID (kid) in token`); `_header_kid` is the
+  one reading for both paths (non-empty string names; absent/empty names none, the SDK's
+  remote reading; a non-string reads as none and joserfc's decode refuses the header on both
+  paths — **no type guard added**: it would be a second owner, measured before writing).
+  Round 11's two tests **re-linked under a published name** — their link assertions had named
+  `client-key` against sets not publishing it and passed *through* the fallback under test
+  (Codex's own r12 repro links the same way and refuses at the new head; said in the reply).
+  Tests: contract suite **275** (+28); mutants moa-110…112; harness **511/46**. Docs: module
+  docstring, design §5.9 (k) + row 8, AGENTS.md rule 13, procedure (moa- paragraph + count),
+  lessons → "The library had two rules". PR body: opening line, What, By file, calls 12/17/18,
+  Tests, negative control, mutants, coverage record (a record's own empty/non-string `kid`
+  listed untested; Codex's r12 untracked coverage folded in).
+- **Decisions:** the rule is the SDK's *remote* one on both paths; an empty `kid` names none
+  (the SDK's remote reading, and its cache keeps a record's empty `kid` under `_default`);
+  a non-string `kid` is joserfc's refusal, not ours; the same-`kid` collision stays the
+  documented inherited boundary (Codex r12 measured it and called it not a finding).
+- **State:** backend **2342 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants **109/109 killed** at `2a786a6` (tracked harness, committed
+  tree, ~14 min; the three new killed first pass). Commit `2a786a6` pushed; PR #212 body
+  amended; the reply is issuecomment-5553421733. Codex's r12 material at `/private/tmp/plamotrack-212-r12/`
+  (untracked). Dev `db` up, Keycloak spike up. LXC untouched (**stays put until M6 is
+  finished**).
+- **Next:** (1) **Codex round 13 on PR #212** — the brief was printed in this session's chat;
+  regenerate from `.agents/review-brief.md` (Codex footer; the reviewer names its model) if
+  needed, naming runtime head `2a786a6`, the branch tip (hand-off only above it), `main`
+  `a497481`, rules 1/6/7.1/9/11/12/13; findings from 37; reproduce at `2a786a6` first; update
+  the coverage record in the reply (procedure 7.1). If GO: squash-merge with `Closes #192`;
+  nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
+  `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak spike, the register
+  burst concurrent — then the LXC upgrade; relink any MCP client first.
 
-## 2026-09-04 — Claude Code (Fable 5.1) — #191 (M6-6) PR #209: Codex round 1 (NO-GO, 2×P2) addressed at `083ad08`, round 2 pending
+## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 11 (Daybreak Blue after GPT-6 Astra's refusals; NO-GO: 2×P3, the record the kid named) answered on the branch — head `5ecef8f`, reply posted (issuecomment-5552863879), PR body + coverage record amended, round-12 brief printed
 
-- **Done:** Codex round 1 (GPT 5.6 Sol) on `910a335`: NO-GO, two P2s on the authorization
-  boundary, both **reproduced first** (the new tests went red on the review's own assertions),
-  then fixed, then mutated. **f1 — superseded sessions across `AUTH_MODE` changes:** the
-  invariant is *a session is authority only in the mode that minted it* — `session.auth_mode`
-  (`AuthMode` in `models/enums.py`; migration **`4f3a9c1e7b2d`**, text + CHECK, backfilled
-  `local`), `new_session_row(..., auth_mode=)` stamps it, `resolve_session(..., auth_mode=)`
-  refuses the other mode's row (→ `anon`), and the lifespan calls
-  `revoke_sessions_of_other_modes` (write gate; `auth.sessions_revoked` + new
-  `auth.mode_changed` audit rows, target `startup`, client `host`; a log line) so the switch is
-  durable in both directions. The mode is read off the provider's presence on `app.state`
-  (new **`app/auth/mode.py`**: `OIDC_PROVIDER_ATTR`, `auth_mode_of`; `routers/auth.py` re-exports
-  the attr); the lifespan now reads the provider from `app_.state`, not the closure (so a test's
-  fake-backed provider is what warms). **f2 — id_token claim shapes:** the joserfc
-  `JWTClaimsRegistry` is gone; `validate_id_token_claims` (module-level in `services/oidc.py`,
-  pinned-clock `now=`) is the one contract — types before values, `aud` exactly this client
-  (string or single-member list; any extra audience refused whatever `azp`), `azp` == client id
-  when present, `iat` required, `exp`/`iat`/`nbf` NumericDates with bools excluded, `nonce` a
-  string; `complete_login` reads `claims["sub"]` (the `no_subject` branch and audit detail are
-  gone — every shape is `id_token_rejected`). Docs: design §5.6 (session row, audit list), §5.8
-  T7, §5.9 item 6 calls **(f)** and **(g)**; `docs/operations.md` (sign-out at the first start in
-  the new mode, both directions; the client must be the token's only audience); AGENTS.md rule 13.
-- **Decisions:** stamp-and-sweep, not an auth-epoch column (the mode switch was the only regime
-  change that did not already write the DB; reset/rebind revoke as before); no trusted-audience
-  setting (single owner, nothing to trust); `read_session`'s ordering unchanged (owner-and-unbound
-  is now unreachable, a reorder would be a dead branch); backfill `local` is a fact for every
-  released instance, disclosed in the migration docstring (the dev DB's OIDC-minted sessions get
-  `local` too — one sign-out on a throwaway DB).
-- **State:** backend **1939 green** (`test_migration_data.py` HEAD → `4f3a9c1e7b2d`),
-  `tests/test_auth_oidc.py` **70** (matrix 6 → 32 refused + 4 accepted shapes, a leeway-edge
-  unit test, four mode-switch tests), frontend untouched (487). Mutants oidc-21…38 (18, one site
-  each): **18 killed, 0 survived (oidc-30 killed as a 500 from the comparison, not a refusal — the type check is what makes it one)**; runner + tuples in the session scratchpad and in the PR body's
-  `<details>`. `uv run alembic check` on the dev DB reports "removed check constraint" for every
-  text-enum CHECK in the schema (pre-existing autogenerate noise; `ck_session_auth_mode` joins the
-  list) and no column difference. Dev DB is at `4f3a9c1e7b2d`. Tree: clean at `083ad08` (the fix) + this entry; both pushed.
-- **Next:** (1) Codex **round 2** on PR #209 — brief per `.agents/review-brief.md` (Codex footer)
-  at the new head, pointing at the round-1 reply and the two new `<details>` rows; (2) after merge,
-  fold oidc-1…38 into `mutation_test.py` (the four registry-anchored tuples are superseded by
-  21–30); (3) #192 (M6-7) on top; (4) #193; (5) **LXC stays put until M6 is finished** (owner,
-  03/09). Release-notes items: `AUTH_MODE=oidc` exists; a mode switch signs every browser out at
-  the first start in the new mode (both directions) and a local→oidc switch needs the setup token
-  once.
+- **Done:** both reproduced at `f82b3b3` on their own assertions first (16 new contract rows in a
+  worktree at that head: **12 red / 4 green** — Codex's eight plus four: with the restricted copy
+  first the *allowed* copy's assertion was refused too, so material-identity followed array order
+  both ways), then fixed at `5ecef8f`. **f34** the record carried by the identity the selection
+  used: `RestrictedKeyVerifier` keeps the fetched JWKs **by `kid`** as the SDK caches their PEMs
+  (`_default` for none, unusable skipped) and returns the record the assertion's `kid` names
+  (or the only key), refusing a record whose material ≠ the SDK's selected PEM; the inline
+  selection written out by the SDK's rule in `_extract_public_key_from_jwks`, returning the
+  record; `selected_jwk` gone; `_header_kid` via the SDK's `decode_jwt_header`. **f35** the
+  validator's inline selection owns usability and selection together (the remote path's
+  predicate: RSA/EC + a joserfc import that succeeds), so an `OKP` or incomplete object no
+  longer denies the single-key fallback inline; round 9's copy-based `with_usable_inline_keys`
+  **retired** — the first full harness pass at the new head returned moa-101/102/103 GREEN
+  (equivalent: a second owner of the decision) → 101/103 retired, 102 re-anchored, re-run.
+  Tests: contract suite **247** (+16); mutants moa-107…109; harness **508/46**, 106 tuples. Docs: module docstring, design §5.9 (k) + row 8,
+  AGENTS.md rule 13, procedure (moa- paragraph + count; reviewer roster: Daybreak Blue from
+  this round), review-brief footer, lessons → "The record the selection named". PR body: What,
+  By file, call 12, call 17 (predicate), call 18 (first-entry assumption withdrawn), Tests,
+  controls, mutants, coverage record (same-`kid` divergence named as inherited/untested).
+- **Decisions:** the inline selection is ours by the SDK's rule (no longer calling the SDK's
+  extractor) so the record, not a PEM, is returned; a fetched record/PEM disagreement refused,
+  never degraded; the SDK's inline-first/remote-last same-`kid` divergence inherited, not
+  reconciled (RFC 7517 §4.5 wants `kid` unique) — named in the brief; the round-11 comment is
+  signed "GPT-6 Astra" though the owner says Daybreak Blue reviewed — the brief's footer asks
+  the reviewer to name itself.
+- **State:** backend **2314 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants ****106/106 killed** at `5ecef8f` (tracked harness, committed tree, ~13 min; the first pass at `a77aa01` was 105 + three GREEN → the retirement)** (tracked harness, committed tree, `nohup`).
+  Commits `5ecef8f` and `5ecef8f` (the filter's retirement after the first harness pass) pushed; PR #212 body amended; the reply is issuecomment-5552863879. Codex's r11 material
+  untracked (its comment names no directory this round). Dev `db` up, Keycloak spike up. LXC
+  untouched (**stays put until M6 is finished**).
+- **Next:** (1) **Codex round 12 has landed — NO-GO, one P3, finding 36, unaddressed**
+  (issuecomment-5553107067, signed "GPT-6 Astra" again; this session closed at ~80 % context
+  before reading past the title, owner's call): *an inline assertion naming an unknown `kid`
+  is accepted through the no-`kid` fallback* — `RestrictedKeyAssertionValidator.
+  _extract_public_key_from_jwks` falls back to the single usable key when the named `kid`
+  matches nothing, where the SDK's remote selection refuses a named `kid` it cannot find
+  (RFC 7517 §4.5). Answer in a new session per `.agents/testing-and-review.md` →
+  "Responding to a review": read the comment in full first, reproduce at `5ecef8f` in the
+  contract suite (both endpoints; the remote parity control), fix so a *named* `kid` must
+  match and only an assertion naming none takes the fallback, add the mutant (moa-110),
+  re-run `-k moa-` on the committed tree, update the coverage record (procedure 7.1),
+  print the round-13 brief from `.agents/review-brief.md` (the reviewer names its model;
+  findings from 37). If GO: squash-merge with `Closes #192`; nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
+  `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak spike, the register
+  burst concurrent — then the LXC upgrade; relink any MCP client first.
 
-## 2026-09-04 — Claude Code (Fable 5.1) — #191 (M6-6) browser OIDC on `feature/m6-6-browser-oidc` — **PR #209** open for Codex review; #190 closed
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 10 (GPT-6, NO-GO: 1×P3, the selected key's authorization) answered on the branch — head `f82b3b3`, reply posted (issuecomment-5552103057), PR body + coverage record amended, round-11 brief printed
 
-- **Done:** #190 closed (evidence comment + harness on `main` at `a642d0b`). Owner chose
-  **#191 before #192** (the declared order: #192's owner binding and mode switch are #191's).
-  Branch `feature/m6-6-browser-oidc` off `a642d0b`, committed and pushed (owner's call) as
-  **PR #209** (body carries the deliberate calls and the mutant table). Shape: `AUTH_MODE=local|oidc` + `OIDC_ISSUER/CLIENT_ID/CLIENT_SECRET`
-  (env-only; `PUBLIC_BASE_URL` required in OIDC mode, the callback
-  `<PUBLIC_BASE_URL>/api/auth/oidc/callback` is built from it); `services/oidc.py` (discovery
-  cached lazily and issuer-checked, JWKS, code exchange `client_secret_basic` + PKCE, id_token
-  via **joserfc** — asymmetric algs only — for iss/aud/sub/exp/nonce; `begin_login` /
-  `complete_login` / `recovery_rebind_oidc`); table `oidc_login` (migration `0db6c35d0a7e`:
-  digests of `state` + a browser-binding cookie, nonce, PKCE verifier, `claiming`, 10 min,
-  single use); routes `POST /auth/oidc/start` (JSON → `{authorization_url}` + binding cookie)
-  and `GET /auth/oidc/callback` (302 to the SPA root; `?auth_error=<word>` on refusal); the
-  password pair 404 in OIDC mode and vice versa (`auth.not_in_this_mode`); registry `modes`
-  field; `GET /auth/session` gains `auth_mode`/`oidc_issuer` and reports `unclaimed` while the
-  owner is **unbound** (claimed but no `(issuer, subject)` — a mode switch or a rebind), so the
-  setup token is the claim gate in OIDC mode too; `recovery rebind-oidc`; SPA screens; docs
-  (operations, .env.example, README, design §5.5 row + §5.9 item 6 "Shipped" calls (a)–(e),
-  AGENTS.md rule 13). **Verified against the real Keycloak** (spike realm, `localhost:8081`,
-  API run in OIDC mode with `PUBLIC_BASE_URL=http://localhost:5173`): setup token → provider
-  → bound owner in the SPA; a stranger → `auth_error=oidc_identity_refused` + audit row.
-- **Decisions:** on PR #209's body ("Deliberate calls" 1–10) and design §5.9 item 6 — notably `start` is a POST returning JSON (token never in a URL,
-  Origin-guarded), the transaction is a DB row not a signed cookie (no app secret exists),
-  unbound ⇒ `unclaimed` ⇒ setup token, joserfc over Authlib's deprecated `jose`.
-- **State:** backend **1903 green** (`test_migration_data.py` HEAD bumped to `0db6c35d0a7e`),
-  `tests/test_auth_oidc.py` **35**; frontend 487, build + lint clean. Hand mutants oidc-1…20
-  (exact tuples in a `<details>` block on the PR body): **18 killed, 2 equivalent**
-  (oidc-11 sub fallback — joserfc's essential `sub` refuses first; oidc-13 HS256 — no symmetric
-  key in the JWKS); three first-pass survivors (5, 12, 19) were test gaps, now tests.
-  T2 rows added to `ingress_matrix.py` (CI Integration proves them; packaged stack not run
-  locally). Dev DB: owner is now **bound to the Keycloak `owner` user** in OIDC mode and still
-  holds the local credential (`e2e-owner-password`) — switching the API back to local mode
-  just works; Keycloak spike container is **up** (`.agents/spikes/190/keycloak/`, realm now
-  lists the `localhost:5173` callback). No e2e change (local mode).
-- **Next:** (1) **Codex round 1 on PR #209** — the brief was printed once in the authoring
-  session and is not stored; regenerate it from `.agents/review-brief.md` (Codex footer), the
-  PR body's "Deliberate calls" and its **"Where a reviewer should push"** section; the
-  runtime head is `96f24ab` (every commit after it on the branch is a hand-off entry —
-  brief the reviewer at the branch tip and say so), `main` `a642d0b`, rules 1/6/7.1/9/11/13 in play; answer findings per
-  `.agents/testing-and-review.md` → "Responding to a review". Tree parked on the branch.
-  (2) fold oidc- mutants
-  into `mutation_test.py` after merge (the usual harness-only PR); (3) #192 (M6-7) on top —
-  same issuer/client, the spike's decisions; (4) #193; (5) **LXC stays put until M6 is
-  finished** (owner, 03/09). Release-notes item: `AUTH_MODE=oidc` exists; a local→oidc switch
-  signs everyone out and needs the setup token once.
+- **Done:** f33 reproduced at `cb69559` on its own assertions first (22 new contract rows in a
+  worktree at that head: **14 red / 8 green**, Codex's twelve among the reds), then fixed at
+  `f82b3b3` within Codex's constraints (both key paths, cached keys, the very key the verifier
+  selects, no refetch, one cryptographic validator, nothing stripped, a mixed-purpose set still
+  admitting its signing key): FastMCP converted the selected JWK to a PEM before verifying, so
+  `alg`/`use`/`key_ops` never reached joserfc. `RestrictedKeyAssertionValidator` (over FastMCP's
+  `CIMDAssertionValidator`: the inline selection returned as the JWK found by the PEM the SDK
+  produced — `_pem_of`/`selected_jwk`, byte-identical across metadata) and `RestrictedKeyVerifier`
+  (over `JWTVerifier`: the fetched JWKs kept beside the SDK's PEM cache, rebuilt on the SDK's
+  refetch, the selected JWK returned in the PEM's place; installed in the SDK's per-client
+  verifier cache under its own key) — joserfc enforces the restrictions in the signature's
+  decode. One validator instance on the proxy (`assertion_validator`) for both endpoints; the
+  authenticator calls `validate_assertion` directly (the manager's validator unused). Codex's
+  corrections adopted: call 17 qualified as approximate (its 2,144-value corpus); the coverage
+  record carries the interrupted-second-write observation forward. Tests: contract suite
+  **231** (+22: 3 restrictions × inline/remote × 2 endpoints, explicit-ok + mixed-set controls,
+  the cached-key rows); mutants moa-104…106; harness **507/46**. Docs: module docstring, design
+  §5.9 (k) + row 8, AGENTS.md rule 13, procedure, lessons → "The selected key keeps its
+  authorization". PR body: What, By file, call 12, call 17 qualified, **new call 18**, Tests,
+  controls, mutants, coverage record.
+- **Decisions:** replace the lossy representation, keep the SDK's selection (no second verifier,
+  no refetch, no metadata check in front of the SDK); one material published twice → the first
+  entry; a restriction changed after a fetch seen at the cache's expiry (FastMCP's TTL — named);
+  the tracked suite plays the JWKS fetch below the verifier, links through the inline set so a
+  fetched verifier's first fetch is the set under test, and drops the cached verifier (a
+  private seam, named) to meet a corrected set.
+- **State:** backend **2298 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants ****105/105 killed** first pass (tracked harness, committed tree, ~12 min)** (tracked harness, committed tree, `nohup`).
+  Commit `f82b3b3` pushed; PR #212 body amended; the reply is issuecomment-5552103057. Codex's r10 material
+  at `/private/tmp/plamotrack-212-r10/` (untracked). Dev `db` up, Keycloak spike up. LXC
+  untouched (**stays put until M6 is finished**).
+- **Next:** (1) **Codex round 11 on PR #212** — the brief was printed in this session's chat;
+  regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming runtime head
+  `f82b3b3`, the branch tip (hand-off only above it), `main` `a497481`, rules 1/6/7.1/9/11/12/13;
+  findings from 34; reproduce at `f82b3b3` first; update the coverage record in the reply
+  (procedure 7.1). If GO: squash-merge with `Closes #192`; nothing to fold in. (2) After
+  merge: #215, #193, M6-9 TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a
+  packaged stack with the Keycloak spike, the register burst concurrent — then the LXC
+  upgrade; relink any MCP client first.
 
-## 2026-09-04 — Claude Code (Fable 5.1) — #190 spike: EVERY leg run (Keycloak, Google, MCP Inspector, Claude web, ChatGPT web, nginx, T13); evidence comment POSTED
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 9 (GPT-6, NO-GO: 2×P3, "parsing is not validation") answered on the branch — head `cb69559`, reply posted (issuecomment-5551526055), PR body + coverage record amended, round-10 brief printed
 
-- **Done:** #190's spike, every leg that needs no external account, against the pinned
-  FastMCP 3.4.5 / MCP SDK 1.29.0. Harness + raw outputs in **`.agents/spikes/190/`**
-  (untracked — owner decides whether it is committed; `.agents/README.md` gained a line for
-  `spikes/`); **`findings.md` there is the #190 evidence comment, posted** as
-  https://github.com/DeusMaximus/plamotrack/issues/190#issuecomment-5538814198 (owner's call). Phase A
-  (in-process, no network): raw child + parent well-known route tables — exactly §5.5's four;
-  the response profile per route; the redirect-binding matrix (every §5.6 claim reproduced:
-  pattern replaces registration, synthesised upstream-id client → consent for any URI) and the
-  **thin constraint** (`BoundProxy`, 15 lines: registration AND allowlist, upstream id refused).
-  Phase B: **Keycloak 26.6.4** (realm import, `basic` scope needed for `sub`) + **MCP Inspector
-  2.5.0** (DCR public client, callback `http://127.0.0.1:6274/oauth/callback`, negotiated MCP
-  2025-11-25, requested only the PRM from the 401 pointer + path-aware AS doc — **never the bare
-  `openid-configuration`**); scripted client end to end; **T13 matrix**: same store+key → refresh
-  200 / 0 registrations; empty store or other key → 401 `invalid_client` (the DCR record is in
-  the store) → clients relink, nothing else lost. **Postgres adapter proven** (py-key-value-aio
-  `PostgreSQLStore` over asyncpg, one table `mcp_oauth_state`, values Fernet-encrypted, link →
-  restart → refresh 200). Phase C: packaged nginx (built from `frontend/`) in front of the probe —
-  the family-8 T2 surface matches §5.5 except two new facts: nginx **301**s the slash-less
-  `/.well-known/oauth-protected-resource/mcp`, and `PUT /mcp/authorize` is Starlette's 405 +
-  `Allow` (#206's family-8 sibling). **Then the owner-supplied legs, same session**, through a
-  Cloudflare tunnel `https://testing.gunp.la` → the packaged nginx (built from `frontend/`, tunnel
-  host in its allowlist) → the probe: **Google** (`verify_id_token=True`; scopes come back as
-  URIs so require `openid` only, else 403 `insufficient_scope`; **no refresh token without
-  `access_type=offline&prompt=consent`**), **Claude web = CIMD**
-  (`https://claude.ai/oauth/mcp-oauth-client-metadata`, callback `…/api/mcp/auth_callback`;
-  it **strips the trailing slash and posts to bare `/mcp`** — source-run it stalled on a
-  404/no-pointer fallback chain, so nginx's rewrite is load-bearing), **ChatGPT web = CIMD**
-  (per-connector `client.json`, callback `chatgpt.com/connector/oauth/<id>`; it reads the
-  **path-aware `openid-configuration/mcp`** after 404 on the pruned child alias). Nobody used
-  the bare OpenID document or the upstream-client-id path.
-- **Decisions (proposed in `findings.md` §10, not yet in `docs/design.md`):** CIMD **on** (both
-  web clients chose it), the synthesised upstream-id client refused, the allowlist narrows DCR
-  only; path-aware OpenID doc kept, bare one pruned; bare `/mcp` is a client-facing spelling; Postgres adapter
-  for proxy state, table owned by Alembic, backup set becomes DB + `.env`; explicit
-  `MCP_OAUTH_SIGNING_KEY` as 32 random bytes (the default store crashes on non-UTF-8 key bytes,
-  so always pass `client_storage`); `verify_id_token=True` as the one verifier shape (Google's
-  access tokens are opaque; proven on Keycloak); **owner binding at issuance** via an
-  `exchange_authorization_code` override (the verifier alone refuses a stranger only at the first
-  MCP call — they still get a token pair); refuse a token without `sub`; **the MCP scope
-  vocabulary is the IdP's** — `collection:*` cannot be per-grant scopes on 3.4.5 without
-  translating both directions (outbound is a private method) → fixed rw mapping for every
-  proxy-issued token; CIMD off until a named client needs it; FastMCP token lifetime = upstream
-  `expires_in` (Keycloak 300 s) unless pinned.
-- **State:** `main` at `4366695` + this entry, `.agents/README.md` edited, `.agents/spikes/190/`
-  untracked (its `.gitignore` keeps `secrets.env` — the owner's Google client — plus stores,
-  state and key out); **nothing committed** (owner's call). Spike containers: Keycloak stopped
-  (realm inside), nginx spike stack removed, image `plamotrack-web-spike` kept, scratch DB
-  dropped; ports 8000 / 8001 / 6274 / 8082 free. The tunnel `testing.gunp.la` → `10.86.64.128:8000`
-  route has been deleted by the owner; both web-client connectors removed (the Claude one may
-  linger as "Reconnect" — harmless, points nowhere). No code change in
-  `backend/` or `frontend/`. Dev DB still claimed with `e2e-owner-password`.
-- **Next:** (1) owner closes #190 when satisfied; (2) the §5 amendments (`findings.md` §10) and #192 (M6-7) on a
-  branch: CIMD on, owner binding at issuance, Postgres store under Alembic, fixed rw scope
-  mapping, Google's two parameters, bare `/mcp` carrying the pointer; (3) #193 audit / rate
-  limiting can run in parallel (family-8 `limit_req` on `authorize` matters more now that the
-  proxy fetches CIMD URLs); (4) **LXC stays put until M6 is finished** (owner, 03/09).
+- **Done:** both reproduced at `d2e1297` on their own assertions first (32 new/changed contract
+  rows in a worktree at that head: **23 red / 9 green**), then fixed at `cb69559`. **f31**
+  `ABSOLUTE_URI` — RFC 3986 Appendix A's `absolute-URI` as one regex — judged in
+  `resource_identity` on the decoded string *before* `urlsplit` (which admitted a tab in the
+  authority, a CR in the path, a leading NUL, and never looked at the ignored query: `%zz`,
+  an unescaped space); a valid escape admitted. **f32** `with_usable_inline_keys` in the
+  `private_key_jwt` branch: `keys` must be an array, non-object entries dropped (RFC 7517
+  §5.1, matching the remote path) from a copy handed to FastMCP's validator, none usable →
+  `invalid_client`; the snapshot still returned. Correction adopted: call 16's scheme wording
+  (the scheme case-folds via `urlsplit`/`urlparse`; the authority as written) — the round-8
+  `spelling` row split into `scheme_case` (accepted) and `host_case` (foreign). Tests: contract
+  suite **209** (+29; the whole-URI test 12 values × 3 flows, the key-set test 4 × 2); mutants
+  moa-100…103; harness **504/46**. Docs: module docstring, design §5.9 (k) + row 8, AGENTS.md
+  rule 13, procedure, lessons → "Parsing is not validation". PR body: What, By file, call 16
+  corrected, **new call 17** (the grammar's approximations; the §5.1 ignore rule and the
+  single-key-fallback consequence), Tests, controls, mutants, coverage record.
+- **Decisions:** `IPvFuture`/`IPv6address` approximated as a bracketed hex/colon/dot literal,
+  `IPv4address` under `reg-name`; unusable key entries dropped rather than the set refused
+  (Codex offered either); the grammar judged on the once-decoded form value; no other
+  exception translated at the key boundary.
+- **State:** backend **2276 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants ****102/102 killed** — 101 first pass; moa-92 GREEN (equivalent under the new grammar) → redesigned as the fragment stripped before comparing, killed alone** (tracked harness, committed tree, `nohup`).
+  Commits `cb69559` (runtime) and `e7ad8c4` (moa-92 redesign, procedure) pushed; PR #212 body amended; the reply is issuecomment-5551526055. Codex's r9 material
+  at `/private/tmp/plamotrack-212-r9/` (untracked). Exact-tip CI was green at `559c6f8` (the
+  round-8 timing flake did not recur). Dev `db` up, Keycloak spike up. LXC untouched (**stays
+  put until M6 is finished**).
+- **Next:** (1) **Codex round 10 on PR #212** — the brief was printed in this session's chat;
+  regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming runtime head
+  `cb69559`, the branch tip (hand-off only above it), `main` `a497481`, rules 1/6/7.1/9/11/12/13;
+  findings from 33; reproduce at `cb69559` first; update the coverage record in the reply
+  (procedure 7.1). If GO: squash-merge with `Closes #192`; nothing to fold in. (2) After
+  merge: #215, #193, M6-9 TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a
+  packaged stack with the Keycloak spike, the register burst concurrent — then the LXC
+  upgrade; relink any MCP client first.

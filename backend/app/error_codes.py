@@ -170,6 +170,12 @@ IMPORT_RECEIPT_CONFLICT = "import.receipt_conflict"
 # the .env key that fixes it, so the sentence can point at it.
 INGRESS_HOST_NOT_ALLOWED = "ingress.host_not_allowed"
 INGRESS_ORIGIN_NOT_ALLOWED = "ingress.origin_not_allowed"
+# 429 from the bundled nginx alone: the per-peer limit on the three OAuth
+# endpoints an unauthenticated party can drive (`/mcp/authorize`, `/mcp/token`,
+# `/mcp/register`; §5.5 family 8, M6-7). Carries `Cache-Control: no-store` like
+# every family-8 failure (Codex #212 round 1, f4). The app has no raise site for
+# it — its own budgets are #193's.
+INGRESS_RATE_LIMITED = "ingress.rate_limited"
 
 # --- authorization refusals (the route-policy dependency — app/auth, §5.5) ----
 # 401: no credential, or a presented one that fails, on a route that needs one.

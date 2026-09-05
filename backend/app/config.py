@@ -14,6 +14,12 @@ from app.models.enums import AuthMode
 #: configured OpenID Connect provider asserts. Never a third, "off" one (§5.6).
 AUTH_MODES = tuple(mode.value for mode in AuthMode)
 
+#: The hosts the MCP SDK admits as a plain-http OAuth issuer (RFC 8414 wants
+#: https; `mcp.server.auth.routes.validate_issuer_url` excepts exactly these).
+#: Mirrored here so the settings validator refuses at start what the SDK would
+#: refuse at app build, naming the setting.
+MCP_OAUTH_PLAIN_HTTP_HOSTS: frozenset[str] = frozenset({"localhost", "127.0.0.1"})
+
 _CURRENCY_RE = re.compile(r"[A-Z]{3}")
 
 
@@ -110,6 +116,27 @@ class Settings(BaseSettings):
     oidc_client_id: str = ""
     oidc_client_secret: str = ""
 
+    # --- MCP OAuth (§5.5 family 8, §5.6; M6-7 / #192) ------------------------------
+    # OIDC mode only, and required there: the key that signs the access and
+    # refresh tokens the MCP OAuth proxy issues to clients, and from which the
+    # key encrypting the proxy's state rows (`mcp_oauth_state`) is derived.
+    # 32 random bytes as 64 hex characters (`openssl rand -hex 32`). Installation
+    # identity beside PUBLIC_BASE_URL: rotating it invalidates every MCP link
+    # (clients re-authorise; data, sessions and access tokens are untouched).
+    # Explicit rather than derived from OIDC_CLIENT_SECRET, so rotating the
+    # provider's secret does not silently start an empty state store.
+    mcp_oauth_signing_key: str = ""
+    # Optional, OIDC mode. Comma-separated redirect-URI patterns a dynamically
+    # registered MCP client may register (`http://localhost:*`,
+    # `https://*.example.com/*`). It NARROWS registration and never replaces the
+    # registration binding: a client is still sent only to a URI it registered.
+    # When set it applies to EVERY client kind (FastMCP re-checks it at the
+    # callback, where the kind is no longer known), so it must also admit the
+    # callbacks of the CIMD clients in use — Claude web, ChatGPT web — whose
+    # binding is otherwise their published metadata document. Empty: any safe
+    # URI may be registered, and the registration is the binding.
+    mcp_oauth_allowed_redirect_uris: str = ""
+
     @field_validator("public_base_url")
     @classmethod
     def _validate_public_base_url(cls, value: str) -> str:
@@ -185,6 +212,43 @@ class Settings(BaseSettings):
             )
         return value
 
+    @field_validator("mcp_oauth_signing_key")
+    @classmethod
+    def _validate_mcp_oauth_signing_key(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not value:
+            return ""
+        if not re.fullmatch(r"[0-9a-f]{64}", value):
+            raise ValueError(
+                "MCP_OAUTH_SIGNING_KEY must be 32 random bytes as 64 hex characters "
+                "(`openssl rand -hex 32`)"
+            )
+        return value
+
+    @field_validator("mcp_oauth_allowed_redirect_uris")
+    @classmethod
+    def _validate_mcp_oauth_allowed_redirect_uris(cls, value: str) -> str:
+        for entry in split_csv(value):
+            parsed = urlsplit(entry)
+            if parsed.scheme not in ("http", "https") or not parsed.netloc:
+                raise ValueError(
+                    "MCP_OAUTH_ALLOWED_REDIRECT_URIS entries are http(s) URI patterns "
+                    f"(got {entry!r})"
+                )
+        return value
+
+    @property
+    def mcp_oauth_signing_key_bytes(self) -> bytes:
+        """The signing key as the 32 bytes the proxy takes; empty when unset."""
+        return bytes.fromhex(self.mcp_oauth_signing_key) if self.mcp_oauth_signing_key else b""
+
+    @property
+    def mcp_oauth_allowed_redirect_uri_patterns(self) -> list[str] | None:
+        """The allowlist as the proxy takes it: None when unset (registration is
+        the binding), else the patterns."""
+        entries = split_csv(self.mcp_oauth_allowed_redirect_uris)
+        return entries or None
+
     @field_validator("allowed_origins")
     @classmethod
     def _validate_allowed_origins(cls, value: str) -> str:
@@ -232,13 +296,30 @@ class Settings(BaseSettings):
                 ("OIDC_CLIENT_ID", self.oidc_client_id),
                 ("OIDC_CLIENT_SECRET", self.oidc_client_secret),
                 ("PUBLIC_BASE_URL", self.public_base_url),
+                ("MCP_OAUTH_SIGNING_KEY", self.mcp_oauth_signing_key),
             )
             if not value
         ]
         if missing:
             raise ValueError(
                 "AUTH_MODE=oidc needs " + ", ".join(missing) + " — the callback URL is built "
-                "from PUBLIC_BASE_URL and the provider from OIDC_ISSUER (docs/operations.md)"
+                "from PUBLIC_BASE_URL, the provider from OIDC_ISSUER, and the MCP OAuth "
+                "tokens are signed with MCP_OAUTH_SIGNING_KEY (docs/operations.md)"
+            )
+        # The MCP OAuth authorization server is `<PUBLIC_BASE_URL>/mcp` (§5.5
+        # family 8, #192). RFC 8414 requires an https issuer and the MCP SDK
+        # enforces it, with the developer's loopback as the one exception — and
+        # an authorization server on plain http would hand bearer tokens to
+        # clients in the clear. OIDC mode therefore needs TLS in front (§5.4 mode
+        # R) or a loopback address (mode L / Dev); the private-network plain-http
+        # deployment (mode P) stays on local mode.
+        parsed = urlsplit(self.public_base_url)
+        if parsed.scheme != "https" and parsed.hostname not in MCP_OAUTH_PLAIN_HTTP_HOSTS:
+            raise ValueError(
+                "AUTH_MODE=oidc needs an https PUBLIC_BASE_URL (or localhost / 127.0.0.1 for "
+                "development): the MCP OAuth authorization server at <PUBLIC_BASE_URL>/mcp "
+                f"must be https (RFC 8414); got {self.public_base_url!r}. Put TLS in front, "
+                "or use AUTH_MODE=local (docs/operations.md)"
             )
         return self
 
