@@ -492,9 +492,12 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     malformed set had been a 500. **The selected key keeps its authorization** (round
     10, f33): FastMCP verified with a PEM of the JWK it selected, so the key's `alg`, `use`
     and `key_ops` never reached joserfc; `RestrictedKeyAssertionValidator` and
-    `RestrictedKeyVerifier` hand its verifier the selected JWK itself, on the inline and
-    the fetched path, cache included, and the same decode enforces the restrictions — one
-    cryptographic validator, the SDK's selection unchanged. All of it tested from raw
+    `RestrictedKeyVerifier` hand its verifier the selected JWK itself — the record the
+    `kid` named, never the first record with its material (round 11, f34) — on the inline
+    and the fetched path, cache included, and the same decode enforces the restrictions —
+    one cryptographic validator, the SDK's selection rule unchanged; the inline set is
+    filtered by the remote path's own usability predicate before the single-key fallback
+    counts it (f35). All of it tested from raw
     requests in `tests/test_mcp_oauth_clients.py` — never through the SDK's models or
     a helper that pads the form, and with the test's own dates computed when it runs,
     not at import (f23). The upstream

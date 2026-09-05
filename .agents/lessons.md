@@ -852,3 +852,20 @@ of the PEM it selected, identified by that PEM (identical whatever metadata the 
 carries), so the SDK's own decode enforces the restriction on the key it chose, cache
 lifetime included. When the library's selection is right and its representation is
 lossy, replace the representation, not the selection.
+
+## The record the selection named (#212, round 11)
+
+Round 10 carried the selected JWK to the verifier by finding it through the PEM the
+SDK had selected — material as identity — and named the assumption in the brief: a set
+publishing one material twice is judged by its first entry. The eleventh round
+measured it: two `kid`s, one material, one copy `use: sig` and one `use: enc`, the
+assertion naming the `enc` copy — accepted when the `sig` copy came first, refused when
+it came second. The outcome followed array order, which RFC 7517 §5.1 says implies
+nothing, instead of the `kid`, which §4.5 says is how a key is selected. The lesson
+completes round 10's: when you replace a library's lossy representation, carry the
+record by **the identity the selection used**, not by the material the representation
+kept — the material is exactly the part two records can share. And the smaller one
+beside it: a usability predicate copied from a library has to be the library's whole
+predicate — "is an object" was round 9's, "can be imported" is the remote path's, and
+the gap between them denied the single-key fallback to an inline set the fetched set
+would have accepted.

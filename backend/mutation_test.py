@@ -4027,9 +4027,10 @@ CASES = [
         "malformed_inline_key_set and token and null_entry",
     ),
     (
+        # Re-anchored in round 11 (f35 made the predicate the remote path's).
         "moa-102. unusable entries not dropped from the set (RFC 7517 §5.1 not applied)",
         MCP_OAUTH,
-        "    usable = [key for key in keys if isinstance(key, dict)]",
+        "    usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]",
         "    usable = list(keys)",
         "malformed_inline_key_set and revoke and null_beside_key",
     ),
@@ -4043,10 +4044,11 @@ CASES = [
     # --- Codex #212 round 10 (f33): the selected key keeps its authorization — the
     # --- JWK itself, not its PEM, through FastMCP's verifier on both paths. ----------
     (
+        # Re-anchored in round 11 (the inline selection is ours and returns the record).
         "moa-104. the inline selection converted to a PEM again (the metadata lost)",
         MCP_OAUTH,
-        '        return selected_jwk(jwks.get("keys"), pem) or pem',
-        "        return pem",
+        "        return selected\n\n    async def validate_assertion(",
+        "        return _pem_of(selected)\n\n    async def validate_assertion(",
         "published_key_s_restrictions_are_enforced and token and inline and use_enc",
     ),
     (
@@ -4057,11 +4059,35 @@ CASES = [
         "published_key_s_restrictions_are_enforced and token and remote and use_enc",
     ),
     (
+        # Re-anchored in round 11 (the record the kid named, checked against the PEM).
         "moa-106. the remote selection handed on as its PEM (the JWK kept but not used)",
         MCP_OAUTH,
-        "        return selected_jwk(self._jwks_keys, selected) or selected",
-        "        return selected",
+        "        return chosen\n",
+        "        return pem\n",
         "published_key_s_restrictions_are_enforced and revoke and remote and alg_rs512",
+    ),
+    # --- Codex #212 round 11 (f34–f35): the record the kid named, not the first with its
+    # --- material; the inline usability predicate the remote path's. -------------------
+    (
+        "moa-107. the inline record re-identified by material (the first copy judged)",
+        MCP_OAUTH,
+        "        return selected\n\n    async def validate_assertion(",
+        "        return next(key for key in keys if _pem_of(key) == _pem_of(selected))\n\n    async def validate_assertion(",
+        "key_selected_by_kid_is_the_one_judged and inline and allowed_first",
+    ),
+    (
+        "moa-108. the remote record re-identified by material (the first copy judged)",
+        MCP_OAUTH,
+        "        if kid is not None:\n            chosen = self._jwks_by_kid.get(kid)",
+        "        if kid is not None:\n            chosen = next((k for k in self._jwks_by_kid.values() if _pem_of(k) == pem), None)",
+        "key_selected_by_kid_is_the_one_judged and remote and allowed_first",
+    ),
+    (
+        "moa-109. an object-shaped unusable inline key counted before the fallback",
+        MCP_OAUTH,
+        "    usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]",
+        "    usable = [key for key in keys if isinstance(key, dict)]",
+        "unusable_inline_key_is_ignored and inline and token and unsupported_kty",
     ),
 ]
 

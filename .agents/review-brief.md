@@ -152,7 +152,7 @@ Add to the brief:
 > under you mid-round, re-run in a detached worktree at the reviewed head and say
 > so (the #173 round's precedent).
 
-**Codex (GPT-6; GPT 5.6 Sol before 2026-09-05).** Any size, or multi-round. Capacity stopped being the
+**Codex (GPT-6; GPT 5.6 Sol before 2026-09-05; Daybreak Blue — GPT 5.6 Sol-based — from 2026-09-06 when GPT-6 Astra refuses).** Any size, or multi-round. Capacity stopped being the
 constraint with the 2026-08-28 subscription bump — no meter check needed for a
 routine round.
 

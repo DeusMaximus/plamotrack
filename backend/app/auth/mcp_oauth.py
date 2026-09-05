@@ -203,9 +203,13 @@ revocation) rather than to the entry points one at a time:
   never reached the verifier and a valid signature authenticated under a
   key that excluded it; `RestrictedKeyAssertionValidator` and
   `RestrictedKeyVerifier` hand FastMCP's own verifier the selected JWK
-  itself — the one whose material the SDK's selection produced, cache and
-  fallback included — and joserfc enforces the restrictions in the same
-  decode, one cryptographic validator still.
+  itself — the record the SDK's selection *named* by the assertion's `kid`
+  or its single-key fallback, never the first record with that material
+  (round 11, f34: two `kid`s publishing one material collapsed onto the
+  first), cache and fallback included — and joserfc enforces the
+  restrictions in the same decode, one cryptographic validator still; and
+  the inline set is filtered by the remote path's own usability predicate
+  before that fallback counts it (f35).
 - **Client-redirect binding per client kind** (§5.6 proxy trust; T9).
   `get_client` refuses the client FastMCP synthesises for the upstream client
   id (anyone who knows the public id could be sent anywhere — the spike's
@@ -292,6 +296,7 @@ from fastmcp.server.auth.oauth_proxy.models import (
 )
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from fastmcp.server.dependencies import get_http_request
+from fastmcp.utilities.auth import decode_jwt_header
 from fastmcp.utilities.ui import create_secure_html_response
 from joserfc import jwk as jose_jwk
 from joserfc.errors import JoseError
@@ -1102,9 +1107,13 @@ class ClientAssertionAuthenticator(ClientAuthenticator):
 
 def _pem_of(key: dict[str, Any]) -> str | None:
     """The PEM FastMCP converts a JWK to, or `None` for a key it would skip as
-    unusable — the same joserfc import, so byte-identical to the SDK's
-    conversion whatever metadata the JWK carries (the metadata is exactly
-    what a PEM cannot represent)."""
+    unusable — an unsupported `kty`, a missing member, material joserfc
+    refuses — the same joserfc import and the same skip set as the SDK's
+    remote path (RFC 7517 §5: ignore what cannot be processed), so this is
+    also the usability predicate the inline set is filtered by (round 11,
+    f35). Byte-identical to the SDK's conversion whatever metadata the JWK
+    carries: the metadata is exactly what a PEM cannot represent, which is
+    why identity is never re-derived from it (round 11, f34)."""
     kind = key.get("kty")
     if kind not in ("RSA", "EC"):
         return None
@@ -1114,15 +1123,14 @@ def _pem_of(key: dict[str, Any]) -> str | None:
         return None
 
 
-def selected_jwk(keys: Any, pem: str) -> dict[str, Any] | None:
-    """The JWK in `keys` whose material the PEM FastMCP selected is — the
-    first, where a set publishes one material twice — or `None`."""
-    if not isinstance(keys, list):
+def _header_kid(token: str) -> str | None:
+    """The assertion's `kid`, as the SDK reads it; a malformed header is the
+    SDK's own refusal downstream, `None` here."""
+    try:
+        kid = decode_jwt_header(token).get("kid")
+    except (ValueError, KeyError, IndexError, TypeError):
         return None
-    for key in keys:
-        if isinstance(key, dict) and _pem_of(key) == pem:
-            return key
-    return None
+    return kid if isinstance(kid, str) and kid else None
 
 
 class RestrictedKeyVerifier(JWTVerifier):
@@ -1133,42 +1141,81 @@ class RestrictedKeyVerifier(JWTVerifier):
     valid signature authenticated under a key that excluded it. This keeps
     the JWKs of the last fetch beside the SDK's own cache — rebuilt only when
     the SDK refetches, so within its cache lifetime like the material — and
-    hands `load_access_token` the JWK whose material the SDK selected (its
-    cache, its fallback, its selection all untouched) in place of the PEM;
+    hands `load_access_token` the JWK the SDK's selection named — by the
+    assertion's `kid`, or the only key when it names none (its cache, its
+    fallback, its selection all untouched) — in place of the PEM;
     the SDK's `_import_key_for_algorithm` imports a JWK as readily as a PEM,
     and the same `jwt.decode` that verifies the signature then enforces the
     restrictions. One cryptographic validator, no refetch."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._jwks_keys: list[dict[str, Any]] = []
+        self._jwks_by_kid: dict[str, dict[str, Any]] = {}
 
     async def _fetch_jwks(self) -> dict[str, Any]:
+        """The SDK's fetch, with the JWKs kept **by `kid`** exactly as the SDK
+        caches their PEMs — a key without one under its `_default` slot, an
+        unusable key skipped — so the record the selection names is the
+        record kept (round 11, f34: found by material, two `kid`s publishing
+        one material collapsed onto the first)."""
         data = await super()._fetch_jwks()
         keys = data.get("keys", []) if isinstance(data, dict) else []
-        self._jwks_keys = [key for key in keys if isinstance(key, dict)]
+        self._jwks_by_kid = {}
+        for key in keys:
+            if not isinstance(key, dict) or _pem_of(key) is None:
+                continue
+            self._jwks_by_kid[key.get("kid") or "_default"] = key
         return data
 
     async def _get_verification_key(self, token: str) -> Any:
-        selected = await super()._get_verification_key(token)
-        return selected_jwk(self._jwks_keys, selected) or selected
+        """The SDK's selection — its cache, lifetime, fetch and fallback —
+        answered with the record it named: the JWK under the assertion's
+        `kid`, or the only cached key when the assertion names none, as the
+        SDK's rule reads. A record whose material is not the PEM the SDK
+        selected is a disagreement between the two and is refused, never
+        degraded to the PEM (the metadata would be lost again)."""
+        pem = await super()._get_verification_key(token)
+        kid = _header_kid(token)
+        if kid is not None:
+            chosen = self._jwks_by_kid.get(kid)
+        elif len(self._jwks_by_kid) == 1:
+            chosen = next(iter(self._jwks_by_kid.values()))
+        else:
+            chosen = None
+        if chosen is None or _pem_of(chosen) != pem:
+            raise ValueError("the selected key and its published record disagree")
+        return chosen
 
 
 class RestrictedKeyAssertionValidator(CIMDAssertionValidator):
     """FastMCP's client-assertion validator — issuer, audience, lifetime, the
     `jti` replay cache, and the key selected by `kid` or the single-key
     fallback — with the selected key's authorization kept on both key paths
-    (round 10, f33): the inline extraction returns the selected JWK itself
-    in place of the PEM the SDK converted it to (the SDK's selection first,
-    raising as it does; the JWK found by that PEM), and a fetched set is
+    (round 10, f33; round 11, f34): the inline extraction returns the
+    record the SDK's rule selects, itself, in place of the PEM the SDK
+    converted it to, and a fetched set is
     verified through `RestrictedKeyVerifier`, installed in the SDK's own
     per-client verifier cache under the SDK's own key so its `validate_assertion`
     picks it up unchanged. One instance serves both endpoints
     (`PlamotrackOAuthProxy.assertion_validator`), so the replay cache is one."""
 
     def _extract_public_key_from_jwks(self, token: str, jwks: dict) -> Any:
-        pem = super()._extract_public_key_from_jwks(token, jwks)
-        return selected_jwk(jwks.get("keys"), pem) or pem
+        """The inline selection, by the SDK's own rule — the key whose `kid`
+        the assertion names, else the only key when it names none, else the
+        SDK's refusal — returning the **record selected**, not a PEM and not
+        the first record with its material (round 11, f34). The set arrives
+        filtered to usable keys (`with_usable_inline_keys`), so the
+        single-key fallback counts what the remote path counts (f35)."""
+        keys = [key for key in jwks.get("keys", []) if isinstance(key, dict)]
+        if not keys:
+            raise ValueError("JWKS document contains no keys")
+        kid = _header_kid(token)
+        selected = next((key for key in keys if kid and key.get("kid") == kid), None)
+        if selected is None:
+            if len(keys) != 1:
+                raise ValueError(f"No matching key found for kid={kid} in JWKS")
+            selected = keys[0]
+        return selected
 
     async def validate_assertion(
         self, assertion: str, client_id: str, token_endpoint: str, cimd_doc: Any
@@ -1194,7 +1241,11 @@ def with_usable_inline_keys(client: OAuthClientInformationFull) -> OAuthClientIn
     ignored. The extraction called `.get` on whatever each entry was, so a
     `keys` object, a `keys` string or a null entry was a **500** on both
     endpoints, and a null entry beside the client's key failed where the
-    remote path skips it (Codex #212 round 9, f32). A `keys` that is not an
+    remote path skips it (Codex #212 round 9, f32); and "cannot be
+    processed" is the remote path's own predicate — an object whose material
+    FastMCP cannot import (an unsupported `kty`, a missing member) is
+    ignored too, where counting it had denied the single-key fallback to an
+    assertion naming no `kid` (round 11, f35). A `keys` that is not an
     array, or a set with no usable entry, is a client-authentication failure;
     unusable entries beside a usable one are dropped from a **copy** of the
     record handed to the validator — the snapshot itself is what the handler
@@ -1209,7 +1260,7 @@ def with_usable_inline_keys(client: OAuthClientInformationFull) -> OAuthClientIn
         raise AuthenticationError(
             "the client's key set is malformed: keys is not an array (RFC 7517 §5)"
         )
-    usable = [key for key in keys if isinstance(key, dict)]
+    usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]
     if not usable:
         raise AuthenticationError("the client's key set holds no usable key (RFC 7517 §5.1)")
     if len(usable) == len(keys):

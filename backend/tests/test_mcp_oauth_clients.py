@@ -2059,3 +2059,131 @@ async def test_a_cached_remote_key_keeps_its_restrictions(monkeypatch, endpoint)
         assert second.status_code == 401, second.text[:300]
         assert served["fetches"] == fetches_before + 1, "the cached key, not a fetch, refused"
         assert grant_records(await _state_rows())
+
+
+# --- Codex #212 round 11: the record the kid named; the remote path's usability predicate -----
+
+
+def _assertion_with_kid(key: RSAKey, kid: str | None, client_id: str, audience: str) -> str:
+    """An assertion signed by `key` whose header names `kid` — or names none."""
+    now = int(time.time())
+    body = {
+        "iss": client_id,
+        "sub": client_id,
+        "aud": audience,
+        "iat": now,
+        "exp": now + 120,
+        "jti": secrets.token_hex(8),
+    }
+    header = {"alg": "RS256"} if kid is None else {"alg": "RS256", "kid": kid}
+    return jwt.encode(header, body, key)
+
+
+@pytest.mark.parametrize("order", ["allowed_first", "selected_first"])
+@pytest.mark.parametrize("source", ["inline", "remote"])
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_the_key_selected_by_kid_is_the_one_judged(monkeypatch, endpoint, source, order):
+    """RFC 7517 §4.5 and §5.1: `kid` is how a specific key is selected, and a
+    set's order implies nothing. One RSA material published twice —
+    `allowed-copy` with `use: sig`, `selected-copy` with `use: enc` — and an
+    assertion naming `selected-copy` is `401 invalid_client` on both
+    endpoints, inline and fetched, whichever copy comes first, with no
+    provider call and the grant intact; the same handle with an assertion
+    naming `allowed-copy` then succeeds. Round 10's repair found the selected
+    key by its material and so judged the *first* copy with that material:
+    with the allowed copy first, all four requests were accepted (Codex #212
+    round 11, f34)."""
+    key = RSAKey.generate_key(2048, parameters={"kid": "client-key"})
+    public = key.as_dict(private=False)
+    public.pop("kid", None)
+    allowed = {**public, "kid": "allowed-copy", "use": "sig"}
+    selected = {**public, "kid": "selected-copy", "use": "enc"}
+    served = _play_key_sets(monkeypatch, {"keys": [allowed]}, source)
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        served["source"] = source
+        served["jwks"] = {
+            "keys": [allowed, selected] if order == "allowed_first" else [selected, allowed]
+        }
+        asked_before = list(fake.token_requests)
+        refused = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": _assertion_with_kid(key, "selected-copy", CIMD_ID, audience),
+            },
+        )
+        assert refused.status_code == 401, (order, refused.status_code, refused.text[:300])
+        assert refused.json()["error"] == "invalid_client"
+        assert fake.token_requests == asked_before
+        assert fake.revoked == []
+        assert grant_records(await _state_rows())
+        assert (await initialize(client, tokens["access_token"])).status_code == 200
+        accepted = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": _assertion_with_kid(key, "allowed-copy", CIMD_ID, audience),
+            },
+        )
+        assert accepted.status_code == 200, accepted.text[:300]
+        if endpoint == "revoke":
+            assert not grant_records(await _state_rows())
+
+
+@pytest.mark.parametrize("shape", ["unsupported_kty", "incomplete_rsa"])
+@pytest.mark.parametrize("source", ["inline", "remote"])
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_an_unusable_inline_key_is_ignored_before_the_fallback(
+    monkeypatch, endpoint, source, shape
+):
+    """RFC 7517 §5: a JWK with an unsupported `kty` or a missing required
+    member is ignored. One usable RSA key published without a `kid`, beside
+    an `OKP` object or an RSA object missing `n`, verifies an assertion that
+    names no `kid` — the single-key fallback sees one usable key — on both
+    endpoints, inline as on the fetched path, which skipped the unusable
+    object already. Round 9's inline filter kept every object, so the inline
+    set counted two and refused what the fetched set accepted (Codex #212
+    round 11, f35)."""
+    key = RSAKey.generate_key(2048, parameters={"kid": "client-key"})
+    public = key.as_dict(private=False)
+    public.pop("kid", None)
+    unusable = {
+        "unsupported_kty": {
+            "kty": "OKP",
+            "crv": "Ed25519",
+            "x": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "kid": "other",
+        },
+        "incomplete_rsa": {"kty": "RSA", "e": "AQAB", "kid": "broken"},
+    }[shape]
+    served = _play_key_sets(monkeypatch, {"keys": [public]}, source)
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        served["source"] = source
+        served["jwks"] = {"keys": [unusable, public]}
+        accepted = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": _assertion_with_kid(key, None, CIMD_ID, audience),
+            },
+        )
+        assert accepted.status_code == 200, (shape, accepted.status_code, accepted.text[:300])
+        if endpoint == "revoke":
+            assert not grant_records(await _state_rows())
