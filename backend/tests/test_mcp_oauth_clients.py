@@ -2483,3 +2483,63 @@ async def test_a_sole_unnamed_record_is_the_fallback(monkeypatch, endpoint, sour
         assert accepted.status_code == 200, (shape, accepted.status_code, accepted.text[:300])
         if endpoint == "revoke":
             assert not grant_records(await _state_rows())
+
+
+# --- Codex #212 round 14: every consumer of the set consumes the records the rule is over ------
+
+
+@pytest.mark.parametrize("header", ["named", "none"])
+@pytest.mark.parametrize("record_kid", ["number", "list", "null"])
+@pytest.mark.parametrize("source", ["inline", "remote"])
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_an_unusable_record_beside_the_signer_is_ignored_on_both_paths(
+    monkeypatch, endpoint, source, record_kid, header
+):
+    """RFC 7517 §5: a JWK that cannot be processed is ignored — by every
+    consumer of the set. A record whose own `kid` is a number, a list or
+    `null` is unusable (joserfc refuses it at import, on both paths), and the
+    signer published beside it verifies an assertion naming it, or naming
+    none — the usable count is one — on both endpoints, inline as fetched,
+    the refresh reaching the provider and the revocation ending the grant.
+    The fetched path had filtered its own records and then handed FastMCP
+    the raw array: the SDK's skip loop, which the inline path never runs,
+    put the unusable record's `kid` into a set and choked on an unhashable
+    one, refusing the set the inline path accepted (Codex #212 round 14,
+    f38). `number` and `null` are the SDK's hashable and falsy branches —
+    controls, green before and after."""
+    signer = RSAKey.generate_key(2048, parameters={"kid": "signer"})
+    other = RSAKey.generate_key(2048, parameters={"kid": "other"})
+    served = _play_key_sets(monkeypatch, {"keys": [signer.as_dict(private=False)]}, source)
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, signer)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        served["source"] = source
+        unusable = {
+            **other.as_dict(private=False),
+            "kid": {"number": 7, "list": ["malformed"], "null": None}[record_kid],
+        }
+        served["jwks"] = {"keys": [unusable, signer.as_dict(private=False)]}
+        kid = "signer" if header == "named" else None
+        asked_before = len(fake.token_requests)
+        accepted = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": _assertion_with_kid(signer, kid, CIMD_ID, audience),
+            },
+        )
+        assert accepted.status_code == 200, (
+            record_kid,
+            header,
+            accepted.status_code,
+            accepted.text[:300],
+        )
+        if endpoint == "token":
+            assert len(fake.token_requests) == asked_before + 1
+        else:
+            assert not grant_records(await _state_rows())

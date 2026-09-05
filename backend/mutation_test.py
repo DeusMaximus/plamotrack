@@ -4122,6 +4122,15 @@ CASES = [
         "    if usable:\n        return usable[-1:]",
         "two_unnamed_records and inline and token and missing",
     ),
+    # --- Codex #212 round 14 (f38): the SDK consumes the records the rule is stated over,
+    # --- not the raw array (its skip loop choked on an unhashable record kid). ----------
+    (
+        "moa-115. the raw fetched array handed back to the SDK (its skip loop runs on it)",
+        MCP_OAUTH,
+        '        return {"keys": list(self._jwks_records)}\n',
+        "        return data\n",
+        "unusable_record_beside_the_signer and remote and token and list and named",
+    ),
 ]
 
 

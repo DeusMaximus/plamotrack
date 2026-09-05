@@ -219,7 +219,10 @@ revocation) rather than to the entry points one at a time:
   fallback counts the set's records, not the slots a cache keeps them in —
   FastMCP's PEM cache holds every unnamed record under one `_default` slot,
   the fetched path had kept the records the same way, and two unnamed
-  records were one key fetched and an ambiguous set inline.
+  records were one key fetched and an ambiguous set inline — and the SDK's
+  cache is built from those records, not the raw array (round 14, f38: its
+  skip loop, which the inline path never runs, choked on an unusable
+  record's unhashable `kid` and refused a set the inline path accepted).
 - **Client-redirect binding per client kind** (§5.6 proxy trust; T9).
   `get_client` refuses the client FastMCP synthesises for the upstream client
   id (anyone who knows the public id could be sent anywhere — the spike's
@@ -1179,9 +1182,10 @@ class RestrictedKeyVerifier(JWTVerifier):
     by `kid` and verifies with the PEM, so the JWK's `alg`, `use` and
     `key_ops` (RFC 7517 §4.2–§4.4; RFC 8725 §3.1) never reached joserfc and a
     valid signature authenticated under a key that excluded it. This keeps
-    every usable JWK of the last fetch, in order, beside the SDK's own cache
-    — rebuilt only when the SDK refetches, so within its cache lifetime like
-    the material — and hands `load_access_token` the record `select_records`
+    every usable JWK of the last fetch, in order, and builds the SDK's own
+    cache from those same records (round 14, f38: the raw array had reached
+    the SDK's skip loop) — rebuilt only when the SDK refetches, so within
+    its cache lifetime like the material — and hands `load_access_token` the record `select_records`
     names over them (round 13, f37: the records had been kept by the SDK's
     cache slots, `kid or "_default"`, so two unnamed records were one and the
     fallback counted slots), with the SDK's own selection behind it able to
@@ -1200,13 +1204,19 @@ class RestrictedKeyVerifier(JWTVerifier):
         FastMCP cannot import skipped, as the SDK skips it — and not by the
         slots the SDK caches their PEMs under (round 13, f37: `kid or
         "_default"` collapsed every unnamed record onto one). The cardinality
-        the fallback counts is the set's, not the cache's."""
+        the fallback counts is the set's, not the cache's. And the SDK is
+        handed **those records** in the document's place, not the raw array
+        (round 14, f38): its own skip loop, which the inline path never runs,
+        put an unusable record's `kid` into a set and choked on an unhashable
+        one, refusing fetched a set the inline path accepted — the
+        representation below the rule. Every consumer of the set consumes
+        the records the rule is stated over."""
         data = await super()._fetch_jwks()
         keys = data.get("keys", []) if isinstance(data, dict) else []
         self._jwks_records = [
             key for key in keys if isinstance(key, dict) and _pem_of(key) is not None
         ]
-        return data
+        return {"keys": list(self._jwks_records)}
 
     async def _get_verification_key(self, token: str) -> Any:
         """The SDK's selection first — its cache, lifetime and fetch, and a

@@ -907,3 +907,19 @@ either representation is consulted, with the library's own answer behind it able
 refuse but never to admit. And the procedure's rule 6 applies to the author as much as
 the reviewer: four rounds in one function is the signal to stop repairing
 representations and write the rule they were all approximating.
+
+## The consumer below the rule (#212, round 14)
+
+Round 13 stated the selection rule over the usable records of the set, and the fetched
+path derived those records from the fetch — then handed FastMCP the raw array it had
+just filtered. The SDK's own preprocessing, a skip loop the inline path never runs,
+put each unusable record's `kid` into a set on its way past it, and an unusable record
+whose `kid` was a list was unhashable: the fetched path refused a set the inline path
+accepted, with the valid signer standing beside the malformed record on both. Five
+rounds in one seam, and the last representation was the library's *input*, below the
+rule the fourth round had put above its cache. The lesson completes round 13's: stating
+the invariant over records is necessary and not sufficient — every consumer of the set,
+the library's included, has to be given those records, or the library's own reading of
+the raw data is one more representation the rule does not govern. The check is
+mechanical: for each thing the rule is stated over, list every consumer, and confirm
+each is fed the governed form and not the source it was derived from.

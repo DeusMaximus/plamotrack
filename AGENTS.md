@@ -504,7 +504,10 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     records** (`select_records`) for both paths — the fallback counts the set's records,
     not the slots a cache keeps them in, where FastMCP's PEM cache and the fetched path's
     records held every unnamed record under one `_default` slot, so two unnamed records
-    were one key fetched and an ambiguous set inline (round 13, f37). All of it tested from raw
+    were one key fetched and an ambiguous set inline (round 13, f37); and the SDK's cache is
+    built from those same records, never the raw array — its own skip loop, which the inline
+    path never runs, choked on an unusable record's unhashable `kid` and refused a set the
+    inline path accepted (round 14, f38). All of it tested from raw
     requests in `tests/test_mcp_oauth_clients.py` — never through the SDK's models or
     a helper that pads the form, and with the test's own dates computed when it runs,
     not at import (f23). The upstream
