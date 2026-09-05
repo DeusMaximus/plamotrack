@@ -489,7 +489,12 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     the grammar refuses, and a query the comparison ignores was never checked), and the
     inline key set has a contract in front of FastMCP's extraction (`keys` an array,
     unusable entries ignored per RFC 7517 §5.1, none usable a refusal) where a
-    malformed set had been a 500. All of it tested from raw
+    malformed set had been a 500. **The selected key keeps its authorization** (round
+    10, f33): FastMCP verified with a PEM of the JWK it selected, so the key's `alg`, `use`
+    and `key_ops` never reached joserfc; `RestrictedKeyAssertionValidator` and
+    `RestrictedKeyVerifier` hand its verifier the selected JWK itself, on the inline and
+    the fetched path, cache included, and the same decode enforces the restrictions — one
+    cryptographic validator, the SDK's selection unchanged. All of it tested from raw
     requests in `tests/test_mcp_oauth_clients.py` — never through the SDK's models or
     a helper that pads the form, and with the test's own dates computed when it runs,
     not at import (f23). The upstream

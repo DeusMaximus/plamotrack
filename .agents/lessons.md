@@ -831,3 +831,24 @@ cannot represent has already decided for you; a comparison that ignores a compon
 has left that component unchecked. The corollary for borrowed helpers is the same as
 round 8's: a library's tolerance is its own, and the seam that owns the decision owns
 the grammar too.
+
+## The selected key keeps its authorization (#212, round 10)
+
+FastMCP's assertion validator selects the client's JWK by `kid`, converts it to a PEM,
+and verifies with the PEM — on the inline set and on the fetched one, where the PEMs
+are what it caches. A PEM is key material and nothing else: the JWK's `alg`, `use` and
+`key_ops` — the key's declared authorization for an operation (RFC 7517 §4.2–§4.4),
+which RFC 8725 §3.1 says a verifier must honour — are gone before joserfc sees the key,
+so a mathematically valid RS256 signature authenticated under a key published as
+`alg: RS512`, `use: enc` or `key_ops: ["sign"]`. joserfc enforces all three when given
+the JWK object. The lesson extends round 9's: a conversion is a parser in reverse — it
+keeps what its output format can represent and silently discards the rest — and the
+seam that owns a decision has to check what the library's *intermediate
+representation* dropped, not only what its parser admitted. The repair's shape is
+worth keeping: not a second verifier, not a refetch, not a metadata check bolted on
+before the SDK (which would have to reproduce the SDK's selection, cache and fallback
+to be judging the same key) — but the JWK itself handed to FastMCP's verifier in place
+of the PEM it selected, identified by that PEM (identical whatever metadata the JWK
+carries), so the SDK's own decode enforces the restriction on the key it chose, cache
+lifetime included. When the library's selection is right and its representation is
+lossy, replace the representation, not the selection.

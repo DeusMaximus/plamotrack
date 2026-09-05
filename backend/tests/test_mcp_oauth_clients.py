@@ -53,6 +53,7 @@ from types import SimpleNamespace
 
 import pytest
 from fastmcp.server.auth.cimd import CIMDFetcher
+from fastmcp.server.auth.providers.jwt import JWTVerifier
 from joserfc import jwt
 from joserfc.jwk import ECKey, RSAKey
 
@@ -1910,3 +1911,151 @@ async def test_a_malformed_inline_key_set_is_a_client_refusal(monkeypatch, endpo
         assert accepted.status_code == 200, accepted.text[:300]
         if endpoint == "revoke":
             assert not grant_records(await _state_rows())
+
+
+# --- Codex #212 round 10: the selected key keeps its authorization -----------------------------
+
+
+JWKS_URI = "https://client.example/jwks.json"
+
+
+def _restricted(public: dict, restriction: str) -> dict:
+    """The client's public JWK with one declared restriction, or the explicit
+    permissive metadata."""
+    return {
+        "alg_rs512": {**public, "alg": "RS512"},
+        "use_enc": {**public, "use": "enc"},
+        "key_ops_sign": {**public, "key_ops": ["sign"]},
+        "explicit_ok": {**public, "alg": "RS256", "use": "sig", "key_ops": ["verify"]},
+    }[restriction]
+
+
+def _play_key_sets(monkeypatch, sound: dict, source: str):
+    """A CIMD document whose key set is `sound` — inline, or fetched from
+    `JWKS_URI` with the JWKS fetch played below FastMCP's verifier (its
+    SSRF-safe fetch is not exercised here; its cache, selection and
+    verification are) — returned as a mutable holder the test can point at
+    another set, and a fetch counter."""
+    served = {"jwks": sound, "fetches": 0, "source": "inline"}
+
+    def document():
+        # The link is made through the inline set whatever `source` is, so a
+        # fetched set's verifier meets the set under test on its first fetch
+        # (FastMCP caches a fetched set for an hour); the test switches the
+        # source after linking.
+        if served["source"] == "inline":
+            return _cimd_document(token_endpoint_auth_method="private_key_jwt", jwks=served["jwks"])
+        return _cimd_document(token_endpoint_auth_method="private_key_jwt", jwks_uri=JWKS_URI)
+
+    async def fetch(self, client_id_url: str):
+        assert client_id_url == CIMD_ID
+        return document()
+
+    async def fetch_jwks(self):
+        served["fetches"] += 1
+        return served["jwks"]
+
+    monkeypatch.setattr(CIMDFetcher, "fetch", fetch)
+    monkeypatch.setattr(JWTVerifier, "_fetch_jwks", fetch_jwks)
+    return served
+
+
+@pytest.mark.parametrize(
+    "restriction", ["alg_rs512", "use_enc", "key_ops_sign", "explicit_ok", "mixed_set"]
+)
+@pytest.mark.parametrize("source", ["inline", "remote"])
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_a_published_key_s_restrictions_are_enforced(
+    monkeypatch, endpoint, source, restriction
+):
+    """RFC 7517 §4.2–§4.4 and RFC 8725 §3.1: a JWK's `alg`, `use` and
+    `key_ops` are the key's authorization, and the key that verifies an
+    assertion must be authorized for that. The client's own key, published
+    with `alg: RS512`, `use: enc` or `key_ops: ["sign"]`, refuses its RS256
+    assertion — `401 invalid_client` on both endpoints, inline and fetched,
+    with the grant intact and the **same assertion and handle** accepted
+    once the published metadata is corrected; explicit permissive metadata
+    is accepted, and a set holding an encryption key beside the signing key
+    admits the signing key by `kid`. The reviewed head converted the
+    selected JWK to a PEM before verifying, on both paths, so the metadata
+    never reached the verifier and a mathematically valid signature
+    authenticated under a key that excluded it (Codex #212 round 10, f33)."""
+    key = RSAKey.generate_key(2048, parameters={"kid": "client-key"})
+    public = key.as_dict(private=False)
+    sound = {"keys": [public]}
+    served = _play_key_sets(monkeypatch, sound, source)
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (live, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        credential = {
+            "client_assertion_type": ASSERTION_TYPE,
+            "client_assertion": assertion(key, CIMD_ID, audience),
+        }
+        served["source"] = source
+        if restriction == "mixed_set":
+            other = RSAKey.generate_key(2048, parameters={"kid": "enc-key"}).as_dict(private=False)
+            served["jwks"] = {"keys": [{**other, "use": "enc"}, {**public, "use": "sig"}]}
+        else:
+            served["jwks"] = {"keys": [_restricted(public, restriction)]}
+        response = await _endpoint_request(client, endpoint, tokens, fake, credential)
+        if restriction in ("explicit_ok", "mixed_set"):
+            assert response.status_code == 200, (
+                restriction,
+                response.status_code,
+                response.text[:300],
+            )
+            if endpoint == "revoke":
+                assert not grant_records(await _state_rows())
+            return
+        assert response.status_code == 401, (restriction, response.status_code, response.text[:300])
+        assert response.json()["error"] == "invalid_client"
+        assert response.headers.get_list("cache-control") == ["no-store"]
+        assert grant_records(await _state_rows())
+        assert (await initialize(client, tokens["access_token"])).status_code == 200
+        served["jwks"] = sound
+        if source == "remote":
+            # The refusing key is what the verifier cached, for FastMCP's hour:
+            # the corrected set is met by a fresh verifier (the cache dropped),
+            # not by a restriction lifted from the cached key.
+            getattr(live.state, MCP_OAUTH_ATTR).proxy.assertion_validator._verifier_cache.clear()
+        accepted = await _endpoint_request(client, endpoint, tokens, fake, credential)
+        assert accepted.status_code == 200, accepted.text[:300]
+        if endpoint == "revoke":
+            assert not grant_records(await _state_rows())
+
+
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_a_cached_remote_key_keeps_its_restrictions(monkeypatch, endpoint):
+    """The restriction lives on the key FastMCP caches, not only on the fetch:
+    a fetched set whose key says `use: enc` is refused on the first request
+    (the fetch) and on the second (the cache, no fetch), and a key fetched
+    sound stays sound within FastMCP's cache lifetime even if the published
+    set changes — the same TTL semantics as the key material's rotation,
+    named as such in the PR body."""
+    key = RSAKey.generate_key(2048, parameters={"kid": "client-key"})
+    public = key.as_dict(private=False)
+    served = _play_key_sets(monkeypatch, {"keys": [public]}, "remote")
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+
+        def credential():
+            return {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": assertion(key, CIMD_ID, audience),
+            }
+
+        served["source"] = "remote"
+        served["jwks"] = {"keys": [{**public, "use": "enc"}]}
+        fetches_before = served["fetches"]
+        first = await _endpoint_request(client, endpoint, tokens, fake, credential())
+        assert first.status_code == 401, first.text[:300]
+        assert served["fetches"] == fetches_before + 1
+        second = await _endpoint_request(client, endpoint, tokens, fake, credential())
+        assert second.status_code == 401, second.text[:300]
+        assert served["fetches"] == fetches_before + 1, "the cached key, not a fetch, refused"
+        assert grant_records(await _state_rows())

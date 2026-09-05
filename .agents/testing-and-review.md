@@ -194,7 +194,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` after #212: 504 cases over 46 target files** — counted the way the
+- **On `main` after #212: 507 cases over 46 target files** — counted the way the
   harness itself counts, `len(CASES)` and the distinct paths those cases mutate
   (migrations, the one test file and the two `frontend/` files included; the
   one-liner is `uv run python -c "import mutation_test as m, pathlib; print(len(m.CASES), len({pathlib.Path(c[1]).resolve() for c in m.CASES}))"`
@@ -331,8 +331,11 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   refuses a fragment on its own, so "the explicit check removed" had become an
   equivalent mutant (GREEN on the full pass — the procedure's take-it-out-or-make-it-
   killable rule); it is now the fragment *stripped* before comparing, FastMCP's original
-  erasure, killed by the fragment rows; all 102 killed on the branch by the tracked
-  harness on the committed tree, `-k moa-` — three first-pass survivors in
+  erasure, killed by the fragment rows; 104…106 from round 10 — the selected key's
+  authorization: the inline selection converted to a PEM again, the remote verifier
+  left as FastMCP's, the remote selection handed on as its PEM — all three killed in
+  the contract suite; all 105 killed on the branch by the tracked harness on the
+  committed tree, `-k moa-` — three first-pass survivors in
   round 2, each fixed outside the tuple: moa-47 a redundant second delete, moa-56 a
   fallback re-check masking the gate, moa-49 the fake's re-issued id_token identical
   to the original within one second)

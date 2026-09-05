@@ -4040,6 +4040,29 @@ CASES = [
         "    if True:\n        return client\n    return client.model_copy(",
         "malformed_inline_key_set and token and null_beside_key",
     ),
+    # --- Codex #212 round 10 (f33): the selected key keeps its authorization — the
+    # --- JWK itself, not its PEM, through FastMCP's verifier on both paths. ----------
+    (
+        "moa-104. the inline selection converted to a PEM again (the metadata lost)",
+        MCP_OAUTH,
+        '        return selected_jwk(jwks.get("keys"), pem) or pem',
+        "        return pem",
+        "published_key_s_restrictions_are_enforced and token and inline and use_enc",
+    ),
+    (
+        "moa-105. the remote verifier left as FastMCP's (PEMs cached by kid)",
+        MCP_OAUTH,
+        "            if not isinstance(self._verifier_cache.get(cache_key), RestrictedKeyVerifier):",
+        "            if False:",
+        "published_key_s_restrictions_are_enforced and token and remote and use_enc",
+    ),
+    (
+        "moa-106. the remote selection handed on as its PEM (the JWK kept but not used)",
+        MCP_OAUTH,
+        "        return selected_jwk(self._jwks_keys, selected) or selected",
+        "        return selected",
+        "published_key_s_restrictions_are_enforced and revoke and remote and alg_rs512",
+    ),
 ]
 
 

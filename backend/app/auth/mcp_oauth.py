@@ -196,7 +196,16 @@ revocation) rather than to the entry points one at a time:
   ignores — and the inline key set has a contract in front of FastMCP's
   extraction (`with_usable_inline_keys`: `keys` an array, non-object
   entries ignored as RFC 7517 §5.1 says, none usable a refusal), where a
-  `keys` object or a null entry had been a 500.
+  `keys` object or a null entry had been a 500. *And the selected key keeps
+  its authorization* (round 10, f33): FastMCP converted the JWK it selected
+  to a PEM before verifying, on the inline and the fetched path alike, so
+  the key's `alg`, `use` and `key_ops` (RFC 7517 §4.2–§4.4, RFC 8725 §3.1)
+  never reached the verifier and a valid signature authenticated under a
+  key that excluded it; `RestrictedKeyAssertionValidator` and
+  `RestrictedKeyVerifier` hand FastMCP's own verifier the selected JWK
+  itself — the one whose material the SDK's selection produced, cache and
+  fallback included — and joserfc enforces the restrictions in the same
+  decode, one cryptographic validator still.
 - **Client-redirect binding per client kind** (§5.6 proxy trust; T9).
   `get_client` refuses the client FastMCP synthesises for the upstream client
   id (anyone who knows the public id could be sent anywhere — the spike's
@@ -272,6 +281,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from fastmcp.server.auth import AccessToken, TokenVerifier
 from fastmcp.server.auth.auth import JWT_BEARER_ASSERTION_TYPE, TokenHandler
+from fastmcp.server.auth.cimd import CIMDAssertionValidator
 from fastmcp.server.auth.handlers.authorize import AuthorizationHandler
 from fastmcp.server.auth.oauth_proxy import OAuthProxy
 from fastmcp.server.auth.oauth_proxy.models import (
@@ -280,8 +290,11 @@ from fastmcp.server.auth.oauth_proxy.models import (
     _hash_token,
     _matches_registered_redirect_uri,
 )
+from fastmcp.server.auth.providers.jwt import JWTVerifier
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.utilities.ui import create_secure_html_response
+from joserfc import jwk as jose_jwk
+from joserfc.errors import JoseError
 from key_value.aio.adapters.pydantic import PydanticAdapter
 from key_value.aio.stores.postgresql import PostgreSQLStore
 from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
@@ -1010,8 +1023,10 @@ class ClientAssertionAuthenticator(ClientAuthenticator):
     3. **Dispatch by the snapshot's method.** `private_key_jwt`: the
        assertion type, the assertion, the inline key set's contract
        (`with_usable_inline_keys` — round 9, f32), then FastMCP's own
-       validator (`validate_private_key_jwt` — signature, issuer, audience,
-       lifetime, replay). `none`: the client id alone; an assertion presented to it is
+       validator with the selected key's authorization kept
+       (`RestrictedKeyAssertionValidator` — signature, issuer, audience,
+       lifetime, replay, and the key's `alg`/`use`/`key_ops`; round 10,
+       f33). `none`: the client id alone; an assertion presented to it is
        refused, since there is no key it could be verified against; a stray
        `client_secret` with no assertion is ignored, as the SDK ignores it
        (no mechanism is in use). Any other method is refused.
@@ -1021,9 +1036,11 @@ class ClientAssertionAuthenticator(ClientAuthenticator):
     endpoints; `PlamotrackOAuthProxy._client_authenticator` builds one per
     endpoint."""
 
-    def __init__(self, *, provider, cimd_manager, token_endpoint_url: str) -> None:
+    def __init__(
+        self, *, provider, validator: RestrictedKeyAssertionValidator, token_endpoint_url: str
+    ) -> None:
         super().__init__(provider)
-        self.cimd_manager = cimd_manager
+        self.validator = validator
         self.endpoint_url = token_endpoint_url
 
     async def authenticate_request(self, request: Request) -> OAuthClientInformationFull:
@@ -1060,9 +1077,12 @@ class ClientAssertionAuthenticator(ClientAuthenticator):
             if not isinstance(assertion, str) or not assertion:
                 raise AuthenticationError("Missing client_assertion")
             verifying = with_usable_inline_keys(client)
+            document = getattr(verifying, "cimd_document", None)
+            if document is None or document.token_endpoint_auth_method != "private_key_jwt":
+                raise AuthenticationError("Client must have a CIMD document for private_key_jwt")
             try:
-                await self.cimd_manager.validate_private_key_jwt(
-                    assertion=assertion, client=verifying, token_endpoint=self.endpoint_url
+                await self.validator.validate_assertion(
+                    assertion, verifying.client_id, self.endpoint_url, document
                 )
             except ValueError as exc:
                 raise AuthenticationError(f"Invalid client assertion: {exc}") from exc
@@ -1075,6 +1095,96 @@ class ClientAssertionAuthenticator(ClientAuthenticator):
                 )
             return client
         raise AuthenticationError(f"Unsupported auth method: {method}")
+
+
+# --- the selected key keeps its authorization --------------------------------------------
+
+
+def _pem_of(key: dict[str, Any]) -> str | None:
+    """The PEM FastMCP converts a JWK to, or `None` for a key it would skip as
+    unusable — the same joserfc import, so byte-identical to the SDK's
+    conversion whatever metadata the JWK carries (the metadata is exactly
+    what a PEM cannot represent)."""
+    kind = key.get("kty")
+    if kind not in ("RSA", "EC"):
+        return None
+    try:
+        return jose_jwk.import_key(key, kind).as_pem().decode("utf-8")
+    except (JoseError, TypeError, ValueError, KeyError):
+        return None
+
+
+def selected_jwk(keys: Any, pem: str) -> dict[str, Any] | None:
+    """The JWK in `keys` whose material the PEM FastMCP selected is — the
+    first, where a set publishes one material twice — or `None`."""
+    if not isinstance(keys, list):
+        return None
+    for key in keys:
+        if isinstance(key, dict) and _pem_of(key) == pem:
+            return key
+    return None
+
+
+class RestrictedKeyVerifier(JWTVerifier):
+    """FastMCP's JWKS verifier with the selected key's authorization kept
+    (Codex #212 round 10, f33): the SDK caches the PEM of every fetched key
+    by `kid` and verifies with the PEM, so the JWK's `alg`, `use` and
+    `key_ops` (RFC 7517 §4.2–§4.4; RFC 8725 §3.1) never reached joserfc and a
+    valid signature authenticated under a key that excluded it. This keeps
+    the JWKs of the last fetch beside the SDK's own cache — rebuilt only when
+    the SDK refetches, so within its cache lifetime like the material — and
+    hands `load_access_token` the JWK whose material the SDK selected (its
+    cache, its fallback, its selection all untouched) in place of the PEM;
+    the SDK's `_import_key_for_algorithm` imports a JWK as readily as a PEM,
+    and the same `jwt.decode` that verifies the signature then enforces the
+    restrictions. One cryptographic validator, no refetch."""
+
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._jwks_keys: list[dict[str, Any]] = []
+
+    async def _fetch_jwks(self) -> dict[str, Any]:
+        data = await super()._fetch_jwks()
+        keys = data.get("keys", []) if isinstance(data, dict) else []
+        self._jwks_keys = [key for key in keys if isinstance(key, dict)]
+        return data
+
+    async def _get_verification_key(self, token: str) -> Any:
+        selected = await super()._get_verification_key(token)
+        return selected_jwk(self._jwks_keys, selected) or selected
+
+
+class RestrictedKeyAssertionValidator(CIMDAssertionValidator):
+    """FastMCP's client-assertion validator — issuer, audience, lifetime, the
+    `jti` replay cache, and the key selected by `kid` or the single-key
+    fallback — with the selected key's authorization kept on both key paths
+    (round 10, f33): the inline extraction returns the selected JWK itself
+    in place of the PEM the SDK converted it to (the SDK's selection first,
+    raising as it does; the JWK found by that PEM), and a fetched set is
+    verified through `RestrictedKeyVerifier`, installed in the SDK's own
+    per-client verifier cache under the SDK's own key so its `validate_assertion`
+    picks it up unchanged. One instance serves both endpoints
+    (`PlamotrackOAuthProxy.assertion_validator`), so the replay cache is one."""
+
+    def _extract_public_key_from_jwks(self, token: str, jwks: dict) -> Any:
+        pem = super()._extract_public_key_from_jwks(token, jwks)
+        return selected_jwk(jwks.get("keys"), pem) or pem
+
+    async def validate_assertion(
+        self, assertion: str, client_id: str, token_endpoint: str, cimd_doc: Any
+    ) -> bool:
+        if cimd_doc.jwks_uri:
+            cache_key = f"{cimd_doc.jwks_uri}|{client_id}|{token_endpoint}"
+            if not isinstance(self._verifier_cache.get(cache_key), RestrictedKeyVerifier):
+                if len(self._verifier_cache) >= self._verifier_cache_max_size:
+                    del self._verifier_cache[next(iter(self._verifier_cache))]
+                self._verifier_cache[cache_key] = RestrictedKeyVerifier(
+                    jwks_uri=str(cimd_doc.jwks_uri),
+                    issuer=client_id,
+                    audience=token_endpoint,
+                    ssrf_safe=True,
+                )
+        return await super().validate_assertion(assertion, client_id, token_endpoint, cimd_doc)
 
 
 def with_usable_inline_keys(client: OAuthClientInformationFull) -> OAuthClientInformationFull:
@@ -1433,6 +1543,7 @@ class PlamotrackOAuthProxy(OAuthProxy):
         self._provider = provider
         self._owner_check = IdTokenOwnerCheck(provider)
         self._pat_verifier = pat_verifier
+        self.assertion_validator = RestrictedKeyAssertionValidator()
         #: Test seam: an httpx transport the upstream code exchange, refresh
         #: and revocation go through instead of the network, so the suite can
         #: play the provider. None on the shipped app — nothing sets it.
@@ -1606,7 +1717,7 @@ class PlamotrackOAuthProxy(OAuthProxy):
             return ClientAuthenticator(self)
         return ClientAssertionAuthenticator(
             provider=self,
-            cimd_manager=self._cimd_manager,
+            validator=self.assertion_validator,
             token_endpoint_url=f"{self.base_url}{endpoint}",
         )
 
