@@ -3738,8 +3738,8 @@ CASES = [
     (
         "moa-64. a revocation assertion's audience is the token endpoint",
         MCP_OAUTH,
-        '            token_endpoint_url=f"{self.base_url}{REVOCATION_PATH}",',
-        '            token_endpoint_url=f"{self.base_url}/token",',
+        "            self._client_authenticator(REVOCATION_PATH),\n        )\n        token = TokenHandler(",
+        "            self._client_authenticator(TOKEN_PATH),\n        )\n        token = TokenHandler(",
         "private_key_jwt_client_is_refused_without_a_valid_assertion and revoke and wrong_audience",
     ),
     (
@@ -3784,6 +3784,77 @@ CASES = [
         "    token: str\n    token_type_hint: str | None = None",
         '    token: str\n    token_type_hint: Literal["access_token", "refresh_token"] | None = None',
         "hint_is_advice_and_either_half_ends_the_grant and unknown_type",
+    ),
+    # --- Codex #212 round 6: the protocol boundary, field by field (f16–f19) ------------------
+    (
+        "moa-71. the claim contract not applied (the SDK's authenticator alone judges the assertion)",
+        MCP_OAUTH,
+        "        return ClientAssertionAuthenticator(\n            provider=self,",
+        "        return PrivateKeyJWTClientAuthenticator(\n            provider=self,",
+        "claim_that_fails_the_contract_is_refused_first and nbf_future",
+    ),
+    (
+        "moa-72. nbf not enforced",
+        MCP_OAUTH,
+        "    if not_before is not None and not_before > now + CLIENT_ASSERTION_SKEW:",
+        "    if False:",
+        "assertion_not_yet_valid_is_the_same_assertion_later and revoke",
+    ),
+    (
+        "moa-73. jti not required to be a string (a list reaches the SDK's dictionary key)",
+        MCP_OAUTH,
+        '    for name in ("iss", "sub", "jti"):',
+        '    for name in ("iss", "sub"):',
+        "claim_that_fails_the_contract_is_refused_first and jti_list",
+    ),
+    (
+        "moa-74. a boolean taken for a NumericDate",
+        MCP_OAUTH,
+        "    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):",
+        "    if not isinstance(value, (int, float)) or not math.isfinite(value):",
+        "claim_that_fails_the_contract_is_refused_first and iat_bool",
+    ),
+    (
+        "moa-75. a null redirect list not refused (FastMCP's localhost default invented)",
+        MCP_OAUTH,
+        "        if not client_info.redirect_uris:\n            raise RegistrationError(",
+        "        if False:\n            raise RegistrationError(",
+        "registration_response_describes_the_stored_client and null_redirects",
+    ),
+    (
+        "moa-76. the stored client not the admitted contract (FastMCP's record left standing)",
+        MCP_OAUTH,
+        "        await self._client_store.put(\n            key=client_info.client_id,\n            value=ProxyDCRClient(",
+        "        await self._client_store.get(\n            key=client_info.client_id,\n        )\n        ProxyDCRClient(",
+        "registration_response_describes_the_stored_client and display",
+    ),
+    (
+        "moa-77. a repeated parameter not refused (the SDK's last value wins again)",
+        MCP_OAUTH,
+        "        if repeated:\n            return (",
+        "        if False:\n            return (",
+        "repeated_token_parameter_is_refused and client_id",
+    ),
+    (
+        "moa-78. empty values not treated as omitted",
+        MCP_OAUTH,
+        '        pairs = [(name, value) for name, value in pairs if value != ""]',
+        "        pairs = list(pairs)",
+        "empty_value_is_an_omitted_one",
+    ),
+    (
+        "moa-79. an omitted code_challenge_method left to the SDK's S256 default",
+        MCP_OAUTH,
+        '            pairs.append(("code_challenge_method", "plain"))',
+        "            pass",
+        "pkce_must_be_declared_s256 and absent",
+    ),
+    (
+        "moa-80. the unregistered-client guidance left pointing at the pruned child alias",
+        MCP_OAUTH,
+        '        if "authorization_server_metadata" in body:\n            body["authorization_server_metadata"] = self._discovery_url',
+        '        if False:\n            body["authorization_server_metadata"] = self._discovery_url',
+        "unregistered_client_is_pointed_at_the_root_discovery_document",
     ),
 ]
 

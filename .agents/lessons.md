@@ -722,3 +722,30 @@ pass with the record in front of it. The rule for the author is the mirror image
 the fix for a finding is a *contract* (round 4's), the sweep is the contract's whole
 surface — the documents that describe it as well as the endpoints that enforce it —
 and every field's value space is the protocol's, including the values nobody defined.
+
+## The seam has an owner per field, not per endpoint (#212, round 6)
+
+Round 5's process change worked as designed: given two jobs in order — the whole
+contract first, the fixes second — the reviewer wrote a ten-surface field inventory
+before reading the coverage record and found four pre-existing gaps in one pass, all
+at the SDK-to-application boundary and none in the grant machinery: the SDK's
+client-assertion validator never checked `nbf` and used the raw `jti` as a dictionary
+key; FastMCP's registration stored a record built from a few of the fields while the
+SDK returned the object it was handed, so three more fields disagreed after round 4
+had fixed one; the SDK's `dict(form)` kept the last of a repeated parameter and minted,
+revoked or opened a consent transaction on it; and a generated recovery URL named the
+child discovery alias this instance prunes. The pattern across the four: **fixing the
+one field a review names leaves its siblings inherited.** Round 4 made
+`token_endpoint_auth_method` truthful and left `response_types`, `grant_types`,
+`scope` and the display fields to FastMCP; round 3 gave revocation its own lookup and
+left its *form parsing* to the SDK; the assertion had an audience and a replay check
+and no claim contract. The rule that came out: when an adapter takes over a field at
+a seam, enumerate every field the same message carries and decide, per field, who
+owns its value space — the SDK, or you — and write the owner down (design §5.9 (k)'s
+audit is per endpoint *and* per field now). The second half of the lesson is about
+where the guard sits: a repeated parameter cannot be seen once a framework has
+parsed the form into a dict, so the request-decoding contract is an ASGI guard on the
+raw query and body in front of the handler (the registration-body guard's shape),
+not a check inside a Pydantic model; and a claim contract that must not spend the
+replay identifier runs before the validator that caches it, on the unverified
+payload — refuse-only, granting nothing, with the SDK's verification still behind it.

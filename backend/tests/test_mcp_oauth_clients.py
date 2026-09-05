@@ -45,8 +45,10 @@ an unknown hint turning a valid revocation into `400 invalid_request`.
 
 from __future__ import annotations
 
+import json
 import secrets
 import time
+from types import SimpleNamespace
 
 import pytest
 from fastmcp.server.auth.cimd import CIMDFetcher
@@ -641,3 +643,507 @@ async def test_a_revocation_missing_a_required_field_is_refused_in_the_envelope(
         assert grant_records(await _state_rows())
         assert (await initialize(client, tokens["access_token"])).status_code == 200
     assert not await _events(audit.MCP_GRANT_REVOKED)
+
+
+# --- Codex #212 round 6: the SDK-to-application boundary, field by field ------------------
+#
+# Registration normalisation, request decoding, assertion claims and a generated
+# URL each need an explicit owner; fixing the one field a review names leaves its
+# siblings inherited. The rows below are the value spaces the round enumerated.
+
+
+def _clock(monkeypatch, seconds: int) -> None:
+    """Move every clock an assertion is judged by — this module's claim
+    validator, the SDK's assertion validator and its JWT verifier — by
+    `seconds`, leaving `monotonic` (the SDK's cache housekeeping) real."""
+    import fastmcp.server.auth.cimd as cimd_module
+    import fastmcp.server.auth.providers.jwt as jwt_module
+
+    from app.auth import mcp_oauth as mcp_oauth_module
+
+    later = SimpleNamespace(time=lambda: time.time() + seconds, monotonic=time.monotonic)
+    for module in (cimd_module, jwt_module, mcp_oauth_module):
+        monkeypatch.setattr(module, "time", later)
+
+
+def signed(key, client_id: str, audience: str, *, alg: str = "RS256", **claims) -> str:
+    """An assertion with any claim overridden — a value of `OMIT` leaves the
+    claim out — and the JOSE `alg` a knob."""
+    now = int(time.time())
+    body = {
+        "iss": client_id,
+        "sub": client_id,
+        "aud": audience,
+        "iat": now,
+        "exp": now + 120,
+        "jti": secrets.token_hex(8),
+    }
+    for name, value in claims.items():
+        if value is OMIT:
+            body.pop(name, None)
+        else:
+            body[name] = value
+    return jwt.encode({"alg": alg, "kid": key.kid}, body, key)
+
+
+OMIT = object()
+NOW = int(time.time())
+_CLAIM_DEFECTS = {
+    "nbf_future": {"nbf": NOW + 240, "exp": NOW + 270},
+    "nbf_string": {"nbf": "later"},
+    "nbf_null": {"nbf": None},
+    "nbf_bool": {"nbf": False},
+    "iat_bool": {"iat": False},
+    "exp_string": {"exp": "soon"},
+    "exp_missing": {"exp": OMIT},
+    "jti_number": {"jti": 12345},
+    "jti_list": {"jti": ["a", "b"]},
+    "jti_missing": {"jti": OMIT},
+    "sub_missing": {"sub": OMIT},
+    "aud_number": {"aud": 7},
+}
+
+
+async def _endpoint_request(client, endpoint: str, tokens: dict, fake: FakeIdp, credential: dict):
+    """The request under test on `endpoint` with the grant's handle: a refresh
+    on the token endpoint, the access token on the revocation endpoint."""
+    if endpoint == "token":
+        fake.next_refresh = _provider_refresh_for(fake)
+        form = {
+            "grant_type": "refresh_token",
+            "refresh_token": tokens["refresh_token"],
+            "client_id": CIMD_ID,
+        }
+    else:
+        form = {"token": tokens["access_token"], "client_id": CIMD_ID}
+    return await client.post(f"/mcp/{endpoint}", data={**form, **credential})
+
+
+@pytest.mark.parametrize("defect", sorted(_CLAIM_DEFECTS))
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_a_client_assertion_claim_that_fails_the_contract_is_refused_first(
+    monkeypatch, endpoint, defect
+):
+    """RFC 7523 §3 and RFC 7519 §4.1, on both endpoints: the assertion's claims
+    have a contract — `exp` required, `exp`/`iat`/`nbf` finite NumericDates
+    and never booleans, `nbf` respected (with the SDK's 30 s skew), `jti` a
+    non-empty string, `sub` present, `aud` a string or a list of strings — and
+    a claim outside it is `401 invalid_client` **before** the SDK verifies
+    the assertion, so nothing is spent: the grant stands, no provider call, no
+    audit row, and the same handle is then redeemed with a correct assertion.
+    The reviewed head accepted an assertion before its `nbf`, accepted
+    booleans and strings where dates belong, and answered **500** to a list
+    or object `jti` — the SDK's validator never checked `nbf` and used the raw
+    `jti` as a dictionary key (Codex #212 round 6, f16)."""
+    key = cimd(monkeypatch, "private_key_jwt")
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        bad = signed(key, CIMD_ID, audience, **_CLAIM_DEFECTS[defect])
+        asked_before = list(fake.token_requests)
+        refused = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {"client_assertion_type": ASSERTION_TYPE, "client_assertion": bad},
+        )
+        assert refused.status_code == 401, (defect, refused.status_code, refused.text[:200])
+        assert refused.json()["error"] == "invalid_client"
+        assert refused.headers.get_list("cache-control") == ["no-store"]
+        assert grant_records(await _state_rows())
+        assert fake.token_requests == asked_before
+        assert fake.revoked == []
+        assert (await initialize(client, tokens["access_token"])).status_code == 200
+        accepted = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": signed(key, CIMD_ID, audience),
+            },
+        )
+        assert accepted.status_code == 200, accepted.text[:300]
+    assert not await _events(audit.MCP_IDENTITY_REFUSED)
+
+
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_an_assertion_not_yet_valid_is_the_same_assertion_later(monkeypatch, endpoint):
+    """The `nbf` refusal spends nothing: the very same signed assertion, refused
+    before its not-before time, is accepted once the clocks pass it — the
+    refusal happened before the SDK's replay cache saw the `jti`."""
+    key = cimd(monkeypatch, "private_key_jwt")
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        now = int(time.time())
+        early = signed(key, CIMD_ID, audience, nbf=now + 240, exp=now + 270)
+        credential = {"client_assertion_type": ASSERTION_TYPE, "client_assertion": early}
+        refused = await _endpoint_request(client, endpoint, tokens, fake, credential)
+        assert refused.status_code == 401, refused.text[:200]
+        assert refused.json()["error"] == "invalid_client"
+        _clock(monkeypatch, 241)
+        accepted = await _endpoint_request(client, endpoint, tokens, fake, credential)
+        assert accepted.status_code == 200, accepted.text[:300]
+        if endpoint == "revoke":
+            assert not grant_records(await _state_rows())
+
+
+@pytest.mark.parametrize("shape", ["fractional_dates", "no_iat", "aud_list"])
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_a_valid_but_unusual_assertion_shape_is_accepted(monkeypatch, endpoint, shape):
+    """The contract's positive edge: fractional NumericDates, an omitted
+    optional `iat`, and an `aud` given as a one-element list are all valid
+    (RFC 7519 §4.1) and are accepted on both endpoints."""
+    key = cimd(monkeypatch, "private_key_jwt")
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        now = time.time()
+        claims = {
+            "fractional_dates": {"iat": now - 0.5, "exp": now + 119.5},
+            "no_iat": {"iat": OMIT},
+            "aud_list": {"aud": [audience]},
+        }[shape]
+        accepted = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": signed(key, CIMD_ID, audience, **claims),
+            },
+        )
+        assert accepted.status_code == 200, accepted.text[:300]
+
+
+# --- registration: every substituted field describes the stored client ----------------------
+
+
+@pytest.mark.parametrize(
+    "variation",
+    [
+        "null_redirects",
+        "extra_response_type",
+        "empty_scope",
+        "padded_scope",
+        "extra_grant",
+        "display",
+    ],
+)
+async def test_the_registration_response_describes_the_stored_client(variation):
+    """RFC 7591 §3.2.1, the neighbouring fields of round 4's method: the
+    server substitutes what it does not offer and the response says what it
+    registered — and the stored client is that same object, field for field.
+    A `null` redirect list is refused (`invalid_client_metadata`: this server
+    issues authorization codes only, and the reviewed head invented
+    `http://localhost/` for it); `response_types` beyond `code` and
+    `grant_types` beyond the two are substituted to what is offered; an empty
+    or padded `scope` is the default; the display and software fields are
+    echoed *and* stored. The reviewed head returned what was asked and stored
+    what FastMCP's registration constructed (Codex #212 round 6, f17)."""
+    body = dict(REGISTRATION)
+    body["token_endpoint_auth_method"] = "none"
+    expected: dict = {}
+    if variation == "null_redirects":
+        body["redirect_uris"] = None
+    elif variation == "extra_response_type":
+        body["response_types"] = ["code", "token"]
+        expected["response_types"] = ["code"]
+    elif variation == "empty_scope":
+        body["scope"] = ""
+        expected["scope"] = "openid"
+    elif variation == "padded_scope":
+        body["scope"] = "  openid  "
+        expected["scope"] = "openid"
+    elif variation == "extra_grant":
+        body["grant_types"] = ["authorization_code", "refresh_token", "implicit"]
+        expected["grant_types"] = ["authorization_code", "refresh_token"]
+    else:
+        body.update(
+            client_uri="https://client.example/",
+            contacts=["ops@client.example"],
+            software_id="contract-suite",
+            software_version="1",
+        )
+        expected.update(
+            client_uri="https://client.example/",
+            contacts=["ops@client.example"],
+            software_id="contract-suite",
+            software_version="1",
+        )
+    async with oauth_app(FakeIdp()) as (live, client):
+        registered = await client.post("/mcp/register", json=body)
+        if variation == "null_redirects":
+            assert registered.status_code == 400, registered.text
+            assert registered.json()["error"] == "invalid_client_metadata"
+            assert registered.headers.get_list("cache-control") == ["no-store"]
+            return
+        assert registered.status_code == 201, registered.text
+        advertised = registered.json()
+        for field, value in expected.items():
+            assert advertised[field] == value, (field, advertised)
+        stored = json.loads((await stored_client(live, advertised["client_id"])).model_dump_json())
+        for field, value in advertised.items():
+            assert stored.get(field) == value, (field, value, stored.get(field))
+
+
+# --- request decoding: multiplicity, emptiness, the protocol's own errors ---------------------
+
+
+async def _public_grant(client, fake: FakeIdp) -> tuple[str, str, str, dict | None]:
+    """A public DCR client with a code in hand: returns client id, code,
+    verifier — and no tokens (the exchange is the test's)."""
+    registered = await client.post(
+        "/mcp/register", json={**REGISTRATION, "token_endpoint_auth_method": "none"}
+    )
+    client_id = registered.json()["client_id"]
+    code, verifier = await browser_leg(client, fake, client_id, NATIVE_CB)
+    return client_id, code, verifier, None
+
+
+def _encoded(pairs: list[tuple[str, str]]) -> tuple[str, dict]:
+    """A form body with the pairs in this order — including a name twice, which
+    a dict cannot express — and its content type."""
+    from urllib.parse import urlencode
+
+    return urlencode(pairs), {"Content-Type": "application/x-www-form-urlencoded"}
+
+
+@pytest.mark.parametrize("field", ["grant_type", "client_id", "code_verifier"])
+async def test_a_repeated_token_parameter_is_refused_and_the_code_survives(field):
+    """RFC 6749 §3.2: parameters "MUST NOT be included more than once". A code
+    exchange carrying `grant_type`, `client_id` or `code_verifier` twice — an
+    invalid value first, the valid one last — is `400 invalid_request` before
+    anything is redeemed: the code is then exchanged cleanly. The reviewed
+    head's form parsing kept the last value and minted (Codex #212 round 6,
+    f18)."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        client_id, code, verifier, _ = await _public_grant(client, fake)
+        pairs = [
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("redirect_uri", NATIVE_CB),
+            ("client_id", client_id),
+            ("code_verifier", verifier),
+        ]
+        wrong = {"grant_type": "password", "client_id": "someone-else", "code_verifier": "x" * 43}
+        doubled = [(field, wrong[field])] + pairs
+        body, headers = _encoded(doubled)
+        refused = await client.post("/mcp/token", content=body, headers=headers)
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["error"] == "invalid_request"
+        assert refused.headers.get_list("cache-control") == ["no-store"]
+        body, headers = _encoded(pairs)
+        exchanged = await client.post("/mcp/token", content=body, headers=headers)
+        assert exchanged.status_code == 200, exchanged.text
+    assert len(await _events(audit.MCP_GRANT_ISSUED)) == 1
+
+
+@pytest.mark.parametrize("field", ["client_id", "token", "token_type_hint"])
+async def test_a_repeated_revocation_parameter_is_refused_and_the_grant_stands(field):
+    """The same rule at `/revoke`: `client_id`, `token` or `token_type_hint`
+    twice is `400 invalid_request` with the grant untouched; the clean form
+    then ends it."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        client_id, code, verifier, _ = await _public_grant(client, fake)
+        exchanged = await client.post(
+            "/mcp/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": NATIVE_CB,
+                "client_id": client_id,
+                "code_verifier": verifier,
+            },
+        )
+        tokens = exchanged.json()
+        pairs = [("token", tokens["access_token"]), ("client_id", client_id)]
+        wrong = {"client_id": "someone-else", "token": "not-a-token", "token_type_hint": "x"}
+        doubled = [(field, wrong[field])] + pairs + [("token_type_hint", "access_token")]
+        body, headers = _encoded(doubled)
+        refused = await client.post("/mcp/revoke", content=body, headers=headers)
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["error"] == "invalid_request"
+        assert grant_records(await _state_rows())
+        assert (await initialize(client, tokens["access_token"])).status_code == 200
+        body, headers = _encoded(pairs)
+        revoked = await client.post("/mcp/revoke", content=body, headers=headers)
+        assert revoked.status_code == 200, revoked.text
+        assert not grant_records(await _state_rows())
+    assert len(await _events(audit.MCP_GRANT_REVOKED)) == 1
+
+
+@pytest.mark.parametrize("field", ["state", "client_id"])
+async def test_a_repeated_authorization_parameter_is_refused_without_a_redirect(field):
+    """RFC 6749 §3.1 at `/authorize`: `state` or `client_id` twice is a `400`
+    answered directly — never a redirect through a client URI chosen from an
+    ambiguous request — and no transaction is created."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        registered = await client.post(
+            "/mcp/register", json={**REGISTRATION, "token_endpoint_auth_method": "none"}
+        )
+        client_id = registered.json()["client_id"]
+        _, challenge = _pkce()
+        pairs = [
+            ("client_id", client_id),
+            ("response_type", "code"),
+            ("redirect_uri", NATIVE_CB),
+            ("code_challenge", challenge),
+            ("code_challenge_method", "S256"),
+            ("state", "client-state"),
+            ("scope", "openid"),
+        ]
+        first = {"state": "other-state", "client_id": "someone-else"}
+        from urllib.parse import urlencode
+
+        refused = await client.get("/mcp/authorize?" + urlencode([(field, first[field])] + pairs))
+        assert refused.status_code == 400, refused.text
+        assert "location" not in refused.headers
+        assert refused.json()["error"] == "invalid_request"
+        assert refused.headers.get_list("cache-control") == ["no-store"]
+
+
+async def test_an_empty_value_is_an_omitted_one():
+    """RFC 6749 §3.1: "parameters sent without a value MUST be treated as if
+    they were omitted". An empty `token` at `/revoke` is a missing required
+    parameter (`400 invalid_request`, the grant untouched); an empty `scope`
+    at `/authorize` is no scope, so the default applies and the transaction
+    is created. The reviewed head revoked nothing and answered 200 to the
+    first, and redirected `invalid_scope` for the second."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        client_id, code, verifier, _ = await _public_grant(client, fake)
+        exchanged = await client.post(
+            "/mcp/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": NATIVE_CB,
+                "client_id": client_id,
+                "code_verifier": verifier,
+            },
+        )
+        tokens = exchanged.json()
+        refused = await client.post("/mcp/revoke", data={"token": "", "client_id": client_id})
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["error"] == "invalid_request"
+        assert grant_records(await _state_rows())
+        assert (await initialize(client, tokens["access_token"])).status_code == 200
+        _, challenge = _pkce()
+        started = await authorize(client, client_id, NATIVE_CB, challenge=challenge, scope="")
+        assert started.status_code == 302, started.text
+        assert started.headers["location"].startswith(f"{BASE}/mcp/consent?txn_id="), (
+            started.headers["location"]
+        )
+
+
+@pytest.mark.parametrize("grant_type", ["client_credentials", "password", "unknown"])
+async def test_an_unsupported_grant_type_is_named_as_such(grant_type):
+    """RFC 6749 §5.2: a grant type the server does not support is
+    `unsupported_grant_type`, not a malformed request. The reviewed head's
+    parser answered `invalid_request` for all three."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        client_id, _, _, _ = await _public_grant(client, fake)
+        refused = await client.post(
+            "/mcp/token", data={"grant_type": grant_type, "client_id": client_id}
+        )
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["error"] == "unsupported_grant_type"
+        assert refused.headers.get_list("cache-control") == ["no-store"]
+
+
+@pytest.mark.parametrize("method", ["absent", "plain", "s256"])
+async def test_pkce_must_be_declared_s256(method):
+    """RFC 7636 §4.3: an omitted `code_challenge_method` means `plain`, which
+    this server does not offer, so the omission is refused exactly as `plain`
+    is — RFC 7636 §4.4.1's authorization error response, an `invalid_request`
+    redirect to the registered callback with the state, and no consent
+    transaction — where the reviewed head's model defaulted the omission to
+    `S256` and opened one. `S256` stated is the control."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        registered = await client.post(
+            "/mcp/register", json={**REGISTRATION, "token_endpoint_auth_method": "none"}
+        )
+        client_id = registered.json()["client_id"]
+        _, challenge = _pkce()
+        params = {
+            "client_id": client_id,
+            "response_type": "code",
+            "redirect_uri": NATIVE_CB,
+            "code_challenge": challenge,
+            "state": "client-state",
+            "scope": "openid",
+        }
+        if method == "plain":
+            params["code_challenge_method"] = "plain"
+        elif method == "s256":
+            params["code_challenge_method"] = "S256"
+        response = await client.get("/mcp/authorize", params=params)
+        assert response.status_code == 302, response.text
+        location = response.headers["location"]
+        if method == "s256":
+            assert location.startswith(f"{BASE}/mcp/consent?txn_id="), location
+            return
+        assert location.startswith(NATIVE_CB + "?"), location
+        back = _query(location)
+        assert back["error"] == "invalid_request"
+        assert back["state"] == "client-state"
+
+
+# --- the unregistered-client guidance points at a document that exists ----------------------
+
+
+async def test_an_unregistered_client_is_pointed_at_the_root_discovery_document():
+    """FastMCP's authorize handler answers an unknown client with guidance: the
+    registration endpoint and the authorization-server document. The document
+    it named lived under the issuer path — the child alias this instance
+    prunes — so the recovery instruction was a 404 exactly when a client had
+    lost its registration (Codex #212 round 6, f19). The pointer is now the
+    canonical root document, and it answers 200; the HTML page for a browser
+    is the control."""
+    async with oauth_app(FakeIdp()) as (_, client):
+        _, challenge = _pkce()
+        params = {
+            "client_id": "nobody-registered-this",
+            "response_type": "code",
+            "redirect_uri": NATIVE_CB,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "state": "client-state",
+        }
+        guided = await client.get(
+            "/mcp/authorize", params=params, headers={"Accept": "application/json"}
+        )
+        assert guided.status_code == 400, guided.text
+        body = guided.json()
+        assert body["registration_endpoint"] == f"{BASE}/mcp/register"
+        assert body["authorization_server_metadata"] == (
+            f"{BASE}/.well-known/oauth-authorization-server/mcp"
+        )
+        document = await client.get(body["authorization_server_metadata"].removeprefix(BASE))
+        assert document.status_code == 200
+        assert document.json()["registration_endpoint"] == body["registration_endpoint"]
+        page = await client.get("/mcp/authorize", params=params, headers={"Accept": "text/html"})
+        assert page.status_code == 400
+        assert page.headers["content-type"].startswith("text/html")

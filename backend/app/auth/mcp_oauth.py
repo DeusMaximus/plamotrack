@@ -129,6 +129,33 @@ revocation) rather than to the entry points one at a time:
   unrecognised values included (round 5, f15): a `token_type_hint` the
   server does not know is ignored (RFC 7009 §2.2), never refused — the
   form's two-value enum had turned a valid revocation into `400`.
+- **The protocol boundary, field by field** (round 6, f16–f19): registration
+  normalisation, request decoding, assertion claims and a generated URL each
+  have an owner here, because fixing the one field a review names leaves its
+  siblings inherited. *Assertion claims* — `ClientAssertionAuthenticator`, on
+  `/token` and `/revoke` alike, runs `validate_client_assertion_claims` on the
+  assertion **before** the SDK verifies it (RFC 7523 §3, RFC 7519 §4.1: a
+  JWS with an advertised `alg`, an object payload, string `iss`/`sub`/`jti`,
+  `aud` a string or a list of strings, `exp` required, every NumericDate
+  finite and never a boolean, `nbf` honoured with the SDK's 30 s skew), so a
+  refusal is `401 invalid_client` and spends nothing — the SDK's validator
+  never checked `nbf`, took booleans for dates, and used the raw `jti` as a
+  dictionary key (a 500 for a list). *Registration* — `register_client`
+  canonicalises the admitted metadata once and stores that same object: a
+  `null` redirect list is refused (FastMCP invented `http://localhost/`),
+  `response_types` and `grant_types` are what the server offers, a blank
+  `scope` is the default, the display and software fields are kept. *Request
+  decoding* — `ProtocolRequest`, an ASGI guard on the three endpoints a
+  client drives (RFC 6749 §3.1–§3.2): a parameter repeated is
+  `invalid_request` before anything is redeemed, redirected or spent (the
+  SDK's `dict(form)` kept the last value); an empty value is an omitted one; a
+  `grant_type` the server does not offer is `unsupported_grant_type`; an
+  omitted `code_challenge_method` is `plain` (RFC 7636 §4.3), which this
+  S256-only server then refuses the way it refuses `plain` — the SDK's model
+  had defaulted the omission to `S256`. *The generated URL* —
+  `UnregisteredClientGuidance` points an unknown client at the **root**
+  authorization-server document; FastMCP's handler named the child alias this
+  instance prunes.
 - **Client-redirect binding per client kind** (§5.6 proxy trust; T9).
   `get_client` refuses the client FastMCP synthesises for the upstream client
   id (anyone who knows the public id could be sent anywhere — the spike's
@@ -185,11 +212,16 @@ import base64
 import hashlib
 import json
 import logging
+import math
+import time
+from binascii import Error as binascii_error
+from collections import Counter
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Literal
+from urllib.parse import parse_qsl, urlencode, urlparse
 
 import asyncpg
 import httpx
@@ -198,7 +230,8 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from fastmcp.server.auth import AccessToken, TokenVerifier
-from fastmcp.server.auth.auth import PrivateKeyJWTClientAuthenticator
+from fastmcp.server.auth.auth import PrivateKeyJWTClientAuthenticator, TokenHandler
+from fastmcp.server.auth.handlers.authorize import AuthorizationHandler
 from fastmcp.server.auth.oauth_proxy import OAuthProxy
 from fastmcp.server.auth.oauth_proxy.models import (
     ProxyDCRClient,
@@ -220,9 +253,16 @@ from mcp.server.auth.provider import (
     AuthorizationCode,
     AuthorizeError,
     RefreshToken,
+    RegistrationError,
     TokenError,
 )
-from mcp.server.auth.routes import REVOCATION_PATH, build_metadata, cors_middleware
+from mcp.server.auth.routes import (
+    AUTHORIZATION_PATH,
+    REVOCATION_PATH,
+    TOKEN_PATH,
+    build_metadata,
+    cors_middleware,
+)
 from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 from mcp.shared.auth import (
     InvalidRedirectUriError,
@@ -304,6 +344,14 @@ CLIENT_AUTH_METHODS: tuple[str, ...] = ("none", "private_key_jwt")
 #: a JWT method is advertised. Measured by the contract suite: an ES256
 #: assertion under the document's own EC key is refused.
 CLIENT_ASSERTION_ALGORITHMS: tuple[str, ...] = ("RS256",)
+#: The grant types this authorization server offers (RFC 6749 §4.1, §6) — what
+#: `grant_types_supported` says, what a registration is substituted to, and what
+#: any other `grant_type` at the token endpoint is `unsupported_grant_type`
+#: against (RFC 6749 §5.2; the SDK's parser said `invalid_request`).
+SUPPORTED_GRANT_TYPES: tuple[str, ...] = ("authorization_code", "refresh_token")
+#: Clock tolerance for a client assertion's `nbf` — the SDK's own for `exp` and
+#: `iat` (RFC 7523 §3 asks for "a small allowance").
+CLIENT_ASSERTION_SKEW = 30
 #: The key under `upstream_claims` in every token the proxy issues that holds
 #: the owner binding the grant was issued to.
 BINDING_CLAIM = "plamotrack_owner"
@@ -772,6 +820,204 @@ class GrantRevocation(RevocationHandler):
         )
 
 
+# --- the client assertion's claims --------------------------------------------------
+
+
+def _b64url_json(segment: str) -> Any:
+    padded = segment + "=" * (-len(segment) % 4)
+    return json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+
+
+def _numeric_date(claims: dict[str, Any], name: str) -> float | None:
+    value = claims.get(name)
+    if value is None:
+        if name in claims:
+            raise ValueError(f"{name} must be a NumericDate, not null")
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+        raise ValueError(f"{name} must be a finite NumericDate")
+    return float(value)
+
+
+def validate_client_assertion_claims(assertion: str, *, now: float) -> None:
+    """RFC 7523 §3 and RFC 7519 §4.1 on the *unverified* assertion, refuse-only:
+    it grants nothing — the SDK's validator then verifies the signature, the
+    issuer, the audience, the lifetime and the replay — but it runs first, so
+    a claim outside the contract is refused before the `jti` is spent, and
+    the same assertion can be presented once it is valid (an `nbf` that has
+    arrived). Raises `ValueError` naming the claim."""
+    try:
+        header_segment, payload_segment, _signature = assertion.split(".")
+        header, claims = _b64url_json(header_segment), _b64url_json(payload_segment)
+    except (ValueError, UnicodeDecodeError, binascii_error):
+        raise ValueError("the assertion is not a compact JWS") from None
+    if not isinstance(header, dict) or header.get("alg") not in CLIENT_ASSERTION_ALGORITHMS:
+        raise ValueError(f"alg must be one of {', '.join(CLIENT_ASSERTION_ALGORITHMS)}")
+    if not isinstance(claims, dict):
+        raise ValueError("the claims must be a JSON object")
+    for name in ("iss", "sub", "jti"):
+        if not isinstance(claims.get(name), str) or not claims[name]:
+            raise ValueError(f"{name} must be a non-empty string")
+    audience = claims.get("aud")
+    if isinstance(audience, list):
+        if not audience or not all(isinstance(item, str) and item for item in audience):
+            raise ValueError("aud must be a non-empty string or a list of them")
+    elif not isinstance(audience, str) or not audience:
+        raise ValueError("aud must be a non-empty string or a list of them")
+    if _numeric_date(claims, "exp") is None:
+        raise ValueError("exp is required")
+    _numeric_date(claims, "iat")
+    not_before = _numeric_date(claims, "nbf")
+    if not_before is not None and not_before > now + CLIENT_ASSERTION_SKEW:
+        raise ValueError("the assertion is not yet valid (nbf)")
+
+
+class ClientAssertionAuthenticator(PrivateKeyJWTClientAuthenticator):
+    """FastMCP's CIMD-capable client authenticator — `none`, and
+    `private_key_jwt` verified against the client's document and bound to
+    one endpoint's URL as the assertion's audience — with the claim contract
+    in front: a client that presents an assertion is judged by it, in full,
+    before the SDK's validator sees it (Codex #212 round 6, f16). One class
+    for both endpoints; `PlamotrackOAuthProxy._client_authenticator` builds
+    one per endpoint."""
+
+    async def authenticate_request(self, request: Request) -> OAuthClientInformationFull:
+        form = await request.form()
+        assertion = form.get("client_assertion")
+        if isinstance(assertion, str) and assertion:
+            try:
+                validate_client_assertion_claims(assertion, now=time.time())
+            except ValueError as exc:
+                raise AuthenticationError(f"Invalid client assertion: {exc}") from None
+        return await super().authenticate_request(request)
+
+
+# --- request decoding ------------------------------------------------------------------
+
+
+class ProtocolRequest:
+    """RFC 6749 §3.1–§3.2 in front of the SDK's handlers on the three endpoints
+    a client drives — `/authorize`, `/token`, `/revoke` — applied to the raw
+    query or form before the SDK's `dict(form)` loses it (Codex #212 round 6,
+    f18): a parameter "MUST NOT be included more than once", so a repetition
+    is `400 invalid_request` before anything is redeemed, redirected or spent
+    (the SDK kept the last value and minted, revoked, or opened a consent
+    transaction); a parameter "sent without a value MUST be treated as if it
+    were omitted", so empties are dropped before the handler reads the form
+    (an empty `token` is a missing one; an empty `scope` is no scope); a
+    `grant_type` the server does not offer is `unsupported_grant_type` (RFC
+    6749 §5.2), where the SDK's discriminated parser said `invalid_request`;
+    and an omitted `code_challenge_method` is `plain` (RFC 7636 §4.3), which
+    the SDK's S256-only model then refuses exactly as it refuses `plain` — an
+    error redirect for a registered client with a valid redirect URI (RFC
+    7636 §4.4.1), a direct 400 otherwise — where its default had read the
+    omission as `S256`. Bodies that are not form-encoded, and verbs the
+    endpoint does not take, pass through to the SDK (and the binding)."""
+
+    def __init__(self, app: ASGIApp, *, endpoint: str) -> None:
+        self.app = app
+        self.endpoint = endpoint
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["method"] not in ("GET", "POST"):
+            await self.app(scope, receive, send)
+            return
+        if scope["method"] == "GET":
+            if self.endpoint != AUTHORIZATION_PATH:
+                await self.app(scope, receive, send)
+                return
+            raw = scope["query_string"].decode("utf-8", "replace")
+            pairs = parse_qsl(raw, keep_blank_values=True)
+            body: bytes | None = None
+        else:
+            request = Request(scope, receive)
+            body = await request.body()
+            if not request.headers.get("content-type", "").startswith(
+                "application/x-www-form-urlencoded"
+            ):
+                await self.app(scope, self._replay(body), send)
+                return
+            pairs = parse_qsl(body.decode("utf-8", "replace"), keep_blank_values=True)
+        refusal = self._refusal(pairs)
+        if refusal is not None:
+            error, description = refusal
+            response = JSONResponse(
+                {"error": error, "error_description": description},
+                status_code=400,
+                headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+            )
+            await response(scope, receive, send)
+            return
+        pairs = [(name, value) for name, value in pairs if value != ""]
+        if self.endpoint == AUTHORIZATION_PATH and all(
+            name != "code_challenge_method" for name, _ in pairs
+        ):
+            pairs.append(("code_challenge_method", "plain"))
+        encoded = urlencode(pairs).encode()
+        if body is None:
+            await self.app({**scope, "query_string": encoded}, receive, send)
+            return
+        headers = [(k, v) for k, v in scope["headers"] if k.lower() != b"content-length"]
+        headers.append((b"content-length", str(len(encoded)).encode()))
+        await self.app({**scope, "headers": headers}, self._replay(encoded), send)
+
+    def _refusal(self, pairs: list[tuple[str, str]]) -> tuple[str, str] | None:
+        repeated = sorted(name for name, count in Counter(n for n, _ in pairs).items() if count > 1)
+        if repeated:
+            return (
+                "invalid_request",
+                f"parameter repeated: {', '.join(repeated)} (RFC 6749 §3.1)",
+            )
+        if self.endpoint == TOKEN_PATH:
+            grant_types = [value for name, value in pairs if name == "grant_type" and value]
+            if grant_types and grant_types[0] not in SUPPORTED_GRANT_TYPES:
+                return (
+                    "unsupported_grant_type",
+                    f"grant_type must be one of: {', '.join(SUPPORTED_GRANT_TYPES)}",
+                )
+        return None
+
+    @staticmethod
+    def _replay(body: bytes):
+        async def receive() -> dict[str, Any]:
+            return {"type": "http.request", "body": body, "more_body": False}
+
+        return receive
+
+
+class UnregisteredClientGuidance(AuthorizationHandler):
+    """FastMCP's authorize handler — its enhanced answer to an unregistered
+    client names the registration endpoint and the authorization-server
+    document — with the document's URL the **root** one this instance serves:
+    the handler built it under the issuer path, the child alias that is
+    pruned here, so the recovery instruction was a 404 exactly when a client
+    had lost its registration (Codex #212 round 6, f19). The HTML page and
+    the `Link` header are the handler's own."""
+
+    def __init__(self, provider: PlamotrackOAuthProxy, *, discovery_url: str) -> None:
+        super().__init__(provider=provider, base_url=provider.base_url)  # type: ignore[arg-type]
+        self._discovery_url = discovery_url
+
+    async def _create_enhanced_error_response(
+        self, request: Request, client_id: str, state: str | None
+    ) -> Response:
+        response = await super()._create_enhanced_error_response(request, client_id, state)
+        if not response.headers.get("content-type", "").startswith("application/json"):
+            return response
+        body = json.loads(bytes(response.body))  # type: ignore[attr-defined]
+        if "authorization_server_metadata" in body:
+            body["authorization_server_metadata"] = self._discovery_url
+        return JSONResponse(
+            body,
+            status_code=response.status_code,
+            headers={
+                name: value
+                for name, value in response.headers.items()
+                if name.lower() in ("link", "cache-control")
+            },
+        )
+
+
 # --- the redirect binding -----------------------------------------------------------
 
 
@@ -926,30 +1172,65 @@ class PlamotrackOAuthProxy(OAuthProxy):
         The object is made truthful before it is stored or returned: the
         same value on the wire and in the store, and nothing minted that
         nothing checks. Both MCP SDK clients adapt to it — they send a secret
-        only when the response carries one, by its method."""
+        only when the response carries one, by its method. And the rest of
+        the metadata describes the stored client too (round 6, f17): the
+        admitted contract is canonicalised once here — a `null` redirect list
+        refused (FastMCP invented `http://localhost/` for it; this server
+        issues authorization codes only), `response_types` and `grant_types`
+        what the server offers, a blank or padded `scope` the default — and
+        the record stored is built from that same object, display and
+        software fields included, where FastMCP's registration constructed a
+        record of its own from a few of the fields."""
+        if not client_info.redirect_uris:
+            raise RegistrationError(
+                "invalid_client_metadata",
+                "redirect_uris is required: this server issues authorization codes only",
+            )
         client_info.token_endpoint_auth_method = "none"
         client_info.client_secret = None
         client_info.client_secret_expires_at = None
+        client_info.response_types = ["code"]
+        client_info.grant_types = list(SUPPORTED_GRANT_TYPES)
+        requested_scope = " ".join((client_info.scope or "").split())
+        client_info.scope = requested_scope or " ".join(ADVERTISED_SCOPES)
+        # FastMCP's registration: the allowlist check, and a record of its own.
         await super().register_client(client_info)
+        # The record is the admitted contract, field for field.
+        await self._client_store.put(
+            key=client_info.client_id,
+            value=ProxyDCRClient(
+                **client_info.model_dump(),
+                allowed_redirect_uri_patterns=self._allowed_client_redirect_uris,
+            ),
+        )
 
     # -- the routes ------------------------------------------------------------------
 
-    def _revocation_authenticator(self) -> ClientAuthenticator:
-        """Client authentication at `/revoke`, the same policy as at `/token`:
-        FastMCP's CIMD-capable authenticator — `none` and `private_key_jwt`,
-        the latter's assertion verified against the client's document and
-        bound to **this** endpoint's URL as its audience (RFC 7523 §3), used
-        once — where FastMCP itself installs it on `/token` alone and the
-        plain SDK authenticator refused the method a CIMD client had linked
-        with (round 4, f13). An assertion for the token endpoint is not one
-        for revocation, and the reverse."""
+    def _client_authenticator(self, endpoint: str) -> ClientAuthenticator:
+        """Client authentication at `/token` and at `/revoke`, one policy built
+        per endpoint: FastMCP's CIMD-capable authenticator — `none` and
+        `private_key_jwt`, the latter's assertion verified against the
+        client's document and bound to **this** endpoint's URL as its
+        audience (RFC 7523 §3), used once per process — under the claim
+        contract (`ClientAssertionAuthenticator`, round 6). FastMCP installs
+        its authenticator on `/token` alone and the plain SDK authenticator
+        refused the method a CIMD client had linked with at `/revoke` (round
+        4, f13). An assertion for the token endpoint is not one for
+        revocation, and the reverse."""
         if self._cimd_manager is None:  # pragma: no cover — CIMD is always on here
             return ClientAuthenticator(self)
-        return PrivateKeyJWTClientAuthenticator(
+        return ClientAssertionAuthenticator(
             provider=self,
             cimd_manager=self._cimd_manager,
-            token_endpoint_url=f"{self.base_url}{REVOCATION_PATH}",
+            token_endpoint_url=f"{self.base_url}{endpoint}",
         )
+
+    def _root_discovery_url(self) -> str:
+        """The RFC 8414 path-aware document at the root — the one this instance
+        serves — for the unregistered-client guidance."""
+        parsed = urlparse(str(self.base_url))
+        path = parsed.path.rstrip("/")
+        return f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-authorization-server{path}"
 
     def discovery_metadata(self) -> OAuthMetadata:
         """The authorization-server document (RFC 8414 §2), owned here rather
@@ -980,16 +1261,27 @@ class PlamotrackOAuthProxy(OAuthProxy):
         return metadata
 
     def get_routes(self, mcp_path: str | None = None) -> list[Route]:
-        """FastMCP's protocol routes, with two of them the contract's: `/revoke`
+        """FastMCP's protocol routes, with the contract on four of them: `/revoke`
         handled by `GrantRevocation` over `RevocationLookup` — the SDK's own
         handler steps, given a provider whose token lookup locates rather than
         authorizes, the contract's wire form, and the client authenticator the
-        contract needs — and the authorization-server document served from
+        contract needs; `/token` FastMCP's handler (its OAuth 2.1 error codes)
+        over the same authenticator class bound to its own URL; `/authorize`
+        FastMCP's handler with the unregistered-client guidance pointing at the
+        root document; and the authorization-server document served from
         `discovery_metadata` (the root documents are this list filtered to
         `/.well-known/`, so they carry it too). The same seam FastMCP uses to
-        replace `/authorize` and `/token`."""
+        replace `/authorize` and `/token`; the request-decoding guard goes in
+        front of three of these when the mount is built (`guard_protocol_requests`)."""
         routes = super().get_routes(mcp_path)
-        revocation = GrantRevocation(RevocationLookup(self), self._revocation_authenticator())  # type: ignore[arg-type]
+        revocation = GrantRevocation(
+            RevocationLookup(self),  # type: ignore[arg-type]
+            self._client_authenticator(REVOCATION_PATH),
+        )
+        token = TokenHandler(
+            provider=self, client_authenticator=self._client_authenticator(TOKEN_PATH)
+        )
+        authorize = UnregisteredClientGuidance(self, discovery_url=self._root_discovery_url())
         discovery = MetadataHandler(self.discovery_metadata())
         rebuilt: list[Route] = []
         for route in routes:
@@ -999,6 +1291,14 @@ class PlamotrackOAuthProxy(OAuthProxy):
                     endpoint=cors_middleware(revocation.handle, ["POST", "OPTIONS"]),
                     methods=["POST", "OPTIONS"],
                 )
+            elif isinstance(route, Route) and route.path == TOKEN_PATH:
+                route = Route(
+                    path=route.path,
+                    endpoint=cors_middleware(token.handle, ["POST", "OPTIONS"]),
+                    methods=["POST", "OPTIONS"],
+                )
+            elif isinstance(route, Route) and route.path == AUTHORIZATION_PATH:
+                route = Route(path=route.path, endpoint=authorize.handle, methods=["GET", "POST"])
             elif isinstance(route, Route) and route.path.startswith(
                 "/.well-known/oauth-authorization-server"
             ):
@@ -1615,6 +1915,20 @@ def guard_registration_body(mcp_app: Starlette) -> None:
     for route in mcp_app.router.routes:
         if isinstance(route, Route) and route.path == _child_path(f"{MCP_MOUNT}/register"):
             route.app = ClientMetadataBody(route.app)
+
+
+def guard_protocol_requests(mcp_app: Starlette) -> None:
+    """Put `ProtocolRequest` in front of the three routes a client drives,
+    under the `RouteBinding` the registry adds later (the route's endpoint,
+    which the registry keys on, is untouched — the same shape as
+    `guard_registration_body`)."""
+    for route in mcp_app.router.routes:
+        if isinstance(route, Route) and route.path in (
+            AUTHORIZATION_PATH,
+            TOKEN_PATH,
+            REVOCATION_PATH,
+        ):
+            route.app = ProtocolRequest(route.app, endpoint=route.path)
 
 
 def declare_child_verbs(mcp_app: Starlette) -> None:

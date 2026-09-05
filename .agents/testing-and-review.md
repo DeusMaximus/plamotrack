@@ -194,7 +194,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` after #212: 471 cases over 46 target files** — counted the way the
+- **On `main` after #212: 481 cases over 46 target files** — counted the way the
   harness itself counts, `len(CASES)` and the distinct paths those cases mutate
   (migrations, the one test file and the two `frontend/` files included; the
   one-liner is `uv run python -c "import mutation_test as m, pathlib; print(len(m.CASES), len({pathlib.Path(c[1]).resolve() for c in m.CASES}))"`
@@ -298,7 +298,12 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   contract (the AS document not rebuilt, the revocation methods advertised as the SDK's
   pair, no algorithm beside a JWT method) and the hint as advice (an unknown value a 400
   again), all four killed in the contract suite, and moa-57 re-anchored a second time on
-  the rewritten `get_routes`; all 69 killed on the branch,
+  the rewritten `get_routes`; 71…80 from round 6 — the protocol boundary field by field:
+  the assertion claim contract (not applied, `nbf`, a non-string `jti`, a boolean date),
+  registration canonicalisation (a null redirect list, the stored record), request
+  decoding (a repeated parameter, an empty value, the PKCE default) and the recovery
+  URL, all ten killed in the contract suite, with moa-64 re-anchored on the
+  per-endpoint authenticator factory; all 79 killed on the branch,
   `-k moa-` — three first-pass survivors in
   round 2, each fixed outside the tuple: moa-47 a redundant second delete, moa-56 a
   fallback re-check masking the gate, moa-49 the fake's re-issued id_token identical

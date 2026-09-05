@@ -26,6 +26,7 @@ from app.auth.mcp_oauth import (
     McpOAuth,
     build_mcp_oauth,
     declare_child_verbs,
+    guard_protocol_requests,
     guard_registration_body,
     local_mode_child_routes,
     prune_child_well_known,
@@ -270,6 +271,7 @@ def build_mcp_app(
     if oauth is not None:
         prune_child_well_known(mcp_app)
         guard_registration_body(mcp_app)
+        guard_protocol_requests(mcp_app)
     else:
         mcp_app.router.routes.extend(local_mode_child_routes())
     declare_child_verbs(mcp_app)

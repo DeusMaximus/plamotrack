@@ -446,7 +446,15 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     methods for both endpoints and `RS256`, where the SDK's metadata advertised its
     shared-secret methods and no algorithm (round 5, f14); every protocol field's value
     space is the protocol's, unrecognised values included — an unknown
-    `token_type_hint` is ignored, never refused (f15); all of it tested from raw
+    `token_type_hint` is ignored, never refused (f15); and **the boundary is owned field
+    by field** (round 6, f16–f19): `ClientAssertionAuthenticator` judges an assertion's
+    claims (`nbf` included, dates never booleans, `jti` a string) *before* the SDK's
+    validator spends its `jti`; `register_client` canonicalises the admitted metadata and
+    stores that same object (a null redirect list refused); `ProtocolRequest`, an ASGI
+    guard on `/authorize`, `/token` and `/revoke`, refuses a repeated parameter, drops
+    empty ones, names `unsupported_grant_type`, and reads an omitted
+    `code_challenge_method` as `plain` for the SDK to refuse; `UnregisteredClientGuidance`
+    points at the root discovery document. All of it tested from raw
     requests in `tests/test_mcp_oauth_clients.py` — never through the SDK's models or
     a helper that pads the form. The upstream
     endpoints are **properties over `OidcProvider.cached_metadata`** — no reader in
