@@ -73,12 +73,19 @@ Template:
   Commits `5ecef8f` and `5ecef8f` (the filter's retirement after the first harness pass) pushed; PR #212 body amended; the reply is issuecomment-5552863879. Codex's r11 material
   untracked (its comment names no directory this round). Dev `db` up, Keycloak spike up. LXC
   untouched (**stays put until M6 is finished**).
-- **Next:** (1) **Codex round 12 on PR #212** — the brief was printed in this session's chat;
-  regenerate from `.agents/review-brief.md` (the Codex footer; the reviewer names its model)
-  if needed, naming runtime head `5ecef8f`, the branch tip (hand-off only above it), `main`
-  `a497481`, rules 1/6/7.1/9/11/12/13; findings from 36; reproduce at `5ecef8f` first; update
-  the coverage record in the reply (procedure 7.1). If GO: squash-merge with `Closes #192`;
-  nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
+- **Next:** (1) **Codex round 12 has landed — NO-GO, one P3, finding 36, unaddressed**
+  (issuecomment-5553107067, signed "GPT-6 Astra" again; this session closed at ~80 % context
+  before reading past the title, owner's call): *an inline assertion naming an unknown `kid`
+  is accepted through the no-`kid` fallback* — `RestrictedKeyAssertionValidator.
+  _extract_public_key_from_jwks` falls back to the single usable key when the named `kid`
+  matches nothing, where the SDK's remote selection refuses a named `kid` it cannot find
+  (RFC 7517 §4.5). Answer in a new session per `.agents/testing-and-review.md` →
+  "Responding to a review": read the comment in full first, reproduce at `5ecef8f` in the
+  contract suite (both endpoints; the remote parity control), fix so a *named* `kid` must
+  match and only an assertion naming none takes the fallback, add the mutant (moa-110),
+  re-run `-k moa-` on the committed tree, update the coverage record (procedure 7.1),
+  print the round-13 brief from `.agents/review-brief.md` (the reviewer names its model;
+  findings from 37). If GO: squash-merge with `Closes #192`; nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
   `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak spike, the register
   burst concurrent — then the LXC upgrade; relink any MCP client first.
 
