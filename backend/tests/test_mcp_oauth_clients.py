@@ -1526,31 +1526,68 @@ async def test_an_assertion_from_a_client_not_registered_for_it_is_refused(
 
 
 @pytest.mark.parametrize(
-    "value", ["fragment", "empty_fragment", "path_parameter", "relative", "spelling"]
+    "value",
+    [
+        "fragment",
+        "empty_fragment",
+        "relative",
+        "tab_in_authority",
+        "cr_in_path",
+        "leading_nul",
+        "bad_percent",
+        "unescaped_space",
+        "path_parameter",
+        "host_case",
+        "scheme_case",
+        "encoded_query",
+    ],
 )
 @pytest.mark.parametrize("endpoint", ["authorize", "token", "refresh"])
 async def test_a_resource_is_compared_on_the_whole_uri(endpoint, value):
-    """RFC 8707 §2: the value is an absolute URI without a fragment, and
-    it names this server or it does not. A fragment (`#other`, or the empty
-    `#`) and a value with no scheme are malformed — a direct
-    `400 invalid_target` on every endpoint; a value whose path carries
-    `;different-resource`, or that spells the scheme and host differently
-    from the protected-resource document (compared as written — the
-    deliberate rule), names another target — at `/authorize` the error
-    redirect with the state and no transaction, at the code exchange and at
-    a refresh a direct 400. The handle survives to a corrected request in
-    every case. The reviewed head shared FastMCP's normaliser, which dropped
-    the fragment and the path's parameters before comparing, so all three of
-    Codex's values opened a transaction and minted (Codex #212 round 8, f27)."""
+    """RFC 8707 §2: the value is an absolute URI without a fragment — RFC
+    3986's grammar, judged on the decoded string before any parser — and it
+    names this server or it does not. Malformed, a direct `400 invalid_target`
+    on every endpoint: a fragment (`#other`, or the empty `#`), a value with
+    no scheme, a tab in the authority, a carriage return in the path, a
+    leading NUL, an invalid percent-escape and an unescaped space in the
+    query (round 9, f31: `urlsplit` had accepted every one of these, some by
+    stripping the character, and a query the comparison ignores was never
+    checked). Another target — at `/authorize` the error redirect with the
+    state and no transaction, at the code exchange and at a refresh a direct
+    400, the handle surviving to a corrected request: a path carrying
+    `;different-resource`, and the host spelled differently from the
+    protected-resource document (the authority compares as written). This
+    server: the scheme spelled in upper case (case-folded, as FastMCP's
+    normaliser behind the hand-off folds it too — round 9's correction of the
+    wording) and a query with a valid percent-escape. The reviewed head of
+    round 8 shared FastMCP's normaliser, which dropped the fragment and the
+    path's parameters before comparing, so three of Codex's values opened a
+    transaction and minted (Codex #212 round 8, f27)."""
     local = f"{BASE}/mcp/"
     resources = {
         "fragment": local + "#other",
         "empty_fragment": local + "#",
-        "path_parameter": local + ";different-resource",
         "relative": "/mcp/",
-        "spelling": local.replace("http://localhost", "HTTP://LOCALHOST"),
+        "tab_in_authority": "http://local\thost/mcp/",
+        "cr_in_path": "http://localhost/m\rcp/",
+        "leading_nul": "\x00" + local,
+        "bad_percent": local + "?x=%zz",
+        "unescaped_space": local + "?x=a b",
+        "path_parameter": local + ";different-resource",
+        "host_case": local.replace("localhost", "LOCALHOST"),
+        "scheme_case": local.replace("http://", "HTTP://"),
+        "encoded_query": local + "?x=a%20b",
     }
-    malformed = value in ("fragment", "empty_fragment", "relative")
+    malformed = value in (
+        "fragment",
+        "empty_fragment",
+        "relative",
+        "tab_in_authority",
+        "cr_in_path",
+        "leading_nul",
+        "bad_percent",
+        "unescaped_space",
+    )
     fake = FakeIdp()
     await _bind_owner()
     async with oauth_app(fake) as (_, client):
@@ -1563,6 +1600,9 @@ async def test_a_resource_is_compared_on_the_whole_uri(endpoint, value):
         else:
             body, headers = _encoded(sent)
             response = await client.post("/mcp/token", content=body, headers=headers)
+        if value in ("scheme_case", "encoded_query"):
+            assert _succeeded(endpoint, response), (value, response.status_code, response.text)
+            return
         if endpoint == "authorize" and not malformed:
             assert response.status_code == 302, response.text
             location = response.headers["location"]
@@ -1809,3 +1849,64 @@ async def test_the_client_record_is_one_snapshot_per_request(monkeypatch, endpoi
             },
         )
         assert accepted.status_code == 200, accepted.text[:300]
+
+
+# --- Codex #212 round 9: the inline key set has a contract too --------------------------------
+
+
+@pytest.mark.parametrize("shape", ["keys_object", "keys_string", "null_entry", "null_beside_key"])
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_a_malformed_inline_key_set_is_a_client_refusal(monkeypatch, endpoint, shape):
+    """RFC 7517 §5 and §5.1: a JWK Set's `keys` is an array of JWK objects,
+    and an entry that cannot be processed is ignored. A CIMD document whose
+    inline set has `keys` as an object or a string, or holds only a null
+    entry, is `401 invalid_client` on both endpoints — the grant intact, the
+    handle and the **same assertion** then accepted once the document is
+    sound again — where FastMCP's extraction called `.get` on the entry and
+    answered 500; a null entry beside the client's key is skipped, as the
+    remote path skips it, and the request succeeds (Codex #212 round 9,
+    f32)."""
+    key = RSAKey.generate_key(2048, parameters={"kid": "client-key"})
+    public = key.as_dict(private=False)
+    sound = _cimd_document(token_endpoint_auth_method="private_key_jwt", jwks={"keys": [public]})
+    shapes = {
+        "keys_object": {"keys": {"one": public}},
+        "keys_string": {"keys": "x"},
+        "null_entry": {"keys": [None]},
+        "null_beside_key": {"keys": [None, public]},
+    }
+    served = {"document": sound}
+
+    async def fetch(self, client_id_url: str):
+        assert client_id_url == CIMD_ID
+        return served["document"]
+
+    monkeypatch.setattr(CIMDFetcher, "fetch", fetch)
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        credential = {
+            "client_assertion_type": ASSERTION_TYPE,
+            "client_assertion": assertion(key, CIMD_ID, audience),
+        }
+        served["document"] = _cimd_document(
+            token_endpoint_auth_method="private_key_jwt", jwks=shapes[shape]
+        )
+        response = await _endpoint_request(client, endpoint, tokens, fake, credential)
+        if shape == "null_beside_key":
+            assert response.status_code == 200, (shape, response.status_code, response.text[:300])
+            if endpoint == "revoke":
+                assert not grant_records(await _state_rows())
+            return
+        assert response.status_code == 401, (shape, response.status_code, response.text[:300])
+        assert response.json()["error"] == "invalid_client"
+        assert response.headers.get_list("cache-control") == ["no-store"]
+        assert grant_records(await _state_rows())
+        assert (await initialize(client, tokens["access_token"])).status_code == 200
+        served["document"] = sound
+        accepted = await _endpoint_request(client, endpoint, tokens, fake, credential)
+        assert accepted.status_code == 200, accepted.text[:300]
+        if endpoint == "revoke":
+            assert not grant_records(await _state_rows())

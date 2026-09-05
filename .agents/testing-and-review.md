@@ -194,7 +194,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` after #212: 500 cases over 46 target files** — counted the way the
+- **On `main` after #212: 504 cases over 46 target files** — counted the way the
   harness itself counts, `len(CASES)` and the distinct paths those cases mutate
   (migrations, the one test file and the two `frontend/` files included; the
   one-liner is `uv run python -c "import mutation_test as m, pathlib; print(len(m.CASES), len({pathlib.Path(c[1]).resolve() for c in m.CASES}))"`
@@ -324,8 +324,11 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   authenticator owns admission end to end, so "the SDK's alone" became the claim
   contract skipped; the header inventory moved in front of the secret rule; dispatch
   is by the snapshot's method; the refusal is the proxy's own, so the vocabulary
-  mutant is its code); all 98 killed on the branch by the tracked harness on the
-  committed tree, `-k moa-` — three first-pass survivors in
+  mutant is its code); 100…103 from round 9 — parsing is not validation: the URI
+  grammar not applied, the inline key set handed to the SDK's extraction unchecked,
+  unusable entries not dropped, the filtered copy not handed to the validator — all
+  four killed in the contract suite; all 102 killed on the branch by the tracked
+  harness on the committed tree, `-k moa-` — three first-pass survivors in
   round 2, each fixed outside the tuple: moa-47 a redundant second delete, moa-56 a
   fallback re-check masking the gate, moa-49 the fake's re-issued id_token identical
   to the original within one second)

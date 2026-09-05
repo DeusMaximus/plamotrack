@@ -188,7 +188,15 @@ revocation) rather than to the entry points one at a time:
   method, the verifying document and the authenticated client all that one
   snapshot (a `no-store` document that said `private_key_jwt` to the precheck
   and `none` to the SDK had authorised an assertion under a key it never
-  published), FastMCP's cryptographic validator behind it.
+  published), FastMCP's cryptographic validator behind it. *And parsing is
+  not validation* (round 9, f31–f32): the resource value is judged against
+  RFC 3986's `absolute-URI` grammar (`ABSOLUTE_URI`) before `urlsplit` — a
+  parser that accepted a tab in the authority, a carriage return in the
+  path and a leading NUL, and never looked at the query the comparison
+  ignores — and the inline key set has a contract in front of FastMCP's
+  extraction (`with_usable_inline_keys`: `keys` an array, non-object
+  entries ignored as RFC 7517 §5.1 says, none usable a refusal), where a
+  `keys` object or a null entry had been a 500.
 - **Client-redirect binding per client kind** (§5.6 proxy trust; T9).
   `get_client` refuses the client FastMCP synthesises for the upstream client
   id (anyone who knows the public id could be sent anywhere — the spike's
@@ -1000,9 +1008,10 @@ class ClientAssertionAuthenticator(ClientAuthenticator):
        method it names, the document whose keys verify the assertion, and
        the authenticated client the handler receives are all that record.
     3. **Dispatch by the snapshot's method.** `private_key_jwt`: the
-       assertion type, the assertion, then FastMCP's own validator
-       (`validate_private_key_jwt` — signature, issuer, audience, lifetime,
-       replay). `none`: the client id alone; an assertion presented to it is
+       assertion type, the assertion, the inline key set's contract
+       (`with_usable_inline_keys` — round 9, f32), then FastMCP's own
+       validator (`validate_private_key_jwt` — signature, issuer, audience,
+       lifetime, replay). `none`: the client id alone; an assertion presented to it is
        refused, since there is no key it could be verified against; a stray
        `client_secret` with no assertion is ignored, as the SDK ignores it
        (no mechanism is in use). Any other method is refused.
@@ -1050,9 +1059,10 @@ class ClientAssertionAuthenticator(ClientAuthenticator):
                 )
             if not isinstance(assertion, str) or not assertion:
                 raise AuthenticationError("Missing client_assertion")
+            verifying = with_usable_inline_keys(client)
             try:
                 await self.cimd_manager.validate_private_key_jwt(
-                    assertion=assertion, client=client, token_endpoint=self.endpoint_url
+                    assertion=assertion, client=verifying, token_endpoint=self.endpoint_url
                 )
             except ValueError as exc:
                 raise AuthenticationError(f"Invalid client assertion: {exc}") from exc
@@ -1065,6 +1075,40 @@ class ClientAssertionAuthenticator(ClientAuthenticator):
                 )
             return client
         raise AuthenticationError(f"Unsupported auth method: {method}")
+
+
+def with_usable_inline_keys(client: OAuthClientInformationFull) -> OAuthClientInformationFull:
+    """RFC 7517 §5 and §5.1 on a CIMD document's inline key set, in front of
+    FastMCP's key extraction: a JWK Set is an object whose `keys` member is
+    an array of JWK objects, and an entry that cannot be processed is
+    ignored. The extraction called `.get` on whatever each entry was, so a
+    `keys` object, a `keys` string or a null entry was a **500** on both
+    endpoints, and a null entry beside the client's key failed where the
+    remote path skips it (Codex #212 round 9, f32). A `keys` that is not an
+    array, or a set with no usable entry, is a client-authentication failure;
+    unusable entries beside a usable one are dropped from a **copy** of the
+    record handed to the validator — the snapshot itself is what the handler
+    receives — so the matching key is selected as the remote path selects it.
+    A document with no inline set is left to the SDK (its own refusal, or the
+    remote set)."""
+    document = getattr(client, "cimd_document", None)
+    if document is None or document.jwks is None:
+        return client
+    keys = document.jwks.get("keys")
+    if not isinstance(keys, list):
+        raise AuthenticationError(
+            "the client's key set is malformed: keys is not an array (RFC 7517 §5)"
+        )
+    usable = [key for key in keys if isinstance(key, dict)]
+    if not usable:
+        raise AuthenticationError("the client's key set holds no usable key (RFC 7517 §5.1)")
+    if len(usable) == len(keys):
+        return client
+    return client.model_copy(
+        update={
+            "cimd_document": document.model_copy(update={"jwks": {**document.jwks, "keys": usable}})
+        }
+    )
 
 
 #: RFC 9110 §11.1: an authentication scheme is a token. Echoed into the
@@ -1085,6 +1129,33 @@ def presented_scheme(request: Request) -> str | None:
 
 # --- the resource indicator ----------------------------------------------------------
 
+_UNRESERVED = r"A-Za-z0-9\-._~"
+_SUB_DELIMS = r"!$&'()*+,;="
+_PCT = r"%[0-9A-Fa-f]{2}"
+_PCHAR = rf"(?:[{_UNRESERVED}{_SUB_DELIMS}:@]|{_PCT})"
+_SEGMENT = rf"{_PCHAR}*"
+_AUTHORITY = (
+    rf"(?:(?:[{_UNRESERVED}{_SUB_DELIMS}:]|{_PCT})*@)?"
+    rf"(?:\[(?:[0-9A-Fa-f:.]+|v[0-9A-Fa-f]+\.[{_UNRESERVED}{_SUB_DELIMS}:]+)\]"
+    rf"|(?:[{_UNRESERVED}{_SUB_DELIMS}]|{_PCT})*)"
+    r"(?::[0-9]*)?"
+)
+_HIER_PART = (
+    rf"(?://{_AUTHORITY}(?:/{_SEGMENT})*"  # "//" authority path-abempty
+    rf"|/(?:{_PCHAR}+(?:/{_SEGMENT})*)?"  # path-absolute
+    rf"|{_PCHAR}+(?:/{_SEGMENT})*"  # path-rootless
+    r"|)"  # path-empty
+)
+#: RFC 3986 §4.3 `absolute-URI` — scheme ":" hier-part [ "?" query ], no
+#: fragment — as Appendix A's grammar, applied to the decoded value **before**
+#: a parser sees it: `urlsplit` accepts what the grammar does not (a tab in
+#: the authority, a carriage return in the path, a leading NUL — some of which
+#: it silently strips), and a query this comparison ignores was never checked
+#: at all (an invalid percent-escape, an unescaped space). RFC 8707 §2 requires
+#: the value to be such a URI (Codex #212 round 9, f31: parsing is not
+#: validation). A valid percent-escape in the query is admitted.
+ABSOLUTE_URI = re.compile(rf"[A-Za-z][A-Za-z0-9+\-.]*:{_HIER_PART}(?:\?(?:{_PCHAR}|[/?])*)?")
+
 
 def resource_identity(value: str) -> tuple[str, str, str]:
     """RFC 8707 §2's value reduced to what this server compares — the owned
@@ -1092,21 +1163,27 @@ def resource_identity(value: str) -> tuple[str, str, str]:
     7, dropped the fragment and the path's `;parameters` before comparing,
     so `…/mcp/#other` and `…/mcp/;different-resource` were this server).
     Malformed, raising `ValueError`: a fragment — any `#`, the empty fragment
-    included — which the RFC forbids; a value with no scheme, which is not
-    an absolute URI (RFC 3986 §4.3); a value that does not parse. Otherwise
-    the scheme, the authority and the **whole** path, `;parameters` kept
-    (`urlsplit`, which does not separate them, where `urlparse` did), with
-    these equivalences and no other: a trailing slash on the path is ignored;
-    the query is not compared (RFC 8707 says a client SHOULD NOT send one;
-    FastMCP allows the clients that append one); scheme and authority are
-    compared **as written** — the spelling the protected-resource document
-    gave the client — so the normaliser behind this decision, which compares
-    them as written too, never refuses what this accepted."""
+    included — which the RFC forbids; anything outside RFC 3986's
+    `absolute-URI` grammar (`ABSOLUTE_URI`, judged on the string before
+    `urlsplit`, which is a parser and not a validator — round 9, f31).
+    Otherwise the scheme, the authority and the **whole** path, `;parameters`
+    kept (`urlsplit`, which does not separate them, where `urlparse` did),
+    with these equivalences and no other: a trailing slash on the path is
+    ignored; the query is not compared (RFC 8707 says a client SHOULD NOT
+    send one; FastMCP allows the clients that append one); the **scheme** is
+    case-folded (RFC 3986 §6.2.2.1; `urlsplit` folds it, and so does the
+    `urlparse` in FastMCP's normaliser — round 9's correction of the "as
+    written" wording); the **authority** is compared as written — the
+    spelling the protected-resource document gave the client — so the
+    normaliser behind this decision, which compares it as written too, never
+    refuses what this accepted."""
     if "#" in value:
         raise ValueError("a resource indicator must not include a fragment (RFC 8707 §2)")
+    if not ABSOLUTE_URI.fullmatch(value):
+        raise ValueError(
+            "a resource indicator must be an absolute URI (RFC 8707 §2, RFC 3986 §4.3)"
+        )
     parsed = urlsplit(value)
-    if not parsed.scheme:
-        raise ValueError("a resource indicator must be an absolute URI (RFC 8707 §2)")
     return parsed.scheme, parsed.netloc, parsed.path.rstrip("/")
 
 

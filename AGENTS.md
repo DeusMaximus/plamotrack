@@ -483,7 +483,13 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     client authentication end to end — every `Authorization` occurrence inventoried
     first and any one refused as a failed HTTP attempt, the client resolved **once**
     with the method, the verifying document and the authenticated client all that
-    snapshot, FastMCP's cryptographic validator behind it. All of it tested from raw
+    snapshot, FastMCP's cryptographic validator behind it. **Parsing is not
+    validation** (round 9, f31–f32): the resource value is judged against RFC 3986's
+    `absolute-URI` grammar before `urlsplit` sees it (a parser strips or admits what
+    the grammar refuses, and a query the comparison ignores was never checked), and the
+    inline key set has a contract in front of FastMCP's extraction (`keys` an array,
+    unusable entries ignored per RFC 7517 §5.1, none usable a refusal) where a
+    malformed set had been a 500. All of it tested from raw
     requests in `tests/test_mcp_oauth_clients.py` — never through the SDK's models or
     a helper that pads the form, and with the test's own dates computed when it runs,
     not at import (f23). The upstream

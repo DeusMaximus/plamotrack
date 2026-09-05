@@ -4006,6 +4006,36 @@ CASES = [
         '    for header in [request.headers.get("authorization", "")]:',
         "every_authorization_occurrence_counts and empty_first",
     ),
+    # --- Codex #212 round 9 (f31–f32): parsing is not validation; the inline key
+    # --- set's contract in front of the SDK's extraction. ------------------------
+    (
+        "moa-100. the URI grammar not applied (urlsplit as validation again)",
+        MCP_OAUTH,
+        "    if not ABSOLUTE_URI.fullmatch(value):\n        raise ValueError(",
+        "    if False:\n        raise ValueError(",
+        "resource_is_compared_on_the_whole_uri and token and bad_percent",
+    ),
+    (
+        "moa-101. the inline key set handed to the SDK's extraction unchecked",
+        MCP_OAUTH,
+        "            verifying = with_usable_inline_keys(client)",
+        "            verifying = client",
+        "malformed_inline_key_set and token and null_entry",
+    ),
+    (
+        "moa-102. unusable entries not dropped from the set (RFC 7517 §5.1 not applied)",
+        MCP_OAUTH,
+        "    usable = [key for key in keys if isinstance(key, dict)]",
+        "    usable = list(keys)",
+        "malformed_inline_key_set and revoke and null_beside_key",
+    ),
+    (
+        "moa-103. the filtered copy not handed to the validator",
+        MCP_OAUTH,
+        "    if len(usable) == len(keys):\n        return client\n    return client.model_copy(",
+        "    if True:\n        return client\n    return client.model_copy(",
+        "malformed_inline_key_set and token and null_beside_key",
+    ),
 ]
 
 

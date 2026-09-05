@@ -811,3 +811,23 @@ borrowed comparison inherits the borrowed permissiveness (sharing FastMCP's help
 proved consistency with FastMCP, not correctness against the RFC), and a range chosen
 from a spec's discussion should be described as the local policy it is (the
 NumericDate bound), not as the spec's contract.
+
+## Parsing is not validation (#212, round 9)
+
+The ninth round's two findings were the same shape on two boundaries. The resource
+comparison, owned in round 8, read its value through `urlsplit` and treated "it
+parsed and has a scheme" as "it is an absolute URI": a parser's job is to make sense
+of what it is given, so it admitted a tab in the authority, a carriage return in the
+path and a leading NUL (stripping some of them on the way), and the query the
+comparison ignores was never looked at, so an invalid percent-escape and an unescaped
+space passed too. FastMCP's inline key extraction did the same with the key set: it
+iterated whatever `keys` was and called `.get` on whatever each entry was, so a `keys`
+object, a string or a null entry was a 500. The rule: **a value's grammar is judged on
+the string, before any parser sees it, and a container's shape is judged before
+anything reads it** — RFC 3986's `absolute-URI` as a regular expression on the decoded
+value, RFC 7517's "an array of JWK objects" as an `isinstance` check per entry — and
+only then is the parsed or read result compared or used. A parser that strips what it
+cannot represent has already decided for you; a comparison that ignores a component
+has left that component unchecked. The corollary for borrowed helpers is the same as
+round 8's: a library's tolerance is its own, and the seam that owns the decision owns
+the grammar too.
