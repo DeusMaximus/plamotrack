@@ -73,10 +73,22 @@ Template:
   `/private/tmp/plamotrack-212-r6/` (README, `coverage-plan.md` — its ten-surface inventory —
   and four probe files; untracked). Dev `db` up, Keycloak spike up. LXC untouched (**stays put
   until M6 is finished**).
-- **Next:** (1) **Codex round 7 on PR #212** (same session or fresh — owner's call; the brief was
-  printed in this session's chat; regenerate from `.agents/review-brief.md` if needed, naming
-  runtime head `855c0e1`, the tip, `main` `a497481`, rules 1/6/7.1/9/11/12/13; findings from 20;
-  reproduce at `855c0e1` first; update the coverage record in the reply, procedure 7.1). If GO:
+- **Next:** (1) **Codex round 7 has landed — NO-GO, seven P3s, 20–26, unaddressed**
+  (issuecomment-5550272371; this session closed at ~72 % context before reading it in full,
+  owner's call). Titles: 20 apply request decoding to every admitted form representation;
+  21 map numeric-range failures to a client-authentication error; 22 give the repeatable
+  `resource` field its own multiplicity rule (RFC 8707 allows it more than once — the
+  `ProtocolRequest` repetition rule must exempt it); 23 create the future-`nbf` fixture at
+  execution time (`_CLAIM_DEFECTS` computes `NOW` at import — a test defect); 24 refuse
+  competing client-authentication mechanisms before spending the assertion; 25 repair
+  moa-76 before counting it as killed (the tuple's replacement is not a behavioural mutant —
+  re-anchor it as one before the next `-k moa-` claim); 26 canonical registration metadata
+  must also obey its cross-field constraints. Answer in a new session per
+  `.agents/testing-and-review.md` → "Responding to a review": reproduce each at `855c0e1`
+  first (the contract suite is where the reproductions belong), fix 23 and 25 as test/harness
+  corrections and say so, update the coverage record (procedure 7.1), print the round-8 brief
+  from `.agents/review-brief.md` (GPT-6 footer; findings from 27). If the next round is GO:
+  squash-merge with `Closes #192`; nothing to fold in. If GO:
   squash-merge with `Closes #192`; nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs,
   the M6 release — gate `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak
   spike, the register burst concurrent — then the LXC upgrade; relink any MCP client first.
