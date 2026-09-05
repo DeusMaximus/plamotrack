@@ -3951,10 +3951,14 @@ CASES = [
     # --- Codex #212 round 8 (f27–f30): admitted once — recognised fields, every
     # --- credential occurrence, one client snapshot, the resource on the whole URI.
     (
-        "moa-92. a fragment not refused (the normaliser's erasure again)",
+        # Redesigned in round 9: the URI grammar (f31) refuses a fragment on its own,
+        # so "the check removed" became an equivalent mutant (GREEN on the full pass).
+        # The behaviour worth catching is FastMCP's original erasure — the fragment
+        # stripped before comparing — which the grammar then never sees.
+        "moa-92. a fragment stripped before comparing (the normaliser's erasure again)",
         MCP_OAUTH,
         '    if "#" in value:\n        raise ValueError("a resource indicator must not include a fragment (RFC 8707 §2)")',
-        '    if False:\n        raise ValueError("a resource indicator must not include a fragment (RFC 8707 §2)")',
+        '    if "#" in value:\n        value = value.split("#", 1)[0]\n    if False:\n        raise ValueError("a resource indicator must not include a fragment (RFC 8707 §2)")',
         "resource_is_compared_on_the_whole_uri and token and fragment",
     ),
     (

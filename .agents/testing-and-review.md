@@ -327,7 +327,11 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   mutant is its code); 100…103 from round 9 — parsing is not validation: the URI
   grammar not applied, the inline key set handed to the SDK's extraction unchecked,
   unusable entries not dropped, the filtered copy not handed to the validator — all
-  four killed in the contract suite; all 102 killed on the branch by the tracked
+  four killed in the contract suite, and moa-92 **redesigned** by that round: the grammar
+  refuses a fragment on its own, so "the explicit check removed" had become an
+  equivalent mutant (GREEN on the full pass — the procedure's take-it-out-or-make-it-
+  killable rule); it is now the fragment *stripped* before comparing, FastMCP's original
+  erasure, killed by the fragment rows; all 102 killed on the branch by the tracked
   harness on the committed tree, `-k moa-` — three first-pass survivors in
   round 2, each fixed outside the tuple: moa-47 a redundant second delete, moa-56 a
   fallback re-check masking the gate, moa-49 the fake's re-issued id_token identical
