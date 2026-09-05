@@ -782,3 +782,32 @@ harness's refusal to count setup errors. And a test fixture that computes "now" 
 import is aged by however long the suite takes to reach it: CI's full run failed the
 `nbf`-in-the-future rows on `200 == 401` after 210 seconds while the focused run
 passed — date the fixture when the test runs.
+
+## Admitted once (#212, round 8)
+
+Round 7 gave each decision at the SDK seam an owner and the eighth round found that
+every one of them had been written as a *precheck*: a refuse-only check in front of a
+parser, a comparison or a lookup that then decided again. The resource comparison was
+borrowed from FastMCP's normaliser — which erased the fragment and the path's
+`;parameters` before comparing, so `…/mcp/#other` was this server — and the guard's
+hand-off at `/authorize` was re-judged by that same normaliser, so owning the
+predicate alone fixed `/token` and left `/authorize` opening a transaction. The
+repetition rule counted every name, where RFC 6749's prohibition (erratum 5708)
+covers the parameters it defines and says to ignore the rest. The authenticator read
+one `Authorization` occurrence, then returned to an SDK branch that read none — a
+public client with `Basic` beside its valid code succeeded, and an empty first
+occurrence hid a `Basic` second. And the client was looked up twice, once by the
+precheck and once by the SDK, so a document served with `no-store` could say
+`private_key_jwt` to the first and `none` to the second, which accepted an assertion
+under a key the document never published — neither complete record authorised the
+request; mixing them did. The reviewer named the invariant and it is the lesson: **a
+request is admitted once** — from its recognised fields and every credential
+occurrence, against one client snapshot, with the decision carried through whatever
+the SDK does next. When the fix is "check X before the SDK", ask what the SDK will
+read, compare or fetch *again* afterwards; if the answer is anything, the check is
+not the decision, and the repair is to own the decision — resolve once, dispatch on
+that, hand the SDK only what it cannot re-judge. Two smaller ones rode along: a
+borrowed comparison inherits the borrowed permissiveness (sharing FastMCP's helper
+proved consistency with FastMCP, not correctness against the RFC), and a range chosen
+from a spec's discussion should be described as the local policy it is (the
+NumericDate bound), not as the spec's contract.

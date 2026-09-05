@@ -470,7 +470,20 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     assertion (RFC 7521 §4.2.1, `invalid_client`), and an assertion from a client not
     registered for `private_key_jwt` — the SDK's `none` branch had accepted it unread —
     with a 401 to a client that used the `Authorization` header carrying the
-    `WWW-Authenticate` challenge RFC 6749 §5.2 requires. All of it tested from raw
+    `WWW-Authenticate` challenge RFC 6749 §5.2 requires. **And a request is admitted
+    once** (round 8, f27–f30): a decision at the seam is owned, not prechecked — a
+    refuse-only check in front of a parser, comparison or lookup that decides again can
+    disagree with what executes. So the resource comparison is this server's own, on
+    the whole URI (`resource_identity`: a fragment or a missing scheme is malformed, the
+    path keeps its `;parameters`, a trailing slash and the query are the only
+    equivalences, scheme and authority compare as written) and `authorize` applies it
+    behind the guard's hand-off; each endpoint declares the parameters it recognises
+    (`RECOGNISED_PARAMETERS`) and unknown ones are discarded before their multiplicity
+    is judged (RFC 6749 §3.1, erratum 5708); and `ClientAssertionAuthenticator` owns
+    client authentication end to end — every `Authorization` occurrence inventoried
+    first and any one refused as a failed HTTP attempt, the client resolved **once**
+    with the method, the verifying document and the authenticated client all that
+    snapshot, FastMCP's cryptographic validator behind it. All of it tested from raw
     requests in `tests/test_mcp_oauth_clients.py` — never through the SDK's models or
     a helper that pads the form, and with the test's own dates computed when it runs,
     not at import (f23). The upstream

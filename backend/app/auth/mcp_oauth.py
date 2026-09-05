@@ -172,7 +172,23 @@ revocation) rather than to the entry points one at a time:
   `private_key_jwt`, are `invalid_client` before the SDK selects anything,
   and a 401 to a client that used the `Authorization` header carries its
   `WWW-Authenticate` challenge (`_challenge_on_refusal`); `jwks` with
-  `jwks_uri` is `invalid_client_metadata`.
+  `jwks_uri` is `invalid_client_metadata`. *And a request is admitted once*
+  (round 8, f27–f30 — each of round 7's decisions was a precheck in front of
+  something that decided again): the resource comparison is this server's
+  own, on the whole URI (`resource_identity`: a fragment or a missing scheme
+  malformed, the path with its `;parameters`, a trailing slash and the query
+  the only equivalences, scheme and authority as written), and `authorize`
+  applies it behind the guard's hand-off because FastMCP's normaliser erased
+  what it should have compared; each endpoint declares the parameters it
+  recognises (`RECOGNISED_PARAMETERS`) and an unknown one is discarded
+  before its multiplicity could refuse a request (RFC 6749 §3.1, erratum
+  5708); and `ClientAssertionAuthenticator` owns client authentication end
+  to end — every `Authorization` occurrence inventoried first and any one
+  refused as a failed HTTP attempt, the client resolved **once** and the
+  method, the verifying document and the authenticated client all that one
+  snapshot (a `no-store` document that said `private_key_jwt` to the precheck
+  and `none` to the SDK had authorised an assertion under a key it never
+  published), FastMCP's cryptographic validator behind it.
 - **Client-redirect binding per client kind** (§5.6 proxy trust; T9).
   `get_client` refuses the client FastMCP synthesises for the upstream client
   id (anyone who knows the public id could be sent anywhere — the spike's
@@ -238,7 +254,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import partial
 from typing import Any, Literal
-from urllib.parse import parse_qsl, urlencode, urlparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit
 
 import asyncpg
 import httpx
@@ -247,7 +263,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from fastmcp.server.auth import AccessToken, TokenVerifier
-from fastmcp.server.auth.auth import PrivateKeyJWTClientAuthenticator, TokenHandler
+from fastmcp.server.auth.auth import JWT_BEARER_ASSERTION_TYPE, TokenHandler
 from fastmcp.server.auth.handlers.authorize import AuthorizationHandler
 from fastmcp.server.auth.oauth_proxy import OAuthProxy
 from fastmcp.server.auth.oauth_proxy.models import (
@@ -256,7 +272,6 @@ from fastmcp.server.auth.oauth_proxy.models import (
     _hash_token,
     _matches_registered_redirect_uri,
 )
-from fastmcp.server.auth.oauth_proxy.proxy import _normalize_resource_url, _server_url_has_query
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.utilities.ui import create_secure_html_response
 from key_value.aio.adapters.pydantic import PydanticAdapter
@@ -377,6 +392,51 @@ CLIENT_ASSERTION_SKEW = 30
 FORM_MEDIA_TYPE = "application/x-www-form-urlencoded"
 #: The one parameter RFC 8707 §2 lets a client repeat.
 RESOURCE_PARAMETER = "resource"
+#: The parameters each client-driven endpoint recognises — RFC 6749 §4.1.1, §4.1.3
+#: and §6, RFC 7636 §4.3 and §4.5, RFC 8707 §2, RFC 7523 §2.2, RFC 7009 §2.1 — the
+#: fields whose cardinality the request-decoding guard judges. Anything else is an
+#: extension parameter the protocol says to ignore, however often it appears
+#: (RFC 6749 §3.1 as corrected by erratum 5708; Codex #212 round 8, f28), so the
+#: guard discards it before counting.
+RECOGNISED_PARAMETERS: dict[str, frozenset[str]] = {
+    AUTHORIZATION_PATH: frozenset(
+        {
+            "response_type",
+            "client_id",
+            "redirect_uri",
+            "scope",
+            "state",
+            "code_challenge",
+            "code_challenge_method",
+            RESOURCE_PARAMETER,
+        }
+    ),
+    TOKEN_PATH: frozenset(
+        {
+            "grant_type",
+            "code",
+            "redirect_uri",
+            "client_id",
+            "client_secret",
+            "code_verifier",
+            "refresh_token",
+            "scope",
+            RESOURCE_PARAMETER,
+            "client_assertion_type",
+            "client_assertion",
+        }
+    ),
+    REVOCATION_PATH: frozenset(
+        {
+            "token",
+            "token_type_hint",
+            "client_id",
+            "client_secret",
+            "client_assertion_type",
+            "client_assertion",
+        }
+    ),
+}
 #: The key under `upstream_claims` in every token the proxy issues that holds
 #: the owner binding the grant was issued to.
 BINDING_CLAIM = "plamotrack_owner"
@@ -853,8 +913,10 @@ def _b64url_json(segment: str) -> Any:
     return json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
 
 
-#: The supported range of a NumericDate: the integers a JSON number carries
-#: exactly, ±2^53 (RFC 7493 §2.2). Judged on the parsed value before any float
+#: The supported range of a NumericDate — this server's policy, an inclusive
+#: ±2^53: RFC 7493 §2.2 discusses the integer precision a JSON number carries
+#: interoperably, through ±(2^53−1), and does not itself impose a NumericDate
+#: contract (round 8's correction). Judged on the parsed value before any float
 #: conversion — `math.isfinite` on a 401-digit integer raised `OverflowError`,
 #: which the authenticator did not catch, and a correctly signed assertion was
 #: a 500 on both endpoints (Codex #212 round 7, f21). Fractional dates inside
@@ -873,7 +935,7 @@ def _numeric_date(claims: dict[str, Any], name: str) -> float | None:
     # int and float compare exactly in Python, so an integer beyond the bound is
     # refused without being converted; NaN fails both comparisons, ±inf one.
     if not (-NUMERIC_DATE_BOUND <= value <= NUMERIC_DATE_BOUND):
-        raise ValueError(f"{name} must be a NumericDate within ±2^53 (RFC 7493 §2.2)")
+        raise ValueError(f"{name} must be a NumericDate within ±2^53 (this server's range)")
     return float(value)
 
 
@@ -910,32 +972,62 @@ def validate_client_assertion_claims(assertion: str, *, now: float) -> None:
         raise ValueError("the assertion is not yet valid (nbf)")
 
 
-class ClientAssertionAuthenticator(PrivateKeyJWTClientAuthenticator):
-    """FastMCP's CIMD-capable client authenticator — `none`, and
-    `private_key_jwt` verified against the client's document and bound to
-    one endpoint's URL as the assertion's audience — with the assertion's
-    admission in front of the SDK's validator, refuse-only, spending nothing
-    (Codex #212 round 6, f16; round 7, f24). A request that carries either
-    assertion field is a request to be authenticated by the assertion, and
-    then: **one mechanism per request** (RFC 6749 §2.3, RFC 7521 §4.2.1 —
-    `invalid_client`) — a `client_secret` or an `Authorization` header beside
-    it is refused before the SDK selects anything, where FastMCP's
-    authenticator verified the assertion and ignored the second credential;
-    the claim contract (`validate_client_assertion_claims`); and the client
-    must be **registered for `private_key_jwt`** — a public client's
-    assertion has no key to be verified against, and the SDK's `none` branch
-    accepted the request with the assertion unread (round 7's qualification
-    of call 14: "judged in full" was true of a private client only). A
-    refusal is the endpoint's `401 invalid_client`; the same assertion is
-    then usable on a corrected request. One class for both endpoints;
-    `PlamotrackOAuthProxy._client_authenticator` builds one per endpoint."""
+class ClientAssertionAuthenticator(ClientAuthenticator):
+    """Client authentication at `/token` and `/revoke` — `none`, and
+    `private_key_jwt` verified by FastMCP's CIMD validator against the
+    client's document and bound to one endpoint's URL as the assertion's
+    audience — **admitted once, as one decision** (Codex #212 rounds 6–8:
+    f16, f24, f29, f30). A refuse-only precheck in front of the SDK's
+    authenticator could disagree with what the SDK then executed: the SDK
+    read only the first `Authorization` occurrence and ignored the header
+    entirely on a public client, and it looked the client up a second time,
+    so a document served with `no-store` could say `private_key_jwt` to the
+    precheck and `none` to the SDK, which then accepted an assertion under
+    a key the document never published. So the request is judged here, in
+    order, and nothing behind it decides again:
+
+    1. **The credential inventory.** Every raw `Authorization` occurrence
+       counts (RFC 7235 permits the field more than once): no HTTP scheme is
+       admitted by this contract, so any occurrence is a failed HTTP
+       authentication attempt — `invalid_client`, with the challenge in the
+       scheme the client used (`_challenge_on_refusal`) — whether or not an
+       assertion is beside it. A request carrying either assertion field is
+       a request to be authenticated by the assertion: a `client_secret`
+       beside it is a second mechanism (RFC 6749 §2.3, RFC 7521 §4.2.1 —
+       `invalid_client`), and the assertion's claims are judged by
+       `validate_client_assertion_claims` before its `jti` could be spent.
+    2. **One client snapshot.** The client record is resolved once, and the
+       method it names, the document whose keys verify the assertion, and
+       the authenticated client the handler receives are all that record.
+    3. **Dispatch by the snapshot's method.** `private_key_jwt`: the
+       assertion type, the assertion, then FastMCP's own validator
+       (`validate_private_key_jwt` — signature, issuer, audience, lifetime,
+       replay). `none`: the client id alone; an assertion presented to it is
+       refused, since there is no key it could be verified against; a stray
+       `client_secret` with no assertion is ignored, as the SDK ignores it
+       (no mechanism is in use). Any other method is refused.
+
+    A refusal is the endpoint's `401 invalid_client`, spending nothing: the
+    same assertion is usable on a corrected request. One class for both
+    endpoints; `PlamotrackOAuthProxy._client_authenticator` builds one per
+    endpoint."""
+
+    def __init__(self, *, provider, cimd_manager, token_endpoint_url: str) -> None:
+        super().__init__(provider)
+        self.cimd_manager = cimd_manager
+        self.endpoint_url = token_endpoint_url
 
     async def authenticate_request(self, request: Request) -> OAuthClientInformationFull:
         form = await request.form()
         assertion = form.get("client_assertion")
-        if assertion is None and form.get("client_assertion_type") is None:
-            return await super().authenticate_request(request)
-        if form.get("client_secret") or request.headers.get("authorization"):
+        presented = assertion is not None or form.get("client_assertion_type") is not None
+        header_attempts = request.headers.getlist("authorization")
+        if header_attempts:
+            raise AuthenticationError(
+                "HTTP client authentication is not admitted at this endpoint "
+                "(the methods are none and private_key_jwt; RFC 6749 §2.3)"
+            )
+        if presented and form.get("client_secret"):
             raise AuthenticationError(
                 "more than one client authentication mechanism in the request (RFC 7521 §4.2.1)"
             )
@@ -945,14 +1037,34 @@ class ClientAssertionAuthenticator(PrivateKeyJWTClientAuthenticator):
             except ValueError as exc:
                 raise AuthenticationError(f"Invalid client assertion: {exc}") from None
         client_id = form.get("client_id")
-        if isinstance(client_id, str) and client_id:
-            client = await self.provider.get_client(client_id)
-            if client is not None and client.token_endpoint_auth_method != "private_key_jwt":
+        if not isinstance(client_id, str) or not client_id:
+            raise AuthenticationError("Missing client_id")
+        client = await self.provider.get_client(client_id)
+        if client is None:
+            raise AuthenticationError("Invalid client_id")
+        method = client.token_endpoint_auth_method
+        if method == "private_key_jwt":
+            if form.get("client_assertion_type") != JWT_BEARER_ASSERTION_TYPE:
+                raise AuthenticationError(
+                    f"Invalid client_assertion_type: expected {JWT_BEARER_ASSERTION_TYPE}"
+                )
+            if not isinstance(assertion, str) or not assertion:
+                raise AuthenticationError("Missing client_assertion")
+            try:
+                await self.cimd_manager.validate_private_key_jwt(
+                    assertion=assertion, client=client, token_endpoint=self.endpoint_url
+                )
+            except ValueError as exc:
+                raise AuthenticationError(f"Invalid client assertion: {exc}") from exc
+            return client
+        if method == "none":
+            if presented:
                 raise AuthenticationError(
                     "the client is not registered for private_key_jwt; "
                     "an assertion cannot authenticate it"
                 )
-        return await super().authenticate_request(request)
+            return client
+        raise AuthenticationError(f"Unsupported auth method: {method}")
 
 
 #: RFC 9110 §11.1: an authentication scheme is a token. Echoed into the
@@ -961,10 +1073,41 @@ _SCHEME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 
 
 def presented_scheme(request: Request) -> str | None:
-    """The HTTP authentication scheme a request used, or `None`."""
-    header = request.headers.get("authorization", "")
-    scheme = header.split(None, 1)[0] if header.split() else ""
-    return scheme if _SCHEME.fullmatch(scheme) else None
+    """The HTTP authentication scheme a request used — the first occurrence
+    of `Authorization` that names one (round 8, f29: the field may repeat,
+    and an empty first occurrence hid the second) — or `None`."""
+    for header in request.headers.getlist("authorization"):
+        scheme = header.split(None, 1)[0] if header.split() else ""
+        if _SCHEME.fullmatch(scheme):
+            return scheme
+    return None
+
+
+# --- the resource indicator ----------------------------------------------------------
+
+
+def resource_identity(value: str) -> tuple[str, str, str]:
+    """RFC 8707 §2's value reduced to what this server compares — the owned
+    decision (Codex #212 round 8, f27: FastMCP's normaliser, shared in round
+    7, dropped the fragment and the path's `;parameters` before comparing,
+    so `…/mcp/#other` and `…/mcp/;different-resource` were this server).
+    Malformed, raising `ValueError`: a fragment — any `#`, the empty fragment
+    included — which the RFC forbids; a value with no scheme, which is not
+    an absolute URI (RFC 3986 §4.3); a value that does not parse. Otherwise
+    the scheme, the authority and the **whole** path, `;parameters` kept
+    (`urlsplit`, which does not separate them, where `urlparse` did), with
+    these equivalences and no other: a trailing slash on the path is ignored;
+    the query is not compared (RFC 8707 says a client SHOULD NOT send one;
+    FastMCP allows the clients that append one); scheme and authority are
+    compared **as written** — the spelling the protected-resource document
+    gave the client — so the normaliser behind this decision, which compares
+    them as written too, never refuses what this accepted."""
+    if "#" in value:
+        raise ValueError("a resource indicator must not include a fragment (RFC 8707 §2)")
+    parsed = urlsplit(value)
+    if not parsed.scheme:
+        raise ValueError("a resource indicator must be an absolute URI (RFC 8707 §2)")
+    return parsed.scheme, parsed.netloc, parsed.path.rstrip("/")
 
 
 # --- request decoding ------------------------------------------------------------------
@@ -999,12 +1142,20 @@ class ProtocolRequest:
     (`accepts_resource`, FastMCP's comparison at `/authorize`) — a set that
     names only this server is one effective target, handed to the SDK as
     such; a set naming any other target is `invalid_target`, at
-    `/authorize` by handing the SDK the first such value alone so its policy
-    answers in the endpoint's form (an error redirect for a registered
-    client), at `/token` directly, where the SDK reads the field and judges
-    nothing (RFC 8707 §2.2's "MUST reject"); a value that does not parse is
-    refused directly on both. Verbs the endpoint does not take pass through
-    to the SDK (and the binding)."""
+    `/authorize` by handing the handler the first such value alone so the
+    proxy's `authorize` refuses it in the endpoint's form (an error redirect
+    for a registered client — the decision is the proxy's own, `accepts_resource`
+    over `resource_identity`, applied again there because FastMCP's normaliser
+    behind the hand-off is looser; round 8, f27), at `/token` directly, where
+    the SDK reads the field and judges nothing (RFC 8707 §2.2's "MUST
+    reject"); a malformed value — a fragment, no scheme, unparseable — is
+    refused directly on both. **Only recognised fields are judged** (round 8,
+    f28): each endpoint declares the parameters it understands
+    (`RECOGNISED_PARAMETERS`) and anything else is an extension parameter the
+    protocol says to ignore, however often it appears (RFC 6749 §3.1, erratum
+    5708), so it is discarded before its multiplicity could refuse a request —
+    a recognised credential repeated is still refused. Verbs the endpoint
+    does not take pass through to the SDK (and the binding)."""
 
     def __init__(
         self, app: ASGIApp, *, endpoint: str, accepts_resource: Callable[[str], bool]
@@ -1012,6 +1163,7 @@ class ProtocolRequest:
         self.app = app
         self.endpoint = endpoint
         self.accepts_resource = accepts_resource
+        self.recognised = RECOGNISED_PARAMETERS[endpoint]
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["method"] not in ("GET", "POST"):
@@ -1038,6 +1190,7 @@ class ProtocolRequest:
                 )
                 return
             pairs = parse_qsl(body.decode("utf-8", "replace"), keep_blank_values=True)
+        pairs = [(name, value) for name, value in pairs if name in self.recognised]
         refusal = self._refusal(pairs)
         if refusal is not None:
             await self._refuse(scope, receive, send, *refusal)
@@ -1096,18 +1249,16 @@ class ProtocolRequest:
         tokens for, or the refusal (RFC 8707 §2): identical values collapse;
         every distinct value is judged; the pairs come back with one
         `resource` at most — the first this server accepts when all are
-        acceptable, the first it does not when any is not (for the SDK's own
-        `invalid_target` at `/authorize`); a value that does not parse, or a
-        foreign one at `/token`, is refused here. `/revoke` has no such field
-        (RFC 7009): the collapsed set passes through and the SDK ignores it."""
+        acceptable, the first it does not when any is not (for the proxy's
+        `authorize` to refuse in the endpoint's form); a malformed value, or
+        a foreign one at `/token`, is refused here. `/revoke` has no such
+        field (RFC 7009): it is not recognised there and never reaches this."""
         resources = list(
             dict.fromkeys(value for name, value in pairs if name == RESOURCE_PARAMETER)
         )
         if not resources:
             return pairs, None
         others = [(name, value) for name, value in pairs if name != RESOURCE_PARAMETER]
-        if self.endpoint == REVOCATION_PATH:
-            return others + [(RESOURCE_PARAMETER, value) for value in resources], None
         verdicts: dict[str, bool | None] = {}
         for value in resources:
             try:
@@ -1115,7 +1266,7 @@ class ProtocolRequest:
             except ValueError:
                 verdicts[value] = None
         if any(verdict is None for verdict in verdicts.values()):
-            return pairs, ("invalid_target", "a resource indicator does not parse (RFC 8707 §2)")
+            return pairs, ("invalid_target", "a resource indicator is malformed (RFC 8707 §2)")
         foreign = [value for value, accepted in verdicts.items() if not accepted]
         if foreign and self.endpoint == TOKEN_PATH:
             return pairs, (
@@ -1400,19 +1551,18 @@ class PlamotrackOAuthProxy(OAuthProxy):
 
     def accepts_resource(self, value: str) -> bool:
         """RFC 8707 §2: whether a resource indicator names the one target a
-        token minted here is for — FastMCP's comparison at `/authorize`
-        (a query-less server URL: scheme, host and path, the query and a
-        trailing slash ignored; a server URL with a query: exact) as a
-        predicate, so the request-decoding guard can judge every value of a
-        `resource` set, on `/token` too, where the SDK reads the field and
-        judges nothing (round 7, f22). Raises `ValueError` for a value that
-        does not parse as a URL."""
+        token minted here is for — `resource_identity` of the value against
+        that of this server's resource URL, the decision this proxy owns
+        (round 7, f22; round 8, f27 — FastMCP's comparison, shared before,
+        erased the fragment and the path's parameters first). The guard
+        applies it to every value of a `resource` set on `/authorize` and
+        `/token`, and `authorize` applies it again behind the hand-off; the
+        installation URL cannot carry a query (`config.py` refuses one), so
+        FastMCP's exact-match branch for such a server has no case here.
+        Raises `ValueError` for a malformed value."""
         if self._resource_url is None:  # pragma: no cover — set before any route answers
             return True
-        server_url = str(self._resource_url)
-        if _server_url_has_query(server_url):
-            return value.rstrip("/") == server_url.rstrip("/")
-        return _normalize_resource_url(value) == _normalize_resource_url(server_url)
+        return resource_identity(value) == resource_identity(str(self._resource_url))
 
     def _root_discovery_url(self) -> str:
         """The RFC 8414 path-aware document at the root — the one this instance
@@ -1521,29 +1671,37 @@ class PlamotrackOAuthProxy(OAuthProxy):
     # -- the flow ----------------------------------------------------------------------
 
     async def authorize(self, client, params) -> str:
-        """FastMCP's authorize — the resource check, the transaction, the
-        upstream URL — after the provider is resolved; and RFC 8707 §2.1's
-        `invalid_target` rendered as the error redirect the handler already
-        validated (`params.redirect_uri`, `params.state`), because the SDK's
-        response model lacks the code and its catch-all rendered FastMCP's
-        refusal as `server_error` (Codex #212 round 7, f22)."""
+        """FastMCP's authorize — the transaction, the upstream URL — after the
+        provider is resolved, and after **this server's** resource decision:
+        a `resource` that `accepts_resource` refuses, malformed included, is
+        RFC 8707 §2.1's `invalid_target`, rendered here as the error redirect
+        the handler already validated (`params.redirect_uri`, `params.state`)
+        because the SDK's response model lacks the code and its catch-all
+        rendered FastMCP's refusal as `server_error` (Codex #212 round 7,
+        f22), and applied here, behind the guard's hand-off, because FastMCP's
+        own check is looser and accepted what the guard had judged foreign
+        (round 8, f27). FastMCP's check still runs behind this one and can
+        refuse nothing this accepted (`resource_identity`)."""
         try:
             await self._resolve_upstream()
         except UnavailableError as exc:
             raise AuthorizeError(
                 error="temporarily_unavailable", error_description=_PROVIDER_UNAVAILABLE
             ) from exc
-        try:
-            return await super().authorize(client, params)
-        except AuthorizeError as exc:
-            if exc.error != "invalid_target":
-                raise
-            return construct_redirect_uri(
-                str(params.redirect_uri),
-                error="invalid_target",
-                error_description=exc.error_description,
-                state=params.state,
-            )
+        resource = getattr(params, "resource", None)
+        if resource is not None:
+            try:
+                accepted = self.accepts_resource(str(resource))
+            except ValueError:
+                accepted = False
+            if not accepted:
+                return construct_redirect_uri(
+                    str(params.redirect_uri),
+                    error="invalid_target",
+                    error_description="this server issues tokens for its own resource only",
+                    state=params.state,
+                )
+        return await super().authorize(client, params)
 
     async def _handle_consent(self, request: Request):
         """The consent page and its submission (FastMCP's `ConsentMixin`, the

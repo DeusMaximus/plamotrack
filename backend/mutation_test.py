@@ -3791,8 +3791,10 @@ CASES = [
     (
         "moa-71. the claim contract not applied (the SDK's authenticator alone judges the assertion)",
         MCP_OAUTH,
-        "        return ClientAssertionAuthenticator(\n            provider=self,",
-        "        return PrivateKeyJWTClientAuthenticator(\n            provider=self,",
+        # Re-anchored in round 8: the authenticator owns admission end to end now
+        # (f29/f30), so "the SDK's alone" is the claim contract skipped in it.
+        "                validate_client_assertion_claims(assertion, now=time.time())\n",
+        "                pass\n",
         "claim_that_fails_the_contract_is_refused_first and nbf_future",
     ),
     (
@@ -3903,15 +3905,17 @@ CASES = [
     (
         "moa-86. a second client authentication mechanism beside an assertion admitted",
         MCP_OAUTH,
-        '        if form.get("client_secret") or request.headers.get("authorization"):\n            raise AuthenticationError(',
+        # Re-anchored in round 8 (the header inventory moved in front; f29).
+        '        if presented and form.get("client_secret"):\n            raise AuthenticationError(',
         "        if False:\n            raise AuthenticationError(",
         "second_mechanism_beside_an_assertion and secret",
     ),
     (
         "moa-87. an assertion from a client not registered for private_key_jwt accepted unread",
         MCP_OAUTH,
-        '            if client is not None and client.token_endpoint_auth_method != "private_key_jwt":',
-        "            if False:",
+        # Re-anchored in round 8 (dispatch by the snapshot's method; f30).
+        "            if presented:\n                raise AuthenticationError(",
+        "            if False:\n                raise AuthenticationError(",
         "assertion_from_a_client_not_registered_for_it and dcr",
     ),
     (
@@ -3931,8 +3935,10 @@ CASES = [
     (
         "moa-90. invalid_target left to the SDK's vocabulary (server_error on the redirect)",
         MCP_OAUTH,
-        '            if exc.error != "invalid_target":\n                raise\n',
-        "            if True:\n                raise\n",
+        # Re-anchored in round 8: the refusal is the proxy's own now (f27), so the
+        # vocabulary mutant is its code.
+        '                    error="invalid_target",\n                    error_description="this server issues tokens for its own resource only",',
+        '                    error="server_error",\n                    error_description="this server issues tokens for its own resource only",',
         "resource_indicator_is_a_set and authorize and foreign_first",
     ),
     (
@@ -3941,6 +3947,64 @@ CASES = [
         "        if any(verdict is None for verdict in verdicts.values()):",
         "        if False:",
         "resource_indicator_is_a_set and authorize and unparseable",
+    ),
+    # --- Codex #212 round 8 (f27–f30): admitted once — recognised fields, every
+    # --- credential occurrence, one client snapshot, the resource on the whole URI.
+    (
+        "moa-92. a fragment not refused (the normaliser's erasure again)",
+        MCP_OAUTH,
+        '    if "#" in value:\n        raise ValueError("a resource indicator must not include a fragment (RFC 8707 §2)")',
+        '    if False:\n        raise ValueError("a resource indicator must not include a fragment (RFC 8707 §2)")',
+        "resource_is_compared_on_the_whole_uri and token and fragment",
+    ),
+    (
+        "moa-93. the path compared without its parameters",
+        MCP_OAUTH,
+        '    return parsed.scheme, parsed.netloc, parsed.path.rstrip("/")',
+        '    return parsed.scheme, parsed.netloc, parsed.path.split(";", 1)[0].rstrip("/")',
+        "resource_is_compared_on_the_whole_uri and token and path_parameter",
+    ),
+    (
+        "moa-94. the owned resource decision not applied at /authorize (FastMCP's looser one decides)",
+        MCP_OAUTH,
+        "            if not accepted:\n                return construct_redirect_uri(",
+        "            if False:\n                return construct_redirect_uri(",
+        "resource_is_compared_on_the_whole_uri and authorize and path_parameter",
+    ),
+    (
+        "moa-95. unknown parameters counted under the repetition rule",
+        MCP_OAUTH,
+        "        pairs = [(name, value) for name, value in pairs if name in self.recognised]",
+        "        pairs = list(pairs)",
+        "unknown_parameter_is_ignored and token",
+    ),
+    (
+        "moa-96. an Authorization header ignored when no assertion is presented",
+        MCP_OAUTH,
+        "        if header_attempts:\n            raise AuthenticationError(",
+        "        if header_attempts and presented:\n            raise AuthenticationError(",
+        "http_authentication_attempt_is_refused and dcr and token and Basic",
+    ),
+    (
+        "moa-97. only the first Authorization occurrence inventoried",
+        MCP_OAUTH,
+        '        header_attempts = request.headers.getlist("authorization")',
+        '        header_attempts = [h for h in [request.headers.get("authorization", "")] if h]',
+        "every_authorization_occurrence_counts and empty_first",
+    ),
+    (
+        "moa-98. the client looked up a second time before dispatch",
+        MCP_OAUTH,
+        '        method = client.token_endpoint_auth_method\n        if method == "private_key_jwt":',
+        '        client = await self.provider.get_client(client_id) or client\n        method = client.token_endpoint_auth_method\n        if method == "private_key_jwt":',
+        "one_snapshot_per_request and none_then_private",
+    ),
+    (
+        "moa-99. the challenge read from the first Authorization occurrence only",
+        MCP_OAUTH,
+        '    for header in request.headers.getlist("authorization"):',
+        '    for header in [request.headers.get("authorization", "")]:',
+        "every_authorization_occurrence_counts and empty_first",
     ),
 ]
 

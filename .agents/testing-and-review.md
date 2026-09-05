@@ -194,7 +194,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` after #212: 492 cases over 46 target files** — counted the way the
+- **On `main` after #212: 500 cases over 46 target files** — counted the way the
   harness itself counts, `len(CASES)` and the distinct paths those cases mutate
   (migrations, the one test file and the two `frontend/` files included; the
   one-liner is `uv run python -c "import mutation_test as m, pathlib; print(len(m.CASES), len({pathlib.Path(c[1]).resolve() for c in m.CASES}))"`
@@ -315,8 +315,17 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   harness reported as ERROR and the PR body had counted as killed — a tuple is a
   program, so compile the mutant before counting it), and moa-12 and moa-74 re-anchored in
   place by that round (the `authorize` docstring and the f21 range line moved their
-  anchors); all 90 killed on the branch by the tracked harness on the committed tree,
-  `-k moa-` — three first-pass survivors in
+  anchors); 92…99 from round 8 — admitted once: a fragment not refused, the path
+  compared without its parameters, the owned resource decision not applied at
+  `/authorize`, unknown parameters counted, an `Authorization` header ignored without
+  an assertion, only the first occurrence inventoried, the client looked up a second
+  time before dispatch, the challenge read from the first occurrence only — all eight
+  killed in the contract suite, with moa-71/86/87/90 re-anchored by that round (the
+  authenticator owns admission end to end, so "the SDK's alone" became the claim
+  contract skipped; the header inventory moved in front of the secret rule; dispatch
+  is by the snapshot's method; the refusal is the proxy's own, so the vocabulary
+  mutant is its code); all 98 killed on the branch by the tracked harness on the
+  committed tree, `-k moa-` — three first-pass survivors in
   round 2, each fixed outside the tuple: moa-47 a redundant second delete, moa-56 a
   fallback re-check masking the gate, moa-49 the fake's re-issued id_token identical
   to the original within one second)

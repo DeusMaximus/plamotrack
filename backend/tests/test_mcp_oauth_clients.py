@@ -1262,7 +1262,19 @@ async def _handle(client, fake: FakeIdp, endpoint: str) -> tuple[str, list[tuple
     exchanged = await client.post("/mcp/token", data=dict(exchange))
     assert exchanged.status_code == 200, exchanged.text
     tokens = exchanged.json()
+    if endpoint == "refresh":
+        fake.next_refresh = _provider_refresh_for(fake)
+        refresh = [
+            ("grant_type", "refresh_token"),
+            ("refresh_token", tokens["refresh_token"]),
+            ("client_id", client_id),
+        ]
+        return client_id, refresh, tokens
     return client_id, [("token", tokens["access_token"]), ("client_id", client_id)], tokens
+
+
+def _path(endpoint: str) -> str:
+    return "/mcp/token" if endpoint == "refresh" else f"/mcp/{endpoint}"
 
 
 def _succeeded(endpoint: str, response) -> bool:
@@ -1499,3 +1511,301 @@ async def test_an_assertion_from_a_client_not_registered_for_it_is_refused(
         assert accepted.status_code == 200, accepted.text[:300]
         if endpoint == "revoke":
             assert not grant_records(await _state_rows())
+
+
+# --- Codex #212 round 8: admitted once — recognised fields, every credential, one snapshot --
+#
+# Round 7 owned the boundary's decisions and left each as a precheck in front of
+# something that decided again: a resource comparison borrowed from FastMCP that
+# erased what it should have compared, a repetition rule over every name where
+# the protocol says to ignore the unknown ones, an authenticator that read one
+# `Authorization` occurrence and delegated the rest to an SDK that read none, and
+# a client looked up twice. The rows below are the invariant: a request is
+# admitted once, from its recognised fields and every credential occurrence,
+# against one client snapshot, with the resource decision carried through.
+
+
+@pytest.mark.parametrize(
+    "value", ["fragment", "empty_fragment", "path_parameter", "relative", "spelling"]
+)
+@pytest.mark.parametrize("endpoint", ["authorize", "token", "refresh"])
+async def test_a_resource_is_compared_on_the_whole_uri(endpoint, value):
+    """RFC 8707 §2: the value is an absolute URI without a fragment, and
+    it names this server or it does not. A fragment (`#other`, or the empty
+    `#`) and a value with no scheme are malformed — a direct
+    `400 invalid_target` on every endpoint; a value whose path carries
+    `;different-resource`, or that spells the scheme and host differently
+    from the protected-resource document (compared as written — the
+    deliberate rule), names another target — at `/authorize` the error
+    redirect with the state and no transaction, at the code exchange and at
+    a refresh a direct 400. The handle survives to a corrected request in
+    every case. The reviewed head shared FastMCP's normaliser, which dropped
+    the fragment and the path's parameters before comparing, so all three of
+    Codex's values opened a transaction and minted (Codex #212 round 8, f27)."""
+    local = f"{BASE}/mcp/"
+    resources = {
+        "fragment": local + "#other",
+        "empty_fragment": local + "#",
+        "path_parameter": local + ";different-resource",
+        "relative": "/mcp/",
+        "spelling": local.replace("http://localhost", "HTTP://LOCALHOST"),
+    }
+    malformed = value in ("fragment", "empty_fragment", "relative")
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        client_id, pairs, _ = await _handle(client, fake, endpoint)
+        sent = pairs + [("resource", resources[value])]
+        if endpoint == "authorize":
+            from urllib.parse import urlencode
+
+            response = await client.get("/mcp/authorize?" + urlencode(sent))
+        else:
+            body, headers = _encoded(sent)
+            response = await client.post("/mcp/token", content=body, headers=headers)
+        if endpoint == "authorize" and not malformed:
+            assert response.status_code == 302, response.text
+            location = response.headers["location"]
+            assert location.startswith(NATIVE_CB + "?"), location
+            back = _query(location)
+            assert back["error"] == "invalid_target", back
+            assert back["state"] == "client-state"
+        else:
+            assert response.status_code == 400, (value, response.status_code, response.text)
+            assert "location" not in response.headers
+            assert response.json()["error"] == "invalid_target", response.text
+            assert response.headers.get_list("cache-control") == ["no-store"]
+        if endpoint == "authorize":
+            assert "mcp-oauth-transactions" not in {c for c, _ in await _state_rows()}
+            return
+        body, headers = _encoded(pairs)
+        done = await client.post("/mcp/token", content=body, headers=headers)
+        assert done.status_code == 200, done.text
+
+
+@pytest.mark.parametrize("endpoint", ["authorize", "token", "revoke"])
+async def test_an_unknown_parameter_is_ignored_however_often_it_appears(endpoint):
+    """RFC 6749 §3.1 as corrected by erratum 5708: the prohibition on
+    repeating a parameter covers the parameters the protocol defines;
+    unrecognised extension parameters are ignored — one of them or two.
+    `x_vendor_hint` and `audience` twice each, on every endpoint, and the
+    request proceeds. The reviewed head's repetition rule counted every
+    name and answered `400 invalid_request` (Codex #212 round 8, f28)."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        _, pairs, _ = await _handle(client, fake, endpoint)
+        extensions = [
+            ("x_vendor_hint", "one"),
+            ("x_vendor_hint", "two"),
+            ("audience", "one"),
+            ("audience", "two"),
+        ]
+        body, headers = _encoded(pairs + extensions)
+        done = await client.post(_path(endpoint), content=body, headers=headers)
+        assert _succeeded(endpoint, done), (done.status_code, done.text[:300])
+        if endpoint == "revoke":
+            assert not grant_records(await _state_rows())
+
+
+async def test_a_repeated_recognised_credential_is_still_refused():
+    """The other half of the erratum: a parameter the endpoint *does*
+    recognise keeps its cardinality — `client_secret` twice at `/token` is
+    `400 invalid_request` with the code surviving, exactly as `client_id`
+    twice is."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        _, pairs, _ = await _handle(client, fake, "token")
+        body, headers = _encoded(pairs + [("client_secret", "a"), ("client_secret", "b")])
+        refused = await client.post("/mcp/token", content=body, headers=headers)
+        assert refused.status_code == 400, refused.text
+        assert refused.json()["error"] == "invalid_request"
+        assert refused.json()["error_description"].startswith("parameter repeated: client_secret")
+        body, headers = _encoded(pairs)
+        assert (await client.post("/mcp/token", content=body, headers=headers)).status_code == 200
+
+
+async def _public_handle(client, fake: FakeIdp, kind: str, endpoint: str):
+    """A public client of either kind with the handle `endpoint` needs, and
+    the endpoint's valid pairs: a DCR client through `_handle`; a CIMD
+    client whose document says `none` through the browser leg."""
+    if kind == "dcr":
+        return await _handle(client, fake, endpoint)
+    if endpoint == "token":
+        code, verifier = await browser_leg(client, fake, CIMD_ID, CIMD_CB)
+        return (
+            CIMD_ID,
+            [
+                ("grant_type", "authorization_code"),
+                ("code", code),
+                ("redirect_uri", CIMD_CB),
+                ("client_id", CIMD_ID),
+                ("code_verifier", verifier),
+            ],
+            {},
+        )
+    tokens = await cimd_link(client, fake, None)
+    if endpoint == "refresh":
+        fake.next_refresh = _provider_refresh_for(fake)
+        return (
+            CIMD_ID,
+            [
+                ("grant_type", "refresh_token"),
+                ("refresh_token", tokens["refresh_token"]),
+                ("client_id", CIMD_ID),
+            ],
+            tokens,
+        )
+    return CIMD_ID, [("token", tokens["access_token"]), ("client_id", CIMD_ID)], tokens
+
+
+@pytest.mark.parametrize("scheme", ["Basic", "Bearer", "Unknown"])
+@pytest.mark.parametrize("endpoint", ["token", "refresh", "revoke"])
+@pytest.mark.parametrize("kind", ["dcr", "cimd_none"])
+async def test_an_http_authentication_attempt_is_refused_on_a_public_client(
+    monkeypatch, kind, endpoint, scheme
+):
+    """RFC 6749 §2.3 and §5.2: client authentication included in a request
+    is evaluated, and an unsupported method is `invalid_client`; a request
+    that used the `Authorization` header gets a 401 with the matching
+    challenge. No HTTP scheme is admitted by this contract, so `Basic`,
+    `Bearer` or an unknown scheme beside a public client's valid code,
+    refresh token or revocation token — a DCR client, or a CIMD client whose
+    document says `none` — is `401 invalid_client` with `WWW-Authenticate` in
+    that scheme, the handle intact and then redeemed on the client id alone.
+    The reviewed head's authenticator returned to the SDK's `none` branch
+    when no assertion was presented, and the SDK ignored the header: all
+    eighteen cells succeeded (Codex #212 round 8, f29)."""
+    if kind == "cimd_none":
+        cimd(monkeypatch, "none")
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        client_id, pairs, tokens = await _public_handle(client, fake, kind, endpoint)
+        credential = (
+            base64.b64encode(b"somebody-else:wrong-secret").decode()
+            if scheme == "Basic"
+            else "invalid-credential"
+        )
+        body, headers = _encoded(pairs)
+        refused = await client.post(
+            _path(endpoint),
+            content=body,
+            headers={**headers, "Authorization": f"{scheme} {credential}"},
+        )
+        assert refused.status_code == 401, (refused.status_code, refused.text[:300])
+        assert refused.json()["error"] == "invalid_client"
+        assert refused.headers["www-authenticate"] == f'{scheme} realm="{BASE}/mcp"'
+        assert refused.headers.get_list("cache-control") == ["no-store"]
+        if endpoint == "revoke":
+            assert grant_records(await _state_rows())
+            assert (await initialize(client, tokens["access_token"])).status_code == 200
+        done = await client.post(_path(endpoint), content=body, headers=headers)
+        assert _succeeded(endpoint, done), (done.status_code, done.text[:300])
+        if endpoint == "revoke":
+            assert not grant_records(await _state_rows())
+    assert not await _events(audit.MCP_IDENTITY_REFUSED)
+
+
+@pytest.mark.parametrize("order", ["empty_first", "basic_first"])
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_every_authorization_occurrence_counts(monkeypatch, endpoint, order):
+    """RFC 7235 lets `Authorization` appear more than once; the credential
+    inventory reads every occurrence. A valid assertion beside two raw
+    `Authorization` fields — an empty one and `Basic eDp5`, in either order —
+    is `401 invalid_client` with the `Basic` challenge, the grant intact, and
+    the same assertion then succeeds. The reviewed head read the first
+    occurrence only, so an empty first field hid the second (Codex #212
+    round 8, f29)."""
+    key = cimd(monkeypatch, "private_key_jwt")
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        credential = {
+            "client_assertion_type": ASSERTION_TYPE,
+            "client_assertion": signed(key, CIMD_ID, audience),
+        }
+        fields = [("Authorization", ""), ("Authorization", "Basic eDp5")]
+        if order == "basic_first":
+            fields.reverse()
+        refused = await _endpoint_request(
+            client, endpoint, tokens, fake, credential, headers=fields
+        )
+        assert refused.status_code == 401, (refused.status_code, refused.text[:300])
+        assert refused.json()["error"] == "invalid_client"
+        assert refused.headers["www-authenticate"] == f'Basic realm="{BASE}/mcp"'
+        assert grant_records(await _state_rows())
+        accepted = await _endpoint_request(client, endpoint, tokens, fake, credential)
+        assert accepted.status_code == 200, accepted.text[:300]
+
+
+@pytest.mark.parametrize("flip", ["none_then_private", "private_then_none"])
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_the_client_record_is_one_snapshot_per_request(monkeypatch, endpoint, flip):
+    """A CIMD document served with `no-store` is fetched on every lookup, so a
+    document that changes between two lookups within one request would be
+    judged by two records: the reviewed head admitted the method from the
+    first and let the SDK select from the second — `private_key_jwt` then
+    `none` accepted an assertion under a key the document never published.
+    The record is resolved once per request now, and the method it names,
+    the keys that verify the assertion and the authenticated client are that
+    snapshot: a document saying `none` first and `private_key_jwt` after
+    refuses a valid assertion (presented to a `none` client); one saying
+    `private_key_jwt` first and `none` after refuses an assertion under
+    another key (the first snapshot's document verifies it). Neither
+    complete record authorises either request, and mixing them no longer
+    does; a stable document then accepts the client's own assertion
+    (Codex #212 round 8, f30)."""
+    key = RSAKey.generate_key(2048, parameters={"kid": "client-key"})
+    private_document = _cimd_document(
+        token_endpoint_auth_method="private_key_jwt",
+        jwks={"keys": [key.as_dict(private=False)]},
+    )
+    public_document = _cimd_document(token_endpoint_auth_method="none")
+    played: dict = {"sequence": None, "fetches": 0}
+
+    async def fetch(self, client_id_url: str):
+        assert client_id_url == CIMD_ID
+        if played["sequence"] is None:
+            return private_document
+        played["fetches"] += 1
+        first, later = played["sequence"]
+        return first if played["fetches"] == 1 else later
+
+    monkeypatch.setattr(CIMDFetcher, "fetch", fetch)
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        if flip == "none_then_private":
+            played["sequence"] = (public_document, private_document)
+            signer = key
+        else:
+            played["sequence"] = (private_document, public_document)
+            signer = RSAKey.generate_key(2048, parameters={"kid": "client-key"})
+        credential = {
+            "client_assertion_type": ASSERTION_TYPE,
+            "client_assertion": assertion(signer, CIMD_ID, audience),
+        }
+        refused = await _endpoint_request(client, endpoint, tokens, fake, credential)
+        assert refused.status_code == 401, (flip, refused.status_code, refused.text[:300])
+        assert refused.json()["error"] == "invalid_client"
+        assert played["fetches"] >= 1
+        assert grant_records(await _state_rows())
+        assert (await initialize(client, tokens["access_token"])).status_code == 200
+        played["sequence"] = None
+        accepted = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": assertion(key, CIMD_ID, audience),
+            },
+        )
+        assert accepted.status_code == 200, accepted.text[:300]
