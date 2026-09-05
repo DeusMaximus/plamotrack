@@ -41,6 +41,47 @@ Template:
 
 ---
 
+## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 12 (GPT-6 Astra, NO-GO: 1×P3, a named `kid` must match) answered on the branch — head `2a786a6`, reply posted (issuecomment-5553421733), PR body + coverage record amended, round-13 brief printed
+
+- **Done:** f36 reproduced at `5ecef8f` on its own assertions first (28 new contract rows in a
+  worktree at that head: **4 red / 24 green** — Codex's two inline cells plus the two
+  case-variant rows red on `200 == 401`; every fetched-path, fallback and non-string row a
+  control), then fixed at `2a786a6`. Cause: **FastMCP has two selection rules** — its inline
+  extraction falls back to the only key whenever no record matched the `kid`, named or not;
+  its remote selection only when no `kid` is named — and round 11 wrote out the inline one
+  while the docs described the remote one. `RestrictedKeyAssertionValidator.
+  _extract_public_key_from_jwks` now applies the remote rule with its texts (`Key ID '…' not
+  found in JWKS`; `Multiple keys in JWKS but no key ID (kid) in token`); `_header_kid` is the
+  one reading for both paths (non-empty string names; absent/empty names none, the SDK's
+  remote reading; a non-string reads as none and joserfc's decode refuses the header on both
+  paths — **no type guard added**: it would be a second owner, measured before writing).
+  Round 11's two tests **re-linked under a published name** — their link assertions had named
+  `client-key` against sets not publishing it and passed *through* the fallback under test
+  (Codex's own r12 repro links the same way and refuses at the new head; said in the reply).
+  Tests: contract suite **275** (+28); mutants moa-110…112; harness **511/46**. Docs: module
+  docstring, design §5.9 (k) + row 8, AGENTS.md rule 13, procedure (moa- paragraph + count),
+  lessons → "The library had two rules". PR body: opening line, What, By file, calls 12/17/18,
+  Tests, negative control, mutants, coverage record (a record's own empty/non-string `kid`
+  listed untested; Codex's r12 untracked coverage folded in).
+- **Decisions:** the rule is the SDK's *remote* one on both paths; an empty `kid` names none
+  (the SDK's remote reading, and its cache keeps a record's empty `kid` under `_default`);
+  a non-string `kid` is joserfc's refusal, not ours; the same-`kid` collision stays the
+  documented inherited boundary (Codex r12 measured it and called it not a finding).
+- **State:** backend **2342 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants **109/109 killed** at `2a786a6` (tracked harness, committed
+  tree, ~14 min; the three new killed first pass). Commit `2a786a6` pushed; PR #212 body
+  amended; the reply is issuecomment-5553421733. Codex's r12 material at `/private/tmp/plamotrack-212-r12/`
+  (untracked). Dev `db` up, Keycloak spike up. LXC untouched (**stays put until M6 is
+  finished**).
+- **Next:** (1) **Codex round 13 on PR #212** — the brief was printed in this session's chat;
+  regenerate from `.agents/review-brief.md` (Codex footer; the reviewer names its model) if
+  needed, naming runtime head `2a786a6`, the branch tip (hand-off only above it), `main`
+  `a497481`, rules 1/6/7.1/9/11/12/13; findings from 37; reproduce at `2a786a6` first; update
+  the coverage record in the reply (procedure 7.1). If GO: squash-merge with `Closes #192`;
+  nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
+  `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak spike, the register
+  burst concurrent — then the LXC upgrade; relink any MCP client first.
+
 ## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 11 (Daybreak Blue after GPT-6 Astra's refusals; NO-GO: 2×P3, the record the kid named) answered on the branch — head `5ecef8f`, reply posted (issuecomment-5552863879), PR body + coverage record amended, round-12 brief printed
 
 - **Done:** both reproduced at `f82b3b3` on their own assertions first (16 new contract rows in a
@@ -210,55 +251,3 @@ Template:
   TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a packaged stack with the
   Keycloak spike, the register burst concurrent — then the LXC upgrade; relink any MCP client
   first.
-
-## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 7 (GPT-6, NO-GO: 7×P3, admission/decoding/cardinality at the SDK seam) answered on the branch — head `9bf1925`, reply posted (issuecomment-5550571202), PR body + coverage record amended, round-8 brief printed
-
-- **Done:** all seven reproduced at `855c0e1` on their own assertions first (47 new contract rows
-  copied into a worktree at that head: **38 red / 9 green**), then fixed at `9bf1925`. **f20**
-  `ProtocolRequest` reads the media type as HTTP defines it (case-insensitive, parameters aside)
-  and refuses any non-form POST body `400 invalid_request` before the SDK parses it. **f21**
-  `NUMERIC_DATE_BOUND` ±2^53 (RFC 7493) judged before any float conversion. **f22** `resource` is a
-  set: exempt from the repetition rule, collapsed, every member judged by the proxy's
-  `accepts_resource` (FastMCP's comparison as a predicate; two more private helper imports); a
-  foreign set `invalid_target` — at `/authorize` via the SDK's redirect, now rendered by the
-  proxy's `authorize` through `construct_redirect_uri` because the SDK's vocabulary lacks the code
-  (it said `server_error`; the lifecycle test's hedge is gone); at `/token` the guard's own 400
-  (the SDK judges nothing there — a *single* foreign resource at `/token` is refused now, a
-  client-visible change); unparseable → direct 400. **f23** `_claim_defect(name)` dates the
-  fixture at run time. **f24** an assertion beside `client_secret`/`Authorization` → `401
-  invalid_client` before anything is spent; `_challenge_on_refusal` wraps the `/token` and
-  `/revoke` handlers so a 401 to a header-authenticating client carries `WWW-Authenticate`
-  (scheme echoed when an RFC 9110 token, realm the issuer). **Call 14** fixed rather than
-  reworded: an assertion from a client not registered for `private_key_jwt` is refused. **f25**
-  moa-76 repaired (`_unwritten = (…)`), every round-7 mutant compile-checked; **f26** `jwks` +
-  `jwks_uri` → `invalid_client_metadata`. Tests: contract suite **135** (+47); mutants
-  moa-81…91; harness **492/46**. Docs: design §5.9 (k), AGENTS.md rule 13, module docstring,
-  procedure moa- paragraph + count, lessons → "Admission, decoding, cardinality and the
-  hand-off are one decision". PR body: What, By file, calls 11 (SSRF sentence withdrawn in the
-  body), 12, 13, 14 (rewritten), **new call 15** (the challenge + the client-visible changes),
-  Tests (round 6's control corrected to **36/18**, thirteen decoding rows, six repeated
-  token/revocation rows; round 7's control), coverage record (Codex's "still unexamined" folded
-  in; consent/callback last-value multiplicity "recorded, not hardened").
-- **Decisions:** the `/token` resource policy is the guard's, not a new SDK hook — RFC 8707 §2.2
-  "MUST reject"; the `/authorize` form is the SDK's redirect, produced by handing it the first
-  foreign value (the PKCE-`plain` precedent), the code corrected in `authorize`; JSON bodies are
-  400 where they were the SDK's 401; a stray secret on a public client that presents no
-  assertion stays ignored; the challenge echoes the client's scheme (RFC 6749 §5.2 read
-  literally — a "where I'd push" bullet); multipart refused, not implemented.
-- **State:** backend **2202 green**, lint/format clean, `render_ingress.py --check` clean;
-  frontend untouched. Mutants: ****90/90 killed** — 88 first pass, moa-12 and moa-74 re-anchored (their anchors moved under this round's edits: the `authorize` docstring, the f21 range line) and re-run alone, killed** — run by the **tracked harness on the committed
-  tree** (`uv run python mutation_test.py -k moa-`, detached with `nohup` because the run exceeds
-  a tool call's ceiling; ~11 min). Commits `9bf1925` (runtime) and `118d242` (harness re-anchors, docs) pushed; PR #212 body amended; the reply is
-  issuecomment-5550571202. Codex's r7 material at `/private/tmp/plamotrack-212-r7/` (untracked). Dev `db`
-  up, Keycloak spike up. LXC untouched (**stays put until M6 is finished**).
-- **Next:** (1) **Codex round 8 on PR #212** — the brief was printed in this session's chat;
-  regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming runtime head
-  `9bf1925`, the branch tip (hand-off commits only above it), `main` `a497481`, rules
-  1/6/7.1/9/11/12/13; findings from 27; reproduce at `9bf1925` first; the contract suite is where
-  a boundary finding's reproduction belongs; update the coverage record in the reply (procedure
-  7.1). If GO: squash-merge with `Closes #192`; nothing to fold in. If NO-GO and the findings
-  keep landing in `ProtocolRequest` / `ClientAssertionAuthenticator`, stop patching and look
-  for the invariant one level up (procedure, "Responding" 6). (2) After merge: #215, #193,
-  M6-9 TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a packaged stack with
-  the Keycloak spike, the register burst concurrent — then the LXC upgrade; relink any MCP
-  client first.
