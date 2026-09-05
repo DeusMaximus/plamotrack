@@ -41,6 +41,48 @@ Template:
 
 ---
 
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 10 (GPT-6, NO-GO: 1×P3, the selected key's authorization) answered on the branch — head `f82b3b3`, reply posted (issuecomment-5552103057), PR body + coverage record amended, round-11 brief printed
+
+- **Done:** f33 reproduced at `cb69559` on its own assertions first (22 new contract rows in a
+  worktree at that head: **14 red / 8 green**, Codex's twelve among the reds), then fixed at
+  `f82b3b3` within Codex's constraints (both key paths, cached keys, the very key the verifier
+  selects, no refetch, one cryptographic validator, nothing stripped, a mixed-purpose set still
+  admitting its signing key): FastMCP converted the selected JWK to a PEM before verifying, so
+  `alg`/`use`/`key_ops` never reached joserfc. `RestrictedKeyAssertionValidator` (over FastMCP's
+  `CIMDAssertionValidator`: the inline selection returned as the JWK found by the PEM the SDK
+  produced — `_pem_of`/`selected_jwk`, byte-identical across metadata) and `RestrictedKeyVerifier`
+  (over `JWTVerifier`: the fetched JWKs kept beside the SDK's PEM cache, rebuilt on the SDK's
+  refetch, the selected JWK returned in the PEM's place; installed in the SDK's per-client
+  verifier cache under its own key) — joserfc enforces the restrictions in the signature's
+  decode. One validator instance on the proxy (`assertion_validator`) for both endpoints; the
+  authenticator calls `validate_assertion` directly (the manager's validator unused). Codex's
+  corrections adopted: call 17 qualified as approximate (its 2,144-value corpus); the coverage
+  record carries the interrupted-second-write observation forward. Tests: contract suite
+  **231** (+22: 3 restrictions × inline/remote × 2 endpoints, explicit-ok + mixed-set controls,
+  the cached-key rows); mutants moa-104…106; harness **507/46**. Docs: module docstring, design
+  §5.9 (k) + row 8, AGENTS.md rule 13, procedure, lessons → "The selected key keeps its
+  authorization". PR body: What, By file, call 12, call 17 qualified, **new call 18**, Tests,
+  controls, mutants, coverage record.
+- **Decisions:** replace the lossy representation, keep the SDK's selection (no second verifier,
+  no refetch, no metadata check in front of the SDK); one material published twice → the first
+  entry; a restriction changed after a fetch seen at the cache's expiry (FastMCP's TTL — named);
+  the tracked suite plays the JWKS fetch below the verifier, links through the inline set so a
+  fetched verifier's first fetch is the set under test, and drops the cached verifier (a
+  private seam, named) to meet a corrected set.
+- **State:** backend **2298 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants ****105/105 killed** first pass (tracked harness, committed tree, ~12 min)** (tracked harness, committed tree, `nohup`).
+  Commit `f82b3b3` pushed; PR #212 body amended; the reply is issuecomment-5552103057. Codex's r10 material
+  at `/private/tmp/plamotrack-212-r10/` (untracked). Dev `db` up, Keycloak spike up. LXC
+  untouched (**stays put until M6 is finished**).
+- **Next:** (1) **Codex round 11 on PR #212** — the brief was printed in this session's chat;
+  regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming runtime head
+  `f82b3b3`, the branch tip (hand-off only above it), `main` `a497481`, rules 1/6/7.1/9/11/12/13;
+  findings from 34; reproduce at `f82b3b3` first; update the coverage record in the reply
+  (procedure 7.1). If GO: squash-merge with `Closes #192`; nothing to fold in. (2) After
+  merge: #215, #193, M6-9 TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a
+  packaged stack with the Keycloak spike, the register burst concurrent — then the LXC
+  upgrade; relink any MCP client first.
+
 ## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 9 (GPT-6, NO-GO: 2×P3, "parsing is not validation") answered on the branch — head `cb69559`, reply posted (issuecomment-5551526055), PR body + coverage record amended, round-10 brief printed
 
 - **Done:** both reproduced at `d2e1297` on their own assertions first (32 new/changed contract
@@ -224,45 +266,3 @@ Template:
   squash-merge with `Closes #192`; nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs,
   the M6 release — gate `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak
   spike, the register burst concurrent — then the LXC upgrade; relink any MCP client first.
-
-## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 5 (GPT-6, NO-GO: P2/P3, discovery + the hint) answered on the branch — head `8cae6c7`, reply posted (issuecomment-5549456569), PR body amended with a **coverage record**, brief template changed, round-6 brief printed
-
-- **Done:** **f14** discovery owned by the contract — `discovery_metadata` (SDK `build_metadata`
-  + FastMCP's CIMD flag + `CLIENT_AUTH_METHODS`/`CLIENT_ASSERTION_ALGORITHMS`), served by
-  `get_routes` on the AS route (the root documents are that list filtered): both spellings
-  publish `["none","private_key_jwt"]` for `/token` and `/revoke` and `["RS256"]`; **f15**
-  `RevocationForm.token_type_hint: str | None` — a recognised value chooses order, anything
-  else is ignored (RFC 7009 §2.2). Tests: contract suite **34** (+7: hints `""`/unknown × 2,
-  both discovery spellings pinned to literals, an ES256 assertion under a CIMD EC key refused);
-  control at `139b26e`: **34 rows, 6 red / 28 green**. Mutants moa-67…70, moa-57 re-anchored again; **69/69 killed**. Corrections
-  asked for: r4 control breakdown 5/21/2/4; moa-65 kills in the lifecycle suite; `client_id`
-  beside an assertion named a compatibility restriction (RFC 7521 §4.2); replay per process
-  (restarts included); call 13's rationale scope/complexity not "no protection"; discovery in
-  the ownership audit. **Process (Codex's three points, adopted):** `.agents/review-brief.md`
-  — the reviewer's two jobs in order (own coverage list vs the PR body's record first, fixes
-  second), the round ends with the coverage it added; PR body — a **Coverage record** section
-  (surface × checked/by what/at which head, unresolved, explicitly untested); procedure — the
-  two-jobs bullet, the coverage-record bullet (incl. keep one reviewer session through
-  corrective rounds where practical), step 7.1 in "Responding", the protocol-value-space
-  clause in rule 2; lessons → "Verifying the fixes is not examining the contract". Docs: design
-  §5.5 row 8, §5.9 (k); AGENTS.md rule 13; procedure count (**471/46**).
-- **Decisions:** rebuild the AS document from the SDK's `build_metadata` rather than introspect
-  FastMCP's handler closure (explicit ownership; the literal pin catches drift); RS256 alone
-  advertised because the pinned validator builds its verifier with the default algorithm
-  (measured by the ES256 row); no distributed replay store (documented per-process limit);
-  the session-continuity suggestion recorded as a trade-off for the owner, not a rule.
-- **State:** backend **2101 green**, lint/format clean, `render_ingress.py --check` clean;
-  frontend untouched. Mutants **69/69 killed** (scratch runner, targets hashed, restored). Commit
-  `8cae6c7` pushed; PR #212 body amended (coverage record added); the reply is issuecomment-5549456569.
-  Codex's r5 probes at `/private/tmp/plamotrack-212-r5/` (untracked, `test_review_r5.py`).
-  Dev `db` up, Keycloak spike up. LXC untouched (**stays put until M6 is finished**).
-- **Next:** (1) **Codex round 6 on PR #212** — the owner decides whether in the same Codex
-  session (Codex's suggestion: keep one session through corrective rounds) or a fresh one for
-  an independent pass; either way the brief was printed in this session's chat — regenerate
-  from `.agents/review-brief.md` (GPT-6 footer; **the template changed this round**) if needed,
-  naming runtime head `8cae6c7`, the branch tip, `main` `a497481`, rules 1/6/7.1/9/11/12/13;
-  findings from 16; reproduce at `8cae6c7` first; update the PR body's coverage record in the
-  reply (procedure 7.1). If GO: squash-merge with `Closes #192`; nothing to fold in. (2) After
-  merge: #215, #193, M6-9 TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a
-  packaged stack with the Keycloak spike, the register burst concurrent — then the LXC upgrade;
-  relink any MCP client first (records before `e90550f` carry no binding).
