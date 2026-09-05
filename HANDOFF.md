@@ -41,6 +41,43 @@ Template:
 
 ---
 
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 9 (GPT-6, NO-GO: 2×P3, "parsing is not validation") answered on the branch — head `cb69559`, reply posted (issuecomment-5551526055), PR body + coverage record amended, round-10 brief printed
+
+- **Done:** both reproduced at `d2e1297` on their own assertions first (32 new/changed contract
+  rows in a worktree at that head: **23 red / 9 green**), then fixed at `cb69559`. **f31**
+  `ABSOLUTE_URI` — RFC 3986 Appendix A's `absolute-URI` as one regex — judged in
+  `resource_identity` on the decoded string *before* `urlsplit` (which admitted a tab in the
+  authority, a CR in the path, a leading NUL, and never looked at the ignored query: `%zz`,
+  an unescaped space); a valid escape admitted. **f32** `with_usable_inline_keys` in the
+  `private_key_jwt` branch: `keys` must be an array, non-object entries dropped (RFC 7517
+  §5.1, matching the remote path) from a copy handed to FastMCP's validator, none usable →
+  `invalid_client`; the snapshot still returned. Correction adopted: call 16's scheme wording
+  (the scheme case-folds via `urlsplit`/`urlparse`; the authority as written) — the round-8
+  `spelling` row split into `scheme_case` (accepted) and `host_case` (foreign). Tests: contract
+  suite **209** (+29; the whole-URI test 12 values × 3 flows, the key-set test 4 × 2); mutants
+  moa-100…103; harness **504/46**. Docs: module docstring, design §5.9 (k) + row 8, AGENTS.md
+  rule 13, procedure, lessons → "Parsing is not validation". PR body: What, By file, call 16
+  corrected, **new call 17** (the grammar's approximations; the §5.1 ignore rule and the
+  single-key-fallback consequence), Tests, controls, mutants, coverage record.
+- **Decisions:** `IPvFuture`/`IPv6address` approximated as a bracketed hex/colon/dot literal,
+  `IPv4address` under `reg-name`; unusable key entries dropped rather than the set refused
+  (Codex offered either); the grammar judged on the once-decoded form value; no other
+  exception translated at the key boundary.
+- **State:** backend **2276 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants ****102/102 killed** — 101 first pass; moa-92 GREEN (equivalent under the new grammar) → redesigned as the fragment stripped before comparing, killed alone** (tracked harness, committed tree, `nohup`).
+  Commits `cb69559` (runtime) and `e7ad8c4` (moa-92 redesign, procedure) pushed; PR #212 body amended; the reply is issuecomment-5551526055. Codex's r9 material
+  at `/private/tmp/plamotrack-212-r9/` (untracked). Exact-tip CI was green at `559c6f8` (the
+  round-8 timing flake did not recur). Dev `db` up, Keycloak spike up. LXC untouched (**stays
+  put until M6 is finished**).
+- **Next:** (1) **Codex round 10 on PR #212** — the brief was printed in this session's chat;
+  regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming runtime head
+  `cb69559`, the branch tip (hand-off only above it), `main` `a497481`, rules 1/6/7.1/9/11/12/13;
+  findings from 33; reproduce at `cb69559` first; update the coverage record in the reply
+  (procedure 7.1). If GO: squash-merge with `Closes #192`; nothing to fold in. (2) After
+  merge: #215, #193, M6-9 TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a
+  packaged stack with the Keycloak spike, the register burst concurrent — then the LXC
+  upgrade; relink any MCP client first.
+
 ## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 8 (GPT-6, NO-GO: 4×P3, "admitted once" at the SDK seam) answered on the branch — head `d2e1297`, reply posted (issuecomment-5551101166), PR body + coverage record amended, round-9 brief printed
 
 - **Done:** all four reproduced at `9bf1925` on their own assertions first (45 new contract rows in
@@ -229,51 +266,3 @@ Template:
   merge: #215, #193, M6-9 TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a
   packaged stack with the Keycloak spike, the register burst concurrent — then the LXC upgrade;
   relink any MCP client first (records before `e90550f` carry no binding).
-
-## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 4 (GPT-6, NO-GO: 2×P2/P3, the client-auth boundary) answered on the branch — head `139b26e`, reply posted (issuecomment-5549077553), PR body amended, round-5 brief printed
-
-- **Done:** per Codex's own brief to the owner (contract first, tested from the wire, SDK
-  ownership audited, grant machinery untouched). **The contract** (design §5.9 item 7 (k),
-  AGENTS.md rule 13, the module docstring): every dynamically registered client is **public**
-  (`none` + PKCE) whatever it asked for and the registration response says so — no secret, no
-  expiry; a CIMD client authenticates as its document says (`none` / `private_key_jwt`) on
-  `/token` **and** `/revoke`, the assertion bound to the endpoint; wire forms are the RFCs'
-  (`client_id` in the form for every kind, no secret from a public client, `401 invalid_client`
-  on a failed client authentication on either endpoint). Code (`app/auth/mcp_oauth.py`): **f11**
-  `register_client` makes the SDK's object truthful before it is stored *or* returned (the SDK's
-  handler returns that same object); **f12** `GrantRevocation` over `RevocationForm` +
-  `RevocationRefused` (the SDK's steps, an optional-secret form, `invalid_client`); **f13**
-  `_revocation_authenticator` = FastMCP's `PrivateKeyJWTClientAuthenticator` bound to `/revoke`.
-  Tests: **new `tests/test_mcp_oauth_clients.py`, 27 rows, every request built by hand** (six
-  requested methods × the lifecycle; the secret field absent/empty/stray; hint × half; CIMD
-  none/private_key_jwt lifecycle; refusals on both endpoints × absent/wrong key/wrong
-  audience/replayed; the missing-field rows); the lifecycle suite's `revoke()` helper now sends
-  the public form (it had padded `client_secret=""` — the lesson). Negative control at
-  `4b720ec`: **39 rows, 32 red / 7 green** on the findings' own assertions. Mutants: moa-61…66,
-  the contract suite added to `TEST_FILES`, moa-57 re-anchored on the new handler class; **65/65 killed**. Corrections asked for by the review:
-  round 3's greens are three refresh controls + four race cells (PR body); a *freshly*
-  re-issued old-owner id_token ends the record, only omitted/identical carries forward (PR body
-  call 5); the expired-access policy documented (design (e)). Docs: design §5.5 row 8, §5.9 (e)
-  + (k) with the per-endpoint ownership audit; operations (how clients register); procedure
-  moa- paragraph + count (**467/46**); lessons → "The helper that padded the form".
-- **Decisions:** public-only DCR by substitution (RFC 7591 §3.2.1), not refusal — the MCP Python
-  client *requests* `client_secret_post` by default; confidential DCR rejected (a credential with
-  no authority behind it, plus the SDK's Basic branch to repair, plus a second matrix); one
-  error code `invalid_client` on both endpoints (RFC 6749 §5.2 via RFC 7009 §2.2.1), which
-  nothing in the matrix asserts; `client_id` stays required in the form beside an assertion
-  (parity with FastMCP's `/token`); no packaged re-run (no route/registry/nginx change).
-- **State:** backend **2094 green**, lint/format clean, `render_ingress.py --check` clean;
-  frontend untouched. Mutants **65/65 killed** (scratch runner, targets hashed, restored). Commit
-  `139b26e` pushed; PR #212 body amended; the reply is issuecomment-5549077553. Codex's round-4 probes are at
-  `/private/tmp/plamotrack-212-r4/` (its `test_review.py` is the 44-row matrix — not tracked,
-  will not survive a reboot). Dev `db` up, Keycloak spike up. LXC untouched (**stays put until
-  M6 is finished**).
-- **Next:** (1) **Codex round 5 on PR #212, in a new session**: the brief was printed in this
-  session's chat — regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming
-  runtime head `139b26e`, the branch tip (hand-off commits only above it), `main` `a497481`,
-  rules 1/6/7.1/9/11/12/13; findings numbered from 14; reproduce at `139b26e` first; the
-  contract suite is where a client-auth finding's reproduction belongs. If GO: squash-merge with
-  `Closes #192`; nothing to fold in. (2) After merge: #215 (one line in `ci.yml`), #193, M6-9
-  TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` against a packaged stack with
-  the Keycloak spike, the register burst concurrent — then the LXC upgrade; relink any MCP
-  client first (records written before `e90550f` carry no binding and end at their next refresh).
