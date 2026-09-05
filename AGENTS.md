@@ -500,7 +500,11 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     single-key fallback counts it (f35); and a named `kid` that matches nothing is a
     refusal on both paths, the fallback only for a header naming none — the SDK has two
     rules, and its inline extraction, which round 11 wrote out, fell back to the only key
-    whenever no record matched (round 12, f36). All of it tested from raw
+    whenever no record matched (round 12, f36); and the rule is stated **once, over usable
+    records** (`select_records`) for both paths — the fallback counts the set's records,
+    not the slots a cache keeps them in, where FastMCP's PEM cache and the fetched path's
+    records held every unnamed record under one `_default` slot, so two unnamed records
+    were one key fetched and an ambiguous set inline (round 13, f37). All of it tested from raw
     requests in `tests/test_mcp_oauth_clients.py` — never through the SDK's models or
     a helper that pads the form, and with the test's own dates computed when it runs,
     not at import (f23). The upstream

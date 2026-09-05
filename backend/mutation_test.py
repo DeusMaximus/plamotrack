@@ -4067,10 +4067,11 @@ CASES = [
         "key_selected_by_kid_is_the_one_judged and inline and allowed_first",
     ),
     (
+        # Re-anchored in round 13 (the candidates named over records, the SDK's PEM the tie-break).
         "moa-108. the remote record re-identified by material (the first copy judged)",
         MCP_OAUTH,
-        "        if kid is not None:\n            chosen = self._jwks_by_kid.get(kid)",
-        "        if kid is not None:\n            chosen = next((k for k in self._jwks_by_kid.values() if _pem_of(k) == pem), None)",
+        "        chosen = next((key for key in reversed(candidates) if _pem_of(key) == pem), None)",
+        "        chosen = next((key for key in self._jwks_records if _pem_of(key) == pem), None)",
         "key_selected_by_kid_is_the_one_judged and remote and allowed_first",
     ),
     (
@@ -4083,10 +4084,11 @@ CASES = [
     # --- Codex #212 round 12 (f36): a named kid must match; the single-key fallback is
     # --- for a header naming none — the SDK's remote rule on both paths. -----------------
     (
+        # Re-anchored in round 13 (the rule is `select_records`, one owner for both paths).
         "moa-110. the inline fallback restored for a named kid (the SDK's inline rule)",
         MCP_OAUTH,
-        "            if selected is None:\n                raise ValueError(f\"Key ID '{kid}' not found in JWKS\")",
-        "            if selected is None and len(usable) == 1:\n                selected = usable[0]\n            if selected is None:\n                raise ValueError(f\"Key ID '{kid}' not found in JWKS\")",
+        "        if not named:\n            raise ValueError(f\"Key ID '{kid}' not found in JWKS\")",
+        "        if not named and len(usable) == 1:\n            return usable\n        if not named:\n            raise ValueError(f\"Key ID '{kid}' not found in JWKS\")",
         "named_kid_must_match and inline and token and unknown",
     ),
     (
@@ -4097,11 +4099,28 @@ CASES = [
         "naming_no_kid and empty and token",
     ),
     (
+        # Re-anchored in round 13 (the comparison is the one rule's).
         "moa-112. the inline kid compared case-insensitively",
         MCP_OAUTH,
-        '            selected = next((key for key in usable if key.get("kid") == kid), None)',
-        '            selected = next(\n                (key for key in usable if str(key.get("kid")).lower() == kid.lower()), None\n            )',
+        '        named = [key for key in usable if key.get("kid") == kid]',
+        '        named = [key for key in usable if str(key.get("kid")).lower() == kid.lower()]',
         "named_kid_must_match and inline and token and case_variant",
+    ),
+    # --- Codex #212 round 13 (f37): the fallback counts usable records, not the slots a
+    # --- cache keeps them in — one rule over records for both paths. ---------------------
+    (
+        "moa-113. the fetched records kept by cache slot again (two unnamed records one)",
+        MCP_OAUTH,
+        "        self._jwks_records = [\n            key for key in keys if isinstance(key, dict) and _pem_of(key) is not None\n        ]",
+        '        by_slot = {\n            key.get("kid") or "_default": key\n            for key in keys\n            if isinstance(key, dict) and _pem_of(key) is not None\n        }\n        self._jwks_records = list(by_slot.values())',
+        "two_unnamed_records and remote and token and missing",
+    ),
+    (
+        "moa-114. the no-kid fallback taking the last of several usable records",
+        MCP_OAUTH,
+        "    if len(usable) == 1:\n        return usable",
+        "    if usable:\n        return usable[-1:]",
+        "two_unnamed_records and inline and token and missing",
     ),
 ]
 

@@ -889,3 +889,21 @@ with an assertion naming `client-key` against sets that published the key under
 another name or none, and every link succeeded — by the fallback under test. Re-linked
 under a published name, they still pass; the row that showed the defect was the one
 whose `kid` named nothing published, which no earlier row had sent.
+
+## The cache is not the set (#212, round 13)
+
+Rounds 10, 11 and 12 each repaired one representation of the key selection: the PEM
+that lost the metadata, the material that two records could share, the rule copied from
+the wrong of the SDK's two functions. Round 13 found the representation under all three.
+The fetched path kept its records exactly as FastMCP keeps its PEM cache — by `kid`,
+with every unnamed record under one `_default` slot — and the single-key fallback
+counted slots: two usable records without a `kid` were one key fetched, and the fallback
+returned the last of them while the inline set, which counts records, refused the same
+set as ambiguous. Faithfully mirroring the library's cache reproduced the library's
+loss. The lesson is the one the three earlier rounds circled: when a library's
+representation is lossy, the invariant has to be stated over the thing the
+representation is *of* — here the usable records of the set — in one place, before
+either representation is consulted, with the library's own answer behind it able to
+refuse but never to admit. And the procedure's rule 6 applies to the author as much as
+the reviewer: four rounds in one function is the signal to stop repairing
+representations and write the rule they were all approximating.

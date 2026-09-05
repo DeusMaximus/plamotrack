@@ -2374,3 +2374,112 @@ async def test_a_kid_that_is_not_a_string_is_refused_by_the_decode(
         assert accepted.status_code == 200, accepted.text[:300]
         if endpoint == "revoke":
             assert not grant_records(await _state_rows())
+
+
+# --- Codex #212 round 13: the fallback counts usable records, not the slots a cache keeps ------
+
+
+def _unnamed(key: RSAKey, shape: str) -> dict:
+    """The key's public record without a `kid`, or with `kid: ""` — the two
+    shapes FastMCP's PEM cache keeps under its one `_default` slot."""
+    public = key.as_dict(private=False)
+    public.pop("kid", None)
+    return {**public, "kid": ""} if shape == "empty" else public
+
+
+@pytest.mark.parametrize("shape", ["missing", "empty", "mixed"])
+@pytest.mark.parametrize("source", ["inline", "remote"])
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_two_unnamed_records_are_an_ambiguous_set(monkeypatch, endpoint, source, shape):
+    """The single-key fallback counts usable **records**, not the slots a
+    cache keeps them in. Two usable RSA records both without a `kid`, or
+    both with `kid: ""`, and an assertion signed by the second naming none is
+    `401 invalid_client` on both endpoints, inline as fetched, with no
+    provider call and the grant intact; the second record published alone
+    then verifies the same handle. FastMCP's PEM cache keeps every unnamed
+    record under one `_default` slot, round 11 kept the records the same
+    way, and the fetched fallback counted slots — so it saw one key where
+    the set held two, and the inline path refused what the fetched path
+    accepted (Codex #212 round 13, f37). `mixed` — one named record beside
+    the unnamed signer — is the control the SDK's own cache already refused
+    (two slots), green before and after."""
+    first = RSAKey.generate_key(2048, parameters={"kid": "link-key"})
+    second = RSAKey.generate_key(2048, parameters={"kid": "signer"})
+    served = _play_key_sets(monkeypatch, {"keys": [first.as_dict(private=False)]}, source)
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (live, client):
+        tokens = await cimd_link(client, fake, first)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        served["source"] = source
+        if shape == "mixed":
+            served["jwks"] = {"keys": [first.as_dict(private=False), _unnamed(second, "missing")]}
+        else:
+            served["jwks"] = {"keys": [_unnamed(first, shape), _unnamed(second, shape)]}
+        asked_before = list(fake.token_requests)
+        refused = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": _assertion_with_kid(second, None, CIMD_ID, audience),
+            },
+        )
+        assert refused.status_code == 401, (shape, refused.status_code, refused.text[:300])
+        assert refused.json()["error"] == "invalid_client"
+        assert fake.token_requests == asked_before
+        assert fake.revoked == []
+        assert grant_records(await _state_rows())
+        assert (await initialize(client, tokens["access_token"])).status_code == 200
+        served["jwks"] = {"keys": [_unnamed(second, "missing" if shape == "mixed" else shape)]}
+        if source == "remote":
+            # The ambiguous set is what the verifier cached, for FastMCP's hour:
+            # the corrected set is met by a fresh verifier (the cache dropped).
+            getattr(live.state, MCP_OAUTH_ATTR).proxy.assertion_validator._verifier_cache.clear()
+        accepted = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": _assertion_with_kid(second, None, CIMD_ID, audience),
+            },
+        )
+        assert accepted.status_code == 200, accepted.text[:300]
+        if endpoint == "revoke":
+            assert not grant_records(await _state_rows())
+
+
+@pytest.mark.parametrize("shape", ["missing", "empty"])
+@pytest.mark.parametrize("source", ["inline", "remote"])
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_a_sole_unnamed_record_is_the_fallback(monkeypatch, endpoint, source, shape):
+    """The fallback's own side, so the cardinality rule refuses only a set
+    that holds two: one usable record without a `kid`, or with `kid: ""`,
+    verifies an assertion naming none on both endpoints, inline as fetched.
+    Controls, green before and after (Codex #212 round 13, f37)."""
+    key = RSAKey.generate_key(2048, parameters={"kid": "link-key"})
+    served = _play_key_sets(monkeypatch, {"keys": [key.as_dict(private=False)]}, source)
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        served["source"] = source
+        served["jwks"] = {"keys": [_unnamed(key, shape)]}
+        accepted = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": _assertion_with_kid(key, None, CIMD_ID, audience),
+            },
+        )
+        assert accepted.status_code == 200, (shape, accepted.status_code, accepted.text[:300])
+        if endpoint == "revoke":
+            assert not grant_records(await _state_rows())

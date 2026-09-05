@@ -214,7 +214,12 @@ revocation) rather than to the entry points one at a time:
   one on both paths — a named `kid` that matches nothing is a refusal
   (round 12, f36: the SDK has two rules, and its inline one fell back to
   the only key whenever no record matched, so an assertion naming an
-  unpublished `kid` authenticated inline and was refused fetched).
+  unpublished `kid` authenticated inline and was refused fetched) — stated
+  **once, over usable records** (`select_records`, round 13, f37): the
+  fallback counts the set's records, not the slots a cache keeps them in —
+  FastMCP's PEM cache holds every unnamed record under one `_default` slot,
+  the fetched path had kept the records the same way, and two unnamed
+  records were one key fetched and an ambiguous set inline.
 - **Client-redirect binding per client kind** (§5.6 proxy trust; T9).
   `get_client` refuses the client FastMCP synthesises for the upstream client
   id (anyone who knows the public id could be sent anywhere — the spike's
@@ -1142,56 +1147,81 @@ def _header_kid(token: str) -> str | None:
     return kid if isinstance(kid, str) and kid else None
 
 
+def select_records(usable: list[dict[str, Any]], kid: str | None) -> list[dict[str, Any]]:
+    """The one selection rule, over the usable **records** of a set and before
+    either representation is consulted — the invariant one level up from
+    rounds 10–12, which each repaired one representation (Codex #212 round
+    13, f37): an assertion naming a `kid` selects the records carrying it,
+    none a refusal; an assertion naming none selects the only usable record,
+    and a set holding two — whatever slots a cache would keep them in — is
+    ambiguous and refused. The SDK's remote path's texts. More than one
+    record under the named `kid` is the documented inherited boundary,
+    resolved by the caller's representation: the inline set's first, the
+    fetched set's the one whose material the SDK selected (its cache keeps
+    the last). FastMCP's PEM cache keeps every unnamed record under one
+    `_default` slot, and a fallback that counted slots saw one key where the
+    set held two."""
+    if kid is not None:
+        named = [key for key in usable if key.get("kid") == kid]
+        if not named:
+            raise ValueError(f"Key ID '{kid}' not found in JWKS")
+        return named
+    if len(usable) == 1:
+        return usable
+    raise ValueError(
+        "Multiple keys in JWKS but no key ID (kid) in token" if usable else "No keys found in JWKS"
+    )
+
+
 class RestrictedKeyVerifier(JWTVerifier):
     """FastMCP's JWKS verifier with the selected key's authorization kept
     (Codex #212 round 10, f33): the SDK caches the PEM of every fetched key
     by `kid` and verifies with the PEM, so the JWK's `alg`, `use` and
     `key_ops` (RFC 7517 §4.2–§4.4; RFC 8725 §3.1) never reached joserfc and a
     valid signature authenticated under a key that excluded it. This keeps
-    the JWKs of the last fetch beside the SDK's own cache — rebuilt only when
-    the SDK refetches, so within its cache lifetime like the material — and
-    hands `load_access_token` the JWK the SDK's selection named — by the
-    assertion's `kid`, or the only key when it names none (its cache, its
-    fallback, its selection all untouched) — in place of the PEM;
-    the SDK's `_import_key_for_algorithm` imports a JWK as readily as a PEM,
-    and the same `jwt.decode` that verifies the signature then enforces the
-    restrictions. One cryptographic validator, no refetch."""
+    every usable JWK of the last fetch, in order, beside the SDK's own cache
+    — rebuilt only when the SDK refetches, so within its cache lifetime like
+    the material — and hands `load_access_token` the record `select_records`
+    names over them (round 13, f37: the records had been kept by the SDK's
+    cache slots, `kid or "_default"`, so two unnamed records were one and the
+    fallback counted slots), with the SDK's own selection behind it able to
+    refuse but not to admit and its PEM the disagreement check — in place of
+    the PEM; the SDK's `_import_key_for_algorithm` imports a JWK as readily
+    as a PEM, and the same `jwt.decode` that verifies the signature then
+    enforces the restrictions. One cryptographic validator, no refetch."""
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
-        self._jwks_by_kid: dict[str, dict[str, Any]] = {}
+        self._jwks_records: list[dict[str, Any]] = []
 
     async def _fetch_jwks(self) -> dict[str, Any]:
-        """The SDK's fetch, with the JWKs kept **by `kid`** exactly as the SDK
-        caches their PEMs — a key without one under its `_default` slot, an
-        unusable key skipped — so the record the selection names is the
-        record kept (round 11, f34: found by material, two `kid`s publishing
-        one material collapsed onto the first)."""
+        """The SDK's fetch, with every usable JWK of the set kept **as a
+        record**, in the set's order — an entry that is not an object or that
+        FastMCP cannot import skipped, as the SDK skips it — and not by the
+        slots the SDK caches their PEMs under (round 13, f37: `kid or
+        "_default"` collapsed every unnamed record onto one). The cardinality
+        the fallback counts is the set's, not the cache's."""
         data = await super()._fetch_jwks()
         keys = data.get("keys", []) if isinstance(data, dict) else []
-        self._jwks_by_kid = {}
-        for key in keys:
-            if not isinstance(key, dict) or _pem_of(key) is None:
-                continue
-            self._jwks_by_kid[key.get("kid") or "_default"] = key
+        self._jwks_records = [
+            key for key in keys if isinstance(key, dict) and _pem_of(key) is not None
+        ]
         return data
 
     async def _get_verification_key(self, token: str) -> Any:
-        """The SDK's selection — its cache, lifetime, fetch and fallback —
-        answered with the record it named: the JWK under the assertion's
-        `kid`, or the only cached key when the assertion names none, as the
-        SDK's rule reads. A record whose material is not the PEM the SDK
-        selected is a disagreement between the two and is refused, never
-        degraded to the PEM (the metadata would be lost again)."""
+        """The SDK's selection first — its cache, lifetime and fetch, and a
+        refusal ours would give too (a named `kid` it lacks, a set its cache
+        counts as several) — then the one rule over the records of that
+        fetch: `select_records` names the candidates, and the one whose
+        material is the PEM the SDK selected is returned (the last, where the
+        named `kid` is published twice — the SDK's cache keeps the last, the
+        documented boundary). No candidate with that material is a
+        disagreement between the two and is refused, never degraded to the
+        PEM (the metadata would be lost again)."""
         pem = await super()._get_verification_key(token)
-        kid = _header_kid(token)
-        if kid is not None:
-            chosen = self._jwks_by_kid.get(kid)
-        elif len(self._jwks_by_kid) == 1:
-            chosen = next(iter(self._jwks_by_kid.values()))
-        else:
-            chosen = None
-        if chosen is None or _pem_of(chosen) != pem:
+        candidates = select_records(self._jwks_records, _header_kid(token))
+        chosen = next((key for key in reversed(candidates) if _pem_of(key) == pem), None)
+        if chosen is None:
             raise ValueError("the selected key and its published record disagree")
         return chosen
 
@@ -1213,17 +1243,19 @@ class RestrictedKeyAssertionValidator(CIMDAssertionValidator):
         remote path has them (RFC 7517 §5 and §5.1; round 9, f32; round 11,
         f34–f35): `keys` must be an array; an entry that is not an object, or
         whose material FastMCP cannot import — the remote path's own skip set
-        (`_pem_of`) — is ignored; none usable is a refusal; then the SDK's
-        **remote** rule (round 12, f36) — the record whose `kid` the
-        assertion names, a named `kid` that matches nothing a refusal, or the
-        only usable key when it names none — returning the **record
-        selected**, not a PEM and not the first record with its material. The
-        SDK has two rules: its inline extraction fell back to the only key
-        whenever no record matched, named or not, where its remote selection
-        falls back only when no `kid` is named (RFC 7517 §4.5: `kid` is how a
-        key is selected), and round 11 wrote out the inline one — so an
-        assertion naming an unpublished `kid` authenticated inline and was
-        refused fetched. The SDK's extraction also called `.get` on whatever
+        (`_pem_of`) — is ignored; none usable is a refusal; then the one rule
+        over usable records, `select_records` (round 13, f37) — the SDK's
+        **remote** rule (round 12, f36) stated over records: the record whose
+        `kid` the assertion names, a named `kid` that matches nothing a
+        refusal, or the only usable record when it names none, the first of
+        several under one `kid` — returning the **record selected**, not a
+        PEM and not the first record with its material. The SDK has two
+        rules: its inline extraction fell back to the only key whenever no
+        record matched, named or not, where its remote selection falls back
+        only when no `kid` is named (RFC 7517 §4.5: `kid` is how a key is
+        selected), and round 11 wrote out the inline one — so an assertion
+        naming an unpublished `kid` authenticated inline and was refused
+        fetched. The SDK's extraction also called `.get` on whatever
         each entry was (a 500), counted an unusable object against the
         single-key fallback, and converted the selection to a PEM (its `alg`,
         `use` and `key_ops` lost). Round 9 filtered a copy of the record in
@@ -1238,15 +1270,7 @@ class RestrictedKeyAssertionValidator(CIMDAssertionValidator):
         usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]
         if not usable:
             raise ValueError("the client's key set holds no usable key (RFC 7517 §5.1)")
-        kid = _header_kid(token)
-        if kid is not None:
-            selected = next((key for key in usable if key.get("kid") == kid), None)
-            if selected is None:
-                raise ValueError(f"Key ID '{kid}' not found in JWKS")
-        elif len(usable) == 1:
-            selected = usable[0]
-        else:
-            raise ValueError("Multiple keys in JWKS but no key ID (kid) in token")
+        selected = select_records(usable, _header_kid(token))[0]
         return selected
 
     async def validate_assertion(
