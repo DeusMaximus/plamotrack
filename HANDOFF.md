@@ -41,6 +41,49 @@ Template:
 
 ---
 
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 8 (GPT-6, NO-GO: 4×P3, "admitted once" at the SDK seam) answered on the branch — head `d2e1297`, reply posted (issuecomment-5551101166), PR body + coverage record amended, round-9 brief printed
+
+- **Done:** all four reproduced at `9bf1925` on their own assertions first (45 new contract rows in
+  a worktree at that head: **35 red / 10 green**), then fixed at `d2e1297` to the invariant Codex
+  named — a request is admitted once, from its recognised fields and every credential occurrence,
+  against one client snapshot, with the resource decision carried through the hand-off. **f27**
+  `resource_identity` (own comparison over `urlsplit`: a fragment or no scheme malformed → direct
+  400; whole path with `;parameters`; trailing slash and query the only equivalences; scheme and
+  authority *as written*, call 16) under `accepts_resource`, and `authorize` applies it before
+  FastMCP's looser check; the two private FastMCP helpers removed. **f28** `RECOGNISED_PARAMETERS`
+  per endpoint; unknown parameters dropped before the repetition rule (erratum 5708). **f29**
+  `ClientAssertionAuthenticator` rewritten over the SDK's base `ClientAuthenticator`: every
+  `Authorization` occurrence (`getlist`) inventoried first and any one refused `invalid_client`
+  with the challenge, with or without an assertion; `presented_scheme` over every occurrence.
+  **f30** one `get_client` per request; dispatch by the snapshot's method through FastMCP's
+  `validate_private_key_jwt`. Corrections adopted: NumericDate ±2^53 described as local policy;
+  call 15's claim now true; CI's `test_archive_structure_is_processed_in_linear_time` (1.5 s
+  budget, 2.49 s on the runner) noted as unrelated — owner to re-run/file. Tests: contract suite
+  **180** (+45); mutants moa-92…99, moa-71/86/87/90 re-anchored; harness **500/46**. Docs:
+  module docstring, design §5.9 (k) + §5.5 row 8, AGENTS.md rule 13, procedure, lessons →
+  "Admitted once". PR body: What, By file, calls 12/14/15, **new call 16**, Tests, controls,
+  mutants, coverage record (Codex's r8 untracked probes and "still unexamined" folded in).
+- **Decisions:** scheme/authority compared as written (an equivalence FastMCP's normaliser
+  behind the hand-off lacks would let it refuse what we accepted → `server_error`); a
+  scheme-less resource is *malformed* (direct 400), not foreign (redirect); any `Authorization`
+  header at `/token`/`/revoke` refused even on a public client (no HTTP scheme admitted);
+  unknown parameters dropped before the SDK (its models ignore them anyway); the FastMCP
+  authenticator no longer a base class — its cryptographic validator is called directly.
+- **State:** backend **2247 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants ****98/98 killed** first pass (tracked harness on the committed tree, ~12 min)** (tracked harness, committed tree, detached with
+  `nohup`). Commit `d2e1297` pushed; PR #212 body amended; the reply is issuecomment-5551101166. Codex's r8
+  material at `/private/tmp/plamotrack-212-r8/` (untracked). Dev `db` up, Keycloak spike up.
+  LXC untouched (**stays put until M6 is finished**).
+- **Next:** (1) **Codex round 9 on PR #212** — the brief was printed in this session's chat;
+  regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming runtime head
+  `d2e1297`, the branch tip (hand-off only above it), `main` `a497481`, rules 1/6/7.1/9/11/12/13;
+  findings from 31; reproduce at `d2e1297` first; update the coverage record in the reply
+  (procedure 7.1). If GO: squash-merge with `Closes #192`; nothing to fold in; re-run the tip's
+  Backend CI if the timing test is the only red (or file it). (2) After merge: #215, #193, M6-9
+  TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a packaged stack with the
+  Keycloak spike, the register burst concurrent — then the LXC upgrade; relink any MCP client
+  first.
+
 ## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 7 (GPT-6, NO-GO: 7×P3, admission/decoding/cardinality at the SDK seam) answered on the branch — head `9bf1925`, reply posted (issuecomment-5550571202), PR body + coverage record amended, round-8 brief printed
 
 - **Done:** all seven reproduced at `855c0e1` on their own assertions first (47 new contract rows
@@ -234,50 +277,3 @@ Template:
   TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` against a packaged stack with
   the Keycloak spike, the register burst concurrent — then the LXC upgrade; relink any MCP
   client first (records written before `e90550f` carry no binding and end at their next refresh).
-
-## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 3 (GPT-6, NO-GO: P2/P3) answered on the branch — head `4b720ec`, reply posted (issuecomment-5547333495), PR body amended, round-4 brief printed
-
-- **Done:** both findings reproduced at `e90550f` on their own assertions (the 12 new rows written
-  first: **5 red / 7 green** — f9's two access-token rows and the rebound-owner sibling red on the
-  record still present behind the 200, f10's two paths red on `200 == 401`; the four refresh-token
-  rows and the race test's four cells green), then fixed one step to either side of round 2's gate
-  (`app/auth/mcp_oauth.py`): **f9** the `/revoke` route is built over `RevocationLookup`
-  (`get_routes`, FastMCP's own seam) — the SDK's handler and client authenticator given a provider
-  whose access-token lookup is `locate_access_token`: the proxy's signature, the client id and
-  binding from the claims, the JTI mapping; no provider call, no upstream set, no owner row — so
-  the locked ending in `revoke_token` runs whatever the provider is doing; `load_access_token` and
-  the `unavailable` policy for requests unchanged. Sibling closed by the same change: a client can
-  end a grant the owner row no longer names (the per-request `still_bound` had made that lookup
-  answer `None` too). **f10** the record gate compares a verified candidate's `(iss, sub)` with the
-  **record's** binding before the write — a mismatch is `_GrantRefused(identity)`, the grant ends.
-  Also per the review's evidence replay: the race test's witness tightened to the `pg_blocking_pids`
-  edge on the grant's own lock key (`_blocked_on_the_grant_lock`; the transparent/access cell is a
-  real witness for the first time, since revocation no longer enters the transparent refresh); the
-  round-2 10/4 breakdown carried into the PR body; the CI `--setup-token` argv edge filed as
-  **#215**. Fake: `FakeIdp.unreachable` (per-path outage). Tests: `test_mcp_oauth.py` **111** (+8).
-  Mutants: moa-57…60 added; **59/59 killed**. Docs: design §5.5 row 8, §5.9 (d)/(e); AGENTS.md rule 13;
-  operations "Ending a link"; procedure moa- paragraph + count (**461/46**); lessons → "Located,
-  not authorized; the record's identity, not the owner's".
-- **Decisions:** a second object for the revocation handler rather than a context flag inside
-  `load_access_token` (two callers with opposite failure semantics get two methods); no second
-  `still_bound` under the lock for f10 (narrows the window, does not close it — the continuity
-  comparison is the invariant); the rebind-mid-transition cells that re-issue the old owner's
-  id_token or omit one still write the old binding forward and are refused at the next request
-  (the lingering record is #214); #215 filed rather than fixed here (Codex's ask, no shared cause).
-- **State:** backend **2067 green** on the final tree, lint/format clean, `render_ingress.py
-  --check` clean; frontend untouched. Mutants **59/59 killed** (scratch runner past the clean-tree
-  refusal, targets hashed, restored). Commit `4b720ec` pushed; PR #212 body amended to that head;
-  the reply is issuecomment-5547333495. Packaged stack not re-run (no route/registry/nginx/matrix change). Dev `db`
-  up, Keycloak spike up. LXC untouched (**stays put until M6 is finished**).
-- **Next:** (1) **Codex round 4 on PR #212, in a new session**: the brief was printed in this
-  session's chat — regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming
-  runtime head `4b720ec` and the branch tip (hand-off commits only above it), `main` `a497481`,
-  rules 1/6/7.1/9/11/12/13. Findings: reproduce at `4b720ec` first, answer per
-  `.agents/testing-and-review.md` → "Responding to a review" (numbering continues from 10),
-  re-verify by mutation (`-k moa-`; the scratch runner shape is in this entry's Done). If GO:
-  squash-merge with `Closes #192`; nothing to fold in — every moa- tuple is tracked. (2) After
-  merge: #215 (one line in `ci.yml`), #193, M6-9 TLS docs, the M6 release — gate
-  `ingress_matrix.py --mode oidc` against a packaged stack with the Keycloak spike (the socat
-  sidecar overlay is not tracked; rebuild under `.agents/spikes/190/` if kept) with the register
-  burst concurrent — then the LXC upgrade; relink any MCP client first (records written before
-  `e90550f` carry no binding and end at their next refresh).
