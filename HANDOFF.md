@@ -41,6 +41,58 @@ Template:
 
 ---
 
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 7 (GPT-6, NO-GO: 7×P3, admission/decoding/cardinality at the SDK seam) answered on the branch — head `9bf1925`, reply posted (issuecomment-5550571202), PR body + coverage record amended, round-8 brief printed
+
+- **Done:** all seven reproduced at `855c0e1` on their own assertions first (47 new contract rows
+  copied into a worktree at that head: **38 red / 9 green**), then fixed at `9bf1925`. **f20**
+  `ProtocolRequest` reads the media type as HTTP defines it (case-insensitive, parameters aside)
+  and refuses any non-form POST body `400 invalid_request` before the SDK parses it. **f21**
+  `NUMERIC_DATE_BOUND` ±2^53 (RFC 7493) judged before any float conversion. **f22** `resource` is a
+  set: exempt from the repetition rule, collapsed, every member judged by the proxy's
+  `accepts_resource` (FastMCP's comparison as a predicate; two more private helper imports); a
+  foreign set `invalid_target` — at `/authorize` via the SDK's redirect, now rendered by the
+  proxy's `authorize` through `construct_redirect_uri` because the SDK's vocabulary lacks the code
+  (it said `server_error`; the lifecycle test's hedge is gone); at `/token` the guard's own 400
+  (the SDK judges nothing there — a *single* foreign resource at `/token` is refused now, a
+  client-visible change); unparseable → direct 400. **f23** `_claim_defect(name)` dates the
+  fixture at run time. **f24** an assertion beside `client_secret`/`Authorization` → `401
+  invalid_client` before anything is spent; `_challenge_on_refusal` wraps the `/token` and
+  `/revoke` handlers so a 401 to a header-authenticating client carries `WWW-Authenticate`
+  (scheme echoed when an RFC 9110 token, realm the issuer). **Call 14** fixed rather than
+  reworded: an assertion from a client not registered for `private_key_jwt` is refused. **f25**
+  moa-76 repaired (`_unwritten = (…)`), every round-7 mutant compile-checked; **f26** `jwks` +
+  `jwks_uri` → `invalid_client_metadata`. Tests: contract suite **135** (+47); mutants
+  moa-81…91; harness **492/46**. Docs: design §5.9 (k), AGENTS.md rule 13, module docstring,
+  procedure moa- paragraph + count, lessons → "Admission, decoding, cardinality and the
+  hand-off are one decision". PR body: What, By file, calls 11 (SSRF sentence withdrawn in the
+  body), 12, 13, 14 (rewritten), **new call 15** (the challenge + the client-visible changes),
+  Tests (round 6's control corrected to **36/18**, thirteen decoding rows, six repeated
+  token/revocation rows; round 7's control), coverage record (Codex's "still unexamined" folded
+  in; consent/callback last-value multiplicity "recorded, not hardened").
+- **Decisions:** the `/token` resource policy is the guard's, not a new SDK hook — RFC 8707 §2.2
+  "MUST reject"; the `/authorize` form is the SDK's redirect, produced by handing it the first
+  foreign value (the PKCE-`plain` precedent), the code corrected in `authorize`; JSON bodies are
+  400 where they were the SDK's 401; a stray secret on a public client that presents no
+  assertion stays ignored; the challenge echoes the client's scheme (RFC 6749 §5.2 read
+  literally — a "where I'd push" bullet); multipart refused, not implemented.
+- **State:** backend **2202 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants: ****90/90 killed** — 88 first pass, moa-12 and moa-74 re-anchored (their anchors moved under this round's edits: the `authorize` docstring, the f21 range line) and re-run alone, killed** — run by the **tracked harness on the committed
+  tree** (`uv run python mutation_test.py -k moa-`, detached with `nohup` because the run exceeds
+  a tool call's ceiling; ~11 min). Commits `9bf1925` (runtime) and `118d242` (harness re-anchors, docs) pushed; PR #212 body amended; the reply is
+  issuecomment-5550571202. Codex's r7 material at `/private/tmp/plamotrack-212-r7/` (untracked). Dev `db`
+  up, Keycloak spike up. LXC untouched (**stays put until M6 is finished**).
+- **Next:** (1) **Codex round 8 on PR #212** — the brief was printed in this session's chat;
+  regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming runtime head
+  `9bf1925`, the branch tip (hand-off commits only above it), `main` `a497481`, rules
+  1/6/7.1/9/11/12/13; findings from 27; reproduce at `9bf1925` first; the contract suite is where
+  a boundary finding's reproduction belongs; update the coverage record in the reply (procedure
+  7.1). If GO: squash-merge with `Closes #192`; nothing to fold in. If NO-GO and the findings
+  keep landing in `ProtocolRequest` / `ClientAssertionAuthenticator`, stop patching and look
+  for the invariant one level up (procedure, "Responding" 6). (2) After merge: #215, #193,
+  M6-9 TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a packaged stack with
+  the Keycloak spike, the register burst concurrent — then the LXC upgrade; relink any MCP
+  client first.
+
 ## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 6 (GPT-6, NO-GO: P2 + 3×P3, the SDK boundary field by field) answered on the branch — head `855c0e1`, reply posted (issuecomment-5549938526), PR body + coverage record amended, round-7 brief printed
 
 - **Done:** the two-jobs brief found four pre-existing boundary gaps, none in the grant machinery.
@@ -229,64 +281,3 @@ Template:
   sidecar overlay is not tracked; rebuild under `.agents/spikes/190/` if kept) with the register
   burst concurrent — then the LXC upgrade; relink any MCP client first (records written before
   `e90550f` carry no binding and end at their next refresh).
-
-## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 2 (GPT-6, NO-GO: P1/P2/P3) answered on the branch — head `e90550f`, reply posted (issuecomment-5546424919), PR body amended, round-3 brief printed
-
-- **Done:** all three findings reproduced at `e248a4b` on their own assertions (the 14 new
-  rows written first: 10 red on `200 == 401`/`401 == 200`, 4 controls green), then fixed as
-  the review's closing paragraph asked — on the **grant record**, not the transitions
-  (`app/auth/mcp_oauth.py`): **f6** every transition of a grant (issuance, the refresh
-  exchange, the transparent refresh, revocation) runs under one advisory lock keyed on the
-  record's id (`_one_transition`/`_GrantTransition`; the per-JTI lock is gone),
-  `_try_transparent_refresh` overridden as a transition whose outcome `load_access_token`
-  reads (the SDK answers a failed refresh from the set it had loaded); **f7** `GrantRecords`,
-  one gate on every write to `mcp-upstream-tokens` — a declared `_Transition` only, the
-  record read back under the lock, the identity checked against the record's own binding
-  (`GrantRecord.owner`, the digest of the id_token last verified) before the SDK's `put`;
-  a stranger's or forged id_token on either path **ends the grant** (`_refuse_transition`:
-  record + mapping + hash gone, `auth.mcp_grant_revoked` `ended_by=upstream_refresh` beside
-  the refusal) — round 1's retry withdrawn; `unavailable` verdicts leave the grant standing;
-  **f8** counts corrected to what `CASES` yields, rule stated in the procedure. Sibling
-  found by the sweep and closed here (same root cause): a binding renewed by a transparent
-  refresh drifted from the tokens' digest and the next exchange re-verified an expired
-  id_token. Tests: `test_mcp_oauth.py` **103** (+14, −1 superseded retry test). Mutants:
-  moa-49…56 added, 34/36/37/38/39/42 re-anchored — **55/55 killed** (first pass 52: moa-47 a redundant hash delete in `revoke_token` — fixed; moa-56 masked
-  by the round-1 fallback in `_extract_upstream_claims` — the hook now raises on a digest the gate did
-  not leave; moa-49 the fake's "same" id_token byte-identical within one second — `jti` added, the drift
-  test had been red at `e248a4b` by the clock). Docs:
-  design §5.5 row 8, §5.9 (d) + new (f″); AGENTS.md rule 13; operations "Ending a link";
-  procedure counts (457/46 with the one-liner), moa- paragraph, roster + brief footer
-  (**Codex is GPT-6 since 2026-09-05**); lessons → "The record, not the transitions".
-- **Decisions:** the gate over the SDK's adapter rather than reimplementing the two refresh
-  transitions (the SDK's arithmetic stays the SDK's; a future writer meets the gate or
-  fails loudly); no tombstone — serialization plus the read under the lock is the boundary
-  and the gate refuses undeclared writes; the binding on the record, the tokens keep theirs
-  for the per-request owner-row check; terminate-and-relink on a hostile refresh response
-  (Codex's "defensible policy"); call 10's concurrent burst noted for the release-gate work,
-  not done (matrix unchanged this round — no route/ingress change).
-- **State:** backend **2059 green** on the final tree (`test_mcp_oauth.py` 103), lint/format
-  clean, `render_ingress.py --check` clean; frontend untouched. Mutants **55/55 killed** (54 in the
-  final full run plus moa-47 re-run alone after its anchor moved under a new comment). Commit
-  `e90550f` pushed; PR #212 body amended to that head; the reply is issuecomment-5546424919. Records written before this head have no `owner` and end at
-  their next refresh (relink) — dev DB only. Packaged stack not re-run (nothing under
-  `frontend/nginx/`, the registry or the routes changed). Dev `db` up, Keycloak spike up.
-  LXC untouched (**stays put until M6 is finished**).
-- **Next:** (1) **Codex round 3 on PR #212, in a new session** (this one closed after the round-2
-  reply): the brief was printed in this session's chat and the owner pastes it — it is not
-  stored; regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming runtime head
-  `e90550f` and branch tip `ed5a7d7`+ (hand-off commits only above it), `main` `a497481`, rules
-  1/6/7.1/9/11/12/13. The round-2 reply (issuecomment-5546424919) is the record of what changed
-  and why; its "where I'd push" bullets were: the gate as the only writer of the record, the
-  lock-plus-re-read boundary with no tombstone, the `unavailable` verdict leaving the grant
-  standing, the transparent outcome reaching the request through `_Transition.outcome`, the
-  `pg_locks` witness in the racing test, the fake's same-second id_token. Findings: reproduce at
-  `e90550f` first, answer per `.agents/testing-and-review.md` → "Responding to a review"
-  (numbering continues from 8), re-verify by mutation (`-k moa-`; the scratch runner that
-  bypasses the clean-tree check on a dirty tree is trivial to rewrite: apply/run/restore per
-  case, hash targets before and after). If GO: squash-merge with `Closes #192` (as #209 was);
-  nothing to fold in — every moa- tuple is tracked. (2) After merge: #193, M6-9 TLS docs, the
-  M6 release — gate `ingress_matrix.py --mode oidc` against a packaged stack with the Keycloak
-  spike (the socat-sidecar compose overlay is not tracked; rebuild it under
-  `.agents/spikes/190/` if kept) and make the register burst concurrent there (Codex's call-10
-  remark) — then the LXC upgrade; relink any MCP client first, since records written before
-  `e90550f` carry no binding and end at their next refresh.
