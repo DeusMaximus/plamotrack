@@ -41,6 +41,47 @@ Template:
 
 ---
 
+## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 11 (Daybreak Blue after GPT-6 Astra's refusals; NO-GO: 2×P3, the record the kid named) answered on the branch — head `5ecef8f`, reply posted (issuecomment-5552863879), PR body + coverage record amended, round-12 brief printed
+
+- **Done:** both reproduced at `f82b3b3` on their own assertions first (16 new contract rows in a
+  worktree at that head: **12 red / 4 green** — Codex's eight plus four: with the restricted copy
+  first the *allowed* copy's assertion was refused too, so material-identity followed array order
+  both ways), then fixed at `5ecef8f`. **f34** the record carried by the identity the selection
+  used: `RestrictedKeyVerifier` keeps the fetched JWKs **by `kid`** as the SDK caches their PEMs
+  (`_default` for none, unusable skipped) and returns the record the assertion's `kid` names
+  (or the only key), refusing a record whose material ≠ the SDK's selected PEM; the inline
+  selection written out by the SDK's rule in `_extract_public_key_from_jwks`, returning the
+  record; `selected_jwk` gone; `_header_kid` via the SDK's `decode_jwt_header`. **f35** the
+  validator's inline selection owns usability and selection together (the remote path's
+  predicate: RSA/EC + a joserfc import that succeeds), so an `OKP` or incomplete object no
+  longer denies the single-key fallback inline; round 9's copy-based `with_usable_inline_keys`
+  **retired** — the first full harness pass at the new head returned moa-101/102/103 GREEN
+  (equivalent: a second owner of the decision) → 101/103 retired, 102 re-anchored, re-run.
+  Tests: contract suite **247** (+16); mutants moa-107…109; harness **508/46**, 106 tuples. Docs: module docstring, design §5.9 (k) + row 8,
+  AGENTS.md rule 13, procedure (moa- paragraph + count; reviewer roster: Daybreak Blue from
+  this round), review-brief footer, lessons → "The record the selection named". PR body: What,
+  By file, call 12, call 17 (predicate), call 18 (first-entry assumption withdrawn), Tests,
+  controls, mutants, coverage record (same-`kid` divergence named as inherited/untested).
+- **Decisions:** the inline selection is ours by the SDK's rule (no longer calling the SDK's
+  extractor) so the record, not a PEM, is returned; a fetched record/PEM disagreement refused,
+  never degraded; the SDK's inline-first/remote-last same-`kid` divergence inherited, not
+  reconciled (RFC 7517 §4.5 wants `kid` unique) — named in the brief; the round-11 comment is
+  signed "GPT-6 Astra" though the owner says Daybreak Blue reviewed — the brief's footer asks
+  the reviewer to name itself.
+- **State:** backend **2314 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants ****106/106 killed** at `5ecef8f` (tracked harness, committed tree, ~13 min; the first pass at `a77aa01` was 105 + three GREEN → the retirement)** (tracked harness, committed tree, `nohup`).
+  Commits `5ecef8f` and `5ecef8f` (the filter's retirement after the first harness pass) pushed; PR #212 body amended; the reply is issuecomment-5552863879. Codex's r11 material
+  untracked (its comment names no directory this round). Dev `db` up, Keycloak spike up. LXC
+  untouched (**stays put until M6 is finished**).
+- **Next:** (1) **Codex round 12 on PR #212** — the brief was printed in this session's chat;
+  regenerate from `.agents/review-brief.md` (the Codex footer; the reviewer names its model)
+  if needed, naming runtime head `5ecef8f`, the branch tip (hand-off only above it), `main`
+  `a497481`, rules 1/6/7.1/9/11/12/13; findings from 36; reproduce at `5ecef8f` first; update
+  the coverage record in the reply (procedure 7.1). If GO: squash-merge with `Closes #192`;
+  nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
+  `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak spike, the register
+  burst concurrent — then the LXC upgrade; relink any MCP client first.
+
 ## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 10 (GPT-6, NO-GO: 1×P3, the selected key's authorization) answered on the branch — head `f82b3b3`, reply posted (issuecomment-5552103057), PR body + coverage record amended, round-11 brief printed
 
 - **Done:** f33 reproduced at `cb69559` on its own assertions first (22 new contract rows in a
@@ -214,55 +255,3 @@ Template:
   M6-9 TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a packaged stack with
   the Keycloak spike, the register burst concurrent — then the LXC upgrade; relink any MCP
   client first.
-
-## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 6 (GPT-6, NO-GO: P2 + 3×P3, the SDK boundary field by field) answered on the branch — head `855c0e1`, reply posted (issuecomment-5549938526), PR body + coverage record amended, round-7 brief printed
-
-- **Done:** the two-jobs brief found four pre-existing boundary gaps, none in the grant machinery.
-  **f16** `validate_client_assertion_claims` + `ClientAssertionAuthenticator` (one class, built per
-  endpoint by `_client_authenticator`, on `/token` via FastMCP's `TokenHandler` and `/revoke`): the
-  claim contract on the unverified assertion *before* the SDK's validator — `alg` advertised, object
-  payload, string `iss`/`sub`/`jti`, `aud` str|list, `exp` required, finite non-bool NumericDates,
-  `nbf` with 30 s skew — refuse-only, `401 invalid_client`, spends no `jti`. **f17** `register_client`
-  canonicalises the whole metadata and stores that object (`null` redirect list →
-  `invalid_client_metadata`; response/grant types substituted; blank scope → default; display fields
-  kept). **f18** `ProtocolRequest` (ASGI guard, `guard_protocol_requests` in `build_mcp_app`) on
-  `/authorize` `/token` `/revoke`: repeated parameter → 400 direct; empties omitted; unknown
-  `grant_type` → `unsupported_grant_type`; omitted `code_challenge_method` → `plain` for the SDK to
-  refuse (error redirect for a registered client, RFC 7636 §4.4.1). **f19**
-  `UnregisteredClientGuidance` → root discovery URL. Tests: contract suite **88** (+54); control at
-  `8cae6c7`: **54 rows, 37 red / 17 green**. Mutants moa-71…80, moa-64 re-anchored; **79/79 killed**.
-  Docs: design §5.5 row 8, §5.9 (k) (per-field ownership rows); AGENTS.md rule 13; procedure
-  moa- paragraph + count (**481/46**); lessons → "The seam has an owner per field, not per
-  endpoint"; PR body call 14 (decoding decisions), call 12/13 amended, coverage record updated
-  with Codex's ten-surface inventory (checked / untracked / untested).
-- **Decisions:** the PKCE omission handed to the SDK as `plain` rather than answered by the guard
-  (the SDK knows whether to redirect; §4.4.1 wants the redirect for a registered client); a client
-  presenting an assertion is judged by it whatever its method (a stray secret stays ignored); the
-  guard does not touch `/consent`/callback, unknown extension params, or non-form bodies; null
-  redirect list refused, not defaulted; call 11's "SSRF guard makes remote-JWKS tests impossible"
-  withdrawn (Codex drove it with played DNS/transport — the tracked suite still plays the fetch).
-- **State:** backend **2155 green**, lint/format clean, `render_ingress.py --check` clean;
-  frontend untouched. Mutants **79/79 killed** (scratch runner, targets hashed, restored). Commit
-  `855c0e1` pushed; PR #212 body amended; the reply is issuecomment-5549938526. Codex's r6 material at
-  `/private/tmp/plamotrack-212-r6/` (README, `coverage-plan.md` — its ten-surface inventory —
-  and four probe files; untracked). Dev `db` up, Keycloak spike up. LXC untouched (**stays put
-  until M6 is finished**).
-- **Next:** (1) **Codex round 7 has landed — NO-GO, seven P3s, 20–26, unaddressed**
-  (issuecomment-5550272371; this session closed at ~72 % context before reading it in full,
-  owner's call). Titles: 20 apply request decoding to every admitted form representation;
-  21 map numeric-range failures to a client-authentication error; 22 give the repeatable
-  `resource` field its own multiplicity rule (RFC 8707 allows it more than once — the
-  `ProtocolRequest` repetition rule must exempt it); 23 create the future-`nbf` fixture at
-  execution time (`_CLAIM_DEFECTS` computes `NOW` at import — a test defect); 24 refuse
-  competing client-authentication mechanisms before spending the assertion; 25 repair
-  moa-76 before counting it as killed (the tuple's replacement is not a behavioural mutant —
-  re-anchor it as one before the next `-k moa-` claim); 26 canonical registration metadata
-  must also obey its cross-field constraints. Answer in a new session per
-  `.agents/testing-and-review.md` → "Responding to a review": reproduce each at `855c0e1`
-  first (the contract suite is where the reproductions belong), fix 23 and 25 as test/harness
-  corrections and say so, update the coverage record (procedure 7.1), print the round-8 brief
-  from `.agents/review-brief.md` (GPT-6 footer; findings from 27). If the next round is GO:
-  squash-merge with `Closes #192`; nothing to fold in. If GO:
-  squash-merge with `Closes #192`; nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs,
-  the M6 release — gate `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak
-  spike, the register burst concurrent — then the LXC upgrade; relink any MCP client first.
