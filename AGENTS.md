@@ -495,9 +495,12 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     `RestrictedKeyVerifier` hand its verifier the selected JWK itself — the record the
     `kid` named, never the first record with its material (round 11, f34) — on the inline
     and the fetched path, cache included, and the same decode enforces the restrictions —
-    one cryptographic validator, the SDK's selection rule unchanged; the inline set is
-    filtered by the remote path's own usability predicate before the single-key fallback
-    counts it (f35). All of it tested from raw
+    one cryptographic validator, the SDK's *remote* selection rule on both paths; the
+    inline set is filtered by the remote path's own usability predicate before the
+    single-key fallback counts it (f35); and a named `kid` that matches nothing is a
+    refusal on both paths, the fallback only for a header naming none — the SDK has two
+    rules, and its inline extraction, which round 11 wrote out, fell back to the only key
+    whenever no record matched (round 12, f36). All of it tested from raw
     requests in `tests/test_mcp_oauth_clients.py` — never through the SDK's models or
     a helper that pads the form, and with the test's own dates computed when it runs,
     not at import (f23). The upstream

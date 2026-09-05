@@ -204,13 +204,17 @@ revocation) rather than to the entry points one at a time:
   never reached the verifier and a valid signature authenticated under a
   key that excluded it; `RestrictedKeyAssertionValidator` and
   `RestrictedKeyVerifier` hand FastMCP's own verifier the selected JWK
-  itself — the record the SDK's selection *named* by the assertion's `kid`
-  or its single-key fallback, never the first record with that material
-  (round 11, f34: two `kid`s publishing one material collapsed onto the
-  first), cache and fallback included — and joserfc enforces the
-  restrictions in the same decode, one cryptographic validator still; and
-  the inline set is filtered by the remote path's own usability predicate
-  before that fallback counts it (f35).
+  itself — the record the selection *named* by the assertion's `kid`, or
+  the only usable key when it names none, never the first record with that
+  material (round 11, f34: two `kid`s publishing one material collapsed
+  onto the first), cache and fallback included — and joserfc enforces the
+  restrictions in the same decode, one cryptographic validator still; the
+  inline set is filtered by the remote path's own usability predicate
+  before that fallback counts it (f35); and the rule is the SDK's *remote*
+  one on both paths — a named `kid` that matches nothing is a refusal
+  (round 12, f36: the SDK has two rules, and its inline one fell back to
+  the only key whenever no record matched, so an assertion naming an
+  unpublished `kid` authenticated inline and was refused fetched).
 - **Client-redirect binding per client kind** (§5.6 proxy trust; T9).
   `get_client` refuses the client FastMCP synthesises for the upstream client
   id (anyone who knows the public id could be sent anywhere — the spike's
@@ -1123,8 +1127,14 @@ def _pem_of(key: dict[str, Any]) -> str | None:
 
 
 def _header_kid(token: str) -> str | None:
-    """The assertion's `kid`, as the SDK reads it; a malformed header is the
-    SDK's own refusal downstream, `None` here."""
+    """The assertion's `kid`, read once for both key paths: a non-empty
+    string names a record; absent or empty names none, the reading the SDK's
+    remote selection gives both (round 12, f36). A value that is not a string
+    reads as naming none here and is refused by the JOSE decode downstream —
+    joserfc refuses the header (`'kid' in header must be a str`, RFC 7515
+    §4.1.4) in the very call that verifies the signature, whichever record
+    the selection handed it — so no type guard stands in front of that
+    decision as a second owner; a header that cannot be decoded likewise."""
     try:
         kid = decode_jwt_header(token).get("kid")
     except (ValueError, KeyError, IndexError, TypeError):
@@ -1203,17 +1213,23 @@ class RestrictedKeyAssertionValidator(CIMDAssertionValidator):
         remote path has them (RFC 7517 §5 and §5.1; round 9, f32; round 11,
         f34–f35): `keys` must be an array; an entry that is not an object, or
         whose material FastMCP cannot import — the remote path's own skip set
-        (`_pem_of`) — is ignored; none usable is a refusal; then the SDK's own
-        rule — the key whose `kid` the assertion names, else the only usable
-        key when it names none, else the SDK's refusal — returning the
-        **record selected**, not a PEM and not the first record with its
-        material. The SDK's extraction called `.get` on whatever each entry
-        was (a 500), counted an unusable object against the single-key
-        fallback, and converted the selection to a PEM (its `alg`, `use` and
-        `key_ops` lost). Round 9 filtered a copy of the record in front of
-        the SDK's extraction instead; once the selection was written out here
-        (round 11) that copy was a second owner of the same decision, and its
-        mutants went equivalent, so it retired into this."""
+        (`_pem_of`) — is ignored; none usable is a refusal; then the SDK's
+        **remote** rule (round 12, f36) — the record whose `kid` the
+        assertion names, a named `kid` that matches nothing a refusal, or the
+        only usable key when it names none — returning the **record
+        selected**, not a PEM and not the first record with its material. The
+        SDK has two rules: its inline extraction fell back to the only key
+        whenever no record matched, named or not, where its remote selection
+        falls back only when no `kid` is named (RFC 7517 §4.5: `kid` is how a
+        key is selected), and round 11 wrote out the inline one — so an
+        assertion naming an unpublished `kid` authenticated inline and was
+        refused fetched. The SDK's extraction also called `.get` on whatever
+        each entry was (a 500), counted an unusable object against the
+        single-key fallback, and converted the selection to a PEM (its `alg`,
+        `use` and `key_ops` lost). Round 9 filtered a copy of the record in
+        front of the SDK's extraction instead; once the selection was written
+        out here (round 11) that copy was a second owner of the same decision,
+        and its mutants went equivalent, so it retired into this."""
         keys = jwks.get("keys") if isinstance(jwks, dict) else None
         if not isinstance(keys, list):
             raise ValueError(
@@ -1223,11 +1239,14 @@ class RestrictedKeyAssertionValidator(CIMDAssertionValidator):
         if not usable:
             raise ValueError("the client's key set holds no usable key (RFC 7517 §5.1)")
         kid = _header_kid(token)
-        selected = next((key for key in usable if kid and key.get("kid") == kid), None)
-        if selected is None:
-            if len(usable) != 1:
-                raise ValueError(f"No matching key found for kid={kid} in JWKS")
+        if kid is not None:
+            selected = next((key for key in usable if key.get("kid") == kid), None)
+            if selected is None:
+                raise ValueError(f"Key ID '{kid}' not found in JWKS")
+        elif len(usable) == 1:
             selected = usable[0]
+        else:
+            raise ValueError("Multiple keys in JWKS but no key ID (kid) in token")
         return selected
 
     async def validate_assertion(

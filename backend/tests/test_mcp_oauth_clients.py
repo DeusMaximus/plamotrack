@@ -52,6 +52,8 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding
 from fastmcp.server.auth.cimd import CIMDFetcher
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from joserfc import jwt
@@ -2092,11 +2094,13 @@ async def test_the_key_selected_by_kid_is_the_one_judged(monkeypatch, endpoint, 
     naming `allowed-copy` then succeeds. Round 10's repair found the selected
     key by its material and so judged the *first* copy with that material:
     with the allowed copy first, all four requests were accepted (Codex #212
-    round 11, f34)."""
-    key = RSAKey.generate_key(2048, parameters={"kid": "client-key"})
+    round 11, f34). The key is linked under `allowed-copy`, the name its
+    published record carries: since round 12 (f36) a named `kid` that matches
+    nothing is a refusal, so a link assertion naming an unpublished
+    `client-key` no longer falls back to the only key."""
+    key = RSAKey.generate_key(2048, parameters={"kid": "allowed-copy"})
     public = key.as_dict(private=False)
-    public.pop("kid", None)
-    allowed = {**public, "kid": "allowed-copy", "use": "sig"}
+    allowed = {**public, "use": "sig"}
     selected = {**public, "kid": "selected-copy", "use": "enc"}
     served = _play_key_sets(monkeypatch, {"keys": [allowed]}, source)
     fake = FakeIdp()
@@ -2166,7 +2170,10 @@ async def test_an_unusable_inline_key_is_ignored_before_the_fallback(
         },
         "incomplete_rsa": {"kty": "RSA", "e": "AQAB", "kid": "broken"},
     }[shape]
-    served = _play_key_sets(monkeypatch, {"keys": [public]}, source)
+    # Linked through the key under its own name (the link assertion names
+    # `client-key`; since round 12 a named `kid` must match), then the set
+    # under test — the same key without a `kid` beside the unusable object.
+    served = _play_key_sets(monkeypatch, {"keys": [key.as_dict(private=False)]}, source)
     fake = FakeIdp()
     await _bind_owner()
     async with oauth_app(fake) as (_, client):
@@ -2185,5 +2192,185 @@ async def test_an_unusable_inline_key_is_ignored_before_the_fallback(
             },
         )
         assert accepted.status_code == 200, (shape, accepted.status_code, accepted.text[:300])
+        if endpoint == "revoke":
+            assert not grant_records(await _state_rows())
+
+
+# --- Codex #212 round 12: a named kid must match; the fallback is for a header naming none ----
+
+
+def _hand_signed_assertion(key: RSAKey, header: dict, client_id: str, audience: str) -> str:
+    """An RS256 assertion signed by hand, so the header under test can carry
+    a `kid` joserfc's encoder refuses — `null`, a number, a list: the values
+    a header can hold that are not the string RFC 7515 §4.1.4 requires."""
+    now = int(time.time())
+    body = {
+        "iss": client_id,
+        "sub": client_id,
+        "aud": audience,
+        "iat": now,
+        "exp": now + 120,
+        "jti": secrets.token_hex(8),
+    }
+
+    def part(value: dict) -> str:
+        raw = json.dumps(value, separators=(",", ":")).encode()
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    signing_input = f"{part(header)}.{part(body)}"
+    signature = key.private_key.sign(signing_input.encode(), padding.PKCS1v15(), hashes.SHA256())
+    return f"{signing_input}.{base64.urlsafe_b64encode(signature).rstrip(b'=').decode()}"
+
+
+@pytest.mark.parametrize("naming", ["unknown", "case_variant"])
+@pytest.mark.parametrize("source", ["inline", "remote"])
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_a_named_kid_must_match_a_published_record(monkeypatch, endpoint, source, naming):
+    """RFC 7515 §4.1.4 and RFC 7517 §4.5: `kid` names the key, and its value
+    is a case-sensitive string. One key published as `published-key`, and an
+    assertion validly signed by it whose header names `not-published` — or
+    `Published-Key` — is `401 invalid_client` on both endpoints, inline as
+    fetched, with no provider call and the grant intact; the same handle with
+    an assertion naming `published-key` then succeeds. The single-key
+    fallback is for an assertion that names no key, not for one naming a key
+    the set does not hold: round 11 wrote the inline selection out by the
+    SDK's *inline* rule, which falls back whenever no record matched, where
+    the SDK's remote rule falls back only when no `kid` is named — so a
+    header naming no published record authenticated inline and was refused
+    fetched (Codex #212 round 12, f36)."""
+    key = RSAKey.generate_key(2048, parameters={"kid": "published-key"})
+    public = key.as_dict(private=False)
+    served = _play_key_sets(monkeypatch, {"keys": [public]}, source)
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        served["source"] = source
+        served["jwks"] = {"keys": [public]}
+        named = {"unknown": "not-published", "case_variant": "Published-Key"}[naming]
+        asked_before = list(fake.token_requests)
+        refused = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": _assertion_with_kid(key, named, CIMD_ID, audience),
+            },
+        )
+        assert refused.status_code == 401, (naming, refused.status_code, refused.text[:300])
+        assert refused.json()["error"] == "invalid_client"
+        assert fake.token_requests == asked_before
+        assert fake.revoked == []
+        assert grant_records(await _state_rows())
+        assert (await initialize(client, tokens["access_token"])).status_code == 200
+        accepted = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": _assertion_with_kid(key, "published-key", CIMD_ID, audience),
+            },
+        )
+        assert accepted.status_code == 200, accepted.text[:300]
+        if endpoint == "revoke":
+            assert not grant_records(await _state_rows())
+
+
+@pytest.mark.parametrize("shape", ["absent", "empty"])
+@pytest.mark.parametrize("source", ["inline", "remote"])
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_an_assertion_naming_no_kid_takes_the_single_key_fallback(
+    monkeypatch, endpoint, source, shape
+):
+    """The fallback's own side, so the repair refuses only what names a key:
+    a header with no `kid`, or `kid: ""`, names none — the reading the SDK's
+    remote selection gives both — and the one published key, whatever its
+    own `kid`, verifies the assertion on both endpoints, inline as fetched.
+    Controls, green before and after (Codex #212 round 12, f36)."""
+    key = RSAKey.generate_key(2048, parameters={"kid": "published-key"})
+    public = key.as_dict(private=False)
+    served = _play_key_sets(monkeypatch, {"keys": [public]}, source)
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        served["source"] = source
+        served["jwks"] = {"keys": [public]}
+        kid = {"absent": None, "empty": ""}[shape]
+        accepted = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": _assertion_with_kid(key, kid, CIMD_ID, audience),
+            },
+        )
+        assert accepted.status_code == 200, (shape, accepted.status_code, accepted.text[:300])
+        if endpoint == "revoke":
+            assert not grant_records(await _state_rows())
+
+
+@pytest.mark.parametrize("value", ["null", "number", "list"])
+@pytest.mark.parametrize("source", ["inline", "remote"])
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_a_kid_that_is_not_a_string_is_refused_by_the_decode(
+    monkeypatch, endpoint, source, value
+):
+    """RFC 7515 §4.1.4: `kid` is a string. A header carrying `kid: null`,
+    `kid: 7` or `kid: ["published-key"]` — signed by hand, since joserfc's
+    encoder refuses each — is `401 invalid_client` on both endpoints, inline
+    as fetched, with the grant intact and the same handle then redeemed. The
+    reader on both key paths reads such a value as naming none, and the
+    decision is the JOSE decode's: joserfc refuses the header in the very
+    call that verifies the signature, whichever record the selection handed
+    it, so no type guard stands in front of it as a second owner. Controls,
+    green before and after (Codex #212 round 12, f36)."""
+    key = RSAKey.generate_key(2048, parameters={"kid": "published-key"})
+    public = key.as_dict(private=False)
+    served = _play_key_sets(monkeypatch, {"keys": [public]}, source)
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await cimd_link(client, fake, key)
+        audience = TOKEN_URL if endpoint == "token" else REVOKE_URL
+        served["source"] = source
+        served["jwks"] = {"keys": [public]}
+        kid = {"null": None, "number": 7, "list": ["published-key"]}[value]
+        header = {"alg": "RS256", "kid": kid}
+        asked_before = list(fake.token_requests)
+        refused = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": _hand_signed_assertion(key, header, CIMD_ID, audience),
+            },
+        )
+        assert refused.status_code == 401, (value, refused.status_code, refused.text[:300])
+        assert refused.json()["error"] == "invalid_client"
+        assert fake.token_requests == asked_before
+        assert fake.revoked == []
+        assert grant_records(await _state_rows())
+        accepted = await _endpoint_request(
+            client,
+            endpoint,
+            tokens,
+            fake,
+            {
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": _assertion_with_kid(key, "published-key", CIMD_ID, audience),
+            },
+        )
+        assert accepted.status_code == 200, accepted.text[:300]
         if endpoint == "revoke":
             assert not grant_records(await _state_rows())

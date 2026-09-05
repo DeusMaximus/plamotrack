@@ -869,3 +869,23 @@ beside it: a usability predicate copied from a library has to be the library's w
 predicate — "is an object" was round 9's, "can be imported" is the remote path's, and
 the gap between them denied the single-key fallback to an inline set the fetched set
 would have accepted.
+
+## The library had two rules (#212, round 12)
+
+Round 11 replaced the SDK's inline key extraction with the validator's own, "written
+out by the SDK's rule" — and copied the rule from the function it replaced. The SDK
+has two. Its inline extraction falls back to the only key whenever no record matched
+the assertion's `kid`, named or not; its remote selection falls back only when the
+assertion names no `kid` at all. The docs described the remote one, the code carried
+the inline one, and the twelfth round measured the gap: an assertion signed by the
+only published key but naming a `kid` the set does not hold was accepted inline and
+refused fetched — a refresh reaching the provider and a grant deleted under a header
+that names no published record. The lesson: when a library's function is rewritten in
+place, the rule to write out is the one the *contract* names, not the one the replaced
+function happened to carry; where the library holds the same decision in two places,
+say which one you copied and drive the difference between them. And a control that
+passes *through* the defect is not a control: round 11's own rows linked the client
+with an assertion naming `client-key` against sets that published the key under
+another name or none, and every link succeeded — by the fallback under test. Re-linked
+under a published name, they still pass; the row that showed the defect was the one
+whose `kid` named nothing published, which no earlier row had sent.

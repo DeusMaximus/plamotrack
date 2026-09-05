@@ -4080,6 +4080,29 @@ CASES = [
         "        usable = [key for key in keys if isinstance(key, dict)]",
         "unusable_inline_key_is_ignored and inline and token and unsupported_kty",
     ),
+    # --- Codex #212 round 12 (f36): a named kid must match; the single-key fallback is
+    # --- for a header naming none — the SDK's remote rule on both paths. -----------------
+    (
+        "moa-110. the inline fallback restored for a named kid (the SDK's inline rule)",
+        MCP_OAUTH,
+        "            if selected is None:\n                raise ValueError(f\"Key ID '{kid}' not found in JWKS\")",
+        "            if selected is None and len(usable) == 1:\n                selected = usable[0]\n            if selected is None:\n                raise ValueError(f\"Key ID '{kid}' not found in JWKS\")",
+        "named_kid_must_match and inline and token and unknown",
+    ),
+    (
+        "moa-111. an empty kid read as a name (the sole key refused on both paths)",
+        MCP_OAUTH,
+        "    return kid if isinstance(kid, str) and kid else None",
+        "    return kid if isinstance(kid, str) else None",
+        "naming_no_kid and empty and token",
+    ),
+    (
+        "moa-112. the inline kid compared case-insensitively",
+        MCP_OAUTH,
+        '            selected = next((key for key in usable if key.get("kid") == kid), None)',
+        '            selected = next(\n                (key for key in usable if str(key.get("kid")).lower() == kid.lower()), None\n            )',
+        "named_kid_must_match and inline and token and case_variant",
+    ),
 ]
 
 
