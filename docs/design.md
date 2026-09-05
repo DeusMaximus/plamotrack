@@ -1547,13 +1547,45 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    registered client (RFC 7636 §4.4.1), where its default had read the omission as
    `S256` and opened a transaction; *the generated URL* — `UnregisteredClientGuidance`
    points an unknown client at the root authorization-server document, where FastMCP
-   named the child alias this instance prunes. **Who owns what, per
+   named the child alias this instance prunes. **Admission, decoding, cardinality and
+   the SDK hand-off are one decision** (round 7, f20–f24 and f26 — round 6's guard had
+   chosen *whether to run* by a case-sensitive prefix of the media type, applied one
+   multiplicity rule to a field the protocol lets a client repeat, and let the SDK
+   select an assertion beside a second credential or, on a public client, ignore it):
+   *the body* — the media type is read as HTTP defines it (RFC 9110 §8.3.1) and a POST
+   whose body is anything but `application/x-www-form-urlencoded` is `400
+   invalid_request` before the SDK parses it (RFC 6749 §4.1.3), where
+   `Application/X-Www-Form-Urlencoded` and `multipart/form-data`, both of which the
+   SDK parses, had reached the handlers unguarded; *`resource` is a set* (RFC 8707 §2)
+   — exempt from the repetition rule, identical values collapsed, every member judged
+   by the proxy's own `accepts_resource` (FastMCP's comparison at `/authorize` as a
+   predicate), a set naming only this server one effective target, a set naming any
+   other target `invalid_target` — at `/authorize` the SDK's error redirect to the
+   registered callback, which the proxy's `authorize` renders itself because the SDK's
+   response vocabulary lacks the code and its catch-all had said `server_error`; at
+   `/token` a direct 400, where the SDK reads the field and judges nothing, so a foreign
+   target had been accepted there — and a value that does not parse refused directly;
+   handing the SDK the last value alone would discard the other requested target;
+   *a NumericDate's range* — ±2^53 (RFC 7493 §2.2), judged on the parsed value before
+   any float conversion, where `math.isfinite` on a 401-digit integer overflowed into a
+   500; *one mechanism per request* — an assertion beside a `client_secret` or an
+   `Authorization` header is `401 invalid_client` (RFC 6749 §2.3, RFC 7521 §4.2.1)
+   before the SDK selects anything, the same assertion then usable on a corrected
+   request, and a 401 to a client that used the header carries `WWW-Authenticate` in
+   its scheme (RFC 6749 §5.2); *the registered method* — an assertion from a client not
+   registered for `private_key_jwt` is refused, where the SDK's `none` branch accepted
+   the request with the assertion unread (so "judged in full whatever its method" had
+   been true of a private client only); *the metadata's cross-field rule* — `jwks` and
+   `jwks_uri` together are `invalid_client_metadata` (RFC 7591 §2). **Who owns what, per
    endpoint** (the audit the round asked for; a documented extension point says
    where code runs, not what surrounds it): the **request decoding** of the three
-   client-driven endpoints — ours (`ProtocolRequest`, multiplicity, emptiness, the
-   protocol's own errors, the PKCE default); **client-assertion claims** — ours
-   (`ClientAssertionAuthenticator`), signature, key, issuer, audience, lifetime and
-   replay the SDK's behind it; the **discovery documents** — ours
+   client-driven endpoints — ours (`ProtocolRequest`: the body representation,
+   multiplicity, the `resource` set, emptiness, the protocol's own errors, the PKCE
+   default); **client-assertion admission** — ours (`ClientAssertionAuthenticator`:
+   one mechanism, the claim contract, the registered method), signature, key, issuer,
+   audience, lifetime and replay the SDK's behind it; the **`invalid_target` redirect**
+   — ours (`authorize`), the client and redirect-URI validation before it the SDK's;
+   the **challenge** on a 401 — ours; the **discovery documents** — ours
    (`discovery_metadata`, served through the SDK's `MetadataHandler` on the routes
    `get_routes` rebuilds; the root documents are that list filtered), the
    protected-resource document FastMCP's; `/register` — validation the SDK's handler (metadata

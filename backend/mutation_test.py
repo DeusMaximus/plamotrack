@@ -3822,10 +3822,14 @@ CASES = [
         "registration_response_describes_the_stored_client and null_redirects",
     ),
     (
+        # Repaired in round 7 (f25): the previous replacement closed the `get`
+        # call and left the `put`'s outer `)` behind — a SyntaxError at import,
+        # counted as killed by nothing. The tuple below keeps the constructor's
+        # closing parentheses by binding the two arguments to a name instead.
         "moa-76. the stored client not the admitted contract (FastMCP's record left standing)",
         MCP_OAUTH,
         "        await self._client_store.put(\n            key=client_info.client_id,\n            value=ProxyDCRClient(",
-        "        await self._client_store.get(\n            key=client_info.client_id,\n        )\n        ProxyDCRClient(",
+        "        _unwritten = (\n            client_info.client_id,\n            ProxyDCRClient(",
         "registration_response_describes_the_stored_client and display",
     ),
     (
@@ -3855,6 +3859,85 @@ CASES = [
         '        if "authorization_server_metadata" in body:\n            body["authorization_server_metadata"] = self._discovery_url',
         '        if False:\n            body["authorization_server_metadata"] = self._discovery_url',
         "unregistered_client_is_pointed_at_the_root_discovery_document",
+    ),
+    # --- Codex #212 round 7 (f20–f22, f24, f26, and the call-14 qualification):
+    # --- admission, decoding, cardinality and the SDK hand-off together. -------
+    (
+        "moa-81. the media type read by a case-sensitive prefix, any other body passed through",
+        MCP_OAUTH,
+        "            if media_type.strip().lower() != FORM_MEDIA_TYPE:\n                await self._refuse(",
+        '            if not media_type.startswith("application/x-www-form-urlencoded"):\n                await self.app(scope, self._replay(body), send)\n                return\n            if False:\n                await self._refuse(',
+        "body_representation and mixed_case",
+    ),
+    (
+        "moa-82. the NumericDate range not applied (the float conversion overflows)",
+        MCP_OAUTH,
+        "    if not (-NUMERIC_DATE_BOUND <= value <= NUMERIC_DATE_BOUND):",
+        "    if not (-NUMERIC_DATE_BOUND <= value <= NUMERIC_DATE_BOUND) and False:",
+        "claim_that_fails_the_contract_is_refused_first and exp_huge",
+    ),
+    (
+        "moa-83. resource counted under the repetition rule again",
+        MCP_OAUTH,
+        "            name for name, count in counts.items() if count > 1 and name != RESOURCE_PARAMETER",
+        "            name for name, count in counts.items() if count > 1",
+        "resource_indicator_is_a_set and identical",
+    ),
+    (
+        "moa-84. a set with a foreign target handed to the SDK as its first value (the wrong repair)",
+        MCP_OAUTH,
+        "        chosen = foreign[0] if foreign else resources[0]",
+        "        chosen = resources[0]",
+        "resource_indicator_is_a_set and authorize and foreign_last",
+    ),
+    (
+        "moa-85. a foreign target at /token handed to the SDK, which reads the field and judges nothing",
+        MCP_OAUTH,
+        "        if foreign and self.endpoint == TOKEN_PATH:",
+        "        if False:",
+        "resource_indicator_is_a_set and token and foreign_only",
+    ),
+    (
+        "moa-86. a second client authentication mechanism beside an assertion admitted",
+        MCP_OAUTH,
+        '        if form.get("client_secret") or request.headers.get("authorization"):\n            raise AuthenticationError(',
+        "        if False:\n            raise AuthenticationError(",
+        "second_mechanism_beside_an_assertion and secret",
+    ),
+    (
+        "moa-87. an assertion from a client not registered for private_key_jwt accepted unread",
+        MCP_OAUTH,
+        '            if client is not None and client.token_endpoint_auth_method != "private_key_jwt":',
+        "            if False:",
+        "assertion_from_a_client_not_registered_for_it and dcr",
+    ),
+    (
+        "moa-88. the 401 to an HTTP-authenticating client without its challenge",
+        MCP_OAUTH,
+        "            if response.status_code == 401 and scheme is not None:",
+        "            if False:",
+        "second_mechanism_beside_an_assertion and basic",
+    ),
+    (
+        "moa-89. jwks and jwks_uri admitted together",
+        MCP_OAUTH,
+        "        if client_info.jwks is not None and client_info.jwks_uri is not None:\n            raise RegistrationError(",
+        "        if False:\n            raise RegistrationError(",
+        "registration_response_describes_the_stored_client and both_key_sources",
+    ),
+    (
+        "moa-90. invalid_target left to the SDK's vocabulary (server_error on the redirect)",
+        MCP_OAUTH,
+        '            if exc.error != "invalid_target":\n                raise\n',
+        "            if True:\n                raise\n",
+        "resource_indicator_is_a_set and authorize and foreign_first",
+    ),
+    (
+        "moa-91. a resource that does not parse handed to the SDK",
+        MCP_OAUTH,
+        "        if any(verdict is None for verdict in verdicts.values()):",
+        "        if False:",
+        "resource_indicator_is_a_set and authorize and unparseable",
     ),
 ]
 

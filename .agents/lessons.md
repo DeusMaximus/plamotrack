@@ -749,3 +749,36 @@ raw query and body in front of the handler (the registration-body guard's shape)
 not a check inside a Pydantic model; and a claim contract that must not spend the
 replay identifier runs before the validator that caches it, on the unverified
 payload — refuse-only, granting nothing, with the SDK's verification still behind it.
+
+## Admission, decoding, cardinality and the hand-off are one decision (#212, round 7)
+
+Round 6 gave every field at the SDK seam an owner and the reviewer's next pass found
+that two of the new owners had been written one axis at a time. The request-decoding
+guard decided *whether to run* by a case-sensitive `startswith` on the media type,
+so `Application/X-Www-Form-Urlencoded` — which the SDK parses, media-type names
+being case-insensitive — and a `multipart/form-data` body walked around the whole
+multiplicity contract; and the multiplicity rule itself was universal where the
+protocol has one exception (`resource`, RFC 8707 §2), so a client that sent the same
+resource twice, as the RFC allows, was refused — and the obvious repair, exempting
+the name and letting the SDK keep the last value, would have discarded the other
+requested target. The assertion admission had the same shape: it judged the claims
+and then let the SDK *select* the assertion beside a `client_secret` or a Basic
+header, or — on a public client — ignore it entirely, so "judged in full whatever its
+method" was true of a private client only. And the NumericDate check that refused a
+boolean converted the value to a float first, which overflowed on a 401-digit integer
+into a 500. The lesson: **a guard is not a filter on one axis.** Deciding what a
+field's value space is (round 6) is half of it; the other half is deciding, in the
+same place, *which requests the guard sees* (every representation of the body, or
+none), *what the field's cardinality is per the protocol that defines it* (one, or a
+set with its own collapse and refusal), *what the refusal's form is at each endpoint*
+(the SDK's redirect at `/authorize`, which the proxy has to render itself when the
+SDK's vocabulary lacks the code; a direct 400 at `/token`, where the SDK reads the
+field and judges nothing), and *what the SDK does with what is handed to it* (selects
+by the client's registered method, so the guard must refuse the method conflict the
+SDK will not). Two smaller lessons rode along. A mutant tuple is a program: moa-76's
+replacement left an unmatched `)` and the harness reported an import ERROR the PR body
+had counted as killed — compile the mutated source before counting, and keep the
+harness's refusal to count setup errors. And a test fixture that computes "now" at
+import is aged by however long the suite takes to reach it: CI's full run failed the
+`nbf`-in-the-future rows on `200 == 401` after 210 seconds while the focused run
+passed — date the fixture when the test runs.

@@ -1098,9 +1098,10 @@ async def test_a_resource_for_another_server_is_refused():
         assert resp.status_code == 302
         assert resp.headers["location"].startswith(NATIVE_CB + "?")
         # FastMCP raises RFC 8707's `invalid_target`; the MCP SDK's error
-        # vocabulary lacks it and renders the refusal as `server_error`. The
-        # refusal — sent back to the client, no token — is the point.
-        assert _query(resp.headers["location"])["error"] in ("invalid_target", "server_error")
+        # vocabulary lacks it and rendered the refusal as `server_error` until
+        # the proxy's `authorize` took over the redirect (Codex #212 round 7,
+        # f22 — the contract suite drives the set; this is the single value).
+        assert _query(resp.headers["location"])["error"] == "invalid_target"
         assert "mcp-oauth-transactions" not in {c for c, _ in await _state_rows()}
 
 

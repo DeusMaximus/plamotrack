@@ -155,7 +155,24 @@ revocation) rather than to the entry points one at a time:
   had defaulted the omission to `S256`. *The generated URL* —
   `UnregisteredClientGuidance` points an unknown client at the **root**
   authorization-server document; FastMCP's handler named the child alias this
-  instance prunes.
+  instance prunes. *And admission, decoding, cardinality and the SDK hand-off
+  are one decision* (round 7, f20–f24, f26 — round 6's guard chose whether to
+  run by a case-sensitive prefix of the media type, applied one multiplicity
+  rule to a field the protocol lets a client repeat, and let the SDK select
+  an assertion beside a second credential or, on a public client, ignore it):
+  the media type is read as HTTP defines it and a body that is not
+  form-encoded is refused before the SDK parses it; `resource` is a set —
+  collapsed, every member judged by `accepts_resource` (FastMCP's own
+  comparison as a predicate), a foreign set `invalid_target` in each
+  endpoint's form, the `/authorize` redirect rendered by `authorize` itself
+  because the SDK's vocabulary lacks the code, the `/token` refusal the
+  guard's own because the SDK judges nothing there; a NumericDate has a
+  range, ±2^53, judged before any float conversion; a second mechanism
+  beside an assertion, and an assertion from a client not registered for
+  `private_key_jwt`, are `invalid_client` before the SDK selects anything,
+  and a 401 to a client that used the `Authorization` header carries its
+  `WWW-Authenticate` challenge (`_challenge_on_refusal`); `jwks` with
+  `jwks_uri` is `invalid_client_metadata`.
 - **Client-redirect binding per client kind** (§5.6 proxy trust; T9).
   `get_client` refuses the client FastMCP synthesises for the upstream client
   id (anyone who knows the public id could be sent anywhere — the spike's
@@ -212,7 +229,7 @@ import base64
 import hashlib
 import json
 import logging
-import math
+import re
 import time
 from binascii import Error as binascii_error
 from collections import Counter
@@ -239,6 +256,7 @@ from fastmcp.server.auth.oauth_proxy.models import (
     _hash_token,
     _matches_registered_redirect_uri,
 )
+from fastmcp.server.auth.oauth_proxy.proxy import _normalize_resource_url, _server_url_has_query
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.utilities.ui import create_secure_html_response
 from key_value.aio.adapters.pydantic import PydanticAdapter
@@ -255,6 +273,7 @@ from mcp.server.auth.provider import (
     RefreshToken,
     RegistrationError,
     TokenError,
+    construct_redirect_uri,
 )
 from mcp.server.auth.routes import (
     AUTHORIZATION_PATH,
@@ -352,6 +371,12 @@ SUPPORTED_GRANT_TYPES: tuple[str, ...] = ("authorization_code", "refresh_token")
 #: Clock tolerance for a client assertion's `nbf` — the SDK's own for `exp` and
 #: `iat` (RFC 7523 §3 asks for "a small allowance").
 CLIENT_ASSERTION_SKEW = 30
+#: The one body representation the three client-driven endpoints admit (RFC
+#: 6749 §4.1.3); the guard reads the media type case-insensitively, its
+#: parameters aside (RFC 9110 §8.3.1).
+FORM_MEDIA_TYPE = "application/x-www-form-urlencoded"
+#: The one parameter RFC 8707 §2 lets a client repeat.
+RESOURCE_PARAMETER = "resource"
 #: The key under `upstream_claims` in every token the proxy issues that holds
 #: the owner binding the grant was issued to.
 BINDING_CLAIM = "plamotrack_owner"
@@ -828,14 +853,27 @@ def _b64url_json(segment: str) -> Any:
     return json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
 
 
+#: The supported range of a NumericDate: the integers a JSON number carries
+#: exactly, ±2^53 (RFC 7493 §2.2). Judged on the parsed value before any float
+#: conversion — `math.isfinite` on a 401-digit integer raised `OverflowError`,
+#: which the authenticator did not catch, and a correctly signed assertion was
+#: a 500 on both endpoints (Codex #212 round 7, f21). Fractional dates inside
+#: the range stay legal.
+NUMERIC_DATE_BOUND = 2**53
+
+
 def _numeric_date(claims: dict[str, Any], name: str) -> float | None:
     value = claims.get(name)
     if value is None:
         if name in claims:
             raise ValueError(f"{name} must be a NumericDate, not null")
         return None
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{name} must be a finite NumericDate")
+    # int and float compare exactly in Python, so an integer beyond the bound is
+    # refused without being converted; NaN fails both comparisons, ±inf one.
+    if not (-NUMERIC_DATE_BOUND <= value <= NUMERIC_DATE_BOUND):
+        raise ValueError(f"{name} must be a NumericDate within ±2^53 (RFC 7493 §2.2)")
     return float(value)
 
 
@@ -875,21 +913,58 @@ def validate_client_assertion_claims(assertion: str, *, now: float) -> None:
 class ClientAssertionAuthenticator(PrivateKeyJWTClientAuthenticator):
     """FastMCP's CIMD-capable client authenticator — `none`, and
     `private_key_jwt` verified against the client's document and bound to
-    one endpoint's URL as the assertion's audience — with the claim contract
-    in front: a client that presents an assertion is judged by it, in full,
-    before the SDK's validator sees it (Codex #212 round 6, f16). One class
-    for both endpoints; `PlamotrackOAuthProxy._client_authenticator` builds
-    one per endpoint."""
+    one endpoint's URL as the assertion's audience — with the assertion's
+    admission in front of the SDK's validator, refuse-only, spending nothing
+    (Codex #212 round 6, f16; round 7, f24). A request that carries either
+    assertion field is a request to be authenticated by the assertion, and
+    then: **one mechanism per request** (RFC 6749 §2.3, RFC 7521 §4.2.1 —
+    `invalid_client`) — a `client_secret` or an `Authorization` header beside
+    it is refused before the SDK selects anything, where FastMCP's
+    authenticator verified the assertion and ignored the second credential;
+    the claim contract (`validate_client_assertion_claims`); and the client
+    must be **registered for `private_key_jwt`** — a public client's
+    assertion has no key to be verified against, and the SDK's `none` branch
+    accepted the request with the assertion unread (round 7's qualification
+    of call 14: "judged in full" was true of a private client only). A
+    refusal is the endpoint's `401 invalid_client`; the same assertion is
+    then usable on a corrected request. One class for both endpoints;
+    `PlamotrackOAuthProxy._client_authenticator` builds one per endpoint."""
 
     async def authenticate_request(self, request: Request) -> OAuthClientInformationFull:
         form = await request.form()
         assertion = form.get("client_assertion")
+        if assertion is None and form.get("client_assertion_type") is None:
+            return await super().authenticate_request(request)
+        if form.get("client_secret") or request.headers.get("authorization"):
+            raise AuthenticationError(
+                "more than one client authentication mechanism in the request (RFC 7521 §4.2.1)"
+            )
         if isinstance(assertion, str) and assertion:
             try:
                 validate_client_assertion_claims(assertion, now=time.time())
             except ValueError as exc:
                 raise AuthenticationError(f"Invalid client assertion: {exc}") from None
+        client_id = form.get("client_id")
+        if isinstance(client_id, str) and client_id:
+            client = await self.provider.get_client(client_id)
+            if client is not None and client.token_endpoint_auth_method != "private_key_jwt":
+                raise AuthenticationError(
+                    "the client is not registered for private_key_jwt; "
+                    "an assertion cannot authenticate it"
+                )
         return await super().authenticate_request(request)
+
+
+#: RFC 9110 §11.1: an authentication scheme is a token. Echoed into the
+#: challenge only when it is one.
+_SCHEME = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
+
+
+def presented_scheme(request: Request) -> str | None:
+    """The HTTP authentication scheme a request used, or `None`."""
+    header = request.headers.get("authorization", "")
+    scheme = header.split(None, 1)[0] if header.split() else ""
+    return scheme if _SCHEME.fullmatch(scheme) else None
 
 
 # --- request decoding ------------------------------------------------------------------
@@ -911,12 +986,32 @@ class ProtocolRequest:
     the SDK's S256-only model then refuses exactly as it refuses `plain` — an
     error redirect for a registered client with a valid redirect URI (RFC
     7636 §4.4.1), a direct 400 otherwise — where its default had read the
-    omission as `S256`. Bodies that are not form-encoded, and verbs the
-    endpoint does not take, pass through to the SDK (and the binding)."""
+    omission as `S256`. **Every body representation** (round 7, f20): the
+    media type is read as HTTP defines it — case-insensitively, its
+    parameters aside (RFC 9110 §8.3.1) — and a POST whose body is anything
+    but `application/x-www-form-urlencoded` is `400 invalid_request` before
+    the SDK parses it (RFC 6749 §4.1.3): a case-sensitive `startswith` had
+    let `Application/X-Www-Form-Urlencoded` and `multipart/form-data`
+    bodies, which the SDK parses, reach the handlers unguarded. **`resource`
+    is a set** (round 7, f22): RFC 8707 §2 lets it appear more than once, so
+    it is exempt from the repetition rule; identical values collapse to one;
+    the whole set is judged by the proxy's own acceptability predicate
+    (`accepts_resource`, FastMCP's comparison at `/authorize`) — a set that
+    names only this server is one effective target, handed to the SDK as
+    such; a set naming any other target is `invalid_target`, at
+    `/authorize` by handing the SDK the first such value alone so its policy
+    answers in the endpoint's form (an error redirect for a registered
+    client), at `/token` directly, where the SDK reads the field and judges
+    nothing (RFC 8707 §2.2's "MUST reject"); a value that does not parse is
+    refused directly on both. Verbs the endpoint does not take pass through
+    to the SDK (and the binding)."""
 
-    def __init__(self, app: ASGIApp, *, endpoint: str) -> None:
+    def __init__(
+        self, app: ASGIApp, *, endpoint: str, accepts_resource: Callable[[str], bool]
+    ) -> None:
         self.app = app
         self.endpoint = endpoint
+        self.accepts_resource = accepts_resource
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["method"] not in ("GET", "POST"):
@@ -932,23 +1027,26 @@ class ProtocolRequest:
         else:
             request = Request(scope, receive)
             body = await request.body()
-            if not request.headers.get("content-type", "").startswith(
-                "application/x-www-form-urlencoded"
-            ):
-                await self.app(scope, self._replay(body), send)
+            media_type = request.headers.get("content-type", "").split(";", 1)[0]
+            if media_type.strip().lower() != FORM_MEDIA_TYPE:
+                await self._refuse(
+                    scope,
+                    receive,
+                    send,
+                    "invalid_request",
+                    f"the request body must be {FORM_MEDIA_TYPE} (RFC 6749 §4.1.3)",
+                )
                 return
             pairs = parse_qsl(body.decode("utf-8", "replace"), keep_blank_values=True)
         refusal = self._refusal(pairs)
         if refusal is not None:
-            error, description = refusal
-            response = JSONResponse(
-                {"error": error, "error_description": description},
-                status_code=400,
-                headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
-            )
-            await response(scope, receive, send)
+            await self._refuse(scope, receive, send, *refusal)
             return
         pairs = [(name, value) for name, value in pairs if value != ""]
+        pairs, refusal = self._one_resource(pairs)
+        if refusal is not None:
+            await self._refuse(scope, receive, send, *refusal)
+            return
         if self.endpoint == AUTHORIZATION_PATH and all(
             name != "code_challenge_method" for name, _ in pairs
         ):
@@ -961,8 +1059,22 @@ class ProtocolRequest:
         headers.append((b"content-length", str(len(encoded)).encode()))
         await self.app({**scope, "headers": headers}, self._replay(encoded), send)
 
+    @staticmethod
+    async def _refuse(
+        scope: Scope, receive: Receive, send: Send, error: str, description: str
+    ) -> None:
+        response = JSONResponse(
+            {"error": error, "error_description": description},
+            status_code=400,
+            headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+        )
+        await response(scope, receive, send)
+
     def _refusal(self, pairs: list[tuple[str, str]]) -> tuple[str, str] | None:
-        repeated = sorted(name for name, count in Counter(n for n, _ in pairs).items() if count > 1)
+        counts = Counter(name for name, _ in pairs)
+        repeated = sorted(
+            name for name, count in counts.items() if count > 1 and name != RESOURCE_PARAMETER
+        )
         if repeated:
             return (
                 "invalid_request",
@@ -976,6 +1088,42 @@ class ProtocolRequest:
                     f"grant_type must be one of: {', '.join(SUPPORTED_GRANT_TYPES)}",
                 )
         return None
+
+    def _one_resource(
+        self, pairs: list[tuple[str, str]]
+    ) -> tuple[list[tuple[str, str]], tuple[str, str] | None]:
+        """The `resource` set reduced to the one target this server issues
+        tokens for, or the refusal (RFC 8707 §2): identical values collapse;
+        every distinct value is judged; the pairs come back with one
+        `resource` at most — the first this server accepts when all are
+        acceptable, the first it does not when any is not (for the SDK's own
+        `invalid_target` at `/authorize`); a value that does not parse, or a
+        foreign one at `/token`, is refused here. `/revoke` has no such field
+        (RFC 7009): the collapsed set passes through and the SDK ignores it."""
+        resources = list(
+            dict.fromkeys(value for name, value in pairs if name == RESOURCE_PARAMETER)
+        )
+        if not resources:
+            return pairs, None
+        others = [(name, value) for name, value in pairs if name != RESOURCE_PARAMETER]
+        if self.endpoint == REVOCATION_PATH:
+            return others + [(RESOURCE_PARAMETER, value) for value in resources], None
+        verdicts: dict[str, bool | None] = {}
+        for value in resources:
+            try:
+                verdicts[value] = self.accepts_resource(value)
+            except ValueError:
+                verdicts[value] = None
+        if any(verdict is None for verdict in verdicts.values()):
+            return pairs, ("invalid_target", "a resource indicator does not parse (RFC 8707 §2)")
+        foreign = [value for value, accepted in verdicts.items() if not accepted]
+        if foreign and self.endpoint == TOKEN_PATH:
+            return pairs, (
+                "invalid_target",
+                "this server issues tokens for its own resource only (RFC 8707 §2.2)",
+            )
+        chosen = foreign[0] if foreign else resources[0]
+        return others + [(RESOURCE_PARAMETER, chosen)], None
 
     @staticmethod
     def _replay(body: bytes):
@@ -1180,11 +1328,20 @@ class PlamotrackOAuthProxy(OAuthProxy):
         what the server offers, a blank or padded `scope` the default — and
         the record stored is built from that same object, display and
         software fields included, where FastMCP's registration constructed a
-        record of its own from a few of the fields."""
+        record of its own from a few of the fields. And the admitted metadata
+        obeys the metadata's own cross-field rule (round 7, f26): `jwks` and
+        `jwks_uri` "MUST NOT both be present in the same request or response"
+        (RFC 7591 §2) — the combination is refused, where the SDK's model
+        admitted it and the record echoed and stored both."""
         if not client_info.redirect_uris:
             raise RegistrationError(
                 "invalid_client_metadata",
                 "redirect_uris is required: this server issues authorization codes only",
+            )
+        if client_info.jwks is not None and client_info.jwks_uri is not None:
+            raise RegistrationError(
+                "invalid_client_metadata",
+                "jwks and jwks_uri must not both be present (RFC 7591 §2)",
             )
         client_info.token_endpoint_auth_method = "none"
         client_info.client_secret = None
@@ -1224,6 +1381,38 @@ class PlamotrackOAuthProxy(OAuthProxy):
             cimd_manager=self._cimd_manager,
             token_endpoint_url=f"{self.base_url}{endpoint}",
         )
+
+    def _challenge_on_refusal(self, handle: Callable[[Request], Any]) -> Callable[[Request], Any]:
+        """RFC 6749 §5.2 (adopted by RFC 7009 §2.2.1): a 401 to a client that
+        "attempted to authenticate via the Authorization request header field"
+        carries `WWW-Authenticate` matching the scheme it used. No scheme is
+        admitted here, so the attempt is always a failed one (round 7, f24);
+        the handlers answered without the challenge."""
+
+        async def handled(request: Request) -> Response:
+            response = await handle(request)
+            scheme = presented_scheme(request)
+            if response.status_code == 401 and scheme is not None:
+                response.headers["WWW-Authenticate"] = f'{scheme} realm="{self.base_url}"'
+            return response
+
+        return handled
+
+    def accepts_resource(self, value: str) -> bool:
+        """RFC 8707 §2: whether a resource indicator names the one target a
+        token minted here is for — FastMCP's comparison at `/authorize`
+        (a query-less server URL: scheme, host and path, the query and a
+        trailing slash ignored; a server URL with a query: exact) as a
+        predicate, so the request-decoding guard can judge every value of a
+        `resource` set, on `/token` too, where the SDK reads the field and
+        judges nothing (round 7, f22). Raises `ValueError` for a value that
+        does not parse as a URL."""
+        if self._resource_url is None:  # pragma: no cover — set before any route answers
+            return True
+        server_url = str(self._resource_url)
+        if _server_url_has_query(server_url):
+            return value.rstrip("/") == server_url.rstrip("/")
+        return _normalize_resource_url(value) == _normalize_resource_url(server_url)
 
     def _root_discovery_url(self) -> str:
         """The RFC 8414 path-aware document at the root — the one this instance
@@ -1288,13 +1477,17 @@ class PlamotrackOAuthProxy(OAuthProxy):
             if isinstance(route, Route) and route.path == REVOCATION_PATH:
                 route = Route(
                     path=route.path,
-                    endpoint=cors_middleware(revocation.handle, ["POST", "OPTIONS"]),
+                    endpoint=cors_middleware(
+                        self._challenge_on_refusal(revocation.handle), ["POST", "OPTIONS"]
+                    ),
                     methods=["POST", "OPTIONS"],
                 )
             elif isinstance(route, Route) and route.path == TOKEN_PATH:
                 route = Route(
                     path=route.path,
-                    endpoint=cors_middleware(token.handle, ["POST", "OPTIONS"]),
+                    endpoint=cors_middleware(
+                        self._challenge_on_refusal(token.handle), ["POST", "OPTIONS"]
+                    ),
                     methods=["POST", "OPTIONS"],
                 )
             elif isinstance(route, Route) and route.path == AUTHORIZATION_PATH:
@@ -1328,13 +1521,29 @@ class PlamotrackOAuthProxy(OAuthProxy):
     # -- the flow ----------------------------------------------------------------------
 
     async def authorize(self, client, params) -> str:
+        """FastMCP's authorize — the resource check, the transaction, the
+        upstream URL — after the provider is resolved; and RFC 8707 §2.1's
+        `invalid_target` rendered as the error redirect the handler already
+        validated (`params.redirect_uri`, `params.state`), because the SDK's
+        response model lacks the code and its catch-all rendered FastMCP's
+        refusal as `server_error` (Codex #212 round 7, f22)."""
         try:
             await self._resolve_upstream()
         except UnavailableError as exc:
             raise AuthorizeError(
                 error="temporarily_unavailable", error_description=_PROVIDER_UNAVAILABLE
             ) from exc
-        return await super().authorize(client, params)
+        try:
+            return await super().authorize(client, params)
+        except AuthorizeError as exc:
+            if exc.error != "invalid_target":
+                raise
+            return construct_redirect_uri(
+                str(params.redirect_uri),
+                error="invalid_target",
+                error_description=exc.error_description,
+                state=params.state,
+            )
 
     async def _handle_consent(self, request: Request):
         """The consent page and its submission (FastMCP's `ConsentMixin`, the
@@ -1917,18 +2126,21 @@ def guard_registration_body(mcp_app: Starlette) -> None:
             route.app = ClientMetadataBody(route.app)
 
 
-def guard_protocol_requests(mcp_app: Starlette) -> None:
+def guard_protocol_requests(mcp_app: Starlette, proxy: PlamotrackOAuthProxy) -> None:
     """Put `ProtocolRequest` in front of the three routes a client drives,
     under the `RouteBinding` the registry adds later (the route's endpoint,
     which the registry keys on, is untouched — the same shape as
-    `guard_registration_body`)."""
+    `guard_registration_body`), judging `resource` sets by the proxy's own
+    predicate."""
     for route in mcp_app.router.routes:
         if isinstance(route, Route) and route.path in (
             AUTHORIZATION_PATH,
             TOKEN_PATH,
             REVOCATION_PATH,
         ):
-            route.app = ProtocolRequest(route.app, endpoint=route.path)
+            route.app = ProtocolRequest(
+                route.app, endpoint=route.path, accepts_resource=proxy.accepts_resource
+            )
 
 
 def declare_child_verbs(mcp_app: Starlette) -> None:

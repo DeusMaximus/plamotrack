@@ -450,13 +450,30 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     by field** (round 6, f16–f19): `ClientAssertionAuthenticator` judges an assertion's
     claims (`nbf` included, dates never booleans, `jti` a string) *before* the SDK's
     validator spends its `jti`; `register_client` canonicalises the admitted metadata and
-    stores that same object (a null redirect list refused); `ProtocolRequest`, an ASGI
+    stores that same object (a null redirect list refused; `jwks` with `jwks_uri`
+    refused, RFC 7591 §2 — round 7, f26); `ProtocolRequest`, an ASGI
     guard on `/authorize`, `/token` and `/revoke`, refuses a repeated parameter, drops
     empty ones, names `unsupported_grant_type`, and reads an omitted
     `code_challenge_method` as `plain` for the SDK to refuse; `UnregisteredClientGuidance`
-    points at the root discovery document. All of it tested from raw
+    points at the root discovery document. **Admission, decoding, cardinality and the
+    SDK hand-off are one decision** (round 7, f20–f24): the guard reads the media type
+    as HTTP does (case-insensitive, parameters aside) and refuses any body that is not
+    form-encoded before the SDK parses it — a case-sensitive prefix had let mixed-case
+    and multipart bodies around it; `resource` is the one parameter RFC 8707 lets a
+    client repeat, so it is a **set** — identical values collapse, the proxy's own
+    `accepts_resource` judges every member, a set naming another target is
+    `invalid_target` (at `/authorize` the SDK's redirect, which the proxy's `authorize`
+    renders because the SDK's vocabulary lacks the code; at `/token` directly, where the
+    SDK judges nothing), and the naïve exemption that hands the SDK the last value is
+    the wrong repair; a NumericDate has a range, ±2^53, judged before any float
+    conversion; and `ClientAssertionAuthenticator` refuses a second mechanism beside an
+    assertion (RFC 7521 §4.2.1, `invalid_client`), and an assertion from a client not
+    registered for `private_key_jwt` — the SDK's `none` branch had accepted it unread —
+    with a 401 to a client that used the `Authorization` header carrying the
+    `WWW-Authenticate` challenge RFC 6749 §5.2 requires. All of it tested from raw
     requests in `tests/test_mcp_oauth_clients.py` — never through the SDK's models or
-    a helper that pads the form. The upstream
+    a helper that pads the form, and with the test's own dates computed when it runs,
+    not at import (f23). The upstream
     endpoints are **properties over `OidcProvider.cached_metadata`** — no reader in
     FastMCP can hold a stale copy — and every entry point that reaches the provider
     fetches first (authorize, consent, the callback, the exchanges), so a provider down

@@ -271,7 +271,7 @@ def build_mcp_app(
     if oauth is not None:
         prune_child_well_known(mcp_app)
         guard_registration_body(mcp_app)
-        guard_protocol_requests(mcp_app)
+        guard_protocol_requests(mcp_app, oauth.proxy)
     else:
         mcp_app.router.routes.extend(local_mode_child_routes())
     declare_child_verbs(mcp_app)

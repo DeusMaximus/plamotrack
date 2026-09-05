@@ -194,7 +194,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` after #212: 481 cases over 46 target files** — counted the way the
+- **On `main` after #212: 492 cases over 46 target files** — counted the way the
   harness itself counts, `len(CASES)` and the distinct paths those cases mutate
   (migrations, the one test file and the two `frontend/` files included; the
   one-liner is `uv run python -c "import mutation_test as m, pathlib; print(len(m.CASES), len({pathlib.Path(c[1]).resolve() for c in m.CASES}))"`
@@ -303,7 +303,17 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   registration canonicalisation (a null redirect list, the stored record), request
   decoding (a repeated parameter, an empty value, the PKCE default) and the recovery
   URL, all ten killed in the contract suite, with moa-64 re-anchored on the
-  per-endpoint authenticator factory; all 79 killed on the branch,
+  per-endpoint authenticator factory; 81…91 from round 7 — admission, decoding,
+  cardinality and the SDK hand-off as one decision: the media type read by a
+  case-sensitive prefix, the NumericDate range, `resource` under the repetition rule,
+  a foreign set handed to the SDK as its first value, a foreign target at `/token`
+  passed to an SDK that judges nothing, a second mechanism beside an assertion, an
+  assertion from a public client, the missing challenge, `jwks` with `jwks_uri`,
+  `invalid_target` left to the SDK's vocabulary, an unparseable resource — all
+  eleven killed in the contract suite; and moa-76 **repaired** by that round (Codex
+  f25: its replacement had left an unmatched `)`, a SyntaxError at import that the
+  harness reported as ERROR and the PR body had counted as killed — a tuple is a
+  program, so compile the mutant before counting it); all 90 killed on the branch,
   `-k moa-` — three first-pass survivors in
   round 2, each fixed outside the tuple: moa-47 a redundant second delete, moa-56 a
   fallback re-check masking the gate, moa-49 the fake's re-issued id_token identical
