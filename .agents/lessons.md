@@ -693,3 +693,32 @@ revocation handler disagree on the error code for a failed client authentication
 (`invalid_client` versus `unauthorized_client`); its revocation form and its token
 forms disagree on whether `client_secret` is optional. None of that is visible from
 the extension point's signature.
+
+## Verifying the fixes is not examining the contract (#212, round 5)
+
+Five rounds in, the reviewer put it plainly: the briefs were very good at specifying
+how to verify the reported fixes — exact heads, the assertion each red row should fail
+on, the mutants to re-run, the author's assumptions to challenge — and gave almost no
+structure to what remained unexplored across the whole feature. A reviewer given that
+brief validates the author's test plan thoroughly and inherits its blind spots; a
+*fresh* reviewer session given the same brief inherits them just as well, because the
+thread carries the findings and not the tentative concerns or the paths nobody walked.
+Two findings had sat unexamined through four rounds: the discovery documents a client
+reads *before* it registers still advertised the SDK's shared-secret methods and no
+assertion algorithm, disagreeing with the endpoints the contract had just been written
+for; and an optional field inside a supported request — RFC 7009's hint, which the
+protocol says to ignore when unrecognised — was a two-value enum that turned a valid
+revocation into a 400. Neither needed the grant machinery; both were outside every
+brief's frame. Sixty-five mutants, all killed, could not have shown either: killing
+every listed mutant proves those tests detect those defects and says nothing about
+completeness. Three changes followed, in the template and the procedure: the reviewer
+has **two jobs in a fixed order** — write its own list of the feature's surfaces and
+each field's protocol-defined value space and probe the gap against the PR body first,
+verify the fixes second; the PR body carries a **coverage record** — checked, by what,
+at which head; unresolved; explicitly untested — updated every round as the continuity
+findings alone are not; and where practical **one reviewer session stays through a
+PR's corrective rounds**, a fresh one being opened deliberately for an independent
+pass with the record in front of it. The rule for the author is the mirror image: when
+the fix for a finding is a *contract* (round 4's), the sweep is the contract's whole
+surface — the documents that describe it as well as the endpoints that enforce it —
+and every field's value space is the protocol's, including the values nobody defined.

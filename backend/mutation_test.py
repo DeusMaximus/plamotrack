@@ -3688,8 +3688,8 @@ CASES = [
     (
         "moa-57. revocation's lookup is the bearer's (the /revoke route not rebuilt over it)",
         MCP_OAUTH,
-        "        routes = super().get_routes(mcp_path)\n        handler = GrantRevocation(",
-        "        routes = super().get_routes(mcp_path)\n        return routes\n        handler = GrantRevocation(",
+        "        routes = super().get_routes(mcp_path)\n        revocation = GrantRevocation(",
+        "        routes = super().get_routes(mcp_path)\n        return routes\n        revocation = GrantRevocation(",
         "locates_its_grant_without_asking_the_provider and access_token",
     ),
     (
@@ -3755,6 +3755,35 @@ CASES = [
         '            return PydanticJSONResponse(\n                status_code=401,\n                content=RevocationRefused(error="invalid_client", error_description=exc.message),',
         '            return PydanticJSONResponse(\n                status_code=200,\n                content=RevocationRefused(error="invalid_client", error_description=exc.message),',
         "private_key_jwt_client_is_refused_without_a_valid_assertion and revoke and absent",
+    ),
+    # --- Codex #212 round 5: discovery says the contract; the hint is advice (f14–f15) ------
+    (
+        "moa-67. discovery left as the SDK built it (the AS document not rebuilt over the contract)",
+        MCP_OAUTH,
+        '            elif isinstance(route, Route) and route.path.startswith(\n                "/.well-known/oauth-authorization-server"\n            ):',
+        "            elif False:",
+        "discovery_advertises_exactly_the_admitted_client_authentication",
+    ),
+    (
+        "moa-68. the revocation endpoint's methods advertised as the SDK's shared-secret pair",
+        MCP_OAUTH,
+        "        metadata.revocation_endpoint_auth_methods_supported = list(CLIENT_AUTH_METHODS)",
+        '        metadata.revocation_endpoint_auth_methods_supported = ["client_secret_post", "client_secret_basic"]',
+        "discovery_advertises_exactly_the_admitted_client_authentication and openid",
+    ),
+    (
+        "moa-69. no assertion algorithm advertised beside a JWT method",
+        MCP_OAUTH,
+        "        metadata.token_endpoint_auth_signing_alg_values_supported = list(\n            CLIENT_ASSERTION_ALGORITHMS\n        )",
+        "        metadata.token_endpoint_auth_signing_alg_values_supported = None",
+        "discovery_advertises_exactly_the_admitted_client_authentication and oauth-authorization",
+    ),
+    (
+        "moa-70. the hint a requirement again (an unknown value is a 400)",
+        MCP_OAUTH,
+        "    token: str\n    token_type_hint: str | None = None",
+        '    token: str\n    token_type_hint: Literal["access_token", "refresh_token"] | None = None',
+        "hint_is_advice_and_either_half_ends_the_grant and unknown_type",
     ),
 ]
 

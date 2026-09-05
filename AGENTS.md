@@ -440,9 +440,15 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     (`_revocation_authenticator`, the assertion bound to the revocation URL); the wire
     forms are the RFCs' (`GrantRevocation` over `RevocationForm`: `client_id` in the
     form, no secret from a public client, `401 invalid_client` on a failed client
-    authentication on either endpoint) and are tested from raw requests in
-    `tests/test_mcp_oauth_clients.py` — never through the SDK's models or a helper that
-    pads the form. The upstream
+    authentication on either endpoint); **discovery says the same** — the two
+    authorization-server documents are built here (`discovery_metadata`,
+    `CLIENT_AUTH_METHODS`, `CLIENT_ASSERTION_ALGORITHMS`) and publish exactly those two
+    methods for both endpoints and `RS256`, where the SDK's metadata advertised its
+    shared-secret methods and no algorithm (round 5, f14); every protocol field's value
+    space is the protocol's, unrecognised values included — an unknown
+    `token_type_hint` is ignored, never refused (f15); all of it tested from raw
+    requests in `tests/test_mcp_oauth_clients.py` — never through the SDK's models or
+    a helper that pads the form. The upstream
     endpoints are **properties over `OidcProvider.cached_metadata`** — no reader in
     FastMCP can hold a stale copy — and every entry point that reaches the provider
     fetches first (authorize, consent, the callback, the exchanges), so a provider down

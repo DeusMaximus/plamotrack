@@ -21,15 +21,26 @@ the rotating refresh token do not; the authority is the owner's upstream
 login and the grant machinery. A CIMD client authenticates as its document
 says — `none`, or `private_key_jwt` with the document's keys — on `/token`
 and on `/revoke` alike, each assertion bound to the endpoint it is sent to
-(RFC 7523 §3, the `aud`) and usable once. `client_id` travels in the form on
-both endpoints for every kind (RFC 6749 §3.2.1 requires it of a public
-client; RFC 7523 §2.2 permits it beside an assertion). A public client sends
-no secret, and one it sends anyway is ignored. A wrong or missing assertion
-is `401 invalid_client` on either endpoint with the grant untouched — the refresh handle it
-was sent with stays redeemable. Round 4 found the registration response
-advertising `client_secret_post` and a secret over a stored public client,
-the revocation form refusing a public client that sent no secret, and a
-`private_key_jwt` client able to link and unable to revoke.
+(RFC 7523 §3, the `aud`) and usable once per process. **Discovery says the
+same** (RFC 8414 §2): both authorization-server documents publish exactly
+those two methods for the token endpoint and for the revocation endpoint,
+and `RS256` as the one assertion algorithm the pinned verifier accepts; the
+shared-secret methods the SDK's metadata listed are not there. `client_id`
+travels in the form on both endpoints for every kind — RFC 6749 §3.2.1
+requires it of a public client; beside an assertion it is a **compatibility
+restriction** of this server (RFC 7521 §4.2 makes it optional; FastMCP's
+token endpoint requires it and the revocation endpoint matches). A public
+client sends no secret, and one it sends anyway is ignored. A wrong or
+missing assertion is `401 invalid_client` on either endpoint with the grant
+untouched — the refresh handle it was sent with stays redeemable. The value
+space of every field is the protocol's, unrecognised values included: a
+`token_type_hint` the server does not know is ignored (RFC 7009 §2.2), never
+refused. Round 4 found the registration response advertising
+`client_secret_post` and a secret over a stored public client, the
+revocation form refusing a public client that sent no secret, and a
+`private_key_jwt` client able to link and unable to revoke; round 5 found
+discovery advertising the SDK's shared-secret methods and no algorithm, and
+an unknown hint turning a valid revocation into `400 invalid_request`.
 """
 
 from __future__ import annotations
@@ -40,7 +51,7 @@ import time
 import pytest
 from fastmcp.server.auth.cimd import CIMDFetcher
 from joserfc import jwt
-from joserfc.jwk import RSAKey
+from joserfc.jwk import ECKey, RSAKey
 
 from app.auth.mcp_oauth import MCP_OAUTH_ATTR
 from app.services import audit
@@ -110,10 +121,11 @@ def assertion(key: RSAKey, client_id: str, audience: str, **claims) -> str:
     return jwt.encode({"alg": "RS256", "kid": key.kid}, body, key)
 
 
-def cimd(monkeypatch, method: str) -> RSAKey:
+def cimd(monkeypatch, method: str, key=None):
     """Play the CIMD fetch with a document declaring `method`; the returned key
-    is the one the document publishes (inline JWKS) for private_key_jwt."""
-    key = RSAKey.generate_key(2048, parameters={"kid": "client-key"})
+    is the one the document publishes (inline JWKS) for private_key_jwt — an
+    RSA key unless the test brings another."""
+    key = key or RSAKey.generate_key(2048, parameters={"kid": "client-key"})
     document = _cimd_document(
         token_endpoint_auth_method=method,
         jwks={"keys": [key.as_dict(private=False)]} if method == "private_key_jwt" else None,
@@ -275,12 +287,17 @@ async def test_a_public_client_sends_no_secret_and_one_it_sends_is_ignored(secre
         assert (await initialize(client, successor["access_token"])).status_code == 401
 
 
-@pytest.mark.parametrize("hint", ["absent", "access_token", "refresh_token"])
+@pytest.mark.parametrize("hint", ["absent", "access_token", "refresh_token", "", "unknown_type"])
 @pytest.mark.parametrize("presented", ["access_token", "refresh_token"])
 async def test_the_hint_is_advice_and_either_half_ends_the_grant(presented, hint):
-    """RFC 7009 §2.1: `token_type_hint` is optional and may be wrong; the
-    server tries the other lookup. Every combination of the half presented
-    and the hint given ends the grant."""
+    """RFC 7009 §2.1–§2.2: `token_type_hint` is optional, may be wrong, and
+    when the server does not recognise it "the server MUST ignore it" — the
+    value space is the protocol's: absent, either recognised value (the wrong
+    one for the half presented included), empty, and a value nobody defined.
+    Every combination with the half presented ends the grant. The reviewed
+    head typed the field as a two-value enum, so an empty or unknown hint
+    turned a valid, authenticated revocation into `400 invalid_request` with
+    the grant intact (Codex #212 round 5, f15)."""
     fake = FakeIdp()
     await _bind_owner()
     async with oauth_app(fake) as (_, client):
@@ -493,6 +510,93 @@ async def test_a_private_key_jwt_client_is_refused_without_a_valid_assertion(
     assert len(await _events(audit.MCP_GRANT_REVOKED)) == (
         2 if (endpoint, defect) == ("revoke", "replayed") else int(endpoint == "revoke")
     )
+
+
+# --- discovery describes the same contract ----------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "path", ["/.well-known/oauth-authorization-server/mcp", "/.well-known/openid-configuration/mcp"]
+)
+async def test_discovery_advertises_exactly_the_admitted_client_authentication(path):
+    """RFC 8414 §2: the two documents a client reads before it registers list
+    the client-authentication methods each endpoint accepts and, once a JWT
+    method is among them, the signing algorithms. Both spellings publish
+    literally `none` and `private_key_jwt` for the token endpoint *and* the
+    revocation endpoint, and `RS256` alone — what the pinned verifier accepts
+    (`test_an_assertion_algorithm_not_advertised_is_refused` measures the
+    edge). Each advertised method is one this suite drives end to end:
+    `none` in the registration and hint rows, `private_key_jwt` in the CIMD
+    rows. The reviewed head served the SDK's metadata: both shared-secret
+    methods at the token endpoint, *only* the shared-secret methods at the
+    revocation endpoint — neither admitted anywhere — and no algorithm (Codex
+    #212 round 5, f14)."""
+    async with oauth_app(FakeIdp()) as (_, client):
+        response = await client.get(path)
+        assert response.status_code == 200, response.text
+        document = response.json()
+    assert document["token_endpoint_auth_methods_supported"] == ["none", "private_key_jwt"]
+    assert document["revocation_endpoint_auth_methods_supported"] == ["none", "private_key_jwt"]
+    assert document["token_endpoint_auth_signing_alg_values_supported"] == ["RS256"]
+    assert document["revocation_endpoint_auth_signing_alg_values_supported"] == ["RS256"]
+    for field in (
+        "token_endpoint_auth_methods_supported",
+        "revocation_endpoint_auth_methods_supported",
+    ):
+        assert not {"client_secret_post", "client_secret_basic"} & set(document[field]), field
+    # The rest of the document is FastMCP's, still: the endpoints under the
+    # issuer, PKCE, the one scope, CIMD advertised.
+    assert document["issuer"] == f"{BASE}/mcp"
+    assert document["token_endpoint"] == TOKEN_URL
+    assert document["revocation_endpoint"] == REVOKE_URL
+    assert document["registration_endpoint"] == f"{BASE}/mcp/register"
+    assert document["code_challenge_methods_supported"] == ["S256"]
+    assert document["scopes_supported"] == ["openid"]
+    assert document["grant_types_supported"] == ["authorization_code", "refresh_token"]
+    assert document["client_id_metadata_document_supported"] is True
+
+
+async def test_an_assertion_algorithm_not_advertised_is_refused(monkeypatch):
+    """The other half of the advertised algorithm list: a CIMD document that
+    publishes an EC key, and a client that signs its assertion `ES256` with
+    it, cannot authenticate — `401 invalid_client` at the code exchange,
+    nothing issued, no grant record — because the pinned verifier accepts
+    `RS256` alone, which is what discovery says."""
+    key = ECKey.generate_key("P-256", parameters={"kid": "client-key"})
+    cimd(monkeypatch, "private_key_jwt", key=key)
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        code, verifier = await browser_leg(client, fake, CIMD_ID, CIMD_CB)
+        now = int(time.time())
+        signed = jwt.encode(
+            {"alg": "ES256", "kid": key.kid},
+            {
+                "iss": CIMD_ID,
+                "sub": CIMD_ID,
+                "aud": TOKEN_URL,
+                "iat": now,
+                "exp": now + 120,
+                "jti": secrets.token_hex(8),
+            },
+            key,
+        )
+        refused = await client.post(
+            "/mcp/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": CIMD_CB,
+                "client_id": CIMD_ID,
+                "code_verifier": verifier,
+                "client_assertion_type": ASSERTION_TYPE,
+                "client_assertion": signed,
+            },
+        )
+        assert refused.status_code == 401, refused.text
+        assert refused.json()["error"] == "invalid_client"
+        assert not grant_records(await _state_rows())
+    assert not await _events(audit.MCP_GRANT_ISSUED)
 
 
 # --- the revocation form's edges ---------------------------------------------------------

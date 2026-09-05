@@ -73,7 +73,11 @@ that produced each line.
    before it is fixed; a fix for a defect nobody reproduced is a guess.
 2. **Enumerate the field's values before writing assertions:** null, empty,
    whitespace, the derived or default value, and something that genuinely differs.
-   Drive at least the null and the default.
+   Drive at least the null and the default. For a field a **protocol** defines, the
+   value space is the protocol's, *unrecognised values included* — RFC 7009's
+   `token_type_hint` is ignored when the server does not know it, never refused, and a
+   two-value enum on that field turned a valid revocation into a 400 through four
+   review rounds (#212 round 5).
 3. **Enumerate the row's states.** The action (create / update / error / skip), the
    mode (merge / add_only / replace_all), the status — whatever classification
    decides the shape of the structure the fix touches. Drive at least two, and
@@ -190,7 +194,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` after #212: 467 cases over 46 target files** — counted the way the
+- **On `main` after #212: 471 cases over 46 target files** — counted the way the
   harness itself counts, `len(CASES)` and the distinct paths those cases mutate
   (migrations, the one test file and the two `frontend/` files included; the
   one-liner is `uv run python -c "import mutation_test as m, pathlib; print(len(m.CASES), len({pathlib.Path(c[1]).resolve() for c in m.CASES}))"`
@@ -288,8 +292,13 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   kills live in a file that builds every request by hand rather than through a helper:
   the registration response left as the SDK built it, the revocation form requiring a
   secret, the plain authenticator at `/revoke`, the assertion audience, the ownership
-  check, a 200 on a failed client authentication), with moa-57 re-anchored on the
-  handler class that replaced the SDK's; all 65 killed on the branch,
+  check, a 200 on a failed client authentication — five of the six kill in the contract
+  suite, moa-65 in the lifecycle suite's cross-client test), with moa-57 re-anchored on
+  the handler class that replaced the SDK's; 67…70 from round 5 — discovery says the
+  contract (the AS document not rebuilt, the revocation methods advertised as the SDK's
+  pair, no algorithm beside a JWT method) and the hint as advice (an unknown value a 400
+  again), all four killed in the contract suite, and moa-57 re-anchored a second time on
+  the rewritten `get_routes`; all 69 killed on the branch,
   `-k moa-` — three first-pass survivors in
   round 2, each fixed outside the tuple: moa-47 a redundant second delete, moa-56 a
   fallback re-check masking the gate, moa-49 the fake's re-issued id_token identical
@@ -395,6 +404,24 @@ what they say:
   prompt inside the review.
 - **Tell it where to post:** `gh pr comment N --body-file <path>` — `--body-file`,
   not `--body`, because a shell string mangles backticks and `$`.
+- **Give the reviewer two jobs, in order: the whole contract first, the fixes
+  second.** The template says it in fixed words. A brief that specifies exactly how
+  to verify the reported fixes — heads, failing assertions, mutants, the author's
+  assumptions — is very good at getting those verified and steers the reviewer past
+  everything outside the author's test plan; on #212, discovery metadata and the
+  value space of an optional revocation field sat unchecked through four rounds of
+  such briefs, and the reviewer said so (round 5). Killing every listed mutant proves
+  those tests detect those defects, not completeness. So the reviewer first writes its
+  own list of the feature's surfaces and each field's protocol-defined value space,
+  compares it with the PR body's **coverage record**, and probes the gap before it
+  verifies anything the author claimed.
+- **Carry a coverage record in the PR body**, updated every round: surface by surface,
+  what was checked, by what, at which head; what is unresolved; what is explicitly
+  untested. Findings survive in the thread; tentative concerns, unexplored paths and
+  the reasons particular checks were chosen do not — and a fresh reviewer session
+  otherwise rebuilds its understanding from the newest brief alone. Where practical,
+  keep one reviewer session through a PR's corrective rounds and open a fresh one
+  deliberately, for an independent pass, with the record in front of it.
 - **Point it at the test claim, and tell it to re-measure.** The PR body lists
   which tests fail against unfixed `main` and why; that is the claim most worth
   checking, and the author's counts are the first thing to get wrong (#109's body
@@ -429,6 +456,9 @@ what they say:
    for the invariant one level up.
 7. **File the siblings a review turns up** as their own issues; do not fold them in
    unless they share the root cause and the branch says so.
+7.1. **Update the coverage record** in the PR body: what this round checked and at
+   which head, what it opened, what stays explicitly untested. The next reviewer reads
+   it before the reply.
 8. **After merge, `Closes #A, closes #B`** — one `closes` per reference; GitHub binds
    only the first otherwise.
 

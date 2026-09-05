@@ -86,10 +86,14 @@ revocation) rather than to the entry points one at a time:
   revocation. Every dynamically registered client is a **public** client —
   `token_endpoint_auth_method=none`, PKCE — whatever it asked for, and the
   registration response says so with no secret and no secret expiry
-  (`register_client`): registration is open, so a downstream secret would be
-  minted to whoever asks and would authenticate nothing that PKCE and the
-  rotating refresh token do not; the authority is the owner's upstream login
-  and the grant machinery. The SDK's handler minted a secret for any method
+  (`register_client`). The choice is scope, not a claim that a secret would
+  protect nothing — a confidential registration's secret would guard that
+  registration's stolen refresh token — but the measured clients (#190) are
+  a public DCR client and two CIMD clients, and confidential DCR would mean
+  storing and comparing shared secrets, repairing the SDK authenticator's
+  Basic branch and a second lifecycle matrix, for clients nobody has brought;
+  the authority remains the owner's upstream login and the grant machinery.
+  The SDK's handler minted a secret for any method
   but `none` and returned that object while FastMCP stored a public client,
   so a client held a `client_secret_post` credential the server never read
   (f11). A CIMD client authenticates as its document says — `none`, or
@@ -106,7 +110,25 @@ revocation) rather than to the entry points one at a time:
   invalid_client` on either endpoint (RFC 6749 §5.2, which RFC 7009 §2.2.1
   adopts; the SDK's two handlers disagreed). There are no `client_secret_*`
   clients under this contract, so the SDK authenticator's Basic branch — which
-  wants the client id in the form beside the header — is unreachable.
+  wants the client id in the form beside the header — is unreachable. Two
+  restrictions of this server, named as such: `client_id` is required in the
+  form beside a `private_key_jwt` assertion (RFC 7521 §4.2 makes it optional;
+  FastMCP's token endpoint requires it and the revocation endpoint matches),
+  and an assertion is usable once **per process** — the SDK validator's
+  replay cache is in memory, so a restart, or a second API process, would
+  accept it again (RFC 7523 §3 makes replay tracking optional; the grant
+  itself is still redeemed once, under its lock, whatever the process).
+  **Discovery says the same** (round 5, f14): the two authorization-server
+  documents are built here (`discovery_metadata`) and publish exactly
+  `CLIENT_AUTH_METHODS` for the token endpoint and for the revocation
+  endpoint and `CLIENT_ASSERTION_ALGORITHMS` as the signing algorithms,
+  where the SDK's metadata advertised both shared-secret methods at the
+  token endpoint, *only* the shared-secret methods at the revocation
+  endpoint, and no algorithm — a client choosing from discovery had no
+  usable way to revoke. And the value space of every field is the protocol's,
+  unrecognised values included (round 5, f15): a `token_type_hint` the
+  server does not know is ignored (RFC 7009 §2.2), never refused — the
+  form's two-value enum had turned a valid revocation into `400`.
 - **Client-redirect binding per client kind** (§5.6 proxy trust; T9).
   `get_client` refuses the client FastMCP synthesises for the upstream client
   id (anyone who knows the public id could be sent anywhere — the spike's
@@ -190,6 +212,7 @@ from key_value.aio.adapters.pydantic import PydanticAdapter
 from key_value.aio.stores.postgresql import PostgreSQLStore
 from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
 from mcp.server.auth.errors import stringify_pydantic_error
+from mcp.server.auth.handlers.metadata import MetadataHandler
 from mcp.server.auth.handlers.revoke import RevocationHandler
 from mcp.server.auth.json_response import PydanticJSONResponse
 from mcp.server.auth.middleware.client_auth import AuthenticationError, ClientAuthenticator
@@ -199,10 +222,12 @@ from mcp.server.auth.provider import (
     RefreshToken,
     TokenError,
 )
-from mcp.server.auth.routes import REVOCATION_PATH, cors_middleware
+from mcp.server.auth.routes import REVOCATION_PATH, build_metadata, cors_middleware
+from mcp.server.auth.settings import ClientRegistrationOptions, RevocationOptions
 from mcp.shared.auth import (
     InvalidRedirectUriError,
     OAuthClientInformationFull,
+    OAuthMetadata,
     OAuthToken,
 )
 from pydantic import AnyUrl, BaseModel, ConfigDict, ValidationError
@@ -265,6 +290,20 @@ STORAGE_KEY_SALT = b"plamotrack-mcp-oauth-state"
 #: reached — every entry point resolves first — but a bug that did reach it
 #: would fail loudly rather than reach a wrong server.
 UNRESOLVED_ENDPOINT = "https://oidc-provider-unresolved.invalid/"
+#: The client-authentication methods this authorization server accepts, at the
+#: token endpoint and at the revocation endpoint alike — the downstream client
+#: contract (§5.9 item 7 (k)), published by discovery (RFC 8414 §2) as
+#: `token_endpoint_auth_methods_supported` and
+#: `revocation_endpoint_auth_methods_supported`: every dynamically registered
+#: client is `none`; a CIMD client may bring `private_key_jwt`.
+CLIENT_AUTH_METHODS: tuple[str, ...] = ("none", "private_key_jwt")
+#: The assertion algorithms the pinned verifier accepts for `private_key_jwt`
+#: (FastMCP's CIMD validator builds its `JWTVerifier` with the default, RS256,
+#: for an inline JWKS and a `jwks_uri` alike) — published as both
+#: `*_endpoint_auth_signing_alg_values_supported`, which RFC 8414 requires once
+#: a JWT method is advertised. Measured by the contract suite: an ES256
+#: assertion under the document's own EC key is refused.
+CLIENT_ASSERTION_ALGORITHMS: tuple[str, ...] = ("RS256",)
 #: The key under `upstream_claims` in every token the proxy issues that holds
 #: the owner binding the grant was issued to.
 BINDING_CLAIM = "plamotrack_owner"
@@ -663,12 +702,16 @@ class RevocationForm(BaseModel):
     per the client's method, and are not fields of this model; the SDK's own
     model declared `client_secret` without a default, so Pydantic required a
     field no public client has and the contract's form was `400
-    invalid_request` (Codex #212 round 4, f12)."""
+    invalid_request` (Codex #212 round 4, f12). The hint is **any string**:
+    a recognised value chooses the lookup order and "if the server is unable
+    to locate the token using the given hint, it MUST extend its search"; an
+    unrecognised one "MUST be ignored" (RFC 7009 §2.2) — a two-value enum
+    here had made an empty or unknown hint a `400` (round 5, f15)."""
 
     model_config = ConfigDict(extra="ignore")
 
     token: str
-    token_type_hint: Literal["access_token", "refresh_token"] | None = None
+    token_type_hint: str | None = None
 
 
 class RevocationRefused(BaseModel):
@@ -908,25 +951,66 @@ class PlamotrackOAuthProxy(OAuthProxy):
             token_endpoint_url=f"{self.base_url}{REVOCATION_PATH}",
         )
 
+    def discovery_metadata(self) -> OAuthMetadata:
+        """The authorization-server document (RFC 8414 §2), owned here rather
+        than inherited: the SDK's `build_metadata` for the endpoints under the
+        issuer, PKCE, the scopes and the grant types, FastMCP's CIMD flag, and
+        then the client contract as this server actually enforces it — the
+        two methods for the token endpoint and for the revocation endpoint,
+        and the one assertion algorithm. The SDK's metadata advertised the
+        shared-secret methods it supports in general and none of what this
+        proxy admits at `/revoke` (Codex #212 round 5, f14). The contract
+        suite pins the document to these literals and drives every advertised
+        method end to end; `test_the_three_root_documents_…` pins the rest."""
+        metadata = build_metadata(
+            self.base_url,  # type: ignore[arg-type]
+            self.service_documentation_url,
+            self.client_registration_options or ClientRegistrationOptions(),
+            self.revocation_options or RevocationOptions(),
+        )
+        metadata.client_id_metadata_document_supported = self._cimd_manager is not None
+        metadata.token_endpoint_auth_methods_supported = list(CLIENT_AUTH_METHODS)
+        metadata.token_endpoint_auth_signing_alg_values_supported = list(
+            CLIENT_ASSERTION_ALGORITHMS
+        )
+        metadata.revocation_endpoint_auth_methods_supported = list(CLIENT_AUTH_METHODS)
+        metadata.revocation_endpoint_auth_signing_alg_values_supported = list(
+            CLIENT_ASSERTION_ALGORITHMS
+        )
+        return metadata
+
     def get_routes(self, mcp_path: str | None = None) -> list[Route]:
-        """FastMCP's protocol routes, with `/revoke` handled by
-        `GrantRevocation` over `RevocationLookup` — the SDK's own handler
-        steps, given a provider whose token lookup locates rather than
-        authorizes, the contract's wire form, and the client authenticator
-        the contract needs. The same seam FastMCP uses to replace `/authorize`
-        and `/token`."""
+        """FastMCP's protocol routes, with two of them the contract's: `/revoke`
+        handled by `GrantRevocation` over `RevocationLookup` — the SDK's own
+        handler steps, given a provider whose token lookup locates rather than
+        authorizes, the contract's wire form, and the client authenticator the
+        contract needs — and the authorization-server document served from
+        `discovery_metadata` (the root documents are this list filtered to
+        `/.well-known/`, so they carry it too). The same seam FastMCP uses to
+        replace `/authorize` and `/token`."""
         routes = super().get_routes(mcp_path)
-        handler = GrantRevocation(RevocationLookup(self), self._revocation_authenticator())  # type: ignore[arg-type]
-        return [
-            Route(
-                path=route.path,
-                endpoint=cors_middleware(handler.handle, ["POST", "OPTIONS"]),
-                methods=["POST", "OPTIONS"],
-            )
-            if isinstance(route, Route) and route.path == REVOCATION_PATH
-            else route
-            for route in routes
-        ]
+        revocation = GrantRevocation(RevocationLookup(self), self._revocation_authenticator())  # type: ignore[arg-type]
+        discovery = MetadataHandler(self.discovery_metadata())
+        rebuilt: list[Route] = []
+        for route in routes:
+            if isinstance(route, Route) and route.path == REVOCATION_PATH:
+                route = Route(
+                    path=route.path,
+                    endpoint=cors_middleware(revocation.handle, ["POST", "OPTIONS"]),
+                    methods=["POST", "OPTIONS"],
+                )
+            elif isinstance(route, Route) and route.path.startswith(
+                "/.well-known/oauth-authorization-server"
+            ):
+                route = Route(
+                    path=route.path,
+                    endpoint=cors_middleware(discovery.handle, ["GET", "OPTIONS"]),
+                    methods=route.methods,
+                    name=route.name,
+                    include_in_schema=route.include_in_schema,
+                )
+            rebuilt.append(route)
+        return rebuilt
 
     # -- the client kinds ------------------------------------------------------------
 
