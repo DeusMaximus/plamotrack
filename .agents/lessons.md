@@ -654,3 +654,42 @@ the session holding *this grant's* lock to the one parked on it — and the
 revocation lookup's change made the transparent/access cell of that race a real
 witness for the first time (before, revocation's lookup itself entered the locked
 transparent refresh, so the cell was green for a reason other than the lock).
+
+## The helper that padded the form (#212, round 4)
+
+Three rounds of grant-lifecycle findings had been fixed and were holding; round 4
+landed on the client-authentication boundary, and every one of its three findings was
+a requirement no test had expressed. The clearest: the suite's `revoke()` helper sent
+`client_secret=""` on every call, because the SDK's revocation form model required the
+field — so every revocation test in the lifecycle suite passed against a server that
+answered `400 invalid_request` to the form a public client actually sends. **Fifty-nine
+mutants, all killed, cannot expose a requirement the tests never state**; a helper
+that adapts a request to a defect makes the defect invisible to every test that uses
+it. Two more of the same shape: the registration helper always asked for `none`, so
+the SDK's response advertising `client_secret_post` and a secret over a stored public
+client was never seen; and the CIMD fixture only ever declared `none`, so the
+`private_key_jwt` method a CIMD document may declare was authenticated at `/token`
+(FastMCP installs its authenticator there) and refused at `/revoke` (the plain SDK one
+there) without a test noticing. The rule that came out of it, per the reviewer's
+brief: **define the client contract before editing, then test it from the wire** —
+which client kinds and authentication methods are supported, the exact forms and
+headers for each, on every endpoint that authenticates a client, through the whole
+lifecycle including absent, wrong and correct credentials, with the persisted state
+and the bearer's later fate asserted, and with the requests built by hand rather than
+through the SDK's models or a convenience helper. The contract suite
+(`tests/test_mcp_oauth_clients.py`) is that; its first run against the reviewed head
+went red on 32 of 39 rows, on the three findings' own assertions, and green on the
+seven controls. Choosing the contract also simplified the code: registration is open,
+so a downstream client secret authenticates nothing that PKCE and the rotating
+refresh token do not — every dynamically registered client is public, the registration
+response says so, and the SDK authenticator's Basic branch (which wants the client id
+in the form beside the header) becomes unreachable rather than something to repair.
+The companion rule for the SDK seam: **a documented extension point says where your
+code runs, not what surrounds it** — list, per endpoint, who owns client
+authentication, the request form, the lookup, persistence and error handling, and
+test each boundary you do not own from outside. The SDK's registration handler
+returns the very object it hands to `register_client`; the SDK's token handler and
+revocation handler disagree on the error code for a failed client authentication
+(`invalid_client` versus `unauthorized_client`); its revocation form and its token
+forms disagree on whether `client_secret` is optional. None of that is visible from
+the extension point's signature.

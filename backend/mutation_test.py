@@ -3688,8 +3688,8 @@ CASES = [
     (
         "moa-57. revocation's lookup is the bearer's (the /revoke route not rebuilt over it)",
         MCP_OAUTH,
-        "        routes = super().get_routes(mcp_path)\n        handler = RevocationHandler(",
-        "        routes = super().get_routes(mcp_path)\n        return routes\n        handler = RevocationHandler(",
+        "        routes = super().get_routes(mcp_path)\n        handler = GrantRevocation(",
+        "        routes = super().get_routes(mcp_path)\n        return routes\n        handler = GrantRevocation(",
         "locates_its_grant_without_asking_the_provider and access_token",
     ),
     (
@@ -3712,6 +3712,49 @@ CASES = [
         "        return AccessToken(\n            token=_reference(token),\n            client_id=client_id,",
         '        return AccessToken(\n            token=_reference(token),\n            client_id="",',
         "successful_revocation_kills_every_credential_of_the_grant and access_token",
+    ),
+    # --- Codex #212 round 4: one downstream client contract (f11–f13) -------------------------
+    (
+        "moa-61. the registration response left as the SDK built it (a secret advertised over a public client)",
+        MCP_OAUTH,
+        '        client_info.token_endpoint_auth_method = "none"\n        client_info.client_secret = None\n        client_info.client_secret_expires_at = None\n',
+        "        pass\n",
+        "every_dynamic_registration_is_a_public_client and client_secret_post",
+    ),
+    (
+        "moa-62. the revocation form requires a secret again (the public form is 400)",
+        MCP_OAUTH,
+        "    token: str\n    token_type_hint:",
+        "    token: str\n    client_secret: str\n    token_type_hint:",
+        "every_dynamic_registration_is_a_public_client and absent",
+    ),
+    (
+        "moa-63. the revocation authenticator is the SDK's plain one (private_key_jwt refused at /revoke)",
+        MCP_OAUTH,
+        "        if self._cimd_manager is None:  # pragma: no cover — CIMD is always on here",
+        "        if True:  # pragma: no cover — CIMD is always on here",
+        "cimd_client_authenticates_as_its_document_says and private_key_jwt",
+    ),
+    (
+        "moa-64. a revocation assertion's audience is the token endpoint",
+        MCP_OAUTH,
+        '            token_endpoint_url=f"{self.base_url}{REVOCATION_PATH}",',
+        '            token_endpoint_url=f"{self.base_url}/token",',
+        "private_key_jwt_client_is_refused_without_a_valid_assertion and revoke and wrong_audience",
+    ),
+    (
+        "moa-65. the revocation handler skips the client-ownership check",
+        MCP_OAUTH,
+        "        if token is not None and token.client_id == client.client_id:",
+        "        if token is not None:",
+        "client_cannot_revoke_another_clients_grant",
+    ),
+    (
+        "moa-66. a failed client authentication at /revoke answers 200",
+        MCP_OAUTH,
+        '            return PydanticJSONResponse(\n                status_code=401,\n                content=RevocationRefused(error="invalid_client", error_description=exc.message),',
+        '            return PydanticJSONResponse(\n                status_code=200,\n                content=RevocationRefused(error="invalid_client", error_description=exc.message),',
+        "private_key_jwt_client_is_refused_without_a_valid_assertion and revoke and absent",
     ),
 ]
 
@@ -4702,8 +4745,10 @@ TEST_FILES = [
     "tests/test_auth_unrouted.py",
     "tests/test_auth_oidc.py",
     # The #192 (moa-) set: MCP OAuth — every moa- kill lives here or in the
-    # route-policy / unrouted / oidc suites above.
+    # route-policy / unrouted / oidc suites above; moa-61…66 (the client
+    # contract, Codex round 4) kill in the wire-level contract suite.
     "tests/test_mcp_oauth.py",
+    "tests/test_mcp_oauth_clients.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.

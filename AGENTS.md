@@ -431,7 +431,18 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     client kind — a DCR client to its registration (`BoundDCRClient`: exact, loopback
     port free, *then* the operator allowlist, which FastMCP alone would check instead),
     the synthesised upstream-id client refused, a CIMD client (Claude web, ChatGPT web)
-    by its document — and the allowlist, when set, applies to every kind. The upstream
+    by its document — and the allowlist, when set, applies to every kind. **One
+    downstream client contract** (round 4, f11–f13): every dynamically registered client
+    is **public** (`none` + PKCE) whatever it asked for and the registration response says
+    so (`register_client` makes the SDK's object truthful before it is stored *or*
+    returned — the SDK returns that same object); a CIMD client authenticates as its
+    document says, `none` or `private_key_jwt`, on `/token` **and** `/revoke`
+    (`_revocation_authenticator`, the assertion bound to the revocation URL); the wire
+    forms are the RFCs' (`GrantRevocation` over `RevocationForm`: `client_id` in the
+    form, no secret from a public client, `401 invalid_client` on a failed client
+    authentication on either endpoint) and are tested from raw requests in
+    `tests/test_mcp_oauth_clients.py` — never through the SDK's models or a helper that
+    pads the form. The upstream
     endpoints are **properties over `OidcProvider.cached_metadata`** — no reader in
     FastMCP can hold a stale copy — and every entry point that reaches the provider
     fetches first (authorize, consent, the callback, the exchanges), so a provider down

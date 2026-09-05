@@ -80,6 +80,33 @@ revocation) rather than to the entry points one at a time:
   no scope (`GrantVerifier` declares none), so a personal access token — whose
   scopes are its own — stays valid on `/mcp/` in OIDC mode: `load_access_token`
   routes a `ptk_` bearer to `PersonalAccessTokenVerifier` unchanged.
+- **One downstream client contract** (RFC 7591 §3.2.1, RFC 6749 §2.3 and
+  §3.2.1, RFC 7523 §3; round 4, f11–f13), the same in the registration
+  response, the stored client, the code exchange, the refresh and the
+  revocation. Every dynamically registered client is a **public** client —
+  `token_endpoint_auth_method=none`, PKCE — whatever it asked for, and the
+  registration response says so with no secret and no secret expiry
+  (`register_client`): registration is open, so a downstream secret would be
+  minted to whoever asks and would authenticate nothing that PKCE and the
+  rotating refresh token do not; the authority is the owner's upstream login
+  and the grant machinery. The SDK's handler minted a secret for any method
+  but `none` and returned that object while FastMCP stored a public client,
+  so a client held a `client_secret_post` credential the server never read
+  (f11). A CIMD client authenticates as its document says — `none`, or
+  `private_key_jwt` with the document's keys — on `/token` (FastMCP's
+  authenticator) **and on `/revoke`** (`_revocation_authenticator`, the same
+  class bound to the revocation endpoint's URL as the assertion's audience),
+  where the plain SDK authenticator had refused the method the client linked
+  with (f13). The wire forms are the RFCs': `client_id` in the form on both
+  endpoints for every kind, no secret from a public client (one sent anyway
+  is ignored, as the SDK does), the assertion fields for `private_key_jwt`;
+  the SDK's revocation form model made `client_secret` a required field and
+  refused the public form outright (f12) — `GrantRevocation` is the SDK's
+  handler with `RevocationForm`, and a failed client authentication is `401
+  invalid_client` on either endpoint (RFC 6749 §5.2, which RFC 7009 §2.2.1
+  adopts; the SDK's two handlers disagreed). There are no `client_secret_*`
+  clients under this contract, so the SDK authenticator's Basic branch — which
+  wants the client id in the form beside the header — is unreachable.
 - **Client-redirect binding per client kind** (§5.6 proxy trust; T9).
   `get_client` refuses the client FastMCP synthesises for the upstream client
   id (anyone who knows the public id could be sent anywhere — the spike's
@@ -139,7 +166,8 @@ import logging
 from collections.abc import Callable
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import Any
+from functools import partial
+from typing import Any, Literal
 
 import asyncpg
 import httpx
@@ -148,6 +176,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from fastmcp.server.auth import AccessToken, TokenVerifier
+from fastmcp.server.auth.auth import PrivateKeyJWTClientAuthenticator
 from fastmcp.server.auth.oauth_proxy import OAuthProxy
 from fastmcp.server.auth.oauth_proxy.models import (
     ProxyDCRClient,
@@ -160,8 +189,10 @@ from fastmcp.utilities.ui import create_secure_html_response
 from key_value.aio.adapters.pydantic import PydanticAdapter
 from key_value.aio.stores.postgresql import PostgreSQLStore
 from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
+from mcp.server.auth.errors import stringify_pydantic_error
 from mcp.server.auth.handlers.revoke import RevocationHandler
-from mcp.server.auth.middleware.client_auth import ClientAuthenticator
+from mcp.server.auth.json_response import PydanticJSONResponse
+from mcp.server.auth.middleware.client_auth import AuthenticationError, ClientAuthenticator
 from mcp.server.auth.provider import (
     AuthorizationCode,
     AuthorizeError,
@@ -174,12 +205,12 @@ from mcp.shared.auth import (
     OAuthClientInformationFull,
     OAuthToken,
 )
-from pydantic import AnyUrl
+from pydantic import AnyUrl, BaseModel, ConfigDict, ValidationError
 from sqlalchemy import text
 from sqlalchemy.engine import make_url
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -626,6 +657,78 @@ class RevocationLookup:
         await self._proxy.revoke_token(token)
 
 
+class RevocationForm(BaseModel):
+    """RFC 7009 §2.1's form: the token and an optional hint. The client's
+    credentials — `client_id`, an assertion — are the authenticator's to read,
+    per the client's method, and are not fields of this model; the SDK's own
+    model declared `client_secret` without a default, so Pydantic required a
+    field no public client has and the contract's form was `400
+    invalid_request` (Codex #212 round 4, f12)."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    token: str
+    token_type_hint: Literal["access_token", "refresh_token"] | None = None
+
+
+class RevocationRefused(BaseModel):
+    """RFC 7009 §2.2.1's error response, with RFC 6749 §5.2's codes: a failed
+    client authentication is `invalid_client`, as the token endpoint says it
+    (the SDK's revocation handler said `unauthorized_client`; the contract
+    answers one code on both endpoints)."""
+
+    error: Literal["invalid_request", "invalid_client"]
+    error_description: str | None = None
+
+
+class GrantRevocation(RevocationHandler):
+    """The SDK's revocation handler, its steps in the SDK's order — authenticate
+    the client, read the form, locate the token (the hint first, the other
+    lookup second), check it is this client's, revoke, 200 — over the wire
+    form the contract accepts (`RevocationForm`) and the SDK's `no-store` on
+    every answer (the `RouteBinding` stamps it too). The provider is
+    `RevocationLookup`; the authenticator is the proxy's
+    `_revocation_authenticator`."""
+
+    async def handle(self, request: Request) -> Response:
+        try:
+            client = await self.client_authenticator.authenticate_request(request)
+        except AuthenticationError as exc:
+            return PydanticJSONResponse(
+                status_code=401,
+                content=RevocationRefused(error="invalid_client", error_description=exc.message),
+                headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+            )
+        try:
+            form = RevocationForm.model_validate(dict(await request.form()))
+        except ValidationError as exc:
+            return PydanticJSONResponse(
+                status_code=400,
+                content=RevocationRefused(
+                    error="invalid_request", error_description=stringify_pydantic_error(exc)
+                ),
+                headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
+            )
+        loaders = [
+            self.provider.load_access_token,
+            partial(self.provider.load_refresh_token, client),
+        ]
+        if form.token_type_hint == "refresh_token":
+            loaders.reverse()
+        token: AccessToken | RefreshToken | None = None
+        for loader in loaders:
+            token = await loader(form.token)
+            if token is not None:
+                break
+        # An unknown token is the RFC's 200; another client's token is too
+        # (RFC 7009 §2.1: a client may revoke only its own), and nothing moves.
+        if token is not None and token.client_id == client.client_id:
+            await self.provider.revoke_token(token)
+        return Response(
+            status_code=200, headers={"Cache-Control": "no-store", "Pragma": "no-cache"}
+        )
+
+
 # --- the redirect binding -----------------------------------------------------------
 
 
@@ -765,15 +868,55 @@ class PlamotrackOAuthProxy(OAuthProxy):
             transport=self.upstream_transport,
         )
 
+    # -- the client contract: registration -------------------------------------------
+
+    async def register_client(self, client_info: OAuthClientInformationFull) -> None:
+        """Every dynamically registered client is a public client — `none`,
+        PKCE — whatever method it asked for, and the registration response
+        says so (RFC 7591 §3.2.1: the server may substitute requested
+        metadata; the response describes what was registered). The SDK's
+        handler mints a secret for any method but `none` (its default when
+        the field is absent or null is `client_secret_post`), passes the
+        object here and returns **that object**, while FastMCP stores a
+        public `ProxyDCRClient` — so a client was told `client_secret_post`
+        and handed a secret the server never read (Codex #212 round 4, f11).
+        The object is made truthful before it is stored or returned: the
+        same value on the wire and in the store, and nothing minted that
+        nothing checks. Both MCP SDK clients adapt to it — they send a secret
+        only when the response carries one, by its method."""
+        client_info.token_endpoint_auth_method = "none"
+        client_info.client_secret = None
+        client_info.client_secret_expires_at = None
+        await super().register_client(client_info)
+
     # -- the routes ------------------------------------------------------------------
 
+    def _revocation_authenticator(self) -> ClientAuthenticator:
+        """Client authentication at `/revoke`, the same policy as at `/token`:
+        FastMCP's CIMD-capable authenticator — `none` and `private_key_jwt`,
+        the latter's assertion verified against the client's document and
+        bound to **this** endpoint's URL as its audience (RFC 7523 §3), used
+        once — where FastMCP itself installs it on `/token` alone and the
+        plain SDK authenticator refused the method a CIMD client had linked
+        with (round 4, f13). An assertion for the token endpoint is not one
+        for revocation, and the reverse."""
+        if self._cimd_manager is None:  # pragma: no cover — CIMD is always on here
+            return ClientAuthenticator(self)
+        return PrivateKeyJWTClientAuthenticator(
+            provider=self,
+            cimd_manager=self._cimd_manager,
+            token_endpoint_url=f"{self.base_url}{REVOCATION_PATH}",
+        )
+
     def get_routes(self, mcp_path: str | None = None) -> list[Route]:
-        """FastMCP's protocol routes, with `/revoke` handled over
-        `RevocationLookup` — the SDK's own handler and client authenticator,
-        given a provider whose token lookup locates rather than authorizes.
-        The same seam FastMCP uses to replace `/authorize` and `/token`."""
+        """FastMCP's protocol routes, with `/revoke` handled by
+        `GrantRevocation` over `RevocationLookup` — the SDK's own handler
+        steps, given a provider whose token lookup locates rather than
+        authorizes, the contract's wire form, and the client authenticator
+        the contract needs. The same seam FastMCP uses to replace `/authorize`
+        and `/token`."""
         routes = super().get_routes(mcp_path)
-        handler = RevocationHandler(RevocationLookup(self), ClientAuthenticator(self))  # type: ignore[arg-type]
+        handler = GrantRevocation(RevocationLookup(self), self._revocation_authenticator())  # type: ignore[arg-type]
         return [
             Route(
                 path=route.path,

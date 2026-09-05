@@ -190,7 +190,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` after #212: 461 cases over 46 target files** — counted the way the
+- **On `main` after #212: 467 cases over 46 target files** — counted the way the
   harness itself counts, `len(CASES)` and the distinct paths those cases mutate
   (migrations, the one test file and the two `frontend/` files included; the
   one-liner is `uv run python -c "import mutation_test as m, pathlib; print(len(m.CASES), len({pathlib.Path(c[1]).resolve() for c in m.CASES}))"`
@@ -283,7 +283,14 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   continuity check (a candidate must name the record's `(iss, sub)`, not merely the
   owner now), with moa-56 re-anchored by that round — the continuity check now sits
   inside its old anchor, so it replaces the verifier's call with the record's own
-  verdict instead; all 59 killed on the branch, `-k moa-` — three first-pass survivors in
+  verdict instead; 61…66 from round 4 — one downstream client contract, killed by the
+  **wire-level contract suite** `tests/test_mcp_oauth_clients.py` (the first cases whose
+  kills live in a file that builds every request by hand rather than through a helper:
+  the registration response left as the SDK built it, the revocation form requiring a
+  secret, the plain authenticator at `/revoke`, the assertion audience, the ownership
+  check, a 200 on a failed client authentication), with moa-57 re-anchored on the
+  handler class that replaced the SDK's; all 65 killed on the branch,
+  `-k moa-` — three first-pass survivors in
   round 2, each fixed outside the tuple: moa-47 a redundant second delete, moa-56 a
   fallback re-check masking the gate, moa-49 the fake's re-issued id_token identical
   to the original within one second)

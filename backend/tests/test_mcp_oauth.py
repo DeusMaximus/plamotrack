@@ -1403,9 +1403,12 @@ async def refresh(client, client_id: str, refresh_token: str) -> httpx.Response:
 
 
 async def revoke(client, client_id: str, token: str, *, hint: str | None = None) -> httpx.Response:
-    """RFC 7009 through the SDK's model: `client_secret` is a required form
-    field even for a public client, so a native client sends it empty."""
-    form = {"token": token, "client_id": client_id, "client_secret": ""}
+    """RFC 7009 §2.1 as a public client sends it: the token and the client id,
+    no secret. (This helper once sent `client_secret=""` because the SDK's
+    form model required the field — and so adapted every revocation test to
+    a defect a public client would have met: Codex #212 round 4, f12. The
+    contract suite, `test_mcp_oauth_clients.py`, drives the form itself.)"""
+    form = {"token": token, "client_id": client_id}
     if hint is not None:
         form["token_type_hint"] = hint
     return await client.post("/mcp/revoke", data=form)

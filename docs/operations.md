@@ -126,6 +126,12 @@ so link a client only where you would paste a read-and-write access token.
 Personal access tokens keep working on `/mcp/` in this mode too; a client that can
 send a header needs nothing new.
 
+Clients that register themselves are registered as **public** clients (PKCE, no
+client secret) whatever they ask for, and the registration response says so — a
+client secret would add nothing here, since anyone can register. Claude web and
+ChatGPT web bring their own client metadata documents instead of registering and
+authenticate the way those documents say, on every endpoint.
+
 Ending a link: a client that revokes either of its tokens (`POST /mcp/revoke`) ends
 the whole grant at once — its access token, its refresh token, and, best effort,
 the provider's own refresh token — recorded as `auth.mcp_grant_revoked`, and it
