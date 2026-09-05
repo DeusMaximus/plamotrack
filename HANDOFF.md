@@ -41,6 +41,54 @@ Template:
 
 ---
 
+## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 4 (GPT-6, NO-GO: 2×P2/P3, the client-auth boundary) answered on the branch — head `139b26e`, reply posted (issuecomment-5549077553), PR body amended, round-5 brief printed
+
+- **Done:** per Codex's own brief to the owner (contract first, tested from the wire, SDK
+  ownership audited, grant machinery untouched). **The contract** (design §5.9 item 7 (k),
+  AGENTS.md rule 13, the module docstring): every dynamically registered client is **public**
+  (`none` + PKCE) whatever it asked for and the registration response says so — no secret, no
+  expiry; a CIMD client authenticates as its document says (`none` / `private_key_jwt`) on
+  `/token` **and** `/revoke`, the assertion bound to the endpoint; wire forms are the RFCs'
+  (`client_id` in the form for every kind, no secret from a public client, `401 invalid_client`
+  on a failed client authentication on either endpoint). Code (`app/auth/mcp_oauth.py`): **f11**
+  `register_client` makes the SDK's object truthful before it is stored *or* returned (the SDK's
+  handler returns that same object); **f12** `GrantRevocation` over `RevocationForm` +
+  `RevocationRefused` (the SDK's steps, an optional-secret form, `invalid_client`); **f13**
+  `_revocation_authenticator` = FastMCP's `PrivateKeyJWTClientAuthenticator` bound to `/revoke`.
+  Tests: **new `tests/test_mcp_oauth_clients.py`, 27 rows, every request built by hand** (six
+  requested methods × the lifecycle; the secret field absent/empty/stray; hint × half; CIMD
+  none/private_key_jwt lifecycle; refusals on both endpoints × absent/wrong key/wrong
+  audience/replayed; the missing-field rows); the lifecycle suite's `revoke()` helper now sends
+  the public form (it had padded `client_secret=""` — the lesson). Negative control at
+  `4b720ec`: **39 rows, 32 red / 7 green** on the findings' own assertions. Mutants: moa-61…66,
+  the contract suite added to `TEST_FILES`, moa-57 re-anchored on the new handler class; **65/65 killed**. Corrections asked for by the review:
+  round 3's greens are three refresh controls + four race cells (PR body); a *freshly*
+  re-issued old-owner id_token ends the record, only omitted/identical carries forward (PR body
+  call 5); the expired-access policy documented (design (e)). Docs: design §5.5 row 8, §5.9 (e)
+  + (k) with the per-endpoint ownership audit; operations (how clients register); procedure
+  moa- paragraph + count (**467/46**); lessons → "The helper that padded the form".
+- **Decisions:** public-only DCR by substitution (RFC 7591 §3.2.1), not refusal — the MCP Python
+  client *requests* `client_secret_post` by default; confidential DCR rejected (a credential with
+  no authority behind it, plus the SDK's Basic branch to repair, plus a second matrix); one
+  error code `invalid_client` on both endpoints (RFC 6749 §5.2 via RFC 7009 §2.2.1), which
+  nothing in the matrix asserts; `client_id` stays required in the form beside an assertion
+  (parity with FastMCP's `/token`); no packaged re-run (no route/registry/nginx change).
+- **State:** backend **2094 green**, lint/format clean, `render_ingress.py --check` clean;
+  frontend untouched. Mutants **65/65 killed** (scratch runner, targets hashed, restored). Commit
+  `139b26e` pushed; PR #212 body amended; the reply is issuecomment-5549077553. Codex's round-4 probes are at
+  `/private/tmp/plamotrack-212-r4/` (its `test_review.py` is the 44-row matrix — not tracked,
+  will not survive a reboot). Dev `db` up, Keycloak spike up. LXC untouched (**stays put until
+  M6 is finished**).
+- **Next:** (1) **Codex round 5 on PR #212, in a new session**: the brief was printed in this
+  session's chat — regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming
+  runtime head `139b26e`, the branch tip (hand-off commits only above it), `main` `a497481`,
+  rules 1/6/7.1/9/11/12/13; findings numbered from 14; reproduce at `139b26e` first; the
+  contract suite is where a client-auth finding's reproduction belongs. If GO: squash-merge with
+  `Closes #192`; nothing to fold in. (2) After merge: #215 (one line in `ci.yml`), #193, M6-9
+  TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` against a packaged stack with
+  the Keycloak spike, the register burst concurrent — then the LXC upgrade; relink any MCP
+  client first (records written before `e90550f` carry no binding and end at their next refresh).
+
 ## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 3 (GPT-6, NO-GO: P2/P3) answered on the branch — head `4b720ec`, reply posted (issuecomment-5547333495), PR body amended, round-4 brief printed
 
 - **Done:** both findings reproduced at `e90550f` on their own assertions (the 12 new rows written
@@ -252,38 +300,3 @@ Template:
   then the LXC upgrade. Release-notes items so far: `AUTH_MODE=oidc`; the mode switch sign-out;
   the setup token once on local→oidc; `session.auth_mode`; **`MCP_OAUTH_SIGNING_KEY` required in
   OIDC mode and OIDC mode needs an https `PUBLIC_BASE_URL`**; MCP clients can link by signing in.
-
-## 2026-09-05 — Claude Code (Fable 5.1) — #191 (M6-6) MERGED (PR #209 → `b84f757`, Codex round 3 GO); oidc- fold-in MERGED (PR #211 → `ffaddd4`)
-
-- **Done:** Codex round 3 (GPT 5.6 Sol) on `59eb9a4`: **GO, no findings**. PR #209 squash-merged
-  to `main` as `b84f757` (`Closes #191` — issue closed), branch deleted. Then the usual
-  harness-only fold-in, PR #211 → `ffaddd4`: 34 `oidc-` cases in `backend/mutation_test.py`
-  (constants `OIDC_SVC`, `AUTH_ROUTER`, `MODE`; `TEST_FILES` + `tests/test_auth_oidc.py`;
-  procedure count 368/32 → 402/33 with the oidc- paragraph). Not folded: oidc-1/2/3/11
-  (anchored on the joserfc registry round 1 replaced; superseded by 23/22/27/26) and oidc-13
-  (equivalent — no symmetric key in the JWKS); oidc-20 and oidc-25 re-anchored. `-k oidc-`
-  all 34 killed on the fold-in head, no external review (the #199/#201/#203/#207 precedent).
-- **Decisions:** owner's — #192 (M6-7, MCP OAuth) starts in a **new session** (context, not
-  scope); this session closes here. Memory (agent-side): the owner switches sessions at
-  ~80–90% context after a hand-off update and never relies on compaction.
-- **State:** `main` at `ffaddd4` + this entry; tree clean. Backend 1949 green at the merge,
-  frontend 487. Dev DB at `4f3a9c1e7b2d` (head), owner bound to the Keycloak `owner` user
-  (spike realm) in OIDC mode and still holding the local credential — note the migration
-  stamped its existing sessions `local`, so the next OIDC-mode start of the API signs that
-  browser out once (sweep + `auth.mode_changed` row); local-mode starts are unaffected.
-  Keycloak spike container state as the #190 entry left it (`.agents/spikes/190/`, tracked at
-  `a642d0b`). The LXC is on the pre-M6 reset and **stays put until M6 is finished** (owner,
-  03/09) — it will need `ALLOWED_HOSTS` and, if it ever switches modes, expect the one-time
-  sign-out.
-- **Next:** (1) **#192 (M6-7) MCP OAuth** on a branch off `main` — build from design §5.9
-  item 7 and the #190 spike's decisions (`.agents/spikes/190/findings.md` §10: CIMD on,
-  synthesised upstream-id client refused, allowlist narrows DCR only, path-aware OpenID doc
-  kept and the bare one pruned, Postgres adapter for proxy state with the table owned by
-  Alembic, explicit `MCP_OAUTH_SIGNING_KEY`, `verify_id_token=True`, owner binding at
-  issuance, fixed rw scope mapping); same issuer/client as #191, so `services/oidc.py`'s
-  provider/discovery is the thing to reuse, and family 8's registry declarations + the
-  generated ingress rejections are where `test_route_policy.py` / `test_ingress_generation.py`
-  will push back first; (2) #193 audit/rate limiting; (3) M6-9 TLS docs, then the M6 release
-  (gate in `.agents/testing-and-review.md`) and only then the LXC upgrade. Release-notes
-  items so far: `AUTH_MODE=oidc`; a mode switch signs every browser out at the first start in
-  the new mode; a local→oidc switch needs the setup token once; `session.auth_mode` migration.
