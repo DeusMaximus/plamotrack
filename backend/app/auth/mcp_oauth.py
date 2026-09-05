@@ -193,10 +193,11 @@ revocation) rather than to the entry points one at a time:
   RFC 3986's `absolute-URI` grammar (`ABSOLUTE_URI`) before `urlsplit` — a
   parser that accepted a tab in the authority, a carriage return in the
   path and a leading NUL, and never looked at the query the comparison
-  ignores — and the inline key set has a contract in front of FastMCP's
-  extraction (`with_usable_inline_keys`: `keys` an array, non-object
-  entries ignored as RFC 7517 §5.1 says, none usable a refusal), where a
-  `keys` object or a null entry had been a 500. *And the selected key keeps
+  ignores — and the inline key set has a contract where FastMCP's
+  extraction read it (`keys` an array, entries that cannot be processed
+  ignored as RFC 7517 §5.1 says, none usable a refusal — in the validator's
+  own inline selection since round 11), where a `keys` object or a null
+  entry had been a 500. *And the selected key keeps
   its authorization* (round 10, f33): FastMCP converted the JWK it selected
   to a PEM before verifying, on the inline and the fetched path alike, so
   the key's `alg`, `use` and `key_ops` (RFC 7517 §4.2–§4.4, RFC 8725 §3.1)
@@ -1026,12 +1027,11 @@ class ClientAssertionAuthenticator(ClientAuthenticator):
        method it names, the document whose keys verify the assertion, and
        the authenticated client the handler receives are all that record.
     3. **Dispatch by the snapshot's method.** `private_key_jwt`: the
-       assertion type, the assertion, the inline key set's contract
-       (`with_usable_inline_keys` — round 9, f32), then FastMCP's own
-       validator with the selected key's authorization kept
-       (`RestrictedKeyAssertionValidator` — signature, issuer, audience,
-       lifetime, replay, and the key's `alg`/`use`/`key_ops`; round 10,
-       f33). `none`: the client id alone; an assertion presented to it is
+       assertion type, the assertion, then FastMCP's own validator with the
+       inline set's usability and selection owned and the selected key's
+       authorization kept (`RestrictedKeyAssertionValidator` — signature,
+       issuer, audience, lifetime, replay, and the key's `alg`/`use`/`key_ops`;
+       rounds 9–11). `none`: the client id alone; an assertion presented to it is
        refused, since there is no key it could be verified against; a stray
        `client_secret` with no assertion is ignored, as the SDK ignores it
        (no mechanism is in use). Any other method is refused.
@@ -1081,13 +1081,12 @@ class ClientAssertionAuthenticator(ClientAuthenticator):
                 )
             if not isinstance(assertion, str) or not assertion:
                 raise AuthenticationError("Missing client_assertion")
-            verifying = with_usable_inline_keys(client)
-            document = getattr(verifying, "cimd_document", None)
+            document = getattr(client, "cimd_document", None)
             if document is None or document.token_endpoint_auth_method != "private_key_jwt":
                 raise AuthenticationError("Client must have a CIMD document for private_key_jwt")
             try:
                 await self.validator.validate_assertion(
-                    assertion, verifying.client_id, self.endpoint_url, document
+                    assertion, client.client_id, self.endpoint_url, document
                 )
             except ValueError as exc:
                 raise AuthenticationError(f"Invalid client assertion: {exc}") from exc
@@ -1200,21 +1199,35 @@ class RestrictedKeyAssertionValidator(CIMDAssertionValidator):
     (`PlamotrackOAuthProxy.assertion_validator`), so the replay cache is one."""
 
     def _extract_public_key_from_jwks(self, token: str, jwks: dict) -> Any:
-        """The inline selection, by the SDK's own rule — the key whose `kid`
-        the assertion names, else the only key when it names none, else the
-        SDK's refusal — returning the **record selected**, not a PEM and not
-        the first record with its material (round 11, f34). The set arrives
-        filtered to usable keys (`with_usable_inline_keys`), so the
-        single-key fallback counts what the remote path counts (f35)."""
-        keys = [key for key in jwks.get("keys", []) if isinstance(key, dict)]
-        if not keys:
-            raise ValueError("JWKS document contains no keys")
+        """The inline set's usability and selection in one place, as the SDK's
+        remote path has them (RFC 7517 §5 and §5.1; round 9, f32; round 11,
+        f34–f35): `keys` must be an array; an entry that is not an object, or
+        whose material FastMCP cannot import — the remote path's own skip set
+        (`_pem_of`) — is ignored; none usable is a refusal; then the SDK's own
+        rule — the key whose `kid` the assertion names, else the only usable
+        key when it names none, else the SDK's refusal — returning the
+        **record selected**, not a PEM and not the first record with its
+        material. The SDK's extraction called `.get` on whatever each entry
+        was (a 500), counted an unusable object against the single-key
+        fallback, and converted the selection to a PEM (its `alg`, `use` and
+        `key_ops` lost). Round 9 filtered a copy of the record in front of
+        the SDK's extraction instead; once the selection was written out here
+        (round 11) that copy was a second owner of the same decision, and its
+        mutants went equivalent, so it retired into this."""
+        keys = jwks.get("keys") if isinstance(jwks, dict) else None
+        if not isinstance(keys, list):
+            raise ValueError(
+                "the client's key set is malformed: keys is not an array (RFC 7517 §5)"
+            )
+        usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]
+        if not usable:
+            raise ValueError("the client's key set holds no usable key (RFC 7517 §5.1)")
         kid = _header_kid(token)
-        selected = next((key for key in keys if kid and key.get("kid") == kid), None)
+        selected = next((key for key in usable if kid and key.get("kid") == kid), None)
         if selected is None:
-            if len(keys) != 1:
+            if len(usable) != 1:
                 raise ValueError(f"No matching key found for kid={kid} in JWKS")
-            selected = keys[0]
+            selected = usable[0]
         return selected
 
     async def validate_assertion(
@@ -1232,44 +1245,6 @@ class RestrictedKeyAssertionValidator(CIMDAssertionValidator):
                     ssrf_safe=True,
                 )
         return await super().validate_assertion(assertion, client_id, token_endpoint, cimd_doc)
-
-
-def with_usable_inline_keys(client: OAuthClientInformationFull) -> OAuthClientInformationFull:
-    """RFC 7517 §5 and §5.1 on a CIMD document's inline key set, in front of
-    FastMCP's key extraction: a JWK Set is an object whose `keys` member is
-    an array of JWK objects, and an entry that cannot be processed is
-    ignored. The extraction called `.get` on whatever each entry was, so a
-    `keys` object, a `keys` string or a null entry was a **500** on both
-    endpoints, and a null entry beside the client's key failed where the
-    remote path skips it (Codex #212 round 9, f32); and "cannot be
-    processed" is the remote path's own predicate — an object whose material
-    FastMCP cannot import (an unsupported `kty`, a missing member) is
-    ignored too, where counting it had denied the single-key fallback to an
-    assertion naming no `kid` (round 11, f35). A `keys` that is not an
-    array, or a set with no usable entry, is a client-authentication failure;
-    unusable entries beside a usable one are dropped from a **copy** of the
-    record handed to the validator — the snapshot itself is what the handler
-    receives — so the matching key is selected as the remote path selects it.
-    A document with no inline set is left to the SDK (its own refusal, or the
-    remote set)."""
-    document = getattr(client, "cimd_document", None)
-    if document is None or document.jwks is None:
-        return client
-    keys = document.jwks.get("keys")
-    if not isinstance(keys, list):
-        raise AuthenticationError(
-            "the client's key set is malformed: keys is not an array (RFC 7517 §5)"
-        )
-    usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]
-    if not usable:
-        raise AuthenticationError("the client's key set holds no usable key (RFC 7517 §5.1)")
-    if len(usable) == len(keys):
-        return client
-    return client.model_copy(
-        update={
-            "cimd_document": document.model_copy(update={"jwks": {**document.jwks, "keys": usable}})
-        }
-    )
 
 
 #: RFC 9110 §11.1: an authentication scheme is a token. Echoed into the

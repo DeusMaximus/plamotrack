@@ -194,7 +194,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` after #212: 510 cases over 46 target files** — counted the way the
+- **On `main` after #212: 508 cases over 46 target files** — counted the way the
   harness itself counts, `len(CASES)` and the distinct paths those cases mutate
   (migrations, the one test file and the two `frontend/` files included; the
   one-liner is `uv run python -c "import mutation_test as m, pathlib; print(len(m.CASES), len({pathlib.Path(c[1]).resolve() for c in m.CASES}))"`
@@ -338,8 +338,12 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   and the remote record re-identified by material (the first copy judged), an
   object-shaped unusable inline key counted before the fallback — all three killed in
   the contract suite, with moa-102/104/106 re-anchored by that round (the usability
-  predicate, the inline selection written out, the record checked against the PEM);
-  all 108 killed on the branch by the tracked harness on the committed tree,
+  predicate, the inline selection written out, the record checked against the PEM)
+  and **moa-101 and moa-103 retired** by it: once the inline selection was the
+  validator's own, round 9's copy-based filter was a second owner of the same decision
+  and its three mutants went equivalent (GREEN on the full pass — the procedure's
+  take-it-out rule); the filter retired into the selection and moa-102 followed it;
+  all 106 killed on the branch by the tracked harness on the committed tree,
   `-k moa-` — three first-pass survivors in
   round 2, each fixed outside the tuple: moa-47 a redundant second delete, moa-56 a
   fallback re-check masking the gate, moa-49 the fake's re-issued id_token identical

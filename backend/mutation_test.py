@@ -4012,6 +4012,11 @@ CASES = [
     ),
     # --- Codex #212 round 9 (f31–f32): parsing is not validation; the inline key
     # --- set's contract in front of the SDK's extraction. ------------------------
+    # moa-101 (the inline key set handed to the SDK's extraction unchecked) and
+    # moa-103 (the filtered copy not handed to the validator) retired in round 11:
+    # once the inline selection was the validator's own, the copy-based filter
+    # they mutated was a second owner of the same decision and both went
+    # equivalent (GREEN on the full pass); the filter retired into the selection.
     (
         "moa-100. the URI grammar not applied (urlsplit as validation again)",
         MCP_OAUTH,
@@ -4020,26 +4025,12 @@ CASES = [
         "resource_is_compared_on_the_whole_uri and token and bad_percent",
     ),
     (
-        "moa-101. the inline key set handed to the SDK's extraction unchecked",
-        MCP_OAUTH,
-        "            verifying = with_usable_inline_keys(client)",
-        "            verifying = client",
-        "malformed_inline_key_set and token and null_entry",
-    ),
-    (
         # Re-anchored in round 11 (f35 made the predicate the remote path's).
         "moa-102. unusable entries not dropped from the set (RFC 7517 §5.1 not applied)",
         MCP_OAUTH,
-        "    usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]",
-        "    usable = list(keys)",
+        "        usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]",
+        "        usable = list(keys)",
         "malformed_inline_key_set and revoke and null_beside_key",
-    ),
-    (
-        "moa-103. the filtered copy not handed to the validator",
-        MCP_OAUTH,
-        "    if len(usable) == len(keys):\n        return client\n    return client.model_copy(",
-        "    if True:\n        return client\n    return client.model_copy(",
-        "malformed_inline_key_set and token and null_beside_key",
     ),
     # --- Codex #212 round 10 (f33): the selected key keeps its authorization — the
     # --- JWK itself, not its PEM, through FastMCP's verifier on both paths. ----------
@@ -4085,8 +4076,8 @@ CASES = [
     (
         "moa-109. an object-shaped unusable inline key counted before the fallback",
         MCP_OAUTH,
-        "    usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]",
-        "    usable = [key for key in keys if isinstance(key, dict)]",
+        "        usable = [key for key in keys if isinstance(key, dict) and _pem_of(key) is not None]",
+        "        usable = [key for key in keys if isinstance(key, dict)]",
         "unusable_inline_key_is_ignored and inline and token and unsupported_kty",
     ),
 ]

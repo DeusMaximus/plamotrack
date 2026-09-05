@@ -1606,12 +1606,13 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    authority, a carriage return in the path and a leading NUL (some silently stripped),
    and never looked at the query the comparison ignores (an invalid percent-escape, an
    unescaped space) — with a valid percent-escape admitted; and the inline key set of a
-   CIMD document has a contract in front of FastMCP's extraction
-   (`with_usable_inline_keys`: `keys` must be an array, entries that are not objects
-   are ignored as RFC 7517 §5.1 says — dropped from a copy handed to the validator, the
-   snapshot itself what the handler receives — and a set with no usable entry is a
-   client refusal), where a `keys` object or string or a null entry had been a 500 on
-   both endpoints. *And the selected key keeps its authorization* (round 10, f33): a
+   CIMD document has a contract where FastMCP's extraction read it (`keys` must be an
+   array, entries that cannot be processed are ignored as RFC 7517 §5.1 says, and a
+   set with no usable entry is a client refusal), where a `keys` object or string or a
+   null entry had been a 500 on both endpoints — round 9 filtered a copy of the record
+   in front of the SDK's extraction; since round 11 the validator's own inline
+   selection owns usability and selection together, as the SDK's remote path does,
+   and the copy retired. *And the selected key keeps its authorization* (round 10, f33): a
    JWK's `alg`, `use` and `key_ops` are the key's authorization for an operation (RFC
    7517 §4.2–§4.4; RFC 8725 §3.1 requires the key–algorithm association checked), and
    FastMCP converted the JWK it selected to a PEM before verifying, on the inline and
@@ -1656,7 +1657,8 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    replay the SDK's validator behind it; the **resource decision and its
    `invalid_target` redirect** — ours (`resource_identity`, `authorize`), the client and
    redirect-URI validation before it the SDK's; the **challenge** on a 401 — ours; the
-   **inline key set's shape** — ours (`with_usable_inline_keys`); the **selected key's
+   **inline key set's shape and selection** — ours (the validator's own inline
+   selection); the **selected key's
    authorization** — ours in the sense that the JWK itself reaches the verifier
    (`RestrictedKeyAssertionValidator`, `RestrictedKeyVerifier`), the selection, the
    fetch, the cache and the signature FastMCP's and the restriction check joserfc's
