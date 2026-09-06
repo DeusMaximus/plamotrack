@@ -286,15 +286,18 @@ jobs:
       # canonical positives beside them (signed in as the owner the claim above
       # creates; anonymous, they are the dependency's 401), no Location anywhere
       # but nginx's own relative 301, the security headers, and T3's hostile
-      # Host / Origin and listed-name rows at this layer.
+      # Host / Origin and listed-name rows at this layer. The variable-valued
+      # options are spelled attached (--flag="$VAR"): the setup token is
+      # token_urlsafe, so about one run in 64 it starts with "-", which
+      # argparse reads as an option when it is a separate word (#215).
       - name: Run the ingress matrix
         working-directory: backend
         run: >
           uv run python ingress_matrix.py http://127.0.0.1:8080
           --allowed-host ci.plamotrack.test
-          --setup-token "$SETUP_TOKEN" --password ingress-matrix-ci-password
-          --token-out "$RUNNER_TEMP/plamotrack-pat"
-          --log-secrets-out "$RUNNER_TEMP/plamotrack-log-secrets"
+          --setup-token="$SETUP_TOKEN" --password ingress-matrix-ci-password
+          --token-out="$RUNNER_TEMP/plamotrack-pat"
+          --log-secrets-out="$RUNNER_TEMP/plamotrack-log-secrets"
 
       # The transport is bearer-only (§5.5 family 7; #189): a real MCP client
       # with the token the matrix minted lists the tools through nginx, and
