@@ -1,5 +1,5 @@
-"""Audit events (§5.6, log and audit hygiene; M6-3 writes the first rows, #193
-owns retention and the rest of the vocabulary).
+"""Audit events (§5.6, log and audit hygiene; M6-3 wrote the first rows and
+M6-8/#193 completed ingress recording and retention).
 
 One row per security-relevant event, carrying who (the principal's kind and its
 credential subject — an id, never the secret), where from (the client address as
@@ -11,12 +11,19 @@ records commit or roll back together.
 
 from __future__ import annotations
 
+import hashlib
+from datetime import datetime
+
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
+from starlette.types import Scope
 
-from app.auth.principal import Principal
-from app.ingress import CLIENT_ADDRESS_KEY
+from app.auth.principal import Principal, anonymous, internal
+from app.db import session_scope
+from app.ingress import CLIENT_ADDRESS_KEY, IngressPolicy, client_address_from_scope
 from app.models import AuditEvent
+from app.services.write_gate import acquire_write_gate
 
 # --- the M6-3 vocabulary --------------------------------------------------------
 SETUP_CLAIMED = "auth.setup_claimed"
@@ -35,6 +42,11 @@ TOKEN_REVOKED = "auth.token_revoked"
 #: client was never updated — either way worth a row (§5.6, log and audit).
 TOKEN_USE_AFTER_REVOKE = "auth.token_use_after_revoke"
 
+# --- ingress and maintenance vocabulary (#193) ---------------------------------
+HOST_REJECTED = "ingress.host_rejected"
+ORIGIN_REJECTED = "ingress.origin_rejected"
+AUDIT_PRUNED = "auth.audit_pruned"
+
 # --- the M6-6 vocabulary (#191) -------------------------------------------------
 #: A signed-in identity that is not the bound owner: refused, no session (T6).
 OIDC_IDENTITY_REFUSED = "auth.oidc_identity_refused"
@@ -51,19 +63,34 @@ AUTH_MODE_CHANGED = "auth.mode_changed"
 
 # --- the M6-7 vocabulary (#192) -------------------------------------------------
 #: The MCP OAuth proxy issued an access/refresh token pair to a client after the
-#: bound owner signed in at the provider (§5.5 family 8). `detail` names the
-#: MCP client id — a DCR id or a CIMD URL — never a token.
+#: bound owner signed in at the provider (§5.5 family 8). `detail` fingerprints
+#: the MCP client id — never the raw DCR id/CIMD URL or a token.
 MCP_GRANT_ISSUED = "auth.mcp_grant_issued"
 #: A provider identity other than the bound owner completed the MCP OAuth
 #: round trip and was refused at issuance — nothing minted, nothing stored
-#: (§5.6 open redirect; T6). `detail` names the subject, as the browser login's
-#: refusal does.
+#: (§5.6 open redirect; T6). `detail` fingerprints the subject, as the browser
+#: login's refusal does.
 MCP_IDENTITY_REFUSED = "auth.mcp_identity_refused"
 #: A client revoked one of its issued tokens at `/mcp/revoke` and the whole grant
 #: went with it — the access token, the refresh token and, best effort, the
 #: provider's own refresh token (RFC 7009 §2.1; Codex #212 round 1, f1).
-#: `detail` names the client and which half was presented, never a token.
+#: `detail` fingerprints the client and names which half was presented, never a token.
 MCP_GRANT_REVOKED = "auth.mcp_grant_revoked"
+
+
+def external_reference(value: str | None) -> str:
+    """A bounded correlation reference, never an external identifier's raw text.
+
+    OAuth client ids can be URLs containing credentials in any component; an
+    untrusted OIDC subject is opaque too. Fingerprint the entire value rather
+    than displaying part of it or guessing which substring is sensitive. This
+    changes only audit metadata, never protocol identifiers or authorization.
+    Missing and empty values remain distinct; surrogatepass handles every Python
+    string without making an audit field change the request's outcome.
+    """
+    if value is None:
+        return "none"
+    return "sha256:" + hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()
 
 
 def client_address_of(request: Request | None) -> str | None:
@@ -98,3 +125,55 @@ async def record_event(
     )
     session.add(event)
     return event
+
+
+async def record_ingress_rejection(
+    event_type: str,
+    scope: Scope,
+    *,
+    policy: IngressPolicy,
+    setting: str,
+) -> None:
+    """Persist a Host/Origin refusal before routing.
+
+    The guard deliberately runs before credential resolution, so the caller is
+    recorded as anonymous and no credential-bearing header is inspected. The
+    target is the decoded path only — never the query string or request body.
+    This owns its transaction because a rejected request never reaches FastAPI's
+    request-scoped database session.
+    """
+    async with session_scope() as session:
+        await record_event(
+            session,
+            event_type,
+            principal=anonymous(),
+            target=scope.get("path"),
+            detail=f"method={scope.get('method', '')} setting={setting}",
+            client_address=client_address_from_scope(scope, policy),
+        )
+
+
+async def prune_events(
+    session: AsyncSession,
+    *,
+    before: datetime,
+) -> int:
+    """Delete audit rows older than ``before`` and record the maintenance act.
+
+    This is host-side maintenance, not an HTTP route. The strict ``<`` boundary
+    makes a row exactly at the requested cutoff a keeper, and the prune event is
+    appended after the delete so it cannot remove itself.
+    """
+    await acquire_write_gate(session)
+    result = await session.execute(delete(AuditEvent).where(AuditEvent.occurred_at < before))
+    deleted = result.rowcount or 0
+    await record_event(
+        session,
+        AUDIT_PRUNED,
+        principal=internal(),
+        target="maintenance prune-audit",
+        detail=f"deleted={deleted} before={before.isoformat()}",
+        client_address="host",
+    )
+    await session.commit()
+    return deleted

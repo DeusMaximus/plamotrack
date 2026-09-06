@@ -395,7 +395,7 @@ no secrets to forks, stale runs cancelled.
 | --- | --- |
 | Backend | ruff check + format check, pytest against Postgres 16 |
 | Frontend | oxlint, vitest, translation coverage report to the step summary, `tsc -b` + Vite build |
-| Integration | Playwright e2e (one worker, one retry, trace on first retry, HTML report uploaded **only on failure**), then the packaged Compose stack **from an empty volume** (`down -v` first — the e2e claimed the owner in the same project's database, and a claimed instance prints no token): UI/liveness/`/api/auth/session` probes (a fresh stack must say `unclaimed`), the **setup token read from `docker compose logs api`** the way an operator would, **`backend/ingress_matrix.py`** (T2 — claims the stack with that token through nginx, then the `/api/` alias rejections in their normalised spellings, the canonical positives signed in beside an anonymous `401`, the cookie-borne writes with the absent-Origin `403`, no `Location` but nginx's relative 301, security headers, hostile Host/Origin and the listed name `ci.plamotrack.test` from the CI `.env`; since #189 it also mints two personal access tokens and proves the bearer rows — the MCP positives carry one, an anonymous MCP initialize is the bare `Bearer` challenge, a read token cannot write, a write token cannot manage tokens, a wrong secret and a revoked token are `invalid_token` on REST and MCP — and writes the write token to `$RUNNER_TEMP` with `--token-out`), and an MCP `tools/list` through nginx **with that token** by a real `fastmcp` client, plus the same client refused without one |
+| Integration | Playwright e2e (one worker, one retry, trace on first retry, HTML report uploaded **only on failure**), then the packaged Compose stack **from an empty volume** (`down -v` first — the e2e claimed the owner in the same project's database, and a claimed instance prints no token): UI/liveness/`/api/auth/session` probes (a fresh stack must say `unclaimed`), the **setup token read from `docker compose logs api`** the way an operator would, **`backend/ingress_matrix.py`** (T2/T8 — claims the stack with that token, signs out and performs a real password login through nginx; checks the `/api/` alias rejections in their normalised spellings, the canonical positives, cookie-borne writes, redirects, security headers, hostile Host/Origin and the listed CI name; mints two personal access tokens and proves the REST/MCP bearer rows; then requires each independent nginx limit on families 2, 3, 8 and 9 to answer 429), an MCP `tools/list` through nginx **with the live token** by a real `fastmcp` client plus the same client refused without one, and a non-vacuous T10 scan (requires access records from both containers, then proves the run's password, PAT, session value and OAuth query/Referer probes are absent from their full logs) |
 
 - **A pass on retry reports as `flaky` with exit 0.** Deliberate: instability is
   surfaced without blocking a PR. The lever, if it hides a real intermittent, is the
@@ -545,13 +545,18 @@ v0.2.4.1, v0.2.4.2), so it is not a formality either.
    **Family 8 in OIDC mode is the hand-run half of T2** (#192): the CI stack is local
    mode, so once per release run the matrix against a stack configured with a
    provider — `uv run python ingress_matrix.py http://127.0.0.1:8080 --mode oidc
-   --public-base-url <the stack's PUBLIC_BASE_URL> --password …` — and expect zero
+   --public-base-url <the stack's PUBLIC_BASE_URL>
+   --log-secrets-out <private JSON path>` — and expect zero
    failing rows; the three discovery documents, the anonymous `/mcp/` challenge's
    `resource_metadata` pointer, the six protocol routes' `no-store` (a registration
    body the SDK cannot read included) are what it proves there and cannot in local
    mode. In either mode the matrix ends with a burst at `/mcp/register` that trips
    nginx's limiter and checks its 429s carry the envelope and `no-store` — run it
-   last, and expect the peer to be rate-limited for a moment afterwards.
+   last, and expect the peer to be rate-limited for a moment afterwards. Scan
+   the complete API/nginx logs for every value in that private JSON, requiring
+   an access record from each service first, as the CI T10 step does. This run
+   also probes query/Referer values on refused and throttled callbacks; it does
+   not perform a provider login (the OIDC lifecycle is the backend suite's).
 5. **Restore the dev overlay afterwards** — the packaged stack replaced the dev
    `db` container:
    ```bash

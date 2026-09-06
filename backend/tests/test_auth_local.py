@@ -25,7 +25,7 @@ from sqlalchemy import func, select
 
 from app import error_codes
 from app.auth import credentials
-from app.auth.budget import BASE_DELAY, FailureBudget
+from app.auth.budget import BASE_DELAY, MAX_DELAY, FailureBudget
 from app.auth.sessions import (
     CSRF_HEADER,
     PLAIN_COOKIE_NAME,
@@ -295,6 +295,42 @@ async def test_repeated_failures_throttle_then_a_success_resets(anon_client):
         ok = await c.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
         assert ok.status_code == 200
     assert app.state.login_budget.failures == 0
+    async with get_sessionmaker()() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(AuditEvent)
+                    .where(AuditEvent.event_type.in_((audit.LOGIN_FAILED, audit.LOGIN_THROTTLED)))
+                    .order_by(AuditEvent.occurred_at)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [row.event_type for row in rows] == [audit.LOGIN_FAILED, audit.LOGIN_THROTTLED]
+    assert all(row.principal_kind == "anon" for row in rows)
+    assert all(row.client_address == "127.0.0.1" for row in rows)
+    assert all(row.target == "/auth/login" for row in rows)
+    assert rows[-1].detail == f"retry_after={int(BASE_DELAY)}"
+
+
+def test_failure_budget_doubles_to_a_finite_ceiling():
+    now = {"t": 1000.0}
+    budget = FailureBudget(clock=lambda: now["t"])
+    delays = [budget.record_failure() for _ in range(12)]
+    assert delays[:4] == [1.0, 2.0, 4.0, 8.0]
+    assert delays[-2:] == [MAX_DELAY, MAX_DELAY]
+    assert budget.retry_after() == int(MAX_DELAY)
+
+
+def test_setup_token_has_the_declared_entropy():
+    import base64
+
+    from app.auth.credentials import TOKEN_BYTES
+
+    raw = _issue_setup_token()
+    decoded = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4))
+    assert len(decoded) == TOKEN_BYTES == 32
 
 
 async def test_failures_are_audited(anon_client):

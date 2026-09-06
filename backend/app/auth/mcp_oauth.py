@@ -356,6 +356,7 @@ from app import error_codes
 from app.auth import tokens as token_format
 from app.auth.mcp_auth import PersonalAccessTokenVerifier
 from app.auth.mode import OIDC_PROVIDER_ATTR
+from app.auth.principal import anonymous
 from app.auth.principal import mcp as mcp_principal
 from app.auth.registry import DISCOVERY_ROUTES, MCP_MOUNT, MCP_OAUTH_ROUTES
 from app.config import Settings
@@ -2027,7 +2028,7 @@ class PlamotrackOAuthProxy(OAuthProxy):
             await self._record(
                 audit.MCP_GRANT_ISSUED,
                 principal=mcp_principal(write=True, subject=verdict.subject),
-                detail=f"client={client.client_id}",
+                detail=f"client={audit.external_reference(client.client_id)}",
             )
             return tokens
 
@@ -2114,7 +2115,10 @@ class PlamotrackOAuthProxy(OAuthProxy):
             await self._record(
                 audit.MCP_GRANT_REVOKED,
                 principal=mcp_principal(write=True, subject=transition.binding.subject),
-                detail=f"client={transition.client_id} ended_by={ENDED_BY_UPSTREAM}",
+                detail=(
+                    f"client={audit.external_reference(transition.client_id)} "
+                    f"ended_by={ENDED_BY_UPSTREAM}"
+                ),
                 target=transition.target,
             )
         transition.outcome = "refused"
@@ -2122,19 +2126,26 @@ class PlamotrackOAuthProxy(OAuthProxy):
 
     async def _record_refusal(self, verdict: OwnerVerdict, transition: _Transition) -> None:
         """A verdict other than the owner's, at issuance or on a refresh: the
-        audit row — the identity refusal names the subject, a token that fails
+        audit row — the identity refusal fingerprints the subject, a token that fails
         the contract is a failed round trip — on the route the transition
         answers."""
         if verdict.reason == "identity":
             await self._record(
                 audit.MCP_IDENTITY_REFUSED,
-                detail=f"subject={verdict.subject} client={transition.client_id}",
+                principal=anonymous(),
+                detail=(
+                    f"subject={audit.external_reference(verdict.subject)} "
+                    f"client={audit.external_reference(transition.client_id)}"
+                ),
                 target=transition.target,
             )
             return
         await self._record(
             audit.OIDC_LOGIN_FAILED,
-            detail=f"id_token_{verdict.reason} client={transition.client_id}",
+            principal=anonymous(),
+            detail=(
+                f"id_token_{verdict.reason} client={audit.external_reference(transition.client_id)}"
+            ),
             target=transition.target,
         )
 
@@ -2300,7 +2311,7 @@ class PlamotrackOAuthProxy(OAuthProxy):
         await self._record(
             audit.MCP_GRANT_REVOKED,
             principal=mcp_principal(write=True, subject=handle[1].subject),
-            detail=f"client={token.client_id} presented={presented}",
+            detail=f"client={audit.external_reference(token.client_id)} presented={presented}",
             target=f"{MCP_MOUNT}/revoke",
         )
         await self._revoke_upstream(grant)

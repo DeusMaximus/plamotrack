@@ -3,6 +3,7 @@
 
     uv run python ingress_matrix.py [BASE_URL] [--allowed-host NAME]
                                     [--setup-token TOKEN] [--password PASSWORD]
+                                    [--token-out PATH] [--log-secrets-out PATH]
 
 BASE_URL defaults to http://127.0.0.1:8080. `--allowed-host` names an entry the
 stack's `.env` carries in ALLOWED_HOSTS, which enables T3's "a listed name" rows
@@ -14,7 +15,9 @@ owner, so the matrix signs in first when told how: `--setup-token` with
 is the one the API printed to its log, which is what CI reads out of
 `docker compose logs api`, so the first-run path is exercised through the
 packaged ingress; `--password` alone signs into a claimed instance through
-`/api/auth/login`. Either way the positives then run cookie-borne, with the
+`/api/auth/login`. The claim path signs out and performs a real password login
+before continuing, so CI's log-hygiene control covers the full login flow rather
+than treating setup as a substitute. Either way the positives then run cookie-borne, with the
 `Origin` and `X-CSRF-Token` a cookie-borne write owes (§5.6), and the session
 is signed out at the end. With neither flag the same rows expect the
 dependency's 401 — still a positive control for the ingress (a spelling nginx
@@ -31,6 +34,15 @@ step — CI's MCP `tools/list` probe with a real client; without it both tokens
 are revoked at the end. The token is never printed, and a live token travels
 only in headers: the query-string row uses a fake, because request URIs are
 what access logs record (T10).
+
+After sign-out, the matrix rapidly reads one safe endpoint in each bounded
+family (2, 3, 8 and 9) and requires every nginx zone to answer 429. It does not
+pin the exact admitted count because elapsed time may replenish a request.
+`--log-secrets-out PATH` writes the run's password, PAT and session value (when
+signed in), plus synthetic OAuth code/state/Referer probes, to a mode-0600 JSON
+file for T10. The probes also drive a 429 so nginx's error logging is covered;
+none of their values is printed. This option also works without a browser login
+in the OIDC-mode run.
 
 What it proves, per row: the status; that no response carries a `Location`
 except nginx's own relative `/api` → `/api/` 301; that the security headers are
@@ -63,9 +75,12 @@ from __future__ import annotations
 import argparse
 import http.client
 import json
+import os
 import pathlib
+import secrets
 import sys
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass, field, replace
 from urllib.parse import urlsplit
 
 INITIALIZE = json.dumps(
@@ -120,6 +135,16 @@ class Credential:
         if origin is not None:
             headers["Origin"] = origin
         return headers
+
+
+def write_private(path_value: str, content: str) -> pathlib.Path:
+    """Restrict and write one opened file, refusing a symlink at the output path."""
+    path = pathlib.Path(path_value)
+    flags = os.O_CREAT | os.O_TRUNC | os.O_WRONLY | os.O_NOFOLLOW
+    with os.fdopen(os.open(path, flags, 0o600), "w", encoding="utf-8") as output:
+        os.fchmod(output.fileno(), 0o600)
+        output.write(content)
+    return path
 
 
 @dataclass
@@ -570,7 +595,7 @@ def rate_limit_rows(base: str) -> list[tuple[Row, Response]]:
     ]
     if not refused:
         return [(burst, Response(0, {}, b"the limiter never engaged across the burst"))]
-    return [(burst, resp) for resp in refused[:3]]
+    return [(burst, resp) for resp in refused]
 
 
 def mcp_challenge_value(mode: str, public_base_url: str) -> str:
@@ -810,6 +835,7 @@ def rows(
                 else mcp_challenge(
                     f"listed name {allowed_host} on MCP anonymous → 401",
                     "/mcp/",
+                    www_authenticate=challenge,
                     headers={**MCP_HEADERS, "Host": allowed_host},
                 )
             ),
@@ -1046,6 +1072,150 @@ def revoked_rows(tokens: Tokens) -> list[Row]:
     ]
 
 
+def query_log_probes(
+    base: str, mode: str, markers: dict[str, str], *, throttled: bool = False
+) -> list[str]:
+    """Synthetic credentials exercise the real query/Referer logging paths.
+    Never print the query: the caller records only the probe's outcome."""
+    callback = (
+        "/mcp/auth/callback?code=" + markers["oauth_code"] + "&state=" + markers["oauth_state"]
+    )
+    headers = {"Referer": base + "/callback?code=" + markers["referer_code"]}
+    row = Row(
+        "callback query log probe",
+        "GET",
+        callback,
+        429 if throttled else (400 if mode == "oidc" else 404),
+        headers=headers,
+    )
+    if throttled:
+        row = replace(rate_limit_refusal(callback), headers=headers)
+        refused = [
+            response
+            for response in (send(base, row) for _ in range(RATE_LIMIT_BURST))
+            if response.status == 429
+        ]
+        if not refused:
+            return ["query-bearing burst never engaged the limiter"]
+        return [problem for response in refused for problem in check(row, response)]
+    problems = check(row, send(base, row))
+    if not throttled:
+        row = Row(
+            "token query log probe",
+            "GET",
+            "/api/healthz?access_token=" + markers["oauth_code"],
+            200,
+        )
+        problems.extend(check(row, send(base, row)))
+    return problems
+
+
+def rate_limit_refusal(path: str) -> Row:
+    return Row(
+        "bounded family refusal profile",
+        "GET",
+        path,
+        429,
+        content_type="application/json",
+        json_code="ingress.rate_limited",
+        expect_headers={**NO_STORE, "retry-after": "1"},
+    )
+
+
+def rate_limit_checks(base: str, mode: str = "local") -> list[str]:
+    """T8 at the real ingress: each bounded family eventually answers 429.
+
+    The checks run after sign-out and use safe GETs, so they cannot change auth
+    state or trip the app's separate login-failure budget. We intentionally do
+    not pin the exact accepted count — elapsed time and a worker scheduling gap
+    can replenish a request — only the control's observable boundary. Doubled-
+    slash, dot-segment and percent-encoded spellings are sent verbatim for every
+    family: each must share the canonical ingress limit key, even when the app
+    refuses an unrewritten root spelling (#208 review P3-1).
+    """
+    discovery_status = {200} if mode == "oidc" else {404}
+    cases = (
+        ("family 2 auth bootstrap", "/api/auth/session", {200}),
+        ("family 3 auth actions", "/api/auth/login", {405}),
+        ("family 8 protocol", "/.well-known/openid-configuration/mcp", discovery_status),
+        ("family 9 liveness", "/api/healthz", {200}),
+    )
+    # Every protocol location now inherits this same budget (#212/#193).
+    protocol_cases = tuple(
+        ("family 8 " + path, path, {400, 405} if mode == "oidc" else {404, 405})
+        for path in PROTOCOL_ROUTES
+    )
+    cases += protocol_cases
+    problems: list[str] = []
+    for label, path, admitted in cases:
+        statuses: list[int] = []
+        for _ in range(80):
+            response = send(base, Row(label, "GET", path, 0))
+            statuses.append(response.status)
+            if response.status == 429:
+                problems.extend(check(rate_limit_refusal(path), response))
+                break
+            if response.status not in admitted:
+                problems.append(
+                    f"{label} answered {response.status} before throttling; "
+                    f"expected one of {sorted(admitted)}"
+                )
+                break
+        if 429 not in statuses:
+            problems.append(f"{label} never answered 429 across {len(statuses)} requests")
+        else:
+            print(f"ok  RATE   {path:60} {label} → 429 after {len(statuses)} requests")
+    normalised_cases = (
+        ("family 2", "//api/auth/session", {200}),
+        ("family 2", "/api/./auth/session", {200}),
+        ("family 2", "/api/%61uth/session", {200}),
+        ("family 3", "//api/auth/login", {405}),
+        ("family 3", "/api/./auth/login", {405}),
+        ("family 3", "/api/auth/%6cogin", {405}),
+        # Root proxy locations can forward an unrewritten spelling to the app,
+        # whose default-deny gate then answers 401. The ingress must still
+        # account it against the normalised family key.
+        ("family 8", "//.well-known/openid-configuration/mcp", discovery_status | {401}),
+        ("family 8", "/.well-known/./openid-configuration/mcp", discovery_status | {401}),
+        ("family 8", "/.well-known/%6fpenid-configuration/mcp", discovery_status),
+        ("family 9", "//api/healthz", {200}),
+        ("family 9", "/api/./healthz", {200}),
+        ("family 9", "/api/%68ealthz", {200}),
+    )
+    for label, path, admitted in protocol_cases:
+        prefix, name = path.rsplit("/", 1)
+        encoded = prefix + "/%" + format(ord(name[0]), "02x") + name[1:]
+        normalised_cases += tuple(
+            (label, spelling, admitted | {401, 404})
+            for spelling in ("/" + path, "/./" + path.lstrip("/"), encoded)
+        )
+    for family, path, admitted in normalised_cases:
+        statuses = []
+        for _ in range(80):
+            response = send(base, Row(f"{family} normalised spelling", "GET", path, 0))
+            statuses.append(response.status)
+            if response.status == 429:
+                problems.extend(check(rate_limit_refusal(path), response))
+                break
+            if response.status not in admitted:
+                problems.append(
+                    f"normalised {family} spelling {path!r} answered {response.status} "
+                    f"before throttling; expected one of {sorted(admitted)}"
+                )
+                break
+        if 429 not in statuses:
+            problems.append(
+                f"normalised {family} spelling {path!r} never answered 429 "
+                f"across {len(statuses)} requests"
+            )
+        else:
+            print(
+                f"ok  RATE   {path:60} {family} normalised spelling → 429 "
+                f"after {len(statuses)} requests"
+            )
+    return problems
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -1068,6 +1238,11 @@ def main(argv: list[str]) -> int:
         help="write the minted write token to this file (mode 0600) and leave it live",
     )
     parser.add_argument(
+        "--log-secrets-out",
+        default=None,
+        help="write query probes and any run PAT/session/password to a private JSON file for T10",
+    )
+    parser.add_argument(
         "--mode",
         choices=("local", "oidc"),
         default="local",
@@ -1084,11 +1259,24 @@ def main(argv: list[str]) -> int:
     if args.token_out is not None and args.password is None:
         parser.error("--token-out needs a signed-in owner (--password) to mint the token")
 
+    log_secrets = (
+        {key: secrets.token_urlsafe(24) for key in ("oauth_code", "oauth_state", "referer_code")}
+        if args.log_secrets_out
+        else None
+    )
     credential = None
     tokens = None
     if args.password is not None:
         credential = sign_in(args.base, setup_token=args.setup_token, password=args.password)
-        print(f"signed in as the owner ({'claimed' if args.setup_token else 'logged in'})")
+        if args.setup_token is not None:
+            # A fresh-stack run proves both credential-bearing actions: claim,
+            # then sign out and perform a real password login for the full T10
+            # log scan. The credential below is therefore always login-issued.
+            sign_out(args.base, credential)
+            credential = sign_in(args.base, setup_token=None, password=args.password)
+            print("claimed the instance, then logged in as the owner")
+        else:
+            print("logged in as the owner")
         tokens = mint_tokens(args.base, credential)
         print("minted a write token and a read token for the bearer rows")
     else:
@@ -1114,25 +1302,45 @@ def main(argv: list[str]) -> int:
     ):
         run(row)
     for row in family_8_rows(args.mode, public_base_url):
+        # Family 8 now shares a budget across discovery and protocol routes.
+        # These are contract checks; intentional bursts run separately below.
+        time.sleep(0.12)
         run(row)
     for row, resp in write_rows(args.base, args.allowed_host, credential):
         run(row, resp)
     if credential is not None and tokens is not None:
+        if log_secrets is not None:
+            log_secrets.update(
+                password=args.password,
+                pat=tokens.write.raw,
+                session=credential.cookie.split("=", 1)[1],
+            )
         for row in token_rows(args.base, tokens):
             run(row)
         revoke_token(args.base, credential, tokens.read)
         for row in revoked_rows(tokens):
             run(row)
         if args.token_out is not None:
-            path = pathlib.Path(args.token_out)
-            path.write_text(tokens.write.raw + "\n")
-            path.chmod(0o600)
+            path = write_private(args.token_out, tokens.write.raw + "\n")
             print(f"write token left live and written to {path}")
         else:
             revoke_token(args.base, credential, tokens.write)
         sign_out(args.base, credential)
+    if log_secrets is not None:
+        write_private(args.log_secrets_out, json.dumps(log_secrets) + "\n")
+        for problem in query_log_probes(args.base, args.mode, log_secrets):
+            failures += 1
+            print(f"FAIL LOG {problem}")
+        print("query/referrer log probes sent; scan their private output with the container logs")
+    for problem in rate_limit_checks(args.base, args.mode):
+        failures += 1
+        print(f"FAIL {'RATE':6} {'':60} {problem}")
     for row, resp in rate_limit_rows(args.base):
         run(row, resp)
+    if log_secrets is not None:
+        for problem in query_log_probes(args.base, args.mode, log_secrets, throttled=True):
+            failures += 1
+            print(f"FAIL LOG {problem}")
     print(f"\n{failures} failing check(s)")
     return failures
 

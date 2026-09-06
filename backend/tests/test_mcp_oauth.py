@@ -156,6 +156,11 @@ async def _bind_owner(sub: str = OWNER_SUB) -> None:
         await session.commit()
 
 
+def _audit_reference(value: str) -> str:
+    # Independent expected serialization; never call the production formatter.
+    return "sha256:" + hashlib.sha256(value.encode()).hexdigest()
+
+
 async def _events(event_type: str) -> list[AuditEvent]:
     async with get_sessionmaker()() as session:
         rows = await session.execute(select(AuditEvent).where(AuditEvent.event_type == event_type))
@@ -539,7 +544,7 @@ async def test_the_owner_links_a_client_and_the_token_drives_the_tools():
     assert len(issued) == 1
     assert issued[0].principal_kind == "mcp:write"
     assert issued[0].principal_subject == OWNER_SUB
-    assert issued[0].detail == f"client={outcome['client_id']}"
+    assert issued[0].detail == f"client={_audit_reference(outcome['client_id'])}"
     assert issued[0].target == "/mcp/token"
     for secret in (tokens["access_token"], tokens["refresh_token"], fake.next_token["id_token"]):
         assert secret not in (issued[0].detail or "")
@@ -614,11 +619,60 @@ async def test_a_stranger_is_refused_at_the_token_endpoint_with_nothing_minted()
         assert retry.json()["error"] == "invalid_grant"
     refused = await _events(audit.MCP_IDENTITY_REFUSED)
     assert len(refused) == 1
-    assert refused[0].detail == f"subject={STRANGER_SUB} client={outcome['client_id']}"
+    assert refused[0].principal_kind == "anon"
+    assert refused[0].client_address == "127.0.0.1"
+    assert refused[0].detail == (
+        f"subject={_audit_reference(STRANGER_SUB)} client={_audit_reference(outcome['client_id'])}"
+    )
     assert not await _events(audit.MCP_GRANT_ISSUED)
     collections = {collection for collection, _ in await _state_rows()}
     assert "mcp-upstream-tokens" not in collections
     assert "mcp-jti-mappings" not in collections
+
+
+@pytest.mark.parametrize(
+    "sub,event,kind",
+    [
+        (OWNER_SUB, audit.MCP_GRANT_ISSUED, "mcp:write"),
+        (STRANGER_SUB, audit.MCP_IDENTITY_REFUSED, "anon"),
+    ],
+)
+@pytest.mark.parametrize(
+    "config,headers,address",
+    [
+        (
+            {},
+            {"X-Forwarded-For": "198.51.100.44", "X-Plamotrack-Client-Address": "198.51.100.45"},
+            "127.0.0.1",
+        ),
+        (
+            {"trusted_proxies": "127.0.0.1"},
+            {"X-Forwarded-For": "198.51.100.44", "X-Plamotrack-Client-Address": "198.51.100.45"},
+            "198.51.100.44",
+        ),
+        (
+            {"plamotrack_bundled_ingress": True},
+            {"X-Plamotrack-Client-Address": "198.51.100.45"},
+            "198.51.100.45",
+        ),
+    ],
+)
+async def test_mcp_oauth_audit_uses_the_ingress_resolved_address(
+    sub, event, kind, config, headers, address
+):
+    """Issuance and refusal behind the shared ingress: trust changes attribution,
+    never whether the provider identity is admitted (#193/#192 integration)."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake, **config) as (_, client):
+        client.headers.update(headers)
+        outcome = await link(client, fake, sub=sub)
+        assert outcome["status"] == (200 if sub == OWNER_SUB else 401), outcome["body"]
+    events = await _events(event)
+    assert len(events) == 1
+    assert events[0].principal_kind == kind
+    assert events[0].client_address == address
+    assert events[0].target == "/mcp/token"
 
 
 async def test_an_unbound_instance_issues_nothing():
@@ -668,6 +722,8 @@ async def test_an_id_token_that_fails_the_claim_contract_issues_nothing(tamper):
     assert not await _events(audit.MCP_IDENTITY_REFUSED)
     failed = await _events(audit.OIDC_LOGIN_FAILED)
     assert len(failed) == 1 and failed[0].target == "/mcp/token"
+    assert failed[0].principal_kind == "anon"
+    assert failed[0].client_address == "127.0.0.1"
     assert failed[0].detail.startswith("id_token_invalid")
 
 
@@ -1083,7 +1139,7 @@ async def test_a_cimd_client_links_and_is_named_in_the_audit_row(cimd_client):
         claims = _decode_issued(exchanged.json()["access_token"])
         assert claims["client_id"] == CIMD_ID
     issued = await _events(audit.MCP_GRANT_ISSUED)
-    assert issued[0].detail == f"client={CIMD_ID}"
+    assert issued[0].detail == f"client={_audit_reference(CIMD_ID)}"
 
 
 async def test_a_resource_for_another_server_is_refused():
@@ -1293,6 +1349,31 @@ class _Capture(logging.Handler):
         self.lines.append(record.getMessage() + " " + repr(record.args))
 
 
+@pytest.mark.parametrize(
+    "query",
+    ["code=code-marker&state=state-marker", "error=denied&error_description=description-marker"],
+)
+async def test_failed_oauth_callbacks_keep_credentials_out_of_library_logs(query):
+    import fastmcp.server.auth.oauth_proxy.proxy as library
+
+    logger = library.logger
+    capture = _Capture()
+    was_disabled, previous_level = logger.disabled, logger.level
+    logger.disabled = False
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(capture)
+    try:
+        async with oauth_app(FakeIdp()) as (_, client):
+            response = await client.get("/mcp/auth/callback?" + query)
+            assert response.status_code == 400
+    finally:
+        logger.removeHandler(capture)
+        logger.disabled, logger.level = was_disabled, previous_level
+    assert capture.lines, "the refusal must still produce a diagnostic"
+    for marker in ("code-marker", "state-marker", "description-marker"):
+        assert marker not in "\n".join(capture.lines)
+
+
 async def test_a_full_link_and_tool_run_leaves_no_secret_in_the_logs():
     """Every logger re-enabled and captured at DEBUG — attached to each one,
     not only root, since FastMCP's and uvicorn's do not propagate (the token
@@ -1498,7 +1579,7 @@ async def test_a_successful_revocation_kills_every_credential_of_the_grant(prese
     assert len(rows) == 1
     assert rows[0].principal_kind == "mcp:write"
     assert rows[0].principal_subject == OWNER_SUB
-    assert rows[0].detail == f"client={client_id} presented={presented}"
+    assert rows[0].detail == f"client={_audit_reference(client_id)} presented={presented}"
     assert rows[0].target == "/mcp/revoke"
     for secret in (tokens["access_token"], tokens["refresh_token"], upstream_refresh):
         assert secret not in (rows[0].detail or "")
@@ -2043,19 +2124,33 @@ async def test_a_refresh_response_becomes_the_grant_only_once_it_is_verified(pat
     target = "/mcp/token" if path == "explicit" else "/mcp/"
     if response == "stranger":
         refused = await _events(audit.MCP_IDENTITY_REFUSED)
+        assert all(r.principal_kind == "anon" for r in refused)
+        assert all(r.client_address == "127.0.0.1" for r in refused)
         assert [(r.detail, r.target) for r in refused] == [
-            (f"subject={STRANGER_SUB} client={client_id}", target)
+            (
+                f"subject={_audit_reference(STRANGER_SUB)} client={_audit_reference(client_id)}",
+                target,
+            )
         ]
         assert not await _events(audit.OIDC_LOGIN_FAILED)
     else:
         failed = await _events(audit.OIDC_LOGIN_FAILED)
+        assert all(r.principal_kind == "anon" for r in failed)
+        assert all(r.client_address == "127.0.0.1" for r in failed)
         assert [(r.detail, r.target) for r in failed] == [
-            (f"id_token_invalid client={client_id}", target)
+            (
+                f"id_token_invalid client={_audit_reference(client_id)}",
+                target,
+            )
         ]
         assert not await _events(audit.MCP_IDENTITY_REFUSED)
     ended = await _events(audit.MCP_GRANT_REVOKED)
     assert [(r.detail, r.target, r.principal_subject) for r in ended] == [
-        (f"client={client_id} ended_by=upstream_refresh", target, OWNER_SUB)
+        (
+            f"client={_audit_reference(client_id)} ended_by=upstream_refresh",
+            target,
+            OWNER_SUB,
+        )
     ]
     assert len(await _events(audit.MCP_GRANT_ISSUED)) == 1
 
@@ -2134,7 +2229,11 @@ async def test_a_revocation_locates_its_grant_without_asking_the_provider(presen
         assert replay.json()["error"] == "invalid_grant"
     ended = await _events(audit.MCP_GRANT_REVOKED)
     assert [(r.detail, r.principal_subject, r.target) for r in ended] == [
-        (f"client={client_id} presented={presented}", OWNER_SUB, "/mcp/revoke")
+        (
+            f"client={_audit_reference(client_id)} presented={presented}",
+            OWNER_SUB,
+            "/mcp/revoke",
+        )
     ]
     assert not await _events(audit.OIDC_LOGIN_FAILED)
 
@@ -2161,7 +2260,10 @@ async def test_a_client_can_end_a_grant_the_owner_row_no_longer_names(presented)
         assert [r["token"] for r in fake.revoked] == [upstream_refresh]
     ended = await _events(audit.MCP_GRANT_REVOKED)
     assert [(r.detail, r.principal_subject) for r in ended] == [
-        (f"client={client_id} presented={presented}", OWNER_SUB)
+        (
+            f"client={_audit_reference(client_id)} presented={presented}",
+            OWNER_SUB,
+        )
     ]
 
 
@@ -2209,11 +2311,18 @@ async def test_a_refresh_keeps_the_identity_that_authorized_the_grant(path):
     target = "/mcp/token" if path == "explicit" else "/mcp/"
     refused = await _events(audit.MCP_IDENTITY_REFUSED)
     assert [(r.detail, r.target) for r in refused] == [
-        (f"subject={REBOUND_SUB} client={client_id}", target)
+        (
+            f"subject={_audit_reference(REBOUND_SUB)} client={_audit_reference(client_id)}",
+            target,
+        )
     ]
     ended = await _events(audit.MCP_GRANT_REVOKED)
     assert [(r.detail, r.target, r.principal_subject) for r in ended] == [
-        (f"client={client_id} ended_by=upstream_refresh", target, OWNER_SUB)
+        (
+            f"client={_audit_reference(client_id)} ended_by=upstream_refresh",
+            target,
+            OWNER_SUB,
+        )
     ]
     assert not await _events(audit.OIDC_LOGIN_FAILED)
     assert len(await _events(audit.MCP_GRANT_ISSUED)) == 2

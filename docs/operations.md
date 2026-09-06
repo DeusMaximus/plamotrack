@@ -185,6 +185,53 @@ the browser's session cookie never authenticates it, by design, so a page in you
 browser cannot drive an agent's tools. Minting, revoking, and any use of a revoked
 token are recorded in the audit table.
 
+## Security audit retention
+
+Security-relevant authentication and ingress events are kept in Postgres's
+`audit_event` table: owner claim, login success/failure/throttling, logout and
+session revocation, token mint/revocation/use-after-revocation, host-side recovery,
+and app-layer Host/Origin refusals. Rows carry the credential's kind and id when
+one exists, the resolved client address, and the route or tool — never a request
+body, query string, or secret. The bundled nginx rejects an unknown Host before
+it can reach the API, so that outer refusal is in nginx's access log; the app's
+defence-in-depth Host refusal is the database event. Collection edits are not
+audited in Milestone 6.
+
+OAuth client references (DCR ids and CIMD URLs) and refused OIDC subjects are stored
+as `sha256:<hex digest>` in audit details. The digest covers the whole identifier,
+so clients whose URLs differ only by query or fragment can still be distinguished;
+the URL, userinfo and other opaque text are not displayed. Protocol identifiers and
+verified principal ids are unchanged. Browser callback failures record only
+`access_denied`, `missing_code`, or `other`; token-exchange diagnostics retain the
+HTTP status without copying a provider's error body. These rules apply to new rows;
+existing audit rows are not rewritten. Use retention if older records must expire.
+
+The table is append-only during normal operation. Retention is the operator's
+choice; this host-side command deletes rows older than 180 days and appends a row
+recording the prune itself:
+
+```bash
+docker compose exec api python -m app.auth.recovery prune-audit --older-than-days 180
+```
+
+Use a different positive day count if your policy requires it. Take a database
+backup first if those events must remain available elsewhere.
+
+### Access logs and callback credentials
+
+The API and bundled nginx record request paths, methods and statuses without
+query strings. nginx also omits request headers, including `Referer`, because an
+OAuth callback URL can contain an authorization code and state. Its access records
+include upstream status and request/upstream timing for diagnosing 429 and 5xx
+responses. nginx's request error diagnostics cannot be reformatted and include the
+raw request, so the bundled HTTP context discards them; configuration/startup
+failures still reach stderr. Authentication-library diagnostics retain severity
+and source with a fixed message: the libraries can embed state values, provider
+errors and exceptions in their text. The application's own safe auth messages,
+audit events and other application errors remain available. Do not restore
+nginx's default combined access format or request error log on an OIDC instance.
+An additional proxy, such as Caddy, needs the same query/header hygiene.
+
 ## What's running
 
 `docker compose up -d --build --wait` gives you four things:
@@ -342,7 +389,7 @@ the API. `.env.example` documents every key. The ones worth knowing:
 | `MCP_OAUTH_SIGNING_KEY` | — | OIDC mode, required. 32 random bytes as 64 hex characters (`openssl rand -hex 32`): signs the tokens MCP clients receive and encrypts the proxy's state in the database. Installation identity — rotating it means every MCP client re-authorises. See [MCP clients that sign in through the provider](#mcp-clients-that-sign-in-through-the-provider-oidc-mode). |
 | `MCP_OAUTH_ALLOWED_REDIRECT_URIS` | — | OIDC mode, optional. Comma-separated patterns a dynamically registering MCP client may use as its callback (`http://localhost:*`). Narrows registration, never replaces it; applies to every client kind when set, so it must also admit the web clients' callbacks. Leave unset unless you have a reason. |
 | `ALLOWED_ORIGINS` | — | Extra browser origins allowed to write, beyond the instance's own and loopback ones. Rarely needed. |
-| `TRUSTED_PROXIES` | — | IPs or CIDRs of a reverse proxy whose `X-Forwarded-For` is believed for the client's address. Nothing reads that address in this release; leave it unset. |
+| `TRUSTED_PROXIES` | — | IPs or CIDRs of a reverse proxy whose `X-Forwarded-For` is believed for the client's address. nginx keys its per-client limits on that resolved address and the API records it in security audit events. On the source-run API, every walked hop must be a valid IP (an optional numeric port is accepted); malformed or empty hops stop resolution at the last verified address. Leave it empty without an extra proxy. |
 | `REFERENCE_CURRENCY` | `AUD` | Your currency — **first-run bootstrap only**. The migration seeds it into the instance settings; after that the database row is the setting (`PATCH /settings`), and editing the env var does nothing. Changing the setting affects new entries only — stored snapshots keep the currency they were recorded in. |
 | `DATABASE_URL` | — | Set it to use a Postgres you manage yourself; the `POSTGRES_*` values then only configure the bundled `db`. |
 
@@ -497,8 +544,16 @@ behind a TLS proxy and the cookie becomes `Secure` and `__Host-`-prefixed.
 If you do build your own: `frontend/nginx/default.conf.template` documents the two
 settings a proxy in front of MCP has to get right; the name it forwards goes in
 `ALLOWED_HOSTS`; `PUBLIC_BASE_URL=https://…` is what lets the browser's `https://`
-origin write; and `TRUSTED_PROXIES` names the proxy, though nothing reads the
-forwarded address yet.
+origin write; and `TRUSTED_PROXIES` names the proxy so rate limits and audit use
+the client address rather than treating the proxy as one client.
+
+In the bundled stack, nginx performs that proxy walk and the unpublished API trusts
+the client-address header nginx overwrites. Every container attached to the private
+Compose network is therefore inside that header's trust boundary: do not attach an
+untrusted companion container to it, and do not treat audit addresses on requests
+sent directly to `api:8000` by another container as verified. Host clients cannot
+reach that port through the supplied Compose configuration; all published traffic
+passes through nginx, which overwrites a forged value.
 
 ## When something's wrong
 

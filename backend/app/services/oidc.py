@@ -68,6 +68,7 @@ from starlette.requests import Request
 from app import error_codes
 from app.auth import credentials
 from app.auth.budget import FailureBudget
+from app.auth.principal import anonymous, internal
 from app.auth.setup_token import SetupToken
 from app.config import Settings
 from app.exceptions import UnavailableError
@@ -422,15 +423,9 @@ class OidcProvider:
         except ValueError:
             body = None
         if response.status_code != 200 or not isinstance(body, dict):
-            # The provider's `error` code is a word worth logging; its
-            # description and the rest of the body are not (they can quote
-            # what was sent).
-            provider_error = body.get("error") if isinstance(body, dict) else None
-            log.warning(
-                "OIDC code exchange refused: status=%s error=%s",
-                response.status_code,
-                provider_error,
-            )
+            # Even an `error` field can contain arbitrary provider data.
+            # The HTTP status identifies this failure without copying payloads.
+            log.warning("OIDC code exchange refused: status=%s", response.status_code)
             raise OidcLoginRefused(CallbackError.FAILED)
         return body
 
@@ -552,6 +547,7 @@ async def _refuse(
     await audit.record_event(
         session,
         audit.OIDC_LOGIN_FAILED,
+        principal=anonymous(),
         request=request,
         target="/auth/oidc/callback",
         detail=detail,
@@ -604,9 +600,13 @@ async def complete_login(
 
     if error is not None or not code:
         code_out = CallbackError.DENIED if error == "access_denied" else CallbackError.FAILED
-        raise await _refuse(
-            session, request, code=code_out, detail=f"provider_error={error or 'missing_code'}"
-        )
+        if error is None:
+            category = "missing_code"
+        elif error == "access_denied":
+            category = "access_denied"
+        else:
+            category = "other"
+        raise await _refuse(session, request, code=code_out, detail=f"provider_error={category}")
 
     try:
         tokens = await provider.exchange_code(code, verifier)
@@ -657,9 +657,10 @@ async def complete_login(
         await audit.record_event(
             session,
             audit.OIDC_IDENTITY_REFUSED,
+            principal=anonymous(),
             request=request,
             target="/auth/oidc/callback",
-            detail=f"subject={subject}",
+            detail=f"subject={audit.external_reference(subject)}",
         )
         await session.commit()
         raise OidcLoginRefused(CallbackError.IDENTITY_REFUSED)
@@ -702,14 +703,19 @@ async def recovery_rebind_oidc(session: AsyncSession) -> int:
     owner.oidc_issuer = None
     owner.oidc_subject = None
     revoked = await auth_service.revoke_all_sessions(
-        session, target="recovery rebind-oidc", client_address="host"
+        session, target="recovery rebind-oidc", principal=internal(), client_address="host"
     )
     await audit.record_event(
-        session, audit.OIDC_REBIND, target="recovery rebind-oidc", client_address="host"
+        session,
+        audit.OIDC_REBIND,
+        principal=internal(),
+        target="recovery rebind-oidc",
+        client_address="host",
     )
     await audit.record_event(
         session,
         audit.RECOVERY_RUN,
+        principal=internal(),
         target="recovery rebind-oidc",
         detail=f"sessions_revoked={revoked}",
         client_address="host",

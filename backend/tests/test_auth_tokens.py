@@ -736,8 +736,8 @@ async def test_mcp_use_after_revoke_is_audited(client):
         )
         assert resp.status_code == 401
     rows = await _audit_rows(audit.TOKEN_USE_AFTER_REVOKE)
-    assert [(e.principal_kind, e.principal_subject, e.target) for e in rows] == [
-        ("pat:read", minted["id"], "/mcp/")
+    assert [(e.principal_kind, e.principal_subject, e.client_address, e.target) for e in rows] == [
+        ("pat:read", minted["id"], LOOPBACK[0], "/mcp/")
     ]
 
 

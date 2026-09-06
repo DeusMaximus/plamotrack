@@ -41,6 +41,137 @@ Template:
 
 ---
 
+## 2026-09-06 — Codex (GPT-6 Astra) — #208 security review P3-5/P3-6 repaired locally
+
+- **Context:** the independent review at `43c5826` is NO-GO (P3-5 malformed XFF
+  attribution, P3-6 opaque OAuth values in audit details), issuecomment-5557756710.
+  The review is posted as GPT-5; the owner identifies the reviewer as Daybreak Blue.
+  #208 was pushed at `43c5826`, CI all green, main remains `1fd3b36` with #212 merged.
+- **Done:** reproduced both at the reviewed head, then fixed the class. The shared
+  IP parser validates/canonicalizes whole IP/port/bracket spellings and rejects
+  interface scope ids; a malformed or empty XFF hop stops at the last verified
+  address. Bundled-header validation uses the same parser; raw peers stay intact.
+  `audit.external_reference` fingerprints complete client ids and refused OIDC
+  subjects at every emitter. Protocol ids and verified principal ids are unchanged.
+  Browser callback errors use fixed categories. The sweep also reproduced and
+  removed a raw provider-error log; HTTP status remains. Docs/rule 14 updated;
+  lessons: "A field name is not a safe audit representation".
+- **Decisions:** digest-only references rather than displaying a URL with just its
+  query stripped: its path/userinfo can carry credentials too. Query/fragment
+  differences remain correlatable. Missing and empty values differ; every Python
+  string is handled. Existing audit rows are not rewritten; retention remains the
+  host-side way to expire them. #212's authorization/grant/client decisions remain.
+- **Validation:** new regression selection at `43c5826`: **70 red / 27 green**,
+  all final data assertions after correcting two witness setup/expectation mistakes.
+  New suite is now **113 cases**, including fingerprint and bundled-parser controls.
+  Full backend run **2527 passed / 9 failed**; the nine were old raw-identifier
+  audit expectations, updated and rerun **9 passed** with runtime code unchanged.
+  Three redirect controls also passed after a test-witness repair (one added case):
+  2537 cases validated across full/focused runs, not one final-tree green invocation.
+  Ruff/format/render/whitespace pass.
+- **Mutation:** aud-38..56 **19/19 killed** with green baselines and byte restoration:
+  parser validation/stop/empty/port/bracket/scope/private-header, five client emitters,
+  two subject emitters, callback category, provider-error log, whole/missing/Unicode
+  fingerprint handling. Tracked moa-54 re-anchored. Full tracked replay: **513/514**;
+  oidc-19 survived because #212 changed fixture BASE to localhost, equal to its Host
+  witness. No production redirect defect. Corrected the contrasting Host in start
+  and both callback branches: oidc-19 replay **1/1**, adjacent aud-57/58 **2/2**.
+  All 514 tracked plus 21 new mutants detected across runs; exact restoration.
+  Lesson: "A changed fixture can erase the contrasting value".
+- **State:** fixes applied but **uncommitted/unpushed** in the #208 worktree,
+  `/Users/tlgja/Code/plamotrack-208`; primary dirty #194 untouched. No PR reply/body
+  update or merge this turn. Review worktree `/private/tmp/plamotrack-208-r2` and
+  logs `/private/tmp/plamotrack208-r2-*.log`; runner
+  `/private/tmp/plamotrack208-r2-mutations.py`, evidence/recipes under
+  `/private/tmp/plamotrack208-r2-mutants/`. Local reply/body drafts are
+  `/private/tmp/plamotrack208-r2-{response,pr-body}.md`; not posted. Both dedicated
+  test DBs removed; dev DB healthy. No frontend/packaged/TLS/restore/LXC rerun.
+- **Next:** commit/push when asked, then publish the per-finding response/updated
+  coverage at the new head. Obtain another independent review before merging.
+  Fold aud-1..58 after merge, adding
+  test_audit_privacy.py and test_access_logging.py to harness targets. #206/#210/
+  #213/#214/#215 remain separate issue questions. #194 and the M6 release gates
+  still precede the LXC upgrade; the end-of-M6 security review remains planned.
+
+## 2026-09-06 — Codex (GPT-6) — #208 integration committed; #212 handoff history preserved
+
+- **Done:** this merge commit integrates freshly fetched `origin/main` `1fd3b36`
+  (including #212 squash `538640b`) into `codex/193-audit-rate-limit-log-hygiene`,
+  together with the OAuth limiter, audit-attribution and log-hygiene fixes detailed
+  in the preceding entry. The owner requested this commit and handoff reconciliation.
+- **History:** compared every entry in `HANDOFF.md` and `.agents/handoff/` against
+  both parents before committing: all 114 main entries and all 103 branch entries
+  remain unchanged, without duplicate titles. #212's final GO/merge record remains
+  in the live handoff. Added this entry and rotated the oldest verbatim; five live
+  entries, 121 total. No historical entry was rewritten to describe the new state.
+- **State:** committed locally in `/Users/tlgja/Code/plamotrack-208`; no push or
+  GitHub prose update. The primary checkout remains on dirty #194 with its existing
+  files intact. #208 still needs a fresh PR-specific security review before merging;
+  the earlier GO predates #212 and the new logging changes. The broader end-of-M6
+  security review remains planned. #212 itself is no longer a merge-order blocker.
+- **Validation:** retained final affected backend run **589 passed**, frontend
+  **488 passed** plus lint/build, and packaged local/OIDC ingress matrices with zero
+  failures. Full backend 2417 passed before the final SDK diagnostic refinement;
+  the full final backend and 514-case mutation harness were not rerun. Eleven
+  targeted mutants killed. Packaged OIDC used a discovery fixture; provider lifecycle
+  is covered by backend fake-provider tests. Current lint/format/render/whitespace
+  and history-preservation checks passed; this step changed handoff files only.
+- **Next:** push when requested, refresh the stale PR body/coverage with the committed
+  head, then obtain the fresh security review before merging #208. Fold aud-1..37
+  after merge, adding test_access_logging.py to the harness targets. Evidence and
+  runners remain in `/tmp/plamotrack208-current/`. #210/#214/#215 remain separate;
+  #194/TLS/restore and the M6 release precede the LXC upgrade. Disposable stack/test
+  DBs are removed; the original dev Postgres remains. No LXC operation.
+
+## 2026-09-06 — Codex (GPT-6) — #208 integrated with merged #212; OAuth/logging gaps repaired locally
+
+- **Context:** #212 merged as `538640b`; main is `1fd3b36` (remote checked again at
+  finish). Primary checkout is now dirty #194 (`codex/194-caddy-deployment-harness`),
+  so work is isolated in `/Users/tlgja/Code/plamotrack-208` on the existing #193 branch.
+  HEAD stays `2449ed7`: merge of `1fd3b36` and all fixes are prepared, **uncommitted**.
+  No push, GitHub edit, PR merge, or LXC operation. #194's files were left intact.
+- **Done:** resolved the merge, preserving both handoff histories. Removed #212's
+  duplicate OAuth zone/three exact locations; discovery and all six protocol routes
+  inherit the shared family-8 limiter and trusted-address header. Retained the 429
+  envelope/no-store/Retry-After/security profile. MCP claim/identity refusals now name
+  anon; six address witnesses cover raw, trusted-proxy and bundled attribution.
+  #212's grant/client/resource/registration decisions are retained.
+- **Logging finding/fix:** real callbacks leaked code/state in both access logs,
+  Referer in nginx, query credentials in nginx limiter diagnostics, and invalid state
+  in the SDK's diagnostic. `app/log_hygiene.py` chains the record factory before app
+  auth construction: uvicorn queries stripped; SDK auth messages/args/tracebacks
+  replaced with a fixed diagnostic retaining source/severity. App auth messages and
+  audit rows stay detailed. nginx overrides the image's combined log per server,
+  keeps path/status/size/timing, and discards its unformattable request-error log.
+  This diagnostic tradeoff is documented; a stopped-upstream 502 still logged status
+  and timing fields without query/Referer. Startup/config errors still reach stderr.
+- **Harness:** discovery expectations/challenge now follow mode, family-8 contract
+  rows paced before intentional bursts; all six protocol paths and 30 alternate
+  spellings covered. Unrewritten root spellings may be 401/404 at the app while still
+  sharing the ingress budget. Private log-scan JSON includes OAuth query/Referer
+  probes on normal and throttled callbacks, also in the anonymous OIDC-mode run.
+- **Validation:** full backend 2409, then 2417 passed before the final SDK-record
+  sanitization/installation refinement; final affected suites **589 passed**, including
+  six further diagnostic cases. Frontend lint/**488 tests**/build green; Ruff, format,
+  render and whitespace green. Packaged local AND OIDC matrices: zero failures;
+  real PAT/anonymous MCP clients on both spellings; non-vacuous credential/query scans.
+  OIDC packaged provider was a minimal loopback discovery fixture, not a live provider
+  login. Lifecycle/crypto/refresh/revocation are the backend fake-provider suites.
+- **Mutation/negative controls:** six actor assertions and both real-server query-log
+  tests failed before fixes; packaged leaks observed directly. All 514 tracked anchors
+  match once and Python replacements compile. Repaired auth-17/22/pat-16 plus new
+  aud-30..37 killed (**11 distinct cases**); full 514 harness not rerun. New queue:
+  30/31 MCP refusal actors; 32 log-policy installation; 33 query stripping; 34 nginx
+  raw access URI; 35 raw nginx error diagnostics; 36 family-8 limiter; 37 SDK auth
+  payload sanitization. Fold aud-1..37 after merge; add test_access_logging.py to targets.
+- **Evidence:** `/tmp/plamotrack208-current/integration-review.md` has coverage/limits
+  and mutation runners/logs. Disposable stack/volume and the two dedicated test DBs
+  removed; original dev Postgres remains. Worktree dependencies are installed.
+- **Next:** commit/push only when requested; refresh the stale PR body/coverage at the
+  resulting head and obtain a **fresh security review** before merging #208. #212 is
+  no longer the blocker. #210, #214 and #215 remain separate open work. #194/TLS/restore
+  and the M6 release still precede the LXC upgrade. This session publishes nothing.
+
 ## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) MERGED: PR #212 squash → `538640b` after Codex round 15 (GPT-6 Astra, **GO, no findings**); nothing to fold in; next #215, #193, M6-9 TLS docs, the M6 release
 
 - **Done:** Codex round 15 replayed at `1476976` (issuecomment-5555934731): finding 38's negative
@@ -105,131 +236,5 @@ Template:
   `a497481`, rules 1/6/7.1/9/11/12/13; findings from 39; reproduce at `1476976` first; update
   the coverage record in the reply (procedure 7.1). If GO: squash-merge with `Closes #192`;
   nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
-  `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak spike, the register
-  burst concurrent — then the LXC upgrade; relink any MCP client first.
-
-## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 13 (GPT-6 Astra, NO-GO: 1×P3, the fallback counts records, not cache slots) answered on the branch — head `ff8a5ec`, reply posted (issuecomment-5553924170), PR body + coverage record amended, round-14 brief printed
-
-- **Done:** f37 reproduced at `2a786a6` on its own assertions first (20 new contract rows in a
-  worktree at that head: **4 red / 16 green** — Codex's four fetched cells, two unnamed records
-  × token/revoke, on `200 == 401`; the inline, mixed and sole-record rows controls), then
-  fixed at `ff8a5ec`. Cause: the fetched path kept records by the SDK's cache slots (`kid or
-  "_default"`), so two unnamed records were one and the fallback counted slots. **The invariant
-  is now one function, `select_records`, over usable records, for both paths** (procedure 6:
-  rounds 10–13 all landed in this seam): a named `kid` → the records carrying it, none a
-  refusal; no `kid` → the only usable record, two ambiguous. `RestrictedKeyVerifier` keeps
-  every usable record of the fetch in order (`_jwks_records`), the SDK's selection runs
-  behind it (refuse-only), its PEM the disagreement check and the same-`kid` tie-break (last —
-  the documented boundary, unchanged); the inline path takes `[0]`. Tests: contract suite
-  **295** (+20); mutants moa-113/114, moa-108/110/112 re-anchored; harness **513/46**. Docs:
-  module docstring, design §5.9 (k) + row 8, AGENTS.md rule 13, procedure (moa- paragraph +
-  count), lessons → "The cache is not the set". PR body: opening line, What, By file, calls
-  12/17/18 (revised as overruled), Tests, negative control, mutants, coverage record (Codex's
-  r13 untracked coverage folded in; a record's non-string `kid` stays untested here).
-- **Decisions:** the SDK's remote selection stays in front on the fetched path (its cache,
-  TTL and fetch are its own) as a refuse-only layer, ours the owner of cardinality; the
-  same-`kid` collision stays inline-first / fetched-last (Codex asked to preserve it); the
-  corrected set on the fetched path is met by dropping the cached verifier (round 10's idiom).
-- **State:** backend **2362 green**, lint/format clean, `render_ingress.py --check` clean;
-  frontend untouched. Mutants **111/111 killed** at `ff8a5ec` (tracked harness, committed tree,
-  ~13 min; the two new killed first pass). Commit `ff8a5ec` pushed; PR #212 body amended;
-  the reply is issuecomment-5553924170. Codex's r12 material at `/private/tmp/plamotrack-212-r12/`
-  (untracked; r13 named no directory). Dev `db` up, Keycloak spike up. LXC untouched (**stays
-  put until M6 is finished**).
-- **Next:** (1) **Codex round 14 on PR #212** — the brief was printed in this session's chat;
-  regenerate from `.agents/review-brief.md` (Codex footer; the reviewer names its model) if
-  needed, naming runtime head `ff8a5ec`, the branch tip (hand-off only above it), `main`
-  `a497481`, rules 1/6/7.1/9/11/12/13; findings from 38; reproduce at `ff8a5ec` first; update
-  the coverage record in the reply (procedure 7.1). If GO: squash-merge with `Closes #192`;
-  nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
-  `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak spike, the register
-  burst concurrent — then the LXC upgrade; relink any MCP client first.
-
-## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 12 (GPT-6 Astra, NO-GO: 1×P3, a named `kid` must match) answered on the branch — head `2a786a6`, reply posted (issuecomment-5553421733), PR body + coverage record amended, round-13 brief printed
-
-- **Done:** f36 reproduced at `5ecef8f` on its own assertions first (28 new contract rows in a
-  worktree at that head: **4 red / 24 green** — Codex's two inline cells plus the two
-  case-variant rows red on `200 == 401`; every fetched-path, fallback and non-string row a
-  control), then fixed at `2a786a6`. Cause: **FastMCP has two selection rules** — its inline
-  extraction falls back to the only key whenever no record matched the `kid`, named or not;
-  its remote selection only when no `kid` is named — and round 11 wrote out the inline one
-  while the docs described the remote one. `RestrictedKeyAssertionValidator.
-  _extract_public_key_from_jwks` now applies the remote rule with its texts (`Key ID '…' not
-  found in JWKS`; `Multiple keys in JWKS but no key ID (kid) in token`); `_header_kid` is the
-  one reading for both paths (non-empty string names; absent/empty names none, the SDK's
-  remote reading; a non-string reads as none and joserfc's decode refuses the header on both
-  paths — **no type guard added**: it would be a second owner, measured before writing).
-  Round 11's two tests **re-linked under a published name** — their link assertions had named
-  `client-key` against sets not publishing it and passed *through* the fallback under test
-  (Codex's own r12 repro links the same way and refuses at the new head; said in the reply).
-  Tests: contract suite **275** (+28); mutants moa-110…112; harness **511/46**. Docs: module
-  docstring, design §5.9 (k) + row 8, AGENTS.md rule 13, procedure (moa- paragraph + count),
-  lessons → "The library had two rules". PR body: opening line, What, By file, calls 12/17/18,
-  Tests, negative control, mutants, coverage record (a record's own empty/non-string `kid`
-  listed untested; Codex's r12 untracked coverage folded in).
-- **Decisions:** the rule is the SDK's *remote* one on both paths; an empty `kid` names none
-  (the SDK's remote reading, and its cache keeps a record's empty `kid` under `_default`);
-  a non-string `kid` is joserfc's refusal, not ours; the same-`kid` collision stays the
-  documented inherited boundary (Codex r12 measured it and called it not a finding).
-- **State:** backend **2342 green**, lint/format clean, `render_ingress.py --check` clean;
-  frontend untouched. Mutants **109/109 killed** at `2a786a6` (tracked harness, committed
-  tree, ~14 min; the three new killed first pass). Commit `2a786a6` pushed; PR #212 body
-  amended; the reply is issuecomment-5553421733. Codex's r12 material at `/private/tmp/plamotrack-212-r12/`
-  (untracked). Dev `db` up, Keycloak spike up. LXC untouched (**stays put until M6 is
-  finished**).
-- **Next:** (1) **Codex round 13 on PR #212** — the brief was printed in this session's chat;
-  regenerate from `.agents/review-brief.md` (Codex footer; the reviewer names its model) if
-  needed, naming runtime head `2a786a6`, the branch tip (hand-off only above it), `main`
-  `a497481`, rules 1/6/7.1/9/11/12/13; findings from 37; reproduce at `2a786a6` first; update
-  the coverage record in the reply (procedure 7.1). If GO: squash-merge with `Closes #192`;
-  nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
-  `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak spike, the register
-  burst concurrent — then the LXC upgrade; relink any MCP client first.
-
-## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 11 (Daybreak Blue after GPT-6 Astra's refusals; NO-GO: 2×P3, the record the kid named) answered on the branch — head `5ecef8f`, reply posted (issuecomment-5552863879), PR body + coverage record amended, round-12 brief printed
-
-- **Done:** both reproduced at `f82b3b3` on their own assertions first (16 new contract rows in a
-  worktree at that head: **12 red / 4 green** — Codex's eight plus four: with the restricted copy
-  first the *allowed* copy's assertion was refused too, so material-identity followed array order
-  both ways), then fixed at `5ecef8f`. **f34** the record carried by the identity the selection
-  used: `RestrictedKeyVerifier` keeps the fetched JWKs **by `kid`** as the SDK caches their PEMs
-  (`_default` for none, unusable skipped) and returns the record the assertion's `kid` names
-  (or the only key), refusing a record whose material ≠ the SDK's selected PEM; the inline
-  selection written out by the SDK's rule in `_extract_public_key_from_jwks`, returning the
-  record; `selected_jwk` gone; `_header_kid` via the SDK's `decode_jwt_header`. **f35** the
-  validator's inline selection owns usability and selection together (the remote path's
-  predicate: RSA/EC + a joserfc import that succeeds), so an `OKP` or incomplete object no
-  longer denies the single-key fallback inline; round 9's copy-based `with_usable_inline_keys`
-  **retired** — the first full harness pass at the new head returned moa-101/102/103 GREEN
-  (equivalent: a second owner of the decision) → 101/103 retired, 102 re-anchored, re-run.
-  Tests: contract suite **247** (+16); mutants moa-107…109; harness **508/46**, 106 tuples. Docs: module docstring, design §5.9 (k) + row 8,
-  AGENTS.md rule 13, procedure (moa- paragraph + count; reviewer roster: Daybreak Blue from
-  this round), review-brief footer, lessons → "The record the selection named". PR body: What,
-  By file, call 12, call 17 (predicate), call 18 (first-entry assumption withdrawn), Tests,
-  controls, mutants, coverage record (same-`kid` divergence named as inherited/untested).
-- **Decisions:** the inline selection is ours by the SDK's rule (no longer calling the SDK's
-  extractor) so the record, not a PEM, is returned; a fetched record/PEM disagreement refused,
-  never degraded; the SDK's inline-first/remote-last same-`kid` divergence inherited, not
-  reconciled (RFC 7517 §4.5 wants `kid` unique) — named in the brief; the round-11 comment is
-  signed "GPT-6 Astra" though the owner says Daybreak Blue reviewed — the brief's footer asks
-  the reviewer to name itself.
-- **State:** backend **2314 green**, lint/format clean, `render_ingress.py --check` clean;
-  frontend untouched. Mutants ****106/106 killed** at `5ecef8f` (tracked harness, committed tree, ~13 min; the first pass at `a77aa01` was 105 + three GREEN → the retirement)** (tracked harness, committed tree, `nohup`).
-  Commits `5ecef8f` and `5ecef8f` (the filter's retirement after the first harness pass) pushed; PR #212 body amended; the reply is issuecomment-5552863879. Codex's r11 material
-  untracked (its comment names no directory this round). Dev `db` up, Keycloak spike up. LXC
-  untouched (**stays put until M6 is finished**).
-- **Next:** (1) **Codex round 12 has landed — NO-GO, one P3, finding 36, unaddressed**
-  (issuecomment-5553107067, signed "GPT-6 Astra" again; this session closed at ~80 % context
-  before reading past the title, owner's call): *an inline assertion naming an unknown `kid`
-  is accepted through the no-`kid` fallback* — `RestrictedKeyAssertionValidator.
-  _extract_public_key_from_jwks` falls back to the single usable key when the named `kid`
-  matches nothing, where the SDK's remote selection refuses a named `kid` it cannot find
-  (RFC 7517 §4.5). Answer in a new session per `.agents/testing-and-review.md` →
-  "Responding to a review": read the comment in full first, reproduce at `5ecef8f` in the
-  contract suite (both endpoints; the remote parity control), fix so a *named* `kid` must
-  match and only an assertion naming none takes the fallback, add the mutant (moa-110),
-  re-run `-k moa-` on the committed tree, update the coverage record (procedure 7.1),
-  print the round-13 brief from `.agents/review-brief.md` (the reviewer names its model;
-  findings from 37). If GO: squash-merge with `Closes #192`; nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
   `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak spike, the register
   burst concurrent — then the LXC upgrade; relink any MCP client first.

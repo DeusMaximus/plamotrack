@@ -2276,8 +2276,8 @@ CASES = [
     (
         "ingr-16. forwarded address overwrites the raw peer",
         ING,
-        '            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = self.policy.resolve_client_address(\n                peer, forwarded\n            )',
-        '            resolved = self.policy.resolve_client_address(peer, forwarded)\n            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = resolved\n            if resolved:\n                scope["client"] = (resolved, 0)',
+        '            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = address\n',
+        '            scope.setdefault("state", {})[CLIENT_ADDRESS_KEY] = address\n            if address:\n                scope["client"] = (address, 0)\n',
         "raw_peer or forge",
     ),
     (
@@ -2469,8 +2469,8 @@ CASES = [
     (
         "auth-17. the binding does not stamp",
         DEP,
-        '            if message["type"] == "http.response.start":\n                _stamp_cache_control(message, self.policy.response)\n            await send(message)\n\n        if self.policy.methods',
-        "            if False:\n                _stamp_cache_control(message, self.policy.response)\n            await send(message)\n\n        if self.policy.methods",
+        '            if message["type"] == "http.response.start":\n                started = True\n                _stamp_cache_control(message, self.policy.response)\n            await send(message)\n\n        if self.policy.methods',
+        "            if False:\n                started = True\n                _stamp_cache_control(message, self.policy.response)\n            await send(message)\n\n        if self.policy.methods",
         "replaces_every_handler or carries_no_store_over",
     ),
     (
@@ -2497,8 +2497,8 @@ CASES = [
     (
         "auth-21. the profile middleware never added",
         MAIN,
-        "        bind_route_policies(app, route_index)\n        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n\n    app.add_exception_handler",
-        "        bind_route_policies(app, route_index)\n\n    app.add_exception_handler",
+        "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n",
+        "",
         "middleware_is_innermost or no_store_on_a_collection_read",
     ),
     # auth-22 MOVES the add_middleware call to the tail of create_app — after the
@@ -2510,23 +2510,8 @@ CASES = [
     (
         "auth-22. the profile middleware added last (outermost)",
         MAIN,
-        "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n\n"
-        "    app.add_exception_handler(DomainError, domain_error_handler)\n"
-        "    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n"
-        "    app.add_exception_handler(RequestValidationError, request_validation_handler)\n\n"
-        "    # Outermost last: the guard answers a hostile Host before anything else\n"
-        "    # runs, and the forwarded-client resolver sees only requests that passed it.\n"
-        "    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n"
-        "    app.add_middleware(HostOriginGuardMiddleware, policy=policy)\n"
-        "    return app",
-        "\n    app.add_exception_handler(DomainError, domain_error_handler)\n"
-        "    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n"
-        "    app.add_exception_handler(RequestValidationError, request_validation_handler)\n\n"
-        "    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n"
-        "    app.add_middleware(HostOriginGuardMiddleware, policy=policy)\n"
-        "    if authorization:\n"
-        "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n"
-        "    return app",
+        "        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n        # Directly above it, the pre-routing gate (§5.5 family 13, #204): the\n        # principal resolved once, before Starlette routes and FastAPI parses,\n        # so an anonymous caller is refused ahead of the router's 404/405 and\n        # the parser's 422 — none of which the dependency can reach. It renders\n        # through the same envelope handler the dependency's errors take.\n        app.add_middleware(\n            PreRoutingAuthMiddleware,\n            index=route_index,\n            table=DispatchTable.from_app(app),\n            render=domain_error_handler,\n        )\n\n        async def record_ingress_rejection(event_type: str, scope, setting: str) -> None:\n            # Lazy import keeps the ingress policy independent of persistence;\n            # the service owns the audit transaction (rule 1).\n            from app.services.audit import record_ingress_rejection as record\n\n            await record(event_type, scope, policy=policy, setting=setting)\n\n    app.add_exception_handler(DomainError, domain_error_handler)\n    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n    app.add_exception_handler(RequestValidationError, request_validation_handler)\n    app.add_exception_handler(Exception, unhandled_error_envelope)\n\n    # Outermost last: the guard answers a hostile Host before anything else\n    # runs, and the forwarded-client resolver sees only requests that passed it.\n    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n    app.add_middleware(\n        HostOriginGuardMiddleware,\n        policy=policy,\n        rejection_recorder=record_ingress_rejection if authorization else None,\n    )\n    return app",
+        "        # Directly above it, the pre-routing gate (§5.5 family 13, #204): the\n        # principal resolved once, before Starlette routes and FastAPI parses,\n        # so an anonymous caller is refused ahead of the router's 404/405 and\n        # the parser's 422 — none of which the dependency can reach. It renders\n        # through the same envelope handler the dependency's errors take.\n        app.add_middleware(\n            PreRoutingAuthMiddleware,\n            index=route_index,\n            table=DispatchTable.from_app(app),\n            render=domain_error_handler,\n        )\n\n        async def record_ingress_rejection(event_type: str, scope, setting: str) -> None:\n            # Lazy import keeps the ingress policy independent of persistence;\n            # the service owns the audit transaction (rule 1).\n            from app.services.audit import record_ingress_rejection as record\n\n            await record(event_type, scope, policy=policy, setting=setting)\n\n    app.add_exception_handler(DomainError, domain_error_handler)\n    app.add_exception_handler(StarletteHTTPException, http_exception_envelope)\n    app.add_exception_handler(RequestValidationError, request_validation_handler)\n    app.add_exception_handler(Exception, unhandled_error_envelope)\n\n    # Outermost last: the guard answers a hostile Host before anything else\n    # runs, and the forwarded-client resolver sees only requests that passed it.\n    app.add_middleware(ForwardedClientMiddleware, policy=policy)\n    app.add_middleware(\n        HostOriginGuardMiddleware,\n        policy=policy,\n        rejection_recorder=record_ingress_rejection if authorization else None,\n    )\n    if authorization:\n        app.add_middleware(ResponseProfileMiddleware, index=route_index)\n    return app",
         "middleware_is_innermost",
     ),
     (
@@ -2570,9 +2555,9 @@ CASES = [
     (
         "auth-28. anon on a scoped route is 403, not 401",
         DEP,
-        "    if principal.kind is PrincipalKind.ANON:\n        raise UnauthenticatedError(_UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED)\n    if not principal.has_scope(scope):",
+        "    if principal.kind is PrincipalKind.ANON:\n        raise UnauthenticatedError(\n            _UNAUTHENTICATED, code=error_codes.AUTH_UNAUTHENTICATED, challenge=BEARER_CHALLENGE\n        )\n    if not principal.has_scope(scope):",
         "    if not principal.has_scope(scope):",
-        "reads_need_a_read_scope or anonymous_read_is_the_unauthenticated_envelope",
+        "dependency_alone_refuses_anonymous",
     ),
     (
         "auth-29. the scope check dropped",
@@ -2866,7 +2851,7 @@ CASES = [
     (
         "pat-16. the mount is built without the verifier",
         MAIN,
-        "        auth=PersonalAccessTokenVerifier() if authorization else None,",
+        "        auth=auth,",
         "        auth=None,",
         "takes_a_bearer_and_never_a_cookie or carries_no_store_over",
     ),
@@ -3113,7 +3098,7 @@ CASES = [
     (
         "oidc-14. rebind keeps sessions",
         OIDC_SVC,
-        '    revoked = await auth_service.revoke_all_sessions(\n        session, target="recovery rebind-oidc", client_address="host"\n    )',
+        '    revoked = await auth_service.revoke_all_sessions(\n        session, target="recovery rebind-oidc", principal=internal(), client_address="host"\n    )',
         "    revoked = 0",
         "rebind_revokes_every_session",
     ),
@@ -3246,8 +3231,8 @@ CASES = [
     (
         "oidc-33. sweep touches instead of revoking",
         AUTH_SVC,
-        '        .values(revoked_at=_now())\n    )\n    revoked = result.rowcount or 0\n    if revoked:\n        await audit.record_event(\n            session,\n            audit.SESSIONS_REVOKED,\n            target="startup",',
-        '        .values(last_used_at=_now())\n    )\n    revoked = result.rowcount or 0\n    if revoked:\n        await audit.record_event(\n            session,\n            audit.SESSIONS_REVOKED,\n            target="startup",',
+        '        .values(revoked_at=_now())\n    )\n    revoked = result.rowcount or 0\n    if revoked:\n        await audit.record_event(\n            session,\n            audit.SESSIONS_REVOKED,\n            principal=internal(),\n            target="startup",',
+        '        .values(last_used_at=_now())\n    )\n    revoked = result.rowcount or 0\n    if revoked:\n        await audit.record_event(\n            session,\n            audit.SESSIONS_REVOKED,\n            principal=internal(),\n            target="startup",',
         "starting_in_the_other_mode_revokes",
     ),
     (
@@ -3274,7 +3259,7 @@ CASES = [
     (
         "oidc-37. mode_changed audit row not written",
         AUTH_SVC,
-        '        await audit.record_event(\n            session,\n            audit.AUTH_MODE_CHANGED,\n            target="startup",\n            detail=f"auth_mode={auth_mode} sessions_revoked={revoked}",\n            client_address="host",\n        )\n',
+        '        await audit.record_event(\n            session,\n            audit.AUTH_MODE_CHANGED,\n            principal=internal(),\n            target="startup",\n            detail=f"auth_mode={auth_mode} sessions_revoked={revoked}",\n            client_address="host",\n        )\n',
         "",
         "starting_in_the_other_mode_revokes",
     ),
@@ -3668,8 +3653,8 @@ CASES = [
     (
         "moa-54. the upstream ending audited as a client revocation",
         MCP_OAUTH,
-        '                detail=f"client={transition.client_id} ended_by={ENDED_BY_UPSTREAM}",',
-        '                detail=f"client={transition.client_id} presented=refresh_token",',
+        '                    f"ended_by={ENDED_BY_UPSTREAM}"',
+        '                    f"presented=refresh_token"',
         "becomes_the_grant_only_once and forged",
     ),
     (
