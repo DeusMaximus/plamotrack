@@ -41,6 +41,47 @@ Template:
 
 ---
 
+## 2026-09-07 — Claude Code (Fable 5.1) — #215 fixed (PR #216, CI green) and the #208 `aud-` set folded (PR #217, 56/56 on the committed tree); both open for the owner's merge; #194 next
+
+- **Done:** (1) **#215** on `fix/215-ci-setup-token-argv` → **PR #216** (`040c613`): the
+  Integration matrix step's three variable-valued options spelled attached
+  (`--setup-token="$SETUP_TOKEN"`, `--token-out=…`, `--log-secrets-out=…`) with a comment
+  above the step saying why; the procedure doc's hand-run instruction says the same.
+  Proven against the real `ingress_matrix.main` parser with a leading-hyphen token
+  (separate word: `SystemExit(2)`; attached: parsed). Backend/Frontend/Integration green.
+  (2) **The `aud-` fold-in** on `chore/193-aud-mutants` → **PR #217** (`0cfdeb5`): 56 cases —
+  aud-1…17 reconstructed from PR #208's prose descriptions against `bd40687` (aud-14 on the
+  normalised snapshot), 18…58 verbatim from the record's two JSON blocks; four suites join
+  `TEST_FILES` (`test_audit`, `test_audit_privacy`, `test_access_logging`,
+  `test_deployment_hygiene`); the nginx template, `Dockerfile` and `ingress_matrix.py` join
+  the clean-tree check. Harness **570 cases / 51 files** (procedure doc's count line
+  re-derived). **56/56 RED on the committed tree** (`-k aud-`, ~8 min, tree clean after);
+  first pass 55/56 — aud-23 GREEN on the record's selection (the id_token-rejected test
+  asserts the row's detail, not its actor) → re-pointed at
+  `the_owner_cancelling_at_the_provider_spends_the_transaction`, RED on replay.
+- **Decisions:** aud-34/35 stay out — nothing in `tests/` reads the access-log format or
+  `error_log /dev/null;`, so their only witness is the release gate's packaged log scan.
+  aud-17/36, packaged-only in the record, fold on the four-families test's literal
+  assertions (added by the P3 round). No full-harness run: the branch touches no emission
+  site or anchored line; every anchor checked once (570/570), replacements compile, no
+  `-k` prefix collision. No reviewer requested on either PR — owner's call (CI/process,
+  not app code). Commit/push/PR for both was the owner's explicit choice this session.
+- **State:** `main` at `9273840` + this hand-off, tree clean, nothing uncommitted. Two
+  branches pushed and open: **PR #216** (green), **PR #217** (CI running at hand-off).
+  Dev `db` up; the Keycloak spike compose still up (`.agents/spikes/190/`, untracked —
+  needed for the OIDC-mode release gate). The owner's **#194 work-in-progress is
+  uncommitted on their MacBook**; they expect to redo it on this Mac — treat #194 as not
+  started here. LXC untouched (**stays put until M6 is finished**).
+- **Next:** (1) owner merges #216 and #217 (squash; #216's body carries `Closes #215`).
+  (2) **#194** (M6-9: reference TLS deployment with Caddy + the operations/README rewrite)
+  on a fresh branch — read the issue and design §5.4 first. (3) **#195**, the M6 release:
+  the gate in `.agents/testing-and-review.md` — `ingress_matrix.py --mode oidc` against a
+  packaged stack with the Keycloak spike, the register burst last — then bump via PR, tag,
+  prerelease notes leading with the fail-closed upgrade path; the open M6 P3s
+  **#206/#210/#213/#214** need a defer-or-fix call before the tag, #30 closes with the
+  release. (4) Only then the LXC upgrade (back up first; `ALLOWED_HOSTS`; relink MCP
+  clients; refresh the personal Gunpla skill).
+
 ## 2026-09-06 — Codex (GPT-6 Astra) — #208 post-merge GO; feature branch deleted
 
 - **Done:** verified Daybreak's independent GO at `3f93b3c`, recorded in PR #208
@@ -177,51 +218,3 @@ Template:
   #194/TLS/restore and the M6 release precede the LXC upgrade. Disposable stack/test
   DBs are removed; the original dev Postgres remains. No LXC operation.
 
-## 2026-09-06 — Codex (GPT-6) — #208 integrated with merged #212; OAuth/logging gaps repaired locally
-
-- **Context:** #212 merged as `538640b`; main is `1fd3b36` (remote checked again at
-  finish). Primary checkout is now dirty #194 (`codex/194-caddy-deployment-harness`),
-  so work is isolated in `/Users/tlgja/Code/plamotrack-208` on the existing #193 branch.
-  HEAD stays `2449ed7`: merge of `1fd3b36` and all fixes are prepared, **uncommitted**.
-  No push, GitHub edit, PR merge, or LXC operation. #194's files were left intact.
-- **Done:** resolved the merge, preserving both handoff histories. Removed #212's
-  duplicate OAuth zone/three exact locations; discovery and all six protocol routes
-  inherit the shared family-8 limiter and trusted-address header. Retained the 429
-  envelope/no-store/Retry-After/security profile. MCP claim/identity refusals now name
-  anon; six address witnesses cover raw, trusted-proxy and bundled attribution.
-  #212's grant/client/resource/registration decisions are retained.
-- **Logging finding/fix:** real callbacks leaked code/state in both access logs,
-  Referer in nginx, query credentials in nginx limiter diagnostics, and invalid state
-  in the SDK's diagnostic. `app/log_hygiene.py` chains the record factory before app
-  auth construction: uvicorn queries stripped; SDK auth messages/args/tracebacks
-  replaced with a fixed diagnostic retaining source/severity. App auth messages and
-  audit rows stay detailed. nginx overrides the image's combined log per server,
-  keeps path/status/size/timing, and discards its unformattable request-error log.
-  This diagnostic tradeoff is documented; a stopped-upstream 502 still logged status
-  and timing fields without query/Referer. Startup/config errors still reach stderr.
-- **Harness:** discovery expectations/challenge now follow mode, family-8 contract
-  rows paced before intentional bursts; all six protocol paths and 30 alternate
-  spellings covered. Unrewritten root spellings may be 401/404 at the app while still
-  sharing the ingress budget. Private log-scan JSON includes OAuth query/Referer
-  probes on normal and throttled callbacks, also in the anonymous OIDC-mode run.
-- **Validation:** full backend 2409, then 2417 passed before the final SDK-record
-  sanitization/installation refinement; final affected suites **589 passed**, including
-  six further diagnostic cases. Frontend lint/**488 tests**/build green; Ruff, format,
-  render and whitespace green. Packaged local AND OIDC matrices: zero failures;
-  real PAT/anonymous MCP clients on both spellings; non-vacuous credential/query scans.
-  OIDC packaged provider was a minimal loopback discovery fixture, not a live provider
-  login. Lifecycle/crypto/refresh/revocation are the backend fake-provider suites.
-- **Mutation/negative controls:** six actor assertions and both real-server query-log
-  tests failed before fixes; packaged leaks observed directly. All 514 tracked anchors
-  match once and Python replacements compile. Repaired auth-17/22/pat-16 plus new
-  aud-30..37 killed (**11 distinct cases**); full 514 harness not rerun. New queue:
-  30/31 MCP refusal actors; 32 log-policy installation; 33 query stripping; 34 nginx
-  raw access URI; 35 raw nginx error diagnostics; 36 family-8 limiter; 37 SDK auth
-  payload sanitization. Fold aud-1..37 after merge; add test_access_logging.py to targets.
-- **Evidence:** `/tmp/plamotrack208-current/integration-review.md` has coverage/limits
-  and mutation runners/logs. Disposable stack/volume and the two dedicated test DBs
-  removed; original dev Postgres remains. Worktree dependencies are installed.
-- **Next:** commit/push only when requested; refresh the stale PR body/coverage at the
-  resulting head and obtain a **fresh security review** before merging #208. #212 is
-  no longer the blocker. #210, #214 and #215 remain separate open work. #194/TLS/restore
-  and the M6 release still precede the LXC upgrade. This session publishes nothing.
