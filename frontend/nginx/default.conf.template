@@ -9,6 +9,19 @@
 # assembled by 15-plamotrack-server-names.envsh from PUBLIC_BASE_URL, WEB_BIND and
 # ALLOWED_HOSTS — the same inputs the API derives its allowlist from.
 
+# OAuth callbacks carry one-use credentials in the query. Log the public path
+# before nginx rewrites it, with method/status/timing, but no query or headers
+# (Referer can carry a callback URL too). nginx's error diagnostics cannot be
+# formatted and include the raw request, even on a limiter refusal. Discard
+# those request diagnostics; access records still expose 429/5xx and upstream
+# status/timing. Configuration/startup failures still reach nginx's stderr.
+map $request_uri $plamotrack_log_path {
+    ~^([^?]*) $1;
+}
+log_format plamotrack '$remote_addr [$time_local] "$request_method $plamotrack_log_path $server_protocol" '
+                      '$status $body_bytes_sent upstream=$upstream_status request_time=$request_time upstream_time=$upstream_response_time';
+error_log /dev/null;
+
 # TRUSTED_PROXIES is rendered as validated `set_real_ip_from` directives by the
 # same startup script. Only those peers may supply X-Forwarded-For; after nginx's
 # real-ip module resolves the chain, `$binary_remote_addr` is the per-client key
@@ -52,6 +65,9 @@ limit_req_zone $plamotrack_family_9_key zone=plamotrack_family_9:1m rate=5r/s;
 # (app/ingress.py), because nothing is "protected by nginx" (§5.5). The body is
 # the API's error envelope, naming the setting that fixes it.
 server {
+    # Override the image's http-level combined log; another http-level
+    # access_log would append a second destination and retain the raw query.
+    access_log /var/log/nginx/access.log plamotrack;
     listen 80 default_server;
     server_name _;
     default_type application/json;
@@ -59,6 +75,9 @@ server {
 }
 
 server {
+    # Override the image's http-level combined log; another http-level
+    # access_log would append a second destination and retain the raw query.
+    access_log /var/log/nginx/access.log plamotrack;
     listen 80;
     server_name ${PLAMOTRACK_SERVER_NAMES};
 
@@ -121,6 +140,21 @@ server {
         return 404 '{"detail":"Not Found"}';
     }
 
+    # Every bounded family shares this refusal profile. OAuth failures keep
+    # the registry's no-store envelope (#212 f4); the other families receive
+    # the same protection. add_header does not inherit, so headers repeat here.
+    error_page 429 = @rate_limited;
+    location @rate_limited {
+        default_type application/json;
+        add_header Cache-Control "no-store" always;
+        add_header Retry-After 1 always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options DENY always;
+        add_header Referrer-Policy strict-origin-when-cross-origin always;
+        add_header Content-Security-Policy "frame-ancestors 'none'" always;
+        return 429 '{"detail":"Too many requests to this endpoint from your address; try again in a moment.","code":"ingress.rate_limited","params":{}}';
+    }
+
     # react-router owns the path space: a deep link like /orders is not a file,
     # and must return the app rather than a 404.
     location / {
@@ -173,9 +207,18 @@ server {
     }
 
     # OAuth discovery (§5.5, family 8) lives at the root, installed on the API by
-    # M6-7; until then the API answers these 404. Exact locations, so nothing
-    # else under /.well-known/ is ever handed the SPA's index.html as a 200.
+    # M6-7 — three documents in OIDC mode, the same three paths answering 404
+    # themselves in local mode. Exact locations, so nothing else under
+    # /.well-known/ is ever handed the SPA's index.html as a 200.
     location ^~ /.well-known/ {
+        return 404;
+    }
+    # The resource is `…/mcp/`, slash included, and clients ask for exactly that
+    # (the pointer in the 401 challenge names it). Without this block nginx
+    # answers the slash-less spelling with its own 301 onto the proxied location
+    # — a second ingress-produced redirect the design allows only for /api
+    # (§5.6, proxy trust; the #190 spike measured it), so it is 404 instead.
+    location = /.well-known/oauth-protected-resource/mcp {
         return 404;
     }
     location = /.well-known/oauth-protected-resource/mcp/ {

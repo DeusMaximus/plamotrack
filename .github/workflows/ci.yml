@@ -331,7 +331,7 @@ jobs:
           PY
 
       # T10 at the packaged layer: neither uvicorn's nor nginx's log may hold
-      # the password, PAT or session id from the full login/PAT/MCP run. The
+      # the password, PAT, session id or OAuth query/Referer probes from the run. The
       # scan is not allowed
       # to be vacuous (round 2, f5): the captured output must first show an
       # access record from EACH service for the liveness probe above — the API
@@ -356,7 +356,7 @@ jobs:
           for kind, secret in secrets.items():
               if secret in logs:
                   raise SystemExit(f"the {kind} appears in a container log")
-          print("access records from api and web seen; no password, PAT or session id in them")
+          print("access records from api and web seen; no run credential or query/referrer probe in them")
           PY
 
       - name: Show Compose logs on failure

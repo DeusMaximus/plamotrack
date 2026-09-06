@@ -13,6 +13,7 @@ packaged-stack behaviour of these 404s is proven separately by
 1 shipped, so that behaviour is unchanged.
 """
 
+import re
 from pathlib import Path
 
 from app.auth.registry import (
@@ -110,4 +111,10 @@ def test_the_four_declared_rate_limit_families_have_separate_keys_and_bursts():
     assert "map $request_uri $plamotrack_family_" not in text
     # Every path proxied to the unpublished API overwrites the internal address
     # header; a client-supplied value can never pass through nginx unchanged.
-    assert text.count("proxy_set_header X-Plamotrack-Client-Address $remote_addr;") == 7
+    proxy_blocks = re.findall(r"location [^{]+\{([^}]+)\}", text)
+    proxy_blocks = [block for block in proxy_blocks if "proxy_pass " in block]
+    assert len(proxy_blocks) == 7
+    for block in proxy_blocks:
+        assert "proxy_set_header X-Plamotrack-Client-Address $remote_addr;" in block
+        assert "limit_req " not in block, "location limits replace the shared server limits"
+    assert len(re.findall(r"^limit_req_zone ", text, re.M)) == 4

@@ -347,16 +347,31 @@ class RouteBinding:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        started = False
 
         async def send_wrapper(message: Message) -> None:
+            nonlocal started
             if message["type"] == "http.response.start":
+                started = True
                 _stamp_cache_control(message, self.policy.response)
             await send(message)
 
         if self.policy.methods and scope["method"] not in self.policy.methods:
             await method_not_allowed(self.policy)(scope, receive, send_wrapper)
             return
-        await self.app(scope, receive, send_wrapper)
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception:
+            # The route's failure is the binding's response too: the child
+            # app's error layer sits above this binding and would answer in
+            # plain text without the profile (Codex #212 round 1, f4). The
+            # exception still propagates, so the server logs it as it does
+            # every other 500.
+            if not started:
+                await JSONResponse({"detail": "Internal Server Error"}, status_code=500)(
+                    scope, receive, send_wrapper
+                )
+            raise
 
 
 def bind_route_policies(app: FastAPI, index: RouteIndex) -> None:
