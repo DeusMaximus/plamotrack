@@ -41,6 +41,30 @@ Template:
 
 ---
 
+## 2026-09-06 — Codex (GPT-6 Astra) — #208 post-merge GO; feature branch deleted
+
+- **Done:** verified Daybreak's independent GO at `3f93b3c`, recorded in PR #208
+  issuecomment-5558944536: P3-5/P3-6 resolved, no new P1–P3 findings, all ten calls
+  accepted, no revert or corrective follow-up warranted. #208 was already squash-
+  merged as `bd40687`; #193 is closed and #212 remains integrated. No second merge.
+  Deleted local and remote `codex/193-audit-rate-limit-log-hygiene` at `f7f6089`,
+  after confirming its tree equals the squash merge. Remote deletion used a lease.
+- **Review evidence:** 113/113 privacy tests; independent negative control 70 red /
+  27 green; all 21 new anchors checked; 10 source mutants plus packaged aud-17/35
+  detected. Added temporary duplicate-XFF/empty-boundary and overlapping ASGI-task
+  attribution/reset probes (2 passed, removed afterward). CI at reviewed `3f93b3c`
+  passed (run 34029727544); the fix-head CI also passed. No code changed this turn.
+- **History/state:** preserved all 123 prior entries and rotated the oldest verbatim:
+  124 unique entries, five live. #212's merge record is archived intact. The separate
+  #208 worktree remains on main; the primary dirty #194 checkout is untouched.
+  PR body updated with the GO and added coverage. No release or deployment performed.
+- **Next:** fold queued aud-1..58 in a separate change after checking current anchors,
+  adding test_audit_privacy.py and test_access_logging.py to harness targets.
+  #194 and the separate end-of-M6 security/deployment gates remain: concurrent real-
+  socket attribution, live provider, TLS/Caddy/LXC/restore and long-duration limiter
+  behaviour are not signed off by this GO. #206/#210/#213/#214/#215 remain separate
+  questions. Keep the LXC upgrade behind the remaining M6 gates.
+
 ## 2026-09-06 — Codex (GPT-6 Astra) — #208 merged; independent post-merge verdict pending
 
 - **Done:** committed P3-5/P3-6 and the redirect-test repair as `f7f6089`, pushed,
@@ -201,32 +225,3 @@ Template:
   resulting head and obtain a **fresh security review** before merging #208. #212 is
   no longer the blocker. #210, #214 and #215 remain separate open work. #194/TLS/restore
   and the M6 release still precede the LXC upgrade. This session publishes nothing.
-
-## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) MERGED: PR #212 squash → `538640b` after Codex round 15 (GPT-6 Astra, **GO, no findings**); nothing to fold in; next #215, #193, M6-9 TLS docs, the M6 release
-
-- **Done:** Codex round 15 replayed at `1476976` (issuecomment-5555934731): finding 38's negative
-  control 4/20 → 24/24, 112/112 mutants, 2386 green, the six-round representation sweep closed
-  (raw document → usable records → SDK cache → `select_records` → PEM tie-break → selected JWK →
-  imported key, every consumer accounted for at FastMCP 3.4.5), boolean/object record `kid`,
-  an assertion naming an unusable record, fetched root extensions, overlapping fetches and a
-  failed-refetch recovery all driven untracked; calls 1–18 stand. Squash-merged with
-  `Closes #192` in the squash body (procedure 8). **Nothing to fold in**: every `moa-` tuple
-  (1…115 less the withdrawn/retired 16, 101, 103 → 112) is already in the tracked harness —
-  `.agents/testing-and-review.md`'s "on `main` after #212: 514 cases over 46 target files" is
-  now literally true. Branch `feature/m6-7-mcp-oauth` left in place (not deleted).
-- **Decisions:** merged on the owner's report of GO (the hand-off's standing "if GO:
-  squash-merge" since round 1); no release cut — M6 is one release at the end.
-- **State:** `main` at `538640b` (the squash) + this hand-off; **nothing in flight** — the
-  session closed here with the tree clean on `main`, #192 closed by the merge (COMPLETED),
-  PR #212 MERGED, no open branch work. Dev `db` up; the Keycloak spike compose is still up
-  (`.agents/spikes/190/`, untracked) — stop it when it is no longer needed for the OIDC-mode
-  ingress gate. LXC untouched (**stays put until M6 is finished** — #215, #193, M6-9 and the
-  release are still ahead of it). Frontend untouched throughout #212.
-- **Next:** (1) **#215** and **#193** (the app's own request budget; the ingress limits landed
-  with #212) — read each issue first; branch + PR each. (2) **M6-9 TLS docs** — the tested
-  TLS/VPS deployment path (design §5.4 modes), on a branch. (3) **The M6 release**: the
-  release gate in `.agents/testing-and-review.md` — `ingress_matrix.py --mode oidc` against a
-  packaged stack with the Keycloak spike, the register burst concurrent — then tag, notes
-  (client-visible changes are itemised per round in the PR #212 body, "Deliberate calls"),
-  and only then the LXC upgrade (back up first; needs `ALLOWED_HOSTS`; relink any MCP client;
-  refresh the personal Gunpla skill to the new version).
