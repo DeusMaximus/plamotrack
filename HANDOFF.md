@@ -55,10 +55,12 @@ Template:
   now literally true. Branch `feature/m6-7-mcp-oauth` left in place (not deleted).
 - **Decisions:** merged on the owner's report of GO (the hand-off's standing "if GO:
   squash-merge" since round 1); no release cut — M6 is one release at the end.
-- **State:** `main` at `538640b` (+ this hand-off). Dev `db` up; the Keycloak spike compose
-  is still up (`.agents/spikes/190/`, untracked) — stop it when it is no longer needed for
-  the OIDC-mode ingress gate. LXC untouched (**stays put until M6 is finished** — #215, #193,
-  M6-9 and the release are still ahead of it).
+- **State:** `main` at `538640b` (the squash) + this hand-off; **nothing in flight** — the
+  session closed here with the tree clean on `main`, #192 closed by the merge (COMPLETED),
+  PR #212 MERGED, no open branch work. Dev `db` up; the Keycloak spike compose is still up
+  (`.agents/spikes/190/`, untracked) — stop it when it is no longer needed for the OIDC-mode
+  ingress gate. LXC untouched (**stays put until M6 is finished** — #215, #193, M6-9 and the
+  release are still ahead of it). Frontend untouched throughout #212.
 - **Next:** (1) **#215** and **#193** (the app's own request budget; the ingress limits landed
   with #212) — read each issue first; branch + PR each. (2) **M6-9 TLS docs** — the tested
   TLS/VPS deployment path (design §5.4 modes), on a branch. (3) **The M6 release**: the
