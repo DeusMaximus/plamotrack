@@ -406,10 +406,12 @@ no secrets to forks, stale runs cancelled.
   path, no secrets — and appends `ALLOWED_HOSTS=ci.plamotrack.test` so the matrix
   has a listed name to prove. Locally the matrix runs the same way against a
   packaged stack: `uv run python ingress_matrix.py http://127.0.0.1:8080
-  [--allowed-host NAME] [--setup-token TOKEN | ] --password PASSWORD` from
+  [--allowed-host NAME] [--setup-token=TOKEN | ] --password PASSWORD` from
   `backend/`; without a name in your `.env`, omit the flag and the listed-name rows
   are skipped. `--setup-token` (from `docker compose logs api`) claims a fresh
-  stack with `--password`; `--password` alone signs into a claimed one; with
+  stack with `--password` — spell it attached, `--setup-token=TOKEN`: a token can
+  begin with `-`, which argparse reads as an option when the value is a separate
+  word (#215); `--password` alone signs into a claimed one; with
   neither, the guarded positives expect the dependency's 401 and no write lands.
   The claim is real — a stack claimed by the matrix is claimed with that password.
   Signed in, it mints two access tokens for the bearer rows and revokes them at
