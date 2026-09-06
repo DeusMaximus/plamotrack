@@ -41,6 +41,33 @@ Template:
 
 ---
 
+## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) MERGED: PR #212 squash → `538640b` after Codex round 15 (GPT-6 Astra, **GO, no findings**); nothing to fold in; next #215, #193, M6-9 TLS docs, the M6 release
+
+- **Done:** Codex round 15 replayed at `1476976` (issuecomment-5555934731): finding 38's negative
+  control 4/20 → 24/24, 112/112 mutants, 2386 green, the six-round representation sweep closed
+  (raw document → usable records → SDK cache → `select_records` → PEM tie-break → selected JWK →
+  imported key, every consumer accounted for at FastMCP 3.4.5), boolean/object record `kid`,
+  an assertion naming an unusable record, fetched root extensions, overlapping fetches and a
+  failed-refetch recovery all driven untracked; calls 1–18 stand. Squash-merged with
+  `Closes #192` in the squash body (procedure 8). **Nothing to fold in**: every `moa-` tuple
+  (1…115 less the withdrawn/retired 16, 101, 103 → 112) is already in the tracked harness —
+  `.agents/testing-and-review.md`'s "on `main` after #212: 514 cases over 46 target files" is
+  now literally true. Branch `feature/m6-7-mcp-oauth` left in place (not deleted).
+- **Decisions:** merged on the owner's report of GO (the hand-off's standing "if GO:
+  squash-merge" since round 1); no release cut — M6 is one release at the end.
+- **State:** `main` at `538640b` (+ this hand-off). Dev `db` up; the Keycloak spike compose
+  is still up (`.agents/spikes/190/`, untracked) — stop it when it is no longer needed for
+  the OIDC-mode ingress gate. LXC untouched (**stays put until M6 is finished** — #215, #193,
+  M6-9 and the release are still ahead of it).
+- **Next:** (1) **#215** and **#193** (the app's own request budget; the ingress limits landed
+  with #212) — read each issue first; branch + PR each. (2) **M6-9 TLS docs** — the tested
+  TLS/VPS deployment path (design §5.4 modes), on a branch. (3) **The M6 release**: the
+  release gate in `.agents/testing-and-review.md` — `ingress_matrix.py --mode oidc` against a
+  packaged stack with the Keycloak spike, the register burst concurrent — then tag, notes
+  (client-visible changes are itemised per round in the PR #212 body, "Deliberate calls"),
+  and only then the LXC upgrade (back up first; needs `ALLOWED_HOSTS`; relink any MCP client;
+  refresh the personal Gunpla skill to the new version).
+
 ## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 14 (GPT-6 Astra, NO-GO: 1×P3, the SDK fed the raw array below the rule) answered on the branch — head `1476976`, reply posted (issuecomment-5554588219), PR body + coverage record amended, round-15 brief printed
 
 - **Done:** f38 reproduced at `ff8a5ec` on its own assertions first (24 new contract rows in a
@@ -204,45 +231,3 @@ Template:
   findings from 37). If GO: squash-merge with `Closes #192`; nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
   `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak spike, the register
   burst concurrent — then the LXC upgrade; relink any MCP client first.
-
-## 2026-09-05 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 10 (GPT-6, NO-GO: 1×P3, the selected key's authorization) answered on the branch — head `f82b3b3`, reply posted (issuecomment-5552103057), PR body + coverage record amended, round-11 brief printed
-
-- **Done:** f33 reproduced at `cb69559` on its own assertions first (22 new contract rows in a
-  worktree at that head: **14 red / 8 green**, Codex's twelve among the reds), then fixed at
-  `f82b3b3` within Codex's constraints (both key paths, cached keys, the very key the verifier
-  selects, no refetch, one cryptographic validator, nothing stripped, a mixed-purpose set still
-  admitting its signing key): FastMCP converted the selected JWK to a PEM before verifying, so
-  `alg`/`use`/`key_ops` never reached joserfc. `RestrictedKeyAssertionValidator` (over FastMCP's
-  `CIMDAssertionValidator`: the inline selection returned as the JWK found by the PEM the SDK
-  produced — `_pem_of`/`selected_jwk`, byte-identical across metadata) and `RestrictedKeyVerifier`
-  (over `JWTVerifier`: the fetched JWKs kept beside the SDK's PEM cache, rebuilt on the SDK's
-  refetch, the selected JWK returned in the PEM's place; installed in the SDK's per-client
-  verifier cache under its own key) — joserfc enforces the restrictions in the signature's
-  decode. One validator instance on the proxy (`assertion_validator`) for both endpoints; the
-  authenticator calls `validate_assertion` directly (the manager's validator unused). Codex's
-  corrections adopted: call 17 qualified as approximate (its 2,144-value corpus); the coverage
-  record carries the interrupted-second-write observation forward. Tests: contract suite
-  **231** (+22: 3 restrictions × inline/remote × 2 endpoints, explicit-ok + mixed-set controls,
-  the cached-key rows); mutants moa-104…106; harness **507/46**. Docs: module docstring, design
-  §5.9 (k) + row 8, AGENTS.md rule 13, procedure, lessons → "The selected key keeps its
-  authorization". PR body: What, By file, call 12, call 17 qualified, **new call 18**, Tests,
-  controls, mutants, coverage record.
-- **Decisions:** replace the lossy representation, keep the SDK's selection (no second verifier,
-  no refetch, no metadata check in front of the SDK); one material published twice → the first
-  entry; a restriction changed after a fetch seen at the cache's expiry (FastMCP's TTL — named);
-  the tracked suite plays the JWKS fetch below the verifier, links through the inline set so a
-  fetched verifier's first fetch is the set under test, and drops the cached verifier (a
-  private seam, named) to meet a corrected set.
-- **State:** backend **2298 green**, lint/format clean, `render_ingress.py --check` clean;
-  frontend untouched. Mutants ****105/105 killed** first pass (tracked harness, committed tree, ~12 min)** (tracked harness, committed tree, `nohup`).
-  Commit `f82b3b3` pushed; PR #212 body amended; the reply is issuecomment-5552103057. Codex's r10 material
-  at `/private/tmp/plamotrack-212-r10/` (untracked). Dev `db` up, Keycloak spike up. LXC
-  untouched (**stays put until M6 is finished**).
-- **Next:** (1) **Codex round 11 on PR #212** — the brief was printed in this session's chat;
-  regenerate from `.agents/review-brief.md` (GPT-6 footer) if needed, naming runtime head
-  `f82b3b3`, the branch tip (hand-off only above it), `main` `a497481`, rules 1/6/7.1/9/11/12/13;
-  findings from 34; reproduce at `f82b3b3` first; update the coverage record in the reply
-  (procedure 7.1). If GO: squash-merge with `Closes #192`; nothing to fold in. (2) After
-  merge: #215, #193, M6-9 TLS docs, the M6 release — gate `ingress_matrix.py --mode oidc` on a
-  packaged stack with the Keycloak spike, the register burst concurrent — then the LXC
-  upgrade; relink any MCP client first.
