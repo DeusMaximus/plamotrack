@@ -41,6 +41,36 @@ Template:
 
 ---
 
+## 2026-09-06 — Codex (GPT-6 Astra) — #208 merged; independent post-merge verdict pending
+
+- **Done:** committed P3-5/P3-6 and the redirect-test repair as `f7f6089`, pushed,
+  and squash-merged PR #208 to main as `bd40687` after Backend, Frontend and
+  Integration CI passed at the exact fix head (run 34029077765). #193 is closed.
+  The PR body records the fixes, exact mutation recipes and coverage boundaries.
+- **Review status:** the owner explicitly requested merge before the next Daybreak
+  verdict. The prior review at `43c5826` remains NO-GO; the merge is not a new GO.
+  A post-merge independent review is pending, findings numbered from 7. The separate
+  end-of-M6 security/deployment gate remains; no release or LXC upgrade performed.
+- **Validation:** local 2537 backend cases across full/focused runs; all 514 tracked
+  plus 21 new mutants detected across full pass/replays. Full tracked pass was
+  513/514 until oidc-19's collapsed Host/BASE witness was repaired; no production
+  redirect change. aud-57/58 cover start/refused-callback siblings. Exact restoration,
+  lint/format/generated ingress/whitespace pass. CI supplies the fresh complete run.
+- **History:** all 122 prior branch entries and main's #212 records are unchanged.
+  Added this entry and rotated the oldest verbatim: 123 unique entries, five live.
+  The primary dirty #194 checkout is untouched. The #208 worktree is now on main;
+  this follow-up commit only records the completed merge and rotates the handoff.
+- **Review materials:** `/private/tmp/plamotrack208-daybreak-postmerge-brief.md`
+  pins the merge/fix/review commits and is printed in full for the owner. The local
+  `/private/tmp/plamotrack208-daybreak-run.py` wrapper selects a dedicated review DB;
+  original dev DB remains healthy. Prior task DBs were removed. Evidence/recipes:
+  `/private/tmp/plamotrack208-r2-*.log` and `/private/tmp/plamotrack208-r2-mutants/`.
+- **Next:** obtain Daybreak's post-merge verdict and address findings on a follow-up
+  branch. Fold queued aud-1..58 separately after rechecking anchors, adding
+  test_audit_privacy.py and test_access_logging.py to harness targets. #206/#210/
+  #213/#214/#215 remain separate questions. #194 and the remaining M6 gates precede
+  the LXC upgrade; no deployment sign-off follows from this merge.
+
 ## 2026-09-06 — Codex (GPT-6 Astra) — #208 security review P3-5/P3-6 repaired locally
 
 - **Context:** the independent review at `43c5826` is NO-GO (P3-5 malformed XFF
@@ -200,41 +230,3 @@ Template:
   (client-visible changes are itemised per round in the PR #212 body, "Deliberate calls"),
   and only then the LXC upgrade (back up first; needs `ALLOWED_HOSTS`; relink any MCP client;
   refresh the personal Gunpla skill to the new version).
-
-## 2026-09-06 — Claude Code (Fable 5.1) — #192 (M6-7) PR #212: Codex round 14 (GPT-6 Astra, NO-GO: 1×P3, the SDK fed the raw array below the rule) answered on the branch — head `1476976`, reply posted (issuecomment-5554588219), PR body + coverage record amended, round-15 brief printed
-
-- **Done:** f38 reproduced at `ff8a5ec` on its own assertions first (24 new contract rows in a
-  worktree at that head: **4 red / 20 green** — fetched × list-`kid` record × token/revoke ×
-  named/unnamed on `401 == 200`; the inline rows and the fetched number/`null` rows
-  controls), then fixed at `1476976`. Cause: `_fetch_jwks` derived `_jwks_records` and then
-  returned the raw document, so FastMCP's own skip loop (which the inline path never runs)
-  put each unusable record's `kid` into a set and choked on an unhashable one — a false
-  refusal, no admission. Fix (Codex's measured remedy): `_fetch_jwks` returns `{"keys":
-  <the usable records>}`, so the SDK's cache and `_jwks_records` consume one set; the SDK's
-  `skipped_kids` branch is dead. Tests: contract suite **319** (+24; joserfc refuses every
-  non-string record `kid` at import, measured first); mutant moa-115; harness **514/46**.
-  Docs: module/class docstrings, design §5.9 (k) + row 8, AGENTS.md rule 13, procedure
-  (moa- paragraph + count), lessons → "The consumer below the rule". PR body: opening line,
-  What, By file, calls 12/17/18 (17 overruled → fixed), Tests, negative control, mutants,
-  coverage record (Codex's r14 untracked coverage folded in; a record's boolean/object
-  `kid` stays untested here).
-- **Decisions:** the SDK is fed `{"keys": records}` only (it reads nothing else at 3.4.5);
-  no guard added for a non-list `keys` on the fetched side (the comprehension filters it;
-  a mutant there would be equivalent); the same-`kid` boundary untouched. **Six rounds in
-  the selection seam** (10–14 + the fold): rule over records (r13) + every consumer fed the
-  records (r14) — the invariant is complete as far as the author can see; say so in the
-  brief and ask for a seventh representation.
-- **State:** backend **2386 green**, lint/format clean, `render_ingress.py --check` clean;
-  frontend untouched. Mutants **112/112 killed** at `1476976` (tracked harness, committed
-  tree, ~12 min; moa-115 killed first pass). Commit `1476976` pushed; PR #212 body
-  amended; the reply is issuecomment-5554588219. Codex's r12 material at `/private/tmp/plamotrack-212-r12/`
-  (untracked; r13/r14 named no directory). Dev `db` up, Keycloak spike up. LXC untouched
-  (**stays put until M6 is finished**).
-- **Next:** (1) **Codex round 15 on PR #212** — the brief was printed in this session's chat;
-  regenerate from `.agents/review-brief.md` (Codex footer; the reviewer names its model) if
-  needed, naming runtime head `1476976`, the branch tip (hand-off only above it), `main`
-  `a497481`, rules 1/6/7.1/9/11/12/13; findings from 39; reproduce at `1476976` first; update
-  the coverage record in the reply (procedure 7.1). If GO: squash-merge with `Closes #192`;
-  nothing to fold in. (2) After merge: #215, #193, M6-9 TLS docs, the M6 release — gate
-  `ingress_matrix.py --mode oidc` on a packaged stack with the Keycloak spike, the register
-  burst concurrent — then the LXC upgrade; relink any MCP client first.
