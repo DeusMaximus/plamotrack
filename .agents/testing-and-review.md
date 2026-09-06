@@ -194,7 +194,7 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
-- **On `main` after #212: 514 cases over 46 target files** — counted the way the
+- **On `main` after the #193 `aud-` fold-in: 570 cases over 51 target files** — counted the way the
   harness itself counts, `len(CASES)` and the distinct paths those cases mutate
   (migrations, the one test file and the two `frontend/` files included; the
   one-liner is `uv run python -c "import mutation_test as m, pathlib; print(len(m.CASES), len({pathlib.Path(c[1]).resolve() for c in m.CASES}))"`
@@ -367,7 +367,27 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   `test_an_id_token_signed_with_the_client_secret_is_refused` pins the behaviour either
   way — so it stays out rather than train anyone to ignore a permanent survivor; oidc-30's
   kill is a 500 at the callback's required 302, accepted by round 2 as a semantic
-  regression; all 34 killed at fold-in, `-k oidc-`).
+  regression; all 34 killed at fold-in, `-k oidc-`)
+  and #193 (`aud-` — audit events, request budgets and log hygiene, PR #208, folded
+  after the merge: `app/services/audit.py`, `services/auth.py`, `services/oidc.py`,
+  `auth/mcp_auth.py`, `auth/mcp_oauth.py`, `routers/auth.py`, `ingress.py`,
+  `log_hygiene.py`, `main.py` and — the first cases against them — the nginx
+  template, the Dockerfile's `CMD` and `ingress_matrix.py`'s private output, so the
+  clean-tree check covers those three paths since this fold-in; aud-1…17 hand-run
+  on the branch and recorded as descriptions only, their exact anchors reconstructed
+  at fold-in against `bd40687` (aud-14 re-anchored to the normalised snapshot, as
+  the record said it must be); 18…37 the integration record's exact recipes and
+  38…58 the P3-5/P3-6 round's; aud-34 and aud-35 stay out — the raw `$request_uri`
+  in the access log and nginx's request diagnostics restored have no pytest
+  witness, only the packaged log scan the release gate runs — and aud-17/aud-36,
+  packaged-only in the record, are killed here by the literal assertions the P3
+  round added to the four-families test; four suites join `TEST_FILES`
+  (`test_audit.py`, `test_audit_privacy.py`, `test_access_logging.py`,
+  `test_deployment_hygiene.py`); aud-23 survived the first pass on the record's
+  reconstructed selection — the id_token-rejected test asserts the row's detail,
+  not its actor — and was re-pointed at the cancel-at-provider test, which asserts
+  the actor on the row the same `_refuse` writes; all 56 killed at fold-in,
+  `-k aud-`).
   **A message-restructuring change rots anchors silently**: #25 rewrote 81
   raise sites and six anchors (n5, n6a, n6b, cat-13, cat-14, wdr-8) sat
   SKIP-broken until #26's full run — a fold-in that runs only its own `-k`

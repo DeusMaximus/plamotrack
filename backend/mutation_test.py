@@ -132,6 +132,14 @@ AUTH_ROUTER = ROOT / "app/routers/auth.py"
 MODE = ROOT / "app/auth/mode.py"
 # #192 (M6-7): the moa- set — MCP OAuth.
 MCP_OAUTH = ROOT / "app/auth/mcp_oauth.py"
+# #193 (M6-8): the aud- set — audit events, request budgets and log hygiene.
+# Four targets outside app/ join the clean-tree check: the nginx template
+# (the way ENVSH did), the Dockerfile and the ingress matrix itself.
+AUDIT_SVC = ROOT / "app/services/audit.py"
+LOG_HYG = ROOT / "app/log_hygiene.py"
+TEMPLATE = ROOT.parent / "frontend/nginx/default.conf.template"
+DOCKERFILE = ROOT / "Dockerfile"
+MATRIX = ROOT / "ingress_matrix.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -4116,6 +4124,415 @@ CASES = [
         "        return data\n",
         "unusable_record_beside_the_signer and remote and token and list and named",
     ),
+    # --- #193 (M6-8): audit events, request budgets and log hygiene — the aud- set --
+    # Folded from PR #208's record after the merge (`bd40687`). aud-1…17 were hand-run
+    # on the branch and recorded as descriptions; their exact anchors were
+    # reconstructed here against the merged tree (aud-14 re-anchored to the
+    # normalised snapshot, as the record said it must be). aud-18…37 are the
+    # integration record's exact recipes, aud-38…58 the P3-5/P3-6 round's. Two
+    # stay out: aud-34 (raw `$request_uri` in the access log) and aud-35 (nginx's
+    # request diagnostics restored) have no pytest witness — only the packaged
+    # log scan the release gate runs. aud-17 and aud-36, packaged-only in the
+    # record, are killed here by the literal assertions the P3 round added to
+    # the four-families test. aud-9/10 kill in the token suite (use after
+    # revoke through MCP); aud-18…21 in the deployment-hygiene suite, which
+    # reads the Dockerfile's CMD and exercises the matrix's private output.
+    # aud-23 survived the fold-in's first pass on the record's reconstructed
+    # selection (the id_token-rejected test asserts the row's detail, not its
+    # actor) and is re-pointed at the cancel-at-provider test, which asserts
+    # the actor on the row the same `_refuse` writes. -----------------------------
+    (
+        "aud-1. prune boundary inclusive",
+        AUDIT_SVC,
+        "delete(AuditEvent).where(AuditEvent.occurred_at < before)",
+        "delete(AuditEvent).where(AuditEvent.occurred_at <= before)",
+        "prune_deletes_only",
+    ),
+    (
+        "aud-2. prune actor internal becomes anon",
+        AUDIT_SVC,
+        "        AUDIT_PRUNED,\n        principal=internal(),\n",
+        "        AUDIT_PRUNED,\n        principal=anonymous(),\n",
+        "prune_deletes_only",
+    ),
+    (
+        "aud-3. prune event type becomes recovery_run",
+        AUDIT_SVC,
+        '        AUDIT_PRUNED,\n        principal=internal(),\n        target="maintenance prune-audit",\n',
+        '        RECOVERY_RUN,\n        principal=internal(),\n        target="maintenance prune-audit",\n',
+        "empty_prune",
+    ),
+    (
+        "aud-4. the app's ingress rejection recorder disconnected",
+        MAIN,
+        "        rejection_recorder=record_ingress_rejection if authorization else None,\n",
+        "        rejection_recorder=None,\n",
+        "host_and_origin_rejections_are_audited",
+    ),
+    (
+        "aud-5. ingress rejection actor anon becomes null",
+        AUDIT_SVC,
+        "            event_type,\n            principal=anonymous(),\n",
+        "            event_type,\n            principal=None,\n",
+        "host_and_origin_rejections_are_audited",
+    ),
+    (
+        "aud-6. ingress audit address is the raw peer",
+        AUDIT_SVC,
+        "            client_address=client_address_from_scope(scope, policy),\n",
+        '            client_address=scope["client"][0],\n',
+        "host_and_origin_rejections_are_audited",
+    ),
+    (
+        "aud-7. failed-login actor anon becomes null",
+        AUTH_SVC,
+        "            audit.LOGIN_FAILED,\n            principal=anonymous(),\n",
+        "            audit.LOGIN_FAILED,\n            principal=None,\n",
+        "repeated_failures_throttle",
+    ),
+    (
+        "aud-8. throttled-login actor anon becomes null",
+        AUTH_SVC,
+        "        audit.LOGIN_THROTTLED,\n        principal=anonymous(),\n",
+        "        audit.LOGIN_THROTTLED,\n        principal=None,\n",
+        "repeated_failures_throttle",
+    ),
+    (
+        "aud-9. MCP verifier address becomes null",
+        MCP_AUTH,
+        "                client_address=current_client_address(),\n",
+        "                client_address=None,\n",
+        "mcp_use_after_revoke",
+    ),
+    (
+        "aud-10. async client-address context set to null",
+        ING,
+        "            context_token = _CURRENT_CLIENT_ADDRESS.set(address)\n",
+        "            context_token = _CURRENT_CLIENT_ADDRESS.set(None)\n",
+        "mcp_use_after_revoke",
+    ),
+    (
+        "aud-11. Compose-only ingress flag forced false",
+        ING,
+        "            bundled_ingress=settings.plamotrack_bundled_ingress,\n",
+        "            bundled_ingress=False,\n",
+        "bundled_ingress_header",
+    ),
+    (
+        "aud-12. an invalid proxy entry returns success",
+        ENVSH,
+        '                echo "plamotrack: invalid TRUSTED_PROXIES entry: $entry" >&2\n                return 1\n',
+        '                echo "plamotrack: invalid TRUSTED_PROXIES entry: $entry" >&2\n                return 0\n',
+        "generator_refuses_trusted_proxy_config_injection",
+    ),
+    (
+        "aud-13. the valid proxy directive accumulator becomes a no-op",
+        ENVSH,
+        '        PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES="${PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES}set_real_ip_from ${entry};\n"\n',
+        '        PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES="${PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES}"\n',
+        "generator_renders_only_validated_trusted_proxy_directives",
+    ),
+    (
+        "aud-14. the family-2 map reads $uri, not the normalised snapshot",
+        TEMPLATE,
+        "map $plamotrack_normalized_request_uri $plamotrack_family_2_key {\n",
+        "map $uri $plamotrack_family_2_key {\n",
+        "four_declared_rate_limit_families",
+    ),
+    (
+        "aud-15. the family-9 limiter points at family 8",
+        TEMPLATE,
+        "    limit_req zone=plamotrack_family_9 burst=10 nodelay;\n",
+        "    limit_req zone=plamotrack_family_8 burst=10 nodelay;\n",
+        "four_declared_rate_limit_families",
+    ),
+    (
+        "aud-16. one private-header overwrite removed (six of seven paths)",
+        TEMPLATE,
+        "    location = /openapi.json {\n        set $upstream http://api:8000;\n        proxy_pass $upstream;\n        proxy_http_version 1.1;\n        proxy_set_header Host $http_host;\n        proxy_set_header X-Plamotrack-Client-Address $remote_addr;\n",
+        "    location = /openapi.json {\n        set $upstream http://api:8000;\n        proxy_pass $upstream;\n        proxy_http_version 1.1;\n        proxy_set_header Host $http_host;\n        proxy_set_header X-Plamotrack-Client-Addr $remote_addr;\n",
+        "four_declared_rate_limit_families",
+    ),
+    (
+        "aud-17. the normalised-URI snapshot reads raw $request_uri",
+        TEMPLATE,
+        "    set $plamotrack_normalized_request_uri $uri;\n",
+        "    set $plamotrack_normalized_request_uri $request_uri;\n",
+        "four_declared_rate_limit_families",
+    ),
+    (
+        "aud-18. omit the explicit worker pin",
+        DOCKERFILE,
+        ', "--workers", "1"',
+        "",
+        "packaged_worker_count",
+    ),
+    (
+        "aud-19. omit O_NOFOLLOW on the private output",
+        MATRIX,
+        " | os.O_NOFOLLOW",
+        "",
+        "private_output_refuses_symlinks",
+    ),
+    (
+        "aud-20. omit the descriptor chmod",
+        MATRIX,
+        "        os.fchmod(output.fileno(), 0o600)\n",
+        "",
+        "private_output_creates_or_restricts",
+    ),
+    (
+        "aud-21. reopen the pathname to write",
+        MATRIX,
+        "        output.write(content)",
+        '        path.write_text(content, encoding="utf-8")',
+        "private_output_keeps_the_open_file",
+    ),
+    (
+        "aud-22. hardcode the failed-setup target",
+        AUTH_SVC,
+        "        audit.SETUP_FAILED,\n        principal=anonymous(),\n        request=request,\n        target=target,",
+        '        audit.SETUP_FAILED,\n        principal=anonymous(),\n        request=request,\n        target="/auth/setup",',
+        "start_on_an_unbound_instance_needs_the_setup_token",
+    ),
+    (
+        "aud-23. omit anon on the browser refusal (`_refuse`, every callback failure)",
+        OIDC_SVC,
+        "        audit.OIDC_LOGIN_FAILED,\n        principal=anonymous(),\n",
+        "        audit.OIDC_LOGIN_FAILED,\n",
+        "the_owner_cancelling_at_the_provider_spends_the_transaction",
+    ),
+    (
+        "aud-24. omit anon on the browser identity refusal",
+        OIDC_SVC,
+        "            audit.OIDC_IDENTITY_REFUSED,\n            principal=anonymous(),\n",
+        "            audit.OIDC_IDENTITY_REFUSED,\n",
+        "a_different_identity_is_refused",
+    ),
+    (
+        "aud-25. omit internal on the start-up session revocation",
+        AUTH_SVC,
+        "            audit.SESSIONS_REVOKED,\n            principal=internal(),\n",
+        "            audit.SESSIONS_REVOKED,\n",
+        "starting_in_the_other_mode",
+    ),
+    (
+        "aud-26. omit internal on the start-up mode change",
+        AUTH_SVC,
+        "            audit.AUTH_MODE_CHANGED,\n            principal=internal(),\n",
+        "            audit.AUTH_MODE_CHANGED,\n",
+        "starting_in_the_other_mode",
+    ),
+    (
+        "aud-27. omit internal on the rebind session revocation",
+        OIDC_SVC,
+        'session, target="recovery rebind-oidc", principal=internal(), client_address="host"',
+        'session, target="recovery rebind-oidc", principal=None, client_address="host"',
+        "rebind_revokes_every_session",
+    ),
+    (
+        "aud-28. omit internal on the OIDC rebind",
+        OIDC_SVC,
+        "        audit.OIDC_REBIND,\n        principal=internal(),\n",
+        "        audit.OIDC_REBIND,\n",
+        "rebind_revokes_every_session",
+    ),
+    (
+        "aud-29. omit internal on the rebind recovery run",
+        OIDC_SVC,
+        "        audit.RECOVERY_RUN,\n        principal=internal(),\n",
+        "        audit.RECOVERY_RUN,\n",
+        "rebind_revokes_every_session",
+    ),
+    (
+        "aud-30. omit anon on the MCP identity refusal",
+        MCP_OAUTH,
+        "                audit.MCP_IDENTITY_REFUSED,\n                principal=anonymous(),\n",
+        "                audit.MCP_IDENTITY_REFUSED,\n",
+        "stranger_is_refused or refresh_response_becomes",
+    ),
+    (
+        "aud-31. omit anon on the failed MCP OIDC claim",
+        MCP_OAUTH,
+        "            audit.OIDC_LOGIN_FAILED,\n            principal=anonymous(),\n",
+        "            audit.OIDC_LOGIN_FAILED,\n",
+        "fails_the_claim_contract or refresh_response_becomes",
+    ),
+    (
+        "aud-32. omit the log-policy installation in create_app",
+        MAIN,
+        "    install_log_hygiene()\n",
+        "",
+        "access_logs_keep_requests",
+    ),
+    (
+        "aud-33. keep the full uvicorn target (query and all)",
+        LOG_HYG,
+        'target.partition("?")[0]',
+        "target",
+        "access_logs_keep_requests",
+    ),
+    (
+        "aud-36. remove the family-8 limit_req",
+        TEMPLATE,
+        "    limit_req zone=plamotrack_family_8 burst=20 nodelay;\n",
+        "",
+        "four_declared_rate_limit_families",
+    ),
+    (
+        "aud-37. omit the SDK diagnostic sanitisation",
+        LOG_HYG,
+        'elif record.name.startswith(("fastmcp.server.auth.", "mcp.server.auth.")):',
+        "elif False:",
+        "auth_library_diagnostics or failed_oauth_callbacks",
+    ),
+    (
+        "aud-38. validate and canonicalize before assignment",
+        ING,
+        "    return str(ip_address(value))\n",
+        "    return value\n",
+        "forwarded_audit_address",
+    ),
+    (
+        "aud-39. stop at malformed hops",
+        ING,
+        "            except ValueError:\n                break\n",
+        "            except ValueError:\n                continue\n",
+        "forwarded_audit_address",
+    ),
+    (
+        "aud-40. empty hops are boundaries",
+        ING,
+        '        chain = forwarded_for.split(",")\n',
+        '        chain = [v for v in forwarded_for.split(",") if v.strip()]\n',
+        "forwarded_audit_address",
+    ),
+    (
+        "aud-41. validate optional port",
+        ING,
+        '        raise ValueError("Malformed forwarded address port")',
+        "        pass",
+        "forwarded_audit_address",
+    ),
+    (
+        "aud-42. validate complete brackets",
+        ING,
+        '            raise ValueError("Malformed bracketed IP address")',
+        "            pass",
+        "forwarded_audit_address",
+    ),
+    (
+        "aud-43. reject interface scope",
+        ING,
+        '    if "%" in value:\n        raise ValueError("A forwarded address cannot carry an interface scope")\n',
+        "",
+        "forwarded_audit_address",
+    ),
+    (
+        "aud-44. preserve private-header validation",
+        ING,
+        "                return _parse_address(bundled)",
+        "                return bundled",
+        "bundled_audit_address",
+    ),
+    (
+        "aud-45. fingerprint client on issuance",
+        MCP_OAUTH,
+        'detail=f"client={audit.external_reference(client.client_id)}",',
+        'detail=f"client={client.client_id}",',
+        "oauth_client_audit_references and issue",
+    ),
+    (
+        "aud-46. fingerprint client on upstream ending",
+        MCP_OAUTH,
+        '                    f"client={audit.external_reference(transition.client_id)} "',
+        '                    f"client={transition.client_id} "',
+        "oauth_client_audit_references and explicit-claim",
+    ),
+    (
+        "aud-47. fingerprint client on identity refusal",
+        MCP_OAUTH,
+        '                    f"client={audit.external_reference(transition.client_id)}"',
+        '                    f"client={transition.client_id}"',
+        "oauth_client_audit_references and identity",
+    ),
+    (
+        "aud-48. fingerprint client on claim refusal",
+        MCP_OAUTH,
+        'f"id_token_{verdict.reason} client={audit.external_reference(transition.client_id)}"',
+        'f"id_token_{verdict.reason} client={transition.client_id}"',
+        "oauth_client_audit_references and claim",
+    ),
+    (
+        "aud-49. fingerprint client on either-half revocation",
+        MCP_OAUTH,
+        'detail=f"client={audit.external_reference(token.client_id)} presented={presented}",',
+        'detail=f"client={token.client_id} presented={presented}",',
+        "oauth_client_audit_references and revoke",
+    ),
+    (
+        "aud-50. fingerprint refused MCP subject",
+        MCP_OAUTH,
+        'f"subject={audit.external_reference(verdict.subject)} "',
+        'f"subject={verdict.subject} "',
+        "oauth_client_audit_references and identity",
+    ),
+    (
+        "aud-51. fingerprint refused browser subject",
+        OIDC_SVC,
+        'detail=f"subject={audit.external_reference(subject)}",',
+        'detail=f"subject={subject}",',
+        "browser_identity_audit",
+    ),
+    (
+        "aud-52. categorize opaque browser callback errors",
+        OIDC_SVC,
+        '            category = "other"',
+        "            category = error",
+        "browser_callback_audit",
+    ),
+    (
+        "aud-53. omit opaque token endpoint error payload",
+        OIDC_SVC,
+        'log.warning("OIDC code exchange refused: status=%s", response.status_code)',
+        'log.warning("OIDC code exchange refused: status=%s error=%s", response.status_code, body)',
+        "browser_token_error_logs",
+    ),
+    (
+        "aud-54. fingerprint the whole opaque identifier",
+        AUDIT_SVC,
+        'hashlib.sha256(value.encode("utf-8", errors="surrogatepass"))',
+        'hashlib.sha256(value.partition("?")[0].encode("utf-8", errors="surrogatepass"))',
+        "external_audit_reference",
+    ),
+    (
+        "aud-55. absent identifier differs from empty",
+        AUDIT_SVC,
+        '    if value is None:\n        return "none"',
+        '    if not value:\n        return "none"',
+        "external_audit_reference",
+    ),
+    (
+        "aud-56. handle every string without raising",
+        AUDIT_SVC,
+        'value.encode("utf-8", errors="surrogatepass")',
+        'value.encode("utf-8")',
+        "external_audit_reference",
+    ),
+    (
+        "aud-57. callback URI at start comes from public configuration",
+        OIDC_SVC,
+        '            "redirect_uri": provider.redirect_uri,',
+        '            "redirect_uri": str(request.base_url) + "api/auth/oidc/callback",',
+        "start_ignores_a_forwarded_host",
+    ),
+    (
+        "aud-58. refused callback Location comes from public configuration",
+        AUTH_ROUTER,
+        'f"{provider.home_url}?{AUTH_ERROR_PARAM}={refused.code}", status_code=302',
+        'f"{request.base_url}?{AUTH_ERROR_PARAM}={refused.code}", status_code=302',
+        "callback_redirects_to_public_base_url and access_denied",
+    ),
 ]
 
 
@@ -5109,6 +5526,14 @@ TEST_FILES = [
     # contract, Codex round 4) kill in the wire-level contract suite.
     "tests/test_mcp_oauth.py",
     "tests/test_mcp_oauth_clients.py",
+    # The #193 (aud-) fold-in: the audit vocabulary and prune (aud-1…3), the
+    # privacy contract (aud-38…56), the uvicorn/SDK log hygiene (aud-32/33/37)
+    # and the packaging/matrix hygiene (aud-18…21) each live in a file of
+    # their own; the rest kill in suites already listed.
+    "tests/test_audit.py",
+    "tests/test_audit_privacy.py",
+    "tests/test_access_logging.py",
+    "tests/test_deployment_hygiene.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
@@ -5149,7 +5574,21 @@ def tree_is_clean() -> bool:
         # there was invisible before this fold-in.
         # str(ENVSH): ingr-25/26 mutate the nginx server-name generator, a shell
         # file under frontend/ — same reason.
-        ["git", "status", "--porcelain", "app", "tests", "alembic", str(FIX), str(ENVSH)],
+        # str(TEMPLATE), "Dockerfile", "ingress_matrix.py": the aud- set mutates
+        # the nginx template, the image's CMD and the matrix's private output.
+        [
+            "git",
+            "status",
+            "--porcelain",
+            "app",
+            "tests",
+            "alembic",
+            str(FIX),
+            str(ENVSH),
+            str(TEMPLATE),
+            "Dockerfile",
+            "ingress_matrix.py",
+        ],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -5163,8 +5602,9 @@ def main() -> int:
     args = parser.parse_args()
 
     if not tree_is_clean():
-        print("app/, tests/, alembic/, the shared error-codes fixture or the nginx server-")
-        print("name generator has uncommitted changes — commit or stash first, so that a")
+        print("app/, tests/, alembic/, the shared error-codes fixture, the nginx generator")
+        print("or template, the Dockerfile or the ingress matrix has uncommitted changes —")
+        print("commit or stash first, so that a")
         print("restore that doesn't happen is")
         print("visible rather than mixed in with your edits.")
         return 2
