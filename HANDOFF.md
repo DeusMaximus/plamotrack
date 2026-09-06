@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-07 — Claude Code (Fable 5.1) — #215 fixed (PR #216, CI green) and the #208 `aud-` set folded (PR #217, 56/56 on the committed tree); both open for the owner's merge; #194 next
+## 2026-09-07 — Claude Code (Fable 5.1) — #215 fixed (PR #216 → `a322f15`) and the #208 `aud-` set folded (PR #217 → `3344066`, 56/56 on the committed tree); both MERGED, no review; #194 next
 
 - **Done:** (1) **#215** on `fix/215-ci-setup-token-argv` → **PR #216** (`040c613`): the
   Integration matrix step's three variable-valued options spelled attached
@@ -66,20 +66,22 @@ Template:
   site or anchored line; every anchor checked once (570/570), replacements compile, no
   `-k` prefix collision. No reviewer requested on either PR — owner's call (CI/process,
   not app code). Commit/push/PR for both was the owner's explicit choice this session.
-- **State:** `main` at `9273840` + this hand-off, tree clean, nothing uncommitted. Two
-  branches pushed and open: **PR #216** (green), **PR #217** (CI running at hand-off).
+- **State:** **both squash-merged 2026-09-07** on the owner's call — PR #216 → `a322f15`
+  (#215 closed by the merge), PR #217 → `3344066` — with no review, matching the five
+  prior fold-ins (#199/#201/#203/#207/#211, all unreviewed); CI green on both. `main` at
+  `3344066` + this amended hand-off, tree clean, nothing uncommitted, **nothing in flight**.
+  Branches `fix/215-ci-setup-token-argv` and `chore/193-aud-mutants` left in place.
   Dev `db` up; the Keycloak spike compose still up (`.agents/spikes/190/`, untracked —
   needed for the OIDC-mode release gate). The owner's **#194 work-in-progress is
   uncommitted on their MacBook**; they expect to redo it on this Mac — treat #194 as not
   started here. LXC untouched (**stays put until M6 is finished**).
-- **Next:** (1) owner merges #216 and #217 (squash; #216's body carries `Closes #215`).
-  (2) **#194** (M6-9: reference TLS deployment with Caddy + the operations/README rewrite)
-  on a fresh branch — read the issue and design §5.4 first. (3) **#195**, the M6 release:
+- **Next:** (1) **#194** (M6-9: reference TLS deployment with Caddy + the operations/README
+  rewrite) on a fresh branch — read the issue and design §5.4 first. (2) **#195**, the M6 release:
   the gate in `.agents/testing-and-review.md` — `ingress_matrix.py --mode oidc` against a
   packaged stack with the Keycloak spike, the register burst last — then bump via PR, tag,
   prerelease notes leading with the fail-closed upgrade path; the open M6 P3s
   **#206/#210/#213/#214** need a defer-or-fix call before the tag, #30 closes with the
-  release. (4) Only then the LXC upgrade (back up first; `ALLOWED_HOSTS`; relink MCP
+  release. (3) Only then the LXC upgrade (back up first; `ALLOWED_HOSTS`; relink MCP
   clients; refresh the personal Gunpla skill).
 
 ## 2026-09-06 — Codex (GPT-6 Astra) — #208 post-merge GO; feature branch deleted
