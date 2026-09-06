@@ -224,7 +224,8 @@
     },
     "ingress": {
       "host_not_allowed": "This instance doesn't answer to that host name. Add the name you're using to {{setting}} in .env, then run docker compose up -d.",
-      "origin_not_allowed": "This instance doesn't accept writes from that site. If it's yours, add its origin to {{setting}} in .env."
+      "origin_not_allowed": "This instance doesn't accept writes from that site. If it's yours, add its origin to {{setting}} in .env.",
+      "rate_limited": "Too many requests to this endpoint from your address; try again in a moment."
     },
     "kit": {
       "has_applications_one": "'{{name}}' has {{countDisplay}} upgrade applied — that record explains the stock it used, so the kit is kept. Withdraw the application first; withdrawal asks whether its stock returns.",

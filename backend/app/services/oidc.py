@@ -106,12 +106,15 @@ def _now() -> datetime:
 
 @dataclass(frozen=True)
 class ProviderMetadata:
-    """The four things the flow needs from the discovery document."""
+    """The four things the login flow needs from the discovery document, plus
+    the revocation endpoint the MCP OAuth proxy forwards revocations to when
+    the provider advertises one (#192)."""
 
     issuer: str
     authorization_endpoint: str
     token_endpoint: str
     jwks_uri: str
+    revocation_endpoint: str | None = None
 
 
 class CallbackError(StrEnum):
@@ -160,7 +163,7 @@ def validate_id_token_claims(
     *,
     issuer: str,
     client_id: str,
-    nonce: str,
+    nonce: str | None,
     now: int | None = None,
     leeway: int = CLOCK_LEEWAY,
 ) -> None:
@@ -183,7 +186,12 @@ def validate_id_token_claims(
       `leeway` in the past (step 9); `iat` a NumericDate — §2 requires the claim
       — no more than `leeway` in the future (step 10); `nbf`, when present,
       likewise;
-    - `nonce` is the string this login sent, not a list holding it (step 11).
+    - `nonce` is the string this login sent, not a list holding it (step 11) —
+      when the caller sent one. The MCP OAuth proxy's upstream authorization
+      request carries no nonce (its transaction is bound by `state` and PKCE,
+      and the id_token is re-verified on every MCP request), so it passes
+      `nonce=None` and the claim is not consulted; the browser login always
+      passes the string it sent (#192).
 
     Raises `OidcLoginRefused(FAILED)`; the log line names the claim, never the
     value (T10)."""
@@ -225,6 +233,8 @@ def validate_id_token_claims(
             raise refused("nbf", "is not a NumericDate")
         if nbf > clock + leeway:
             raise refused("nbf", "is in the future")
+    if nonce is None:
+        return
     token_nonce = claims.get("nonce")
     if not isinstance(token_nonce, str) or token_nonce != nonce:
         raise refused("nonce", "is not this login's")
@@ -302,6 +312,13 @@ class OidcProvider:
             )
         return body
 
+    @property
+    def cached_metadata(self) -> ProviderMetadata | None:
+        """The discovery document if this process has fetched it, else `None`.
+        The MCP OAuth proxy reads its upstream endpoints through this view, so
+        no copy of them can go stale (#192; Codex #212 round 1, f5)."""
+        return self._metadata
+
     async def metadata(self) -> ProviderMetadata:
         """The discovery document, fetched once and cached. Its `issuer` must
         equal the configured one (OpenID Discovery §4.3) — a document that says
@@ -325,11 +342,13 @@ class OidcProvider:
                     code=error_codes.AUTH_OIDC_PROVIDER_UNAVAILABLE,
                 )
             try:
+                revocation = document.get("revocation_endpoint")
                 metadata = ProviderMetadata(
                     issuer=issuer,
                     authorization_endpoint=str(document["authorization_endpoint"]),
                     token_endpoint=str(document["token_endpoint"]),
                     jwks_uri=str(document["jwks_uri"]),
+                    revocation_endpoint=str(revocation) if revocation else None,
                 )
             except KeyError as exc:
                 raise UnavailableError(
@@ -415,11 +434,13 @@ class OidcProvider:
             raise OidcLoginRefused(CallbackError.FAILED)
         return body
 
-    async def verify_id_token(self, id_token: object, *, nonce: str) -> dict:
+    async def verify_id_token(self, id_token: object, *, nonce: str | None) -> dict:
         """The id_token's claims, once its signature verifies against the
         provider's keys on an asymmetric algorithm and the claims meet the
         contract in `validate_id_token_claims` for this issuer, this client and
-        this login's nonce. Anything else is a refused login, never a session."""
+        — for the browser login — this login's nonce (`None` from the MCP OAuth
+        proxy, which sends none; #192). Anything else is a refused login, never
+        a session."""
         if not isinstance(id_token, str) or not id_token:
             raise OidcLoginRefused(CallbackError.FAILED)
         keys = await self.keys()

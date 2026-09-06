@@ -3,9 +3,9 @@
 Every request resolves to exactly one principal, and the app-level dependency
 decides allow/deny from the principal's scopes against the route's declared
 credential policy. The credential *mechanisms* that produce a non-anonymous
-principal land later in M6 (session #188, personal token #189, OAuth #192); this
-module is the shape they all resolve to, so the dependency and the scope helper
-are written once against it.
+principal each landed in M6 (session #188, personal token #189, MCP OAuth #192);
+this module is the shape they all resolve to, so the dependency and the scope
+helper are written once against it.
 
 The five kinds and their scopes are §5.5's principal table:
 
@@ -147,7 +147,10 @@ def pat(*, write: bool, subject: str | None = None, via: str | None = None) -> P
 
 
 def mcp(*, write: bool, subject: str | None = None) -> Principal:
-    """An MCP OAuth grant, audience-bound to `/mcp` (OIDC mode only, #192).
-    `read`, or `read`+`write` if granted; never admin (§5.5)."""
+    """An MCP OAuth grant, audience-bound to `/mcp` (OIDC mode only, #192): the
+    owner's delegated grant, always `read`+`write` in practice — the fixed
+    mapping `mcp_auth.principal_from_access_token` applies, since the OAuth
+    scope vocabulary on that path is the provider's — and never admin (§5.5).
+    `subject` is the owner's provider subject."""
     scopes = {Scope.READ, Scope.WRITE} if write else {Scope.READ}
     return Principal(kind=PrincipalKind.MCP, scopes=frozenset(scopes), subject=subject)

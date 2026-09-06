@@ -39,7 +39,7 @@ from fastmcp.server.dependencies import get_access_token, get_http_request
 from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
 from mcp import types as mt
 
-from app.auth.principal import VIA_BEARER, Principal, PrincipalKind, Scope, pat
+from app.auth.principal import VIA_BEARER, Principal, PrincipalKind, Scope, mcp, pat
 from app.auth.registry import MCP_TOOL_SCOPES
 from app.db import session_scope
 
@@ -49,15 +49,20 @@ from app.db import session_scope
 #: missing bearer on the wire.
 INJECTED_MCP_PRINCIPAL_ATTR = "authorization_injected_principal"
 
-_UNAUTHENTICATED = "Authentication required: present a personal access token as a bearer."
+_UNAUTHENTICATED = (
+    "Authentication required: present a personal access token — or, in OIDC mode, "
+    "an access token from this server's OAuth flow — as a bearer."
+)
 
 
 class PersonalAccessTokenVerifier(TokenVerifier):
     """FastMCP's verifier hook, over `services/tokens.resolve_bearer`. No
     `base_url`: in local mode there is no authorization server and no protected-
     resource document to point at, so the SDK's challenge carries no
-    `resource_metadata` — a pointer at a 404 would be worse than none (M6-7
-    adds the document and the pointer with it)."""
+    `resource_metadata` — a pointer at a 404 would be worse than none. In OIDC
+    mode the mount's verifier is the MCP OAuth proxy instead
+    (`app/auth/mcp_oauth.py`), which routes a `ptk_` bearer here and whose
+    challenge does carry the pointer (#192)."""
 
     def __init__(self) -> None:
         super().__init__(base_url=None, required_scopes=[])
@@ -83,12 +88,20 @@ class PersonalAccessTokenVerifier(TokenVerifier):
 
 
 def principal_from_access_token(token: AccessToken) -> Principal:
-    """The `Principal` an SDK access token stands for. Today every token the
-    verifier issues is a PAT; the MCP OAuth grant (#192) will carry its own
-    `claims["kind"]` and map to `mcp(...)` here."""
-    scopes = frozenset(Scope(s) for s in token.scopes)
-    if token.claims.get("kind") == PrincipalKind.PAT.value:
+    """The `Principal` an SDK access token stands for, by the `kind` the
+    verifier that produced it stamped in its claims. A personal access token
+    carries its own granted scopes. An MCP OAuth grant (#192) is the owner's
+    delegated grant with the **fixed** mapping — `collection:read` and
+    `collection:write`, never `instance:admin` (§5.5) — whatever its OAuth
+    `scope` claim says: the scope vocabulary on that path is the identity
+    provider's (`openid`), not ours (`app/auth/mcp_oauth.py`). Its subject is
+    the owner's provider subject, the credential behind the grant."""
+    kind = token.claims.get("kind")
+    if kind == PrincipalKind.PAT.value:
+        scopes = frozenset(Scope(s) for s in token.scopes)
         return pat(write=Scope.WRITE in scopes, subject=token.client_id, via=VIA_BEARER)
+    if kind == PrincipalKind.MCP.value:
+        return mcp(write=True, subject=token.claims.get("sub"))
     raise ToolError(_UNAUTHENTICATED)
 
 

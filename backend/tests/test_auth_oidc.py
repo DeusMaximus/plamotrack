@@ -2,10 +2,11 @@
 redirect, code interception, safe failure; §5.8 T6/T7/T10; M6-6, #191).
 
 An app built in OIDC mode (`create_app(Settings(auth_mode="oidc", …))`) is driven
-as a real anonymous browser against an in-process **fake provider**: an RSA key,
-a discovery document, a JWKS and a token endpoint served through an httpx
-`MockTransport`, so every id_token axis — issuer, audience, nonce, expiry,
-signature, subject — is a knob the test turns. The shipped local-mode `app` is
+as a real anonymous browser against an in-process **fake provider**
+(`tests/oidc_fake.py`, shared with the MCP OAuth suite): an RSA key, a discovery
+document, a JWKS and a token endpoint served through an httpx `MockTransport`,
+so every id_token axis — issuer, audience, nonce, expiry, signature, subject —
+is a knob the test turns. The shipped local-mode `app` is
 driven only where the point is that the OIDC routes do not exist there.
 
 The state axis (AGENTS.md, "sweep the values"): the owner row is unbound
@@ -20,7 +21,6 @@ from __future__ import annotations
 
 import json
 import time
-from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from urllib.parse import parse_qs, urlsplit
 
@@ -28,7 +28,6 @@ import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 from joserfc import jwt
-from joserfc.jwk import KeySet, RSAKey
 from sqlalchemy import select, update
 
 from app import error_codes
@@ -47,130 +46,20 @@ from app.models import Session as SessionRow
 from app.routers.auth import BUDGET_ATTR, OIDC_PROVIDER_ATTR
 from app.services import audit, oidc
 from app.services.oidc import CallbackError, OidcProvider
+from tests.oidc_fake import (
+    BASE,
+    CLIENT_ID,
+    CLIENT_SECRET,
+    ISSUER,
+    ORIGIN,
+    OWNER_SUB,
+    STRANGER_SUB,
+    FakeIdp,
+    oidc_app,
+    oidc_settings,
+)
 
 pytestmark = pytest.mark.anyio
-
-ISSUER = "https://idp.test"
-CLIENT_ID = "plamotrack-web"
-CLIENT_SECRET = "a-client-secret-nobody-logs"
-BASE = "http://plamo.test"
-ORIGIN = {"Origin": BASE}
-OWNER_SUB = "owner-subject-1"
-STRANGER_SUB = "stranger-subject-2"
-
-
-# --- the fake provider ---------------------------------------------------------------
-
-
-class FakeIdp:
-    """The provider as the app sees it over HTTP. `issue()` mints id_tokens; the
-    token endpoint hands out whatever `next_token` holds for the code
-    `GOOD_CODE`, refuses any other code with `invalid_grant`, and records the
-    form it was sent so a test can assert the PKCE verifier and redirect URI."""
-
-    GOOD_CODE = "good-code"
-
-    def __init__(self) -> None:
-        self.key = RSAKey.generate_key(2048, parameters={"kid": "k1"})
-        self.other_key = RSAKey.generate_key(2048, parameters={"kid": "k2"})
-        self.issuer = ISSUER
-        self.next_token: dict | None = None
-        self.token_requests: list[dict] = []
-        self.discovery_status = 200
-        self.token_status: int | None = None  # None → decided by the code
-        self.network_down = False
-        self.calls: list[str] = []
-
-    def issue(
-        self,
-        *,
-        nonce: object,
-        sub: object = OWNER_SUB,
-        email: str | None = "owner@example.test",
-        iss: object = None,
-        aud: object = None,
-        exp: object = None,
-        key: RSAKey | None = None,
-        omit: tuple[str, ...] = (),
-        **extra,
-    ) -> str:
-        """A signed id_token in which every claim is a knob: pass any value —
-        a list, a null, a string where a number belongs — to put that shape in
-        the token, or name a claim in `omit` to leave it out (`sub=None` omits
-        it too, the older spelling of the no-subject case)."""
-        now = int(time.time())
-        claims = {
-            "iss": self.issuer if iss is None else iss,
-            "aud": CLIENT_ID if aud is None else aud,
-            "iat": now,
-            "exp": now + 300 if exp is None else exp,
-            "nonce": nonce,
-            **extra,
-        }
-        if sub is not None:
-            claims["sub"] = sub
-        if email is not None:
-            claims["email"] = email
-        for name in omit:
-            claims.pop(name, None)
-        signing = key or self.key
-        return jwt.encode({"alg": "RS256", "kid": signing.kid}, claims, signing)
-
-    def jwks(self) -> dict:
-        return KeySet([self.key]).as_dict(private=False)
-
-    def handler(self, request: httpx.Request) -> httpx.Response:
-        self.calls.append(f"{request.method} {request.url.path}")
-        if self.network_down:
-            raise httpx.ConnectError("provider down", request=request)
-        path = request.url.path
-        if path == "/.well-known/openid-configuration":
-            if self.discovery_status != 200:
-                return httpx.Response(self.discovery_status, text="nope")
-            return httpx.Response(
-                200,
-                json={
-                    "issuer": self.issuer,
-                    "authorization_endpoint": f"{ISSUER}/authorize",
-                    "token_endpoint": f"{ISSUER}/token",
-                    "jwks_uri": f"{ISSUER}/jwks",
-                    "code_challenge_methods_supported": ["S256"],
-                },
-            )
-        if path == "/jwks":
-            return httpx.Response(200, json=self.jwks())
-        if path == "/token":
-            form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
-            form["_authorization"] = request.headers.get("authorization", "")
-            self.token_requests.append(form)
-            if self.token_status is not None:
-                return httpx.Response(self.token_status, json={"error": "server_error"})
-            if form.get("code") != self.GOOD_CODE or self.next_token is None:
-                return httpx.Response(400, json={"error": "invalid_grant"})
-            return httpx.Response(200, json=self.next_token)
-        return httpx.Response(404)
-
-
-@asynccontextmanager
-async def oidc_app(fake: FakeIdp, *, issuer: str = ISSUER):
-    """An auth-enabled OIDC-mode app whose provider talks to `fake`, and an
-    anonymous browser on it. The shipped app's injected owner never reaches it."""
-    settings = Settings(
-        auth_mode="oidc",
-        oidc_issuer=issuer,
-        oidc_client_id=CLIENT_ID,
-        oidc_client_secret=CLIENT_SECRET,
-        public_base_url=BASE,
-    )
-    live = create_app(settings, authorization=True)
-    transport = httpx.MockTransport(fake.handler)
-    provider = OidcProvider.from_settings(settings, http_client=AsyncClient(transport=transport))
-    assert provider is not None
-    setattr(live.state, OIDC_PROVIDER_ATTR, provider)
-    async with AsyncClient(
-        transport=ASGITransport(app=live, raise_app_exceptions=False), base_url=BASE
-    ) as browser:
-        yield live, browser
 
 
 def fresh_browser(live) -> AsyncClient:
@@ -841,14 +730,7 @@ async def test_a_provider_down_at_start_is_503_and_existing_sessions_survive():
         # A second process, so to speak: no cached discovery, and the provider
         # has gone away.
         fresh = OidcProvider.from_settings(
-            Settings(
-                auth_mode="oidc",
-                oidc_issuer=ISSUER,
-                oidc_client_id=CLIENT_ID,
-                oidc_client_secret=CLIENT_SECRET,
-                public_base_url=BASE,
-            ),
-            http_client=AsyncClient(transport=httpx.MockTransport(fake.handler)),
+            oidc_settings(), http_client=AsyncClient(transport=httpx.MockTransport(fake.handler))
         )
         setattr(live.state, OIDC_PROVIDER_ATTR, fresh)
         fake.network_down = True

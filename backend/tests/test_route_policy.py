@@ -102,6 +102,12 @@ def test_an_undeclared_route_fails_the_build():
 # Regenerate deliberately when a route legitimately changes.
 
 _REST_SURFACE: dict[tuple[str, str], tuple[int, str]] = {
+    # The three root discovery documents (#192): family 8, anonymous by
+    # protocol, in both modes — FastMCP's in OIDC mode, a 404 of their own in
+    # local mode. `HEAD` is Starlette's, beside `GET`.
+    ("/.well-known/oauth-authorization-server/mcp", "GET,HEAD,OPTIONS"): (8, "protocol"),
+    ("/.well-known/oauth-protected-resource/mcp/", "GET,HEAD,OPTIONS"): (8, "protocol"),
+    ("/.well-known/openid-configuration/mcp", "GET,HEAD,OPTIONS"): (8, "protocol"),
     ("/auth/login", "POST"): (3, "anonymous"),
     ("/auth/logout", "POST"): (3, "anonymous"),
     ("/auth/oidc/callback", "GET"): (3, "anonymous"),
@@ -174,6 +180,30 @@ _MOUNTED_SURFACE: dict[tuple[str, str], str] = {
     # transport sits inside it. `*`: the registry's binding is the verb boundary,
     # not the route's metadata (`build_mcp_app`).
     ("/mcp/", "*"): "RequireAuthMiddleware",
+    # The six protocol routes (family 8, #192) on the shipped **local-mode**
+    # app: registered, answering their own 404 (`mcp_oauth.NotInThisMode`); the
+    # registry's declared verbs are the boundary here too (`declare_child_verbs`).
+    ("/mcp/authorize", "*"): "NotInThisMode",
+    ("/mcp/auth/callback", "*"): "NotInThisMode",
+    ("/mcp/consent", "*"): "NotInThisMode",
+    ("/mcp/register", "*"): "NotInThisMode",
+    ("/mcp/revoke", "*"): "NotInThisMode",
+    ("/mcp/token", "*"): "NotInThisMode",
+}
+
+#: The same paths on an **OIDC-mode** app: FastMCP's handlers — the SDK's
+#: authorization handler (a bound `handle`), its CORS-wrapped token,
+#: registration and revocation endpoints, the proxy's callback and consent
+#: methods — with the child's own `/mcp/.well-known/*` aliases pruned before
+#: mounting, so they appear nowhere.
+_MOUNTED_SURFACE_OIDC: dict[tuple[str, str], str] = {
+    ("/mcp/", "*"): "RequireAuthMiddleware",
+    ("/mcp/authorize", "*"): "handle",
+    ("/mcp/auth/callback", "*"): "_handle_idp_callback",
+    ("/mcp/consent", "*"): "_handle_consent",
+    ("/mcp/register", "*"): "CORSMiddleware",
+    ("/mcp/revoke", "*"): "CORSMiddleware",
+    ("/mcp/token", "*"): "CORSMiddleware",
 }
 
 
@@ -195,10 +225,10 @@ def _observed_rest_surface() -> dict[tuple[str, str], tuple[int, str]]:
     return dict(entries)
 
 
-def _observed_mounted_surface() -> dict[tuple[str, str], str]:
+def _observed_mounted_surface(target=app) -> dict[tuple[str, str], str]:
     return {
         (route.path, ",".join(sorted(route.methods)) or "*"): route.name
-        for route in iter_mounted_routes(app)
+        for route in iter_mounted_routes(target)
     }
 
 
@@ -217,6 +247,61 @@ def test_the_mounted_surface_matches_the_snapshot():
     #198 f2). This does not wrap the child in the REST dependency; it only sees
     it."""
     assert _observed_mounted_surface() == _MOUNTED_SURFACE
+
+
+def test_the_mounted_surface_in_oidc_mode_matches_its_snapshot():
+    """The mode axis of the child surface (#192): the same six paths, FastMCP's
+    handlers behind them, the child's well-known aliases gone, and every one
+    declared — `build_route_index` on the OIDC app is what proves the last."""
+    from tests.oidc_fake import oidc_settings
+
+    live = create_app(oidc_settings(), authorization=True)
+    assert _observed_mounted_surface(live) == _MOUNTED_SURFACE_OIDC
+    index = build_route_index(live)
+    assert {r.path for r in index.mounted_routes} == {p for p, _ in _MOUNTED_SURFACE_OIDC}
+    # And the REST half is the local app's: the discovery routes exist in both
+    # modes, so the snapshot above holds for the OIDC app too.
+    observed = {
+        (route.path, ",".join(sorted(route.methods))): (
+            index.policy_for(route.endpoint).family,
+            index.policy_for(route.endpoint).credential,
+        )
+        for route in index.routes
+    }
+    assert observed == _REST_SURFACE
+
+
+def test_a_discovery_route_serving_other_verbs_than_declared_fails_the_build():
+    """The root documents are declared by path with their verbs pinned (#192):
+    a route at one of those paths serving a different set — an SDK release
+    adding or dropping one — is refused at build, not accepted silently."""
+    probe = FastAPI()
+    probe.router.routes.append(
+        Route(
+            "/.well-known/openid-configuration/mcp",
+            endpoint=_transport,
+            methods=["GET", "POST"],
+        )
+    )
+    with pytest.raises(UndeclaredRouteError) as excinfo:
+        build_route_index(probe)
+    assert "declares" in str(excinfo.value)
+
+
+def test_a_non_protocol_route_under_the_protocol_namespace_fails_the_build():
+    """The pre-routing gate passes everything under `/.well-known/` through
+    unresolved (#192), so the registry refuses a scoped route hidden there —
+    the gate could otherwise let an anonymous caller past the 401 to the
+    route's own answer."""
+    probe = FastAPI()
+
+    @probe.get("/.well-known/kits", tags=["kits"])
+    async def _hidden():  # pragma: no cover - never called
+        return {}
+
+    with pytest.raises(DuplicateRouteError) as excinfo:
+        build_route_index(probe)
+    assert "protocol namespace" in str(excinfo.value)
 
 
 # --- the route graphs the build refuses (Codex #198 round 2, f2A) ---------------

@@ -42,11 +42,12 @@ INSTANCE_SETTINGS = "f9979ec7b9cb"
 AUTH_TABLES = "f1058c5de0f3"
 OIDC_LOGIN = "0db6c35d0a7e"
 SESSION_AUTH_MODE = "4f3a9c1e7b2d"
+MCP_OAUTH_STATE = "d5e9362140ea"
 
 # The current migration head, as a literal (this module keeps revision ids as
 # literals on purpose — see the header). The "recovered to head" / "nothing
 # moved" assertions compare against it, so a new migration bumps this one line.
-HEAD = SESSION_AUTH_MODE
+HEAD = MCP_OAUTH_STATE
 
 
 def db(sql: str, **params) -> list[tuple]:

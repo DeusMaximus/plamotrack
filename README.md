@@ -302,6 +302,19 @@ Desktop) only accept publicly reachable URLs, can use the `mcp-remote` bridge sh
 above. Instructions for other specific clients are welcome as PRs; open an issue if
 yours needs something unusual.
 
+### Signing in instead of pasting a token (OIDC mode)
+
+An instance that signs its owner in through an OpenID Connect provider
+(`AUTH_MODE=oidc`) is also an OAuth server for MCP clients: **Claude web, ChatGPT
+web and MCP Inspector** take the URL `https://your-instance/mcp/` in their connector
+dialog, show a consent page, send you to the same provider, and get tokens of their
+own — no paste. Only the owner's account is accepted, and every such token acts as
+the owner with read and write access to the collection, never the instance
+settings. It needs TLS in front of the instance (or a loopback address while
+developing) and one more `.env` line; `docs/operations.md` → *MCP clients that sign
+in through the provider* has the setup. Personal access tokens keep working in that
+mode too.
+
 ### The tools it exposes
 
 | Tool | What it does |
@@ -333,8 +346,9 @@ yours needs something unusual.
 Import and export deliberately have **no** MCP tools. An agent that can silently replace
 your entire collection is not a feature.
 
-> ⚠️ The MCP endpoint takes only a personal access token (see *First, mint a token*
-> above) — never the browser session — and a token's reach is fixed when it is minted.
+> ⚠️ The MCP endpoint takes a personal access token (see *First, mint a token*
+> above) — or, in OIDC mode, a token the client obtained by signing in as the owner —
+> never the browser session, and a personal token's reach is fixed when it is minted.
 > There is no tested TLS path yet, so keep the instance on localhost or a trusted
 > network for now.
 

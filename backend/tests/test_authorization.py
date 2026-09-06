@@ -186,6 +186,24 @@ async def test_no_store_on_the_deny_envelope_too():
     assert denied_403.headers.get("cache-control") == "no-store"
 
 
+async def test_no_store_on_an_unhandled_500_too(http_client, monkeypatch):
+    """An exception no handler caught is rendered by `ServerErrorMiddleware`,
+    *above* the profile layer — so the stock plain-text 500 carried nothing
+    (the REST sibling of a mounted route's failure, Codex #212 round 1, f4).
+    The app's own `Exception` handler stamps it. `http_client`, because the
+    default transport re-raises the exception into the test."""
+    from app.services import kits as kits_service
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("a service failed")
+
+    monkeypatch.setattr(kits_service, "list_kits", boom)
+    resp = await http_client.get("/kits")
+    assert resp.status_code == 500
+    assert resp.headers.get("cache-control") == "no-store"
+    assert resp.json() == {"detail": "Internal Server Error"}
+
+
 # --- the profile is enforced, not defaulted (Codex #198 round 2, f1) ------------
 # The real stampers around a synthetic downstream, so the handler's own
 # `Cache-Control` is the axis: whatever it set — nothing, an empty value, a

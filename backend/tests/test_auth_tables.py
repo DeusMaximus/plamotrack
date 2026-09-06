@@ -14,12 +14,14 @@ from sqlalchemy.exc import IntegrityError
 
 from app.db import get_sessionmaker
 from app.models import (
+    MCP_OAUTH_STATE_TABLE,
     AuditEvent,
     Credential,
     OidcLogin,
     Owner,
     PersonalAccessToken,
     Session,
+    mcp_oauth_state,
 )
 from app.models.auth import OWNER_ROW_ID
 from app.services.portability.spec import TABLE_SPECS
@@ -39,10 +41,13 @@ def test_no_auth_table_is_portable():
 
 def test_no_auth_table_name_is_portable():
     """The same guard by table name, so a future spec that referenced a table by
-    string rather than by model class is caught too."""
+    string rather than by model class is caught too — and the MCP OAuth state
+    store (#192), a `Table` with no model class, is held by its name."""
     portable_tables = {spec.model.__tablename__ for spec in TABLE_SPECS}
     for model in _AUTH_MODELS:
         assert model.__tablename__ not in portable_tables
+    assert mcp_oauth_state.name == MCP_OAUTH_STATE_TABLE
+    assert MCP_OAUTH_STATE_TABLE not in portable_tables
 
 
 async def test_owner_is_seeded_unclaimed_and_singular():

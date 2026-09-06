@@ -31,12 +31,13 @@ What it does not do, deliberately:
   `RouteBinding` is its verb boundary (#198 round 3). The gate does not resolve
   a principal for a request the mount claims.
 - **Family 8's namespace is the protocol's** (`PROTOCOL_NAMESPACES`, the same
-  declaration the ingress alias rejection reads): under `/.well-known/` with no
-  route registered — local mode — the router's 404 stands for everyone, because
-  discovery is anonymous by protocol and a `Bearer` challenge on a discovery
-  URL would be a claim about the resource. No principal is resolved there
-  either; in OIDC mode (M6-7) the routes FastMCP installs carry `PROTOCOL` and
-  are admitted the same way.
+  declaration the ingress alias rejection reads): under `/.well-known/` the
+  answer is the protocol's whatever is registered — FastMCP's discovery
+  document in OIDC mode, the same path's own 404 in local mode, the router's
+  404 for an unknown sibling (#192) — because discovery is anonymous by
+  protocol and a `Bearer` challenge on a discovery URL would be a claim about
+  the resource. No principal is resolved there, and the registry refuses any
+  non-protocol route under the namespace.
 - **Anonymous routes keep their own 405 and 422** — a wrong verb on `/healthz`,
   a malformed login body — because there is no credential to gate on: a path
   whose every matching route is `ANONYMOUS` passes through untouched.
@@ -145,6 +146,15 @@ class DispatchTable:
     def resolve(self, scope: Scope) -> Outcome:
         route_path = get_route_path(scope)
         method = scope["method"]
+        if any(route_path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES):
+            # Family 8's namespace is the protocol's, route or no route (#192):
+            # a discovery document in OIDC mode, the registered 404 in local
+            # mode, or the router's 404 for an unknown sibling — anonymous by
+            # protocol every time, so no principal is resolved and a stale
+            # bearer some client attached is not turned into a challenge on a
+            # discovery URL. The index build refuses any other kind of route
+            # under the namespace.
+            return Outcome(Dispatch.PROTOCOL)
         partial: list[object] = []
         for entry in self._entries:
             if isinstance(entry, Mount):
@@ -159,10 +169,6 @@ class DispatchTable:
             partial.append(entry.endpoint)
         if partial:
             return Outcome(Dispatch.PARTIAL, tuple(partial))
-        if any(route_path.startswith(prefix) for prefix in PROTOCOL_NAMESPACES):
-            # Family 8's namespace with nothing registered (local mode): the
-            # router's 404 is the protocol's answer, not the gate's 401.
-            return Outcome(Dispatch.PROTOCOL)
         return Outcome(Dispatch.NONE)
 
 
