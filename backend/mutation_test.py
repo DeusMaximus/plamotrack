@@ -3653,8 +3653,8 @@ CASES = [
     (
         "moa-54. the upstream ending audited as a client revocation",
         MCP_OAUTH,
-        '                detail=f"client={transition.client_id} ended_by={ENDED_BY_UPSTREAM}",',
-        '                detail=f"client={transition.client_id} presented=refresh_token",',
+        '                    f"ended_by={ENDED_BY_UPSTREAM}"',
+        '                    f"presented=refresh_token"',
         "becomes_the_grant_only_once and forged",
     ),
     (

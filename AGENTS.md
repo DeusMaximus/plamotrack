@@ -538,8 +538,15 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     through `services/audit.py`, never ad-hoc logging. A row identifies the
     principal kind and credential id when one exists, the resolved client address,
     and a route or MCP tool; detail is short structured metadata only — never a
-    credential, request body, or query string. State-change events share the
-    caller's transaction; a pre-routing Host/Origin refusal owns its transaction.
+    credential, request body, or query string. External OAuth client ids and
+    refused OIDC subjects are fingerprinted with `audit.external_reference`;
+    provider callback errors map to fixed categories, never raw parameter values.
+    Token-exchange diagnostics keep the HTTP status, not a provider's error body.
+    A source-run XFF walk validates/canonicalizes each whole IP spelling before
+    assignment; malformed/empty hops stop at the last verified address, never skip
+    leftward. The bundled private header uses the same IP parser. State-change
+    events share the caller's transaction; a pre-routing Host/Origin refusal owns
+    its transaction.
     Retention goes through the audited `prune_events` service and host-side
     `prune-audit` command. The bundled nginx has four independent `limit_req`
     zones for route families 2, 3, 8 and 9, keyed on `$binary_remote_addr` after

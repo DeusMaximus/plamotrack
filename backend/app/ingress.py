@@ -134,14 +134,29 @@ def origin_of_referer(referer: str) -> str:
 
 
 def _parse_address(value: str) -> str:
-    """One X-Forwarded-For entry or a socket peer, with any port removed."""
+    """Canonical IP literal, optionally with a port; malformed input is not an address.
+
+    A scope id is local interface metadata, not a forwarded IP address. Validate
+    the whole bracket/port spelling before removing it, so ignored suffixes cannot
+    turn arbitrary forwarded text into verified audit attribution.
+    """
     value = value.strip()
+    if "%" in value:
+        raise ValueError("A forwarded address cannot carry an interface scope")
+    port = None
     if value.startswith("["):
-        end = value.find("]")
-        return value[1:end] if end != -1 else value
-    if value.count(":") == 1:
-        return value.rsplit(":", 1)[0]
-    return value
+        value, closed, tail = value[1:].partition("]")
+        if not closed or ":" not in value or (tail and not tail.startswith(":")):
+            raise ValueError("Malformed bracketed IP address")
+        if tail:
+            port = tail[1:]
+    elif value.count(":") == 1:
+        value, port = value.rsplit(":", 1)
+    if port is not None and (
+        not port or len(port) > 5 or not port.isascii() or not port.isdecimal() or int(port) > 65535
+    ):
+        raise ValueError("Malformed forwarded address port")
+    return str(ip_address(value))
 
 
 # --- the policy ------------------------------------------------------------------
@@ -245,14 +260,18 @@ class IngressPolicy:
     def resolve_client_address(self, peer: str | None, forwarded_for: str) -> str | None:
         """The client behind a chain of trusted proxies: walk X-Forwarded-For
         from the right, past every trusted hop, and stop at the first address
-        that is not one. An untrusted peer's header is not consulted at all."""
+        that is not one. A malformed hop (including an empty one) stops the walk
+        at the last verified address. An untrusted peer's header is never read."""
         if not self.is_trusted_proxy(peer):
             return peer
-        chain = [entry.strip() for entry in forwarded_for.split(",") if entry.strip()]
+        chain = forwarded_for.split(",")
         resolved = peer
         for hop in reversed(chain):
-            resolved = _parse_address(hop)
-            if not self.is_trusted_proxy(hop):
+            try:
+                resolved = _parse_address(hop)
+            except ValueError:
+                break
+            if not self.is_trusted_proxy(resolved):
                 break
         return resolved
 
@@ -271,9 +290,8 @@ def client_address_from_scope(scope: Scope, policy: IngressPolicy) -> str | None
     if policy.bundled_ingress:
         bundled = headers.get(BUNDLED_CLIENT_HEADER)
         if bundled:
-            candidate = _parse_address(bundled)
             try:
-                return str(ip_address(candidate))
+                return _parse_address(bundled)
             except ValueError:
                 # The bundled proxy always emits an address. A malformed value
                 # from a direct compose-network peer is not trusted as data.

@@ -1127,7 +1127,13 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    trusted-proxy walk for both its per-client limit key and audit, then overwrites a
    private client-address header on every proxied path; the unpublished API accepts
    that header only under a compose-only flag. A source-run API leaves the flag false
-   and continues to resolve `X-Forwarded-For` directly from `TRUSTED_PROXIES`. This
+   and continues to resolve `X-Forwarded-For` directly from `TRUSTED_PROXIES`.
+   Each walked hop is parsed and canonicalized before it becomes the resolved
+   address. A malformed or empty hop stops the walk at the last verified address;
+   it cannot become the address or be skipped to reach text farther left. IPs may
+   carry a numeric port; bracket suffixes, invalid ports and interface scope ids
+   are refused as forwarded addresses. The same parser validates the bundled
+   private header, and neither path changes the raw socket peer. This
    avoids pretending the compose network has a static CIDR and prevents a caller from
    supplying the private header through nginx. Also: T2's rows are typed in
    `backend/ingress_matrix.py` (CI Integration runs it against the packaged stack)
@@ -1365,9 +1371,9 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    validator** with `nonce=None` — the proxy's upstream request carries no nonce,
    its transaction being bound by `state`, PKCE and the consent cookie — so one
    contract decides what an id_token is on both paths; an identity that is not the
-   owner is `auth.mcp_identity_refused` with the subject, a token that fails the
-   contract is `auth.oidc_login_failed` on `/mcp/token`, and a grant is
-   `auth.mcp_grant_issued` naming the client. The verified `(iss, sub)` is then
+   owner is `auth.mcp_identity_refused` with a subject fingerprint, a token that
+   fails the contract is `auth.oidc_login_failed` on `/mcp/token`, and a grant is
+   `auth.mcp_grant_issued` with a client fingerprint. The verified `(iss, sub)` is then
    **grant state** (Codex #212 round 1, f3): carried under the proxy's own signature
    in every token it issues (`upstream_claims`) and compared with the owner row on
    every request, never re-derived from the stored id_token — FastMCP kept that
@@ -1718,8 +1724,16 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    transaction because no request-scoped session exists yet. Each row carries the
    principal kind and credential id when one exists, the resolved client address and
    path/tool, with fixed structured detail only — no request body, query string or
-   secret. The bundled nginx's outer unknown-Host 421 necessarily remains an access-log
-   event because it refuses the request before the API; the app's repeated Host check
+   secret. OAuth client ids and refused OIDC subjects are external opaque values:
+   `audit.external_reference` serializes them as a fixed-size SHA-256 fingerprint,
+   not a partially displayed URL that may still carry secrets in its path/userinfo.
+   The whole identifier participates, so hidden query/fragment differences remain
+   correlatable. Protocol identifiers and verified principal ids stay unchanged.
+   Browser provider errors become fixed `access_denied` / `missing_code` / `other`
+   categories; token-exchange logs retain HTTP status without raw provider payloads.
+   This controls newly emitted metadata; it does not rewrite historical rows. The
+   bundled nginx's outer unknown-Host 421 necessarily remains an access-log event
+   because it refuses the request before the API; the app's repeated Host check
    is the database-audited event. The host-side `prune-audit --older-than-days N`
    command uses a strict cutoff and records its own result. OIDC recovery emits
    `auth.oidc_rebind` alongside its session-revocation and recovery events. Four independent nginx zones key

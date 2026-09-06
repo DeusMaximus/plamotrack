@@ -923,3 +923,37 @@ the library's included, has to be given those records, or the library's own read
 the raw data is one more representation the rule does not govern. The check is
 mechanical: for each thing the rule is stated over, list every consumer, and confirm
 each is fed the governed form and not the source it was derived from.
+
+## A field name is not a safe audit representation
+
+PR #208's second security review found two versions of this mistake. The XFF
+resolver called malformed text "untrusted" after already assigning it as the
+resolved address. OAuth audit details called raw client/subject values identifiers,
+and a browser callback called its raw `error` parameter a category. CIMD URLs can
+carry credentials, and a provider's error field can be any string or JSON value.
+The same sweep reproduced a raw provider-error log beside the audit leaks.
+
+Validate before assignment, and stop at malformed forwarding data rather than
+skipping it to trust text farther left. For external audit references, fingerprint
+the entire opaque identifier; stripping URL queries still leaves path/userinfo
+that can contain credentials. Preserve correlation without changing the identifiers
+used by the protocol. Select callback categories from fixed values and retain only
+safe token-exchange diagnostics. A generic substring redactor cannot establish
+these representation contracts. The regressions first reached their data assertions
+at the reviewed head (70 red / 27 controls); single-site mutations then checked each
+changed emitter and the parser boundaries separately.
+
+## A changed fixture can erase the contrasting value
+
+The full mutation replay during #208 found `oidc-19` surviving: a redirect built
+from the request passed the test intended to require `PUBLIC_BASE_URL`. #212 had
+changed the shared OIDC fixture's public URL to `http://localhost`; the older test
+already sent `Host: localhost`. Its two supposedly different inputs had become
+equal, so both implementations returned the same location.
+
+Use an allowed but distinct host and assert that the witness differs from the
+configured value. The neighbouring login-start URI check owed the same distinction;
+success and refusal callback redirects owed both response branches. The corrected
+witnesses detected each request-derived mutation without a production redirect
+change. A shared-fixture edit owes a sweep of tests whose contrast depends on it,
+not just a green suite under its new default.

@@ -197,6 +197,15 @@ it can reach the API, so that outer refusal is in nginx's access log; the app's
 defence-in-depth Host refusal is the database event. Collection edits are not
 audited in Milestone 6.
 
+OAuth client references (DCR ids and CIMD URLs) and refused OIDC subjects are stored
+as `sha256:<hex digest>` in audit details. The digest covers the whole identifier,
+so clients whose URLs differ only by query or fragment can still be distinguished;
+the URL, userinfo and other opaque text are not displayed. Protocol identifiers and
+verified principal ids are unchanged. Browser callback failures record only
+`access_denied`, `missing_code`, or `other`; token-exchange diagnostics retain the
+HTTP status without copying a provider's error body. These rules apply to new rows;
+existing audit rows are not rewritten. Use retention if older records must expire.
+
 The table is append-only during normal operation. Retention is the operator's
 choice; this host-side command deletes rows older than 180 days and appends a row
 recording the prune itself:
@@ -380,7 +389,7 @@ the API. `.env.example` documents every key. The ones worth knowing:
 | `MCP_OAUTH_SIGNING_KEY` | — | OIDC mode, required. 32 random bytes as 64 hex characters (`openssl rand -hex 32`): signs the tokens MCP clients receive and encrypts the proxy's state in the database. Installation identity — rotating it means every MCP client re-authorises. See [MCP clients that sign in through the provider](#mcp-clients-that-sign-in-through-the-provider-oidc-mode). |
 | `MCP_OAUTH_ALLOWED_REDIRECT_URIS` | — | OIDC mode, optional. Comma-separated patterns a dynamically registering MCP client may use as its callback (`http://localhost:*`). Narrows registration, never replaces it; applies to every client kind when set, so it must also admit the web clients' callbacks. Leave unset unless you have a reason. |
 | `ALLOWED_ORIGINS` | — | Extra browser origins allowed to write, beyond the instance's own and loopback ones. Rarely needed. |
-| `TRUSTED_PROXIES` | — | IPs or CIDRs of a reverse proxy whose `X-Forwarded-For` is believed for the client's address. nginx keys its per-client limits on that resolved address and the API records it in security audit events. Leave it empty without an extra proxy. |
+| `TRUSTED_PROXIES` | — | IPs or CIDRs of a reverse proxy whose `X-Forwarded-For` is believed for the client's address. nginx keys its per-client limits on that resolved address and the API records it in security audit events. On the source-run API, every walked hop must be a valid IP (an optional numeric port is accepted); malformed or empty hops stop resolution at the last verified address. Leave it empty without an extra proxy. |
 | `REFERENCE_CURRENCY` | `AUD` | Your currency — **first-run bootstrap only**. The migration seeds it into the instance settings; after that the database row is the setting (`PATCH /settings`), and editing the env var does nothing. Changing the setting affects new entries only — stored snapshots keep the currency they were recorded in. |
 | `DATABASE_URL` | — | Set it to use a Postgres you manage yourself; the `POSTGRES_*` values then only configure the bundled `db`. |
 

@@ -19,6 +19,7 @@ a session row, and by the audit row that names it.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from datetime import UTC, datetime, timedelta
@@ -278,12 +279,15 @@ async def test_start_ignores_a_forwarded_host_for_the_callback():
             json={"setup_token": token},
             headers={
                 "Origin": "http://localhost",
-                "Host": "localhost",
+                "Host": "127.0.0.1",
                 "X-Forwarded-Host": "evil.test",
             },
         )
     assert started.status_code == 200, started.text
-    assert _params(started.json()["authorization_url"])["redirect_uri"].startswith(BASE)
+    assert started.request.headers["host"] != urlsplit(BASE).netloc
+    assert _params(started.json()["authorization_url"])["redirect_uri"] == (
+        BASE + "/api/auth/oidc/callback"
+    )
 
 
 # --- the claim and the login -----------------------------------------------------------
@@ -320,7 +324,8 @@ async def test_the_first_login_with_the_setup_token_binds_the_owner():
     assert exchange["_authorization"].startswith("Basic ")
 
 
-async def test_the_callback_redirects_to_public_base_url_whatever_the_host():
+@pytest.mark.parametrize("provider_error", [None, "access_denied"])
+async def test_the_callback_redirects_to_public_base_url_whatever_the_host(provider_error):
     """§5.6 proxy trust: the self redirect names PUBLIC_BASE_URL, not the
     request's Host — reached here by an allowed loopback name."""
     fake = FakeIdp()
@@ -331,11 +336,20 @@ async def test_the_callback_redirects_to_public_base_url_whatever_the_host():
         fake.next_token = {"id_token": fake.issue(nonce=params["nonce"])}
         response = await browser.get(
             "/auth/oidc/callback",
-            params={"state": params["state"], "code": FakeIdp.GOOD_CODE},
-            headers={"Host": "localhost", "X-Forwarded-Host": "evil.test"},
+            params={
+                "state": params["state"],
+                "code": FakeIdp.GOOD_CODE,
+                **({"error": provider_error} if provider_error is not None else {}),
+            },
+            headers={"Host": "127.0.0.1", "X-Forwarded-Host": "evil.test"},
         )
+        # Keep the witness distinct if the shared OIDC fixture's BASE changes.
+        assert response.request.headers["host"] != urlsplit(BASE).netloc
     assert response.status_code == 302
-    assert response.headers["location"] == BASE + "/"
+    expected = (
+        BASE + "/" if provider_error is None else f"{BASE}/?auth_error={CallbackError.DENIED}"
+    )
+    assert response.headers["location"] == expected
 
 
 async def test_a_bound_owner_signs_in_again_without_the_token():
@@ -367,7 +381,7 @@ async def test_a_different_identity_is_refused_with_an_audit_row_and_no_session(
             assert (await other.get("/auth/session")).json()["state"] == "anonymous"
     assert await _session_count() == 1
     (refused,) = await _events(audit.OIDC_IDENTITY_REFUSED)
-    assert refused.detail == f"subject={STRANGER_SUB}"
+    assert refused.detail == f"subject=sha256:{hashlib.sha256(STRANGER_SUB.encode()).hexdigest()}"
     assert refused.principal_kind == "anon"
     assert refused.target == "/auth/oidc/callback"
     assert (await _owner()).oidc_subject == OWNER_SUB
@@ -419,7 +433,7 @@ async def test_the_binding_is_the_issuer_too_not_the_subject_alone():
             assert _auth_error(response) == CallbackError.IDENTITY_REFUSED
     assert await _session_count() == 1
     (refused,) = await _events(audit.OIDC_IDENTITY_REFUSED)
-    assert refused.detail == f"subject={OWNER_SUB}"
+    assert refused.detail == f"subject=sha256:{hashlib.sha256(OWNER_SUB.encode()).hexdigest()}"
 
 
 async def test_an_id_token_signed_with_the_client_secret_is_refused():

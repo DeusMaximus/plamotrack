@@ -67,6 +67,7 @@ from tests.test_mcp_oauth import (
     CIMD_CB,
     CIMD_ID,
     NATIVE_CB,
+    _audit_reference,
     _bind_owner,
     _cimd_document,
     _events,
@@ -223,7 +224,7 @@ async def test_every_dynamic_registration_is_a_public_client(requested):
         assert len(fake.revoked) == 1
     ended = await _events(audit.MCP_GRANT_REVOKED)
     assert [(r.detail, r.principal_subject) for r in ended] == [
-        (f"client={client_id} presented=access_token", OWNER_SUB)
+        (f"client={_audit_reference(client_id)} presented=access_token", OWNER_SUB)
     ]
 
 
@@ -408,7 +409,7 @@ async def test_a_cimd_client_authenticates_as_its_document_says(monkeypatch, met
         assert upstream_refresh != fake.next_refresh["refresh_token"]
     ended = await _events(audit.MCP_GRANT_REVOKED)
     assert [(r.detail, r.principal_subject) for r in ended] == [
-        (f"client={CIMD_ID} presented=access_token", OWNER_SUB)
+        (f"client={_audit_reference(CIMD_ID)} presented=access_token", OWNER_SUB)
     ]
 
 

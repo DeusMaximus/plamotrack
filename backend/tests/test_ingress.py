@@ -699,7 +699,9 @@ def test_origin_normalisation_mirrors_fastmcp(value):
             id="stops-at-the-first-untrusted-from-the-right",
         ),
         pytest.param("10.0.0.5", "10.0.0.5", "", "10.0.0.5", id="trusted-but-no-header"),
-        pytest.param("10.0.0.5", "10.0.0.5", "garbage", "garbage", id="unparsable-entry-kept"),
+        pytest.param(
+            "10.0.0.5", "10.0.0.5", "garbage", "10.0.0.5", id="unparsable-entry-stops-at-peer"
+        ),
         pytest.param("10.0.0.5", None, "203.0.113.9", None, id="no-peer"),
         pytest.param(
             "10.0.0.5", "10.0.0.5", "[2001:db8::1]:4444", "2001:db8::1", id="ipv6-with-port"

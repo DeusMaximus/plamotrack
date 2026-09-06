@@ -11,6 +11,7 @@ records commit or roll back together.
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime
 
 from sqlalchemy import delete
@@ -62,19 +63,34 @@ AUTH_MODE_CHANGED = "auth.mode_changed"
 
 # --- the M6-7 vocabulary (#192) -------------------------------------------------
 #: The MCP OAuth proxy issued an access/refresh token pair to a client after the
-#: bound owner signed in at the provider (§5.5 family 8). `detail` names the
-#: MCP client id — a DCR id or a CIMD URL — never a token.
+#: bound owner signed in at the provider (§5.5 family 8). `detail` fingerprints
+#: the MCP client id — never the raw DCR id/CIMD URL or a token.
 MCP_GRANT_ISSUED = "auth.mcp_grant_issued"
 #: A provider identity other than the bound owner completed the MCP OAuth
 #: round trip and was refused at issuance — nothing minted, nothing stored
-#: (§5.6 open redirect; T6). `detail` names the subject, as the browser login's
-#: refusal does.
+#: (§5.6 open redirect; T6). `detail` fingerprints the subject, as the browser
+#: login's refusal does.
 MCP_IDENTITY_REFUSED = "auth.mcp_identity_refused"
 #: A client revoked one of its issued tokens at `/mcp/revoke` and the whole grant
 #: went with it — the access token, the refresh token and, best effort, the
 #: provider's own refresh token (RFC 7009 §2.1; Codex #212 round 1, f1).
-#: `detail` names the client and which half was presented, never a token.
+#: `detail` fingerprints the client and names which half was presented, never a token.
 MCP_GRANT_REVOKED = "auth.mcp_grant_revoked"
+
+
+def external_reference(value: str | None) -> str:
+    """A bounded correlation reference, never an external identifier's raw text.
+
+    OAuth client ids can be URLs containing credentials in any component; an
+    untrusted OIDC subject is opaque too. Fingerprint the entire value rather
+    than displaying part of it or guessing which substring is sensitive. This
+    changes only audit metadata, never protocol identifiers or authorization.
+    Missing and empty values remain distinct; surrogatepass handles every Python
+    string without making an audit field change the request's outcome.
+    """
+    if value is None:
+        return "none"
+    return "sha256:" + hashlib.sha256(value.encode("utf-8", errors="surrogatepass")).hexdigest()
 
 
 def client_address_of(request: Request | None) -> str | None:
