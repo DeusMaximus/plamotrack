@@ -41,6 +41,46 @@ Template:
 
 ---
 
+## 2026-09-07 — Claude Code (Opus 4.8) — #194 (M6-9) MERGED: PR #218 squash → `b32ffe2` after two Codex rounds (NO-GO→GO); #195 next
+
+- **Done:** #194 (M6-9, reference TLS deployment + the T12/T13 gate + the ops/README
+  rewrite) merged to `main` as `b32ffe2`; issue closed. Two Daybreak Blue (Codex GPT 5.6)
+  rounds: round 1 **NO-GO** (2×P2, 2×P3) → round 2 **GO** (4×P3), all fixed. Final head on
+  the branch was `807fb26`. What shipped: nginx bare `/mcp` carries the family's settings;
+  a loopback `TRUSTED_PROXIES` entry also trusts the Docker gateway; `ingress_matrix.py` +
+  HTTPS/`--behind-proxy`/`--credential-file`/`--hold-stream`/`--skip-rate-limits`;
+  `backend/deployment_gate.py` (the T12/T13 driver); `deploy/caddy/` reference + systemd
+  drop-in; `.agents/deployment-gate/` fixtures; `docs/operations.md` rebuilt around the four
+  ways to run it + the two-part backup set; README/`.env.example`/design §5.4-10/AGENTS
+  rule 12/testing-and-review step 4b.
+- **Review fixes (all with regressions):** P2 the Cloudflare token needs Zone:DNS:Edit **and**
+  Zone:Zone:Read (docs); P2 the gate leaked secrets to ssh argv/results → `env_set` sends
+  values on stdin, `run` has a redacting label, docs use `sudoedit`; P3 tunnel required an
+  exact `--tunnel-visitor` on nginx `$remote_addr` **and** the `auth.token_minted` audit row;
+  P3 T13 partial restores assert `refresh 401 invalid_client`; P3 the tunnel runbook names
+  `--tunnel-visitor` (+ drift-guard test); P3 the systemd `systemctl edit --stdin` alt was
+  wrong (sudoedit only); P3 `phase_local` reads `/api/auth/session` first (no swallowed ssh
+  error as "already claimed"); P3 `mcp_link`/`mcp_verify` parse the SSE JSON-RPC result
+  (`mcp_result`), not HTTP 200. Plus a pre-existing rate-check flake found re-verifying:
+  `rate_limit_checks` now admits 404 for a non-canonical discovery spelling (nginx 404s it,
+  rule 12; the limiter still keys on it) — only ever flaked in OIDC mode, masked by the
+  limiter tripping first.
+- **State:** `main` at `b32ffe2` + this hand-off; tree clean, nothing in flight. Gate proven
+  GREEN end-to-end (`--phase all` + tunnel) on **testhost.internal.tlgnet.net** (LXC 117,
+  10.1.1.129, VM04): Caddy 2.11.4 + cloudflare DNS module, Let's Encrypt DNS-01, both `/mcp`
+  spellings held 130 s through the Cloudflare Tunnel `plamotest.gunp.la`, all three T13
+  restores. **testhost is kept** (owner's call) — it is exactly what #195's release gate
+  reuses; it is running, claimed in local mode, and its Keycloak fixture is up. Branch
+  `feat/194-tls-deployment-gate` left in place. The `.agents/spikes/190/` Keycloak is a
+  separate fixture from the gate's.
+- **Next: #195, the M6 release.** The gate now includes `.agents/testing-and-review.md`
+  step 4b — a release runs `deployment_gate.py --phase all` (with `--tunnel-*`) against the
+  **tagged** commit on testhost and pastes its results block into the notes. Then the bump
+  (three files via PR), tag, `--prerelease`; the open M6 P3s **#206/#210/#213/#214** need a
+  defer-or-fix call before the tag, **#30** closes with the release. Only then the LXC
+  upgrade (back up first; `ALLOWED_HOSTS`; relink MCP clients; refresh the personal Gunpla
+  skill).
+
 ## 2026-09-07 — Claude Code (Opus 4.8) — #194 (M6-9) built, gate GREEN on a real host, PR #218 OPEN
 
 - **Done:** M6-9 whole, on `feat/194-tls-deployment-gate` (`d53282e`), **PR #218 open,
@@ -178,56 +218,4 @@ Template:
   test_audit_privacy.py and test_access_logging.py to harness targets. #206/#210/
   #213/#214/#215 remain separate questions. #194 and the remaining M6 gates precede
   the LXC upgrade; no deployment sign-off follows from this merge.
-
-## 2026-09-06 — Codex (GPT-6 Astra) — #208 security review P3-5/P3-6 repaired locally
-
-- **Context:** the independent review at `43c5826` is NO-GO (P3-5 malformed XFF
-  attribution, P3-6 opaque OAuth values in audit details), issuecomment-5557756710.
-  The review is posted as GPT-5; the owner identifies the reviewer as Daybreak Blue.
-  #208 was pushed at `43c5826`, CI all green, main remains `1fd3b36` with #212 merged.
-- **Done:** reproduced both at the reviewed head, then fixed the class. The shared
-  IP parser validates/canonicalizes whole IP/port/bracket spellings and rejects
-  interface scope ids; a malformed or empty XFF hop stops at the last verified
-  address. Bundled-header validation uses the same parser; raw peers stay intact.
-  `audit.external_reference` fingerprints complete client ids and refused OIDC
-  subjects at every emitter. Protocol ids and verified principal ids are unchanged.
-  Browser callback errors use fixed categories. The sweep also reproduced and
-  removed a raw provider-error log; HTTP status remains. Docs/rule 14 updated;
-  lessons: "A field name is not a safe audit representation".
-- **Decisions:** digest-only references rather than displaying a URL with just its
-  query stripped: its path/userinfo can carry credentials too. Query/fragment
-  differences remain correlatable. Missing and empty values differ; every Python
-  string is handled. Existing audit rows are not rewritten; retention remains the
-  host-side way to expire them. #212's authorization/grant/client decisions remain.
-- **Validation:** new regression selection at `43c5826`: **70 red / 27 green**,
-  all final data assertions after correcting two witness setup/expectation mistakes.
-  New suite is now **113 cases**, including fingerprint and bundled-parser controls.
-  Full backend run **2527 passed / 9 failed**; the nine were old raw-identifier
-  audit expectations, updated and rerun **9 passed** with runtime code unchanged.
-  Three redirect controls also passed after a test-witness repair (one added case):
-  2537 cases validated across full/focused runs, not one final-tree green invocation.
-  Ruff/format/render/whitespace pass.
-- **Mutation:** aud-38..56 **19/19 killed** with green baselines and byte restoration:
-  parser validation/stop/empty/port/bracket/scope/private-header, five client emitters,
-  two subject emitters, callback category, provider-error log, whole/missing/Unicode
-  fingerprint handling. Tracked moa-54 re-anchored. Full tracked replay: **513/514**;
-  oidc-19 survived because #212 changed fixture BASE to localhost, equal to its Host
-  witness. No production redirect defect. Corrected the contrasting Host in start
-  and both callback branches: oidc-19 replay **1/1**, adjacent aud-57/58 **2/2**.
-  All 514 tracked plus 21 new mutants detected across runs; exact restoration.
-  Lesson: "A changed fixture can erase the contrasting value".
-- **State:** fixes applied but **uncommitted/unpushed** in the #208 worktree,
-  `/Users/tlgja/Code/plamotrack-208`; primary dirty #194 untouched. No PR reply/body
-  update or merge this turn. Review worktree `/private/tmp/plamotrack-208-r2` and
-  logs `/private/tmp/plamotrack208-r2-*.log`; runner
-  `/private/tmp/plamotrack208-r2-mutations.py`, evidence/recipes under
-  `/private/tmp/plamotrack208-r2-mutants/`. Local reply/body drafts are
-  `/private/tmp/plamotrack208-r2-{response,pr-body}.md`; not posted. Both dedicated
-  test DBs removed; dev DB healthy. No frontend/packaged/TLS/restore/LXC rerun.
-- **Next:** commit/push when asked, then publish the per-finding response/updated
-  coverage at the new head. Obtain another independent review before merging.
-  Fold aud-1..58 after merge, adding
-  test_audit_privacy.py and test_access_logging.py to harness targets. #206/#210/
-  #213/#214/#215 remain separate issue questions. #194 and the M6 release gates
-  still precede the LXC upgrade; the end-of-M6 security review remains planned.
 
