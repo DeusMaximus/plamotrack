@@ -1432,11 +1432,17 @@ def rate_limit_checks(base: str, mode: str = "local") -> list[str]:
         ("family 3", "/api/./auth/login", {405}),
         ("family 3", "/api/auth/%6cogin", {405}),
         # Root proxy locations can forward an unrewritten spelling to the app,
-        # whose default-deny gate then answers 401. The ingress must still
-        # account it against the normalised family key.
-        ("family 8", "//.well-known/openid-configuration/mcp", discovery_status | {401}),
-        ("family 8", "/.well-known/./openid-configuration/mcp", discovery_status | {401}),
-        ("family 8", "/.well-known/%6fpenid-configuration/mcp", discovery_status),
+        # whose default-deny gate then answers 401. A non-canonical spelling of a
+        # discovery document is 404 at nginx (one spelling per family, rule 12) —
+        # `/.well-known/./…` is 404 while `//…` and `%6f…` normalise to the 200
+        # canonical — but the limiter keys on the normalised path either way, so
+        # 404 is an admitted pre-throttle status here and the 429 is the real
+        # proof. In local mode discovery is itself 404, which is why this only
+        # surfaced under the OIDC-mode gate (#194): there discovery is 200, and a
+        # 404 spelling failed the check whenever the limiter had not tripped first.
+        ("family 8", "//.well-known/openid-configuration/mcp", discovery_status | {401, 404}),
+        ("family 8", "/.well-known/./openid-configuration/mcp", discovery_status | {401, 404}),
+        ("family 8", "/.well-known/%6fpenid-configuration/mcp", discovery_status | {401, 404}),
         ("family 9", "//api/healthz", {200}),
         ("family 9", "/api/./healthz", {200}),
         ("family 9", "/api/%68ealthz", {200}),

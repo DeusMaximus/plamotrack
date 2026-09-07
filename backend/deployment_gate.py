@@ -3,7 +3,8 @@
 
     uv run python deployment_gate.py --base https://NAME --ssh root@HOST \\
         --idp https://idp.NAME --idp-password-env GATE_IDP_PASSWORD \\
-        --phase all [--tunnel-base https://TUNNEL --tunnel-proxy 10.0.0.5 --host-ip 10.0.0.9]
+        --phase all [--tunnel-base https://TUNNEL --tunnel-proxy 10.0.0.5
+                     --host-ip 10.0.0.9 --tunnel-visitor <your public IP>]
 
 The host is a fresh Linux box prepared by `.agents/deployment-gate/host-prepare.sh`:
 Docker and Compose, Caddy with the cloudflare DNS module and the reference
@@ -462,15 +463,19 @@ def phase_lockout(ctx: Context) -> None:
 
 def phase_local(ctx: Context) -> None:
     host = ctx.host
-    try:
-        token: str | None = host.setup_token()
-    except GateError:
-        token = None  # already claimed: a re-run signs in with the saved password
-    if token is not None:
+    # Branch on the instance's own claim state, read first — never on whether a
+    # host command happened to fail (Codex #218 P3-7): an SSH/Compose error while
+    # reading the setup token must surface, not be misread as "already claimed".
+    state = session_state(ctx, None)["state"]
+    if state == "unclaimed":
+        token: str | None = host.setup_token()  # must succeed; a host error propagates
         password = secrets.token_urlsafe(18)
         ctx.save("local-password", password + "\n")
+        ctx.results.record("local: claim", "was unclaimed; setup token read, claiming")
     else:
+        token = None
         password = ctx.load("local-password")
+        ctx.results.record("local: claim", f"already claimed (session {state}); saved password")
     pat = ctx.state("pat-local")
     log_secrets = ctx.state("log-secrets-local.json")
     failures, ok_rows, skipped = run_matrix(
@@ -730,6 +735,35 @@ def mcp_initialize(client: httpx.Client, base: str, token: str) -> httpx.Respons
     return mcp_post(client, base, token, "initialize", INITIALIZE_PARAMS)
 
 
+def sse_json(text: str) -> list[dict]:
+    """The JSON-RPC messages in a streamable-HTTP (SSE) body — the shape
+    tests/test_auth_tokens.py drives by hand."""
+    return [json.loads(line[5:].strip()) for line in text.splitlines() if line.startswith("data:")]
+
+
+def mcp_result(response: httpx.Response, request_id: int, what: str) -> dict:
+    """The JSON-RPC *result* for `request_id` — HTTP 200 is not success. A
+    JSON-RPC `error`, a missing message, or a tool result with `isError: true`
+    (a 200 carrying a failed tool call) is a failure the transport wraps in a 200
+    (Codex #218 P3-8). Raises GateError otherwise; returns the result."""
+    if response.status_code != 200:
+        raise GateError(f"{what} answered HTTP {response.status_code}")
+    messages = [m for m in sse_json(response.text) if m.get("id") == request_id]
+    if not messages:
+        raise GateError(
+            f"{what}: no JSON-RPC message for id {request_id} in {response.text[:200]!r}"
+        )
+    message = messages[-1]
+    if message.get("error"):
+        raise GateError(f"{what}: JSON-RPC error {message['error']}")
+    result = message.get("result")
+    if result is None:
+        raise GateError(f"{what}: a JSON-RPC message with neither result nor error")
+    if isinstance(result, dict) and result.get("isError"):
+        raise GateError(f"{what}: the tool call returned isError=true: {result}")
+    return result
+
+
 def mcp_link(ctx: Context) -> dict:
     """A dynamically registered client through the whole chain: discovery, DCR,
     authorize, consent, the provider's login, callback, token, initialize, a tool
@@ -819,10 +853,13 @@ def mcp_link(ctx: Context) -> dict:
             raise GateError(f"/mcp/token answered {tokens.status_code}: {tokens.text[:200]}")
         issued = tokens.json()
         opened = mcp_initialize(client, base, issued["access_token"])
-        if opened.status_code != 200:
-            raise GateError(f"initialize with the issued token answered {opened.status_code}")
+        mcp_result(opened, 1, "initialize with the issued token")
         session = opened.headers.get("mcp-session-id")
-        mcp_post(client, base, issued["access_token"], "notifications/initialized", session=session)
+        ack = mcp_post(
+            client, base, issued["access_token"], "notifications/initialized", session=session
+        )
+        if ack.status_code != 202:
+            raise GateError(f"notifications/initialized answered {ack.status_code}")
         called = mcp_post(
             client,
             base,
@@ -832,8 +869,7 @@ def mcp_link(ctx: Context) -> dict:
             id_=2,
             session=session,
         )
-        if called.status_code != 200:
-            raise GateError(f"tools/call get_meta answered {called.status_code}")
+        mcp_result(called, 2, "tools/call get_meta")
         refreshed = client.post(
             server["token_endpoint"],
             data={
@@ -874,9 +910,11 @@ def mcp_verify(ctx: Context, link: dict) -> dict:
         out["old_access_initialize"] = old.status_code
         if refreshed.status_code == 200:
             fresh = refreshed.json()
-            out["new_access_initialize"] = mcp_initialize(
-                client, ctx.base, fresh["access_token"]
-            ).status_code
+            new = mcp_initialize(client, ctx.base, fresh["access_token"])
+            # The refreshed token must complete a real initialize, not just 200
+            # (Codex #218 P3-8) — a protocol failure here raises, not passes.
+            mcp_result(new, 1, "initialize with the refreshed token")
+            out["new_access_initialize"] = new.status_code
             link.update(refresh_token=fresh["refresh_token"], access_token=fresh["access_token"])
     return out
 

@@ -607,3 +607,111 @@ def test_the_tunnel_phase_requires_an_expected_visitor(monkeypatch):
     with pytest.raises(gate.GateError) as error:
         gate.phase_tunnel(ctx)
     assert "--tunnel-visitor" in str(error.value)
+
+
+# --- #218 round 2 (P3-5..8) ---------------------------------------------------------
+class _Resp:
+    def __init__(self, status_code, text=""):
+        self.status_code = status_code
+        self.text = text
+
+
+def _sse(*messages):
+    import json as _json
+
+    return "\n".join("data: " + _json.dumps(m) for m in messages) + "\n\n"
+
+
+def test_mcp_result_treats_a_200_with_a_jsonrpc_error_or_iserror_as_failure():
+    """HTTP 200 is not MCP success: a JSON-RPC error, a tool result with
+    isError, or no message for the id is a failure the transport wraps in a 200
+    (P3-8). A clean result returns."""
+    ok = _Resp(200, _sse({"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "x"}}))
+    assert gate.mcp_result(ok, 1, "initialize") == {"protocolVersion": "x"}
+
+    tool_ok = _Resp(
+        200, _sse({"jsonrpc": "2.0", "id": 2, "result": {"content": [], "isError": False}})
+    )
+    assert gate.mcp_result(tool_ok, 2, "get_meta")["isError"] is False
+
+    for bad, why in [
+        (
+            _Resp(
+                200, _sse({"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "no"}})
+            ),
+            "error",
+        ),
+        (
+            _Resp(
+                200, _sse({"jsonrpc": "2.0", "id": 2, "result": {"isError": True, "content": []}})
+            ),
+            "isError",
+        ),
+        (_Resp(200, _sse({"jsonrpc": "2.0", "id": 99, "result": {}})), "wrong id"),
+        (_Resp(401, ""), "http"),
+    ]:
+        with pytest.raises(gate.GateError):
+            gate.mcp_result(bad, 1 if why != "isError" else 2, "call")
+
+
+def test_phase_local_branches_on_session_state_not_a_swallowed_ssh_error(monkeypatch, tmp_path):
+    """An SSH/Compose failure reading the setup token must surface, not be
+    reclassified as 'already claimed' (P3-7). The phase reads /api/auth/session
+    first: unclaimed requires setup_token to succeed; claimed loads the saved
+    password without calling it."""
+
+    class Sentinel(Exception):
+        pass
+
+    def ctx_for(state):
+        c = gate.Context(
+            base="https://x",
+            host=gate.Host("root@h", "/opt/plamotrack"),
+            results=gate.Results(),
+            state_dir=tmp_path,
+            idp=None,
+            idp_user="owner",
+            idp_password=None,
+            hold=5,
+            ca_cert=None,
+            host_ip=None,
+            tunnel_base=None,
+            tunnel_proxy=None,
+            tunnel_visitor=None,
+        )
+        monkeypatch.setattr(gate, "session_state", lambda ctx, cred=None: {"state": state})
+        return c
+
+    # unclaimed + setup_token raises (an SSH error) → it propagates, not swallowed
+    ctx = ctx_for("unclaimed")
+    monkeypatch.setattr(
+        ctx.host, "setup_token", lambda: (_ for _ in ()).throw(gate.GateError("ssh failed"))
+    )
+    with pytest.raises(gate.GateError, match="ssh failed"):
+        gate.phase_local(ctx)
+
+    # claimed → the saved password is loaded and setup_token is never called
+    ctx = ctx_for("owner")
+    gate.write_private(str(ctx.state("local-password")), "saved-pw\n")
+    called = {"setup": False}
+    monkeypatch.setattr(ctx.host, "setup_token", lambda: called.__setitem__("setup", True) or "t")
+    monkeypatch.setattr(gate, "run_matrix", lambda c, argv: (_ for _ in ()).throw(Sentinel()))
+    with pytest.raises(Sentinel):
+        gate.phase_local(ctx)
+    assert called["setup"] is False
+
+
+def test_the_tunnel_runbook_names_every_required_tunnel_argument():
+    """A required phase input cannot drift out of the copyable runbook (P3-5):
+    the README and the module docstring must name every --tunnel-* / --host-ip
+    flag the tunnel phase requires."""
+    repo = Path(__file__).resolve().parents[2]
+    readme = (repo / ".agents/deployment-gate/README.md").read_text(encoding="utf-8")
+    docstring = gate.__doc__ or ""
+    for flag in ("--tunnel-base", "--tunnel-proxy", "--host-ip", "--tunnel-visitor"):
+        assert flag in readme, f"{flag} missing from the deployment-gate README"
+        assert flag in docstring, f"{flag} missing from the deployment_gate docstring"
+    # and the systemd drop-in must not offer the wrong `systemctl edit` path (P3-6)
+    conf = (repo / "deploy/caddy/caddy.service.d/cloudflare.conf").read_text(encoding="utf-8")
+    assert "systemctl edit" not in conf
+    assert "sudoedit /etc/caddy/cloudflare.env" in conf

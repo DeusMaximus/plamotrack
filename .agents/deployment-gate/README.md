@@ -22,7 +22,10 @@ Nothing here is imported by the app.
   `host-prepare.sh` refuses to run until it exists and never prints it.
 - For the tunnel phase: a public-hostname route on an existing Cloudflare Tunnel
   whose connector runs on another host, pointing at `http://<host LAN IP>:8080`,
-  and the UI steps written down for `docs/operations.md`.
+  the connector's address (for `--tunnel-proxy`), and this workstation's public
+  address as Cloudflare forwards it (for `--tunnel-visitor` —
+  `curl -s https://cloudflare.com/cdn-cgi/trace | sed -n 's/^ip=//p'`), and the UI
+  steps written down for `docs/operations.md`.
 
 ## Run
 
@@ -52,9 +55,16 @@ starts it on loopback behind Caddy. Re-running it is safe.
 
 The driver keeps every secret of the run under `~/.plamotrack-gate/<name>/`
 (mode 0600) and prints none; the results block it writes is what the release
-notes and the PR body carry. Run the tunnel phase last, once the route exists:
-`--phase tunnel --tunnel-base https://TUNNEL-NAME --tunnel-proxy <connector IP>
---host-ip <host LAN IP>` (or add those three to `--phase all`).
+notes and the PR body carry. Run the tunnel phase last, once the route exists,
+with **four** tunnel arguments — the fourth, `--tunnel-visitor`, is this
+workstation's public address exactly as Cloudflare forwards it, obtained
+independently so the phase proves attribution rather than mere change:
+```bash
+VISITOR=$(curl -s https://cloudflare.com/cdn-cgi/trace | sed -n 's/^ip=//p')
+… --phase tunnel --tunnel-base https://TUNNEL-NAME --tunnel-proxy <connector IP> \
+  --host-ip <host LAN IP> --tunnel-visitor "$VISITOR"
+```
+(or add those four to `--phase all`).
 
 ## Files
 
