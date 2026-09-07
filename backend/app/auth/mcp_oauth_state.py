@@ -37,7 +37,8 @@ JTI_COLLECTION = "mcp-jti-mappings"
 #: Refresh-token metadata, keyed by the token's hash.
 REFRESH_COLLECTION = "mcp-refresh-tokens"
 #: An authorization code the client has not yet exchanged — it already carries
-#: the provider's tokens for whoever signed in.
+#: the provider's token response (`idp_tokens`) for whoever signed in, so the
+#: rebind reads it for what to revoke at the provider, as it does a grant.
 CODE_COLLECTION = "mcp-authorization-codes"
 #: Dynamically registered clients (RFC 7591).
 CLIENT_COLLECTION = "mcp-oauth-proxy-clients"

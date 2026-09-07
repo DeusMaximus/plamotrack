@@ -892,7 +892,7 @@ async def test_rebind_revokes_every_session_and_the_next_login_needs_the_token()
     assert revoked.principal_kind == "internal"
     (run,) = await _events(audit.RECOVERY_RUN)
     assert run.target == "recovery rebind-oidc"
-    assert run.detail == "sessions_revoked=1 grants_purged=0"
+    assert run.detail == "sessions_revoked=1 grants_purged=0 codes_purged=0"
     assert run.principal_kind == "internal"
 
 

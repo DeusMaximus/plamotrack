@@ -957,3 +957,28 @@ success and refusal callback redirects owed both response branches. The correcte
 witnesses detected each request-derived mutation without a production redirect
 change. A shared-fixture edit owes a sweep of tests whose contrast depends on it,
 not just a green suite under its new default.
+
+## The classification you wrote is a promise the same branch keeps (#214, PR #219 round 1)
+
+The #214 branch defined `GRANT_COLLECTIONS` — the four collections of
+`mcp_oauth_state` a rebind purges — and the comment on one of them said why it
+belonged: an unexchanged authorization code "already carries the provider's tokens
+for whoever signed in". The purge then read the grant records for what to revoke at
+the provider and deleted the codes unread. Cursor's round wrote its own contract of
+the feature before reading the author's plan, put "the code's `idp_tokens` on the
+RFC 7009 half" on its list, found it absent from the coverage record, and probed it
+with a one-line extension of the author's own test: the code's refresh token was
+not in `fake.revoked`. P3 by exposure (five minutes, host-side, unusable through the
+proxy); the #214 shape by class.
+
+The sweep in `AGENTS.md` is about paths a *rule* governs. This is the same discipline
+one level down: a classification the branch itself introduces — "these four are a
+grant's because they hold a credential" — names the paths that owe an answer to
+every consequence of that classification, and the PR body's coverage record is where
+the author would have noticed the missing one, if it had been written per member of
+the set rather than per mechanism. Two things to do with a set you define: enumerate
+its members in the coverage record one row each, and mutate membership one member at
+a time (rbp-14/15/16 already did; they proved the *delete*, not the *read*). The
+reviewer also named the remedy's wrong half — `_upstream_credential` on the code
+record's top level, where the tokens live under `idp_tokens` — which is the case for
+reading a library's record shape before writing to it, not from memory of a sibling's.

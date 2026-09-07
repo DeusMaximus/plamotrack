@@ -2332,20 +2332,28 @@ async def test_a_refresh_keeps_the_identity_that_authorized_the_grant(path):
 # --- the rebind purges the grants (#214) ----------------------------------------------------
 
 
+async def _idp_return_without_refresh_token(
+    client, fake: FakeIdp, upstream_location: str
+) -> httpx.Response:
+    """`idp_return` for a provider that issued no refresh token (RFC 6749 §5.1
+    makes it optional): the value axis of what a stored record can hold — its
+    access token is then what the provider is asked to revoke, as `/mcp/revoke`
+    does."""
+    fake.next_token = _provider_tokens(fake)
+    del fake.next_token["refresh_token"]
+    return await client.get(
+        "/mcp/auth/callback",
+        params={"code": FakeIdp.GOOD_CODE, "state": _query(upstream_location)["state"]},
+    )
+
+
 async def _link_without_refresh_token(client, fake: FakeIdp) -> dict:
-    """A link whose provider issued no refresh token (RFC 6749 §5.1 makes it
-    optional): the value axis of what a purged record can hold — its access
-    token is then what the provider is asked to revoke, as `/mcp/revoke` does."""
+    """A whole link on a provider that issued no refresh token."""
     client_id = (await register(client)).json()["client_id"]
     verifier, challenge = _pkce()
     started = await authorize(client, client_id, challenge=challenge)
     approved = await consent(client, started.headers["location"])
-    params = _query(approved.headers["location"])
-    fake.next_token = _provider_tokens(fake)
-    del fake.next_token["refresh_token"]
-    returned = await client.get(
-        "/mcp/auth/callback", params={"code": FakeIdp.GOOD_CODE, "state": params["state"]}
-    )
+    returned = await _idp_return_without_refresh_token(client, fake, approved.headers["location"])
     assert returned.status_code == 302, returned.text
     code = _query(returned.headers["location"])["code"]
     response = await exchange(client, client_id, code, verifier)
@@ -2367,7 +2375,10 @@ async def test_a_rebind_purges_every_grant_and_hands_what_they_held_to_the_provi
     issued and not yet exchanged — while the registered clients and a consent
     still in flight stay; and what each record held is what the provider is
     then asked to revoke: its refresh token, or its access token when the
-    provider issued none. Two grants, so the purge is proven over rows."""
+    provider issued none — a grant's and an unexchanged code's alike (the code
+    already carries the provider's response; Cursor #219 round 1, P3-1). Two
+    grants and two codes, so the purge is proven over rows, and each pair
+    varies the refresh-token axis."""
     monkeypatch.setattr(oidc_module, "get_settings", oidc_settings, raising=False)
     fake = FakeIdp()
     await _bind_owner()
@@ -2382,6 +2393,17 @@ async def test_a_rebind_purges_every_grant_and_hands_what_they_held_to_the_provi
         approved = await consent(client, started.headers["location"])
         returned = await idp_return(client, fake, approved.headers["location"])
         pending_code = _query(returned.headers["location"])["code"]
+        code_upstream_refresh = fake.next_token["refresh_token"]
+        # A second unexchanged code, from a provider that issued no refresh token.
+        bare_client = (await register(client)).json()["client_id"]
+        _, challenge = _pkce()
+        started = await authorize(client, bare_client, challenge=challenge)
+        approved = await consent(client, started.headers["location"])
+        returned = await _idp_return_without_refresh_token(
+            client, fake, approved.headers["location"]
+        )
+        assert returned.status_code == 302, returned.text
+        code_upstream_access = fake.next_token["access_token"]
         # A consent transaction still in flight: nobody's grant, and it stays.
         waiting_client = (await register(client)).json()["client_id"]
         _, challenge = _pkce()
@@ -2400,19 +2422,30 @@ async def test_a_rebind_purges_every_grant_and_hands_what_they_held_to_the_provi
 
         remaining = await _state_rows()
         assert {c for c, _ in remaining} == {"mcp-oauth-proxy-clients", "mcp-oauth-transactions"}
-        assert sum(1 for c, _ in remaining if c == "mcp-oauth-proxy-clients") == 4
+        assert sum(1 for c, _ in remaining if c == "mcp-oauth-proxy-clients") == 5
         assert sum(1 for c, _ in remaining if c == "mcp-oauth-transactions") == 1
-        assert (outcome.grants_purged, outcome.sessions_revoked) == (2, 0)
         assert sorted((g.client_id, g.token_type_hint) for g in outcome.upstream) == sorted(
-            [(first["client_id"], "refresh_token"), (second["client_id"], "access_token")]
+            [
+                (first["client_id"], "refresh_token"),
+                (second["client_id"], "access_token"),
+                (pending_client, "refresh_token"),
+                (bare_client, "access_token"),
+            ]
         )
-        # After the commit the provider is asked, with what each record held.
+        assert (outcome.grants_purged, outcome.codes_purged, outcome.sessions_revoked) == (2, 2, 0)
+        # After the commit the provider is asked, with what each record held —
+        # the two grants' and the two unexchanged codes' alike.
         accepted = await oidc_module.revoke_purged_grants_upstream(
             oidc_settings(), outcome.upstream, http_client=_provider_transport(fake)
         )
-        assert accepted == 2
+        assert accepted == 4
         assert sorted((r["token"], r["token_type_hint"]) for r in fake.revoked) == sorted(
-            [(first_upstream_refresh, "refresh_token"), (second["upstream_access"], "access_token")]
+            [
+                (first_upstream_refresh, "refresh_token"),
+                (second["upstream_access"], "access_token"),
+                (code_upstream_refresh, "refresh_token"),
+                (code_upstream_access, "access_token"),
+            ]
         )
         # Nothing of the grants works, and the provider is not asked for a refresh.
         assert (await initialize(client, first["body"]["access_token"])).status_code == 401
@@ -2423,6 +2456,7 @@ async def test_a_rebind_purges_every_grant_and_hands_what_they_held_to_the_provi
         dead = await exchange(client, pending_client, pending_code, verifier)
         assert dead.status_code in (400, 401) and dead.json()["error"] == "invalid_grant"
     rows = await _events(audit.MCP_GRANT_REVOKED)
+    assert len(rows) == 2  # the grants; a code was never granted, so no row for it
     assert {r.detail for r in rows} == {
         f"client={_audit_reference(first['client_id'])} ended_by=rebind",
         f"client={_audit_reference(second['client_id'])} ended_by=rebind",
@@ -2430,7 +2464,7 @@ async def test_a_rebind_purges_every_grant_and_hands_what_they_held_to_the_provi
     host_side = ("internal", "recovery rebind-oidc", "host")
     assert all((r.principal_kind, r.target, r.client_address) == host_side for r in rows)
     (run,) = await _events(audit.RECOVERY_RUN)
-    assert run.detail == "sessions_revoked=0 grants_purged=2"
+    assert run.detail == "sessions_revoked=0 grants_purged=2 codes_purged=2"
 
 
 async def test_a_rebind_waits_for_a_refresh_in_flight_and_purges_what_it_wrote(monkeypatch):
@@ -2494,8 +2528,8 @@ async def test_the_recovery_command_purges_the_grants_unread_without_a_signing_k
     assert await asyncio.to_thread(recovery.main, ["rebind-oidc"]) == 0
     assert {c for c, _ in await _state_rows()} == {"mcp-oauth-proxy-clients"}
     assert (
-        "OIDC binding cleared. 0 session(s) revoked. 1 MCP grant(s) purged, "
-        "0 revoked at the provider."
+        "OIDC binding cleared. 0 session(s) revoked. 1 MCP grant(s) and 0 pending code(s) "
+        "purged, 0 revoked at the provider."
     ) in capsys.readouterr().out
     assert fake.revoked == [] and "POST /revoke" not in fake.calls
     (row,) = await _events(audit.MCP_GRANT_REVOKED)
@@ -2505,7 +2539,7 @@ async def test_the_recovery_command_purges_the_grants_unread_without_a_signing_k
         "host",
     )
     (run,) = await _events(audit.RECOVERY_RUN)
-    assert run.detail == "sessions_revoked=0 grants_purged=1"
+    assert run.detail == "sessions_revoked=0 grants_purged=1 codes_purged=0"
 
 
 async def test_the_recovery_command_asks_the_provider_after_the_commit(monkeypatch, capsys):
@@ -2527,7 +2561,10 @@ async def test_the_recovery_command_asks_the_provider_after_the_commit(monkeypat
         upstream_refresh = fake.next_token["refresh_token"]
     assert await asyncio.to_thread(recovery.main, ["rebind-oidc"]) == 0
     assert len(handed) == 1, "the command did not run the provider step"
-    assert "1 MCP grant(s) purged, 1 revoked at the provider." in capsys.readouterr().out
+    assert (
+        "1 MCP grant(s) and 0 pending code(s) purged, 1 revoked at the provider."
+        in capsys.readouterr().out
+    )
     [(rows_still_there, purged)] = handed
     assert rows_still_there is False
     assert [(g.client_id, g.token, g.token_type_hint) for g in purged] == [

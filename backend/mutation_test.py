@@ -5551,15 +5551,15 @@ CASES += [
     (
         "rbp-11. the grant count reported as zero",
         OIDC_SVC,
-        "    return len(grant_ids), upstream",
-        "    return 0, upstream",
+        "    return len(grant_ids), len(code_keys), upstream",
+        "    return 0, len(code_keys), upstream",
         "purges_every_grant",
     ),
     (
         "rbp-12. the recovery-run row loses the purge count",
         OIDC_SVC,
-        '        detail=f"sessions_revoked={revoked} grants_purged={purged}",',
-        '        detail=f"sessions_revoked={revoked}",',
+        '        detail=f"sessions_revoked={revoked} grants_purged={purged} codes_purged={codes}",',
+        '        detail=f"sessions_revoked={revoked} codes_purged={codes}",',
         "rebind_revokes_every_session or purges_every_grant",
     ),
     (
@@ -5589,6 +5589,28 @@ CASES += [
         "    {GRANT_COLLECTION, JTI_COLLECTION, REFRESH_COLLECTION, CODE_COLLECTION}",
         "    {GRANT_COLLECTION, JTI_COLLECTION, CODE_COLLECTION}",
         "purges_every_grant",
+    ),
+    # Cursor #219 round 1, P3-1: the unexchanged codes were purged unread.
+    (
+        "rbp-17. the unexchanged codes purged unread (provider never asked for their tokens)",
+        OIDC_SVC,
+        "            for code in code_keys:\n                record = await wrapped.get(key=code, collection=CODE_COLLECTION)",
+        "            for code in ():\n                record = await wrapped.get(key=code, collection=CODE_COLLECTION)",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-18. the code record read at the top level, not under idp_tokens",
+        OIDC_SVC,
+        '        token, hint = _upstream_credential(record.get("idp_tokens") or {})',
+        "        token, hint = _upstream_credential(record)",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-19. the recovery-run row loses the code count",
+        OIDC_SVC,
+        '        detail=f"sessions_revoked={revoked} grants_purged={purged} codes_purged={codes}",',
+        '        detail=f"sessions_revoked={revoked} grants_purged={purged}",',
+        "rebind_revokes_every_session or purges_every_grant",
     ),
 ]
 

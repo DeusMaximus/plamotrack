@@ -122,8 +122,9 @@ def main(argv: list[str] | None = None) -> int:
         outcome, revoked_upstream = asyncio.run(_rebind_oidc())
         print(
             f"OIDC binding cleared. {outcome.sessions_revoked} session(s) revoked. "
-            f"{outcome.grants_purged} MCP grant(s) purged, {revoked_upstream} revoked at the "
-            "provider. Restart the API to get a setup token, then sign in at the identity "
+            f"{outcome.grants_purged} MCP grant(s) and {outcome.codes_purged} pending code(s) "
+            f"purged, {revoked_upstream} revoked at the provider. Restart the API to get a "
+            "setup token, then sign in at the identity "
             "provider with it — that identity becomes the owner."
         )
         return 0

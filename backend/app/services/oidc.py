@@ -69,6 +69,7 @@ from app import error_codes
 from app.auth import credentials
 from app.auth.budget import FailureBudget
 from app.auth.mcp_oauth_state import (
+    CODE_COLLECTION,
     ENDED_BY_REBIND,
     GRANT_COLLECTION,
     GRANT_COLLECTIONS,
@@ -753,6 +754,9 @@ class RebindOutcome:
 
     sessions_revoked: int
     grants_purged: int
+    #: Authorization codes issued and not yet exchanged — no grant, but the
+    #: provider's tokens already (Cursor #219 round 1, P3-1).
+    codes_purged: int = 0
     upstream: list[PurgedGrant] = field(default_factory=list)
 
 
@@ -781,7 +785,7 @@ async def recovery_rebind_oidc(
     revoked = await auth_service.revoke_all_sessions(
         session, target="recovery rebind-oidc", principal=internal(), client_address="host"
     )
-    purged, upstream = await _purge_mcp_grants(session, settings)
+    purged, codes, upstream = await _purge_mcp_grants(session, settings)
     await audit.record_event(
         session,
         audit.OIDC_REBIND,
@@ -794,16 +798,18 @@ async def recovery_rebind_oidc(
         audit.RECOVERY_RUN,
         principal=internal(),
         target="recovery rebind-oidc",
-        detail=f"sessions_revoked={revoked} grants_purged={purged}",
+        detail=f"sessions_revoked={revoked} grants_purged={purged} codes_purged={codes}",
         client_address="host",
     )
     await session.commit()
-    return RebindOutcome(sessions_revoked=revoked, grants_purged=purged, upstream=upstream)
+    return RebindOutcome(
+        sessions_revoked=revoked, grants_purged=purged, codes_purged=codes, upstream=upstream
+    )
 
 
 async def _purge_mcp_grants(
     session: AsyncSession, settings: Settings
-) -> tuple[int, list[PurgedGrant]]:
+) -> tuple[int, int, list[PurgedGrant]]:
     """The grant collections of `mcp_oauth_state`, purged in the caller's
     transaction. Every grant's advisory lock first — rule 7.1's shape, before
     the read: a transition in flight holds its grant's lock through its
@@ -811,9 +817,14 @@ async def _purge_mcp_grants(
     left (the rotated refresh token, not the one the provider just retired) and
     nothing writes it back afterwards; then the records read for what the
     provider can be asked to revoke; then the delete, and one
-    `auth.mcp_grant_revoked` row per grant. Without a signing key — local mode,
-    where the table holds nothing of this instance's — the rows go unread.
-    Returns the grant count and the upstream material."""
+    `auth.mcp_grant_revoked` row per grant. An authorization code issued and
+    not yet exchanged is read the same way — it already carries the provider's
+    token response, the credential a grant would hold five minutes later — for
+    the provider half only: nothing was granted, so no grant row, and no lock
+    (an exchange in flight moves the same tokens into a grant record, which is
+    the concurrent-issuance window either way). Without a signing key — local
+    mode, where the table holds nothing of this instance's — the rows go
+    unread. Returns the grant count, the code count and the upstream material."""
     rows = await session.execute(
         text(f"SELECT key FROM {MCP_OAUTH_STATE_TABLE} WHERE collection = :grants ORDER BY key"),
         {"grants": GRANT_COLLECTION},
@@ -826,14 +837,26 @@ async def _purge_mcp_grants(
             ),
             {"namespace": GRANT_LOCK_NAMESPACE, "key": lock_key(grant_id)},
         )
+    codes = await session.execute(
+        text(f"SELECT key FROM {MCP_OAUTH_STATE_TABLE} WHERE collection = :codes ORDER BY key"),
+        {"codes": CODE_COLLECTION},
+    )
+    # This collection's keys are the authorization codes themselves — secrets,
+    # read off the result and never bound as a parameter (T10, the log).
+    code_keys = [row[0] for row in codes]
     records: dict[str, dict] = {}
-    if grant_ids and settings.mcp_oauth_signing_key:
+    pending: list[dict] = []
+    if (grant_ids or code_keys) and settings.mcp_oauth_signing_key:
         store, wrapped = build_state_store(settings)
         try:
             for grant_id in grant_ids:
                 record = await wrapped.get(key=grant_id, collection=GRANT_COLLECTION)
                 if isinstance(record, dict):
                     records[grant_id] = record
+            for code in code_keys:
+                record = await wrapped.get(key=code, collection=CODE_COLLECTION)
+                if isinstance(record, dict):
+                    pending.append(record)
         finally:
             await store.close()
     await session.execute(
@@ -860,7 +883,13 @@ async def _purge_mcp_grants(
             detail=detail,
             client_address="host",
         )
-    return len(grant_ids), upstream
+    for record in pending:
+        # The code record's tokens are the provider's response, under `idp_tokens`.
+        token, hint = _upstream_credential(record.get("idp_tokens") or {})
+        if token is not None:
+            client_id = str(record.get("client_id") or "")
+            upstream.append(PurgedGrant(client_id=client_id, token=token, token_type_hint=hint))
+    return len(grant_ids), len(code_keys), upstream
 
 
 def _upstream_credential(record: dict) -> tuple[str | None, str]:

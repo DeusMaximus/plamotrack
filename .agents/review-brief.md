@@ -170,6 +170,18 @@ routine round.
 > body's record did not list, and what you left unexamined — so the next round
 > starts from it rather than from the brief alone.
 
+**Cursor (Grok 4.6, SpaceXAI).** Back since 2026-09-07; fix rounds it can hold whole
+(its 256K ceiling is why it was retired for large PRs). Reviewed #219 from a detached
+worktree at the head and a second at the base without being told to.
+
+```
+**Cursor Grok 4.6 (SpaceXAI / Cursor) — review of PR #‹N›, at head `‹sha›`.**
+— **Cursor Grok 4.6 (SpaceXAI)**, via Cursor
+```
+
+Add the same paragraph as for GLM (one round per fresh chat; say so if the diff does
+not fit; re-run in a detached worktree if the checkout moves).
+
 **Claude Code (Opus / Fable).** An option when Cursor and Codex are both spoken for,
 with one caveat to write into the brief: most PRs here are authored by a Claude
 model, and a reviewer from the author's own family shares its blind spots. Say
