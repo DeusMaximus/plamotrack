@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-08 — Claude Code (Fable 5.1) — #195 held behind the owner's security scan: the four mediums fixed as #221 → **PR #222 open, CI green, Codex review next**; release PR #220 waits (rebase + gate rerun after #222 merges)
+## 2026-09-08 — Claude Code (Fable 5.1) — #195 held behind the owner's security scan: the four mediums fixed as #221 → **PR #222; Codex round 1 NO-GO (f1, f2 P2; f3 P3) fixed at `6395a5d`, round 2 pending**; release PR #220 waits (rebase + gate rerun after #222 merges)
 
 - **Done:** (1) **#195 run to the edge of the outward steps** (2026-09-07): `release/0.3.0`
   at `ed48038` (tree `92015d9`) → **PR #220** (bump 0.3.0, design §5 flipped to Built,
@@ -80,7 +80,19 @@ Template:
   burst; the constants are constants; nginx's 413 has no `params.limit`; consent GET
   unbounded; a CIMD lookup at the cap is an unknown client). Reviewer: **Codex** (M6
   security work) — brief printed in the 2026-09-08 session chat, scratchpad copy.
-- **State:** `main` = `c527176` + this entry. PR #222 open at `4b35c73`, unreviewed. PR #220
+- **Round 1 (Codex, GPT-6) — NO-GO, fixed at `6395a5d`:** f1 (P2) the setup token and the OIDC start charged
+  the verification bucket for a cheap comparison, and the general bucket alone let a stream of fresh
+  addresses hold the owner out → `refuse_throttled(verification=False)` on both cheap paths, and a login
+  presenting any session cookie the instance ever stored (rows are never deleted) is verified from a
+  reserved bucket of 10/min (`FailureBudgets.known`), falling back to the general one; the
+  new-browser-under-flood case is documented as the ingress's boundary (operations 429 paragraph,
+  design §5.6/§5.9 item 11). f2 (P2) `/mcp/token` and `/mcp/revoke` materialise CIMD clients through
+  `get_client` with no cull reached → the client-collection cull now lives in `ClientRecords.put` on a
+  new key (`cull_expired(collection)`). f3 (P3) a disconnect mid-body was replayed as a whole body →
+  `read_bounded` raises `Disconnected`, the gate and the three guards answer nothing. Tests for each;
+  scan-26…31 added (31/31 killed); full backend **2653**; response posted; coverage record updated.
+- **State:** `main` = `c527176` + these entries. PR #222 open at `6395a5d`, awaiting round 2 (brief
+  printed in the 2026-09-08 chat; scratchpad `brief-222-r2.md`). PR #220
   open at `ed48038`, **stale once #222 merges** (rebase; the only expected conflict is
   design.md's "Last revised" line — keep 08/09; §5.9 item 11 and the §5.6 rows are #222's).
   No tag exists. testhost left in the gate's end state (OIDC mode, Keycloak up); a rerun
