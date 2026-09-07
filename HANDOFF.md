@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-07 — Claude Code (Fable 5.1) — #213 closed (already fixed); #214 fixed on `fix/214-rebind-purges-mcp-oauth-state` → PR #219 reviewed GO + 1 P3, fixed, **awaiting merge**; #206 closed / #210 deferred; #195 next
+## 2026-09-07 — Claude Code (Fable 5.1) — #213 closed (already fixed); #214 fixed on `fix/214-rebind-purges-mcp-oauth-state` → PR #219 reviewed GO + 1 P3, fixed, **MERGED → `b333ebf`**; #206 closed / #210 deferred; #195 next
 
 - **Done:** (1) **#213 closed** as already fixed: rounds 2–3 of #212 keyed both refresh
   paths on the grant id (`exchange_refresh_token` and `_try_transparent_refresh` both take
@@ -73,13 +73,15 @@ Template:
   *issued* concurrently with the rebind can leave one record, refused at its next use and
   purged by the next rebind. Cursor's #219 round is recorded in `.agents/testing-and-review.md`
   as history, with a footer in `review-brief.md` for the window to the 15th; GLM stays default.
-- **State:** `main` at `40e4eea` + hand-offs (local; **not pushed**); the fix is on the branch
-  at **`b5ff8ed`, pushed, PR #219 open, awaiting the owner's merge**. Tree clean on `main`.
-  Control worktrees removed. testhost (LXC 117) untouched, still claimed local, Keycloak up.
-- **Next:** merge PR #219 with `Closes #214` (squash; no fold-in needed — the 19 `rbp-` cases
-  are tracked); push `main`; then **#195** as the previous entry lays out (gate step 4b on the
-  tagged commit on testhost, bump via PR, tag, `--prerelease`, #30 closes with it; notes carry
-  #206/#210 as deferred). Then the LXC upgrade.
+- **State:** **PR #219 squash-merged → `b333ebf`** (owner's call, 2026-09-07), #214 closed,
+  branch deleted; `main` = `b333ebf` + these hand-offs, pushed. No fold-in owed — the 19
+  `rbp-` cases are tracked (harness now 589 cases / 51 files). Tree clean. Control worktrees
+  removed. testhost (LXC 117) untouched, still claimed local, Keycloak fixture up.
+- **Next: #195**, as the previous entry lays out — gate step 4b (`deployment_gate.py --phase
+  all` + `--tunnel-*`) against the **tagged** commit on testhost, the bump (three files via
+  PR), tag, `--prerelease`, #30 closes with it; the notes carry #206/#210 as deferred and
+  lead with the §5.5 client-visible changes. Then the LXC upgrade (back up first;
+  `ALLOWED_HOSTS`; relink MCP clients; refresh the personal Gunpla skill).
 
 ## 2026-09-07 — Claude Code (Opus 4.8) — #194 (M6-9) MERGED: PR #218 squash → `b32ffe2` after two Codex rounds (NO-GO→GO); #195 next
 
