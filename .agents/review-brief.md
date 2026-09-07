@@ -170,9 +170,10 @@ routine round.
 > body's record did not list, and what you left unexamined — so the next round
 > starts from it rather than from the brief alone.
 
-**Cursor (Grok 4.6, SpaceXAI).** Back since 2026-09-07; fix rounds it can hold whole
-(its 256K ceiling is why it was retired for large PRs). Reviewed #219 from a detached
-worktree at the head and a second at the base without being told to.
+**Cursor (Grok 4.6, SpaceXAI).** Available until 2026-09-15 only, then gone — kept
+here for that window (it reviewed #219 on 2026-09-07, picked by mistake instead of
+GLM, from a detached worktree at the head and a second at the base without being
+told to). Its 256K ceiling is why it left the roster: fix rounds it can hold whole.
 
 ```
 **Cursor Grok 4.6 (SpaceXAI / Cursor) — review of PR #‹N›, at head `‹sha›`.**
