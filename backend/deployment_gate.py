@@ -103,9 +103,19 @@ class Host:
     ssh: str
     remote_dir: str
 
-    def run(self, command: str, *, input_text: str | None = None, check: bool = True) -> str:
+    def run(
+        self,
+        command: str,
+        *,
+        input_text: str | None = None,
+        check: bool = True,
+        label: str | None = None,
+    ) -> str:
         """Run one shell command in the working tree on the host, as the operator
-        would; the command is the documented one, not a private helper."""
+        would; the command is the documented one, not a private helper. `label`
+        names the operation in an error instead of the command text, for a step
+        whose command must never be echoed (an `.env` edit carrying a secret) —
+        the value it sets travels on stdin, never in argv."""
         result = subprocess.run(
             [
                 "ssh",
@@ -121,9 +131,9 @@ class Host:
             text=True,
         )
         if check and result.returncode != 0:
+            what = label or f"`{command}`"
             raise GateError(
-                f"on the host, `{command}` exited {result.returncode}: "
-                f"{result.stderr.strip()[-600:]}"
+                f"on the host, {what} exited {result.returncode}: {result.stderr.strip()[-600:]}"
             )
         return result.stdout
 
@@ -132,14 +142,21 @@ class Host:
 
     def env_set(self, **values: str | None) -> None:
         """Edit `.env` the way the docs say to: one `KEY=value` line per setting,
-        a `None` removes the line. Followed by `up()` — changes need `up -d`."""
+        a `None` removes the line. Followed by `up()` — changes need `up -d`.
+
+        The value travels on stdin, so a secret setting (POSTGRES_PASSWORD,
+        MCP_OAUTH_SIGNING_KEY, OIDC_CLIENT_SECRET) never appears in the SSH
+        command line — not in this process's argv, the remote shell's argv, or a
+        raised error. Only the key name (validated, never secret) is in the
+        command; the error names the operation, not the command."""
         for key, value in values.items():
             if not re.fullmatch(r"[A-Z][A-Z0-9_]*", key):
                 raise GateError(f"not an .env key: {key!r}")
             command = f"sed -i {shlex.quote(f'/^{key}=/d')} .env"
             if value is not None:
-                command += f" && printf '%s\\n' {shlex.quote(f'{key}={value}')} >> .env"
-            self.run(command)
+                # printf the key, then cat the value from stdin, then a newline.
+                command += f" && {{ printf '%s=' {shlex.quote(key)}; cat; printf '\\n'; }} >> .env"
+            self.run(command, input_text=value, label=f"editing .env ({key})")
 
     def up(self) -> None:
         self.compose("up -d --wait")
@@ -244,6 +261,7 @@ class Context:
     host_ip: str | None
     tunnel_base: str | None
     tunnel_proxy: str | None
+    tunnel_visitor: str | None
 
     @property
     def name(self) -> str:
@@ -888,6 +906,23 @@ def describe(checks: dict) -> str:
     return f"session {checks['session']}, PAT {checks['pat']}, data {data},"
 
 
+def t13_partial_restore_ok(checks: dict, seen: dict) -> bool:
+    """What a restore that dropped a secret or the store must show: the data,
+    session and PAT intact, the old MCP access token refused, and the client's
+    refresh refused as **invalid_client** specifically — the class §5.6 names,
+    the one that tells a client to re-register rather than retry (a different 401,
+    e.g. invalid_grant, would be a different contract). The relink is checked by
+    the caller."""
+    return (
+        checks["session"] == "owner"
+        and checks["pat"] == 200
+        and checks["data"]
+        and seen["refresh_status"] == 401
+        and seen.get("refresh_error") == "invalid_client"
+        and seen["old_access_initialize"] == 401
+    )
+
+
 def t13_checks(ctx: Context, label: str, credential: Credential, pat: str) -> dict:
     """The public behaviour every restore is judged by."""
     out = {"session": session_state(ctx, credential)["state"]}
@@ -963,13 +998,7 @@ def phase_t13(ctx: Context) -> None:
     checks = t13_checks(ctx, "without env", credential, pat)
     seen = mcp_verify(ctx, link)
     relinked = mcp_link(ctx)
-    ok = (
-        checks["session"] == "owner"
-        and checks["pat"] == 200
-        and checks["data"]
-        and seen["refresh_status"] == 401
-        and seen["old_access_initialize"] == 401
-    )
+    ok = t13_partial_restore_ok(checks, seen)
     ctx.results.record(
         "T13 restore: without the env secrets",
         describe(checks)
@@ -985,13 +1014,7 @@ def phase_t13(ctx: Context) -> None:
     checks = t13_checks(ctx, "without store", credential, pat)
     seen = mcp_verify(ctx, link)
     relinked = mcp_link(ctx)
-    ok = (
-        checks["session"] == "owner"
-        and checks["pat"] == 200
-        and checks["data"]
-        and seen["refresh_status"] == 401
-        and seen["old_access_initialize"] == 401
-    )
+    ok = t13_partial_restore_ok(checks, seen)
     ctx.results.record(
         "T13 restore: without the store",
         describe(checks)
@@ -1003,8 +1026,12 @@ def phase_t13(ctx: Context) -> None:
 
 
 def phase_tunnel(ctx: Context) -> None:
-    if not (ctx.tunnel_base and ctx.tunnel_proxy and ctx.host_ip):
-        raise GateError("the tunnel phase needs --tunnel-base, --tunnel-proxy and --host-ip")
+    if not (ctx.tunnel_base and ctx.tunnel_proxy and ctx.host_ip and ctx.tunnel_visitor):
+        raise GateError(
+            "the tunnel phase needs --tunnel-base, --tunnel-proxy, --host-ip and "
+            "--tunnel-visitor (this workstation's public address as Cloudflare sees it: "
+            "`curl -s https://cloudflare.com/cdn-cgi/trace | sed -n s/^ip=//p`)"
+        )
     host = ctx.host
     tunnel = ctx.tunnel_base
     host.env_set(
@@ -1017,12 +1044,18 @@ def phase_tunnel(ctx: Context) -> None:
     host.up()
     get(ctx, "/api/healthz", base=tunnel)
     after = host.web_last_address()
-    ok = before == ctx.tunnel_proxy and after != ctx.tunnel_proxy
+    # Not "changed" — an edge address, a wrong hop or a gateway would also change.
+    # nginx must resolve exactly this workstation's independently-known public
+    # address, and only after the connector is trusted (before it, the connector).
+    ok = before == ctx.tunnel_proxy and after == ctx.tunnel_visitor
     ctx.results.record(
         f"tunnel: TRUSTED_PROXIES={ctx.tunnel_proxy}",
-        f"nginx $remote_addr before: {before}; after: {after} (the visitor as Cloudflare saw it)",
+        f"nginx $remote_addr before: {before}; after: {after};"
+        f" expected the visitor {ctx.tunnel_visitor}",
         ok,
     )
+    if not ok:
+        raise GateError("the tunnel did not resolve to the expected visitor address")
     credential = oidc_login(ctx, None, base=tunnel)
     credential_file = save_credential(ctx, "credential-tunnel.json", credential)
     ctx.results.record("tunnel: OIDC login", "provider sign-in on the tunnel name → owner session")
@@ -1052,6 +1085,15 @@ def phase_tunnel(ctx: Context) -> None:
         " per-address, per-spelling keying unobservable here (proven at the packaged layer)",
         failures == 0,
     )
+    # The app's own attribution, independent of nginx's $remote_addr: the matrix
+    # minted tokens through the tunnel, so the newest mint's audit row must name
+    # the same visitor — the tunnel counterpart of the trusted-proxies phase.
+    minted = host.psql(
+        "select client_address from audit_event where event_type = 'auth.token_minted'"
+        " order by occurred_at desc limit 1;"
+    )
+    recorded = minted[0] if minted else ""
+    ctx.results.record("tunnel: audit client_address", recorded, recorded == ctx.tunnel_visitor)
     scan_logs(ctx, [log_secrets])
     host.env_set(WEB_BIND="127.0.0.1", PUBLIC_BASE_URL=ctx.base, TRUSTED_PROXIES="127.0.0.1")
     host.up()
@@ -1094,6 +1136,12 @@ def main(argv: list[str]) -> int:
     parser.add_argument(
         "--tunnel-proxy", default=None, help="the connector's address (tunnel phase)"
     )
+    parser.add_argument(
+        "--tunnel-visitor",
+        default=None,
+        help="this workstation's public address as Cloudflare forwards it (tunnel phase); "
+        "curl -s https://cloudflare.com/cdn-cgi/trace | sed -n s/^ip=//p",
+    )
     parser.add_argument("--phase", choices=(*PHASES, "all"), default="all")
     parser.add_argument("--state-dir", default=None, help="where the run's secrets live (0700)")
     parser.add_argument("--results-out", default=None, help="write the results block here")
@@ -1119,6 +1167,7 @@ def main(argv: list[str]) -> int:
         host_ip=args.host_ip,
         tunnel_base=args.tunnel_base.rstrip("/") if args.tunnel_base else None,
         tunnel_proxy=args.tunnel_proxy,
+        tunnel_visitor=args.tunnel_visitor,
     )
     phases = list(ALL) if args.phase == "all" else [args.phase]
     if args.phase == "all" and args.tunnel_base:

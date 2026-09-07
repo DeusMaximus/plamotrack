@@ -405,11 +405,14 @@ def test_results_block_marks_failures_and_escapes_pipes():
     assert "| matrix **FAIL** | 1 failing / 90 ok |" in block
 
 
-def test_env_set_runs_the_documented_edit_over_ssh(monkeypatch):
-    commands = []
+def test_env_set_sends_the_value_on_stdin_never_in_the_command(monkeypatch):
+    """The command carries only the key name; the value travels on stdin, so a
+    secret setting never appears in argv (this process's or the remote shell's).
+    A `None` removes the line and sends no stdin."""
+    calls = []
 
     def fake_run(argv, input=None, capture_output=None, text=None):
-        commands.append(argv)
+        calls.append((argv, input))
 
         class Done:
             returncode = 0
@@ -420,14 +423,51 @@ def test_env_set_runs_the_documented_edit_over_ssh(monkeypatch):
 
     monkeypatch.setattr(gate.subprocess, "run", fake_run)
     host = gate.Host("root@testhost", "/opt/plamotrack")
-    host.env_set(ALLOWED_HOSTS="testhost.example", TRUSTED_PROXIES=None)
-    assert [argv[-2] for argv in commands] == ["root@testhost", "root@testhost"]
-    listed, removed = (argv[-1] for argv in commands)
-    assert listed.startswith("cd /opt/plamotrack && sed -i '/^ALLOWED_HOSTS=/d' .env && printf")
-    assert "ALLOWED_HOSTS=testhost.example" in listed and ">> .env" in listed
-    assert removed == "cd /opt/plamotrack && sed -i '/^TRUSTED_PROXIES=/d' .env"
+    host.env_set(MCP_OAUTH_SIGNING_KEY="s3cret-signing-key", TRUSTED_PROXIES=None)
+    (set_argv, set_stdin), (rm_argv, rm_stdin) = calls
+    set_cmd, rm_cmd = set_argv[-1], rm_argv[-1]
+    # the secret is on stdin, and nowhere in the command sent to ssh
+    assert set_stdin == "s3cret-signing-key"
+    assert "s3cret-signing-key" not in set_cmd
+    assert "MCP_OAUTH_SIGNING_KEY" in set_cmd and "cat;" in set_cmd and ">> .env" in set_cmd
+    # a removal is just the sed, no stdin
+    assert rm_cmd == "cd /opt/plamotrack && sed -i '/^TRUSTED_PROXIES=/d' .env"
+    assert rm_stdin is None
     with pytest.raises(gate.GateError):
         host.env_set(**{"not a key": "x"})
+
+
+def test_a_failed_secret_edit_leaks_no_secret_anywhere(monkeypatch):
+    """The regression the review asked for: force the SSH call to fail while
+    setting a secret and prove the value is absent from the command argv, the
+    surfaced stderr, the raised GateError, and the results Markdown a stopped
+    phase renders."""
+    marker = "SIGNKEYSECRET-deadbeef"
+    seen_argv = {}
+
+    def failing_run(argv, input=None, capture_output=None, text=None):
+        seen_argv["argv"] = argv
+        seen_argv["stdin"] = input
+
+        class Done:
+            returncode = 255
+            stdout = ""
+            stderr = "ssh: connect to host testhost port 22: Connection refused"
+
+        return Done()
+
+    monkeypatch.setattr(gate.subprocess, "run", failing_run)
+    host = gate.Host("root@testhost", "/opt/plamotrack")
+    with pytest.raises(gate.GateError) as error:
+        host.env_set(MCP_OAUTH_SIGNING_KEY=marker)
+    assert marker not in " ".join(seen_argv["argv"])  # not in argv
+    assert seen_argv["stdin"] == marker  # only on stdin
+    assert marker not in str(error.value)  # not in the raised error
+    assert "editing .env (MCP_OAUTH_SIGNING_KEY)" in str(error.value)  # a redacted label
+    # and not in the results Markdown a stopped phase writes from str(error)
+    results = gate.Results()
+    results.record("oidc: stopped", str(error.value), ok=False)
+    assert marker not in results.markdown(["### gate"])
 
 
 def test_web_last_address_reads_nginx_s_most_recent_access_record(monkeypatch):
@@ -529,3 +569,41 @@ def test_skip_rate_limits_omits_the_limiter_rows(monkeypatch, capsys):
     )
     ingress_matrix.main(["https://x.example"])
     assert called_again == {"rate_checks": 1, "rate_rows": 1}
+
+
+def test_t13_partial_restore_requires_the_invalid_client_error_class():
+    """A restore that dropped a secret or the store must show refresh 401
+    *invalid_client* (§5.6: the class that tells a client to re-register), not
+    just any 401 — the gate previously accepted invalid_grant (Codex #218 P3)."""
+    intact = {"session": "owner", "pat": 200, "data": True}
+    good = {"refresh_status": 401, "refresh_error": "invalid_client", "old_access_initialize": 401}
+    assert gate.t13_partial_restore_ok(intact, good)
+    # another 401 error class is refused
+    assert not gate.t13_partial_restore_ok(intact, {**good, "refresh_error": "invalid_grant"})
+    # a missing error, or the old token still accepted, or lost data, all refuse
+    assert not gate.t13_partial_restore_ok(intact, {**good, "refresh_error": None})
+    assert not gate.t13_partial_restore_ok(intact, {**good, "old_access_initialize": 200})
+    assert not gate.t13_partial_restore_ok({**intact, "data": False}, good)
+
+
+def test_the_tunnel_phase_requires_an_expected_visitor(monkeypatch):
+    """The tunnel phase refuses to run without --tunnel-visitor: 'the address
+    changed' is too weak, so the exact expected value must be supplied (P3)."""
+    ctx = gate.Context(
+        base="https://x",
+        host=gate.Host("root@h", "/opt/plamotrack"),
+        results=gate.Results(),
+        state_dir=Path("/tmp"),
+        idp=None,
+        idp_user="owner",
+        idp_password=None,
+        hold=75,
+        ca_cert=None,
+        host_ip="10.0.0.9",
+        tunnel_base="https://t",
+        tunnel_proxy="10.0.0.5",
+        tunnel_visitor=None,
+    )
+    with pytest.raises(gate.GateError) as error:
+        gate.phase_tunnel(ctx)
+    assert "--tunnel-visitor" in str(error.value)

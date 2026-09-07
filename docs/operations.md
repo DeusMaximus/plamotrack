@@ -177,13 +177,16 @@ sudo apt update && sudo apt install -y caddy
 sudo caddy add-package github.com/caddy-dns/cloudflare
 ```
 
-**The token.** In Cloudflare, create an API token with one permission — Zone →
-DNS → Edit, on the zone your name is in — and put it, and only it, in a root-only
-file; then the systemd drop-in from this repository hands it to Caddy:
+**The token.** In Cloudflare, create an API token with **two** permissions on the
+zone your name is in — Zone → DNS → Edit *and* Zone → Zone → Read (the module reads
+the zone id before it edits a record, so both are required; Cloudflare's built-in
+"Edit zone DNS" template grants exactly these two). Put it, and only it, in a
+root-only file — added in an editor, never as a shell argument, so it never lands in
+your shell history or a process list:
 
 ```bash
 sudo install -m 0600 /dev/null /etc/caddy/cloudflare.env
-sudo sh -c 'printf "CLOUDFLARE_API_TOKEN=%s\n" "<the token>" > /etc/caddy/cloudflare.env'
+sudoedit /etc/caddy/cloudflare.env        # add one line:  CLOUDFLARE_API_TOKEN=<the token>
 sudo install -d /etc/systemd/system/caddy.service.d
 sudo cp deploy/caddy/caddy.service.d/cloudflare.conf /etc/systemd/system/caddy.service.d/
 sudo systemctl daemon-reload
@@ -818,8 +821,10 @@ address in your browser's bar. [`PUBLIC_BASE_URL`](#public_base_url).
 **Caddy shows a certificate error, or never gets a certificate.** `journalctl -u
 caddy`. For the DNS-01 challenge: the token file exists, is `CLOUDFLARE_API_TOKEN=…`,
 the drop-in is installed and `systemctl daemon-reload` was run, and the token has
-DNS Edit on the right zone. For the default challenge: the name resolves to this
-host from the internet and ports 80 and 443 reach Caddy.
+**both** Zone → DNS → Edit and Zone → Zone → Read on the right zone (a token missing
+Zone Read fails to look up the zone id — "an unknown error occurred" from the module).
+For the default challenge: the name resolves to this host from the internet and ports
+80 and 443 reach Caddy.
 
 **`502 Bad Gateway` from Caddy.** The stack isn't up, or `WEB_BIND` isn't
 `127.0.0.1`: `docker compose ps`, and `curl http://127.0.0.1:8080/api/healthz` on the

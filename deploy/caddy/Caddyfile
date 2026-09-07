@@ -16,7 +16,9 @@
 # Cloudflare — what the deployment gate exercised (design notes §5.8, T12). It
 # needs Caddy built with the cloudflare DNS module
 # (`caddy add-package github.com/caddy-dns/cloudflare` on the package install)
-# and an API token with Zone:DNS:Edit on the zone, supplied through the
+# and an API token with Zone:DNS:Edit AND Zone:Zone:Read on the zone (the
+# module reads the zone id before it edits a record — both are required),
+# supplied through the
 # environment: see caddy.service.d/cloudflare.conf beside this file. DNS-01
 # works whether or not the host is reachable from the internet, and it is the
 # only way to a certificate for a name that is not.

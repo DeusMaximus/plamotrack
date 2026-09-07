@@ -15,7 +15,9 @@ Nothing here is imported by the app.
   `PLAMOTRACK_TEST_NAME` below. A second name, `idp.<name>`, at the same address
   for the Keycloak fixture. Split-horizon names work: DNS-01 writes only the
   `_acme-challenge` TXT record in the public zone.
-- A Cloudflare API token with Zone → DNS → Edit on that zone, written by hand on
+- A Cloudflare API token with **both** Zone → DNS → Edit and Zone → Zone → Read on
+  that zone (the caddy-dns/cloudflare module reads the zone id before editing a
+  record; Cloudflare's "Edit zone DNS" template grants exactly these two), written by hand on
   the host to `/etc/caddy/cloudflare.env` as `CLOUDFLARE_API_TOKEN=…`, mode 0600.
   `host-prepare.sh` refuses to run until it exists and never prints it.
 - For the tunnel phase: a public-hostname route on an existing Cloudflare Tunnel
