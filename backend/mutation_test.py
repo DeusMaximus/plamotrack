@@ -132,6 +132,8 @@ AUTH_ROUTER = ROOT / "app/routers/auth.py"
 MODE = ROOT / "app/auth/mode.py"
 # #192 (M6-7): the moa- set — MCP OAuth.
 MCP_OAUTH = ROOT / "app/auth/mcp_oauth.py"
+MCP_OAUTH_STATE = ROOT / "app/auth/mcp_oauth_state.py"
+RECOVERY = ROOT / "app/auth/recovery.py"
 # #193 (M6-8): the aud- set — audit events, request budgets and log hygiene.
 # Four targets outside app/ join the clean-tree check: the nginx template
 # (the way ENVSH did), the Dockerfile and the ingress matrix itself.
@@ -5461,6 +5463,157 @@ async def test_review_a_new_line_refuses_more_uploaded_kits_than_its_quantity(cl
 #: `test_order_invariants.py`, `main`'s named `test_cell_semantics.py`, and the
 #: merge kept one list under the union of both case sets, so every `cell-`
 #: mutant selected zero tests and pytest's exit 5 read as a kill.
+
+# --- the `rbp-` set (#214): `recovery rebind-oidc` purges the MCP OAuth grants -------------
+# The purge in `services/oidc.py` (`_purge_mcp_grants`), the provider half
+# (`revoke_purged_grants_upstream`, `OidcProvider.revoke_token`), the shared
+# collection contract in `auth/mcp_oauth_state.py`, and the command's wiring.
+# Not listed, deliberately: the `settings.mcp_oauth_signing_key` early-out before
+# the records are read — an empty key derives a Fernet key that decrypts nothing,
+# so dropping the check changes nothing observable; it saves a pool, not a decision.
+CASES += [
+    (
+        "rbp-1. the purge's DELETE never runs",
+        OIDC_SVC,
+        """    await session.execute(
+        text(f"DELETE FROM {MCP_OAUTH_STATE_TABLE} WHERE collection IN :collections").bindparams(
+            bindparam("collections", expanding=True)
+        ),
+        {"collections": sorted(GRANT_COLLECTIONS)},
+    )
+""",
+        "    pass  # neutered\n",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-2. the grant locks not taken before the read",
+        OIDC_SVC,
+        '    for grant_id in grant_ids:\n        await session.execute(\n            text(\n                "SELECT pg_advisory_xact_lock',
+        '    for grant_id in ():\n        await session.execute(\n            text(\n                "SELECT pg_advisory_xact_lock',
+        "waits_for_a_refresh_in_flight",
+    ),
+    (
+        "rbp-3. the registered clients and the consent transactions purged too",
+        OIDC_SVC,
+        '        {"collections": sorted(GRANT_COLLECTIONS)},',
+        '        {"collections": sorted(GRANT_COLLECTIONS | {"mcp-oauth-proxy-clients", "mcp-oauth-transactions"})},',
+        "purges_every_grant",
+    ),
+    (
+        "rbp-4. no audit row and no upstream material per grant",
+        OIDC_SVC,
+        "    for grant_id in grant_ids:\n        record = records.get(grant_id)",
+        "    for grant_id in ():\n        record = records.get(grant_id)",
+        "purges_every_grant or purges_the_grants_unread",
+    ),
+    (
+        "rbp-5. the access-token fallback removed (a grant the provider gave no refresh token)",
+        OIDC_SVC,
+        '    if isinstance(access, str) and access:\n        return access, "access_token"',
+        '    if False:\n        return access, "access_token"',
+        "purges_every_grant",
+    ),
+    (
+        "rbp-6. the provider never asked",
+        OIDC_SVC,
+        "        if await provider.revoke_token(grant.token, token_type_hint=grant.token_type_hint):\n            accepted += 1",
+        "        if False:\n            accepted += 1",
+        "purges_every_grant or waits_for_a_refresh_in_flight",
+    ),
+    (
+        "rbp-7. a provider outage raises instead of standing down",
+        OIDC_SVC,
+        '    except UnavailableError:\n        log.warning("OIDC rebind: provider unreachable; %d upstream token(s) stay", len(purged))\n        return 0',
+        "    except UnavailableError:\n        raise",
+        "best_effort and provider_down",
+    ),
+    (
+        "rbp-8. a refused revocation counted as accepted",
+        OIDC_SVC,
+        '        if response.status_code != 200:\n            log.warning("OIDC revocation refused: status=%s", response.status_code)\n            return False',
+        '        if response.status_code != 200:\n            log.warning("OIDC revocation refused: status=%s", response.status_code)\n            return True',
+        "best_effort and refused",
+    ),
+    (
+        "rbp-9. no revocation endpoint advertised: posts anyway",
+        OIDC_SVC,
+        '        if metadata.revocation_endpoint is None:\n            log.info("OIDC revocation: the provider advertises no revocation endpoint")\n            return False',
+        '        if False:\n            log.info("OIDC revocation: the provider advertises no revocation endpoint")\n            return False',
+        "best_effort and no_endpoint",
+    ),
+    (
+        "rbp-10. the rebind rolled back instead of committed",
+        OIDC_SVC,
+        "    await session.commit()\n    return RebindOutcome(",
+        "    await session.rollback()\n    return RebindOutcome(",
+        "purges_every_grant or asks_the_provider_after_the_commit",
+    ),
+    (
+        "rbp-11. the grant count reported as zero",
+        OIDC_SVC,
+        "    return len(grant_ids), len(code_keys), upstream",
+        "    return 0, len(code_keys), upstream",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-12. the recovery-run row loses the purge count",
+        OIDC_SVC,
+        '        detail=f"sessions_revoked={revoked} grants_purged={purged} codes_purged={codes}",',
+        '        detail=f"sessions_revoked={revoked} codes_purged={codes}",',
+        "rebind_revokes_every_session or purges_every_grant",
+    ),
+    (
+        "rbp-13. the command hands the provider step nothing",
+        RECOVERY,
+        "    revoked_upstream = await oidc_service.revoke_purged_grants_upstream(settings, outcome.upstream)",
+        "    revoked_upstream = await oidc_service.revoke_purged_grants_upstream(settings, [])",
+        "asks_the_provider_after_the_commit",
+    ),
+    (
+        "rbp-14. an unexchanged code is not a grant's (stays behind)",
+        MCP_OAUTH_STATE,
+        "    {GRANT_COLLECTION, JTI_COLLECTION, REFRESH_COLLECTION, CODE_COLLECTION}",
+        "    {GRANT_COLLECTION, JTI_COLLECTION, REFRESH_COLLECTION}",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-15. the JTI mappings stay behind",
+        MCP_OAUTH_STATE,
+        "    {GRANT_COLLECTION, JTI_COLLECTION, REFRESH_COLLECTION, CODE_COLLECTION}",
+        "    {GRANT_COLLECTION, REFRESH_COLLECTION, CODE_COLLECTION}",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-16. the refresh-token entries stay behind",
+        MCP_OAUTH_STATE,
+        "    {GRANT_COLLECTION, JTI_COLLECTION, REFRESH_COLLECTION, CODE_COLLECTION}",
+        "    {GRANT_COLLECTION, JTI_COLLECTION, CODE_COLLECTION}",
+        "purges_every_grant",
+    ),
+    # Cursor #219 round 1, P3-1: the unexchanged codes were purged unread.
+    (
+        "rbp-17. the unexchanged codes purged unread (provider never asked for their tokens)",
+        OIDC_SVC,
+        "            for code in code_keys:\n                record = await wrapped.get(key=code, collection=CODE_COLLECTION)",
+        "            for code in ():\n                record = await wrapped.get(key=code, collection=CODE_COLLECTION)",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-18. the code record read at the top level, not under idp_tokens",
+        OIDC_SVC,
+        '        token, hint = _upstream_credential(record.get("idp_tokens") or {})',
+        "        token, hint = _upstream_credential(record)",
+        "purges_every_grant",
+    ),
+    (
+        "rbp-19. the recovery-run row loses the code count",
+        OIDC_SVC,
+        '        detail=f"sessions_revoked={revoked} grants_purged={purged} codes_purged={codes}",',
+        '        detail=f"sessions_revoked={revoked} grants_purged={purged}",',
+        "rebind_revokes_every_session or purges_every_grant",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",

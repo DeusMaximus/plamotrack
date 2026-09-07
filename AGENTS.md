@@ -365,7 +365,9 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     with a sign-in at one configured OpenID Connect provider; the owner is bound to the
     provider's `(issuer, subject)` at the first login that presents the setup token,
     every other identity is refused with an audit row, and `recovery rebind-oidc` is
-    the host-side way back. The modes are mutually exclusive and env-only; each
+    the host-side way back — it also purges every MCP OAuth grant and asks the
+    provider, best effort, to revoke what they held (#214). The modes are mutually
+    exclusive and env-only; each
     family-3 action declares its mode in the registry and answers 404 in the other.
     The id_token is verified with joserfc for its signature and by **one explicit
     claim validator** for its contract (`validate_id_token_claims`: each claim's type

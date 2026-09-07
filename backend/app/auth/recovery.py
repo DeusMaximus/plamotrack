@@ -14,8 +14,10 @@ request, so no network path can reach it (§5.6, route bypass).
     python -m app.auth.recovery rebind-oidc           # OIDC mode: forget the bound identity
 
 Every command prints what it did and appends an audit event.
-`rebind-oidc` (#191) clears the owner's `(issuer, subject)` and revokes every
-session; the instance then prints a setup token at its next start, and the next
+`rebind-oidc` (#191) clears the owner's `(issuer, subject)`, revokes every
+session and purges every MCP OAuth grant (#214) — the provider's refresh tokens
+behind them are asked to be revoked at the provider, best effort, after the
+commit; the instance then prints a setup token at its next start, and the next
 provider login that presents it becomes the owner — the operator never types a
 subject. It is how a lost identity-provider account, or a change of provider,
 is recovered from.
@@ -29,6 +31,7 @@ import getpass
 import sys
 from datetime import UTC, datetime, timedelta
 
+from app.config import get_settings
 from app.db import get_sessionmaker
 from app.exceptions import InvalidInputError
 from app.services import audit as audit_service
@@ -36,9 +39,13 @@ from app.services import auth as auth_service
 from app.services import oidc as oidc_service
 
 
-async def _rebind_oidc() -> int:
+async def _rebind_oidc() -> tuple[oidc_service.RebindOutcome, int]:
+    settings = get_settings()
     async with get_sessionmaker()() as session:
-        return await oidc_service.recovery_rebind_oidc(session)
+        outcome = await oidc_service.recovery_rebind_oidc(session, settings=settings)
+    # After the commit and outside the write gate: the provider is asked, best effort.
+    revoked_upstream = await oidc_service.revoke_purged_grants_upstream(settings, outcome.upstream)
+    return outcome, revoked_upstream
 
 
 async def _reset_password(password: str) -> int:
@@ -112,11 +119,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "rebind-oidc":
-        revoked = asyncio.run(_rebind_oidc())
+        outcome, revoked_upstream = asyncio.run(_rebind_oidc())
         print(
-            f"OIDC binding cleared. {revoked} session(s) revoked. Restart the API to get a "
-            "setup token, then sign in at the identity provider with it — that identity "
-            "becomes the owner."
+            f"OIDC binding cleared. {outcome.sessions_revoked} session(s) revoked. "
+            f"{outcome.grants_purged} MCP grant(s) and {outcome.codes_purged} pending code(s) "
+            f"purged, {revoked_upstream} revoked at the provider. Restart the API to get a "
+            "setup token, then sign in at the identity "
+            "provider with it — that identity becomes the owner."
         )
         return 0
 
