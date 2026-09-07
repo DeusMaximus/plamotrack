@@ -41,38 +41,45 @@ Template:
 
 ---
 
-## 2026-09-07 — Claude Code (Fable 5.1) — #213 closed (already fixed), #214 fixed on `fix/214-rebind-purges-mcp-oauth-state` → PR #219 open; #206/#210 deferred; #195 next
+## 2026-09-07 — Claude Code (Fable 5.1) — #213 closed (already fixed); #214 fixed on `fix/214-rebind-purges-mcp-oauth-state` → PR #219 reviewed GO + 1 P3, fixed, **awaiting merge**; #206 closed / #210 deferred; #195 next
 
 - **Done:** (1) **#213 closed** as already fixed: rounds 2–3 of #212 keyed both refresh
   paths on the grant id (`exchange_refresh_token` and `_try_transparent_refresh` both take
   `_one_transition(…, upstream_token_id)`); the comment on the issue points at the two lines.
   What is not on record is a rotating-provider test — test coverage, not a defect. (2) **#214
-  fixed** on the branch (`0c76771`, **PR #219, awaiting review**): `recovery rebind-oidc`
-  purges the four grant collections of `mcp_oauth_state` in its own transaction under every
-  grant's advisory lock, records `auth.mcp_grant_revoked` per grant (`ended_by=rebind`), and
-  the command then asks the provider, best effort, to revoke what the records held
-  (`revoke_purged_grants_upstream` → `OidcProvider.revoke_token`, after the commit). New leaf
-  `app/auth/mcp_oauth_state.py` holds the collection names, `GRANT_COLLECTIONS`, the lock
-  key and the store — the proxy imports the service, so the service could not import the
-  proxy. Five new tests / 8 cases in `test_mcp_oauth.py` (two grants, a code, a transaction,
-  a pg_locks-pinned refresh in flight, the CLI on local settings, four provider failures);
-  16 `rbp-` harness cases (16/16 killed on the committed tree); negative control 9 red / 3 green on `40e4eea` (the
-  greens are the three pre-existing tests). Docs: operations, design §5.6/§5.9, AGENTS 13.
-- **Decisions:** #206 and #210 **deferred** past the M6 release (owner's call, 2026-09-07,
-  on the assessment in this session): #206 discloses only the Streamable HTTP verb set on a
-  path called `/mcp` and a fix means splitting the `RouteBinding` or widening the pre-routing
-  gate's charter plus restating three structural pins; #210 needs measurement, a policy and a
-  packaged-stack proof, on an Origin-only flood behind nginx at zero adoption, with
-  `prune-audit` already the retention answer. Both get a line in the release notes as known
-  limitations. #214's residual (deliberate call 1 on the PR): a grant *issued* concurrently
-  with the rebind can leave one record, refused at its next use and purged by the next rebind.
-- **State:** `main` at `40e4eea` + this hand-off; the fix is on the branch, **not merged**.
-  Full backend suite 2598 passed at `0c76771`; lint clean; no migration. Worktree `/private/tmp/plamotrack-214-main` (the
-  control) removed. testhost (LXC 117) untouched, still claimed local, Keycloak fixture up.
-- **Next:** review PR #219 (GLM default — small, local, its worst failure a purge that did
-  not happen; brief printed in the session chat); merge with `Closes #214`; then **#195**
-  as the previous entry lays out (gate step 4b on the tagged commit, bump via PR, tag,
-  `--prerelease`, #30 closes with it; notes carry #206/#210 as deferred). Then the LXC upgrade.
+  fixed** on the branch, **PR #219**: `recovery rebind-oidc` purges the four grant collections
+  of `mcp_oauth_state` in its own transaction under every grant's advisory lock, records
+  `auth.mcp_grant_revoked` per grant (`ended_by=rebind`), and the command then asks the
+  provider, best effort, to revoke what the records held (`revoke_purged_grants_upstream` →
+  `OidcProvider.revoke_token`, after the commit). New leaf `app/auth/mcp_oauth_state.py`
+  holds the collection names, `GRANT_COLLECTIONS`, the lock key and the store — the proxy
+  imports the service, so the service could not import the proxy. (3) **PR #219 reviewed**
+  at `0c76771` by Cursor Grok 4.6 — picked in T3 Chat **by mistake** instead of GLM; Cursor
+  is available until **2026-09-15** and then gone, not back — **GO + 1 P3**: an unexchanged
+  authorization code (in the purge set *because* it holds the provider's tokens) was deleted
+  unread, its tokens never revoked upstream. **Fixed at `cc51a01`**: code records read under
+  `idp_tokens` (the review named the top-level read as the wrong remedy), revoked at the
+  provider, `codes_purged` on the `RECOVERY_RUN` row and in the output; no grant row, no lock
+  for a code (deliberate call 7). Round-1 control at `0c76771` red on the upstream list;
+  rbp-17/18/19, **19/19 killed**; full backend **2598** at `cc51a01`. `b5ff8ed` = roster/brief
+  note on Cursor. Response + coverage record posted on the PR. Lesson filed: "The
+  classification you wrote is a promise the same branch keeps". Docs: operations, design
+  §5.6/§5.9, AGENTS 13.
+- **Decisions:** #206 **closed not-planned** and #210 **deferred** past the M6 release (owner's
+  call, 2026-09-07): #206 discloses only the Streamable HTTP verb set on a path called `/mcp`;
+  #210 needs measurement, a policy and a packaged-stack proof, on an Origin-only flood behind
+  nginx at zero adoption, with `prune-audit` already the retention answer — one known-limitation
+  line each in the release notes. #214's residual (deliberate call 1 on the PR): a grant
+  *issued* concurrently with the rebind can leave one record, refused at its next use and
+  purged by the next rebind. Cursor's #219 round is recorded in `.agents/testing-and-review.md`
+  as history, with a footer in `review-brief.md` for the window to the 15th; GLM stays default.
+- **State:** `main` at `40e4eea` + hand-offs (local; **not pushed**); the fix is on the branch
+  at **`b5ff8ed`, pushed, PR #219 open, awaiting the owner's merge**. Tree clean on `main`.
+  Control worktrees removed. testhost (LXC 117) untouched, still claimed local, Keycloak up.
+- **Next:** merge PR #219 with `Closes #214` (squash; no fold-in needed — the 19 `rbp-` cases
+  are tracked); push `main`; then **#195** as the previous entry lays out (gate step 4b on the
+  tagged commit on testhost, bump via PR, tag, `--prerelease`, #30 closes with it; notes carry
+  #206/#210 as deferred). Then the LXC upgrade.
 
 ## 2026-09-07 — Claude Code (Opus 4.8) — #194 (M6-9) MERGED: PR #218 squash → `b32ffe2` after two Codex rounds (NO-GO→GO); #195 next
 
