@@ -199,7 +199,10 @@ class RefusalBudget:
         self.clock = clock
         self.window_started = clock()
         self.total = 0
+        #: Refusals this window has left unrecorded so far.
         self.suppressed = 0
+        #: Counts of rolled-over windows, not yet written.
+        self._pending_summary = 0
         self._per_address: dict[str | None, int] = {}
 
     def admit(self, address: str | None) -> tuple[bool, int]:
@@ -211,6 +214,8 @@ class RefusalBudget:
             self.window_started = now
             self.total = 0
             self._per_address.clear()
+            self._pending_summary += self.suppressed
+            self.suppressed = 0
         if self.total >= REFUSALS_PER_WINDOW or self._per_address.get(address, 0) >= (
             REFUSALS_PER_ADDRESS
         ):
@@ -218,5 +223,5 @@ class RefusalBudget:
             return False, 0
         self.total += 1
         self._per_address[address] = self._per_address.get(address, 0) + 1
-        summary, self.suppressed = self.suppressed, 0
+        summary, self._pending_summary = self._pending_summary, 0
         return True, summary
