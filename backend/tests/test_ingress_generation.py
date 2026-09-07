@@ -118,3 +118,37 @@ def test_the_four_declared_rate_limit_families_have_separate_keys_and_bursts():
         assert "proxy_set_header X-Plamotrack-Client-Address $remote_addr;" in block
         assert "limit_req " not in block, "location limits replace the shared server limits"
     assert len(re.findall(r"^limit_req_zone ", text, re.M)) == 4
+
+
+def test_the_two_mcp_spellings_share_one_family_configuration():
+    """The bare `/mcp` block is the ingress-only alias of `/mcp/` (§5.5, family 7),
+    and what an alias would shed is the family's per-location configuration —
+    buffering, timeouts, the cleared hop-by-hop header. Claude web posts to the
+    bare spelling (#190), so the two blocks must carry the same settings; only
+    the rewrite that makes it an alias may differ. (The 1 h timeouts are the
+    family's settings, not a measured need: the SDK's streams ping every 15 s.)"""
+    text = TEMPLATE.read_text(encoding="utf-8")
+    blocks = {
+        match.group(1): match.group(2)
+        for match in re.finditer(r"location (= /mcp|/mcp/) \{([^}]+)\}", text)
+    }
+    assert set(blocks) == {"= /mcp", "/mcp/"}
+    family_settings = (
+        "proxy_buffering off;",
+        "proxy_cache off;",
+        "proxy_read_timeout 1h;",
+        "proxy_send_timeout 1h;",
+        'proxy_set_header Connection "";',
+        "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+        "proxy_set_header X-Forwarded-Proto $scheme;",
+    )
+    for spelling, block in blocks.items():
+        for setting in family_settings:
+            assert setting in block, f"location {spelling} lacks {setting}"
+
+    def directives(block: str) -> set[str]:
+        lines = {line.strip() for line in block.splitlines()}
+        return {line for line in lines if line and not line.startswith("#")}
+
+    assert "rewrite ^ /mcp/ break;" in directives(blocks["= /mcp"])
+    assert directives(blocks["= /mcp"]) - {"rewrite ^ /mcp/ break;"} == directives(blocks["/mcp/"])

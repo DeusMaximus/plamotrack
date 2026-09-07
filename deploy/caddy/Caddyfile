@@ -1,0 +1,34 @@
+# plamotrack behind Caddy — the reference TLS deployment (docs/operations.md,
+# "Standalone VPS: Caddy with Cloudflare DNS"; design notes §5.4, mode R).
+#
+# Replace the name and keep the rest. Caddy obtains and renews the certificate,
+# redirects http:// to https://, passes the Host header through unchanged (so
+# ALLOWED_HOSTS and PUBLIC_BASE_URL see the public name), sets X-Forwarded-For
+# and X-Forwarded-Proto for the bundled nginx (TRUSTED_PROXIES=127.0.0.1 in
+# .env is what makes nginx believe them), and streams text/event-stream
+# responses — the MCP transport — without buffering or a read timeout. Nothing
+# else is needed, and nothing else was tested. In particular there is no `log`
+# directive: a proxy access log records full request URIs, and an OIDC
+# instance's callbacks carry one-time codes in theirs (docs/operations.md,
+# "Access logs").
+#
+# The certificate comes from Let's Encrypt through the DNS-01 challenge on
+# Cloudflare — what the deployment gate exercised (design notes §5.8, T12). It
+# needs Caddy built with the cloudflare DNS module
+# (`caddy add-package github.com/caddy-dns/cloudflare` on the package install)
+# and an API token with Zone:DNS:Edit AND Zone:Zone:Read on the zone (the
+# module reads the zone id before it edits a record — both are required),
+# supplied through the
+# environment: see caddy.service.d/cloudflare.conf beside this file. DNS-01
+# works whether or not the host is reachable from the internet, and it is the
+# only way to a certificate for a name that is not.
+#
+# If your host *is* reachable on ports 80 and 443 under this name, Caddy's own
+# default challenge works with no module and no token: delete the `tls` block.
+# That variant is Caddy's standard behaviour, not something the gate ran.
+plamotrack.example {
+    reverse_proxy 127.0.0.1:8080
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+}

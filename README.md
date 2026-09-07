@@ -12,14 +12,15 @@ want it to.
 
 > ### ⚠️ This is a public alpha
 >
-> **There is a single owner login and personal access tokens, but no TLS yet.** A fresh
-> install comes up unclaimed and prints a one-time setup token to the API log; you claim
-> it in the browser, every REST route then needs that session, and scripts and **MCP
-> clients** authenticate with an access token minted under Settings. The owner login can
-> be a password or a sign-in at your own OpenID Connect provider (`AUTH_MODE=oidc`,
-> see `docs/operations.md`). Still missing until
-> the rest of Milestone 6: a tested HTTPS path. Run it on a network you trust — your LAN,
-> a VPN, or plain old localhost — and don't put it on the internet yet.
+> **There is a single owner login, personal access tokens, and a tested HTTPS path.** A
+> fresh install comes up unclaimed and prints a one-time setup token to the API log; you
+> claim it in the browser, every REST route then needs that session, and scripts and
+> **MCP clients** authenticate with an access token minted under Settings. The owner
+> login can be a password or a sign-in at your own OpenID Connect provider
+> (`AUTH_MODE=oidc`). The door stays on localhost by default; the four ways to open it —
+> a private network, your own reverse proxy, a Cloudflare Tunnel, or a VPS behind Caddy —
+> are in [docs/operations.md](docs/operations.md#four-ways-to-run-it), each with what
+> was actually tested for it. Read that before you widen anything.
 >
 > The database schema is also still moving. Migrations are provided and tested in both
 > directions, but export an archive before you upgrade. It takes one click, and that's
@@ -146,7 +147,7 @@ Being honest up front beats you finding out at 11pm:
 | MCP server | ✅ Built |
 | Bundled `docker compose up` for the whole local stack | ✅ Built |
 | **Internationalisation foundations** | ✅ Milestone 5.1: instance-wide language, formatting locale, time zone, date/hour style, and reference currency; the `en-AU` source catalogue and fallback; a reviewed [translation workflow](docs/translating.md); locale-aware dates, times, numbers, counts, money, and file sizes; structured REST/import diagnostics with translated known identifiers and an English compatibility fallback; and RTL-aware layout utilities. No non-English catalogue ships yet. Upgrades default existing instances to `en-AU`/UTC; naive CSV timestamps are read prospectively in the configured instance zone, stored history is never reinterpreted, and downgrading past the settings migration loses its settings row. |
-| **Authentication + OAuth-compatible remote MCP** | 🔨 Milestone 6 — yes, really, see the warning above |
+| **Authentication, OAuth-compatible remote MCP, a tested TLS deployment** | ✅ Milestone 6 — owner login (password or OpenID Connect), personal access tokens, MCP OAuth for Claude web / ChatGPT web / MCP Inspector, and the reference Caddy deployment plus the other tested ways to expose an instance (`docs/operations.md`) |
 | **MCP `2026-07-28` compatibility** | 🔨 Milestone 6.1 — dual-era, without dropping current clients |
 | **UI redesign** | 🔨 Milestone 6.5 — moving off the stock-component look, so the gallery and showcase get built in the new one; direction still being explored, and opinions are welcome on the tracker |
 | **Photo gallery per kit** | 🔨 Milestone 7 |
@@ -189,10 +190,11 @@ so an instance has exactly one door, and it's bound to `127.0.0.1`. A `migrate`
 container runs the database migrations and exits before the API starts; seeing it
 as `Exited (0)` is success, not a failure.
 
-Running it on a server and want to reach it from your laptop? That door stays on
-loopback by default for a reason — there's a login now, but no TLS yet — so see
-[Reaching it from another machine](docs/operations.md#reaching-it-from-another-machine)
-rather than just widening the bind.
+Running it on a server and want to reach it from your laptop, or from anywhere? That
+door stays on loopback by default for a reason. See
+[Four ways to run it](docs/operations.md#four-ways-to-run-it) — a private network, your
+own reverse proxy, a Cloudflare Tunnel, or a VPS behind Caddy, each with what was tested
+for it — rather than just widening the bind.
 
 Backups, restores, upgrading, and the full configuration reference live in
 **[docs/operations.md](docs/operations.md)**.
@@ -218,13 +220,14 @@ Backups, restores, upgrading, and the full configuration reference live in
 
 ## Wiring up the MCP server
 
-plamotrack speaks MCP over streamable HTTP at:
+plamotrack speaks MCP over streamable HTTP at `<your instance>/mcp/`:
 
 ```
-http://localhost:8080/mcp/
+http://localhost:8080/mcp/          # on the machine that runs it
+https://plamotrack.example/mcp/     # behind TLS — docs/operations.md, "Four ways to run it"
 ```
 
-**Keep the trailing slash.** The bundled stack serves both spellings, but the API
+The examples below use the loopback form; substitute yours. **Keep the trailing slash.** The bundled stack serves both spellings, but the API
 run straight from source (see *Developing on it*) answers a bare `/mcp` with 404 —
 it no longer redirects, because a redirect built from the request's own `Host` is
 the kind of thing the ingress hardening removed.
@@ -250,11 +253,12 @@ and request URIs end up in access logs.
 
 ### Claude Desktop
 
-Edit the config file directly — Claude Desktop's **Add custom connector** dialog only
-accepts publicly reachable URLs, and a self-hosted plamotrack on your own network isn't
-one. Nor should it be at this stage; see the alpha warning above.
-
-So bridge the HTTP endpoint into a stdio server with
+Claude Desktop's **Add custom connector** dialog only accepts publicly reachable
+`https://` URLs. An instance behind TLS with a public name in OIDC mode is one — paste
+`https://your-instance/mcp/` there and sign in when asked, no token needed (see
+*Signing in instead of pasting a token* below). An instance on your own machine or your
+own network isn't, so edit the config file directly and bridge the HTTP endpoint into a
+stdio server with
 [`mcp-remote`](https://www.npmjs.com/package/mcp-remote), which passes the header
 through. Open `claude_desktop_config.json` — on macOS at
 `~/Library/Application Support/Claude/claude_desktop_config.json`, on Windows at
@@ -283,8 +287,8 @@ through. Open `claude_desktop_config.json` — on macOS at
 
 The header goes through an environment variable because Claude Desktop splits `args`
 on spaces on some platforms, and `Bearer ptk_…` contains one. Restart Claude Desktop.
-If it complains about the URL not being HTTPS, add `"--allow-http"` to the end of the
-`args` array.
+If the URL is plain `http://` and it complains about that, add `"--allow-http"` to the
+end of the `args` array; an `https://` instance needs no flag.
 
 ### Claude Code
 
@@ -295,8 +299,8 @@ claude mcp add --transport http plamotrack http://localhost:8080/mcp/ \
 
 ### Anything else
 
-It's a standard streamable-HTTP MCP server, so any client that can point at a local URL
-and send a bearer header will work — give it `http://localhost:8080/mcp/` and
+It's a standard streamable-HTTP MCP server, so any client that can point at a URL and
+send a bearer header will work — give it `<your instance>/mcp/` and
 `Authorization: Bearer ptk_…`. Clients that only speak stdio, or that (like Claude
 Desktop) only accept publicly reachable URLs, can use the `mcp-remote` bridge shown
 above. Instructions for other specific clients are welcome as PRs; open an issue if
@@ -310,10 +314,11 @@ web and MCP Inspector** take the URL `https://your-instance/mcp/` in their conne
 dialog, show a consent page, send you to the same provider, and get tokens of their
 own — no paste. Only the owner's account is accepted, and every such token acts as
 the owner with read and write access to the collection, never the instance
-settings. It needs TLS in front of the instance (or a loopback address while
-developing) and one more `.env` line; `docs/operations.md` → *MCP clients that sign
-in through the provider* has the setup. Personal access tokens keep working in that
-mode too.
+settings. It needs TLS in front of the instance (`docs/operations.md`, "Four ways to
+run it" — Caddy on the same host is the tested reference; a Cloudflare Tunnel works
+too) or a loopback address while developing, and one more `.env` line;
+`docs/operations.md` → *MCP clients that sign in through the provider* has the setup.
+Personal access tokens keep working in that mode too.
 
 ### The tools it exposes
 
@@ -349,8 +354,8 @@ your entire collection is not a feature.
 > ⚠️ The MCP endpoint takes a personal access token (see *First, mint a token*
 > above) — or, in OIDC mode, a token the client obtained by signing in as the owner —
 > never the browser session, and a personal token's reach is fixed when it is minted.
-> There is no tested TLS path yet, so keep the instance on localhost or a trusted
-> network for now.
+> Which network the endpoint is on is your call: `docs/operations.md`, "Four ways to
+> run it", says what each way was tested for.
 
 ### Teach your agent your hobby's conventions
 

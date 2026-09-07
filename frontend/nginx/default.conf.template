@@ -264,14 +264,26 @@ server {
     # redirected. A redirect here is a real problem, not a cosmetic one: it
     # arrives in response to a POST, and not every client re-sends the body.
     # This is the ingress-only spelling of family 7: the source-run app has no
-    # slash redirect and answers bare /mcp with 404.
+    # slash redirect and answers bare /mcp with 404. It carries every setting
+    # the canonical block below carries (§5.5: what an alias sheds is the
+    # family's per-location configuration, and Claude web posts to this
+    # spelling — #190), so the two spellings are one family at this layer;
+    # tests/test_ingress_generation.py holds them equal. The 1 h timeouts are
+    # the family's settings, not a measured need: the SDK's streams send a
+    # ping every 15 s, so nginx's 60 s default would not have cut them.
     location = /mcp {
         set $upstream http://api:8000;
         rewrite ^ /mcp/ break;
         proxy_pass $upstream;
         proxy_http_version 1.1;
         proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 1h;
+        proxy_send_timeout 1h;
+        proxy_set_header Connection "";
         proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Plamotrack-Client-Address $remote_addr;
     }
 
