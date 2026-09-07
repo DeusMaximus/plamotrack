@@ -28,6 +28,7 @@ from app.auth import credentials
 from app.auth.budget import (
     BASE_DELAY,
     DECAY_AFTER,
+    KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE,
     MAX_DELAY,
     VERIFICATIONS_PER_MINUTE,
     FailureBudget,
@@ -712,3 +713,125 @@ async def test_recovery_on_an_unclaimed_instance_claims_it(anon_client):
         assert (
             await c.post("/auth/login", json={"password": "fresh-owner-password"}, headers=ORIGIN)
         ).status_code == 200
+
+
+# --- Codex #222 round 1, f1: the cheap paths spend nothing; the reserved bucket -------
+
+
+async def test_a_wrong_setup_token_spends_no_verification(anon_client):
+    """Thirty wrong setup tokens from thirty addresses did no Argon2 work and
+    still drained the whole verification bucket, so the correct token from a
+    thirty-first address read 429 (Codex #222 round 1, f1). The setup path is
+    the ladder's alone: the comparison is cheap, and the expensive work behind a
+    correct token is gated by the token's entropy."""
+    now = {"t": 1000.0}
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    setattr(app.state, BUDGET_ATTR, budgets)
+    token = _issue_setup_token()
+    for i in range(VERIFICATIONS_PER_MINUTE):
+        async with _client_from(f"203.0.113.{i + 1}") as guesser:
+            wrong = await guesser.post(
+                "/auth/setup", json={"token": "not-it", "password": "x"}, headers=ORIGIN
+            )
+            assert wrong.status_code == 403
+    assert budgets.verification.tokens == VERIFICATIONS_PER_MINUTE
+    assert budgets.known.tokens == KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE
+    async with _client_from("198.51.100.1") as owner:
+        ok = await owner.post(
+            "/auth/setup", json={"token": token, "password": PASSWORD}, headers=ORIGIN
+        )
+    assert ok.status_code == 200
+
+
+class _Flood:
+    """Wrong passwords from an endless supply of fresh addresses."""
+
+    def __init__(self) -> None:
+        self.next = 0
+
+    async def run(self, count: int) -> None:
+        for _ in range(count):
+            self.next += 1
+            address = f"203.0.{self.next // 250}.{self.next % 250 + 1}"
+            async with _client_from(address) as guesser:
+                wrong = await guesser.post("/auth/login", json={"password": "nope"}, headers=ORIGIN)
+                assert wrong.status_code == 403
+
+
+async def _known_cookie(anon_client) -> str:
+    """Claim, keep the raw session cookie, sign out — the row is revoked, the
+    cookie is still one the instance stored: the weakest proof that admits."""
+    csrf = await _claim(anon_client)
+    raw = anon_client.cookies.get(PLAIN_COOKIE_NAME)
+    assert raw
+    out = await anon_client.post("/auth/logout", headers={**ORIGIN, "X-CSRF-Token": csrf})
+    assert out.status_code in (200, 204), out.text
+    return raw
+
+
+async def test_a_known_browser_is_admitted_from_the_reserved_bucket_under_a_flood(anon_client):
+    """Codex #222 round 1, f1: with the general bucket drained, each two-second
+    refill was taken by the next fresh address before the owner's retry, for as
+    long as the stream cared to continue. A browser that presents any session
+    cookie the instance ever stored — here a revoked one, from a new address —
+    is verified from the reserved bucket and gets in every time; a brand-new
+    browser competes with the flood, as documented."""
+    raw = await _known_cookie(anon_client)
+    now = {"t": 1000.0}
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    setattr(app.state, BUDGET_ATTR, budgets)
+    flood = _Flood()
+    await flood.run(VERIFICATIONS_PER_MINUTE)
+    assert budgets.verification.tokens < 1
+    async with _client_from("198.51.100.20") as new_browser:
+        contested = await new_browser.post(
+            "/auth/login", json={"password": PASSWORD}, headers=ORIGIN
+        )
+    assert contested.status_code == 429
+    known_headers = {**ORIGIN, "Cookie": f"{PLAIN_COOKIE_NAME}={raw}"}
+    async with _client_from("198.51.100.21") as known_browser:
+        for _ in range(4):
+            ok = await known_browser.post(
+                "/auth/login", json={"password": PASSWORD}, headers=known_headers
+            )
+            assert ok.status_code == 200
+            # One general token refills; a fresh address takes it first.
+            now["t"] += 2.0
+            await flood.run(1)
+            assert budgets.verification.tokens < 1
+    async with get_sessionmaker()() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(AuditEvent).where(AuditEvent.event_type == audit.LOGIN_THROTTLED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [row.detail.split(" ")[-1] for row in rows] == ["budget=instance"]
+    assert rows[0].client_address == "198.51.100.20"
+
+
+async def test_the_reserved_bucket_is_bounded_and_falls_back_to_the_general_one(anon_client):
+    """The known-browser allowance is a bound too: a stolen expired cookie
+    replayed from many addresses buys ten verifications a minute and then
+    competes like everyone else."""
+    raw = await _known_cookie(anon_client)
+    now = {"t": 1000.0}
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    setattr(app.state, BUDGET_ATTR, budgets)
+    await _Flood().run(VERIFICATIONS_PER_MINUTE)
+    known_headers = {**ORIGIN, "Cookie": f"{PLAIN_COOKIE_NAME}={raw}"}
+    statuses = []
+    for i in range(KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE + 1):
+        async with _client_from(f"198.51.100.{i + 30}") as replayer:
+            statuses.append(
+                (
+                    await replayer.post(
+                        "/auth/login", json={"password": "nope"}, headers=known_headers
+                    )
+                ).status_code
+            )
+    assert statuses == [403] * KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE + [429]
+    assert budgets.known.tokens < 1

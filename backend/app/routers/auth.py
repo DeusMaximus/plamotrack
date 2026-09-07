@@ -156,8 +156,10 @@ async def setup(
             code=error_codes.AUTH_SETUP_CLAIMED,
         )
     budgets = _budget(request)
+    # The ladder only: the token comparison is cheap, and the expensive work
+    # behind a correct token is gated by the token's entropy (Codex #222, f1).
     ladder = await auth_service.refuse_throttled(
-        session, budgets, request=request, target="/auth/setup"
+        session, budgets, request=request, target="/auth/setup", verification=False
     )
     if not token_state.matches(payload.token):
         await auth_service.record_setup_failure(session, budgets, request=request)

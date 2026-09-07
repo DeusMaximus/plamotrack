@@ -350,7 +350,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import error_codes
 from app.auth import tokens as token_format
-from app.auth.body import read_bounded, replay
+from app.auth.body import Disconnected, read_bounded, replay
 from app.auth.mcp_auth import PersonalAccessTokenVerifier
 from app.auth.mcp_oauth_state import (  # the two writers' shared contract (#214)
     CLIENT_COLLECTION,
@@ -553,6 +553,12 @@ class ClientRecords(PydanticAdapter[ProxyDCRClient]):
     ) -> None:
         existing, existing_ttl = await super().ttl(key=key, collection=collection)
         if existing is None:
+            # A new record is the one thing that grows this collection — a
+            # registration, or a CIMD document materialised by any route that
+            # looks a client up (`/mcp/token` and `/mcp/revoke` included, which
+            # no other cull reaches: Codex #222 round 1, f2). The expired rows
+            # go first, so the physical size never exceeds the live cap.
+            await self._store.cull_expired(collection or CLIENT_COLLECTION)
             live = await self._store.count_live(collection or CLIENT_COLLECTION)
             if live >= MAX_CLIENT_RECORDS:
                 raise ClientRecordsFull(
@@ -1569,7 +1575,10 @@ class ProtocolRequest:
             # The route's body budget (#221 item 1) — judged before the media
             # type and before a byte past it is held; the wrong media type is
             # then refused without the body having been read whole either.
-            body = await read_bounded(scope, receive, self.max_body_bytes)
+            try:
+                body = await read_bounded(scope, receive, self.max_body_bytes)
+            except Disconnected:
+                return  # the client left mid-body: nothing to answer, nothing to run
             if body is None:
                 await refuse_too_large(scope, receive, send, self.max_body_bytes)
                 return
@@ -2668,7 +2677,10 @@ class ClientMetadataBody:
         if scope["type"] != "http" or scope["method"] != "POST":
             await self.app(scope, receive, send)
             return
-        body = await read_bounded(scope, receive, self.max_body_bytes)
+        try:
+            body = await read_bounded(scope, receive, self.max_body_bytes)
+        except Disconnected:
+            return  # the client left mid-body: nothing to answer, nothing to run
         if body is None:
             await refuse_too_large(scope, receive, send, self.max_body_bytes)
             return
@@ -2739,7 +2751,10 @@ class BoundedBody:
         if scope["type"] != "http" or scope["method"] not in ("POST", "PUT", "PATCH"):
             await self.app(scope, receive, send)
             return
-        body = await read_bounded(scope, receive, self.max_body_bytes)
+        try:
+            body = await read_bounded(scope, receive, self.max_body_bytes)
+        except Disconnected:
+            return  # the client left mid-body: nothing to answer, nothing to run
         if body is None:
             await refuse_too_large(scope, receive, send, self.max_body_bytes)
             return

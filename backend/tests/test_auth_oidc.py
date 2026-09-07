@@ -199,6 +199,32 @@ def test_the_registry_declares_the_mode_axis():
 # --- starting a login -------------------------------------------------------------------
 
 
+async def test_start_with_wrong_setup_tokens_spends_no_verification():
+    """Codex #222 round 1, f1: the unbound OIDC start charged the expensive
+    verification bucket for a cheap token comparison, so a stream of wrong
+    tokens from fresh addresses drained it without doing any expensive work.
+    The start spends the ladder alone."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.auth.budget import VERIFICATIONS_PER_MINUTE, FailureBudgets
+
+    async with oidc_app(FakeIdp()) as (live, _):
+        _issue_setup_token(live)
+        budgets = FailureBudgets()
+        setattr(live.state, BUDGET_ATTR, budgets)
+        for i in range(VERIFICATIONS_PER_MINUTE):
+            async with AsyncClient(
+                transport=ASGITransport(
+                    app=live, client=(f"203.0.113.{i + 1}", 40000), raise_app_exceptions=False
+                ),
+                base_url=BASE,
+            ) as guesser:
+                wrong = await _start(guesser, setup_token="not-the-token")
+                assert wrong.status_code == 403
+        assert budgets.verification.tokens == VERIFICATIONS_PER_MINUTE
+        assert budgets.tracked == VERIFICATIONS_PER_MINUTE  # one ladder per address, each shut
+
+
 async def test_start_on_an_unbound_instance_needs_the_setup_token():
     """The claim gate (§5.6 safe failure; T8): no token → 403 like a wrong
     password, audited against the OIDC start, counted by the budget."""

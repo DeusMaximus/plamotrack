@@ -256,3 +256,138 @@ async def test_a_declared_length_over_the_budget_reads_nothing():
     asked.clear()
     assert await read_bounded(malformed, receive, 8192) is None
     assert len(asked) == 9  # a length that is not a number declares nothing
+
+
+# --- Codex #222 round 1, f3: a disconnect is not a body ---------------------------------
+
+
+def _scope(method: str, path: str, headers: dict[str, str], *, host: str) -> dict:
+    return {
+        "type": "http",
+        "asgi": {"version": "3.0", "spec_version": "2.3"},
+        "http_version": "1.1",
+        "method": method,
+        "scheme": "http",
+        "path": path,
+        "raw_path": path.encode(),
+        "root_path": "",
+        "query_string": b"",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in {"host": host, **headers}.items()],
+        "client": ("127.0.0.1", 40000),
+        "server": (host, 80),
+        "state": {},
+    }
+
+
+async def _abandoned(target_app, scope: dict, prefix: bytes) -> list[dict]:
+    """The raw ASGI call: a syntactically complete prefix, declared longer and
+    marked non-terminal, then the client's disconnect. Returns every message the
+    app sent — which must be none."""
+    messages = [
+        {"type": "http.request", "body": prefix, "more_body": True},
+        {"type": "http.disconnect"},
+    ]
+
+    async def receive() -> dict:
+        return messages.pop(0) if messages else {"type": "http.disconnect"}
+
+    sent: list[dict] = []
+
+    async def send(message: dict) -> None:
+        sent.append(message)
+
+    await target_app(scope, receive, send)
+    return sent
+
+
+async def _session_rows() -> int:
+    from sqlalchemy import func, select
+
+    from app.db import get_sessionmaker
+    from app.models import Session as SessionRow
+
+    async with get_sessionmaker()() as session:
+        return await session.scalar(select(func.count()).select_from(SessionRow))
+
+
+async def test_a_login_body_abandoned_mid_way_opens_no_session_and_answers_nothing(anon_client):
+    """Codex #222 round 1, f3: a complete, correct-password JSON prefix declared
+    100 bytes longer and then abandoned was replayed as the whole body — 200
+    and a second session row. The reader now raises on the disconnect and the
+    gate returns without a response; no state moves."""
+    from tests.test_auth_local import PASSWORD, _claim
+
+    await _claim(anon_client)
+    before = await _session_rows()
+    prefix = json.dumps({"password": PASSWORD}).encode()
+    scope = _scope(
+        "POST",
+        "/auth/login",
+        {
+            "content-type": "application/json",
+            "content-length": str(len(prefix) + 100),
+            "origin": "http://test",
+        },
+        host="test",
+    )
+    assert await _abandoned(app, scope, prefix) == []
+    assert await _session_rows() == before
+
+
+async def test_a_setup_body_abandoned_mid_way_claims_nothing(anon_client):
+    from tests.test_auth_local import _issue_setup_token
+
+    token = _issue_setup_token()
+    prefix = json.dumps({"token": token, "password": "a-password"}).encode()
+    scope = _scope(
+        "POST",
+        "/auth/setup",
+        {
+            "content-type": "application/json",
+            "content-length": str(len(prefix) + 100),
+            "origin": "http://test",
+        },
+        host="test",
+    )
+    assert await _abandoned(app, scope, prefix) == []
+    assert (await anon_client.get("/auth/session")).json()["state"] == "unclaimed"
+
+
+@pytest.mark.parametrize(
+    ("path", "prefix", "content_type"),
+    [
+        ("/mcp/token", b"grant_type=authorization_code&code=abc", FORM["Content-Type"]),
+        ("/mcp/register", b'{"redirect_uris": ["http://localhost:1/cb"]}', "application/json"),
+        ("/mcp/consent", b"action=approve", FORM["Content-Type"]),
+    ],
+)
+async def test_a_protocol_body_abandoned_mid_way_is_answered_nothing(path, prefix, content_type):
+    fake = FakeIdp()
+    async with oidc_app(fake) as (live, _):
+        scope = _scope(
+            "POST",
+            path,
+            {"content-type": content_type, "content-length": str(len(prefix) + 50)},
+            host="localhost",
+        )
+        assert await _abandoned(live, scope, prefix) == []
+
+
+async def test_the_reader_raises_on_a_disconnect_and_trusts_the_servers_framing():
+    from app.auth.body import Disconnected, read_bounded
+
+    async def abandoned():
+        yield {"type": "http.request", "body": b"abc", "more_body": True}
+        yield {"type": "http.disconnect"}
+
+    async def short_but_terminal():
+        yield {"type": "http.request", "body": b"abc", "more_body": False}
+
+    for messages, expected in ((abandoned(), Disconnected), (short_but_terminal(), b"abc")):
+        receive = messages.__anext__
+        scope = {"type": "http", "headers": [(b"content-length", b"200")]}
+        if expected is Disconnected:
+            with pytest.raises(Disconnected):
+                await read_bounded(scope, receive, 8192)
+        else:
+            assert await read_bounded(scope, receive, 8192) == expected

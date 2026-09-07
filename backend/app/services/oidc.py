@@ -539,7 +539,7 @@ async def begin_login(
     claiming = False
     if await owner_is_unbound(session):
         await auth_service.refuse_throttled(
-            session, budgets, request=request, target="/auth/oidc/start"
+            session, budgets, request=request, target="/auth/oidc/start", verification=False
         )
         if setup_token is None or not setup_state.matches(setup_token):
             await auth_service.record_setup_failure(

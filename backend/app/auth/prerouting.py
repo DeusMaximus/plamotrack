@@ -69,7 +69,7 @@ from starlette.routing import Match, Mount, compile_path, get_route_path
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import error_codes
-from app.auth.body import read_bounded, replay
+from app.auth.body import Disconnected, read_bounded, replay
 from app.auth.dependency import BEARER_CHALLENGE, REQUEST_PRINCIPAL_ATTR
 from app.auth.principal import PrincipalKind
 from app.auth.registry import (
@@ -258,7 +258,10 @@ class PreRoutingAuthMiddleware:
             # FastAPI's parser, which would read the body whole — from
             # `Content-Length` when there is one, else while reading, never
             # holding more than the budget. What passes is replayed to the app.
-            body = await read_bounded(scope, receive, limit)
+            try:
+                body = await read_bounded(scope, receive, limit)
+            except Disconnected:
+                return  # the client left mid-body: nothing to answer, nothing to run
             if body is None:
                 too_large = PayloadTooLargeError(
                     _TOO_LARGE.format(limit=limit),

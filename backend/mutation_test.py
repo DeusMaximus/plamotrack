@@ -5638,8 +5638,8 @@ CASES += [
     (
         "scan-3. the verification budget is never consulted",
         AUTH_SVC,
-        '        retry_after = budgets.verification.take()\n        budget = "instance"\n',
-        '        retry_after = None\n        budget = "instance"\n',
+        '            retry_after = budgets.verification.take()\n            budget = "instance"\n',
+        '            retry_after = None\n            budget = "instance"\n',
         "verification_budget_bounds_the_instance",
     ),
     (
@@ -5701,22 +5701,22 @@ CASES += [
     (
         "scan-12. the protocol form guard reads without a budget",
         MCP_OAUTH,
-        "            body = await read_bounded(scope, receive, self.max_body_bytes)\n            if body is None:\n                await refuse_too_large(scope, receive, send, self.max_body_bytes)\n                return\n            media_type = ",
-        "            body = await read_bounded(scope, receive, 10**9)\n            if body is None:\n                await refuse_too_large(scope, receive, send, self.max_body_bytes)\n                return\n            media_type = ",
+        "                body = await read_bounded(scope, receive, self.max_body_bytes)\n            except Disconnected:\n                return  # the client left mid-body: nothing to answer, nothing to run\n            if body is None:\n                await refuse_too_large(scope, receive, send, self.max_body_bytes)\n                return\n            media_type = ",
+        "                body = await read_bounded(scope, receive, 10**9)\n            except Disconnected:\n                return  # the client left mid-body: nothing to answer, nothing to run\n            if body is None:\n                await refuse_too_large(scope, receive, send, self.max_body_bytes)\n                return\n            media_type = ",
         "protocol_body_past_the_budget_is_413 and token",
     ),
     (
         "scan-13. the registration guard reads without a budget",
         MCP_OAUTH,
-        "        body = await read_bounded(scope, receive, self.max_body_bytes)\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        try:\n            json.loads(body)\n",
-        "        body = await read_bounded(scope, receive, 10**9)\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        try:\n            json.loads(body)\n",
+        "            body = await read_bounded(scope, receive, self.max_body_bytes)\n        except Disconnected:\n            return  # the client left mid-body: nothing to answer, nothing to run\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        try:\n            json.loads(body)\n",
+        "            body = await read_bounded(scope, receive, 10**9)\n        except Disconnected:\n            return  # the client left mid-body: nothing to answer, nothing to run\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        try:\n            json.loads(body)\n",
         "protocol_body_past_the_budget_is_413 and register",
     ),
     (
         "scan-14. the consent guard reads without a budget",
         MCP_OAUTH,
-        "        body = await read_bounded(scope, receive, self.max_body_bytes)\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        await self.app(scope, replay(body), send)\n",
-        "        body = await read_bounded(scope, receive, 10**9)\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        await self.app(scope, replay(body), send)\n",
+        "            body = await read_bounded(scope, receive, self.max_body_bytes)\n        except Disconnected:\n            return  # the client left mid-body: nothing to answer, nothing to run\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        await self.app(scope, replay(body), send)\n",
+        "            body = await read_bounded(scope, receive, 10**9)\n        except Disconnected:\n            return  # the client left mid-body: nothing to answer, nothing to run\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        await self.app(scope, replay(body), send)\n",
         "protocol_body_past_the_budget_is_413 and consent",
     ),
     (
@@ -5795,6 +5795,50 @@ CASES += [
         "        if key not in self and len(self) >= self.capacity:\n            del self[next(iter(self))]\n",
         "        if False:\n            del self[next(iter(self))]\n",
         "cimd_document_cache_forgets_its_oldest_entry",
+    ),
+    # --- Codex #222 round 1 (f1–f3): the cheap paths spend nothing, the reserved
+    # --- bucket, the cull at materialisation, the disconnect abort. ---------------
+    (
+        "scan-26. the setup path charges the verification bucket again",
+        AUTH_ROUTER,
+        '        session, budgets, request=request, target="/auth/setup", verification=False\n',
+        '        session, budgets, request=request, target="/auth/setup", verification=True\n',
+        "wrong_setup_token_spends_no_verification",
+    ),
+    (
+        "scan-27. a known browser is nobody special",
+        AUTH_SVC,
+        '        session, budgets, request=request, target="/auth/login", known_browser=known\n',
+        '        session, budgets, request=request, target="/auth/login", known_browser=False\n',
+        "known_browser_is_admitted_from_the_reserved_bucket",
+    ),
+    (
+        "scan-28. the reserved bucket is charged and the general one too",
+        AUTH_SVC,
+        "        if not admitted_reserved:\n            retry_after = budgets.verification.take()\n",
+        "        if True:\n            retry_after = budgets.verification.take()\n",
+        "known_browser_is_admitted_from_the_reserved_bucket",
+    ),
+    (
+        "scan-29. no cull where a client record is created",
+        MCP_OAUTH,
+        "            await self._store.cull_expired(collection or CLIENT_COLLECTION)\n            live = await self._store.count_live(collection or CLIENT_COLLECTION)\n",
+        "            live = await self._store.count_live(collection or CLIENT_COLLECTION)\n",
+        "materialised_by_a_lookup_alone_rolls_over",
+    ),
+    (
+        "scan-30. a disconnect ends the body as if it were complete",
+        BODY,
+        "            raise Disconnected\n",
+        "            break\n",
+        "abandoned_mid_way or reader_raises_on_a_disconnect",
+    ),
+    (
+        "scan-31. the OIDC start charges the verification bucket again",
+        OIDC_SVC,
+        '            session, budgets, request=request, target="/auth/oidc/start", verification=False\n',
+        '            session, budgets, request=request, target="/auth/oidc/start", verification=True\n',
+        "start_with_wrong_setup_tokens_spends_no_verification",
     ),
 ]
 

@@ -567,8 +567,11 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     unpublished compose API enables trust in it; source-run deployments use the
     ordinary proxy policy. **The in-process budgets** (#221) — a failure ladder
     per (action, client address) plus one verification bucket for the instance
-    (`app/auth/budget.py`; a guesser's failures slow the guesser's address, never
-    the owner's, and a ladder decays instead of re-arming its ceiling), the
+    and a reserved one for a browser that has signed in before (`app/auth/budget.py`;
+    a guesser's failures slow the guesser's address, never the owner's, a ladder
+    decays instead of re-arming its ceiling, and the owner's own browser is admitted
+    under a flood while a brand-new one is explicitly the operator's ingress to
+    protect; the setup token and the OIDC start spend no verification token), the
     refusal budget the audit recorder reads (ten rows per address and sixty per
     instance a minute, the rest one summary row), and the MCP registration quota
     — remain correct only while the Dockerfile pins uvicorn to one worker; move
@@ -580,9 +583,12 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     `tests/test_body_limits.py` fails on an anonymous body route without one.
     **Client records in `mcp_oauth_state` live a day unless a grant links them**
     (`ClientRecords`, which every writer goes through — FastMCP's included), are
-    capped and culled from the anonymous entry points; the adapter reads an
-    expired row as absent and never deletes it, so a new collection with a
-    lifetime owes the cull too. CI's packaged matrix must exercise all four 429s and
+    capped, and culled where a record is created — `ClientRecords.put` on a new
+    key, whichever route materialised the client — as well as from the anonymous
+    entry points; the adapter reads an expired row as absent and never deletes it,
+    so a new collection with a lifetime owes the cull too. A body whose client
+    disconnects before its last message is neither replayed nor answered
+    (`Disconnected`). CI's packaged matrix must exercise all four 429s and
     scan a full login/PAT/MCP run for the password, PAT and session value, plus
     OAuth query/Referer probes on normal and throttled requests. Both access loggers
     omit queries; nginx omits headers and discards its raw-request error diagnostics.

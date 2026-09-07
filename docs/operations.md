@@ -398,10 +398,15 @@ recoveries on every release.
 
 **`429 Too Many Attempts`.** Throttling is per address: your own wrong guesses slow
 your address down — doubling to five minutes at most — and the count resets after
-ten quiet minutes; somebody else's guesses never lock you out. The instance also
-checks at most thirty passwords a minute in total, so under a flood a correct
-password may be asked to retry in a second or two. Restarting the `api` container
-clears both.
+ten quiet minutes; somebody else's guesses never shut your address. The instance
+also checks at most thirty passwords a minute in total, whoever asks, so that a
+flood of guesses from many addresses cannot saturate it — and a browser that has
+signed in here before is checked from a reserved allowance of ten a minute that the
+flood cannot touch, so from your usual browser you get in whatever is going on. From
+a brand-new browser during a sustained flood you compete with the flood: wait it
+out, use the browser you signed in with before, or block the flood at your proxy —
+the instance does not pretend to bound that case. Restarting the `api` container
+clears the counters.
 
 ### Signing in through an identity provider (OIDC mode)
 

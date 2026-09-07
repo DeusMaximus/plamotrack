@@ -20,14 +20,26 @@ ingress is item 8's and bounds each address before either of these runs.
   is full, idle ladders go first, then the least recently failed — a
   wide-enough flood can evict its own ladders, which costs it the exponential
   delay but not the two bounds below it.
-- **One verification budget for the instance.** A password or setup-token
-  check costs Argon2 work on the single worker, so at most
-  `VERIFICATIONS_PER_MINUTE` are performed instance-wide, whatever addresses
-  they come from; beyond that an attempt is refused with a short `Retry-After`
-  *before* the work is done. This bounds what a distributed guesser can make
-  the worker do, and it can delay the owner only while such a flood is under
-  way, by seconds — it never excludes a correct credential on the strength of
-  someone else's failures.
+- **One verification budget for the instance, and a reserved one for a
+  browser that has signed in before.** A password check costs Argon2 work on
+  the single worker, so at most `VERIFICATIONS_PER_MINUTE` are performed
+  instance-wide, whatever addresses they come from; beyond that an attempt is
+  refused with a short `Retry-After` *before* the work is done. That bounds
+  what a distributed guesser can make the worker do — and, on its own, it
+  would let a guesser with a stream of fresh addresses hold the bucket empty
+  and the owner out (Codex #222 round 1, f1: a CPU ceiling and owner admission
+  are two properties). So a login that presents a session cookie whose digest
+  the instance has ever stored — live, expired or revoked; the cookie is
+  unforgeable and the flood does not hold one — is verified from a **reserved**
+  bucket of `KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE` the general traffic
+  cannot drain, falling back to the general one only when the reserved is
+  spent. The owner's own browser is admitted within that bound however many
+  addresses are failing; a brand-new browser during a sustained distributed
+  flood competes with the flood, and the operator's ingress is the boundary
+  there — the documentation says so rather than the code pretending otherwise.
+  The setup token and the OIDC start spend neither bucket: their comparison
+  is cheap, and the expensive work behind a correct token is gated by the
+  token's own entropy.
 
 The refusal budget the pre-routing guard's audit recorder reads (`RefusalBudget`,
 #210 / #221 item 3) lives here too: the same in-process shape, keyed the same
@@ -49,9 +61,13 @@ MAX_DELAY = 300.0
 DECAY_AFTER = 2 * MAX_DELAY
 #: Ladders kept at once, across every action and address.
 MAX_TRACKED = 4096
-#: Password / setup-token verifications the instance performs per minute, at
-#: most, whoever asks: Argon2 is deliberately slow, and one worker serves it.
+#: Password verifications the instance performs per minute, at most, whoever
+#: asks: Argon2 is deliberately slow, and one worker serves it.
 VERIFICATIONS_PER_MINUTE = 30
+#: The reserved bucket for a browser that has signed in before: the owner's
+#: own admission under a flood, bounded too — a stolen expired cookie replayed
+#: from many addresses buys this much extra Argon2 and no more.
+KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE = 10
 
 
 @dataclass
@@ -136,6 +152,11 @@ class FailureBudgets:
     def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
         self.clock = clock
         self.verification = VerificationBudget(clock=clock)
+        self.known = VerificationBudget(
+            clock=clock,
+            capacity=KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE,
+            tokens=float(KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE),
+        )
         self._ladders: dict[tuple[str, str | None], FailureBudget] = {}
 
     def ladder(self, target: str, address: str | None) -> FailureBudget:
@@ -169,6 +190,7 @@ class FailureBudgets:
         running process's memory cleared."""
         self._ladders.clear()
         self.verification.reset()
+        self.known.reset()
 
 
 # --- the refusal budget (audit volume; #210, #221 item 3) ---------------------------

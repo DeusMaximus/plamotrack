@@ -30,7 +30,14 @@ from app import error_codes
 from app.auth import credentials
 from app.auth.budget import FailureBudget, FailureBudgets
 from app.auth.principal import Principal, anonymous, internal
-from app.auth.sessions import LAST_USED_WRITE_INTERVAL, SESSION_ABSOLUTE, SESSION_IDLE
+from app.auth.sessions import (
+    LAST_USED_WRITE_INTERVAL,
+    SESSION_ABSOLUTE,
+    SESSION_IDLE,
+    cookie_is_secure,
+    cookie_name,
+)
+from app.config import get_settings
 from app.exceptions import (
     CredentialRejectedError,
     GoneError,
@@ -280,19 +287,27 @@ async def refuse_throttled(
     *,
     request: Request | None,
     target: str,
+    verification: bool = True,
+    known_browser: bool = False,
 ) -> FailureBudget:
-    """Raise the 429 when this caller's ladder at `target` is shut, or when the
-    instance's verification budget is spent — with the audit row committed
-    first, since the raise rolls back. Returns the caller's ladder, for the
-    failure or the reset that follows the verification. The ladder is judged
-    first and spends nothing; a verification token is taken only for an attempt
-    that is about to be verified (§5.6, brute force; #221 item 4)."""
+    """Raise the 429 when this caller's ladder at `target` is shut, or — for an
+    attempt that is about to cost Argon2 work (`verification`) — when the
+    budget it draws from is spent; with the audit row committed first, since
+    the raise rolls back. Returns the caller's ladder, for the failure or the
+    reset that follows. The ladder is judged first and spends nothing. A
+    `known_browser` draws from the reserved bucket and only then from the
+    general one (§5.6, brute force; #221 item 4; Codex #222 round 1, f1). The
+    setup token and the OIDC start pass `verification=False`: their comparison
+    is cheap, and charging the expensive budget for it let a stream of wrong
+    tokens drain the bucket without doing any expensive work."""
     ladder = budgets.ladder(target, audit.client_address_of(request))
     retry_after = ladder.retry_after()
     budget = "address"
-    if retry_after is None:
-        retry_after = budgets.verification.take()
-        budget = "instance"
+    if retry_after is None and verification:
+        admitted_reserved = known_browser and budgets.known.take() is None
+        if not admitted_reserved:
+            retry_after = budgets.verification.take()
+            budget = "instance"
     if retry_after is None:
         return ladder
     await audit.record_event(
@@ -335,6 +350,24 @@ async def record_setup_failure(
     raise CredentialRejectedError(_SETUP_TOKEN_INVALID, code=error_codes.AUTH_SETUP_TOKEN_INVALID)
 
 
+async def presented_session_is_known(session: AsyncSession, request: Request | None) -> bool:
+    """Whether the request carries a session cookie whose digest the instance
+    has ever stored — live, expired or revoked (session rows are never deleted,
+    only revoked). An unforgeable proof that this browser was the owner's at
+    some point, which is what admits a login to the reserved verification
+    bucket under a flood (#221 item 4; Codex #222 round 1, f1). Nothing here
+    authenticates: the password is still verified, the cookie is not resolved."""
+    if request is None:
+        return False
+    raw = request.cookies.get(cookie_name(cookie_is_secure(get_settings())))
+    if not raw:
+        return False
+    row = await session.execute(
+        select(SessionRow.id).where(SessionRow.token_hash == credentials.digest(raw))
+    )
+    return row.scalar_one_or_none() is not None
+
+
 async def login(
     session: AsyncSession,
     *,
@@ -351,7 +384,10 @@ async def login(
     401 that could carry no honest challenge. Every failure counts against the
     caller's ladder and is audited; a success resets it and re-hashes a verifier
     made with older parameters."""
-    ladder = await refuse_throttled(session, budgets, request=request, target="/auth/login")
+    known = await presented_session_is_known(session, request)
+    ladder = await refuse_throttled(
+        session, budgets, request=request, target="/auth/login", known_browser=known
+    )
     await acquire_write_gate(session)
     credential = await _the_credential(session)
     verified = credentials.verify_password(

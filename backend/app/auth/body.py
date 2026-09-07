@@ -17,6 +17,14 @@ from starlette.datastructures import Headers
 from starlette.types import Receive, Scope
 
 
+class Disconnected(Exception):
+    """The client went away before its body ended. There is nothing to answer
+    and nothing to hand on: a prefix of a request is not a request (Codex #222
+    round 1, f3 — a syntactically complete prefix of a login body, declared
+    longer and then abandoned, had been replayed as the whole body and opened
+    a session)."""
+
+
 def declared_length(scope: Scope) -> int | None:
     """The `Content-Length` a request declares, or None when absent or not a
     number (a malformed value is the server's 400 later; it declares nothing)."""
@@ -34,7 +42,11 @@ async def read_bounded(scope: Scope, receive: Receive, limit: int) -> bytes | No
     decided from `Content-Length` before a byte is read when the header is
     present, otherwise while reading, stopping at the first chunk that takes
     the total past the limit. What is read is what is held: never more than
-    `limit` plus one chunk."""
+    `limit` plus one chunk. A disconnect before the body's last message raises
+    `Disconnected`: the caller answers nothing and runs nothing. The body's
+    framing is the server's — a message it marks terminal ends the body, even
+    short of a declared length (uvicorn never produces one; a test transport
+    might), because the layer that reads the wire is the one that knows."""
     declared = declared_length(scope)
     if declared is not None and declared > limit:
         return None
@@ -43,7 +55,7 @@ async def read_bounded(scope: Scope, receive: Receive, limit: int) -> bytes | No
     while True:
         message = await receive()
         if message["type"] == "http.disconnect":
-            break
+            raise Disconnected
         chunk = message.get("body", b"")
         total += len(chunk)
         if total > limit:

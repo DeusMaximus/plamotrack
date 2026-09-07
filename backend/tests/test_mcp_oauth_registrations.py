@@ -14,6 +14,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastmcp.server.auth.cimd import CIMDFetcher
 from sqlalchemy import text
 
 from app import error_codes
@@ -35,7 +36,7 @@ from app.auth.mcp_oauth_state import (
 )
 from app.db import get_sessionmaker
 from tests.oidc_fake import FakeIdp
-from tests.test_mcp_oauth import _bind_owner, link, oauth_app, register
+from tests.test_mcp_oauth import _bind_owner, _cimd_document, link, oauth_app, register
 from tests.test_mcp_oauth_clients import CIMD_ID, cimd, cimd_link, stored_client
 
 pytestmark = pytest.mark.anyio
@@ -198,22 +199,28 @@ async def test_expired_rows_are_culled_at_registration_and_authorization():
     assert "stale-client" not in keys
 
 
-async def test_the_cull_runs_at_most_once_per_interval(monkeypatch):
+async def test_the_demand_cull_runs_at_most_once_per_interval_and_the_record_cull_per_record(
+    monkeypatch,
+):
+    """Two culls, two shapes: the all-collection demand cull from the anonymous
+    entry points runs at most once per interval; the client-collection cull
+    runs where a record is created, every time (Codex #222 round 1, f2)."""
     fake = FakeIdp()
     await _bind_owner()
     async with oauth_app(fake) as (live, client):
         proxy = getattr(live.state, MCP_OAUTH_ATTR).proxy
-        calls: list[int] = []
+        calls: list[str | None] = []
         store = proxy._state_store
 
-        async def counted() -> int:
-            calls.append(1)
+        async def counted(collection: str | None = None) -> int:
+            calls.append(collection)
             return 0
 
         monkeypatch.setattr(store, "cull_expired", counted)
         for _ in range(3):
             assert (await register(client)).status_code == 201
-    assert len(calls) == 1
+    assert calls.count(None) == 1
+    assert calls.count(CLIENT_COLLECTION) == 3
 
 
 # --- the in-memory document cache ---------------------------------------------------------
@@ -242,3 +249,64 @@ async def test_the_proxy_installs_the_bounded_cache_on_fastmcps_fetcher():
         assert isinstance(proxy._client_store, ClientRecords)
         assert proxy._client_store._default_collection == CLIENT_COLLECTION
         assert MAX_CLIENT_RECORDS >= 64
+
+
+# --- Codex #222 round 1, f2: a client materialised by a lookup alone --------------------
+
+
+def _any_cimd(monkeypatch) -> None:
+    """Play the CIMD fetch for any https client id: the token and revocation
+    endpoints materialise a record for whatever URL authenticates as a client."""
+
+    async def fetch(self, client_id_url: str):
+        base = client_id_url.rsplit("/", 1)[0]
+        return _cimd_document(client_id=client_id_url, redirect_uris=[f"{base}/callback"])
+
+    monkeypatch.setattr(CIMDFetcher, "fetch", fetch)
+
+
+@pytest.mark.parametrize("endpoint", ["token", "revoke"])
+async def test_a_client_materialised_by_a_lookup_alone_rolls_over_within_the_cap(
+    monkeypatch, endpoint
+):
+    """Neither `/mcp/token` nor `/mcp/revoke` reaches the registration guard
+    or `authorize`, and both look a client up — materialising a CIMD record —
+    so the physical table grew by a capped batch per expiry with no cull ever
+    reached (Codex #222 round 1, f2). The cull lives where a record is created
+    now: with the cap at two, two rows expire and two more are materialised,
+    and the table holds two, not four."""
+    monkeypatch.setattr(mcp_oauth, "MAX_CLIENT_RECORDS", 2)
+    _any_cimd(monkeypatch)
+    fake = FakeIdp()
+    await _bind_owner()
+
+    def client_id(i: int) -> str:
+        return f"https://client{i}.example/client.json"
+
+    def form(i: int) -> dict[str, str]:
+        if endpoint == "token":
+            return {
+                "grant_type": "refresh_token",
+                "refresh_token": "bogus",
+                "client_id": client_id(i),
+            }
+        return {"token": "bogus", "client_id": client_id(i)}
+
+    async with oauth_app(fake) as (_, client):
+        for i in (1, 2):
+            response = await client.post(f"/mcp/{endpoint}", data=form(i))
+            assert response.status_code != 500, response.text
+        assert {key for key, _ in await _rows(CLIENT_COLLECTION)} == {client_id(1), client_id(2)}
+        async with get_sessionmaker()() as session:
+            await session.execute(
+                text(
+                    "UPDATE mcp_oauth_state SET expires_at = now() - interval '1 day'"
+                    " WHERE collection = :c"
+                ),
+                {"c": CLIENT_COLLECTION},
+            )
+            await session.commit()
+        for i in (3, 4):
+            response = await client.post(f"/mcp/{endpoint}", data=form(i))
+            assert response.status_code != 500, response.text
+    assert {key for key, _ in await _rows(CLIENT_COLLECTION)} == {client_id(3), client_id(4)}

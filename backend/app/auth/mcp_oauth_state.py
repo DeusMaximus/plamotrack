@@ -119,14 +119,22 @@ class OAuthStateStore(PostgreSQLStore):
             collection,
         )
 
-    async def cull_expired(self) -> int:
-        """Delete every expired row of every collection; returns how many."""
+    async def cull_expired(self, collection: str | None = None) -> int:
+        """Delete every expired row — of one collection, or of all; returns how
+        many."""
         await self.setup()
         pool = self._initialized_pool
-        result = await pool.execute(
-            f"DELETE FROM {self._table_name} "  # noqa: S608 — the name is Alembic's
-            "WHERE expires_at IS NOT NULL AND expires_at < now()"
-        )
+        if collection is None:
+            result = await pool.execute(
+                f"DELETE FROM {self._table_name} "  # noqa: S608 — the name is Alembic's
+                "WHERE expires_at IS NOT NULL AND expires_at < now()"
+            )
+        else:
+            result = await pool.execute(
+                f"DELETE FROM {self._table_name} "  # noqa: S608 — the name is Alembic's
+                "WHERE collection = $1 AND expires_at IS NOT NULL AND expires_at < now()",
+                collection,
+            )
         # asyncpg answers the command tag: "DELETE <n>".
         return int(result.rsplit(" ", 1)[-1])
 
