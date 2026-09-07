@@ -229,3 +229,30 @@ async def test_more_form_fields_than_the_cap_are_refused_not_enumerated(method):
     assert response.status_code == 400
     assert response.json()["error"] == "invalid_request"
     assert str(MAX_FORM_FIELDS) in response.json()["error_description"]
+
+
+# --- the reader itself ----------------------------------------------------------------
+
+
+async def test_a_declared_length_over_the_budget_reads_nothing():
+    """The cheap half: with `Content-Length` past the budget the reader never
+    asks for a byte; without the header it reads up to the first chunk past
+    the budget and no further."""
+    from app.auth.body import read_bounded
+
+    asked: list[int] = []
+
+    async def receive() -> dict:
+        asked.append(1)
+        return {"type": "http.request", "body": b"x" * 1024, "more_body": True}
+
+    declared = {"type": "http", "headers": [(b"content-length", b"9000")]}
+    assert await read_bounded(declared, receive, 8192) is None
+    assert asked == []
+    undeclared = {"type": "http", "headers": []}
+    assert await read_bounded(undeclared, receive, 8192) is None
+    assert len(asked) == 9  # 8 KiB admitted, the ninth chunk is the one past it
+    malformed = {"type": "http", "headers": [(b"content-length", b"lots")]}
+    asked.clear()
+    assert await read_bounded(malformed, receive, 8192) is None
+    assert len(asked) == 9  # a length that is not a number declares nothing

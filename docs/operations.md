@@ -396,6 +396,13 @@ Neither touches access tokens — revoke those from Settings once you are back i
 then `docker compose up -d`. The gate runs both of these lockouts and their
 recoveries on every release.
 
+**`429 Too Many Attempts`.** Throttling is per address: your own wrong guesses slow
+your address down — doubling to five minutes at most — and the count resets after
+ten quiet minutes; somebody else's guesses never lock you out. The instance also
+checks at most thirty passwords a minute in total, so under a flood a correct
+password may be asked to retry in a second or two. Restarting the `api` container
+clears both.
+
 ### Signing in through an identity provider (OIDC mode)
 
 Instead of a password, the owner can sign in at an OpenID Connect provider —
@@ -485,6 +492,15 @@ client secret would add nothing here, since anyone can register. Claude web and
 ChatGPT web bring their own client metadata documents instead of registering and
 authenticate the way those documents say, on every endpoint.
 
+Because anyone can register, a registration is bounded: it lives **24 hours unless
+a grant links it** — a client that registers and never completes the sign-in is
+forgotten, one that does is kept for as long as it is linked — and the same
+lifetime applies to a metadata document the instance fetched for a client that
+never linked. An address may register twenty clients an hour (`429` past that),
+the instance keeps at most 1024 live client records (`503` with `Retry-After`
+past that, until unlinked ones expire), and a request body to any of the OAuth
+routes is capped at 16 KiB. None of this touches a linked client.
+
 Ending a link: a client that revokes either of its tokens (`POST /mcp/revoke`) ends
 the whole grant at once — its access token, its refresh token, and, best effort,
 the provider's own refresh token — recorded as `auth.mcp_grant_revoked`, and it
@@ -570,7 +586,16 @@ docker compose exec api python -m app.auth.recovery prune-audit --older-than-day
 ```
 
 Use a different positive day count if your policy requires it. Take a database
-backup first if those events must remain available elsewhere.
+backup first if those events must remain available elsewhere. To run the same
+prune automatically — once at start, then daily — set `AUDIT_RETENTION_DAYS` in
+`.env` to the number of days to keep; unset, nothing is pruned unless you run the
+command.
+
+Host and Origin refusals are recorded within a budget: ten rows a minute per
+address and sixty per instance, the rest counted and written as one
+`ingress.refusals_suppressed` row with the next recorded refusal — a flood of
+refused requests cannot grow the table by a row per request, and the first rows of
+it keep their address and path.
 
 ### Access logs and callback credentials
 
@@ -772,6 +797,7 @@ the API. `.env.example` documents every key. The ones worth knowing:
 | `MCP_OAUTH_ALLOWED_REDIRECT_URIS` | — | OIDC mode, optional. Comma-separated patterns a dynamically registering MCP client may use as its callback (`http://localhost:*`). Narrows registration, never replaces it; applies to every client kind when set, so it must also admit the web clients' callbacks. Leave unset unless you have a reason. |
 | `ALLOWED_ORIGINS` | — | Extra browser origins allowed to write, beyond the instance's own and loopback ones. Rarely needed. |
 | `TRUSTED_PROXIES` | — | [The four settings](#trusted_proxies). `127.0.0.1` for a proxy on this host; a connector's or proxy's own address otherwise. |
+| `AUDIT_RETENTION_DAYS` | — | Optional. Prune security audit rows older than this many days, at start and daily — see [Security audit retention](#security-audit-retention). Unset: keep until you prune by hand. |
 | `REFERENCE_CURRENCY` | `AUD` | Your currency — **first-run bootstrap only**. The migration seeds it into the instance settings; after that the database row is the setting (`PATCH /settings`), and editing the env var does nothing. Changing the setting affects new entries only — stored snapshots keep the currency they were recorded in. |
 | `DATABASE_URL` | — | Set it to use a Postgres you manage yourself; the `POSTGRES_*` values then only configure the bundled `db`. |
 

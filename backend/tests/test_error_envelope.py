@@ -257,6 +257,9 @@ _HANDLER_CODES = {
     # answer it before any handler (#221 item 1), and nginx's
     # `client_max_body_size` answers the same code on the same routes.
     "ingress.body_too_large",
+    # Rendered by the MCP OAuth registration guard when the client-record
+    # collection is at its cap (#221 item 2); no raise site.
+    "auth.mcp_registrations_full",
 }
 
 # The two bridge helpers whose `Diagnostic(code=exc.code, params={**...})` the

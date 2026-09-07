@@ -208,6 +208,7 @@
       "bearer_invalid": "That access token isn't valid.",
       "csrf_failed": "This request didn't carry a valid session token. Reload the page and try again.",
       "forbidden": "Your access doesn't allow that action.",
+      "mcp_registrations_full": "This instance cannot register another MCP client right now; unused registrations expire after a day.",
       "login_failed": "That password isn't right.",
       "not_in_this_mode": "This instance doesn't sign in that way.",
       "oidc_provider_unavailable": "The identity provider couldn't be reached. Existing sessions still work; try again shortly.",
