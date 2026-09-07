@@ -41,6 +41,60 @@ Template:
 
 ---
 
+## 2026-09-08 — Claude Code (Fable 5.1) — #195 held behind the owner's security scan: the four mediums fixed as #221 → **PR #222 open, CI green, Codex review next**; release PR #220 waits (rebase + gate rerun after #222 merges)
+
+- **Done:** (1) **#195 run to the edge of the outward steps** (2026-09-07): `release/0.3.0`
+  at `ed48038` (tree `92015d9`) → **PR #220** (bump 0.3.0, design §5 flipped to Built,
+  operations *Upgrading to 0.3.0*, AGENTS roadmap 6 struck), CI green; the whole release
+  gate run on that tree — local packaged stack under Compose project `plamotrack-release`
+  (fresh volume; the dev volume was kept), `/api/meta` and MCP `serverInfo` 0.3.0, manifest
+  0.3.0/d5e9362140ea, matrix 0 failing, T10 clean; `deployment_gate.py --phase all` + tunnel
+  on testhost after a fresh-install reset — GREEN, exit 0, every phase (results comment on
+  #220). Notes, #30 and #195 closing comments drafted. (2) **The owner then ran a Codex
+  Security scan on `ed48038`**: NO-GO for Internet exposure until four medium availability
+  findings are fixed. Filed **#221**; fixed on `fix/scan-0.3.0-availability` → **PR #222**
+  (four commits, one per item): item 4 `FailureBudgets` — a ladder per (action, client
+  address) with decay + an instance-wide verification bucket (`app/auth/budget.py`,
+  `services/auth.py`, `services/oidc.py`, `routers/auth.py`); item 3 `RefusalBudget` on
+  the audit recorder + `AUDIT_RETENTION_DAYS` (closes #210); item 1 `RoutePolicy.max_body_bytes`
+  + one bounded reader (`app/auth/body.py`) in the pre-routing gate and the three protocol
+  guards (+ `BoundedBody` on consent), nginx exact locations generated as a second region
+  of `render_ingress.py`, 413 envelope `ingress.body_too_large`, `MAX_FORM_FIELDS`; item 2
+  `ClientRecords` on FastMCP's client collection (24 h lifetime until `keep` at issuance —
+  a permanent record stays permanent through FastMCP's refresh writes — cap 1024, quota
+  20/h/address, `count_live`/`cull_expired` on the store, `cull_if_due` from the registration
+  guard and `authorize`, FastMCP's CIMD cache a `BoundedCache`), 503
+  `auth.mcp_registrations_full`. Docs: design §5.6 rows + T8 + §5.9 item 11 (the calls),
+  operations, AGENTS rule 14, `.env.example`, the CI row in testing-and-review. Verified:
+  full backend **2641 passed**; CI Backend/Frontend/Integration green at `4b35c73`
+  (Integration = the matrix's new `body_budget_rows`/`origin_flood_rows` through the
+  packaged nginx + the new refusal-row count step); 25 `scan-` mutants in the tracked
+  harness **all killed**; six behavioural control probes **6 red on main / 6 green** on
+  the branch (file kept out of the tree; verbatim in the brief). Four lows filed, not
+  blockers: #223 CSV formula syntax, #224 OIDC endpoint validation, #225 MCP untrusted-text
+  marking, #226 HSTS. The release notes draft gained a scan section and lost #210.
+- **Decisions:** 0.3.0 not 0.2.11 (every caller's contract changed). The seven deliberate
+  calls are on PR #222 (the verification bucket can delay the owner by seconds under a
+  distributed flood; the suppressed count is written with a later window's first recorded
+  refusal; the registration cap is checked before the write, a race overshoots by nginx's
+  burst; the constants are constants; nginx's 413 has no `params.limit`; consent GET
+  unbounded; a CIMD lookup at the cap is an unknown client). Reviewer: **Codex** (M6
+  security work) — brief printed in the 2026-09-08 session chat, scratchpad copy.
+- **State:** `main` = `c527176` + this entry. PR #222 open at `4b35c73`, unreviewed. PR #220
+  open at `ed48038`, **stale once #222 merges** (rebase; the only expected conflict is
+  design.md's "Last revised" line — keep 08/09; §5.9 item 11 and the §5.6 rows are #222's).
+  No tag exists. testhost left in the gate's end state (OIDC mode, Keycloak up); a rerun
+  needs the fresh-install reset (`down -v`, `.env` from `.env.example`, `git archive` the
+  tree) — the memory file `plamotrack-194-deployment-gate-setup` has the exact steps. Gate
+  state dir `~/.plamotrack-gate/testhost…/` (the #194 run's moved aside). Dev overlay up;
+  tree clean; LXC untouched.
+- **Next:** Codex round(s) on #222 → merge → rebase `release/0.3.0` onto main → rerun the
+  release gate on the rebased tree (local step 4 + `--phase all` + tunnel after the
+  testhost reset) → merge #220 → tag `v0.3.0-alpha — the instance has an owner` on the
+  merge commit → push tag → `gh release create --prerelease --verify-tag` with the notes
+  (scratchpad `release-notes-v0.3.0-alpha.md`, the gate block replaced by the rerun's) →
+  post the #30/#195 comments, close both, close the M6 milestone. Then the LXC upgrade.
+
 ## 2026-09-07 — Claude Code (Fable 5.1) — #213 closed (already fixed); #214 fixed on `fix/214-rebind-purges-mcp-oauth-state` → PR #219 reviewed GO + 1 P3, fixed, **MERGED → `b333ebf`**; #206 closed / #210 deferred; #195 next
 
 - **Done:** (1) **#213 closed** as already fixed: rounds 2–3 of #212 keyed both refresh
@@ -206,27 +260,3 @@ Template:
   **#206/#210/#213/#214** need a defer-or-fix call before the tag, #30 closes with the
   release. (3) Only then the LXC upgrade (back up first; `ALLOWED_HOSTS`; relink MCP
   clients; refresh the personal Gunpla skill).
-
-## 2026-09-06 — Codex (GPT-6 Astra) — #208 post-merge GO; feature branch deleted
-
-- **Done:** verified Daybreak's independent GO at `3f93b3c`, recorded in PR #208
-  issuecomment-5558944536: P3-5/P3-6 resolved, no new P1–P3 findings, all ten calls
-  accepted, no revert or corrective follow-up warranted. #208 was already squash-
-  merged as `bd40687`; #193 is closed and #212 remains integrated. No second merge.
-  Deleted local and remote `codex/193-audit-rate-limit-log-hygiene` at `f7f6089`,
-  after confirming its tree equals the squash merge. Remote deletion used a lease.
-- **Review evidence:** 113/113 privacy tests; independent negative control 70 red /
-  27 green; all 21 new anchors checked; 10 source mutants plus packaged aud-17/35
-  detected. Added temporary duplicate-XFF/empty-boundary and overlapping ASGI-task
-  attribution/reset probes (2 passed, removed afterward). CI at reviewed `3f93b3c`
-  passed (run 34029727544); the fix-head CI also passed. No code changed this turn.
-- **History/state:** preserved all 123 prior entries and rotated the oldest verbatim:
-  124 unique entries, five live. #212's merge record is archived intact. The separate
-  #208 worktree remains on main; the primary dirty #194 checkout is untouched.
-  PR body updated with the GO and added coverage. No release or deployment performed.
-- **Next:** fold queued aud-1..58 in a separate change after checking current anchors,
-  adding test_audit_privacy.py and test_access_logging.py to harness targets.
-  #194 and the separate end-of-M6 security/deployment gates remain: concurrent real-
-  socket attribution, live provider, TLS/Caddy/LXC/restore and long-duration limiter
-  behaviour are not signed off by this GO. #206/#210/#213/#214/#215 remain separate
-  questions. Keep the LXC upgrade behind the remaining M6 gates.
