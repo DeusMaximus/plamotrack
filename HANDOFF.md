@@ -41,6 +41,39 @@ Template:
 
 ---
 
+## 2026-09-07 — Claude Code (Fable 5.1) — #213 closed (already fixed), #214 fixed on `fix/214-rebind-purges-mcp-oauth-state` → PR #219 open; #206/#210 deferred; #195 next
+
+- **Done:** (1) **#213 closed** as already fixed: rounds 2–3 of #212 keyed both refresh
+  paths on the grant id (`exchange_refresh_token` and `_try_transparent_refresh` both take
+  `_one_transition(…, upstream_token_id)`); the comment on the issue points at the two lines.
+  What is not on record is a rotating-provider test — test coverage, not a defect. (2) **#214
+  fixed** on the branch (`0c76771`, **PR #219, awaiting review**): `recovery rebind-oidc`
+  purges the four grant collections of `mcp_oauth_state` in its own transaction under every
+  grant's advisory lock, records `auth.mcp_grant_revoked` per grant (`ended_by=rebind`), and
+  the command then asks the provider, best effort, to revoke what the records held
+  (`revoke_purged_grants_upstream` → `OidcProvider.revoke_token`, after the commit). New leaf
+  `app/auth/mcp_oauth_state.py` holds the collection names, `GRANT_COLLECTIONS`, the lock
+  key and the store — the proxy imports the service, so the service could not import the
+  proxy. Five new tests / 8 cases in `test_mcp_oauth.py` (two grants, a code, a transaction,
+  a pg_locks-pinned refresh in flight, the CLI on local settings, four provider failures);
+  16 `rbp-` harness cases (16/16 killed on the committed tree); negative control 9 red / 3 green on `40e4eea` (the
+  greens are the three pre-existing tests). Docs: operations, design §5.6/§5.9, AGENTS 13.
+- **Decisions:** #206 and #210 **deferred** past the M6 release (owner's call, 2026-09-07,
+  on the assessment in this session): #206 discloses only the Streamable HTTP verb set on a
+  path called `/mcp` and a fix means splitting the `RouteBinding` or widening the pre-routing
+  gate's charter plus restating three structural pins; #210 needs measurement, a policy and a
+  packaged-stack proof, on an Origin-only flood behind nginx at zero adoption, with
+  `prune-audit` already the retention answer. Both get a line in the release notes as known
+  limitations. #214's residual (deliberate call 1 on the PR): a grant *issued* concurrently
+  with the rebind can leave one record, refused at its next use and purged by the next rebind.
+- **State:** `main` at `40e4eea` + this hand-off; the fix is on the branch, **not merged**.
+  Full backend suite 2598 passed at `0c76771`; lint clean; no migration. Worktree `/private/tmp/plamotrack-214-main` (the
+  control) removed. testhost (LXC 117) untouched, still claimed local, Keycloak fixture up.
+- **Next:** review PR #219 (GLM default — small, local, its worst failure a purge that did
+  not happen; brief printed in the session chat); merge with `Closes #214`; then **#195**
+  as the previous entry lays out (gate step 4b on the tagged commit, bump via PR, tag,
+  `--prerelease`, #30 closes with it; notes carry #206/#210 as deferred). Then the LXC upgrade.
+
 ## 2026-09-07 — Claude Code (Opus 4.8) — #194 (M6-9) MERGED: PR #218 squash → `b32ffe2` after two Codex rounds (NO-GO→GO); #195 next
 
 - **Done:** #194 (M6-9, reference TLS deployment + the T12/T13 gate + the ops/README
@@ -188,34 +221,3 @@ Template:
   socket attribution, live provider, TLS/Caddy/LXC/restore and long-duration limiter
   behaviour are not signed off by this GO. #206/#210/#213/#214/#215 remain separate
   questions. Keep the LXC upgrade behind the remaining M6 gates.
-
-## 2026-09-06 — Codex (GPT-6 Astra) — #208 merged; independent post-merge verdict pending
-
-- **Done:** committed P3-5/P3-6 and the redirect-test repair as `f7f6089`, pushed,
-  and squash-merged PR #208 to main as `bd40687` after Backend, Frontend and
-  Integration CI passed at the exact fix head (run 34029077765). #193 is closed.
-  The PR body records the fixes, exact mutation recipes and coverage boundaries.
-- **Review status:** the owner explicitly requested merge before the next Daybreak
-  verdict. The prior review at `43c5826` remains NO-GO; the merge is not a new GO.
-  A post-merge independent review is pending, findings numbered from 7. The separate
-  end-of-M6 security/deployment gate remains; no release or LXC upgrade performed.
-- **Validation:** local 2537 backend cases across full/focused runs; all 514 tracked
-  plus 21 new mutants detected across full pass/replays. Full tracked pass was
-  513/514 until oidc-19's collapsed Host/BASE witness was repaired; no production
-  redirect change. aud-57/58 cover start/refused-callback siblings. Exact restoration,
-  lint/format/generated ingress/whitespace pass. CI supplies the fresh complete run.
-- **History:** all 122 prior branch entries and main's #212 records are unchanged.
-  Added this entry and rotated the oldest verbatim: 123 unique entries, five live.
-  The primary dirty #194 checkout is untouched. The #208 worktree is now on main;
-  this follow-up commit only records the completed merge and rotates the handoff.
-- **Review materials:** `/private/tmp/plamotrack208-daybreak-postmerge-brief.md`
-  pins the merge/fix/review commits and is printed in full for the owner. The local
-  `/private/tmp/plamotrack208-daybreak-run.py` wrapper selects a dedicated review DB;
-  original dev DB remains healthy. Prior task DBs were removed. Evidence/recipes:
-  `/private/tmp/plamotrack208-r2-*.log` and `/private/tmp/plamotrack208-r2-mutants/`.
-- **Next:** obtain Daybreak's post-merge verdict and address findings on a follow-up
-  branch. Fold queued aud-1..58 separately after rechecking anchors, adding
-  test_audit_privacy.py and test_access_logging.py to harness targets. #206/#210/
-  #213/#214/#215 remain separate questions. #194 and the remaining M6 gates precede
-  the LXC upgrade; no deployment sign-off follows from this merge.
-
