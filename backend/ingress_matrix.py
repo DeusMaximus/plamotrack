@@ -3,9 +3,13 @@
 
     uv run python ingress_matrix.py [BASE_URL] [--allowed-host NAME]
                                     [--setup-token TOKEN] [--password PASSWORD]
-                                    [--token-out PATH] [--log-secrets-out PATH]
+                                    [--credential-file PATH] [--token-out PATH]
+                                    [--log-secrets-out PATH] [--mode local|oidc]
+                                    [--public-base-url URL] [--behind-proxy]
+                                    [--hold-stream SECONDS] [--ca-cert PATH]
 
-BASE_URL defaults to http://127.0.0.1:8080. `--allowed-host` names an entry the
+BASE_URL defaults to http://127.0.0.1:8080; an https BASE_URL is reached through
+the system trust store (or `--ca-cert`'s bundle). `--allowed-host` names an entry the
 stack's `.env` carries in ALLOWED_HOSTS, which enables T3's "a listed name" rows
 at the ingress layer; CI sets `ci.plamotrack.test`.
 
@@ -66,6 +70,20 @@ pointer. The OIDC run is the release gate's, by hand (`.agents/testing-and-
 review.md`); `--public-base-url` names the stack's `PUBLIC_BASE_URL` when it
 differs from the address the matrix connects to.
 
+T12 (#194) runs the same matrix through a TLS proxy in front of the stack.
+`--behind-proxy` skips the three hostile-Host rows — a proxy answers a foreign
+`Host` itself, so nginx's 421 is proven there with the real name before
+`ALLOWED_HOSTS` lists it — and every other row is expected to relay unchanged.
+`--credential-file` supplies an owner session the matrix cannot obtain itself
+(an OIDC login), which makes the OIDC-mode run a signed-in one; that session is
+used and never signed out. `--hold-stream SECONDS` opens a standalone MCP
+stream on `/mcp/` and on bare `/mcp`, holds it with the client silent, ends the
+session from another connection, and reports the longest gap between bytes
+(the SDK pings every 15 s, so a longer gap means something buffered). Rows
+whose expectation depends on the base name — a loopback `Origin` is allowed
+against a loopback name only — read the name and expect accordingly, so the
+CI run on 127.0.0.1 is unchanged.
+
 Snapshots responses, never a route table (§5.5). Exit status is the number of
 failing rows; every failure is printed with what was expected.
 """
@@ -78,9 +96,12 @@ import json
 import os
 import pathlib
 import secrets
+import socket
+import ssl
 import sys
 import time
 from dataclasses import dataclass, field, replace
+from ipaddress import ip_address
 from urllib.parse import urlsplit
 
 INITIALIZE = json.dumps(
@@ -95,10 +116,23 @@ INITIALIZE = json.dumps(
         },
     }
 ).encode()
+INITIALIZED = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}).encode()
 MCP_HEADERS = {
     "Accept": "application/json, text/event-stream",
     "Content-Type": "application/json",
 }
+#: The TLS context an https BASE_URL is reached through — the system trust
+#: store, or the bundle `--ca-cert` names for a private CA. Module state so
+#: `send()` keeps its signature; `main` replaces it before the first request.
+TLS_CONTEXT: ssl.SSLContext = ssl.create_default_context()
+#: The three T3 rows nginx answers from its default-deny server. A TLS proxy in
+#: front of the stack answers a foreign `Host` itself — a name that matches no
+#: site block never reaches nginx — so `--behind-proxy` skips exactly these.
+HOSTILE_HOST_LABELS = (
+    "hostile Host → nginx 421",
+    "hostile Host on the API → nginx 421",
+    "hostile Host on MCP → nginx 421",
+)
 JSON_404 = {"detail": "Not Found"}
 SECURITY_HEADERS = {
     "x-content-type-options": "nosniff",
@@ -195,9 +229,32 @@ class Tokens:
     read: Bearer
 
 
+def is_loopback_base(base: str) -> bool:
+    """Whether BASE_URL names loopback — `localhost` or a loopback address — the
+    reading the app's Origin rule makes of a request's Host (§5.6): the
+    loopback-to-loopback allowance needs both sides."""
+    host = urlsplit(base).hostname or ""
+    if host == "localhost":
+        return True
+    try:
+        return ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def default_port(base: str) -> int:
+    parts = urlsplit(base)
+    return parts.port or (443 if parts.scheme == "https" else 80)
+
+
 def send(base: str, row: Row, host_override: str | None = None) -> Response:
     parts = urlsplit(base)
-    conn = http.client.HTTPConnection(parts.hostname, parts.port or 80, timeout=30)
+    if parts.scheme == "https":
+        conn: http.client.HTTPConnection = http.client.HTTPSConnection(
+            parts.hostname, default_port(base), timeout=30, context=TLS_CONTEXT
+        )
+    else:
+        conn = http.client.HTTPConnection(parts.hostname, default_port(base), timeout=30)
     headers = dict(row.headers)
     if host_override is not None:
         headers["Host"] = host_override
@@ -614,9 +671,39 @@ def rows(
     tokens: Tokens | None = None,
     *,
     challenge: str = "Bearer",
+    behind_proxy: bool = False,
 ) -> list[Row]:
     owner = credential.read() if credential is not None else {}
     mcp_auth = tokens.write.header() if tokens is not None else {}
+    hostile_host_rows = [
+        Row(
+            HOSTILE_HOST_LABELS[0],
+            "GET",
+            "/",
+            421,
+            headers={"Host": "evil.example"},
+            json_code="ingress.host_not_allowed",
+            security_headers=False,
+        ),
+        Row(
+            HOSTILE_HOST_LABELS[1],
+            "GET",
+            "/api/healthz",
+            421,
+            headers={"Host": "evil.example"},
+            json_code="ingress.host_not_allowed",
+            security_headers=False,
+        ),
+        Row(
+            HOSTILE_HOST_LABELS[2],
+            "POST",
+            "/mcp/",
+            421,
+            headers={**MCP_HEADERS, "Host": "evil.example"},
+            json_code="ingress.host_not_allowed",
+            security_headers=False,
+        ),
+    ]
 
     def guarded(label: str, path: str, *, content_type: str) -> Row:
         """A collection-read positive: 200 for the signed-in owner, else the
@@ -757,33 +844,10 @@ def rows(
             else []
         ),
         # --- T3 at the ingress ------------------------------------------------------------
-        Row(
-            "hostile Host → nginx 421",
-            "GET",
-            "/",
-            421,
-            headers={"Host": "evil.example"},
-            json_code="ingress.host_not_allowed",
-            security_headers=False,
-        ),
-        Row(
-            "hostile Host on the API → nginx 421",
-            "GET",
-            "/api/healthz",
-            421,
-            headers={"Host": "evil.example"},
-            json_code="ingress.host_not_allowed",
-            security_headers=False,
-        ),
-        Row(
-            "hostile Host on MCP → nginx 421",
-            "POST",
-            "/mcp/",
-            421,
-            headers={**MCP_HEADERS, "Host": "evil.example"},
-            json_code="ingress.host_not_allowed",
-            security_headers=False,
-        ),
+        # The hostile-Host rows are nginx's own 421; behind a TLS proxy the
+        # proxy answers a foreign Host before nginx sees it (T12 proves the 421
+        # through the proxy with the real name, before ALLOWED_HOSTS lists it).
+        *([] if behind_proxy else hostile_host_rows),
         Row(
             "hostile Origin on a write → app 403",
             "POST",
@@ -861,15 +925,43 @@ def write_rows(
     undone; the absent-Origin write is now the app's own 403 — a cookie-borne
     write must say where it came from (§5.6, CSRF), and nginx adds no Origin on
     the way through. Anonymous, all three reach the dependency's 401: the ingress
-    passed them (its refusals are 403), the app withheld the write."""
+    passed them (its refusals are 403), the app withheld the write.
+
+    When BASE_URL is not a loopback name (a run through a TLS proxy, #194), the
+    loopback Origin is the guard's 403 `ingress.origin_not_allowed` signed in or
+    not: the loopback-to-loopback allowance needs both sides, and the guard
+    speaks before the dependency does."""
     parts = urlsplit(base)
     port = f":{parts.port}" if parts.port else ""
     json_type = {"Content-Type": "application/json"}
+    loopback = is_loopback_base(base)
 
-    def write(label: str, name: str, *, origin: str | None, host: str | None = None) -> Row:
+    def write(
+        label: str,
+        name: str,
+        *,
+        origin: str | None,
+        host: str | None = None,
+        forbidden: bool = False,
+    ) -> Row:
         headers = {**json_type}
         if host is not None:
             headers["Host"] = host
+        if forbidden:
+            if origin is not None:
+                headers["Origin"] = origin
+            if credential is not None:
+                headers.update(credential.write(origin))
+            return Row(
+                f"{label} → 403",
+                "POST",
+                "/api/retailers",
+                403,
+                headers=headers,
+                body=json.dumps({"name": name}).encode(),
+                json_code="ingress.origin_not_allowed",
+                content_type="application/json",
+            )
         if credential is None:
             if origin is not None:
                 headers["Origin"] = origin
@@ -900,9 +992,12 @@ def write_rows(
 
     cases = [
         write(
-            "loopback Origin on a write",
+            "loopback Origin on a write"
+            if loopback
+            else "loopback Origin against a non-loopback name",
             "Ingress Matrix Loopback",
             origin=f"http://localhost{port}",
+            forbidden=not loopback,
         ),
         write("absent Origin on a cookie-borne write", "Ingress Matrix Script", origin=None),
     ]
@@ -934,12 +1029,62 @@ def write_rows(
     return results
 
 
-def token_rows(base: str, tokens: Tokens) -> list[Row]:
+def token_rows(
+    base: str, tokens: Tokens, *, mode: str = "local", public_base_url: str | None = None
+) -> list[Row]:
     """The bearer through nginx (§5.5; #189): what each grant can and cannot do,
-    and the one answer every failed bearer earns."""
-    port = urlsplit(base).port
-    port = f":{port}" if port else ""
+    and the one answer every failed bearer earns. The two rows that carry an
+    Origin send the request's own — the rule that holds on every base name,
+    where a loopback Origin holds on a loopback name alone (`write_rows`).
+
+    The two OIDC rows are on the mode axis: in local mode the routes exist and
+    answer their own 404 naming the mode; in OIDC mode `oidc/start` begins a
+    login (200) and the callback with a state nobody issued is the documented
+    302 to the SPA's root **built from `PUBLIC_BASE_URL`** — behind TLS, the T9
+    proof that a self Location names the public scheme and host, never the
+    plain-http socket's."""
+    parts = urlsplit(base)
+    origin = f"{parts.scheme}://{parts.netloc}"
     invalid = 'Bearer error="invalid_token"'
+    public = (public_base_url or base).rstrip("/")
+    if mode == "oidc":
+        oidc_rows = [
+            Row(
+                "api/auth/oidc/start in oidc mode → 200 (a login begins)",
+                "POST",
+                "/api/auth/oidc/start",
+                200,
+                headers={"Content-Type": "application/json", "Origin": origin},
+                body=b"{}",
+                content_type="application/json",
+            ),
+            Row(
+                "api/auth/oidc/callback with an unknown state → 302 to PUBLIC_BASE_URL",
+                "GET",
+                "/api/auth/oidc/callback?state=x&code=y",
+                302,
+                location=f"{public}/?auth_error=oidc_expired",
+            ),
+        ]
+    else:
+        oidc_rows = [
+            Row(
+                "api/auth/oidc/start in local mode → 404",
+                "POST",
+                "/api/auth/oidc/start",
+                404,
+                headers={"Content-Type": "application/json", "Origin": origin},
+                body=b"{}",
+                json_code="auth.not_in_this_mode",
+            ),
+            Row(
+                "api/auth/oidc/callback in local mode → 404, no Location",
+                "GET",
+                "/api/auth/oidc/callback?state=x&code=y",
+                404,
+                json_code="auth.not_in_this_mode",
+            ),
+        ]
     return [
         Row(
             "api/kits with a read token → 200",
@@ -983,31 +1128,18 @@ def token_rows(base: str, tokens: Tokens) -> list[Row]:
             headers={
                 **tokens.write.header(),
                 "Content-Type": "application/json",
-                "Origin": f"http://localhost{port}",
+                "Origin": origin,
             },
             body=b'{"password":"irrelevant"}',
             json_code="auth.forbidden",
         ),
         # OIDC mode's routes exist in local mode too (#191) — registered and
         # answering 404 themselves, never the anonymous 401, so a mode is not a
-        # challenge (§5.5). The callback carries no Location: a browser sent
-        # here by a hostile page lands on the envelope, nowhere else.
-        Row(
-            "api/auth/oidc/start in local mode → 404",
-            "POST",
-            "/api/auth/oidc/start",
-            404,
-            headers={"Content-Type": "application/json", "Origin": f"http://localhost{port}"},
-            body=b"{}",
-            json_code="auth.not_in_this_mode",
-        ),
-        Row(
-            "api/auth/oidc/callback in local mode → 404, no Location",
-            "GET",
-            "/api/auth/oidc/callback?state=x&code=y",
-            404,
-            json_code="auth.not_in_this_mode",
-        ),
+        # challenge (§5.5); in local mode the callback carries no Location, so a
+        # browser sent here by a hostile page lands on the envelope, nowhere
+        # else. In OIDC mode they are live, and the callback's Location is the
+        # public origin (the docstring).
+        *oidc_rows,
         # A well-shaped *fake* token, never a live one: request URIs land in the
         # uvicorn and nginx access logs, and a real token there would put the
         # branch's own integration run in breach of T10 (Codex #202 round 1,
@@ -1043,6 +1175,133 @@ def token_rows(base: str, tokens: Tokens) -> list[Row]:
             content_type="application/json",
         ),
     ]
+
+
+def hold_stream(
+    base: str, bearer: Bearer, path: str, seconds: int, *, close_grace: float = 10.0
+) -> tuple[bool, str]:
+    """T12's held stream (§5.8): a standalone MCP GET stream on `path`, kept
+    open for `seconds` with this client silent, then ended by a DELETE of the
+    session on another connection. Fails if anything on the chain ends the
+    response before the deadline — an EOF, or the terminating chunk — or if
+    nothing ends it once the session is gone (a half-open stream nobody can
+    close is the other proxy failure). Reads the socket raw: the probe needs
+    liveness and the end of the response, not SSE parsing, and `http.client`'s
+    chunked reader does not survive a read timeout mid-frame.
+
+    Reports the maximum gap between bytes. The SDK's streams send a ping every
+    15 s (sse-starlette's default), so a proxy read timeout shorter than that
+    never fires here, and a probe that only waited would be green for the
+    wrong reason; the gap is the value that says which chain the bytes crossed
+    and whether anything on it buffered them."""
+    parts = urlsplit(base)
+    with_session = {**MCP_HEADERS, **bearer.header()}
+    opened = send(base, Row("initialize", "POST", path, 200, headers=with_session, body=INITIALIZE))
+    if opened.status != 200:
+        return False, f"initialize answered {opened.status}"
+    session_id = opened.headers.get("mcp-session-id")
+    if not session_id:
+        return False, "initialize set no mcp-session-id (a stateless mount holds no stream)"
+    with_session["Mcp-Session-Id"] = session_id
+    acknowledged = send(
+        base, Row("initialized", "POST", path, 202, headers=with_session, body=INITIALIZED)
+    )
+    if acknowledged.status != 202:
+        return False, f"notifications/initialized answered {acknowledged.status}"
+
+    raw = socket.create_connection((parts.hostname, default_port(base)), timeout=10)
+    if parts.scheme == "https":
+        raw = TLS_CONTEXT.wrap_socket(raw, server_hostname=parts.hostname)
+    request = (
+        f"GET {path} HTTP/1.1\r\nHost: {parts.netloc}\r\n"
+        f"Authorization: Bearer {bearer.raw}\r\nAccept: text/event-stream\r\n"
+        f"Mcp-Session-Id: {session_id}\r\nMCP-Protocol-Version: 2025-06-18\r\n"
+        "Connection: close\r\n\r\n"
+    ).encode()
+    try:
+        raw.sendall(request)
+        raw.settimeout(5)
+        # A tunnel that buffers until the origin's content-type is known may not
+        # flush the response headers until the stream's first ping (~15 s), so
+        # tolerate the read timeout up to the hold window rather than the socket's
+        # connect timeout — Caddy and a direct connection flush immediately.
+        header_deadline = time.monotonic() + max(seconds, 30)
+        head = b""
+        while b"\r\n\r\n" not in head:
+            try:
+                piece = raw.recv(4096)
+            except TimeoutError:
+                if time.monotonic() > header_deadline:
+                    return False, "no response headers within the hold window (a buffering proxy?)"
+                continue
+            if not piece:
+                return False, "closed before any response headers"
+            head += piece
+        header_block, body = head.split(b"\r\n\r\n", 1)
+        status_line, *header_lines = header_block.decode("latin-1").split("\r\n")
+        status = int(status_line.split(" ", 2)[1])
+        headers = {
+            name.strip().lower(): value.strip()
+            for name, value in (line.split(":", 1) for line in header_lines if ":" in line)
+        }
+        if status != 200 or not headers.get("content-type", "").startswith("text/event-stream"):
+            return False, f"GET answered {status} {headers.get('content-type')!r}"
+        chunked = headers.get("transfer-encoding", "").lower() == "chunked"
+        last_chunk = b"\r\n0\r\n\r\n"
+
+        started = time.monotonic()
+        last = started
+        chunks, received, max_gap = (1, len(body), 0.0) if body else (0, 0, 0.0)
+        tail = body[-len(last_chunk) :]
+        raw.settimeout(5)
+
+        def ended(piece: bytes) -> bool:
+            nonlocal tail
+            if not piece:
+                return True
+            tail = (tail + piece)[-len(last_chunk) :]
+            return chunked and tail.endswith(last_chunk)
+
+        while time.monotonic() - started < seconds:
+            try:
+                piece = raw.recv(4096)
+            except TimeoutError:
+                continue
+            now = time.monotonic()
+            if ended(piece):
+                return False, (
+                    f"the chain ended the stream after {now - started:.1f} s of {seconds}"
+                    f" ({chunks} chunk(s), max gap {max_gap:.1f} s)"
+                )
+            max_gap, last = max(max_gap, now - last), now
+            chunks, received = chunks + 1, received + len(piece)
+        held = time.monotonic() - started
+
+        deleted = send(base, Row("delete session", "DELETE", path, 200, headers=with_session))
+        delete_at = time.monotonic()
+        closed_after = None
+        raw.settimeout(min(1.0, close_grace))
+        while time.monotonic() - delete_at < close_grace:
+            try:
+                piece = raw.recv(4096)
+            except TimeoutError:
+                continue
+            if ended(piece):
+                closed_after = time.monotonic() - delete_at
+                break
+        if deleted.status != 200:
+            return False, f"DELETE answered {deleted.status} after a {held:.1f} s hold"
+        if closed_after is None:
+            return False, (
+                f"still open {close_grace:g} s after DELETE"
+                f" (held {held:.1f} s, max gap {max_gap:.1f} s)"
+            )
+        return True, (
+            f"held {held:.1f} s (asked {seconds}); {chunks} chunk(s), {received} bytes;"
+            f" max gap {max_gap:.1f} s; ended {closed_after:.1f} s after DELETE"
+        )
+    finally:
+        raw.close()
 
 
 def revoked_rows(tokens: Tokens) -> list[Row]:
@@ -1253,11 +1512,49 @@ def main(argv: list[str]) -> int:
         default=None,
         help="the stack's PUBLIC_BASE_URL when it differs from BASE_URL (OIDC mode names it)",
     )
+    parser.add_argument(
+        "--credential-file",
+        default=None,
+        help="JSON {cookie, csrf_token} of a signed-in owner session the matrix cannot "
+        "obtain itself (an OIDC login); it is used, never signed out",
+    )
+    parser.add_argument(
+        "--ca-cert",
+        default=None,
+        help="a CA bundle to trust for an https BASE_URL (a private CA); else the system store",
+    )
+    parser.add_argument(
+        "--behind-proxy",
+        action="store_true",
+        help="BASE_URL is a TLS proxy in front of the stack: the hostile-Host rows, which the "
+        "proxy answers itself, are skipped",
+    )
+    parser.add_argument(
+        "--hold-stream",
+        type=int,
+        default=0,
+        metavar="SECONDS",
+        help="hold a standalone MCP stream open this long on /mcp/ and on bare /mcp (T12); 0 skips",
+    )
+    parser.add_argument(
+        "--skip-rate-limits",
+        action="store_true",
+        help="do not exercise nginx's per-address limiter — for a run behind a CDN whose "
+        "latency and URL normalisation make the per-second, per-spelling keying unobservable "
+        "(it is proven at the packaged layer instead)",
+    )
     args = parser.parse_args(argv)
     if args.setup_token is not None and args.password is None:
         parser.error("--setup-token needs --password (the password the claim sets)")
-    if args.token_out is not None and args.password is None:
-        parser.error("--token-out needs a signed-in owner (--password) to mint the token")
+    if args.credential_file is not None and args.password is not None:
+        parser.error("--credential-file supplies the session; --password is not used with it")
+    if args.token_out is not None and args.password is None and args.credential_file is None:
+        parser.error("--token-out needs a signed-in owner (--password or --credential-file)")
+    if args.hold_stream < 0:
+        parser.error("--hold-stream takes a number of seconds")
+    if args.ca_cert is not None:
+        global TLS_CONTEXT
+        TLS_CONTEXT = ssl.create_default_context(cafile=args.ca_cert)
 
     log_secrets = (
         {key: secrets.token_urlsafe(24) for key in ("oauth_code", "oauth_state", "referer_code")}
@@ -1266,7 +1563,13 @@ def main(argv: list[str]) -> int:
     )
     credential = None
     tokens = None
-    if args.password is not None:
+    supplied = args.credential_file is not None
+    if supplied:
+        session = json.loads(pathlib.Path(args.credential_file).read_text(encoding="utf-8"))
+        credential = Credential(cookie=session["cookie"], csrf_token=session["csrf_token"])
+        tokens = mint_tokens(args.base, credential)
+        print("using the supplied owner session (stays signed in); minted a write and a read token")
+    elif args.password is not None:
         credential = sign_in(args.base, setup_token=args.setup_token, password=args.password)
         if args.setup_token is not None:
             # A fresh-stack run proves both credential-bearing actions: claim,
@@ -1294,11 +1597,15 @@ def main(argv: list[str]) -> int:
             print(f"       {problem}")
 
     public_base_url = (args.public_base_url or args.base).rstrip("/")
+    if args.behind_proxy:
+        for label in HOSTILE_HOST_LABELS:
+            print(f"skip {'':6} {'':60} {label} (a proxy answers a foreign Host itself)")
     for row in rows(
         args.allowed_host,
         credential,
         tokens,
         challenge=mcp_challenge_value(args.mode, public_base_url),
+        behind_proxy=args.behind_proxy,
     ):
         run(row)
     for row in family_8_rows(args.mode, public_base_url):
@@ -1311,12 +1618,19 @@ def main(argv: list[str]) -> int:
     if credential is not None and tokens is not None:
         if log_secrets is not None:
             log_secrets.update(
-                password=args.password,
                 pat=tokens.write.raw,
                 session=credential.cookie.split("=", 1)[1],
             )
-        for row in token_rows(args.base, tokens):
+            if args.password is not None:
+                log_secrets["password"] = args.password
+        for row in token_rows(args.base, tokens, mode=args.mode, public_base_url=public_base_url):
             run(row)
+        if args.hold_stream:
+            for path in ("/mcp/", "/mcp"):
+                ok, message = hold_stream(args.base, tokens.write, path, args.hold_stream)
+                if not ok:
+                    failures += 1
+                print(f"{'ok ' if ok else 'FAIL'} {'HOLD':6} {path:60} {message}")
         revoke_token(args.base, credential, tokens.read)
         for row in revoked_rows(tokens):
             run(row)
@@ -1325,22 +1639,26 @@ def main(argv: list[str]) -> int:
             print(f"write token left live and written to {path}")
         else:
             revoke_token(args.base, credential, tokens.write)
-        sign_out(args.base, credential)
+        if not supplied:
+            sign_out(args.base, credential)
     if log_secrets is not None:
         write_private(args.log_secrets_out, json.dumps(log_secrets) + "\n")
         for problem in query_log_probes(args.base, args.mode, log_secrets):
             failures += 1
             print(f"FAIL LOG {problem}")
         print("query/referrer log probes sent; scan their private output with the container logs")
-    for problem in rate_limit_checks(args.base, args.mode):
-        failures += 1
-        print(f"FAIL {'RATE':6} {'':60} {problem}")
-    for row, resp in rate_limit_rows(args.base):
-        run(row, resp)
-    if log_secrets is not None:
-        for problem in query_log_probes(args.base, args.mode, log_secrets, throttled=True):
+    if args.skip_rate_limits:
+        print(f"skip {'RATE':6} {'':60} limiter checks skipped (--skip-rate-limits)")
+    else:
+        for problem in rate_limit_checks(args.base, args.mode):
             failures += 1
-            print(f"FAIL LOG {problem}")
+            print(f"FAIL {'RATE':6} {'':60} {problem}")
+        for row, resp in rate_limit_rows(args.base):
+            run(row, resp)
+        if log_secrets is not None:
+            for problem in query_log_probes(args.base, args.mode, log_secrets, throttled=True):
+                failures += 1
+                print(f"FAIL LOG {problem}")
     print(f"\n{failures} failing check(s)")
     return failures
 

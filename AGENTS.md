@@ -313,7 +313,14 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     policy registry (`app/auth/registry.py`, `API_ALIAS_REJECTIONS`) into the
     template by `scripts/render_ingress.py` (M6-2): a new root namespace owes a
     declaration there or fails `tests/test_ingress_generation.py`. The app is
-    authoritative and nginx never grants: development runs without it.
+    authoritative and nginx never grants: development runs without it. In the bundled
+    stack a **loopback entry in `TRUSTED_PROXIES` also trusts the Compose network's
+    gateway** (`frontend/nginx/15-plamotrack-server-names.envsh`, #194): a proxy on the
+    host — Caddy, the reference deployment — reaches nginx from that address, never
+    from `127.0.0.1`, and without the rule every visitor would key the rate limits and
+    the audit address on the gateway. Both spellings of `/mcp` carry the family's
+    settings (buffering off, the 1 h timeouts, the cleared hop-by-hop header), held
+    equal by the same test file.
 13. **Authorization is one dependency over a declared registry (M6-2, §5.5):** every
     request resolves to one `Principal` (`anon`, `owner`, `pat`, `mcp`, `internal`;
     scopes `collection:read`/`collection:write`/`instance:admin`, `write` implying
@@ -662,5 +669,8 @@ strangers.** No internal references, no assumed context, and disclose what isn't
 built rather than describing planned endpoints as if they exist. Collection and
 administrative access is authenticated — the owner login for the browser, personal
 access tokens for REST scripts and MCP clients (M6-3/M6-4); only liveness and the
-auth bootstrap answer anonymously — but there is no tested TLS path yet, so an alpha
-instance belongs on a trusted network.
+auth bootstrap answer anonymously — and since M6-9 (#194) there is a tested TLS path:
+Caddy with Cloudflare DNS-01 on the same host as the stack (the reference), a
+Cloudflare Tunnel variant, and the private-network case, the four documented ways to
+run it in `docs/operations.md`. Describe those and no others; every one of them was
+run through `backend/deployment_gate.py` before the docs said so (§5.8 T12/T13).

@@ -1,0 +1,18 @@
+# The test host's Caddyfile (rendered by host-prepare.sh into /etc/caddy/Caddyfile).
+# The first site block is deploy/caddy/Caddyfile with the name filled in — the
+# gate's precheck holds the two equal — and the second is the test fixture: the
+# Keycloak the OIDC-mode legs sign in at, behind the same Caddy so its issuer is
+# https as the API requires (backend/app/config.py, OIDC_ISSUER).
+PLAMOTRACK_TEST_NAME {
+    reverse_proxy 127.0.0.1:8080
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+}
+
+idp.PLAMOTRACK_TEST_NAME {
+    reverse_proxy 127.0.0.1:8081
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+}

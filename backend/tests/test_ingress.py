@@ -34,6 +34,7 @@ import os
 import subprocess
 import uuid
 from contextlib import asynccontextmanager
+from ipaddress import ip_network
 from pathlib import Path
 
 import pytest
@@ -1153,8 +1154,33 @@ def _nginx_server_names(public_base_url: str, web_bind: str, allowed_hosts: str)
     return {normalize_host(name) for name in names}
 
 
-def _nginx_trusted_proxy_directives(value: str) -> str:
-    env = {"PATH": os.environ["PATH"], "TRUSTED_PROXIES": value}
+# /proc/net/route as the kernel writes it: little-endian hex, the default route
+# first. 0112A8C0 is 192.168.18.1. The generator reads the file's *path* from
+# PLAMOTRACK_ROUTE_TABLE (a seam for this file, never a value), so a test feeds
+# it a table of its own and the host's real routes never leak in.
+ROUTE_TABLE_HEADER = (
+    "Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT\n"
+)
+ROUTE_TABLE_WITH_DEFAULT = (
+    ROUTE_TABLE_HEADER
+    + "eth0\t00000000\t0112A8C0\t0003\t0\t0\t0\t00000000\t0\t0\t0\n"
+    + "eth0\t0012A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
+)
+ROUTE_TABLE_WITHOUT_DEFAULT = (
+    ROUTE_TABLE_HEADER + "eth0\t0012A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
+)
+ROUTE_TABLE_GATEWAY = "192.168.18.1"
+
+
+def _nginx_trusted_proxy_directives(value: str, route_table: Path | None = None) -> tuple[str, str]:
+    """The rendered `set_real_ip_from` block and the generator's stderr. With no
+    route table the generator sees an empty one (`os.devnull`), so the host
+    running the tests never supplies a gateway of its own."""
+    env = {
+        "PATH": os.environ["PATH"],
+        "TRUSTED_PROXIES": value,
+        "PLAMOTRACK_ROUTE_TABLE": str(route_table) if route_table is not None else os.devnull,
+    }
     command = (
         f'. "{SERVER_NAMES_SCRIPT}" >/dev/null; printf "%s" "$PLAMOTRACK_TRUSTED_PROXY_DIRECTIVES"'
     )
@@ -1165,7 +1191,7 @@ def _nginx_trusted_proxy_directives(value: str) -> str:
         text=True,
         check=True,
     )
-    return result.stdout
+    return result.stdout, result.stderr
 
 
 @pytest.mark.parametrize("public_base_url,web_bind,allowed_hosts", SERVER_NAME_CORPUS)
@@ -1192,10 +1218,79 @@ def test_the_generator_drops_a_terminal_dot_and_a_port():
 
 
 def test_the_generator_renders_only_validated_trusted_proxy_directives():
-    assert _nginx_trusted_proxy_directives("10.0.0.5, 192.0.2.0/24, fd00::/8") == (
+    rendered, _ = _nginx_trusted_proxy_directives("10.0.0.5, 192.0.2.0/24, fd00::/8")
+    assert rendered == (
         "set_real_ip_from 10.0.0.5;\nset_real_ip_from 192.0.2.0/24;\nset_real_ip_from fd00::/8;\n"
     )
-    assert _nginx_trusted_proxy_directives("") == ""
+    assert _nginx_trusted_proxy_directives("") == ("", "")
+
+
+TRUSTED_PROXY_CORPUS = [
+    "",
+    "10.0.0.5",
+    "127.0.0.1",
+    "127.0.0.0/8",
+    "127.0.0.1/8",
+    "127.1.2.3/32",
+    "127.0.0.0/7",
+    "::1",
+    "::1/128",
+    "fd00::/8",
+    "0.0.0.0/0",
+    " 127.0.0.1 ,10.0.0.5",
+    "10.0.0.5,::1",
+]
+
+
+@pytest.mark.parametrize("value", TRUSTED_PROXY_CORPUS)
+def test_a_loopback_trusted_proxy_entry_also_trusts_the_docker_gateway(value, tmp_path):
+    """A loopback entry means "a proxy on this host". Inside the web container
+    that proxy arrives from the Compose network's gateway (docker-proxy /
+    MASQUERADE), never 127.0.0.1, so the generator adds the default route's
+    gateway — once, after the operator's own entries — exactly when Python's
+    `ip_network(...).is_loopback` says an entry is loopback (#194, mode R). The
+    entries themselves render as before, so a run without a loopback entry is
+    byte-identical to the previous release's."""
+    table = tmp_path / "route"
+    table.write_text(ROUTE_TABLE_WITH_DEFAULT)
+    rendered, stderr = _nginx_trusted_proxy_directives(value, table)
+    entries = [entry.strip() for entry in value.split(",") if entry.strip()]
+    expected = "".join(f"set_real_ip_from {entry};\n" for entry in entries)
+    trusts_host = any(ip_network(entry, strict=False).is_loopback for entry in entries)
+    if trusts_host:
+        expected += f"set_real_ip_from {ROUTE_TABLE_GATEWAY};\n"
+    assert rendered == expected
+    assert rendered.count(ROUTE_TABLE_GATEWAY) == (1 if trusts_host else 0)
+    assert "no default route" not in stderr
+
+
+@pytest.mark.parametrize("value", ["127.0.0.1", "::1"])
+def test_the_gateway_rule_without_a_default_route_warns_and_renders_the_entry_alone(
+    value, tmp_path
+):
+    table = tmp_path / "route"
+    table.write_text(ROUTE_TABLE_WITHOUT_DEFAULT)
+    rendered, stderr = _nginx_trusted_proxy_directives(value, table)
+    assert rendered == f"set_real_ip_from {value};\n"
+    assert "no default route" in stderr
+    # An absent table (the default in these tests) is the same case.
+    rendered, stderr = _nginx_trusted_proxy_directives(value)
+    assert rendered == f"set_real_ip_from {value};\n"
+    assert "no default route" in stderr
+
+
+def test_the_gateway_rule_reads_canonical_loopback_spellings_only(tmp_path):
+    """Documented miss, pinned so it is a decision and not a surprise: Python
+    reads the expanded IPv6 spelling as loopback, the sh generator does not. The
+    API accepts it (`ip_network`), nginx accepts it, and only the gateway line is
+    withheld — the operator writes `::1`. Widening the sh rule to every IPv6
+    spelling is not worth a second address parser in shell."""
+    table = tmp_path / "route"
+    table.write_text(ROUTE_TABLE_WITH_DEFAULT)
+    value = "0:0:0:0:0:0:0:1"
+    assert ip_network(value).is_loopback
+    rendered, _ = _nginx_trusted_proxy_directives(value, table)
+    assert rendered == f"set_real_ip_from {value};\n"
 
 
 @pytest.mark.parametrize("value", ["all", "10.0.0.1;return", "10.0.0.1\nallow", "*"])

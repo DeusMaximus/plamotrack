@@ -436,7 +436,11 @@ no secrets to forks, stale runs cancelled.
   The claim is real — a stack claimed by the matrix is claimed with that password.
   Signed in, it mints two access tokens for the bearer rows and revokes them at
   the end; `--token-out PATH` keeps the write one live and writes it there (mode
-  0600) for a following MCP-client step — never printed.
+  0600) for a following MCP-client step — never printed. An `https://` base is
+  reached through the system trust store (`--ca-cert` for a private CA);
+  `--behind-proxy` skips the three hostile-Host rows a TLS proxy answers itself;
+  `--hold-stream SECONDS` holds a standalone MCP stream on `/mcp/` and bare `/mcp`
+  and reports the longest gap between bytes (#194).
 
 ---
 
@@ -577,8 +581,27 @@ v0.2.4.1, v0.2.4.2), so it is not a formality either.
    last, and expect the peer to be rate-limited for a moment afterwards. Scan
    the complete API/nginx logs for every value in that private JSON, requiring
    an access record from each service first, as the CI T10 step does. This run
-   also probes query/Referer values on refused and throttled callbacks; it does
-   not perform a provider login (the OIDC lifecycle is the backend suite's).
+   also probes query/Referer values on refused and throttled callbacks; it does not perform a provider login
+   itself — `--credential-file PATH` (a JSON `{cookie, csrf_token}` from a login made
+   another way; the deployment gate below makes one headlessly) turns it into a
+   signed-in run, which the gate's `oidc` phase is.
+4b. **Deployment gate — T12 and T13 (#194), on a prepared host, not this machine.**
+   `.agents/deployment-gate/README.md` has the setup (a fresh Debian host, Caddy
+   with the cloudflare DNS module and `deploy/caddy/Caddyfile`, the Keycloak
+   fixture, a DNS token the operator writes on the host); then from `backend/`:
+   ```bash
+   GATE_IDP_PASSWORD=owner-password uv run python deployment_gate.py \
+     --base https://NAME --ssh root@HOST --idp https://idp.NAME --phase all \
+     [--tunnel-base https://TUNNEL --tunnel-proxy CONNECTOR-IP --host-ip HOST-LAN-IP]
+   ```
+   Every phase must end with zero failing checks: precheck, both lockouts and their
+   recoveries, the local-mode matrix over https with the stream held on both `/mcp`
+   spellings, the `TRUSTED_PROXIES` observation, the OIDC-mode matrix signed in, the
+   three restores with the documented commands verbatim, and — once the operator
+   has added the route — the tunnel. The results block it prints goes into the
+   release notes **as observed**; a number in it that was not produced by the run
+   is a defect in the notes. The docs may describe a deployment only when this
+   has passed against it (design §5.8).
 5. **Restore the dev overlay afterwards** — the packaged stack replaced the dev
    `db` container:
    ```bash
