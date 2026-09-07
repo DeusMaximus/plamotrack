@@ -341,6 +341,7 @@ from mcp.shared.auth import (
 from pydantic import AnyUrl, BaseModel, ConfigDict, ValidationError
 from sqlalchemy import text
 from starlette.applications import Starlette
+from starlette.datastructures import Headers
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
@@ -348,6 +349,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import error_codes
 from app.auth import tokens as token_format
+from app.auth.body import read_bounded, replay
 from app.auth.mcp_auth import PersonalAccessTokenVerifier
 from app.auth.mcp_oauth_state import (  # the two writers' shared contract (#214)
     GRANT_COLLECTION,
@@ -433,6 +435,12 @@ RESOURCE_PARAMETER = "resource"
 #: extension parameter the protocol says to ignore, however often it appears
 #: (RFC 6749 §3.1 as corrected by erratum 5708; Codex #212 round 8, f28), so the
 #: guard discards it before counting.
+#: Form fields a protocol request may carry, at most (#221 item 1): the token
+#: request is the widest at nine recognised parameters; the rest is what the
+#: protocol says to ignore, and `parse_qsl` refuses to enumerate past this.
+MAX_FORM_FIELDS = 64
+_TOO_MANY_FIELDS = ("invalid_request", f"more than {MAX_FORM_FIELDS} form fields")
+
 RECOGNISED_PARAMETERS: dict[str, frozenset[str]] = {
     AUTHORIZATION_PATH: frozenset(
         {
@@ -1408,12 +1416,18 @@ class ProtocolRequest:
     does not take pass through to the SDK (and the binding)."""
 
     def __init__(
-        self, app: ASGIApp, *, endpoint: str, accepts_resource: Callable[[str], bool]
+        self,
+        app: ASGIApp,
+        *,
+        endpoint: str,
+        accepts_resource: Callable[[str], bool],
+        max_body_bytes: int,
     ) -> None:
         self.app = app
         self.endpoint = endpoint
         self.accepts_resource = accepts_resource
         self.recognised = RECOGNISED_PARAMETERS[endpoint]
+        self.max_body_bytes = max_body_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["method"] not in ("GET", "POST"):
@@ -1424,12 +1438,21 @@ class ProtocolRequest:
                 await self.app(scope, receive, send)
                 return
             raw = scope["query_string"].decode("utf-8", "replace")
-            pairs = parse_qsl(raw, keep_blank_values=True)
+            try:
+                pairs = parse_qsl(raw, keep_blank_values=True, max_num_fields=MAX_FORM_FIELDS)
+            except ValueError:
+                await self._refuse(scope, receive, send, *_TOO_MANY_FIELDS)
+                return
             body: bytes | None = None
         else:
-            request = Request(scope, receive)
-            body = await request.body()
-            media_type = request.headers.get("content-type", "").split(";", 1)[0]
+            # The route's body budget (#221 item 1) — judged before the media
+            # type and before a byte past it is held; the wrong media type is
+            # then refused without the body having been read whole either.
+            body = await read_bounded(scope, receive, self.max_body_bytes)
+            if body is None:
+                await refuse_too_large(scope, receive, send, self.max_body_bytes)
+                return
+            media_type = Headers(scope=scope).get("content-type", "").split(";", 1)[0]
             if media_type.strip().lower() != FORM_MEDIA_TYPE:
                 await self._refuse(
                     scope,
@@ -1439,7 +1462,15 @@ class ProtocolRequest:
                     f"the request body must be {FORM_MEDIA_TYPE} (RFC 6749 §4.1.3)",
                 )
                 return
-            pairs = parse_qsl(body.decode("utf-8", "replace"), keep_blank_values=True)
+            try:
+                pairs = parse_qsl(
+                    body.decode("utf-8", "replace"),
+                    keep_blank_values=True,
+                    max_num_fields=MAX_FORM_FIELDS,
+                )
+            except ValueError:
+                await self._refuse(scope, receive, send, *_TOO_MANY_FIELDS)
+                return
         pairs = [(name, value) for name, value in pairs if name in self.recognised]
         refusal = self._refusal(pairs)
         if refusal is not None:
@@ -2424,21 +2455,26 @@ class DiscoveryDocument:
 
 
 class ClientMetadataBody:
-    """In front of the SDK's registration handler: a body that is not a JSON
-    document is RFC 7591 §3.2.2's `invalid_client_metadata` (400), where the
-    handler's unconditional `request.json()` would raise and the child app
+    """In front of the SDK's registration handler: a body past the route's
+    budget is 413 before it is read whole (#221 item 1); a body that is not a
+    JSON document is RFC 7591 §3.2.2's `invalid_client_metadata` (400), where
+    the handler's unconditional `request.json()` would raise and the child app
     would answer 500 without the profile (Codex #212 round 1, f4). The body is
     read once here and replayed to the handler; a JSON document that is not
     client metadata is the handler's own 400."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(self, app: ASGIApp, *, max_body_bytes: int) -> None:
         self.app = app
+        self.max_body_bytes = max_body_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        body = await Request(scope, receive).body()
+        body = await read_bounded(scope, receive, self.max_body_bytes)
+        if body is None:
+            await refuse_too_large(scope, receive, send, self.max_body_bytes)
+            return
         try:
             json.loads(body)
         except ValueError:
@@ -2448,11 +2484,45 @@ class ClientMetadataBody:
             )
             await response(scope, receive, send)
             return
+        await self.app(scope, replay(body), send)
 
-        async def replay() -> dict[str, Any]:
-            return {"type": "http.request", "body": body, "more_body": False}
 
-        await self.app(scope, replay, send)
+class BoundedBody:
+    """In front of a protocol route whose handler reads its own form — the
+    consent submission: the route's body budget (#221 item 1), the body read
+    within it here and replayed, or 413."""
+
+    def __init__(self, app: ASGIApp, *, max_body_bytes: int) -> None:
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["method"] not in ("POST", "PUT", "PATCH"):
+            await self.app(scope, receive, send)
+            return
+        body = await read_bounded(scope, receive, self.max_body_bytes)
+        if body is None:
+            await refuse_too_large(scope, receive, send, self.max_body_bytes)
+            return
+        await self.app(scope, replay(body), send)
+
+
+_TOO_LARGE = "The request body is larger than this endpoint accepts ({limit} bytes at most)."
+
+
+async def refuse_too_large(scope: Scope, receive: Receive, send: Send, limit: int) -> None:
+    """The 413 a protocol route answers past its body budget: the app's error
+    envelope (the same code the bundled nginx answers from
+    `client_max_body_size`), `no-store` stamped by the route's binding."""
+    response = JSONResponse(
+        {
+            "detail": _TOO_LARGE.format(limit=limit),
+            "code": error_codes.INGRESS_BODY_TOO_LARGE,
+            "params": {"limit": limit},
+        },
+        status_code=413,
+    )
+    await response(scope, receive, send)
 
 
 def root_discovery_routes(oauth: McpOAuth | None) -> list[Route]:
@@ -2496,13 +2566,22 @@ def prune_child_well_known(mcp_app: Starlette) -> None:
     ]
 
 
+def _declared_body_limit(child_path: str) -> int:
+    limit = MCP_OAUTH_ROUTES[MCP_MOUNT + child_path].max_body_bytes
+    if limit is None:
+        raise RuntimeError(f"the registry declares no body budget for {child_path}")
+    return limit
+
+
 def guard_registration_body(mcp_app: Starlette) -> None:
     """Put `ClientMetadataBody` in front of the SDK's registration route, under
     the `RouteBinding` the registry adds later (the route's endpoint, which the
-    registry keys on, is untouched)."""
+    registry keys on, is untouched), with the budget the registry declares."""
     for route in mcp_app.router.routes:
         if isinstance(route, Route) and route.path == _child_path(f"{MCP_MOUNT}/register"):
-            route.app = ClientMetadataBody(route.app)
+            route.app = ClientMetadataBody(
+                route.app, max_body_bytes=_declared_body_limit(route.path)
+            )
 
 
 def guard_protocol_requests(mcp_app: Starlette, proxy: PlamotrackOAuthProxy) -> None:
@@ -2510,16 +2589,20 @@ def guard_protocol_requests(mcp_app: Starlette, proxy: PlamotrackOAuthProxy) -> 
     under the `RouteBinding` the registry adds later (the route's endpoint,
     which the registry keys on, is untouched — the same shape as
     `guard_registration_body`), judging `resource` sets by the proxy's own
-    predicate."""
+    predicate and bodies by the registry's budgets; and `BoundedBody` in front
+    of the consent submission, whose handler reads its own form."""
     for route in mcp_app.router.routes:
-        if isinstance(route, Route) and route.path in (
-            AUTHORIZATION_PATH,
-            TOKEN_PATH,
-            REVOCATION_PATH,
-        ):
+        if not isinstance(route, Route):
+            continue
+        if route.path in (AUTHORIZATION_PATH, TOKEN_PATH, REVOCATION_PATH):
             route.app = ProtocolRequest(
-                route.app, endpoint=route.path, accepts_resource=proxy.accepts_resource
+                route.app,
+                endpoint=route.path,
+                accepts_resource=proxy.accepts_resource,
+                max_body_bytes=_declared_body_limit(route.path),
             )
+        elif route.path == _child_path(f"{MCP_MOUNT}/consent"):
+            route.app = BoundedBody(route.app, max_body_bytes=_declared_body_limit(route.path))
 
 
 def declare_child_verbs(mcp_app: Starlette) -> None:

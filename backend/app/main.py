@@ -48,6 +48,7 @@ from app.exceptions import (
     GoneError,
     InvalidInputError,
     NotFoundError,
+    PayloadTooLargeError,
     RateLimitedError,
     UnauthenticatedError,
     UnavailableError,
@@ -100,6 +101,7 @@ _DOMAIN_STATUS: dict[type[DomainError], int] = {
     ForbiddenError: 403,
     CredentialRejectedError: 403,
     GoneError: 410,
+    PayloadTooLargeError: 413,
     RateLimitedError: 429,
     UnavailableError: 503,
 }

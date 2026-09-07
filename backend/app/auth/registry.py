@@ -206,6 +206,12 @@ class RoutePolicy:
     #: The `ProtocolRole` for a route under the MCP mount or a discovery
     #: document (#192); None for a REST route.
     role: str | None = None
+    #: The most bytes a request body to this route may carry (#221 item 1):
+    #: declared for every anonymous route that takes one, enforced before any
+    #: parser by the pre-routing gate (the app's routes) and the protocol guards
+    #: (the mount's), and rendered into the bundled nginx as
+    #: `client_max_body_size` on the same route. None: the ingress's general cap.
+    max_body_bytes: int | None = None
 
     @property
     def required_scope(self) -> Scope | None:
@@ -471,6 +477,7 @@ def _classify(route: EffectiveRoute) -> RoutePolicy | None:
             # session read admits one and reports `anonymous` (§5.5, #189).
             bearer_refused=(family == 3),
             modes=modes,
+            max_body_bytes=AUTH_BODY_LIMIT if route.path in AUTH_BODY_ROUTES else None,
         )
 
     if "auth-tokens" in tags:
@@ -512,6 +519,23 @@ def _classify(route: EffectiveRoute) -> RoutePolicy | None:
 LOCAL_MODE_ROUTES: frozenset[str] = frozenset({"/auth/setup", "/auth/login"})
 OIDC_MODE_ROUTES: frozenset[str] = frozenset({"/auth/oidc/start", "/auth/oidc/callback"})
 
+#: Body budgets (#221 item 1). The family-3 actions carry a JSON body of a
+#: token and a password — a few hundred bytes; the schema admits a 4096-char
+#: password, which JSON-escaped is under 32 KiB. A protocol route's form or
+#: registration document — a PKCE verifier, a `private_key_jwt` assertion, an
+#: inline `jwks` — is a few KiB. Whole multiples of 1 KiB, so nginx spells them.
+AUTH_BODY_LIMIT = 32 * 1024
+PROTOCOL_BODY_LIMIT = 16 * 1024
+#: The family-3 routes that take a body, by path — declared statically so the
+#: ingress render needs no live app; `tests/test_body_limits.py` holds it equal
+#: to the live route table (every unsafe family-3 route is here, nothing else).
+AUTH_BODY_ROUTES: tuple[str, ...] = (
+    "/auth/setup",
+    "/auth/login",
+    "/auth/logout",
+    "/auth/oidc/start",
+)
+
 
 #: Where the FastMCP child is mounted (§2). The registry's paths under it are
 #: the external spellings — `/mcp/authorize`, not the child's `/authorize`.
@@ -537,11 +561,17 @@ _PUBLIC_DISCOVERY = ResponseProfile(cache="public, max-age=3600")
 
 
 def _protocol(
-    path: str, methods: Iterable[str], role: str, response: ResponseProfile = _NO_STORE
+    path: str,
+    methods: Iterable[str],
+    role: str,
+    response: ResponseProfile = _NO_STORE,
+    *,
+    max_body_bytes: int | None = None,
 ) -> RoutePolicy:
     """A family-8 declaration: anonymous by protocol (FastMCP's handlers decide
     everything; the REST dependency never runs), `no-store` unless said
-    otherwise, one external spelling — the path itself."""
+    otherwise, one external spelling — the path itself — and, for a route that
+    takes a body, its budget."""
     return RoutePolicy(
         8,
         CredentialPolicy.PROTOCOL,
@@ -549,6 +579,7 @@ def _protocol(
         response,
         spellings=frozenset({path}),
         role=role,
+        max_body_bytes=max_body_bytes,
     )
 
 
@@ -583,20 +614,37 @@ DISCOVERY_ROUTES: dict[str, RoutePolicy] = {
 #: aliases are pruned before mounting and so declared nowhere.
 MCP_OAUTH_ROUTES: dict[str, RoutePolicy] = {
     f"{MCP_MOUNT}/register": _protocol(
-        f"{MCP_MOUNT}/register", ("POST", "OPTIONS"), ProtocolRole.REGISTRATION
+        f"{MCP_MOUNT}/register",
+        ("POST", "OPTIONS"),
+        ProtocolRole.REGISTRATION,
+        max_body_bytes=PROTOCOL_BODY_LIMIT,
     ),
     f"{MCP_MOUNT}/authorize": _protocol(
-        f"{MCP_MOUNT}/authorize", ("GET", "POST"), ProtocolRole.AUTHORIZATION
+        f"{MCP_MOUNT}/authorize",
+        ("GET", "POST"),
+        ProtocolRole.AUTHORIZATION,
+        max_body_bytes=PROTOCOL_BODY_LIMIT,
     ),
     f"{MCP_MOUNT}/consent": _protocol(
-        f"{MCP_MOUNT}/consent", ("GET", "POST"), ProtocolRole.CONSENT
+        f"{MCP_MOUNT}/consent",
+        ("GET", "POST"),
+        ProtocolRole.CONSENT,
+        max_body_bytes=PROTOCOL_BODY_LIMIT,
     ),
     f"{MCP_MOUNT}/auth/callback": _protocol(
         f"{MCP_MOUNT}/auth/callback", ("GET",), ProtocolRole.CALLBACK
     ),
-    f"{MCP_MOUNT}/token": _protocol(f"{MCP_MOUNT}/token", ("POST", "OPTIONS"), ProtocolRole.TOKEN),
+    f"{MCP_MOUNT}/token": _protocol(
+        f"{MCP_MOUNT}/token",
+        ("POST", "OPTIONS"),
+        ProtocolRole.TOKEN,
+        max_body_bytes=PROTOCOL_BODY_LIMIT,
+    ),
     f"{MCP_MOUNT}/revoke": _protocol(
-        f"{MCP_MOUNT}/revoke", ("POST", "OPTIONS"), ProtocolRole.REVOCATION
+        f"{MCP_MOUNT}/revoke",
+        ("POST", "OPTIONS"),
+        ProtocolRole.REVOCATION,
+        max_body_bytes=PROTOCOL_BODY_LIMIT,
     ),
 }
 
@@ -863,6 +911,86 @@ NGINX_REJECTIONS_BEGIN = (
     "# >>> generated: /api alias rejections (app/auth/registry.py) — do not edit"
 )
 NGINX_REJECTIONS_END = "# <<< end generated"
+
+#: The second generated region: the body budgets as exact `location` blocks
+#: (#221 item 1), each carrying its family's proxy settings and the budget as
+#: `client_max_body_size`. Rendered by `scripts/render_ingress.py` from the
+#: declarations above; `tests/test_ingress_generation.py` holds each block
+#: equal to its family's canonical block plus the one directive.
+NGINX_BODY_LIMITS_BEGIN = (
+    "# >>> generated: body budgets (app/auth/registry.py, max_body_bytes) — do not edit"
+)
+NGINX_BODY_LIMITS_END = "# <<< end generated body budgets"
+
+_BODY_LIMITS_PREAMBLE = (
+    "Body budgets (§5.6, resource exhaustion; #221 item 1). Each anonymous route\n"
+    "that takes a body has one in the route policy registry, enforced by the app\n"
+    "before any parser; these exact locations duplicate the cheap half here, so\n"
+    "an oversized body is refused before nginx spools it. Every block carries its\n"
+    "family's settings from the canonical location above it — an exact location\n"
+    "inherits none — plus the budget. Generated from the registry; see the\n"
+    "markers above."
+)
+
+#: nginx's per-family proxy directives, as the canonical `/api/` and `/mcp/`
+#: blocks carry them; the generated blocks repeat them verbatim.
+_API_FAMILY_DIRECTIVES = (
+    "set $upstream http://api:8000;",
+    "rewrite ^/api/(.*)$ /$1 break;",
+    "proxy_pass $upstream;",
+    "proxy_http_version 1.1;",
+    "proxy_set_header Host $http_host;",
+    "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+    "proxy_set_header X-Forwarded-Proto $scheme;",
+    "proxy_set_header X-Plamotrack-Client-Address $remote_addr;",
+)
+_MCP_FAMILY_DIRECTIVES = (
+    "set $upstream http://api:8000;",
+    "proxy_pass $upstream;",
+    "proxy_http_version 1.1;",
+    "proxy_buffering off;",
+    "proxy_cache off;",
+    "proxy_read_timeout 1h;",
+    "proxy_send_timeout 1h;",
+    'proxy_set_header Connection "";',
+    "proxy_set_header Host $http_host;",
+    "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
+    "proxy_set_header X-Forwarded-Proto $scheme;",
+    "proxy_set_header X-Plamotrack-Client-Address $remote_addr;",
+)
+
+
+def body_limits() -> tuple[tuple[str, int, tuple[str, ...]], ...]:
+    """Every declared body budget as (external spelling, bytes, the family's
+    nginx directives), in render order: the family-3 actions, then the
+    protocol routes."""
+    limits: list[tuple[str, int, tuple[str, ...]]] = [
+        (f"/api{path}", AUTH_BODY_LIMIT, _API_FAMILY_DIRECTIVES) for path in AUTH_BODY_ROUTES
+    ]
+    for path, policy in MCP_OAUTH_ROUTES.items():
+        if policy.max_body_bytes is not None:
+            limits.append((path, policy.max_body_bytes, _MCP_FAMILY_DIRECTIVES))
+    return tuple(limits)
+
+
+def nginx_size(limit: int) -> str:
+    """A budget as nginx spells a size: whole KiB, which every budget is."""
+    if limit % 1024:
+        raise ValueError(f"a body budget must be a whole number of KiB: {limit}")
+    return f"{limit // 1024}k"
+
+
+def render_body_limits(indent: str = "    ") -> str:
+    """The exact `location` blocks for `body_limits()`, as they appear between
+    the body-budget markers in `frontend/nginx/default.conf.template`."""
+    lines = list(_as_comment(_BODY_LIMITS_PREAMBLE, indent))
+    for spelling, limit, directives in body_limits():
+        lines.append(f"{indent}location = {spelling} {{")
+        lines.append(f"{indent}    client_max_body_size {nginx_size(limit)};")
+        lines.extend(f"{indent}    {directive}" for directive in directives)
+        lines.append(f"{indent}}}")
+    return "\n".join(lines)
+
 
 _REJECTION_PREAMBLE = (
     "One spelling per family (§5.5). The generic /api/ rewrite below makes every\n"

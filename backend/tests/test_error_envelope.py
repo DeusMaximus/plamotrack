@@ -253,6 +253,10 @@ _HANDLER_CODES = {
     # nginx alone emits this one — `limit_req` on the three OAuth endpoints
     # (frontend/nginx/default.conf.template); the app has no raise site for it.
     "ingress.rate_limited",
+    # Rendered, never raised: the pre-routing gate and the protocol guards
+    # answer it before any handler (#221 item 1), and nginx's
+    # `client_max_body_size` answers the same code on the same routes.
+    "ingress.body_too_large",
 }
 
 # The two bridge helpers whose `Diagnostic(code=exc.code, params={**...})` the

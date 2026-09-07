@@ -299,6 +299,21 @@ jobs:
           --token-out="$RUNNER_TEMP/plamotrack-pat"
           --log-secrets-out="$RUNNER_TEMP/plamotrack-log-secrets"
 
+      # #210 / #221 item 3 at the packaged layer: the matrix fired thirty
+      # hostile-Origin writes at a collection route (all refused) beside its
+      # other hostile-Origin rows; the refusal budget lets at most ten of one
+      # address's refusals per minute reach the audit table, so the run's rows
+      # for that event sit at the bound, not at the request count.
+      - name: Check the refusal budget bounded the audit rows
+        run: |
+          ROWS="$(docker compose exec -T db sh -c 'exec psql -At -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+          SELECT count(*) FROM audit_event WHERE event_type = 'ingress.origin_rejected';
+          SQL
+          )"
+          echo "ingress.origin_rejected rows after the run: $ROWS"
+          test "$ROWS" -ge 1 && test "$ROWS" -le 10 \
+            || { echo "expected between 1 and 10 rows — the per-address refusal budget"; exit 1; }
+
       # The transport is bearer-only (§5.5 family 7; #189): a real MCP client
       # with the token the matrix minted lists the tools through nginx, and
       # the same client without one is refused at the handshake.

@@ -469,6 +469,9 @@
         "supported_version"
       ]
     },
+    "ingress.body_too_large": {
+      "params": []
+    },
     "ingress.host_not_allowed": {
       "params": [
         "setting"

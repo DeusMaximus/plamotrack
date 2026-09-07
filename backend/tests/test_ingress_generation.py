@@ -19,10 +19,15 @@ from pathlib import Path
 from app.auth.registry import (
     API_ALIAS_REJECTIONS,
     MCP_TRANSPORT_POLICY,
+    NGINX_BODY_LIMITS_BEGIN,
+    NGINX_BODY_LIMITS_END,
     NGINX_REJECTIONS_BEGIN,
     NGINX_REJECTIONS_END,
+    body_limits,
     build_route_index,
+    nginx_size,
     render_api_alias_rejections,
+    render_body_limits,
 )
 from app.main import app
 
@@ -30,10 +35,12 @@ TEMPLATE = Path(__file__).resolve().parents[2] / "frontend/nginx/default.conf.te
 INDENT = "    "
 
 
-def _generated_region() -> str:
+def _generated_region(
+    begin_marker: str = NGINX_REJECTIONS_BEGIN, end_marker: str = NGINX_REJECTIONS_END
+) -> str:
     text = TEMPLATE.read_text(encoding="utf-8")
-    begin = f"{INDENT}{NGINX_REJECTIONS_BEGIN}"
-    end = f"{INDENT}{NGINX_REJECTIONS_END}"
+    begin = f"{INDENT}{begin_marker}"
+    end = f"{INDENT}{end_marker}"
     assert begin in text and end in text, "the generation markers are missing from the template"
     inner = text.split(begin, 1)[1].split(end, 1)[0]
     # Between the marker lines, minus the surrounding blank lines, is exactly the
@@ -113,7 +120,7 @@ def test_the_four_declared_rate_limit_families_have_separate_keys_and_bursts():
     # header; a client-supplied value can never pass through nginx unchanged.
     proxy_blocks = re.findall(r"location [^{]+\{([^}]+)\}", text)
     proxy_blocks = [block for block in proxy_blocks if "proxy_pass " in block]
-    assert len(proxy_blocks) == 7
+    assert len(proxy_blocks) == 7 + len(body_limits())
     for block in proxy_blocks:
         assert "proxy_set_header X-Plamotrack-Client-Address $remote_addr;" in block
         assert "limit_req " not in block, "location limits replace the shared server limits"
@@ -152,3 +159,61 @@ def test_the_two_mcp_spellings_share_one_family_configuration():
 
     assert "rewrite ^ /mcp/ break;" in directives(blocks["= /mcp"])
     assert directives(blocks["= /mcp"]) - {"rewrite ^ /mcp/ break;"} == directives(blocks["/mcp/"])
+
+
+# --- the body budgets (#221 item 1) ------------------------------------------------
+
+
+def _directives(block: str) -> set[str]:
+    lines = {line.strip() for line in block.splitlines()}
+    return {line for line in lines if line and not line.startswith("#")}
+
+
+def test_the_body_budget_region_equals_the_registry_render():
+    """The second generated region, held by the same drift guard as the first."""
+    assert _generated_region(NGINX_BODY_LIMITS_BEGIN, NGINX_BODY_LIMITS_END) == (
+        render_body_limits(INDENT)
+    )
+
+
+def test_every_body_budget_block_is_its_family_block_plus_the_budget():
+    """An exact location inherits nothing from the prefix location it shadows,
+    so each generated block must carry its family's settings verbatim — the
+    `/api/` block's for the family-3 actions, the `/mcp/` block's for the
+    protocol routes — plus exactly one `client_max_body_size`, spelled from the
+    registry's bytes. Anything else and an alias would shed a setting (§5.5)."""
+    text = TEMPLATE.read_text(encoding="utf-8")
+    blocks = {
+        match.group(1): match.group(2)
+        for match in re.finditer(r"location (= /[^ ]+|/api/|/mcp/) \{([^}]+)\}", text)
+    }
+    declared = {spelling: (limit, directives) for spelling, limit, directives in body_limits()}
+    assert declared, "the registry declares no body budgets"
+    for spelling, (limit, family_directives) in declared.items():
+        block = blocks[f"= {spelling}"]
+        family = "/mcp/" if spelling.startswith("/mcp/") else "/api/"
+        assert _directives(block) == _directives(blocks[family]) | {
+            f"client_max_body_size {nginx_size(limit)};"
+        }, spelling
+        assert set(family_directives) <= _directives(block), spelling
+        assert "limit_req " not in block, "location limits replace the shared server limits"
+    # Every location that sets a body size is a declared budget — none was
+    # typed by hand, and the server-wide 32m is the only other one.
+    sized = {
+        key[2:] for key in blocks if key.startswith("= /") and "client_max_body_size" in blocks[key]
+    }
+    assert sized == set(declared)
+    assert len(re.findall(r"client_max_body_size ", text)) == len(declared) + 1
+
+
+def test_an_oversized_body_earns_the_envelope_from_nginx_too():
+    """nginx's 413 is the app's envelope with the app's code and profile: the
+    same refusal from either layer (rule 12), as the 429 already is."""
+    text = TEMPLATE.read_text(encoding="utf-8")
+    assert "error_page 413 = @too_large;" in text
+    block = re.search(r"location @too_large \{([^}]+)\}", text)
+    assert block is not None
+    body = block.group(1)
+    assert '"code":"ingress.body_too_large"' in body
+    assert 'add_header Cache-Control "no-store" always;' in body
+    assert "return 413 " in body

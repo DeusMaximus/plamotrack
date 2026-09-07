@@ -76,6 +76,14 @@ class GoneError(DomainError):
     the setup token's route after the instance is claimed (§5.5, family 3)."""
 
 
+class PayloadTooLargeError(DomainError):
+    """A request body past the budget the route policy registry declares for
+    its route (`max_body_bytes`; §5.6 resource exhaustion; #221 item 1). 413.
+    Rendered — not raised — by the pre-routing gate for the app's routes and by
+    the protocol guards for the mount's, before the body is read whole; the
+    bundled nginx answers the same code from `client_max_body_size`."""
+
+
 class RateLimitedError(DomainError):
     """The failure budget is shut (429, §5.6 brute force): `retry_after` is the
     whole seconds until the next attempt is allowed, sent as `Retry-After` by the
