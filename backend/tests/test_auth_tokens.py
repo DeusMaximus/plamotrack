@@ -30,7 +30,7 @@ from sqlalchemy import func, select
 from app import error_codes
 from app.auth import credentials
 from app.auth import tokens as token_format
-from app.auth.budget import FailureBudget
+from app.auth.budget import FailureBudgets
 from app.auth.mcp_auth import INJECTED_MCP_PRINCIPAL_ATTR
 from app.auth.principal import Scope, pat
 from app.auth.registry import MCP_TOOL_SCOPES
@@ -433,7 +433,7 @@ async def test_every_401_carries_a_challenge_and_the_form_failures_are_403(anon_
     assert wrong_token.status_code == 403
     assert wrong_token.json()["code"] == error_codes.AUTH_SETUP_TOKEN_INVALID
     assert "www-authenticate" not in wrong_token.headers
-    setattr(app.state, BUDGET_ATTR, FailureBudget())
+    setattr(app.state, BUDGET_ATTR, FailureBudgets())
     await _claim(anon_client)
     async with AsyncClient(
         transport=ASGITransport(app=app, raise_app_exceptions=False), base_url="http://test"

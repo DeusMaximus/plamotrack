@@ -114,7 +114,7 @@ async def clean_tables(apply_migrations):
 # principal) or build a real session; `test_authorization.py` manages injection
 # per request on its own app.
 from app.auth import owner  # noqa: E402
-from app.auth.budget import FailureBudget  # noqa: E402
+from app.auth.budget import FailureBudgets  # noqa: E402
 from app.auth.mcp_auth import INJECTED_MCP_PRINCIPAL_ATTR  # noqa: E402
 from app.auth.resolver import INJECTED_PRINCIPAL_ATTR  # noqa: E402
 from app.auth.setup_token import setup_token_state  # noqa: E402
@@ -134,7 +134,7 @@ def _inject_owner():
     middleware reads only when no HTTP request is in flight (#189)."""
     setattr(app.state, INJECTED_PRINCIPAL_ATTR, owner())
     setattr(mcp_server, INJECTED_MCP_PRINCIPAL_ATTR, owner())
-    setattr(app.state, BUDGET_ATTR, FailureBudget())
+    setattr(app.state, BUDGET_ATTR, FailureBudgets())
     setup_token_state(app).consume()
     yield
     if hasattr(app.state, INJECTED_PRINCIPAL_ATTR):

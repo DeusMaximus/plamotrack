@@ -33,7 +33,7 @@ from sqlalchemy import select, update
 
 from app import error_codes
 from app.auth import recovery
-from app.auth.budget import FailureBudget
+from app.auth.budget import FailureBudgets
 from app.auth.dependency import ROUTE_INDEX_ATTR
 from app.auth.registry import RouteIndex
 from app.auth.sessions import PLAIN_COOKIE_NAME, PLAIN_OIDC_COOKIE_NAME
@@ -218,7 +218,8 @@ async def test_start_on_an_unbound_instance_needs_the_setup_token():
     (throttled,) = await _events(audit.LOGIN_THROTTLED)
     assert throttled.target == "/auth/oidc/start"
     assert throttled.principal_kind == "anon"
-    assert getattr(live.state, BUDGET_ATTR).failures == 1
+    ladders = getattr(live.state, BUDGET_ATTR)
+    assert ladders.ladder("/auth/oidc/start", "127.0.0.1").failures == 1
     async with get_sessionmaker()() as session:
         assert (await session.execute(select(OidcLogin))).scalars().all() == []
 
@@ -266,8 +267,8 @@ async def test_a_hostile_origin_cannot_start_a_login():
     assert response.json()["code"] == error_codes.INGRESS_ORIGIN_NOT_ALLOWED
     async with get_sessionmaker()() as session:
         assert (await session.execute(select(OidcLogin))).scalars().all() == []
-    budget = getattr(live.state, BUDGET_ATTR, None)
-    assert budget is None or budget.failures == 0
+    budgets = getattr(live.state, BUDGET_ATTR, None)
+    assert budgets is None or budgets.tracked == 0
 
 
 async def test_start_ignores_a_forwarded_host_for_the_callback():
@@ -880,7 +881,7 @@ async def test_rebind_revokes_every_session_and_the_next_login_needs_the_token()
         assert (await browser.get("/kits")).status_code == 401
         assert (await browser.get("/auth/session")).json()["state"] == "unclaimed"
         assert (await _start(browser)).status_code == 403
-        setattr(live.state, BUDGET_ATTR, FailureBudget())  # past the throttle; T8 is above
+        setattr(live.state, BUDGET_ATTR, FailureBudgets())  # past the throttle; T8 is above
         new_token = _issue_setup_token(live)
         rebound = await _sign_in(fake, browser, sub=STRANGER_SUB, setup_token=new_token)
         assert _auth_error(rebound) is None

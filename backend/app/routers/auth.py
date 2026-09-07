@@ -3,8 +3,9 @@
 Thin over `services/auth.py` (rule 1): the service owns the state changes and the
 audit rows, the router owns the HTTP shell — the session cookie, the setup-token
 check that lives in the process rather than the database, and the CSRF token
-handed back to the owner. The failure budget is one per instance, on `app.state`
-(the service reads it); the setup token's digest lives there too.
+handed back to the owner. The failure budgets — a ladder per action and client
+address, one verification budget for the instance — live on `app.state` (the
+service reads them); the setup token's digest lives there too.
 
 Every route here is classified **anonymous** by the registry: setup and login
 must answer before any credential exists, and each action does its own check —
@@ -21,7 +22,7 @@ from fastapi.responses import RedirectResponse
 
 from app import error_codes
 from app.auth import credentials
-from app.auth.budget import FailureBudget
+from app.auth.budget import FailureBudgets
 from app.auth.mode import OIDC_PROVIDER_ATTR, auth_mode_of
 from app.auth.principal import PrincipalKind
 from app.auth.resolver import RAW_SESSION_TOKEN_ATTR
@@ -51,7 +52,9 @@ from app.services.oidc import OidcLoginRefused, OidcProvider
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-#: The attribute on `app.state` holding the one login/setup failure budget.
+#: The attribute on `app.state` holding the process's login/setup failure
+#: budgets — a ladder per (action, client address) and the instance's
+#: verification budget (`app.auth.budget`).
 BUDGET_ATTR = "login_budget"
 # `OIDC_PROVIDER_ATTR` — the configured `OidcProvider` on `app.state`, whose
 # presence *is* the mode as the routes see it (#191) — lives in `app.auth.mode`
@@ -64,12 +67,12 @@ _NOT_IN_THIS_MODE = "This instance does not sign in that way; see AUTH_MODE."
 AUTH_ERROR_PARAM = "auth_error"
 
 
-def _budget(request: Request) -> FailureBudget:
-    budget = getattr(request.app.state, BUDGET_ATTR, None)
-    if budget is None:
-        budget = FailureBudget()
-        setattr(request.app.state, BUDGET_ATTR, budget)
-    return budget
+def _budget(request: Request) -> FailureBudgets:
+    budgets = getattr(request.app.state, BUDGET_ATTR, None)
+    if budgets is None:
+        budgets = FailureBudgets()
+        setattr(request.app.state, BUDGET_ATTR, budgets)
+    return budgets
 
 
 def _oidc(request: Request) -> OidcProvider | None:
@@ -152,13 +155,15 @@ async def setup(
             "This instance already has an owner. Sign in instead.",
             code=error_codes.AUTH_SETUP_CLAIMED,
         )
-    budget = _budget(request)
-    await auth_service.refuse_throttled(session, budget, request=request, target="/auth/setup")
+    budgets = _budget(request)
+    ladder = await auth_service.refuse_throttled(
+        session, budgets, request=request, target="/auth/setup"
+    )
     if not token_state.matches(payload.token):
-        await auth_service.record_setup_failure(session, budget, request=request)
+        await auth_service.record_setup_failure(session, budgets, request=request)
     raw = await auth_service.claim_instance(session, password=payload.password, request=request)
     token_state.consume()
-    budget.reset()
+    ladder.reset()
     set_session_cookie(response, raw, secure=cookie_is_secure(get_settings()))
     return await _session_read(
         request, session, state=auth_service.InstanceState.OWNER, raw_token=raw
@@ -172,9 +177,8 @@ async def login(
     """Sign in. One body and timing for every failure kind (T11); the failure
     budget throttles repeated attempts (T8). Local mode only."""
     _require_mode(request, oidc=False)
-    budget = _budget(request)
     raw = await auth_service.login(
-        session, password=payload.password, budget=budget, request=request
+        session, password=payload.password, budgets=_budget(request), request=request
     )
     set_session_cookie(response, raw, secure=cookie_is_secure(get_settings()))
     return await _session_read(
@@ -201,7 +205,7 @@ async def oidc_start(
         request=request,
         setup_token=payload.setup_token,
         setup_state=setup_token_state(request.app),
-        budget=_budget(request),
+        budgets=_budget(request),
     )
     set_oidc_login_cookie(response, binding, secure=cookie_is_secure(get_settings()))
     return OidcStartRead(authorization_url=url)

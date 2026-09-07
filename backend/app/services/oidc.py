@@ -67,7 +67,7 @@ from starlette.requests import Request
 
 from app import error_codes
 from app.auth import credentials
-from app.auth.budget import FailureBudget
+from app.auth.budget import FailureBudgets
 from app.auth.mcp_oauth_state import (
     CODE_COLLECTION,
     ENDED_BY_REBIND,
@@ -525,7 +525,7 @@ async def begin_login(
     request: Request | None,
     setup_token: str | None,
     setup_state: SetupToken,
-    budget: FailureBudget,
+    budgets: FailureBudgets,
 ) -> tuple[str, str]:
     """`POST /auth/oidc/start`. Returns the provider authorization URL the
     browser goes to and the raw binding value for the cookie. While the owner is
@@ -539,11 +539,11 @@ async def begin_login(
     claiming = False
     if await owner_is_unbound(session):
         await auth_service.refuse_throttled(
-            session, budget, request=request, target="/auth/oidc/start"
+            session, budgets, request=request, target="/auth/oidc/start"
         )
         if setup_token is None or not setup_state.matches(setup_token):
             await auth_service.record_setup_failure(
-                session, budget, request=request, target="/auth/oidc/start"
+                session, budgets, request=request, target="/auth/oidc/start"
             )
         claiming = True
     now = _now()

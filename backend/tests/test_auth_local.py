@@ -25,7 +25,14 @@ from sqlalchemy import func, select
 
 from app import error_codes
 from app.auth import credentials
-from app.auth.budget import BASE_DELAY, MAX_DELAY, FailureBudget
+from app.auth.budget import (
+    BASE_DELAY,
+    DECAY_AFTER,
+    MAX_DELAY,
+    VERIFICATIONS_PER_MINUTE,
+    FailureBudget,
+    FailureBudgets,
+)
 from app.auth.sessions import (
     CSRF_HEADER,
     PLAIN_COOKIE_NAME,
@@ -52,7 +59,7 @@ def _issue_setup_token() -> str:
 
 
 def _reset_budget() -> None:
-    setattr(app.state, BUDGET_ATTR, FailureBudget())
+    setattr(app.state, BUDGET_ATTR, FailureBudgets())
 
 
 @asynccontextmanager
@@ -282,7 +289,7 @@ async def test_repeated_failures_throttle_then_a_success_resets(anon_client):
     await _claim(anon_client)
     # A controllable clock so the test pins the doubling without sleeping.
     now = {"t": 1000.0}
-    setattr(app.state, BUDGET_ATTR, FailureBudget(clock=lambda: now["t"]))
+    setattr(app.state, BUDGET_ATTR, FailureBudgets(clock=lambda: now["t"]))
     async with fresh_client() as c:
         first = await c.post("/auth/login", json={"password": "nope"}, headers=ORIGIN)
         assert first.status_code == 403  # the failure is recorded, the gate now shut
@@ -294,7 +301,7 @@ async def test_repeated_failures_throttle_then_a_success_resets(anon_client):
         now["t"] += BASE_DELAY + 0.01
         ok = await c.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
         assert ok.status_code == 200
-    assert app.state.login_budget.failures == 0
+    assert app.state.login_budget.ladder("/auth/login", "127.0.0.1").failures == 0
     async with get_sessionmaker()() as session:
         rows = (
             (
@@ -311,7 +318,7 @@ async def test_repeated_failures_throttle_then_a_success_resets(anon_client):
     assert all(row.principal_kind == "anon" for row in rows)
     assert all(row.client_address == "127.0.0.1" for row in rows)
     assert all(row.target == "/auth/login" for row in rows)
-    assert rows[-1].detail == f"retry_after={int(BASE_DELAY)}"
+    assert rows[-1].detail == f"retry_after={int(BASE_DELAY)} budget=address"
 
 
 def test_failure_budget_doubles_to_a_finite_ceiling():
@@ -321,6 +328,119 @@ def test_failure_budget_doubles_to_a_finite_ceiling():
     assert delays[:4] == [1.0, 2.0, 4.0, 8.0]
     assert delays[-2:] == [MAX_DELAY, MAX_DELAY]
     assert budget.retry_after() == int(MAX_DELAY)
+
+
+def test_a_ladder_at_the_ceiling_restarts_after_a_quiet_period():
+    """#221 item 4: the ceiling was renewable — one failure after each expiry
+    re-armed the full delay for as long as a caller cared to. After `DECAY_AFTER`
+    of quiet the next failure is a first failure again."""
+    now = {"t": 1000.0}
+    budget = FailureBudget(clock=lambda: now["t"])
+    for _ in range(12):
+        budget.record_failure()
+    assert budget.retry_after() == int(MAX_DELAY)
+    # Within the decay window a further failure re-arms the ceiling — that is the
+    # attacker's own address, and it stays slow.
+    now["t"] += MAX_DELAY + 1
+    assert budget.retry_after() is None
+    assert budget.record_failure() == MAX_DELAY
+    # Past it, the ladder starts over.
+    now["t"] += DECAY_AFTER + 1
+    assert budget.record_failure() == BASE_DELAY
+    assert budget.failures == 1
+
+
+def _client_from(address: str):
+    """A cookie-less client whose socket peer is `address` — a different caller
+    at the ingress, which is what the ladders are keyed on."""
+    return AsyncClient(
+        transport=ASGITransport(app=app, client=(address, 40000), raise_app_exceptions=False),
+        base_url="http://test",
+    )
+
+
+async def test_one_address_at_the_ceiling_does_not_exclude_another(anon_client):
+    """#221 item 4, the owner's half: a guesser's failures shut the guesser's
+    address and nobody else's. Address A is driven to the ceiling through the
+    route; the owner at address B signs in with the correct password while A
+    is still refused."""
+    await _claim(anon_client)
+    now = {"t": 1000.0}
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    setattr(app.state, BUDGET_ATTR, budgets)
+    async with _client_from("203.0.113.7") as attacker:
+        for attempt in range(10):
+            if attempt:
+                now["t"] += MAX_DELAY + 1  # wait out the delay: the ladder climbs, never decays
+            wrong = await attacker.post("/auth/login", json={"password": "nope"}, headers=ORIGIN)
+            assert wrong.status_code == 403
+        shut = await attacker.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        assert shut.status_code == 429
+        assert shut.headers["retry-after"] == str(int(MAX_DELAY))
+        async with _client_from("198.51.100.9") as owner:
+            ok = await owner.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+            assert ok.status_code == 200
+        still = await attacker.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        assert still.status_code == 429
+    assert budgets.ladder("/auth/login", "203.0.113.7").failures == 10
+    assert budgets.ladder("/auth/login", "198.51.100.9").failures == 0
+    # The owner's success reset the owner's ladder, not the attacker's.
+    assert budgets.ladder("/auth/login", "203.0.113.7").retry_after() == int(MAX_DELAY)
+
+
+async def test_the_verification_budget_bounds_the_instance_not_the_caller(anon_client):
+    """#221 item 4, the work bound: at most `VERIFICATIONS_PER_MINUTE` password
+    checks per minute instance-wide, refused before the Argon2 work with a
+    short `Retry-After`, and back within the minute — never a lockout."""
+    await _claim(anon_client)
+    now = {"t": 1000.0}
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    setattr(app.state, BUDGET_ATTR, budgets)
+    for _ in range(VERIFICATIONS_PER_MINUTE):
+        assert budgets.verification.take() is None
+    async with fresh_client() as c:
+        spent = await c.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        assert spent.status_code == 429
+        assert spent.json()["code"] == error_codes.AUTH_TOO_MANY_ATTEMPTS
+        assert 1 <= int(spent.headers["retry-after"]) <= 2
+        # The refusal spent nothing on this caller's ladder.
+        assert budgets.ladder("/auth/login", "127.0.0.1").failures == 0
+        now["t"] += 60
+        ok = await c.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+        assert ok.status_code == 200
+    async with get_sessionmaker()() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(AuditEvent).where(AuditEvent.event_type == audit.LOGIN_THROTTLED)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert [row.detail for row in rows] == [
+        f"retry_after={spent.headers['retry-after']} budget=instance"
+    ]
+
+
+def test_setup_and_login_are_separate_ladders_and_the_table_is_bounded():
+    now = {"t": 1000.0}
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    budgets.ladder("/auth/setup", "10.0.0.1").record_failure()
+    assert budgets.ladder("/auth/login", "10.0.0.1").retry_after() is None
+    assert budgets.ladder("/auth/setup", "10.0.0.1").retry_after() == int(BASE_DELAY)
+    # Fill the table from distinct addresses; an idle ladder is evicted first,
+    # a live one only when nothing is idle.
+    from app.auth.budget import MAX_TRACKED
+
+    for i in range(MAX_TRACKED - 2):
+        budgets.ladder("/auth/login", f"10.1.{i // 256}.{i % 256}").record_failure()
+    assert budgets.tracked == MAX_TRACKED
+    budgets.ladder("/auth/login", "10.9.9.9")  # one over: nothing is idle yet
+    assert budgets.tracked == MAX_TRACKED
+    now["t"] += DECAY_AFTER + 1  # everything decays
+    budgets.ladder("/auth/login", "10.9.9.8")
+    assert budgets.tracked == 1
 
 
 def test_setup_token_has_the_declared_entropy():
