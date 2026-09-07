@@ -2,7 +2,7 @@
 
 Backing up, restoring, upgrading and exposing the bundled Docker Compose stack.
 
-> **This instance has a single owner login.** Since M6-3 every collection route
+> **This instance has a single owner login.** Since 0.3.0 every collection route
 > requires the owner's browser session: a fresh install comes up *unclaimed* and
 > prints a one-time setup token to the API log — see [First run](#first-run-claim-the-instance).
 > Scripts and MCP clients authenticate with a [personal access token](#access-tokens)
@@ -352,7 +352,7 @@ passes through nginx, which overwrites a forged value.
 
 ## First run: claim the instance
 
-A fresh install (and an existing instance upgraded onto M6-3) starts **unclaimed**:
+A fresh install (and an existing instance upgraded to 0.3.0) starts **unclaimed**:
 every collection route answers `401` and the UI shows a setup screen. Claim it once:
 
 ```bash
@@ -755,6 +755,35 @@ docker compose logs migrate
 
 **Back up before upgrading.** Migrations run forward automatically; rolling one
 back is a manual `alembic downgrade` and some are deliberately lossy about it.
+
+### Upgrading to 0.3.0: the instance comes up unclaimed
+
+0.3.0 is the release that puts a lock on the door. After the `docker compose up`, an
+existing instance starts **unclaimed**, exactly as a fresh install does: every
+collection route answers `401`, the UI shows the setup screen, and the API prints a
+one-time setup token to its log. Your collection is untouched — the four migrations
+only add the authentication tables. In order:
+
+1. **Back up first** ([Backups](#backups)): the database and `.env`.
+2. If you reach the instance by anything but `localhost`, `ALLOWED_HOSTS` must
+   already name it ([below](#upgrading-to-0210-set-allowed_hosts-first)); behind a
+   TLS proxy, `PUBLIC_BASE_URL` too ([The four settings](#the-four-settings)).
+3. `git pull && docker compose up -d --build --wait`, then claim it — read the token
+   with `docker compose logs api | grep -A6 "no owner yet"` and enter it with the
+   password you want ([First run](#first-run-claim-the-instance)).
+4. **Every script and MCP client needs a personal access token** from now on
+   (**Settings → Access tokens**; [Access tokens](#access-tokens)). A Claude Desktop
+   or Claude Code entry that pointed at `/mcp/` without one is refused at the
+   handshake until it sends the `Authorization` header — the README's *Wiring up the
+   MCP server* has the exact shape.
+5. `/api/meta`, `/openapi.json` and `/api/docs` no longer answer anonymously; a
+   script that read them needs the token as well.
+
+Rolling back to 0.2.10 means restoring the pre-upgrade backup onto
+`git checkout v0.2.10-alpha` ([Restoring a dump](#restoring-a-dump)). Downgrading the
+live database instead (`alembic downgrade f9979ec7b9cb` inside the `api` container)
+drops the authentication tables — the owner and its password, every session and
+access token, and every MCP OAuth link — and leaves the collection as it is.
 
 ### Upgrading to 0.2.10: set `ALLOWED_HOSTS` first
 
