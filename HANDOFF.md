@@ -41,6 +41,47 @@ Template:
 
 ---
 
+## 2026-09-07 — Claude Code (Opus 4.8) — #194 (M6-9) built, gate GREEN on a real host, PR #218 OPEN
+
+- **Done:** M6-9 whole, on `feat/194-tls-deployment-gate` (`d53282e`), **PR #218 open,
+  awaiting review**. Closes #194. **nginx:** bare `location = /mcp` gains the family's
+  settings (buffering off, 1 h timeouts, `Connection ""`, the two `X-Forwarded-*`) so both
+  `/mcp` spellings are one family (§5.5 alias; Claude web posts to the bare one, #190) — the
+  1 h timeouts are the family's, not a measured need (SDK pings every 15 s). The envsh
+  renders a **loopback `TRUSTED_PROXIES` entry's `set_real_ip_from` plus the Docker gateway**
+  (a host proxy reaches nginx from the gateway, not `127.0.0.1`; else every visitor keys the
+  limits/audit on the gateway). **`ingress_matrix.py`:** HTTPS (`--ca-cert`), `--behind-proxy`,
+  `--credential-file` (first signed-in OIDC-mode run), `--hold-stream` (raw socket, both
+  spellings, max inter-byte gap), `--skip-rate-limits`, base-name-aware rows (loopback Origin
+  → 403 off-loopback; the two OIDC rows mode-aware). CI local run unchanged (0 failing on the
+  Mac packaged stack). **`backend/deployment_gate.py`** (new): the T12/T13 driver over ssh,
+  secrets in `--state-dir` (0600, never printed). **Docs:** `operations.md` rebuilt around the
+  four ways to run it (private net / own proxy / Cloudflare Tunnel / VPS+Caddy = reference),
+  the four settings, the **two-part** backup set + three partial-restore outcomes; README,
+  `.env.example`, `deploy/caddy/`, `.agents/deployment-gate/`, design §5.4/§5.6/§5.8/§8/§10,
+  AGENTS rule 12, testing-and-review step 4b.
+- **Gate run (real, LXC 117 `testhost.internal.tlgnet.net` 10.1.1.129):** Caddy 2.11.4 +
+  cloudflare DNS module, Let's Encrypt via DNS-01 (split-horizon name issues fine). One clean
+  `--phase all` + tunnel, **every phase 0 failing**. **Both `/mcp` spellings held 130 s through
+  the Cloudflare Tunnel `plamotest.gunp.la`** (Jamie's route → 10.1.1.129:8080, connector LXC
+  105 = 10.1.1.155) — past the 125 s cliff, 15 s ping, clean DELETE close; 75 s through Caddy.
+  T13 all three restores as documented. Results block sent to Jamie + in the session scratch.
+- **Findings folded into code (not caveated):** (a) `--hold-stream` header read tolerates a
+  buffering CDN's delayed SSE headers; (b) `--skip-rate-limits` for the tunnel — a CDN's
+  latency + URL normalisation make nginx's per-second/per-spelling limiter unobservable (it
+  trips through Caddy + CI); (c) break-glass is its own phase (matrix leaves the login family
+  throttled ~1 min); (d) OIDC rows mode-aware; (e) macOS `tar` `._*` broke Alembic on the host
+  → README `COPYFILE_DISABLE=1`, host-prepare refuses the wrong token var name.
+- **State:** on `main` this is the hand-off only; the feature is on the branch/PR, **not
+  merged**. Lint + render clean; touched-file tests 309 pass; full backend 2544 passed before
+  the last harness edits (T2 harness, not app code; CI Integration exercises it). `testhost`
+  left running, claimed local; tear-down is Jamie's. The `.agents/spikes/190/` Keycloak is
+  separate from the new gate's Keycloak fixture.
+- **Next:** review PR #218 (roster — GLM default, Codex if high-stakes). Then **#195** (M6
+  release): the gate now has step 4b, so a release runs `deployment_gate.py --phase all` against
+  the tagged commit and pastes its block into the notes; bump/tag/prerelease; #206/#210/#213/#214
+  need a defer-or-fix call, #30 closes with it. Then the LXC upgrade.
+
 ## 2026-09-07 — Claude Code (Fable 5.1) — #215 fixed (PR #216 → `a322f15`) and the #208 `aud-` set folded (PR #217 → `3344066`, 56/56 on the committed tree); both MERGED, no review; #194 next
 
 - **Done:** (1) **#215** on `fix/215-ci-setup-token-argv` → **PR #216** (`040c613`): the
@@ -189,34 +230,4 @@ Template:
   test_audit_privacy.py and test_access_logging.py to harness targets. #206/#210/
   #213/#214/#215 remain separate issue questions. #194 and the M6 release gates
   still precede the LXC upgrade; the end-of-M6 security review remains planned.
-
-## 2026-09-06 — Codex (GPT-6) — #208 integration committed; #212 handoff history preserved
-
-- **Done:** this merge commit integrates freshly fetched `origin/main` `1fd3b36`
-  (including #212 squash `538640b`) into `codex/193-audit-rate-limit-log-hygiene`,
-  together with the OAuth limiter, audit-attribution and log-hygiene fixes detailed
-  in the preceding entry. The owner requested this commit and handoff reconciliation.
-- **History:** compared every entry in `HANDOFF.md` and `.agents/handoff/` against
-  both parents before committing: all 114 main entries and all 103 branch entries
-  remain unchanged, without duplicate titles. #212's final GO/merge record remains
-  in the live handoff. Added this entry and rotated the oldest verbatim; five live
-  entries, 121 total. No historical entry was rewritten to describe the new state.
-- **State:** committed locally in `/Users/tlgja/Code/plamotrack-208`; no push or
-  GitHub prose update. The primary checkout remains on dirty #194 with its existing
-  files intact. #208 still needs a fresh PR-specific security review before merging;
-  the earlier GO predates #212 and the new logging changes. The broader end-of-M6
-  security review remains planned. #212 itself is no longer a merge-order blocker.
-- **Validation:** retained final affected backend run **589 passed**, frontend
-  **488 passed** plus lint/build, and packaged local/OIDC ingress matrices with zero
-  failures. Full backend 2417 passed before the final SDK diagnostic refinement;
-  the full final backend and 514-case mutation harness were not rerun. Eleven
-  targeted mutants killed. Packaged OIDC used a discovery fixture; provider lifecycle
-  is covered by backend fake-provider tests. Current lint/format/render/whitespace
-  and history-preservation checks passed; this step changed handoff files only.
-- **Next:** push when requested, refresh the stale PR body/coverage with the committed
-  head, then obtain the fresh security review before merging #208. Fold aud-1..37
-  after merge, adding test_access_logging.py to the harness targets. Evidence and
-  runners remain in `/tmp/plamotrack208-current/`. #210/#214/#215 remain separate;
-  #194/TLS/restore and the M6 release precede the LXC upgrade. Disposable stack/test
-  DBs are removed; the original dev Postgres remains. No LXC operation.
 
