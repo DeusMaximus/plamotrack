@@ -52,7 +52,7 @@ import logging
 import math
 import secrets
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from urllib.parse import urlencode
@@ -61,18 +61,26 @@ import httpx
 from joserfc import jwt
 from joserfc.errors import JoseError
 from joserfc.jwk import KeySet
-from sqlalchemy import delete, or_, select
+from sqlalchemy import bindparam, delete, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 
 from app import error_codes
 from app.auth import credentials
 from app.auth.budget import FailureBudget
+from app.auth.mcp_oauth_state import (
+    ENDED_BY_REBIND,
+    GRANT_COLLECTION,
+    GRANT_COLLECTIONS,
+    GRANT_LOCK_NAMESPACE,
+    build_state_store,
+    lock_key,
+)
 from app.auth.principal import anonymous, internal
 from app.auth.setup_token import SetupToken
-from app.config import Settings
+from app.config import Settings, get_settings
 from app.exceptions import UnavailableError
-from app.models import OidcLogin
+from app.models import MCP_OAUTH_STATE_TABLE, OidcLogin
 from app.models.enums import AuthMode
 from app.services import audit
 from app.services import auth as auth_service
@@ -429,6 +437,40 @@ class OidcProvider:
             raise OidcLoginRefused(CallbackError.FAILED)
         return body
 
+    async def revoke_token(self, token: str, *, token_type_hint: str) -> bool:
+        """RFC 7009 §2.1 at the provider's revocation endpoint, with the client
+        secret as HTTP Basic like the code exchange: the token and its hint in
+        the form. True when the provider answered 200 — which §2.2 has it do for
+        a token it does not know, too — False when it could not be reached or
+        refused; the status is logged, never the body. Nothing to send to when
+        the discovery document names no endpoint (#214)."""
+        metadata = await self.metadata()
+        if metadata.revocation_endpoint is None:
+            log.info("OIDC revocation: the provider advertises no revocation endpoint")
+            return False
+        form = {"token": token, "token_type_hint": token_type_hint}
+        try:
+            if self._http is not None:
+                response = await self._http.post(
+                    metadata.revocation_endpoint,
+                    data=form,
+                    auth=(self.client_id, self._client_secret),
+                )
+            else:
+                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT) as client:
+                    response = await client.post(
+                        metadata.revocation_endpoint,
+                        data=form,
+                        auth=(self.client_id, self._client_secret),
+                    )
+        except httpx.HTTPError as exc:
+            log.warning("OIDC revocation failed: %s", type(exc).__name__)
+            return False
+        if response.status_code != 200:
+            log.warning("OIDC revocation refused: status=%s", response.status_code)
+            return False
+        return True
+
     async def verify_id_token(self, id_token: object, *, nonce: str | None) -> dict:
         """The id_token's claims, once its signature verifies against the
         provider's keys on an asymmetric algorithm and the claims meet the
@@ -692,12 +734,46 @@ def _display_name(claims: dict) -> str | None:
 # --- recovery -------------------------------------------------------------------------
 
 
-async def recovery_rebind_oidc(session: AsyncSession) -> int:
+@dataclass(frozen=True)
+class PurgedGrant:
+    """What a purged grant record held that the provider can still be asked to
+    revoke (RFC 7009): its refresh token, or its access token when the provider
+    issued none — handed from the rebind to `revoke_purged_grants_upstream`
+    after the commit, never printed, never audited."""
+
+    client_id: str
+    token: str
+    token_type_hint: str
+
+
+@dataclass
+class RebindOutcome:
+    """What `recovery_rebind_oidc` did: sessions revoked, MCP OAuth grants
+    purged, and the upstream credentials those grants held."""
+
+    sessions_revoked: int
+    grants_purged: int
+    upstream: list[PurgedGrant] = field(default_factory=list)
+
+
+async def recovery_rebind_oidc(
+    session: AsyncSession, *, settings: Settings | None = None
+) -> RebindOutcome:
     """The host-side rebind (§5.6, credentials lost): clear the owner's
-    `(issuer, subject)` and revoke every session. The instance then reports
-    `unclaimed` in OIDC mode, prints a setup token at the next start, and the
-    next provider login that presents it binds afresh — the operator never
-    types a subject. Never an HTTP endpoint. Returns the sessions revoked."""
+    `(issuer, subject)`, revoke every session and purge every MCP OAuth grant
+    (#214). The instance then reports `unclaimed` in OIDC mode, prints a setup
+    token at the next start, and the next provider login that presents it binds
+    afresh — the operator never types a subject. Never an HTTP endpoint.
+
+    The grants: an issued MCP token is refused the moment the owner row names
+    another identity, but the **provider's** refresh token behind it stayed in
+    `mcp_oauth_state`, encrypted, until FastMCP's fallback TTL — a credential
+    for an account this instance no longer trusts, kept for a year for no
+    purpose. So the grant collections go here, in this transaction, under every
+    grant's advisory lock; what they held comes back in the outcome for
+    `revoke_purged_grants_upstream`, which the recovery command runs after the
+    commit so that no network call happens under the write gate."""
+    settings = settings if settings is not None else get_settings()
     await acquire_write_gate(session)
     owner = await auth_service.owner_row(session, for_update=True)
     owner.oidc_issuer = None
@@ -705,6 +781,7 @@ async def recovery_rebind_oidc(session: AsyncSession) -> int:
     revoked = await auth_service.revoke_all_sessions(
         session, target="recovery rebind-oidc", principal=internal(), client_address="host"
     )
+    purged, upstream = await _purge_mcp_grants(session, settings)
     await audit.record_event(
         session,
         audit.OIDC_REBIND,
@@ -717,8 +794,110 @@ async def recovery_rebind_oidc(session: AsyncSession) -> int:
         audit.RECOVERY_RUN,
         principal=internal(),
         target="recovery rebind-oidc",
-        detail=f"sessions_revoked={revoked}",
+        detail=f"sessions_revoked={revoked} grants_purged={purged}",
         client_address="host",
     )
     await session.commit()
-    return revoked
+    return RebindOutcome(sessions_revoked=revoked, grants_purged=purged, upstream=upstream)
+
+
+async def _purge_mcp_grants(
+    session: AsyncSession, settings: Settings
+) -> tuple[int, list[PurgedGrant]]:
+    """The grant collections of `mcp_oauth_state`, purged in the caller's
+    transaction. Every grant's advisory lock first — rule 7.1's shape, before
+    the read: a transition in flight holds its grant's lock through its
+    upstream call and its write, so the record read here is the one that write
+    left (the rotated refresh token, not the one the provider just retired) and
+    nothing writes it back afterwards; then the records read for what the
+    provider can be asked to revoke; then the delete, and one
+    `auth.mcp_grant_revoked` row per grant. Without a signing key — local mode,
+    where the table holds nothing of this instance's — the rows go unread.
+    Returns the grant count and the upstream material."""
+    rows = await session.execute(
+        text(f"SELECT key FROM {MCP_OAUTH_STATE_TABLE} WHERE collection = :grants ORDER BY key"),
+        {"grants": GRANT_COLLECTION},
+    )
+    grant_ids = [row[0] for row in rows]
+    for grant_id in grant_ids:
+        await session.execute(
+            text(
+                "SELECT pg_advisory_xact_lock(CAST(:namespace AS integer), CAST(:key AS integer))"
+            ),
+            {"namespace": GRANT_LOCK_NAMESPACE, "key": lock_key(grant_id)},
+        )
+    records: dict[str, dict] = {}
+    if grant_ids and settings.mcp_oauth_signing_key:
+        store, wrapped = build_state_store(settings)
+        try:
+            for grant_id in grant_ids:
+                record = await wrapped.get(key=grant_id, collection=GRANT_COLLECTION)
+                if isinstance(record, dict):
+                    records[grant_id] = record
+        finally:
+            await store.close()
+    await session.execute(
+        text(f"DELETE FROM {MCP_OAUTH_STATE_TABLE} WHERE collection IN :collections").bindparams(
+            bindparam("collections", expanding=True)
+        ),
+        {"collections": sorted(GRANT_COLLECTIONS)},
+    )
+    upstream: list[PurgedGrant] = []
+    for grant_id in grant_ids:
+        record = records.get(grant_id)
+        detail = f"ended_by={ENDED_BY_REBIND}"
+        if record is not None:
+            client_id = str(record.get("client_id") or "")
+            detail = f"client={audit.external_reference(client_id)} {detail}"
+            token, hint = _upstream_credential(record)
+            if token is not None:
+                upstream.append(PurgedGrant(client_id=client_id, token=token, token_type_hint=hint))
+        await audit.record_event(
+            session,
+            audit.MCP_GRANT_REVOKED,
+            principal=internal(),
+            target="recovery rebind-oidc",
+            detail=detail,
+            client_address="host",
+        )
+    return len(grant_ids), upstream
+
+
+def _upstream_credential(record: dict) -> tuple[str | None, str]:
+    """What of a grant record the provider can revoke: the refresh token, or the
+    access token when the provider issued none — the choice `/mcp/revoke` makes."""
+    refresh, access = record.get("refresh_token"), record.get("access_token")
+    if isinstance(refresh, str) and refresh:
+        return refresh, "refresh_token"
+    if isinstance(access, str) and access:
+        return access, "access_token"
+    return None, ""
+
+
+async def revoke_purged_grants_upstream(
+    settings: Settings,
+    purged: list[PurgedGrant],
+    *,
+    http_client: httpx.AsyncClient | None = None,
+) -> int:
+    """Best effort, after the rebind's commit: ask the provider to revoke what
+    each purged grant held, as `/mcp/revoke` does for one grant. Returns how
+    many the provider accepted. A provider that cannot be reached, or that
+    advertises no revocation endpoint, leaves the local purge standing — the
+    token is unusable through this instance either way; this is the courtesy
+    of not leaving it live at the provider. Local mode has no provider."""
+    if not purged:
+        return 0
+    provider = OidcProvider.from_settings(settings, http_client=http_client)
+    if provider is None:
+        return 0
+    try:
+        await provider.metadata()
+    except UnavailableError:
+        log.warning("OIDC rebind: provider unreachable; %d upstream token(s) stay", len(purged))
+        return 0
+    accepted = 0
+    for grant in purged:
+        if await provider.revoke_token(grant.token, token_type_hint=grant.token_type_hint):
+            accepted += 1
+    return accepted

@@ -443,12 +443,15 @@ API container:
 docker compose exec api python -m app.auth.recovery rebind-oidc
 ```
 
-It clears the bound identity and signs every browser out. Restart the API
+It clears the bound identity, signs every browser out, and ends every MCP
+client's link through the provider: the grants are purged from the instance
+and, best effort, the provider's own refresh tokens behind them are revoked at
+the provider — the command says how many the provider accepted, and a provider
+that cannot be reached leaves the purge standing. Restart the API
 (`docker compose restart api`), read the new setup token from its log, and sign
 in at the provider — that account is the owner from then on. Access tokens are
 untouched; revoke any you no longer trust from Settings. MCP clients linked
-through the provider stop working at their next request until the new owner
-signs in through them again.
+through the provider sign in again once the new owner has claimed the instance.
 
 ### MCP clients that sign in through the provider (OIDC mode)
 
@@ -487,8 +490,9 @@ the whole grant at once — its access token, its refresh token, and, best effor
 the provider's own refresh token — recorded as `auth.mcp_grant_revoked`, and it
 does so whatever the provider is doing at the time (the grant is found by the
 instance's own signature, not by asking the provider); rebinding
-the owner (`recovery rebind-oidc`) ends every grant at the next request, and a
-client left holding one can still revoke it; a
+the owner (`recovery rebind-oidc`) ends every grant at once — purged from the
+instance, the provider asked best effort, recorded as `auth.mcp_grant_revoked`
+with `ended_by=rebind`; a
 grant whose provider token can no longer be refreshed ends with it; and a refresh
 the provider answers with another identity, or with an id_token that fails
 verification, ends the grant too — `auth.mcp_grant_revoked` with

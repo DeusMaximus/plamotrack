@@ -1055,7 +1055,8 @@ Each row names the control, the layer that owns it, and the §5.8 tests that pro
   its approval, between the approval and the provider's return) completes on the
   fresh process.
 - **Credentials lost:** a host-side command resets the local password or rebinds the
-  OIDC identity and revokes every session; it is never an HTTP endpoint.
+  OIDC identity, revokes every session and purges the MCP OAuth grants, asking the
+  provider to revoke what they held (#214); it is never an HTTP endpoint.
 
 ### 5.7 What the loopback install keeps
 
@@ -1288,7 +1289,8 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    PKCE S256) and the id_token verified against the provider's JWKS for signature,
    `iss`, `aud`, `exp` and the transaction's `nonce`; the owner bound at the callback
    to `(issuer, sub)`, a token without `sub` refused (the spike's Keycloak finding);
-   `recovery rebind-oidc` clears the binding and revokes every session. Calls the
+   `recovery rebind-oidc` clears the binding, revokes every session and purges every
+   MCP OAuth grant, asking the provider to revoke what they held (#214). Calls the
    item's wording left open, recorded here: (a) **`start` is a `POST` returning the
    authorization URL as JSON, not a redirecting `GET`** — the setup token an unbound
    instance needs travels in a body, never a query string (T10), the unsafe method

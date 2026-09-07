@@ -290,12 +290,8 @@ from functools import partial
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit
 
-import asyncpg
 import httpx
 from authlib.integrations.httpx_client import AsyncOAuth2Client
-from cryptography.fernet import Fernet
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 from fastmcp.server.auth import AccessToken, TokenVerifier
 from fastmcp.server.auth.auth import JWT_BEARER_ASSERTION_TYPE, TokenHandler
 from fastmcp.server.auth.cimd import CIMDAssertionValidator
@@ -314,7 +310,6 @@ from fastmcp.utilities.ui import create_secure_html_response
 from joserfc import jwk as jose_jwk
 from joserfc.errors import JoseError
 from key_value.aio.adapters.pydantic import PydanticAdapter
-from key_value.aio.stores.postgresql import PostgreSQLStore
 from key_value.aio.wrappers.encryption import FernetEncryptionWrapper
 from mcp.server.auth.errors import stringify_pydantic_error
 from mcp.server.auth.handlers.metadata import MetadataHandler
@@ -345,7 +340,6 @@ from mcp.shared.auth import (
 )
 from pydantic import AnyUrl, BaseModel, ConfigDict, ValidationError
 from sqlalchemy import text
-from sqlalchemy.engine import make_url
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
@@ -355,6 +349,14 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app import error_codes
 from app.auth import tokens as token_format
 from app.auth.mcp_auth import PersonalAccessTokenVerifier
+from app.auth.mcp_oauth_state import (  # the two writers' shared contract (#214)
+    GRANT_COLLECTION,
+    GRANT_LOCK_NAMESPACE,
+    OAuthStateStore,
+    build_state_store,
+    storage_key,  # noqa: F401 — the suite imports it here
+)
+from app.auth.mcp_oauth_state import lock_key as _lock_key
 from app.auth.mode import OIDC_PROVIDER_ATTR
 from app.auth.principal import anonymous
 from app.auth.principal import mcp as mcp_principal
@@ -362,7 +364,6 @@ from app.auth.registry import DISCOVERY_ROUTES, MCP_MOUNT, MCP_OAUTH_ROUTES
 from app.config import Settings
 from app.db import get_sessionmaker, session_scope
 from app.exceptions import UnavailableError
-from app.models import MCP_OAUTH_STATE_TABLE
 from app.services import audit
 from app.services import auth as auth_service
 from app.services.oidc import OidcLoginRefused, OidcProvider
@@ -393,12 +394,6 @@ ACCESS_TOKEN_LIFETIME = 3600
 #: Refresh the upstream token this many seconds before it expires, so a request
 #: that passes the expiry check does not meet an expired token a moment later.
 REFRESH_THRESHOLD = 30
-#: Connections the state store may hold: the proxy touches it a handful of
-#: times per request, on one owner's traffic.
-STATE_STORE_POOL_SIZE = 2
-#: HKDF salt for the storage key — distinct from anything FastMCP derives from
-#: the same material, so the signing key and the encryption key differ.
-STORAGE_KEY_SALT = b"plamotrack-mcp-oauth-state"
 #: What an upstream-endpoint property reads as until the provider's document
 #: has been fetched: a name that resolves nowhere (`.invalid`, RFC 2606). Never
 #: reached — every entry point resolves first — but a bug that did reach it
@@ -480,16 +475,9 @@ RECOGNISED_PARAMETERS: dict[str, frozenset[str]] = {
 #: The key under `upstream_claims` in every token the proxy issues that holds
 #: the owner binding the grant was issued to.
 BINDING_CLAIM = "plamotrack_owner"
-#: The collection FastMCP keeps the grant records in — the SDK's own name for
-#: it; the record gate's adapter reads and writes that same collection.
-GRANT_COLLECTION = "mcp-upstream-tokens"
 #: What an `auth.mcp_grant_revoked` row's `ended_by` says when the provider's
 #: refresh response, not a client at `/revoke`, ended the grant.
 ENDED_BY_UPSTREAM = "upstream_refresh"
-#: Postgres advisory-lock namespace for the grant lock — the two-int4 form,
-#: which cannot collide with the write gate's single int8 key; spells "moa",
-#: so it is recognisable in `pg_locks`.
-GRANT_LOCK_NAMESPACE = 0x6D6F61
 
 _NOT_IN_THIS_MODE = "This instance does not sign in that way; see AUTH_MODE."
 _NOT_OWNER = "The signed-in identity is not this instance's owner."
@@ -512,11 +500,6 @@ def _reference(token: str) -> str:
 
 def _digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
-
-
-def _lock_key(handle: str) -> int:
-    """A grant handle as the int4 half of an advisory-lock key."""
-    return int.from_bytes(hashlib.sha256(handle.encode()).digest()[:4], "big", signed=True)
 
 
 def _current_request() -> Request | None:
@@ -2371,46 +2354,6 @@ class PlamotrackOAuthProxy(OAuthProxy):
                 target=target,
                 detail=detail,
             )
-
-
-# --- the state store ------------------------------------------------------------------
-
-
-class OAuthStateStore(PostgreSQLStore):
-    """The `py-key-value-aio` PostgreSQL adapter over the app's own database,
-    with a pool sized for the proxy's traffic (the library's default opens
-    ten connections). The table exists before first use — Alembic owns it — so
-    the adapter's `CREATE TABLE IF NOT EXISTS` never runs."""
-
-    async def _create_pool(self) -> asyncpg.Pool:
-        assert self._url is not None
-        return await asyncpg.create_pool(self._url, min_size=1, max_size=STATE_STORE_POOL_SIZE)
-
-
-def storage_key(signing_key: bytes) -> bytes:
-    """The Fernet key for the state store's values, HKDF-derived from the
-    signing key under a storage-specific salt."""
-    derived = HKDF(
-        algorithm=hashes.SHA256(), length=32, salt=STORAGE_KEY_SALT, info=b"Fernet"
-    ).derive(signing_key)
-    return base64.urlsafe_b64encode(derived)
-
-
-def asyncpg_dsn(database_url: str) -> str:
-    """The SQLAlchemy URL (`postgresql+asyncpg://…`) as the DSN asyncpg takes."""
-    return make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
-
-
-def build_state_store(settings: Settings) -> tuple[OAuthStateStore, FernetEncryptionWrapper]:
-    store = OAuthStateStore(
-        url=asyncpg_dsn(settings.database_url), table_name=MCP_OAUTH_STATE_TABLE
-    )
-    wrapped = FernetEncryptionWrapper(
-        key_value=store,
-        fernet=Fernet(storage_key(settings.mcp_oauth_signing_key_bytes)),
-        raise_on_decryption_error=False,
-    )
-    return store, wrapped
 
 
 # --- building it ------------------------------------------------------------------------

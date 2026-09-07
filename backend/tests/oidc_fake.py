@@ -64,6 +64,10 @@ class FakeIdp:
         self.refresh_tokens: set[str] = set()
         self.next_refresh: dict | None = None
         self.revoked: list[dict] = []
+        #: The revocation endpoint's answer, and whether discovery advertises
+        #: one at all (a rebind's upstream revocation is best effort; #214).
+        self.revoke_status = 200
+        self.advertises_revocation = True
         self.discovery_status = 200
         self.token_status: int | None = None  # None → decided by the code
         self.network_down = False
@@ -126,8 +130,12 @@ class FakeIdp:
                     "authorization_endpoint": f"{ISSUER}/authorize",
                     "token_endpoint": f"{ISSUER}/token",
                     "jwks_uri": f"{ISSUER}/jwks",
-                    "revocation_endpoint": f"{ISSUER}/revoke",
                     "code_challenge_methods_supported": ["S256"],
+                    **(
+                        {"revocation_endpoint": f"{ISSUER}/revoke"}
+                        if self.advertises_revocation
+                        else {}
+                    ),
                 },
             )
         if path == "/jwks":
@@ -148,7 +156,7 @@ class FakeIdp:
         if path == "/revoke":
             form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
             self.revoked.append(form)
-            return httpx.Response(200)
+            return httpx.Response(self.revoke_status)
         return httpx.Response(404)
 
 

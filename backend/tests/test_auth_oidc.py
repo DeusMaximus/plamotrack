@@ -872,8 +872,8 @@ async def test_rebind_revokes_every_session_and_the_next_login_needs_the_token()
         assert _auth_error(await _sign_in(fake, browser, setup_token=token)) is None
         assert (await browser.get("/kits")).status_code == 200
         async with get_sessionmaker()() as session:
-            revoked = await oidc.recovery_rebind_oidc(session)
-        assert revoked == 1
+            outcome = await oidc.recovery_rebind_oidc(session)
+        assert outcome.sessions_revoked == 1
         # The old cookie is dead and the instance is unbound; a login without
         # the token is refused, and a *different* identity with the new token
         # becomes the owner — the recovery path.
@@ -891,7 +891,8 @@ async def test_rebind_revokes_every_session_and_the_next_login_needs_the_token()
     (revoked,) = await _events(audit.SESSIONS_REVOKED)
     assert revoked.principal_kind == "internal"
     (run,) = await _events(audit.RECOVERY_RUN)
-    assert run.target == "recovery rebind-oidc" and run.detail == "sessions_revoked=1"
+    assert run.target == "recovery rebind-oidc"
+    assert run.detail == "sessions_revoked=1 grants_purged=0"
     assert run.principal_kind == "internal"
 
 
