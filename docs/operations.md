@@ -715,7 +715,11 @@ docker compose up -d --build --wait
 
 The quoted variables are expanded inside the database container, so these commands
 follow the active `POSTGRES_USER` and `POSTGRES_DB` values from `.env` rather than
-assuming the defaults.
+assuming the defaults. `up -d db --wait` returns only once the real server is
+listening: on a fresh volume the image first runs a temporary server for its own
+setup and shuts it down again, and the healthcheck probes over TCP, which that
+temporary server never answers — so the restore that follows cannot land in the gap
+between the two (the release gate met exactly that gap once; #228).
 
 **What comes back** depends on which half of the backup you have. The deployment
 gate runs all three of these with the commands above, verbatim, against a client
