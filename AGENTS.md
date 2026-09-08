@@ -678,8 +678,8 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
      `en-AU` source catalogue and fallback, reviewed language contributions,
      locale-aware presentation, Settings page (absorbing Data), and structured
      REST/import diagnostics; no non-English translation required
-6. Secure remote access: single-owner browser auth, scoped REST/MCP tokens,
-   OAuth-compatible MCP, tested TLS/VPS deployment path
+6. ~~Secure remote access: single-owner browser auth, scoped REST/MCP tokens,
+   OAuth-compatible MCP, tested TLS/VPS deployment path~~ ✅ (§5, v0.3.0-alpha)
 6.1. MCP modernisation: dual-era current + `2026-07-28` compatibility with
      conformance and client coverage
 6.5. UI redesign: move off the stock Tailwind look — direction still being

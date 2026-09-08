@@ -70,8 +70,10 @@ else's UI. This is the same app, owned outright.
   source catalogue and fallback, reviewed language contributions, locale-aware
   presentation, a Settings page, structured REST/import diagnostics, and logical RTL
   layout utilities. No non-English translation is required to complete the foundation
-- 🔨 **Planned (M6)** Authenticated remote access for the web UI, REST API, and MCP,
-  including OAuth-compatible MCP clients and a tested VPS deployment path
+- ✅ **M6** Authenticated remote access for the web UI, REST API, and MCP — a single
+  owner login (password or OpenID Connect), scoped personal access tokens,
+  OAuth-compatible MCP clients, and a tested TLS deployment path (§5; v0.3.0-alpha,
+  08/09/2026)
 - 🔨 **Planned (M6.1)** Dual-era MCP compatibility, adding `2026-07-28` without
   dropping clients on the current protocol generation
 - 🔨 **Planned (M7)** Photo gallery per kit
@@ -652,21 +654,27 @@ timeline is planned, only that the columns are cheap now and expensive to retrof
 
 ---
 
-## 5. Auth, Remote Access & Public Mode 🔨 **In progress (M6 + M8) — threat model recorded 02/09/2026; §5.9 items 1–4 implemented (ingress identity #186 03/09; auth foundation #187, local owner auth #188 and personal access tokens #189 04/09/2026), plus item 3(b)'s deferred family-13 hardening (#204); item 6 browser OIDC (#191); item 7 MCP OAuth (#192, 05/09/2026)**
+## 5. Auth, Remote Access & Public Mode ✅ **Built (M6, v0.3.0-alpha, 08/09/2026) — threat model recorded 02/09/2026; §5.9 items 1–11 shipped between 03/09 and 08/09/2026 (#186, #187, #188 + #204, #189, #190, #191, #192, #193, #194, #195, #221); the public read-only mode is 🔨 Planned (M8)**
 
-Of this section §5.9 items 1–4 are built: the Host/Origin guard, the ingress
-topology and the proxy-trust posture (#186); the principal model, the route policy
-registry and the default-deny dependency (#187); the owner's setup, login, session
-cookie and CSRF controls, with the shipped app enforcing (#188); and personal access
-tokens as the bearer on REST and MCP with per-tool scope (#189). §5.1 records the
-pre-M6 state the model started from, and §10 says what running an alpha means. The
-rest of the section is the M6 threat model and route
+Every item of §5.9 is built and shipped as v0.3.0-alpha (08/09/2026): the Host/Origin
+guard, the ingress topology and the proxy-trust posture (#186); the principal model,
+the route policy registry and the default-deny dependency (#187); the owner's setup,
+login, session cookie and CSRF controls, with the shipped app enforcing (#188), and
+the pre-routing gate that closes family 13 (#204); personal access tokens as the
+bearer on REST and MCP with per-tool scope (#189); the compatibility spike (#190);
+browser OIDC (#191); MCP OAuth (#192); audit, rate limiting and log hygiene (#193);
+the reference TLS deployment and the operations rewrite (#194); the release itself
+(#195); and the availability bounds the release candidate's security scan asked for
+(#221). §5.1 records the pre-M6 state the model started from, and §10 says
+what running an alpha means. The rest of the section is the M6 threat model and route
 authorization matrix (#29): the actors, the trust boundaries, the deployment modes
-that will be supported, what every route family requires from whom, which layer
-enforces it, how it fails, and the tests that have to exist before the documentation
-may recommend widening `WEB_BIND`. The credential architecture — which login
-mechanisms, the token format, the OAuth machinery — is #30's decision and appears
-here only where the threat model constrains it.
+supported, what every route family requires from whom, which layer enforces it, how
+it fails, and the tests that had to exist before the documentation could recommend
+widening `WEB_BIND` — every one of which now exists and passes (§5.8). The credential
+architecture — which login mechanisms, the token format, the OAuth machinery — was
+#30's decision, closed with the release, and appears here only where the threat
+model constrains it. What this section still holds as 🔨 **Planned** is M8's public
+read-only mode: family 12 in §5.5, absent until then.
 
 Why this exists before any code: the SPA, the REST API and the MCP endpoint share one
 ingress and one process, so a login screen bolted onto the SPA would leave every other
@@ -1089,7 +1097,7 @@ feeling.
 | T10 | **Leakage.** Captured logs contain no token, password or session id across a full login, PAT and MCP run; `Cache-Control: no-store` on families 2–7 and on family 8's transaction and credential responses — consent GET and POST, callback, token, revoke, and their failure paths — with discovery asserted to carry its declared public caching instead; the archive's table registry contains no auth table (a rule-9 spec test); `GET /auth/session` and `/healthz` carry no version. | pytest |
 | T11 | **Timing shape.** An unknown token prefix and a wrong secret produce identical status and body; the compare is `compare_digest` by construction, and the test asserts the code path, not a stopwatch. | pytest |
 | T12 | **The deployment path.** The documented Caddy + compose configuration on a fresh VM: TLS, setup, login, a PAT REST call, MCP initialize through the proxy with a stream held open past 60 s, OAuth discovery through Caddy → nginx → api, `/api/readyz` 404 from outside, an `ALLOWED_HOSTS` lockout and its recovery. Scripted where possible; results recorded in the release notes. **Scripted (#194):** `backend/deployment_gate.py` runs it from a workstation over ssh — the matrix over https with the stream held on both `/mcp` spellings and its longest inter-byte gap reported (the SDK pings every 15 s, so a hold that only waited would prove nothing), both mode-R lockouts, the `TRUSTED_PROXIES` observation, the OIDC-mode matrix signed in, and the tunnel variant — and prints the results block the release notes carry. | release gate |
-| T13 | **Recovery.** The break-glass reset revokes sessions and restores access; a restore from the complete set — database (the OAuth state is a table in it, #192) and `.env` — brings back sessions, PATs and an *existing* MCP link — proved through public behaviour: the old client's refresh token returns 200 from `POST /mcp/token`, the access token completes an MCP initialize, and zero registrations occur after the restore; a restore without the env secrets leaves data intact and credentials re-mintable; a restore without the store — a dump taken before the link, or a signing key rotated — leaves data, sessions and PATs intact and MCP links to re-establish, as documented; `tests/test_mcp_oauth.py` proves the store-and-key rows in-process. | release gate |
+| T13 | **Recovery.** The break-glass reset revokes sessions and restores access; a restore from the complete set — database (the OAuth state is a table in it, #192) and `.env` — brings back sessions, PATs and an *existing* MCP link — proved through public behaviour: the old client's refresh token returns 200 from `POST /mcp/token`, the access token completes an MCP initialize, and zero registrations occur after the restore; a restore without the env secrets leaves data intact and credentials re-mintable; a restore without the store — a dump taken before the link, or a signing key rotated — leaves data, sessions and PATs intact and MCP links to re-establish, as documented; `tests/test_mcp_oauth.py` proves the store-and-key rows in-process. **Scripted (#194):** the `break-glass` and `t13` phases of `backend/deployment_gate.py` — the reset and the revocation from the host, then a real DCR client linked through the chain and the three restores with the documented commands verbatim, each asserted through public behaviour (the old refresh token's status, an initialize with the new access token, the registration count). | release gate |
 
 ### 5.9 Implementation split
 
@@ -1765,9 +1773,31 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    two-part set (database — the OAuth state is a table in it since #192 — and
    `.env`), the README's alpha warning
    rewritten, the `.env.example` keys. (T12, T13.)
+   **Shipped (#194, 07/09/2026):** `deploy/caddy/` — the reference Caddyfile (Let's
+   Encrypt through Cloudflare's DNS-01 challenge, no `log` directive) and the systemd
+   drop-in that supplies the token; `docs/operations.md` rebuilt around the four ways
+   to run it (a private network, an operator's own proxy as a contract, a Cloudflare
+   Tunnel, Caddy on a VPS) and the two-part backup set; the README's alpha warning
+   rewritten; `backend/deployment_gate.py` (T12/T13) with its host fixture under
+   `.agents/deployment-gate/`, run green against a fresh Debian LXC through Caddy and
+   through a Cloudflare Tunnel before the docs described either (§5.4, §5.8). Two
+   calls, recorded in §5.6 and AGENTS rule 12: in the bundled stack a loopback
+   `TRUSTED_PROXIES` entry also trusts the Compose gateway, and both `/mcp` spellings
+   at nginx carry the family's settings.
 10. **Release** — notes leading with `ALLOWED_HOSTS`, then the client-visible changes
     in §5.5; the upgrade path for existing instances (they come up unclaimed and fail
     closed until the setup token is used).
+    **Shipped (#195, v0.3.0-alpha):** the minor version moved because
+    every caller's contract changed — a request that answered 200 on 0.2.10 answers
+    401 on 0.3.0 without a credential. The notes lead with the upgrade path (back up,
+    `up --build`, read the setup token from the API log, claim, mint a token for every
+    script and MCP client), then the §5.5 client-visible changes, the features, and
+    the deployment gate's results block as observed against the tagged tree on the
+    #194 host; the four migrations since 0.2.10 are additive and each states what its
+    downgrade discards; #206 is recorded as a known limitation rather than fixed, and
+    the release candidate's security scan added item 11 before the tag (#221, which
+    closed #210); #30 closed with the release, its evidence being §5.8's tests and the
+    gate — rerun on the tree that carries item 11.
 11. **Availability bounds from the 0.3.0 scan (#221)** — the owner's full-repository
     security scan of the release candidate (three source passes at `ed48038`) found
     no bypass and four medium availability findings, fixed before the tag on one
