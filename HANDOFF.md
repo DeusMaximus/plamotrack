@@ -107,8 +107,17 @@ Template:
   matched; an accounting test pins 30 + 10, the 41st refused, both refill rates; lesson filed ("A
   runbook paragraph is one promise"). Rounds 2 and 3 both explicitly ran neither the control nor the
   mutants; author's record at `ec171fd`: 31/31 killed, full backend **2655**, CI green (Backend 12m49s).
-- **State:** `main` = `c527176` + these entries. PR #222 open at `ec171fd`; no application code has
-  changed since `6395a5d`. **Recommendation given (2026-09-08): stop the Codex rounds** — the NO-GOs
+- **PR #222 MERGED → `94fd2f9`** (squash, 2026-09-08; #221 and #210 closed) after the owner ran the
+  control (6 red) and the mutants (31 killed) himself. `release/0.3.0` rebased onto it → `9f2c52a`
+  (tree `36b2749`), PR #220 updated; the design.md conflicts resolved (item 10's note before item
+  11; dates to 08/09). **Gate rerun on that tree: local step 4 green; the deployment gate stopped
+  in T13** — the runbook's `pg_restore` after `down -v; up -d db --wait` met "the database system
+  is shutting down": the socket healthcheck is satisfied by the image's temporary init server
+  (`listen_addresses=''`). Filed **#228**, fixed on `fix/db-healthcheck-init-race` → **PR #229**
+  (TCP probe in compose and CI's service container, a runbook sentence; verified 3× on a fresh
+  volume). The lockout/local/oidc phases were green before the stop (matrices 179 and 182 ok rows).
+- **State:** `main` = `94fd2f9` + these entries. PR #229 open (CI pending), PR #220 open at
+  `9f2c52a` (will need one more rebase after #229). No tag exists. **Recommendation given (2026-09-08): stop the Codex rounds** — the NO-GOs
   are the reviewer's own unrun verification, not defects — and merge once the owner has run the two
   mechanical checks himself (the control file in a `c527176` worktree → 6 red; `mutation_test.py -k
   scan-` → 31 killed). A round-4 brief exists (scratchpad `brief-222-r4.md`) if a reviewer's name is
@@ -120,7 +129,7 @@ Template:
   tree) — the memory file `plamotrack-194-deployment-gate-setup` has the exact steps. Gate
   state dir `~/.plamotrack-gate/testhost…/` (the #194 run's moved aside). Dev overlay up;
   tree clean; LXC untouched.
-- **Next:** the owner's two checks → merge #222 → rebase `release/0.3.0` onto main → rerun the
+- **Next:** owner merges #229 → rebase `release/0.3.0` onto main → rerun the
   release gate on the rebased tree (local step 4 + `--phase all` + tunnel after the
   testhost reset) → merge #220 → tag `v0.3.0-alpha — the instance has an owner` on the
   merge commit → push tag → `gh release create --prerelease --verify-tag` with the notes
