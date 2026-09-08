@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-08 — Claude Code (Fable 5.1) — #195 held behind the owner's security scan: the four mediums fixed as #221 → **PR #222; Codex round 1 NO-GO (f1, f2 P2; f3 P3) fixed at `6395a5d`; round 2 NO-GO (f4 P3, docs) fixed at `b4d9aa4`; round 3 NO-GO (f5 P3, docs) fixed at `ec171fd`; the owner is running the control and the mutants himself — merge on that record is the recommendation**; release PR #220 waits (rebase + gate rerun after #222 merges)
+## 2026-09-08 — Claude Code (Fable 5.1) — #195 held behind the owner's security scan: the four mediums fixed as #221 → **PR #222; Codex round 1 NO-GO (f1, f2 P2; f3 P3) fixed at `6395a5d`; round 2 NO-GO (f4 P3, docs) fixed at `b4d9aa4`; round 3 NO-GO (f5 P3, docs) fixed at `ec171fd`; PR #222 MERGED `94fd2f9`; the gate rerun found #228 → PR #229 MERGED `37ef344`; release branch at `511ea90` (tree `c270127`), **gate GREEN on it, CI green — awaiting the owner's go: merge #220 → tag → release**; release PR #220 waits (rebase + gate rerun after #222 merges)
 
 - **Done:** (1) **#195 run to the edge of the outward steps** (2026-09-07): `release/0.3.0`
   at `ed48038` (tree `92015d9`) → **PR #220** (bump 0.3.0, design §5 flipped to Built,
@@ -116,8 +116,18 @@ Template:
   (`listen_addresses=''`). Filed **#228**, fixed on `fix/db-healthcheck-init-race` → **PR #229**
   (TCP probe in compose and CI's service container, a runbook sentence; verified 3× on a fresh
   volume). The lockout/local/oidc phases were green before the stop (matrices 179 and 182 ok rows).
-- **State:** `main` = `94fd2f9` + these entries. PR #229 open (CI pending), PR #220 open at
-  `9f2c52a` (will need one more rebase after #229). No tag exists. **Recommendation given (2026-09-08): stop the Codex rounds** — the NO-GOs
+- **PR #229 MERGED → `37ef344`** (#228 closed) on the owner's word; `release/0.3.0` rebased again →
+  **`511ea90`, tree `c270127`**, PR #220 updated, CI green (Backend 12m50s). **Gate run #3 on that tree
+  GREEN**: local step 4 green; `--phase all` green through T13 on the fixed healthcheck (local matrix
+  177 ok, oidc 181 ok, three restores); the tunnel rows failed only because the workstation's temporary
+  IPv6 rotated mid-run — the tunnel phase rerun alone passed (attribution to the current address,
+  both spellings held 130 s+, matrix 87 ok, audit row = visitor); the first tunnel rerun crashed on a
+  peer reset mid-hold → **#230** filed (harness gap, not a blocker). Results comment on #220; the
+  notes draft (scratchpad `release-notes-v0.3.0-alpha.md`) carries the three observed blocks, the
+  #221 section, the #228 line, and no longer lists #210.
+- **State:** `main` = `37ef344` + these entries. PR #220 open at `511ea90`; **no tag exists**. testhost
+  left in mode R after the tunnel phase's restore (OIDC mode, Keycloak up). Gate state dir
+  `~/.plamotrack-gate/testhost…/` holds run #3 (`…release-run-1`, `…release-run-2-stopped` beside it). **Recommendation given (2026-09-08): stop the Codex rounds** — the NO-GOs
   are the reviewer's own unrun verification, not defects — and merge once the owner has run the two
   mechanical checks himself (the control file in a `c527176` worktree → 6 red; `mutation_test.py -k
   scan-` → 31 killed). A round-4 brief exists (scratchpad `brief-222-r4.md`) if a reviewer's name is
@@ -129,9 +139,7 @@ Template:
   tree) — the memory file `plamotrack-194-deployment-gate-setup` has the exact steps. Gate
   state dir `~/.plamotrack-gate/testhost…/` (the #194 run's moved aside). Dev overlay up;
   tree clean; LXC untouched.
-- **Next:** owner merges #229 → rebase `release/0.3.0` onto main → rerun the
-  release gate on the rebased tree (local step 4 + `--phase all` + tunnel after the
-  testhost reset) → merge #220 → tag `v0.3.0-alpha — the instance has an owner` on the
+- **Next:** owner merges #220 (squash) → verify the merge commit's tree is `c270127` → tag `v0.3.0-alpha — the instance has an owner` on the
   merge commit → push tag → `gh release create --prerelease --verify-tag` with the notes
   (scratchpad `release-notes-v0.3.0-alpha.md`, the gate block replaced by the rerun's) →
   post the #30/#195 comments, close both, close the M6 milestone. Then the LXC upgrade.
