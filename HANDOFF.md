@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-08 — Claude Code (Fable 5.1) — #195 held behind the owner's security scan: the four mediums fixed as #221 → **PR #222; Codex round 1 NO-GO (f1, f2 P2; f3 P3) fixed at `6395a5d`; round 2 NO-GO (f4 P3, docs) fixed at `b4d9aa4`; round 3 — the replay round — pending**; release PR #220 waits (rebase + gate rerun after #222 merges)
+## 2026-09-08 — Claude Code (Fable 5.1) — #195 held behind the owner's security scan: the four mediums fixed as #221 → **PR #222; Codex round 1 NO-GO (f1, f2 P2; f3 P3) fixed at `6395a5d`; round 2 NO-GO (f4 P3, docs) fixed at `b4d9aa4`; round 3 NO-GO (f5 P3, docs) fixed at `ec171fd`; the owner is running the control and the mutants himself — merge on that record is the recommendation**; release PR #220 waits (rebase + gate rerun after #222 merges)
 
 - **Done:** (1) **#195 run to the edge of the outward steps** (2026-09-07): `release/0.3.0`
   at `ed48038` (tree `92015d9`) → **PR #220** (bump 0.3.0, design §5 flipped to Built,
@@ -100,8 +100,19 @@ Template:
   cancelled at `6395a5d` — now 20 with the reason in the workflow); **#227** filed for the device
   capability as a product contract. Round 2 explicitly ran no replays, control or mutants; re-run
   at `b4d9aa4`: 31/31 killed, control 6 red on `c527176` / 6 green, full backend **2654**.
-- **State:** `main` = `c527176` + these entries. PR #222 open at `b4d9aa4`, awaiting round 3 — the
-  replay round (brief printed in the 2026-09-08 chat; scratchpad `brief-222-r3.md`). PR #220
+- **Round 3 (Codex) — NO-GO on f5 (P3, documentation), fixed at `ec171fd`:** the runbook said "at most
+  thirty passwords a minute in total"; the policy is two additive token buckets (30 + 10, continuous
+  refill). The 429 paragraph is rewritten as one contract (ladder → reserved bucket → general bucket,
+  capacity + refill, every cookie state, a restore's present-but-unrecognised cookie); budget comments
+  matched; an accounting test pins 30 + 10, the 41st refused, both refill rates; lesson filed ("A
+  runbook paragraph is one promise"). Rounds 2 and 3 both explicitly ran neither the control nor the
+  mutants; author's record at `ec171fd`: 31/31 killed, full backend **2655**, CI green (Backend 12m49s).
+- **State:** `main` = `c527176` + these entries. PR #222 open at `ec171fd`; no application code has
+  changed since `6395a5d`. **Recommendation given (2026-09-08): stop the Codex rounds** — the NO-GOs
+  are the reviewer's own unrun verification, not defects — and merge once the owner has run the two
+  mechanical checks himself (the control file in a `c527176` worktree → 6 red; `mutation_test.py -k
+  scan-` → 31 killed). A round-4 brief exists (scratchpad `brief-222-r4.md`) if a reviewer's name is
+  wanted on those two items; GLM would do for that. PR #220
   open at `ed48038`, **stale once #222 merges** (rebase; the only expected conflict is
   design.md's "Last revised" line — keep 08/09; §5.9 item 11 and the §5.6 rows are #222's).
   No tag exists. testhost left in the gate's end state (OIDC mode, Keycloak up); a rerun
@@ -109,7 +120,7 @@ Template:
   tree) — the memory file `plamotrack-194-deployment-gate-setup` has the exact steps. Gate
   state dir `~/.plamotrack-gate/testhost…/` (the #194 run's moved aside). Dev overlay up;
   tree clean; LXC untouched.
-- **Next:** Codex round(s) on #222 → merge → rebase `release/0.3.0` onto main → rerun the
+- **Next:** the owner's two checks → merge #222 → rebase `release/0.3.0` onto main → rerun the
   release gate on the rebased tree (local step 4 + `--phase all` + tunnel after the
   testhost reset) → merge #220 → tag `v0.3.0-alpha — the instance has an owner` on the
   merge commit → push tag → `gh release create --prerelease --verify-tag` with the notes
