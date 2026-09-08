@@ -411,6 +411,26 @@ deleted literals instead, which is the stronger control anyway. Write "spec X
 pins string Y" only in the same breath as the grep that proves it.
 → PR #165 reply.
 
+### A runbook paragraph is one promise, and the reviewer replays the promise
+
+PR #222 (the 0.3.0 scan's four mediums) took two review rounds on one paragraph of
+`docs/operations.md` — the 429 recovery text — after the code had stopped changing.
+Round 2 (f4): the paragraph said the reserved login path was for "the browser you
+signed in with"; a normal logout clears that cookie, so an ordinarily signed-out
+browser holds nothing. Round 3 (f5): it said the instance checks "at most thirty
+passwords a minute in total"; the policy is two token buckets, thirty plus ten,
+refilling continuously — forty at once, and no per-minute total anywhere. Each
+sentence had been written from the mechanism it described and was true of that
+mechanism; the paragraph as a whole promised what neither sentence's mechanism
+delivered, and a reviewer reads the paragraph as one end-to-end contract and
+replays it. The fix that held was to rewrite the paragraph in the order the code
+decides (the ladder, the reserved bucket, the general bucket), in the code's own
+terms (capacity and refill, not a ceiling), naming every lifecycle state the
+mechanism distinguishes. When a review round lands on prose, review the whole
+paragraph against the whole mechanism — cookie lifecycle, address precedence,
+capacity, refill — not the sentence the finding quoted; the next finding is in the
+sentence beside it.
+
 ## Architecture
 
 ### Why the write gate exists

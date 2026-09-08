@@ -44,6 +44,7 @@ from app.auth.sessions import (
 from app.auth.setup_token import setup_token_state
 from app.config import Settings
 from app.db import get_sessionmaker
+from app.exceptions import RateLimitedError
 from app.main import app, create_app
 from app.models import AuditEvent, Owner
 from app.models import Session as SessionRow
@@ -889,3 +890,45 @@ async def test_the_reserved_path_is_what_the_browser_still_holds(anon_client):
     recovered = await anon_client.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
     assert recovered.status_code == 200
     assert budgets.known.tokens == budgets.known.capacity - 1
+
+
+async def test_the_two_buckets_are_separate_additive_and_refill_continuously(anon_client):
+    """Codex #222 round 3, f5: the runbook said "thirty in total"; the policy
+    is two token buckets — the general one admits thirty at once and refills at
+    thirty a minute, the reserved one ten and ten — drawn in that order by a
+    recognised browser, so the instance admits up to forty checks at once and
+    refills continuously rather than counting per minute. Accounting only: no
+    password is checked here."""
+    await _claim(anon_client)
+    now = {"t": 1000.0}
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    setattr(app.state, BUDGET_ATTR, budgets)
+    assert budgets.verification.capacity == VERIFICATIONS_PER_MINUTE == 30
+    assert budgets.known.capacity == KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE == 10
+    async with get_sessionmaker()() as session:
+        for _ in range(VERIFICATIONS_PER_MINUTE):
+            await auth_service.refuse_throttled(
+                session, budgets, request=None, target="/auth/login"
+            )
+        assert budgets.verification.tokens < 1
+        for _ in range(KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE):
+            await auth_service.refuse_throttled(
+                session, budgets, request=None, target="/auth/login", known_browser=True
+            )
+        assert budgets.known.tokens < 1
+        # Forty admitted at once; the forty-first, known or not, is refused.
+        with pytest.raises(RateLimitedError):
+            await auth_service.refuse_throttled(
+                session, budgets, request=None, target="/auth/login", known_browser=True
+            )
+        # Continuous refill: two seconds buy one general check, six one reserved.
+        now["t"] += 2.0
+        await auth_service.refuse_throttled(session, budgets, request=None, target="/auth/login")
+        with pytest.raises(RateLimitedError):
+            await auth_service.refuse_throttled(
+                session, budgets, request=None, target="/auth/login"
+            )
+        now["t"] += 6.0
+        await auth_service.refuse_throttled(
+            session, budgets, request=None, target="/auth/login", known_browser=True
+        )

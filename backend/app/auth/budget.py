@@ -22,9 +22,12 @@ ingress is item 8's and bounds each address before either of these runs.
   delay but not the two bounds below it.
 - **One verification budget for the instance, and a reserved one for a
   browser that has signed in before.** A password check costs Argon2 work on
-  the single worker, so at most `VERIFICATIONS_PER_MINUTE` are performed
-  instance-wide, whatever addresses they come from; beyond that an attempt is
-  refused with a short `Retry-After` *before* the work is done. That bounds
+  the single worker, so the general bucket admits `VERIFICATIONS_PER_MINUTE`
+  checks at once and refills at that many a minute, whatever addresses they
+  come from — a token bucket, so a quiet instance holds a full one and the
+  count admitted in any given minute can exceed the refill rate by the
+  capacity; past it an attempt is refused with a short `Retry-After` *before*
+  the work is done. That bounds
   what a distributed guesser can make the worker do — and, on its own, it
   would let a guesser with a stream of fresh addresses hold the bucket empty
   and the owner out (Codex #222 round 1, f1: a CPU ceiling and owner admission
@@ -33,10 +36,16 @@ ingress is item 8's and bounds each address before either of these runs.
   unforgeable and the flood does not hold one — is verified from a **reserved**
   bucket of `KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE` the general traffic
   cannot drain, falling back to the general one only when the reserved is
-  spent. The owner's own browser is admitted within that bound however many
-  addresses are failing; a brand-new browser during a sustained distributed
-  flood competes with the flood, and the operator's ingress is the boundary
-  there — the documentation says so rather than the code pretending otherwise.
+  spent. A browser that still holds such a cookie — idled out, or ended by a
+  host-side reset — is admitted within that bound however many addresses are
+  failing; one that signed out normally holds none (logout clears it), and
+  one without a recognised cookie for any reason competes with the flood
+  during a sustained distributed one, the operator's ingress being the
+  boundary there — the documentation says so rather than the code pretending
+  otherwise (Codex #222 round 2, f4). The two buckets are separate and
+  additive — a recognised browser draws on the reserved one first, then the
+  general one — so the instance admits up to their capacities' sum at once;
+  neither is a per-minute total (round 3, f5).
   The setup token and the OIDC start spend neither bucket: their comparison
   is cheap, and the expensive work behind a correct token is gated by the
   token's own entropy.
@@ -61,12 +70,14 @@ MAX_DELAY = 300.0
 DECAY_AFTER = 2 * MAX_DELAY
 #: Ladders kept at once, across every action and address.
 MAX_TRACKED = 4096
-#: Password verifications the instance performs per minute, at most, whoever
-#: asks: Argon2 is deliberately slow, and one worker serves it.
+#: The general verification bucket: this many checks admitted at once, refilled
+#: at this many a minute, whoever asks — Argon2 is deliberately slow, and one
+#: worker serves it. A capacity and a rate, not a per-minute ceiling.
 VERIFICATIONS_PER_MINUTE = 30
-#: The reserved bucket for a browser that has signed in before: the owner's
-#: own admission under a flood, bounded too — a stolen expired cookie replayed
-#: from many addresses buys this much extra Argon2 and no more.
+#: The reserved bucket for a browser that has signed in before — additional to
+#: the general one, the same shape: the owner's own admission under a flood,
+#: bounded too — a stolen expired cookie replayed from many addresses buys this
+#: much extra Argon2 and no more.
 KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE = 10
 
 

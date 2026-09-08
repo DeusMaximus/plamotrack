@@ -396,23 +396,34 @@ Neither touches access tokens — revoke those from Settings once you are back i
 then `docker compose up -d`. The gate runs both of these lockouts and their
 recoveries on every release.
 
-**`429 Too Many Attempts`.** Throttling is per address: wrong guesses from your
-address slow that address down — doubling to five minutes at most — and the count
-resets after ten quiet minutes. Everyone behind one resolved address shares that
-ladder (a household NAT, a proxy you have not listed in `TRUSTED_PROXIES`). The
-instance also checks at most thirty passwords a minute in total, whoever asks, so a
-flood of guesses from many addresses cannot saturate it. Under such a flood a login
-is checked from a **reserved** allowance of ten a minute — one the flood cannot
-touch — when the browser still holds a session cookie this database recognises:
-a session that idled out (the cookie stays in the browser for thirty days), or one
-the host-side `reset-password` or `revoke-sessions` ended (the browser keeps the
-cookie; the row is kept, revoked). A browser that **signed out normally** holds no
-cookie, and neither does one whose thirty days ran out, one that cleared its
-cookies, or one whose row is missing after a restore from an older dump: from
-those, during a sustained flood, you compete with the flood. Then: wait for a gap
-(a token frees every two seconds), use a browser that still holds its cookie, or
-block the flood at your proxy — the instance does not pretend to bound that case.
-Restarting the `api` container clears the counters, not the flood.
+**`429 Too Many Attempts`.** Three things decide whether a login attempt is
+checked, in this order.
+
+1. **Your address's ladder.** Wrong guesses from one resolved address slow that
+   address down — doubling to five minutes at most — and the count resets after ten
+   quiet minutes. Everyone behind one resolved address shares the ladder (a household
+   NAT, a proxy you have not listed in `TRUSTED_PROXIES`); nobody else's guesses touch
+   it. A shut ladder is refused before anything below is consulted.
+2. **A reserved allowance, if the browser still holds a session cookie this database
+   recognises** — a session that idled out (the cookie stays in the browser for thirty
+   days), or one the host-side `reset-password` or `revoke-sessions` ended (the browser
+   keeps the cookie; the row is kept, revoked). That allowance is a bucket of ten
+   checks, refilling at ten a minute, that nobody without such a cookie can draw on.
+3. **The general allowance**, for everyone else and for a recognised browser whose
+   reserved bucket is spent: a bucket of thirty checks, refilling at thirty a minute
+   (one every two seconds), shared by every address. It bounds the password checks a
+   flood of guesses from many addresses can make the instance do; it is a bucket, not
+   a strict per-minute count — a quiet instance holds a full one — and the two buckets
+   together admit up to forty checks at once.
+
+A browser that **signed out normally** holds no cookie (signing out clears it), and a
+browser whose cookie ran past thirty days, or that cleared its cookies, holds none
+either; one restored from an older dump may hold a cookie this database no longer
+recognises. From any of those, during a sustained flood, you compete with the flood
+for the general allowance: wait for a gap, use a browser that still holds a recognised
+cookie, or block the flood at your proxy — the instance does not pretend to bound that
+case. Restarting the `api` container refills the buckets and clears the ladders; it
+does not stop the flood.
 
 ### Signing in through an identity provider (OIDC mode)
 
