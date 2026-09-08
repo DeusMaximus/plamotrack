@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -14,6 +16,7 @@ from starlette.responses import Response
 
 from app import __version__, error_codes
 from app.auth import sessions, setup_token
+from app.auth.budget import RefusalBudget
 from app.auth.dependency import (
     ROUTE_INDEX_ATTR,
     ResponseProfileMiddleware,
@@ -45,6 +48,7 @@ from app.exceptions import (
     GoneError,
     InvalidInputError,
     NotFoundError,
+    PayloadTooLargeError,
     RateLimitedError,
     UnauthenticatedError,
     UnavailableError,
@@ -70,7 +74,11 @@ from app.routers import (
     tokens,
 )
 from app.schemas.errors import ERROR_RESPONSES
+from app.services.audit import retention_loop
 from app.services.oidc import OidcProvider
+
+#: The attribute on `app.state` holding the refusal budget (`app.auth.budget`).
+REFUSAL_BUDGET_ATTR = "refusal_budget"
 
 ROUTERS = (
     kits.router,
@@ -93,6 +101,7 @@ _DOMAIN_STATUS: dict[type[DomainError], int] = {
     ForbiddenError: 403,
     CredentialRejectedError: 403,
     GoneError: 410,
+    PayloadTooLargeError: 413,
     RateLimitedError: 429,
     UnavailableError: 503,
 }
@@ -271,7 +280,7 @@ def build_mcp_app(
     mcp_app.router.redirect_slashes = False
     if oauth is not None:
         prune_child_well_known(mcp_app)
-        guard_registration_body(mcp_app)
+        guard_registration_body(mcp_app, oauth.proxy)
         guard_protocol_requests(mcp_app, oauth.proxy)
     else:
         mcp_app.router.routes.extend(local_mode_child_routes())
@@ -345,6 +354,7 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
 
     @asynccontextmanager
     async def lifespan(app_: FastAPI):
+        retention: asyncio.Task[None] | None = None
         # An unclaimed instance prints a one-time setup token at every start
         # until it is claimed (§5.6 safe failure, §5.7). Only when auth is on —
         # the pre-auth app has no owner to claim.
@@ -383,11 +393,18 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
                         setup_url=_setup_url(config),
                         oidc_issuer=provider.issuer if provider is not None else None,
                     )
+        if authorization and config.audit_retention_days is not None:
+            # Automatic retention (#221 item 3): a pass now and one a day.
+            retention = asyncio.create_task(retention_loop(config.audit_retention_days))
         assert mcp_app is not None
         async with mcp_app.lifespan(app_):  # the MCP session manager lives here
             try:
                 yield
             finally:
+                if retention is not None:
+                    retention.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await retention
                 if oauth is not None:
                     # The state store's pool, opened on first use (#192).
                     await oauth.close()
@@ -411,6 +428,9 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
         redoc_url=None,
     )
     app.state.ingress_policy = policy
+    # The refusal budget the guard's recorder reads (#210; #221 item 3): one
+    # per process, on the state so a test can hand it a clock.
+    setattr(app.state, REFUSAL_BUDGET_ATTR, RefusalBudget())
     if oidc_provider is not None:
         setattr(app.state, OIDC_PROVIDER_ATTR, oidc_provider)
         if authorization:
@@ -474,7 +494,13 @@ def create_app(config: Settings | None = None, *, authorization: bool = False) -
             # the service owns the audit transaction (rule 1).
             from app.services.audit import record_ingress_rejection as record
 
-            await record(event_type, scope, policy=policy, setting=setting)
+            await record(
+                event_type,
+                scope,
+                policy=policy,
+                setting=setting,
+                budget=getattr(app.state, REFUSAL_BUDGET_ATTR),
+            )
 
     app.add_exception_handler(DomainError, domain_error_handler)
     app.add_exception_handler(StarletteHTTPException, http_exception_envelope)

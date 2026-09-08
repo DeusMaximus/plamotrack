@@ -565,9 +565,34 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     prefix by nginx's limit phase. nginx overwrites the
     private client-address header on every API/MCP proxy path and only the
     unpublished compose API enables trust in it; source-run deployments use the
-    ordinary proxy policy. The login/setup failure budget remains in process only
-    while the Dockerfile pins uvicorn to one worker — move it to a shared store
-    before adding workers. CI's packaged matrix must exercise all four 429s and
+    ordinary proxy policy. **The in-process budgets** (#221) — a failure ladder
+    per (action, client address) plus one verification bucket for the instance
+    and a reserved one for a browser that has signed in before (`app/auth/budget.py`;
+    a guesser's failures slow the guesser's address, never the owner's, a ladder
+    decays instead of re-arming its ceiling, and a browser still holding a session
+    cookie the database recognises — idled out, or ended by a host-side reset — is
+    admitted under a flood, while one that signed out normally, or holds no
+    recognised cookie for any other reason, is explicitly the operator's ingress to
+    protect — the two buckets are separate and additive, capacity plus refill, never a
+    per-minute total; the setup
+    token and the OIDC start spend no verification token), the
+    refusal budget the audit recorder reads (ten rows per address and sixty per
+    instance a minute, the rest one summary row), and the MCP registration quota
+    — remain correct only while the Dockerfile pins uvicorn to one worker; move
+    them to a shared store before adding workers. **Every anonymous route that
+    takes a body declares `max_body_bytes` in the registry** (#221 item 1): the
+    pre-routing gate and the protocol guards enforce it through one bounded reader
+    (`app/auth/body.py`) before any parser, and nginx's exact locations are
+    generated from it (`scripts/render_ingress.py`, the second region);
+    `tests/test_body_limits.py` fails on an anonymous body route without one.
+    **Client records in `mcp_oauth_state` live a day unless a grant links them**
+    (`ClientRecords`, which every writer goes through — FastMCP's included), are
+    capped, and culled where a record is created — `ClientRecords.put` on a new
+    key, whichever route materialised the client — as well as from the anonymous
+    entry points; the adapter reads an expired row as absent and never deletes it,
+    so a new collection with a lifetime owes the cull too. A body whose client
+    disconnects before its last message is neither replayed nor answered
+    (`Disconnected`). CI's packaged matrix must exercise all four 429s and
     scan a full login/PAT/MCP run for the password, PAT and session value, plus
     OAuth query/Referer probes on normal and throttled requests. Both access loggers
     omit queries; nginx omits headers and discards its raw-request error diagnostics.

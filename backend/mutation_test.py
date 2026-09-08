@@ -142,6 +142,11 @@ LOG_HYG = ROOT / "app/log_hygiene.py"
 TEMPLATE = ROOT.parent / "frontend/nginx/default.conf.template"
 DOCKERFILE = ROOT / "Dockerfile"
 MATRIX = ROOT / "ingress_matrix.py"
+# #221: the scan- set — the four availability bounds from the 0.3.0 security
+# scan: the failure ladders and verification budget, the refusal budget, the
+# body budgets and their reader, the client records' bounds.
+BUDGET = ROOT / "app/auth/budget.py"
+BODY = ROOT / "app/auth/body.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -5612,6 +5617,229 @@ CASES += [
         '        detail=f"sessions_revoked={revoked} grants_purged={purged}",',
         "rebind_revokes_every_session or purges_every_grant",
     ),
+    # --- #221 (the 0.3.0 scan): the scan- set. Item 4 — the ladders and the
+    # --- verification budget; item 3 — the refusal budget and retention; item 1
+    # --- — the gate, the reader, the three guards, the field cap, the render;
+    # --- item 2 — the lifetime, the link, the cap, the quota, the cull, the cache.
+    (
+        "scan-1. one ladder for every address (the keying dropped)",
+        AUTH_SVC,
+        "    ladder = budgets.ladder(target, audit.client_address_of(request))\n    retry_after = ladder.retry_after()\n",
+        "    ladder = budgets.ladder(target, None)\n    retry_after = ladder.retry_after()\n",
+        "one_address_at_the_ceiling_does_not_exclude_another",
+    ),
+    (
+        "scan-2. a ladder never decays",
+        BUDGET,
+        "        if now - self.last_failure > DECAY_AFTER:\n            self.failures = 0\n",
+        "        if False:\n            self.failures = 0\n",
+        "restarts_after_a_quiet_period",
+    ),
+    (
+        "scan-3. the verification budget is never consulted",
+        AUTH_SVC,
+        '            retry_after = budgets.verification.take()\n            budget = "instance"\n',
+        '            retry_after = None\n            budget = "instance"\n',
+        "verification_budget_bounds_the_instance",
+    ),
+    (
+        "scan-4. a successful login leaves the ladder as it was",
+        AUTH_SVC,
+        "    ladder.reset()\n    if credentials.password_needs_rehash(credential.secret_hash):\n",
+        "    if credentials.password_needs_rehash(credential.secret_hash):\n",
+        "repeated_failures_throttle_then_a_success_resets",
+    ),
+    (
+        "scan-5. every refusal is recorded, budget or not",
+        AUDIT_SVC,
+        "        admitted, summary = budget.admit(address)\n        if not admitted:\n            return\n",
+        "        admitted, summary = budget.admit(address)\n        if not admitted and False:\n            return\n",
+        "hostile_origin_flood_writes_the_bound",
+    ),
+    (
+        "scan-6. the suppressed count is never written",
+        AUDIT_SVC,
+        "        if summary:\n            await record_event(\n                session,\n                REFUSALS_SUPPRESSED,\n",
+        "        if summary and False:\n            await record_event(\n                session,\n                REFUSALS_SUPPRESSED,\n",
+        "hostile_origin_flood_writes_the_bound",
+    ),
+    (
+        "scan-7. only the instance bound, no per-address bound",
+        BUDGET,
+        "        if self.total >= REFUSALS_PER_WINDOW or self._per_address.get(address, 0) >= (\n            REFUSALS_PER_ADDRESS\n        ):\n",
+        "        if self.total >= REFUSALS_PER_WINDOW:\n",
+        "each_address_and_the_instance_have_a_bound",
+    ),
+    (
+        "scan-8. a failed retention pass ends the loop",
+        AUDIT_SVC,
+        '        except Exception:\n            log.exception("audit retention pass failed; next in %ss", interval)\n',
+        "        except Exception:\n            raise\n",
+        "retention_loop_survives_a_failed_pass",
+    ),
+    (
+        "scan-9. the gate enforces no budget",
+        PRE,
+        "    if outcome.kind is not Dispatch.FULL:\n        return None\n    (endpoint,) = outcome.endpoints\n",
+        "    if outcome.kind is not Dispatch.FULL or True:\n        return None\n    (endpoint,) = outcome.endpoints\n",
+        "declared_length_past_the_budget_is_413 or chunked_body_is_judged",
+    ),
+    (
+        "scan-10. a declared length is not judged before reading",
+        BODY,
+        "    if declared is not None and declared > limit:\n        return None\n",
+        "    if False:\n        return None\n",
+        "declared_length_over_the_budget_reads_nothing",
+    ),
+    (
+        "scan-11. the streamed total is not judged",
+        BODY,
+        "        if total > limit:\n            return None\n",
+        "        if False:\n            return None\n",
+        "chunked_body_is_judged or declared_length_over_the_budget_reads_nothing",
+    ),
+    (
+        "scan-12. the protocol form guard reads without a budget",
+        MCP_OAUTH,
+        "                body = await read_bounded(scope, receive, self.max_body_bytes)\n            except Disconnected:\n                return  # the client left mid-body: nothing to answer, nothing to run\n            if body is None:\n                await refuse_too_large(scope, receive, send, self.max_body_bytes)\n                return\n            media_type = ",
+        "                body = await read_bounded(scope, receive, 10**9)\n            except Disconnected:\n                return  # the client left mid-body: nothing to answer, nothing to run\n            if body is None:\n                await refuse_too_large(scope, receive, send, self.max_body_bytes)\n                return\n            media_type = ",
+        "protocol_body_past_the_budget_is_413 and token",
+    ),
+    (
+        "scan-13. the registration guard reads without a budget",
+        MCP_OAUTH,
+        "            body = await read_bounded(scope, receive, self.max_body_bytes)\n        except Disconnected:\n            return  # the client left mid-body: nothing to answer, nothing to run\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        try:\n            json.loads(body)\n",
+        "            body = await read_bounded(scope, receive, 10**9)\n        except Disconnected:\n            return  # the client left mid-body: nothing to answer, nothing to run\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        try:\n            json.loads(body)\n",
+        "protocol_body_past_the_budget_is_413 and register",
+    ),
+    (
+        "scan-14. the consent guard reads without a budget",
+        MCP_OAUTH,
+        "            body = await read_bounded(scope, receive, self.max_body_bytes)\n        except Disconnected:\n            return  # the client left mid-body: nothing to answer, nothing to run\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        await self.app(scope, replay(body), send)\n",
+        "            body = await read_bounded(scope, receive, 10**9)\n        except Disconnected:\n            return  # the client left mid-body: nothing to answer, nothing to run\n        if body is None:\n            await refuse_too_large(scope, receive, send, self.max_body_bytes)\n            return\n        await self.app(scope, replay(body), send)\n",
+        "protocol_body_past_the_budget_is_413 and consent",
+    ),
+    (
+        "scan-15. no cap on form fields",
+        MCP_OAUTH,
+        "MAX_FORM_FIELDS = 64\n",
+        "MAX_FORM_FIELDS = 10**6\n",
+        "more_form_fields_than_the_cap",
+    ),
+    (
+        "scan-16. the render forgets the budget directive (template stale)",
+        REG,
+        '        lines.append(f"{indent}    client_max_body_size {nginx_size(limit)};")\n',
+        "",
+        "body_budget_region_equals_the_registry_render or every_body_budget_block",
+    ),
+    (
+        "scan-17. the family-3 actions declare no budget",
+        REG,
+        "            max_body_bytes=AUTH_BODY_LIMIT if route.path in AUTH_BODY_ROUTES else None,\n",
+        "            max_body_bytes=None,\n",
+        "every_anonymous_route_that_takes_a_body_declares_a_budget or declared_length_past_the_budget_is_413",
+    ),
+    (
+        "scan-18. a client record is written with no lifetime",
+        MCP_OAUTH,
+        "        if ttl is None and not (existing is not None and existing_ttl is None):\n",
+        "        if False:\n",
+        "registration_expires_unless_a_grant_links_it or cimd_record_is_stored_with_the_lifetime",
+    ),
+    (
+        "scan-19. issuance does not keep the client",
+        MCP_OAUTH,
+        '            await self._client_store.keep(client.client_id or "")\n',
+        "            pass\n",
+        "registration_expires_unless_a_grant_links_it",
+    ),
+    (
+        "scan-20. the store admits a new record past the cap",
+        MCP_OAUTH,
+        "            if live >= MAX_CLIENT_RECORDS:\n",
+        "            if False:\n",
+        "cimd_lookup_at_the_cap_is_not_a_client",
+    ),
+    (
+        "scan-21. the guard never answers 503",
+        MCP_OAUTH,
+        "        if await self.proxy.registrations_full():\n",
+        "        if False:\n",
+        "collection_is_capped_and_the_guard_answers_503",
+    ),
+    (
+        "scan-22. no registration quota",
+        MCP_OAUTH,
+        "        retry_after = self.quota.admit(audit.client_address_of(Request(scope)))\n",
+        "        retry_after = None\n",
+        "address_has_a_registration_quota",
+    ),
+    (
+        "scan-23. the registration guard never culls",
+        MCP_OAUTH,
+        "        await self.proxy.cull_if_due()\n        if await self.proxy.registrations_full():\n",
+        "        if await self.proxy.registrations_full():\n",
+        "expired_rows_are_culled_at_registration",
+    ),
+    (
+        "scan-24. FastMCP's CIMD cache left unbounded",
+        MCP_OAUTH,
+        "        fetcher._cache = BoundedCache(CIMD_CACHE_ENTRIES)\n",
+        "        fetcher._cache = {}\n",
+        "proxy_installs_the_bounded_cache",
+    ),
+    (
+        "scan-25. the bounded cache never evicts",
+        MCP_OAUTH,
+        "        if key not in self and len(self) >= self.capacity:\n            del self[next(iter(self))]\n",
+        "        if False:\n            del self[next(iter(self))]\n",
+        "cimd_document_cache_forgets_its_oldest_entry",
+    ),
+    # --- Codex #222 round 1 (f1–f3): the cheap paths spend nothing, the reserved
+    # --- bucket, the cull at materialisation, the disconnect abort. ---------------
+    (
+        "scan-26. the setup path charges the verification bucket again",
+        AUTH_ROUTER,
+        '        session, budgets, request=request, target="/auth/setup", verification=False\n',
+        '        session, budgets, request=request, target="/auth/setup", verification=True\n',
+        "wrong_setup_token_spends_no_verification",
+    ),
+    (
+        "scan-27. a known browser is nobody special",
+        AUTH_SVC,
+        '        session, budgets, request=request, target="/auth/login", known_browser=known\n',
+        '        session, budgets, request=request, target="/auth/login", known_browser=False\n',
+        "known_browser_is_admitted_from_the_reserved_bucket",
+    ),
+    (
+        "scan-28. the reserved bucket is charged and the general one too",
+        AUTH_SVC,
+        "        if not admitted_reserved:\n            retry_after = budgets.verification.take()\n",
+        "        if True:\n            retry_after = budgets.verification.take()\n",
+        "known_browser_is_admitted_from_the_reserved_bucket",
+    ),
+    (
+        "scan-29. no cull where a client record is created",
+        MCP_OAUTH,
+        "            await self._store.cull_expired(collection or CLIENT_COLLECTION)\n            live = await self._store.count_live(collection or CLIENT_COLLECTION)\n",
+        "            live = await self._store.count_live(collection or CLIENT_COLLECTION)\n",
+        "materialised_by_a_lookup_alone_rolls_over",
+    ),
+    (
+        "scan-30. a disconnect ends the body as if it were complete",
+        BODY,
+        "            raise Disconnected\n",
+        "            break\n",
+        "abandoned_mid_way or reader_raises_on_a_disconnect",
+    ),
+    (
+        "scan-31. the OIDC start charges the verification bucket again",
+        OIDC_SVC,
+        '            session, budgets, request=request, target="/auth/oidc/start", verification=False\n',
+        '            session, budgets, request=request, target="/auth/oidc/start", verification=True\n',
+        "start_with_wrong_setup_tokens_spends_no_verification",
+    ),
 ]
 
 TEST_FILES = [
@@ -5679,6 +5907,10 @@ TEST_FILES = [
     # contract, Codex round 4) kill in the wire-level contract suite.
     "tests/test_mcp_oauth.py",
     "tests/test_mcp_oauth_clients.py",
+    # The #221 scan- set: the four availability bounds.
+    "tests/test_refusal_budget.py",
+    "tests/test_body_limits.py",
+    "tests/test_mcp_oauth_registrations.py",
     # The #193 (aud-) fold-in: the audit vocabulary and prune (aud-1…3), the
     # privacy contract (aud-38…56), the uvicorn/SDK log hygiene (aud-32/33/37)
     # and the packaging/matrix hygiene (aud-18…21) each live in a file of

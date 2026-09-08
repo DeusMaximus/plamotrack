@@ -11,16 +11,19 @@ records commit or roll back together.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
-from datetime import datetime
+import logging
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.requests import Request
 from starlette.types import Scope
 
+from app.auth.budget import REFUSAL_WINDOW, RefusalBudget
 from app.auth.principal import Principal, anonymous, internal
-from app.db import session_scope
+from app.db import get_sessionmaker, session_scope
 from app.ingress import CLIENT_ADDRESS_KEY, IngressPolicy, client_address_from_scope
 from app.models import AuditEvent
 from app.services.write_gate import acquire_write_gate
@@ -45,6 +48,10 @@ TOKEN_USE_AFTER_REVOKE = "auth.token_use_after_revoke"
 # --- ingress and maintenance vocabulary (#193) ---------------------------------
 HOST_REJECTED = "ingress.host_rejected"
 ORIGIN_REJECTED = "ingress.origin_rejected"
+#: Refusals the budget left unrecorded in a window (#210; #221 item 3): one row
+#: carrying the count, written with the next recorded refusal. `detail` names
+#: the count and the window; there is no address to name.
+REFUSALS_SUPPRESSED = "ingress.refusals_suppressed"
 AUDIT_PRUNED = "auth.audit_pruned"
 
 # --- the M6-6 vocabulary (#191) -------------------------------------------------
@@ -133,23 +140,45 @@ async def record_ingress_rejection(
     *,
     policy: IngressPolicy,
     setting: str,
+    budget: RefusalBudget | None = None,
 ) -> None:
-    """Persist a Host/Origin refusal before routing.
+    """Persist a Host/Origin refusal before routing — within the budget.
 
     The guard deliberately runs before credential resolution, so the caller is
     recorded as anonymous and no credential-bearing header is inspected. The
     target is the decoded path only — never the query string or request body.
     This owns its transaction because a rejected request never reaches FastAPI's
     request-scoped database session.
+
+    `budget` bounds the rows (#210; #221 item 3): a refusal past the caller's
+    or the instance's per-window bound is counted, not written, and the count
+    a rolled-over window left is written as one `REFUSALS_SUPPRESSED` row in the
+    same transaction as the next recorded refusal — so an anonymous flood costs
+    the database the bound plus one row per window, never a row per request,
+    while the first refusals of it keep their address and path. The refusal
+    itself is answered whatever the budget says; only the row is in question.
     """
+    address = client_address_from_scope(scope, policy)
+    summary = 0
+    if budget is not None:
+        admitted, summary = budget.admit(address)
+        if not admitted:
+            return
     async with session_scope() as session:
+        if summary:
+            await record_event(
+                session,
+                REFUSALS_SUPPRESSED,
+                principal=anonymous(),
+                detail=f"suppressed={summary} window_s={int(REFUSAL_WINDOW)}",
+            )
         await record_event(
             session,
             event_type,
             principal=anonymous(),
             target=scope.get("path"),
             detail=f"method={scope.get('method', '')} setting={setting}",
-            client_address=client_address_from_scope(scope, policy),
+            client_address=address,
         )
 
 
@@ -177,3 +206,35 @@ async def prune_events(
     )
     await session.commit()
     return deleted
+
+
+# --- automatic retention (#221 item 3) -------------------------------------------
+
+log = logging.getLogger("plamotrack.audit")
+
+#: How often the retention task runs while the API is up.
+RETENTION_INTERVAL_SECONDS = 24 * 60 * 60
+
+
+async def prune_retained(days: int) -> int:
+    """One retention pass: `prune_events` with a cutoff `days` ago, on a session
+    of its own. The host-side `prune-audit` command and this are the same
+    delete with the same audit row; this one is what `AUDIT_RETENTION_DAYS`
+    schedules."""
+    async with get_sessionmaker()() as session:
+        return await prune_events(session, before=datetime.now(UTC) - timedelta(days=days))
+
+
+async def retention_loop(days: int, *, interval: float = RETENTION_INTERVAL_SECONDS) -> None:
+    """Prune at start and every `interval` while the process lives. A failed
+    pass is logged and the next is still scheduled: retention must not take the
+    API down with it, and must not stop because one pass could not run."""
+    while True:
+        try:
+            deleted = await prune_retained(days)
+            log.info("audit retention: pruned %d rows older than %d days", deleted, days)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("audit retention pass failed; next in %ss", interval)
+        await asyncio.sleep(interval)

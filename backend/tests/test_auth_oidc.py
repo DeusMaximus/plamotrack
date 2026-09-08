@@ -33,7 +33,7 @@ from sqlalchemy import select, update
 
 from app import error_codes
 from app.auth import recovery
-from app.auth.budget import FailureBudget
+from app.auth.budget import FailureBudgets
 from app.auth.dependency import ROUTE_INDEX_ATTR
 from app.auth.registry import RouteIndex
 from app.auth.sessions import PLAIN_COOKIE_NAME, PLAIN_OIDC_COOKIE_NAME
@@ -199,6 +199,32 @@ def test_the_registry_declares_the_mode_axis():
 # --- starting a login -------------------------------------------------------------------
 
 
+async def test_start_with_wrong_setup_tokens_spends_no_verification():
+    """Codex #222 round 1, f1: the unbound OIDC start charged the expensive
+    verification bucket for a cheap token comparison, so a stream of wrong
+    tokens from fresh addresses drained it without doing any expensive work.
+    The start spends the ladder alone."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.auth.budget import VERIFICATIONS_PER_MINUTE, FailureBudgets
+
+    async with oidc_app(FakeIdp()) as (live, _):
+        _issue_setup_token(live)
+        budgets = FailureBudgets()
+        setattr(live.state, BUDGET_ATTR, budgets)
+        for i in range(VERIFICATIONS_PER_MINUTE):
+            async with AsyncClient(
+                transport=ASGITransport(
+                    app=live, client=(f"203.0.113.{i + 1}", 40000), raise_app_exceptions=False
+                ),
+                base_url=BASE,
+            ) as guesser:
+                wrong = await _start(guesser, setup_token="not-the-token")
+                assert wrong.status_code == 403
+        assert budgets.verification.tokens == VERIFICATIONS_PER_MINUTE
+        assert budgets.tracked == VERIFICATIONS_PER_MINUTE  # one ladder per address, each shut
+
+
 async def test_start_on_an_unbound_instance_needs_the_setup_token():
     """The claim gate (§5.6 safe failure; T8): no token → 403 like a wrong
     password, audited against the OIDC start, counted by the budget."""
@@ -218,7 +244,8 @@ async def test_start_on_an_unbound_instance_needs_the_setup_token():
     (throttled,) = await _events(audit.LOGIN_THROTTLED)
     assert throttled.target == "/auth/oidc/start"
     assert throttled.principal_kind == "anon"
-    assert getattr(live.state, BUDGET_ATTR).failures == 1
+    ladders = getattr(live.state, BUDGET_ATTR)
+    assert ladders.ladder("/auth/oidc/start", "127.0.0.1").failures == 1
     async with get_sessionmaker()() as session:
         assert (await session.execute(select(OidcLogin))).scalars().all() == []
 
@@ -266,8 +293,8 @@ async def test_a_hostile_origin_cannot_start_a_login():
     assert response.json()["code"] == error_codes.INGRESS_ORIGIN_NOT_ALLOWED
     async with get_sessionmaker()() as session:
         assert (await session.execute(select(OidcLogin))).scalars().all() == []
-    budget = getattr(live.state, BUDGET_ATTR, None)
-    assert budget is None or budget.failures == 0
+    budgets = getattr(live.state, BUDGET_ATTR, None)
+    assert budgets is None or budgets.tracked == 0
 
 
 async def test_start_ignores_a_forwarded_host_for_the_callback():
@@ -880,7 +907,7 @@ async def test_rebind_revokes_every_session_and_the_next_login_needs_the_token()
         assert (await browser.get("/kits")).status_code == 401
         assert (await browser.get("/auth/session")).json()["state"] == "unclaimed"
         assert (await _start(browser)).status_code == 403
-        setattr(live.state, BUDGET_ATTR, FailureBudget())  # past the throttle; T8 is above
+        setattr(live.state, BUDGET_ATTR, FailureBudgets())  # past the throttle; T8 is above
         new_token = _issue_setup_token(live)
         rebound = await _sign_in(fake, browser, sub=STRANGER_SUB, setup_token=new_token)
         assert _auth_error(rebound) is None

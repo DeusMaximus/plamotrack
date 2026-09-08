@@ -176,6 +176,16 @@ INGRESS_ORIGIN_NOT_ALLOWED = "ingress.origin_not_allowed"
 # every family-8 failure (Codex #212 round 1, f4). The app has no raise site for
 # it — its own budgets are #193's.
 INGRESS_RATE_LIMITED = "ingress.rate_limited"
+# 413: a request body past the budget the route policy registry declares for
+# the route (`RoutePolicy.max_body_bytes`; the anonymous routes that take one),
+# refused before it is read whole — by the pre-routing gate, the protocol
+# guards and the bundled nginx alike (#221 item 1). `params.limit` from the app.
+INGRESS_BODY_TOO_LARGE = "ingress.body_too_large"
+# 503 from the MCP OAuth registration endpoint: the client-record collection
+# is at its cap and a new registration must wait for unlinked ones to expire
+# (#221 item 2). Rendered by the registration guard; `Retry-After` names the
+# lifetime. No params.
+AUTH_MCP_REGISTRATIONS_FULL = "auth.mcp_registrations_full"
 
 # --- authorization refusals (the route-policy dependency — app/auth, §5.5) ----
 # 401: no credential, or a presented one that fails, on a route that needs one.

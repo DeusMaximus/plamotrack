@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     # *client address* (rate limiting and audit). Never for the
     # app's identity, never for the raw peer `/readyz` reads. Empty: ignored.
     trusted_proxies: str = ""
+    # Audit rows older than this many days are pruned automatically, once at
+    # start and daily after (#221 item 3). Unset: kept until the host-side
+    # `prune-audit` command runs — the pre-#221 behaviour.
+    audit_retention_days: int | None = None
     # Internal compose contract: the API port is unpublished and the bundled
     # nginx overwrites X-Plamotrack-Client-Address with the client address it
     # resolved. Every peer on that private Compose network is inside this trust
@@ -268,6 +272,13 @@ class Settings(BaseSettings):
             # Origins are exact: `http://*:8080` would be a wildcard pattern to
             # the guard's fnmatch (PR #196 review, the P3-1 sweep).
             validate_host_pattern(parsed.hostname, setting="ALLOWED_ORIGINS", allow_wildcard=False)
+        return value
+
+    @field_validator("audit_retention_days")
+    @classmethod
+    def _validate_audit_retention_days(cls, value: int | None) -> int | None:
+        if value is not None and value < 1:
+            raise ValueError("AUDIT_RETENTION_DAYS must be a whole number of days, at least 1")
         return value
 
     @field_validator("trusted_proxies")

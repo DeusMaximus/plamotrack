@@ -28,9 +28,16 @@ from starlette.requests import Request
 
 from app import error_codes
 from app.auth import credentials
-from app.auth.budget import FailureBudget
+from app.auth.budget import FailureBudget, FailureBudgets
 from app.auth.principal import Principal, anonymous, internal
-from app.auth.sessions import LAST_USED_WRITE_INTERVAL, SESSION_ABSOLUTE, SESSION_IDLE
+from app.auth.sessions import (
+    LAST_USED_WRITE_INTERVAL,
+    SESSION_ABSOLUTE,
+    SESSION_IDLE,
+    cookie_is_secure,
+    cookie_name,
+)
+from app.config import get_settings
 from app.exceptions import (
     CredentialRejectedError,
     GoneError,
@@ -276,23 +283,40 @@ def owner_principal(row: SessionRow) -> Principal:
 
 async def refuse_throttled(
     session: AsyncSession,
-    budget: FailureBudget,
+    budgets: FailureBudgets,
     *,
     request: Request | None,
     target: str,
-) -> None:
-    """Raise the 429 when the budget is shut — with the audit row committed
-    first, since the raise rolls back."""
-    retry_after = budget.retry_after()
+    verification: bool = True,
+    known_browser: bool = False,
+) -> FailureBudget:
+    """Raise the 429 when this caller's ladder at `target` is shut, or — for an
+    attempt that is about to cost Argon2 work (`verification`) — when the
+    budget it draws from is spent; with the audit row committed first, since
+    the raise rolls back. Returns the caller's ladder, for the failure or the
+    reset that follows. The ladder is judged first and spends nothing. A
+    `known_browser` draws from the reserved bucket and only then from the
+    general one (§5.6, brute force; #221 item 4; Codex #222 round 1, f1). The
+    setup token and the OIDC start pass `verification=False`: their comparison
+    is cheap, and charging the expensive budget for it let a stream of wrong
+    tokens drain the bucket without doing any expensive work."""
+    ladder = budgets.ladder(target, audit.client_address_of(request))
+    retry_after = ladder.retry_after()
+    budget = "address"
+    if retry_after is None and verification:
+        admitted_reserved = known_browser and budgets.known.take() is None
+        if not admitted_reserved:
+            retry_after = budgets.verification.take()
+            budget = "instance"
     if retry_after is None:
-        return
+        return ladder
     await audit.record_event(
         session,
         audit.LOGIN_THROTTLED,
         principal=anonymous(),
         request=request,
         target=target,
-        detail=f"retry_after={retry_after}",
+        detail=f"retry_after={retry_after} budget={budget}",
     )
     await session.commit()
     raise RateLimitedError(
@@ -305,15 +329,16 @@ async def refuse_throttled(
 
 async def record_setup_failure(
     session: AsyncSession,
-    budget: FailureBudget,
+    budgets: FailureBudgets,
     *,
     request: Request | None,
     target: str = "/auth/setup",
 ) -> None:
-    """A wrong setup token: counts against the budget, audited, refused as a
-    rejected form credential (403 — see `CredentialRejectedError`). The OIDC
-    start presents the same token (#191) and names its own route as `target`."""
-    budget.record_failure()
+    """A wrong setup token: counts against this caller's ladder at `target`,
+    audited, refused as a rejected form credential (403 — see
+    `CredentialRejectedError`). The OIDC start presents the same token (#191)
+    and names its own route as `target`."""
+    budgets.ladder(target, audit.client_address_of(request)).record_failure()
     await audit.record_event(
         session,
         audit.SETUP_FAILED,
@@ -325,11 +350,29 @@ async def record_setup_failure(
     raise CredentialRejectedError(_SETUP_TOKEN_INVALID, code=error_codes.AUTH_SETUP_TOKEN_INVALID)
 
 
+async def presented_session_is_known(session: AsyncSession, request: Request | None) -> bool:
+    """Whether the request carries a session cookie whose digest the instance
+    has ever stored — live, expired or revoked (session rows are never deleted,
+    only revoked). An unforgeable proof that this browser was the owner's at
+    some point, which is what admits a login to the reserved verification
+    bucket under a flood (#221 item 4; Codex #222 round 1, f1). Nothing here
+    authenticates: the password is still verified, the cookie is not resolved."""
+    if request is None:
+        return False
+    raw = request.cookies.get(cookie_name(cookie_is_secure(get_settings())))
+    if not raw:
+        return False
+    row = await session.execute(
+        select(SessionRow.id).where(SessionRow.token_hash == credentials.digest(raw))
+    )
+    return row.scalar_one_or_none() is not None
+
+
 async def login(
     session: AsyncSession,
     *,
     password: str,
-    budget: FailureBudget,
+    budgets: FailureBudgets,
     request: Request | None = None,
 ) -> str:
     """`POST /auth/login`. Returns the raw session token for the cookie.
@@ -338,17 +381,20 @@ async def login(
     against the stored verifier or, when there is none — an unclaimed instance —
     against `DUMMY_HASH`, so the work done and the status, code and body
     returned are identical. The refusal is 403 (`CredentialRejectedError`), not a
-    401 that could carry no honest challenge. Every failure counts against the budget and is
-    audited; a success resets the budget and re-hashes a verifier made with
-    older parameters."""
-    await refuse_throttled(session, budget, request=request, target="/auth/login")
+    401 that could carry no honest challenge. Every failure counts against the
+    caller's ladder and is audited; a success resets it and re-hashes a verifier
+    made with older parameters."""
+    known = await presented_session_is_known(session, request)
+    ladder = await refuse_throttled(
+        session, budgets, request=request, target="/auth/login", known_browser=known
+    )
     await acquire_write_gate(session)
     credential = await _the_credential(session)
     verified = credentials.verify_password(
         credential.secret_hash if credential is not None else None, password
     )
     if not (verified and credential is not None):
-        budget.record_failure()
+        ladder.record_failure()
         await audit.record_event(
             session,
             audit.LOGIN_FAILED,
@@ -358,7 +404,7 @@ async def login(
         )
         await session.commit()
         raise CredentialRejectedError(_LOGIN_FAILED, code=error_codes.AUTH_LOGIN_FAILED)
-    budget.reset()
+    ladder.reset()
     if credentials.password_needs_rehash(credential.secret_hash):
         credential.secret_hash = credentials.hash_password(password)
     raw, row = new_session_row(_now(), auth_mode=AuthMode.LOCAL)

@@ -630,6 +630,161 @@ def family_8_rows(mode: str, public_base_url: str) -> list[Row]:
 RATE_LIMIT_BURST = 60
 
 
+#: The body budgets the registry declares (`AUTH_BODY_LIMIT`,
+#: `PROTOCOL_BODY_LIMIT`; #221 item 1), typed here as literals the way the
+#: matrix types its rows: an independent snapshot the packaged stack is held to.
+AUTH_BODY_LIMIT = 32 * 1024
+PROTOCOL_BODY_LIMIT = 16 * 1024
+
+
+def _padded(core: bytes, size: int) -> bytes:
+    return core + b" " * (size - len(core))
+
+
+def body_budget_rows(mode: str, *, claimed: bool) -> list[Row]:
+    """#221 item 1 at the ingress: a body one byte past a route's budget is 413
+    in the envelope with `no-store` — nginx's `client_max_body_size` on the
+    generated exact location answers it, and the app's gate and guards answer
+    the same code behind it; a body of exactly the budget reaches the app,
+    whose answer is the route's own: the mode's 404 for a route of the other
+    mode, the registration handler's 400, a claimed instance's 410 at setup."""
+    json_type = {"Content-Type": "application/json"}
+    form_type = {"Content-Type": "application/x-www-form-urlencoded"}
+    too_large = {
+        "json_code": "ingress.body_too_large",
+        "expect_headers": NO_STORE,
+        "content_type": "application/json",
+    }
+    over_json = _padded(b'{"redirect_uris": []}', PROTOCOL_BODY_LIMIT + 1)
+    over_form = _padded(b"a=b", PROTOCOL_BODY_LIMIT + 1)
+    rows = [
+        Row(
+            "body budget: /api/auth/setup one byte over → 413",
+            "POST",
+            "/api/auth/setup",
+            413,
+            headers=json_type,
+            body=_padded(b'{"token": "x", "password": "y"}', AUTH_BODY_LIMIT + 1),
+            **too_large,
+        ),
+        Row(
+            "body budget: /api/auth/login one byte over → 413",
+            "POST",
+            "/api/auth/login",
+            413,
+            headers=json_type,
+            body=_padded(b'{"password": "y"}', AUTH_BODY_LIMIT + 1),
+            **too_large,
+        ),
+        Row(
+            "body budget: /mcp/register one byte over → 413",
+            "POST",
+            "/mcp/register",
+            413,
+            headers=json_type,
+            body=over_json,
+            **too_large,
+        ),
+        Row(
+            "body budget: /mcp/token one byte over → 413",
+            "POST",
+            "/mcp/token",
+            413,
+            headers=form_type,
+            body=over_form,
+            **too_large,
+        ),
+        Row(
+            "body budget: /mcp/consent one byte over → 413",
+            "POST",
+            "/mcp/consent",
+            413,
+            headers=form_type,
+            body=over_form,
+            **too_large,
+        ),
+    ]
+    at_budget_json = _padded(b'{"redirect_uris": []}', PROTOCOL_BODY_LIMIT)
+    at_budget_setup = _padded(b'{"token": "x", "password": "y"}', AUTH_BODY_LIMIT)
+    if mode == "local":
+        rows.append(
+            Row(
+                "body budget: /mcp/register at the budget reaches the app (the mode's 404)",
+                "POST",
+                "/mcp/register",
+                404,
+                headers=json_type,
+                body=at_budget_json,
+                json_code="auth.not_in_this_mode",
+                expect_headers=NO_STORE,
+            )
+        )
+        if claimed:
+            rows.append(
+                Row(
+                    "body budget: /api/auth/setup at the budget reaches the app (410, claimed)",
+                    "POST",
+                    "/api/auth/setup",
+                    410,
+                    headers=json_type,
+                    body=at_budget_setup,
+                    json_code="auth.setup_claimed",
+                    expect_headers=NO_STORE,
+                )
+            )
+    else:
+        rows.append(
+            Row(
+                "body budget: /mcp/register at the budget reaches the app (the handler's 400)",
+                "POST",
+                "/mcp/register",
+                400,
+                headers=json_type,
+                body=at_budget_json,
+                json_has={"error": "invalid_client_metadata"},
+                expect_headers=NO_STORE,
+            )
+        )
+        rows.append(
+            Row(
+                "body budget: /api/auth/setup at the budget reaches the app (the mode's 404)",
+                "POST",
+                "/api/auth/setup",
+                404,
+                headers=json_type,
+                body=at_budget_setup,
+                json_code="auth.not_in_this_mode",
+                expect_headers=NO_STORE,
+            )
+        )
+    return rows
+
+
+#: Hostile-Origin writes fired at a collection route back to back (#210; #221
+#: item 3): every one is the guard's 403, and the packaged run's audit rows for
+#: them are bounded — CI counts the rows after the run.
+ORIGIN_FLOOD = 30
+
+
+def origin_flood_rows(base: str) -> list[tuple[Row, Response]]:
+    """A flood of hostile-Origin writes is refused, every one, whether or not
+    the refusal budget records it; the row count is CI's to check."""
+    row = Row(
+        f"hostile Origin ×{ORIGIN_FLOOD} on /api/retailers → 403 every time; rows bounded",
+        "POST",
+        "/api/retailers",
+        403,
+        headers={"Content-Type": "application/json", "Origin": "https://evil.example"},
+        body=b'{"name": "flood"}',
+        json_code="ingress.origin_not_allowed",
+    )
+    responses = [send(base, row) for _ in range(ORIGIN_FLOOD)]
+    refused = [resp for resp in responses if resp.status != 403]
+    if refused:
+        return [(row, resp) for resp in refused]
+    return [(row, responses[-1])]
+
+
 def rate_limit_rows(base: str) -> list[tuple[Row, Response]]:
     """nginx's `limit_req` on the OAuth endpoints, in either mode: a burst at
     `/mcp/register` earns some 429s, and every one of them is the envelope with
@@ -1619,6 +1774,11 @@ def main(argv: list[str]) -> int:
         # These are contract checks; intentional bursts run separately below.
         time.sleep(0.12)
         run(row)
+    for row in body_budget_rows(args.mode, claimed=credential is not None):
+        time.sleep(0.12)
+        run(row)
+    for row, resp in origin_flood_rows(args.base):
+        run(row, resp)
     for row, resp in write_rows(args.base, args.allowed_host, credential):
         run(row, resp)
     if credential is not None and tokens is not None:

@@ -57,6 +57,21 @@ GRANT_COLLECTIONS: frozenset[str] = frozenset(
 #: client at `/mcp/revoke` or the provider's refresh response, ended the grant.
 ENDED_BY_REBIND = "rebind"
 
+# --- the client records' bounds (#221 item 2) ---------------------------------------------
+
+#: A client record's lifetime until a grant links it: a registration nobody
+#: authorized, a CIMD document nobody linked, expires after this; issuance
+#: makes the record permanent (`ClientRecords.keep`). A day covers a client
+#: that registers now and whose owner completes the browser leg later.
+UNLINKED_CLIENT_TTL_SECONDS = 24 * 60 * 60
+#: Live client records the collection holds at most, linked and unlinked
+#: together: a registration past it is refused until unlinked ones expire.
+#: Each is bounded by the registration body budget, so this bounds the bytes.
+MAX_CLIENT_RECORDS = 1024
+#: How often, at most, the expired rows of every collection are deleted — the
+#: adapter reads an expired row as absent but never removes it.
+CULL_INTERVAL_SECONDS = 60.0
+
 # --- the grant lock -----------------------------------------------------------------------
 
 #: Postgres advisory-lock namespace for the grant lock — the two-int4 form,
@@ -86,11 +101,42 @@ class OAuthStateStore(PostgreSQLStore):
     """The `py-key-value-aio` PostgreSQL adapter over the app's own database,
     with a pool sized for the proxy's traffic (the library's default opens
     ten connections). The table exists before first use — Alembic owns it — so
-    the adapter's `CREATE TABLE IF NOT EXISTS` never runs."""
+    the adapter's `CREATE TABLE IF NOT EXISTS` never runs. Two queries of its
+    own (#221 item 2): the live count of a collection, and the cull of every
+    expired row — the adapter treats an expired row as absent and leaves it."""
 
     async def _create_pool(self) -> asyncpg.Pool:
         assert self._url is not None
         return await asyncpg.create_pool(self._url, min_size=1, max_size=STATE_STORE_POOL_SIZE)
+
+    async def count_live(self, collection: str) -> int:
+        """Rows of `collection` that have not expired."""
+        await self.setup()
+        pool = self._initialized_pool
+        return await pool.fetchval(
+            f"SELECT count(*) FROM {self._table_name} "  # noqa: S608 — the name is Alembic's
+            "WHERE collection = $1 AND (expires_at IS NULL OR expires_at > now())",
+            collection,
+        )
+
+    async def cull_expired(self, collection: str | None = None) -> int:
+        """Delete every expired row — of one collection, or of all; returns how
+        many."""
+        await self.setup()
+        pool = self._initialized_pool
+        if collection is None:
+            result = await pool.execute(
+                f"DELETE FROM {self._table_name} "  # noqa: S608 — the name is Alembic's
+                "WHERE expires_at IS NOT NULL AND expires_at < now()"
+            )
+        else:
+            result = await pool.execute(
+                f"DELETE FROM {self._table_name} "  # noqa: S608 — the name is Alembic's
+                "WHERE collection = $1 AND expires_at IS NOT NULL AND expires_at < now()",
+                collection,
+            )
+        # asyncpg answers the command tag: "DELETE <n>".
+        return int(result.rsplit(" ", 1)[-1])
 
 
 def storage_key(signing_key: bytes) -> bytes:

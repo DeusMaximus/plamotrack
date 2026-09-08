@@ -279,6 +279,7 @@ import base64
 import hashlib
 import json
 import logging
+import math
 import re
 import time
 from binascii import Error as binascii_error
@@ -341,6 +342,7 @@ from mcp.shared.auth import (
 from pydantic import AnyUrl, BaseModel, ConfigDict, ValidationError
 from sqlalchemy import text
 from starlette.applications import Starlette
+from starlette.datastructures import Headers
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
@@ -348,10 +350,15 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import error_codes
 from app.auth import tokens as token_format
+from app.auth.body import Disconnected, read_bounded, replay
 from app.auth.mcp_auth import PersonalAccessTokenVerifier
 from app.auth.mcp_oauth_state import (  # the two writers' shared contract (#214)
+    CLIENT_COLLECTION,
+    CULL_INTERVAL_SECONDS,
     GRANT_COLLECTION,
     GRANT_LOCK_NAMESPACE,
+    MAX_CLIENT_RECORDS,
+    UNLINKED_CLIENT_TTL_SECONDS,
     OAuthStateStore,
     build_state_store,
     storage_key,  # noqa: F401 — the suite imports it here
@@ -433,6 +440,12 @@ RESOURCE_PARAMETER = "resource"
 #: extension parameter the protocol says to ignore, however often it appears
 #: (RFC 6749 §3.1 as corrected by erratum 5708; Codex #212 round 8, f28), so the
 #: guard discards it before counting.
+#: Form fields a protocol request may carry, at most (#221 item 1): the token
+#: request is the widest at nine recognised parameters; the rest is what the
+#: protocol says to ignore, and `parse_qsl` refuses to enumerate past this.
+MAX_FORM_FIELDS = 64
+_TOO_MANY_FIELDS = ("invalid_request", f"more than {MAX_FORM_FIELDS} form fields")
+
 RECOGNISED_PARAMETERS: dict[str, frozenset[str]] = {
     AUTHORIZATION_PATH: frozenset(
         {
@@ -488,6 +501,128 @@ _PROVIDER_UNAVAILABLE_HTML = (
     "<p>The identity provider could not be reached. Try again shortly.</p>"
 )
 _NOT_JSON = "The registration request body is not a JSON document."
+
+# --- the client records' bounds (#221 item 2) ----------------------------------------------
+
+#: Registrations one client address may make per window (in-process, one
+#: worker — the failure budgets' shape): a client registers once and links;
+#: twenty an hour is a developer restarting a client all afternoon.
+REGISTRATIONS_PER_ADDRESS = 20
+REGISTRATION_WINDOW_SECONDS = 60.0 * 60.0
+#: Addresses the quota remembers at most; expired windows go first.
+REGISTRATION_QUOTA_ENTRIES = 4096
+#: CIMD documents FastMCP's fetcher keeps in memory at most — its cache was a
+#: plain dict keyed by every URL ever looked up.
+CIMD_CACHE_ENTRIES = 256
+_REGISTRATIONS_FULL = (
+    "This instance cannot register another MCP client right now; "
+    "unused registrations expire after a day."
+)
+_REGISTRATIONS_THROTTLED = "Too many client registrations from your address; try again later."
+
+
+class ClientRecordsFull(Exception):
+    """The client-record collection is at `MAX_CLIENT_RECORDS`; a new record
+    cannot be written until unlinked ones expire."""
+
+
+class ClientRecords(PydanticAdapter[ProxyDCRClient]):
+    """FastMCP's client collection under two rules (#221 item 2). A record is
+    written with `UNLINKED_CLIENT_TTL_SECONDS` unless `keep` — issuance — made
+    it permanent, and a permanent record stays permanent through every later
+    write: FastMCP's own writes (a registration, a CIMD document fetched or
+    refreshed on each lookup) supply no lifetime and would have stored every
+    anonymous registration and every URL ever presented as a client id for
+    good — or, once the lifetime existed, put a linked client's record back on
+    the clock at its next refresh. And a *new* record past `MAX_CLIENT_RECORDS`
+    live ones is refused (`ClientRecordsFull`); an update of a live record — a
+    CIMD refresh, the link — is never refused, so a full collection cannot
+    break a client that already exists."""
+
+    def __init__(self, *, store: OAuthStateStore, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._store = store
+
+    async def put(
+        self,
+        key: str,
+        value: ProxyDCRClient,
+        *,
+        collection: str | None = None,
+        ttl: float | None = None,
+    ) -> None:
+        existing, existing_ttl = await super().ttl(key=key, collection=collection)
+        if existing is None:
+            # A new record is the one thing that grows this collection — a
+            # registration, or a CIMD document materialised by any route that
+            # looks a client up (`/mcp/token` and `/mcp/revoke` included, which
+            # no other cull reaches: Codex #222 round 1, f2). The expired rows
+            # go first, so the physical size never exceeds the live cap.
+            await self._store.cull_expired(collection or CLIENT_COLLECTION)
+            live = await self._store.count_live(collection or CLIENT_COLLECTION)
+            if live >= MAX_CLIENT_RECORDS:
+                raise ClientRecordsFull(
+                    f"{live} live client records; the cap is {MAX_CLIENT_RECORDS}"
+                )
+        if ttl is None and not (existing is not None and existing_ttl is None):
+            # No lifetime asked for: the unlinked lifetime, unless the record
+            # is already permanent — a linked client's, which a refresh
+            # rewrites and must not put back on the clock.
+            ttl = UNLINKED_CLIENT_TTL_SECONDS
+        await super().put(key=key, value=value, collection=collection, ttl=ttl)
+
+    async def keep(self, key: str) -> None:
+        """Make the record permanent — a grant now links it."""
+        record = await self.get(key=key)
+        if record is not None:
+            await super().put(key=key, value=record, ttl=None)
+
+
+class BoundedCache(dict):
+    """A dict that forgets its oldest entry past `capacity` — the bound on
+    FastMCP's in-memory CIMD document cache."""
+
+    def __init__(self, capacity: int) -> None:
+        super().__init__()
+        self.capacity = capacity
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        if key not in self and len(self) >= self.capacity:
+            del self[next(iter(self))]
+        super().__setitem__(key, value)
+
+
+class RegistrationQuota:
+    """Registrations per client address per window, in process."""
+
+    def __init__(self, clock: Callable[[], float] = time.monotonic) -> None:
+        self.clock = clock
+        self._windows: dict[str | None, tuple[float, int]] = {}
+
+    def admit(self, address: str | None) -> int | None:
+        """None when this registration is within the address's quota, else the
+        whole seconds until its window ends."""
+        now = self.clock()
+        started, count = self._windows.get(address, (now, 0))
+        if now - started >= REGISTRATION_WINDOW_SECONDS:
+            started, count = now, 0
+        if count >= REGISTRATIONS_PER_ADDRESS:
+            return max(1, math.ceil(started + REGISTRATION_WINDOW_SECONDS - now))
+        if address not in self._windows and len(self._windows) >= REGISTRATION_QUOTA_ENTRIES:
+            self._evict(now)
+        self._windows[address] = (started, count + 1)
+        return None
+
+    def _evict(self, now: float) -> None:
+        expired = [
+            key
+            for key, (started, _) in self._windows.items()
+            if now - started >= REGISTRATION_WINDOW_SECONDS
+        ]
+        for key in expired:
+            del self._windows[key]
+        if len(self._windows) >= REGISTRATION_QUOTA_ENTRIES:
+            del self._windows[min(self._windows, key=lambda key: self._windows[key][0])]
 
 
 def _reference(token: str) -> str:
@@ -1408,12 +1543,18 @@ class ProtocolRequest:
     does not take pass through to the SDK (and the binding)."""
 
     def __init__(
-        self, app: ASGIApp, *, endpoint: str, accepts_resource: Callable[[str], bool]
+        self,
+        app: ASGIApp,
+        *,
+        endpoint: str,
+        accepts_resource: Callable[[str], bool],
+        max_body_bytes: int,
     ) -> None:
         self.app = app
         self.endpoint = endpoint
         self.accepts_resource = accepts_resource
         self.recognised = RECOGNISED_PARAMETERS[endpoint]
+        self.max_body_bytes = max_body_bytes
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "http" or scope["method"] not in ("GET", "POST"):
@@ -1424,12 +1565,24 @@ class ProtocolRequest:
                 await self.app(scope, receive, send)
                 return
             raw = scope["query_string"].decode("utf-8", "replace")
-            pairs = parse_qsl(raw, keep_blank_values=True)
+            try:
+                pairs = parse_qsl(raw, keep_blank_values=True, max_num_fields=MAX_FORM_FIELDS)
+            except ValueError:
+                await self._refuse(scope, receive, send, *_TOO_MANY_FIELDS)
+                return
             body: bytes | None = None
         else:
-            request = Request(scope, receive)
-            body = await request.body()
-            media_type = request.headers.get("content-type", "").split(";", 1)[0]
+            # The route's body budget (#221 item 1) — judged before the media
+            # type and before a byte past it is held; the wrong media type is
+            # then refused without the body having been read whole either.
+            try:
+                body = await read_bounded(scope, receive, self.max_body_bytes)
+            except Disconnected:
+                return  # the client left mid-body: nothing to answer, nothing to run
+            if body is None:
+                await refuse_too_large(scope, receive, send, self.max_body_bytes)
+                return
+            media_type = Headers(scope=scope).get("content-type", "").split(";", 1)[0]
             if media_type.strip().lower() != FORM_MEDIA_TYPE:
                 await self._refuse(
                     scope,
@@ -1439,7 +1592,15 @@ class ProtocolRequest:
                     f"the request body must be {FORM_MEDIA_TYPE} (RFC 6749 §4.1.3)",
                 )
                 return
-            pairs = parse_qsl(body.decode("utf-8", "replace"), keep_blank_values=True)
+            try:
+                pairs = parse_qsl(
+                    body.decode("utf-8", "replace"),
+                    keep_blank_values=True,
+                    max_num_fields=MAX_FORM_FIELDS,
+                )
+            except ValueError:
+                await self._refuse(scope, receive, send, *_TOO_MANY_FIELDS)
+                return
         pairs = [(name, value) for name, value in pairs if name in self.recognised]
         refusal = self._refusal(pairs)
         if refusal is not None:
@@ -1602,10 +1763,13 @@ class PlamotrackOAuthProxy(OAuthProxy):
         provider: Callable[[], OidcProvider],
         pat_verifier: PersonalAccessTokenVerifier,
         storage: FernetEncryptionWrapper,
+        state_store: OAuthStateStore,
     ) -> None:
         self._provider = provider
         self._owner_check = IdTokenOwnerCheck(provider)
         self._pat_verifier = pat_verifier
+        self._state_store = state_store
+        self._last_cull = -math.inf
         self.assertion_validator = RestrictedKeyAssertionValidator()
         #: Test seam: an httpx transport the upstream code exchange, refresh
         #: and revocation go through instead of the network, so the suite can
@@ -1647,6 +1811,30 @@ class PlamotrackOAuthProxy(OAuthProxy):
                 raise_on_validation_error=True,
             ),
         )
+        # The client records under their bounds (#221 item 2): the same
+        # storage and collection as the adapter the SDK built, so every
+        # writer — the SDK's registration, its CIMD fetch and refresh, this
+        # class — goes through the lifetime and the cap.
+        sdk_clients = self._client_store
+        if getattr(sdk_clients, "_default_collection", CLIENT_COLLECTION) != CLIENT_COLLECTION:
+            raise RuntimeError(
+                "MCP OAuth: FastMCP moved its client records; the bounds must follow"
+            )
+        self._client_store = ClientRecords(  # type: ignore[assignment]
+            store=state_store,
+            key_value=self._client_storage,
+            pydantic_model=ProxyDCRClient,
+            default_collection=CLIENT_COLLECTION,
+            raise_on_validation_error=True,
+        )
+        # And the in-memory CIMD document cache, a plain dict on FastMCP's
+        # fetcher keyed by every URL ever presented as a client id.
+        fetcher = getattr(self._cimd_manager, "_fetcher", None)
+        if fetcher is None or not isinstance(getattr(fetcher, "_cache", None), dict):
+            raise RuntimeError(
+                "MCP OAuth: FastMCP moved its CIMD document cache; the bound must follow"
+            )
+        fetcher._cache = BoundedCache(CIMD_CACHE_ENTRIES)
 
     # -- the upstream: a view of the provider's document ---------------------------
 
@@ -1752,16 +1940,39 @@ class PlamotrackOAuthProxy(OAuthProxy):
         client_info.grant_types = list(SUPPORTED_GRANT_TYPES)
         requested_scope = " ".join((client_info.scope or "").split())
         client_info.scope = requested_scope or " ".join(ADVERTISED_SCOPES)
-        # FastMCP's registration: the allowlist check, and a record of its own.
-        await super().register_client(client_info)
-        # The record is the admitted contract, field for field.
-        await self._client_store.put(
-            key=client_info.client_id,
-            value=ProxyDCRClient(
-                **client_info.model_dump(),
-                allowed_redirect_uri_patterns=self._allowed_client_redirect_uris,
-            ),
-        )
+        try:
+            # FastMCP's registration: the allowlist check, and a record of its own.
+            await super().register_client(client_info)
+            # The record is the admitted contract, field for field — written
+            # with the unlinked lifetime; issuance keeps it (#221 item 2).
+            await self._client_store.put(
+                key=client_info.client_id,
+                value=ProxyDCRClient(
+                    **client_info.model_dump(),
+                    allowed_redirect_uri_patterns=self._allowed_client_redirect_uris,
+                ),
+            )
+        except ClientRecordsFull:
+            # The guard in front answers 503 for this before the handler runs;
+            # a registration that raced it past the cap gets the handler's
+            # form of the same refusal.
+            raise RegistrationError("invalid_client_metadata", _REGISTRATIONS_FULL) from None
+
+    async def registrations_full(self) -> bool:
+        """Whether a new client record would be refused (#221 item 2)."""
+        return await self._state_store.count_live(CLIENT_COLLECTION) >= MAX_CLIENT_RECORDS
+
+    async def cull_if_due(self) -> None:
+        """Delete the expired rows of every collection, at most once per
+        `CULL_INTERVAL_SECONDS` — the adapter reads an expired transaction,
+        code or client as absent but never removes it, so the two anonymous
+        entry points that create such rows (registration, authorization)
+        pay for the cleanup (#221 item 2)."""
+        now = time.monotonic()
+        if now - self._last_cull < CULL_INTERVAL_SECONDS:
+            return
+        self._last_cull = now
+        await self._state_store.cull_expired()
 
     # -- the routes ------------------------------------------------------------------
 
@@ -1914,7 +2125,12 @@ class PlamotrackOAuthProxy(OAuthProxy):
             # nobody uses it (the spike named every client's kind), so it is
             # refused as an unknown client.
             return None
-        client = await super().get_client(client_id)
+        try:
+            client = await super().get_client(client_id)
+        except ClientRecordsFull:
+            # A CIMD document fetched for a URL never seen while the collection
+            # is at its cap: not stored, so not a client (#221 item 2).
+            return None
         if client is None or client.cimd_document is not None:
             return client
         return BoundDCRClient(**client.model_dump(), allow_unregistered_redirect_uris=False)
@@ -1933,6 +2149,7 @@ class PlamotrackOAuthProxy(OAuthProxy):
         own check is looser and accepted what the guard had judged foreign
         (round 8, f27). FastMCP's check still runs behind this one and can
         refuse nothing this accepted (`resource_identity`)."""
+        await self.cull_if_due()
         try:
             await self._resolve_upstream()
         except UnavailableError as exc:
@@ -2008,6 +2225,9 @@ class PlamotrackOAuthProxy(OAuthProxy):
                 raise self._refusal_error(verdict)
             transition.binding = verdict.binding
             tokens = await super().exchange_authorization_code(client, authorization_code)
+            # A grant links the client: its record outlives the unlinked
+            # lifetime from here (#221 item 2).
+            await self._client_store.keep(client.client_id or "")
             await self._record(
                 audit.MCP_GRANT_ISSUED,
                 principal=mcp_principal(write=True, subject=verdict.subject),
@@ -2386,7 +2606,11 @@ def build_mcp_oauth(
 
     store, storage = build_state_store(settings)
     proxy = PlamotrackOAuthProxy(
-        settings=settings, provider=provider, pat_verifier=pat_verifier, storage=storage
+        settings=settings,
+        provider=provider,
+        pat_verifier=pat_verifier,
+        storage=storage,
+        state_store=store,
     )
     return McpOAuth(proxy=proxy, store=store)
 
@@ -2424,21 +2648,42 @@ class DiscoveryDocument:
 
 
 class ClientMetadataBody:
-    """In front of the SDK's registration handler: a body that is not a JSON
-    document is RFC 7591 §3.2.2's `invalid_client_metadata` (400), where the
-    handler's unconditional `request.json()` would raise and the child app
-    would answer 500 without the profile (Codex #212 round 1, f4). The body is
-    read once here and replayed to the handler; a JSON document that is not
-    client metadata is the handler's own 400."""
+    """In front of the SDK's registration handler, in this order: a body past
+    the route's budget is 413 before it is read whole (#221 item 1); a body
+    that is not a JSON document is RFC 7591 §3.2.2's `invalid_client_metadata`
+    (400), where the handler's unconditional `request.json()` would raise and
+    the child app would answer 500 without the profile (Codex #212 round 1,
+    f4); a registration past the address's quota is 429 with `Retry-After`;
+    and with the expired rows culled, a collection at its cap is 503 with
+    `Retry-After` naming the unlinked lifetime (#221 item 2) — before the
+    handler mints an id. The body is read once here and replayed to the
+    handler; a JSON document that is not client metadata is the handler's
+    own 400."""
 
-    def __init__(self, app: ASGIApp) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        max_body_bytes: int,
+        proxy: PlamotrackOAuthProxy,
+        quota: RegistrationQuota,
+    ) -> None:
         self.app = app
+        self.max_body_bytes = max_body_bytes
+        self.proxy = proxy
+        self.quota = quota
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        if scope["type"] != "http" or scope["method"] != "POST":
             await self.app(scope, receive, send)
             return
-        body = await Request(scope, receive).body()
+        try:
+            body = await read_bounded(scope, receive, self.max_body_bytes)
+        except Disconnected:
+            return  # the client left mid-body: nothing to answer, nothing to run
+        if body is None:
+            await refuse_too_large(scope, receive, send, self.max_body_bytes)
+            return
         try:
             json.loads(body)
         except ValueError:
@@ -2448,11 +2693,90 @@ class ClientMetadataBody:
             )
             await response(scope, receive, send)
             return
+        retry_after = self.quota.admit(audit.client_address_of(Request(scope)))
+        if retry_after is not None:
+            await _refuse_envelope(
+                scope,
+                receive,
+                send,
+                429,
+                _REGISTRATIONS_THROTTLED,
+                error_codes.INGRESS_RATE_LIMITED,
+                retry_after=retry_after,
+            )
+            return
+        await self.proxy.cull_if_due()
+        if await self.proxy.registrations_full():
+            await _refuse_envelope(
+                scope,
+                receive,
+                send,
+                503,
+                _REGISTRATIONS_FULL,
+                error_codes.AUTH_MCP_REGISTRATIONS_FULL,
+                retry_after=UNLINKED_CLIENT_TTL_SECONDS,
+            )
+            return
+        await self.app(scope, replay(body), send)
 
-        async def replay() -> dict[str, Any]:
-            return {"type": "http.request", "body": body, "more_body": False}
 
-        await self.app(scope, replay, send)
+async def _refuse_envelope(
+    scope: Scope,
+    receive: Receive,
+    send: Send,
+    status: int,
+    detail: str,
+    code: str,
+    *,
+    retry_after: int,
+) -> None:
+    response = JSONResponse(
+        {"detail": detail, "code": code, "params": {}},
+        status_code=status,
+        headers={"Retry-After": str(retry_after)},
+    )
+    await response(scope, receive, send)
+
+
+class BoundedBody:
+    """In front of a protocol route whose handler reads its own form — the
+    consent submission: the route's body budget (#221 item 1), the body read
+    within it here and replayed, or 413."""
+
+    def __init__(self, app: ASGIApp, *, max_body_bytes: int) -> None:
+        self.app = app
+        self.max_body_bytes = max_body_bytes
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http" or scope["method"] not in ("POST", "PUT", "PATCH"):
+            await self.app(scope, receive, send)
+            return
+        try:
+            body = await read_bounded(scope, receive, self.max_body_bytes)
+        except Disconnected:
+            return  # the client left mid-body: nothing to answer, nothing to run
+        if body is None:
+            await refuse_too_large(scope, receive, send, self.max_body_bytes)
+            return
+        await self.app(scope, replay(body), send)
+
+
+_TOO_LARGE = "The request body is larger than this endpoint accepts ({limit} bytes at most)."
+
+
+async def refuse_too_large(scope: Scope, receive: Receive, send: Send, limit: int) -> None:
+    """The 413 a protocol route answers past its body budget: the app's error
+    envelope (the same code the bundled nginx answers from
+    `client_max_body_size`), `no-store` stamped by the route's binding."""
+    response = JSONResponse(
+        {
+            "detail": _TOO_LARGE.format(limit=limit),
+            "code": error_codes.INGRESS_BODY_TOO_LARGE,
+            "params": {"limit": limit},
+        },
+        status_code=413,
+    )
+    await response(scope, receive, send)
 
 
 def root_discovery_routes(oauth: McpOAuth | None) -> list[Route]:
@@ -2496,13 +2820,26 @@ def prune_child_well_known(mcp_app: Starlette) -> None:
     ]
 
 
-def guard_registration_body(mcp_app: Starlette) -> None:
+def _declared_body_limit(child_path: str) -> int:
+    limit = MCP_OAUTH_ROUTES[MCP_MOUNT + child_path].max_body_bytes
+    if limit is None:
+        raise RuntimeError(f"the registry declares no body budget for {child_path}")
+    return limit
+
+
+def guard_registration_body(mcp_app: Starlette, proxy: PlamotrackOAuthProxy) -> None:
     """Put `ClientMetadataBody` in front of the SDK's registration route, under
     the `RouteBinding` the registry adds later (the route's endpoint, which the
-    registry keys on, is untouched)."""
+    registry keys on, is untouched), with the budget the registry declares, the
+    proxy's capacity and cull, and one registration quota per process."""
     for route in mcp_app.router.routes:
         if isinstance(route, Route) and route.path == _child_path(f"{MCP_MOUNT}/register"):
-            route.app = ClientMetadataBody(route.app)
+            route.app = ClientMetadataBody(
+                route.app,
+                max_body_bytes=_declared_body_limit(route.path),
+                proxy=proxy,
+                quota=RegistrationQuota(),
+            )
 
 
 def guard_protocol_requests(mcp_app: Starlette, proxy: PlamotrackOAuthProxy) -> None:
@@ -2510,16 +2847,20 @@ def guard_protocol_requests(mcp_app: Starlette, proxy: PlamotrackOAuthProxy) -> 
     under the `RouteBinding` the registry adds later (the route's endpoint,
     which the registry keys on, is untouched — the same shape as
     `guard_registration_body`), judging `resource` sets by the proxy's own
-    predicate."""
+    predicate and bodies by the registry's budgets; and `BoundedBody` in front
+    of the consent submission, whose handler reads its own form."""
     for route in mcp_app.router.routes:
-        if isinstance(route, Route) and route.path in (
-            AUTHORIZATION_PATH,
-            TOKEN_PATH,
-            REVOCATION_PATH,
-        ):
+        if not isinstance(route, Route):
+            continue
+        if route.path in (AUTHORIZATION_PATH, TOKEN_PATH, REVOCATION_PATH):
             route.app = ProtocolRequest(
-                route.app, endpoint=route.path, accepts_resource=proxy.accepts_resource
+                route.app,
+                endpoint=route.path,
+                accepts_resource=proxy.accepts_resource,
+                max_body_bytes=_declared_body_limit(route.path),
             )
+        elif route.path == _child_path(f"{MCP_MOUNT}/consent"):
+            route.app = BoundedBody(route.app, max_body_bytes=_declared_body_limit(route.path))
 
 
 def declare_child_verbs(mcp_app: Starlette) -> None:

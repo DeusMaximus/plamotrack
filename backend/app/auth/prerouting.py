@@ -69,6 +69,7 @@ from starlette.routing import Match, Mount, compile_path, get_route_path
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app import error_codes
+from app.auth.body import Disconnected, read_bounded, replay
 from app.auth.dependency import BEARER_CHALLENGE, REQUEST_PRINCIPAL_ATTR
 from app.auth.principal import PrincipalKind
 from app.auth.registry import (
@@ -80,7 +81,7 @@ from app.auth.registry import (
 )
 from app.auth.resolver import resolve_principal
 from app.db import session_scope
-from app.exceptions import DomainError, UnauthenticatedError
+from app.exceptions import DomainError, PayloadTooLargeError, UnauthenticatedError
 
 #: How the gate renders a refusal: the app's own envelope handler, passed in by
 #: `create_app` so the envelope has one author and this module does not import
@@ -198,6 +199,21 @@ def refuses_anonymous(index: RouteIndex, outcome: Outcome) -> bool:
     return False
 
 
+def body_budget(index: RouteIndex, outcome: Outcome) -> int | None:
+    """The body budget the matched route declares (#221 item 1), or None: a
+    full match with a policy that names one. A partial match is refused or
+    405'd without a body being read; a mount's and the protocol namespace's
+    are their own."""
+    if outcome.kind is not Dispatch.FULL:
+        return None
+    (endpoint,) = outcome.endpoints
+    policy = index.policy_for(endpoint)
+    return policy.max_body_bytes if policy is not None else None
+
+
+_TOO_LARGE = "The request body is larger than this endpoint accepts ({limit} bytes at most)."
+
+
 # --- the middleware -------------------------------------------------------------
 
 
@@ -236,6 +252,25 @@ class PreRoutingAuthMiddleware:
             )
             await self._refuse(request, refusal, scope, receive, send)
             return
+        limit = body_budget(self.index, outcome)
+        if limit is not None:
+            # The route's body budget (#221 item 1), judged here — before
+            # FastAPI's parser, which would read the body whole — from
+            # `Content-Length` when there is one, else while reading, never
+            # holding more than the budget. What passes is replayed to the app.
+            try:
+                body = await read_bounded(scope, receive, limit)
+            except Disconnected:
+                return  # the client left mid-body: nothing to answer, nothing to run
+            if body is None:
+                too_large = PayloadTooLargeError(
+                    _TOO_LARGE.format(limit=limit),
+                    code=error_codes.INGRESS_BODY_TOO_LARGE,
+                    params={"limit": limit},
+                )
+                await self._refuse(request, too_large, scope, receive, send)
+                return
+            receive = replay(body)
         await self.app(scope, receive, send)
 
     async def _refuse(
