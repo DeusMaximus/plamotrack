@@ -41,6 +41,43 @@ Template:
 
 ---
 
+## 2026-09-08 — Claude Code (Fable 5.1) — **v0.3.0-alpha RELEASED** (M6 complete): PR #220 → `c46b652`, tag pushed, prerelease published, #30 + #195 closed, milestone M6 closed; next the LXC upgrade
+
+- **Done:** the whole of #195's tail on the owner's word ("do the lot"): **PR #220 squash-merged →
+  `c46b652`** (closes #195); annotated tag `v0.3.0-alpha — the instance has an owner` on it,
+  pushed; `gh release create --prerelease --verify-tag` with the notes —
+  https://github.com/DeusMaximus/plamotrack/releases/tag/v0.3.0-alpha ; #30 closed with the
+  criterion-by-criterion evidence comment; #195 closed with the record; **milestone M6 closed**
+  (20 closed, 0 open). The notes lead with the upgrade path (unclaimed on upgrade, back up,
+  the setup token, a PAT for every MCP client), then §5.5's client-visible changes, the
+  features, the scan's four bounds (#221) and the healthcheck fix (#228), the four
+  migrations and what each downgrade discards, the three observed gate blocks, the known
+  limitations (#206, #214's residual, #227's boundary, one worker, mode P, `PUBLIC_BASE_URL`,
+  M6.1). Earlier today: #222 merged `94fd2f9` (the scan's mediums, three Codex rounds); #229
+  merged `37ef344` (the db healthcheck over TCP, found by the gate's restore phase); the release
+  branch rebased twice; the gate rerun green on the final tree `c270127`.
+- **Decisions:** (1) **The tagged tree differs from the gated tree by `HANDOFF.md` alone** — the
+  hand-off I committed on `main` between the rebase and the merge; no image builds from it
+  (`backend/` and `frontend/` are the build contexts), so every byte the stack runs is the
+  gated byte; stated in the notes' gate paragraph. **Lesson for the next release: hold the
+  hand-off commit until after the release PR merges, or gate the merge commit** — a tree hash
+  argument should not need a caveat. (2) The tunnel phase was rerun alone after the
+  workstation's temporary IPv6 rotated mid-run (nginx attributed correctly, to the new
+  address); the first rerun died on a Cloudflare reset mid-hold → **#230** (harness gap: a
+  peer reset should be a failed row, not a crash; not a blocker). (3) #227 filed as the
+  product question (a device capability surviving a normal logout) rather than folded in.
+- **State:** `main` = `c46b652` + this entry; tag `v0.3.0-alpha` = `c46b652`. CI on `main`
+  triggered by the merge — check it. Branches `fix/scan-0.3.0-availability`,
+  `fix/db-healthcheck-init-race`, `release/0.3.0` deleted (remote). testhost left in mode R
+  (OIDC mode, Keycloak up); gate state dirs under `~/.plamotrack-gate/` (run #3 current, two
+  older beside it). Dev overlay up; tree clean. **The LXC still runs 0.2.10 — the real
+  collection; it has not been touched.** Open from the scan: #223–#226 (lows), #227, #230.
+- **Next:** **the LXC upgrade** — back up first (dump + `.env`), set `ALLOWED_HOSTS` if not
+  already, `git pull` to `v0.3.0-alpha`, `up -d --build --wait`, claim with the setup token
+  from `docker compose logs api`, mint PATs and relink every MCP client, refresh the personal
+  Gunpla skill to the deployed version (memory: it deliberately lags main). Then M6.1 /
+  M6.5 per the roadmap; the lows #223–#226 whenever.
+
 ## 2026-09-08 — Claude Code (Fable 5.1) — #195 held behind the owner's security scan: the four mediums fixed as #221 → **PR #222; Codex round 1 NO-GO (f1, f2 P2; f3 P3) fixed at `6395a5d`; round 2 NO-GO (f4 P3, docs) fixed at `b4d9aa4`; round 3 NO-GO (f5 P3, docs) fixed at `ec171fd`; PR #222 MERGED `94fd2f9`; the gate rerun found #228 → PR #229 MERGED `37ef344`; release branch at `511ea90` (tree `c270127`), **gate GREEN on it, CI green — awaiting the owner's go: merge #220 → tag → release**; release PR #220 waits (rebase + gate rerun after #222 merges)
 
 - **Done:** (1) **#195 run to the edge of the outward steps** (2026-09-07): `release/0.3.0`
@@ -266,46 +303,3 @@ Template:
   release): the gate now has step 4b, so a release runs `deployment_gate.py --phase all` against
   the tagged commit and pastes its block into the notes; bump/tag/prerelease; #206/#210/#213/#214
   need a defer-or-fix call, #30 closes with it. Then the LXC upgrade.
-
-## 2026-09-07 — Claude Code (Fable 5.1) — #215 fixed (PR #216 → `a322f15`) and the #208 `aud-` set folded (PR #217 → `3344066`, 56/56 on the committed tree); both MERGED, no review; #194 next
-
-- **Done:** (1) **#215** on `fix/215-ci-setup-token-argv` → **PR #216** (`040c613`): the
-  Integration matrix step's three variable-valued options spelled attached
-  (`--setup-token="$SETUP_TOKEN"`, `--token-out=…`, `--log-secrets-out=…`) with a comment
-  above the step saying why; the procedure doc's hand-run instruction says the same.
-  Proven against the real `ingress_matrix.main` parser with a leading-hyphen token
-  (separate word: `SystemExit(2)`; attached: parsed). Backend/Frontend/Integration green.
-  (2) **The `aud-` fold-in** on `chore/193-aud-mutants` → **PR #217** (`0cfdeb5`): 56 cases —
-  aud-1…17 reconstructed from PR #208's prose descriptions against `bd40687` (aud-14 on the
-  normalised snapshot), 18…58 verbatim from the record's two JSON blocks; four suites join
-  `TEST_FILES` (`test_audit`, `test_audit_privacy`, `test_access_logging`,
-  `test_deployment_hygiene`); the nginx template, `Dockerfile` and `ingress_matrix.py` join
-  the clean-tree check. Harness **570 cases / 51 files** (procedure doc's count line
-  re-derived). **56/56 RED on the committed tree** (`-k aud-`, ~8 min, tree clean after);
-  first pass 55/56 — aud-23 GREEN on the record's selection (the id_token-rejected test
-  asserts the row's detail, not its actor) → re-pointed at
-  `the_owner_cancelling_at_the_provider_spends_the_transaction`, RED on replay.
-- **Decisions:** aud-34/35 stay out — nothing in `tests/` reads the access-log format or
-  `error_log /dev/null;`, so their only witness is the release gate's packaged log scan.
-  aud-17/36, packaged-only in the record, fold on the four-families test's literal
-  assertions (added by the P3 round). No full-harness run: the branch touches no emission
-  site or anchored line; every anchor checked once (570/570), replacements compile, no
-  `-k` prefix collision. No reviewer requested on either PR — owner's call (CI/process,
-  not app code). Commit/push/PR for both was the owner's explicit choice this session.
-- **State:** **both squash-merged 2026-09-07** on the owner's call — PR #216 → `a322f15`
-  (#215 closed by the merge), PR #217 → `3344066` — with no review, matching the five
-  prior fold-ins (#199/#201/#203/#207/#211, all unreviewed); CI green on both. `main` at
-  `3344066` + this amended hand-off, tree clean, nothing uncommitted, **nothing in flight**.
-  Branches `fix/215-ci-setup-token-argv` and `chore/193-aud-mutants` left in place.
-  Dev `db` up; the Keycloak spike compose still up (`.agents/spikes/190/`, untracked —
-  needed for the OIDC-mode release gate). The owner's **#194 work-in-progress is
-  uncommitted on their MacBook**; they expect to redo it on this Mac — treat #194 as not
-  started here. LXC untouched (**stays put until M6 is finished**).
-- **Next:** (1) **#194** (M6-9: reference TLS deployment with Caddy + the operations/README
-  rewrite) on a fresh branch — read the issue and design §5.4 first. (2) **#195**, the M6 release:
-  the gate in `.agents/testing-and-review.md` — `ingress_matrix.py --mode oidc` against a
-  packaged stack with the Keycloak spike, the register burst last — then bump via PR, tag,
-  prerelease notes leading with the fail-closed upgrade path; the open M6 P3s
-  **#206/#210/#213/#214** need a defer-or-fix call before the tag, #30 closes with the
-  release. (3) Only then the LXC upgrade (back up first; `ALLOWED_HOSTS`; relink MCP
-  clients; refresh the personal Gunpla skill).
