@@ -41,6 +41,50 @@ Template:
 
 ---
 
+## 2026-09-09 — Claude Code (Fable 5.1) — M6.5 direction decided: **Workbench** (design §13); mockups on a private design canvas; dev DB seeded with fixtures; docs committed, the four-PR split filed as #231–#234; no code yet
+
+- **Done:** a design walkthrough with the owner on the running dev stack, then three
+  directions drawn on the same screens (Home dashboard, Kits, Orders; dark, plus a light
+  variant) on a Claude Design canvas — a private artifact on the owner's account, not in
+  the repo. **Owner chose Workbench** (warm near-black, one amber accent, hairline borders,
+  flat surfaces, Inter, Lucide, no emoji); Console liked and kept as a possible second
+  selectable theme later; Editorial set aside. Every product decision from the walkthrough
+  is written into **`docs/design.md` §13** (13.1 tokens + per-browser light/dark/system,
+  13.2 Home replaces the board, 13.3 sidebar, 13.4 URL filter/sort on the list pages, 13.5
+  phone/tablet deferred, 13.6 the four-PR split); §11 item 11, `AGENTS.md` roadmap 6.5 and
+  the README row point at it.
+- **Decisions:** (1) theme is the one per-browser preference (localStorage, applied before
+  first paint) — everything else stays instance-wide (rule 11); (2) Home replaces the
+  kanban: Building as a hero strip, Backlog / Recently completed capped at six with true
+  counts and view-all links into the list pages filtered by status and sorted by
+  `status_updated_at`, an In-the-mail strip of ORDER cards (a mixed order sits under
+  Ordered with a pre-order tag); no drag-and-drop on Home; edit is a visible corner
+  control, not right-click; (3) Settings alone above a footer with the theme switch and
+  Sign out (+ an identity line in OIDC mode only), the sidebar fixed while the page
+  scrolls; (4) the tagline leaves the sidebar for sign-in and About; (5) phone/tablet is a
+  later, separate UI; (6) confirmed by the owner in the same session: no drag-and-drop on Home, and one
+  edit control per list row with Delete inside the dialog.
+- **State:** tree on `main` at `20b05ac` plus the doc edits above and this entry, **committed and pushed on `main`** on the
+  owner's word (docs only, per the convention), together with Codex's spike hand-off
+  commit `20b05ac`, which had been local only. **The dev DB holds INVENTED fixture data** — 15 kits across all six
+  statuses, 6 orders, 4 retailers, catalog stock, two upgrade applications — seeded
+  2026-09-08 through the service layer for the walkthrough; disposable, not the owner's
+  collection; the owner reset the dev password themselves. Copies of the mock artboards
+  sit in `frontend/node_modules/.cache/plamotrack-drafts/` (ignored; delete freely). The
+  dev overlay and both dev servers were running from this session. `spike/m61-fastmcp4`
+  is untouched, one docs commit behind `main`.
+- **Next:** M6.5 PR 1 per §13.6, on a branch off `main`: semantic tokens in
+  `frontend/src/index.css` through Tailwind v4 `@theme`, `[data-theme]` with an inline
+  pre-paint script, `@fontsource-variable/inter`, `lucide-react`, the new sidebar; then
+  sweep every `zinc-*` / `indigo-*` utility (`ui.tsx`, `Modal`, `StatusBadge`, `Layout`,
+  `AuthGate`, the pages and settings sections) onto the tokens. Then PR 2 (URL filter/sort
+  + sort/limit on the kit and order list endpoints, REST **and** MCP, registry), PR 3
+  (Home, drop dnd-kit), PR 4 (Settings, About, e2e, README screenshots). Filed as
+  **#231 → #234** (milestone M6.5), one per PR, in that order — **start with #231 in a fresh session** (owner's call,
+  2026-09-09). Brief for it: this entry, design §13.1 / §13.3 / §13.6, and #231 itself;
+  the reference artboards are on the owner's private design canvas — ask the owner for
+  exported PNGs if exact spacing or colour is in doubt. M6.1's two-PR plan from the spike hand-off is unaffected.
+
 ## 2026-09-08 — Codex (GPT-6) — M6.1 FastMCP 4 compatibility spike completed locally
 
 - **Done:** Fable's attached brief on `spike/m61-fastmcp4`, forked from `main` at
@@ -255,43 +299,3 @@ Template:
   PR), tag, `--prerelease`, #30 closes with it; the notes carry #206/#210 as deferred and
   lead with the §5.5 client-visible changes. Then the LXC upgrade (back up first;
   `ALLOWED_HOSTS`; relink MCP clients; refresh the personal Gunpla skill).
-
-## 2026-09-07 — Claude Code (Opus 4.8) — #194 (M6-9) MERGED: PR #218 squash → `b32ffe2` after two Codex rounds (NO-GO→GO); #195 next
-
-- **Done:** #194 (M6-9, reference TLS deployment + the T12/T13 gate + the ops/README
-  rewrite) merged to `main` as `b32ffe2`; issue closed. Two Daybreak Blue (Codex GPT 5.6)
-  rounds: round 1 **NO-GO** (2×P2, 2×P3) → round 2 **GO** (4×P3), all fixed. Final head on
-  the branch was `807fb26`. What shipped: nginx bare `/mcp` carries the family's settings;
-  a loopback `TRUSTED_PROXIES` entry also trusts the Docker gateway; `ingress_matrix.py` +
-  HTTPS/`--behind-proxy`/`--credential-file`/`--hold-stream`/`--skip-rate-limits`;
-  `backend/deployment_gate.py` (the T12/T13 driver); `deploy/caddy/` reference + systemd
-  drop-in; `.agents/deployment-gate/` fixtures; `docs/operations.md` rebuilt around the four
-  ways to run it + the two-part backup set; README/`.env.example`/design §5.4-10/AGENTS
-  rule 12/testing-and-review step 4b.
-- **Review fixes (all with regressions):** P2 the Cloudflare token needs Zone:DNS:Edit **and**
-  Zone:Zone:Read (docs); P2 the gate leaked secrets to ssh argv/results → `env_set` sends
-  values on stdin, `run` has a redacting label, docs use `sudoedit`; P3 tunnel required an
-  exact `--tunnel-visitor` on nginx `$remote_addr` **and** the `auth.token_minted` audit row;
-  P3 T13 partial restores assert `refresh 401 invalid_client`; P3 the tunnel runbook names
-  `--tunnel-visitor` (+ drift-guard test); P3 the systemd `systemctl edit --stdin` alt was
-  wrong (sudoedit only); P3 `phase_local` reads `/api/auth/session` first (no swallowed ssh
-  error as "already claimed"); P3 `mcp_link`/`mcp_verify` parse the SSE JSON-RPC result
-  (`mcp_result`), not HTTP 200. Plus a pre-existing rate-check flake found re-verifying:
-  `rate_limit_checks` now admits 404 for a non-canonical discovery spelling (nginx 404s it,
-  rule 12; the limiter still keys on it) — only ever flaked in OIDC mode, masked by the
-  limiter tripping first.
-- **State:** `main` at `b32ffe2` + this hand-off; tree clean, nothing in flight. Gate proven
-  GREEN end-to-end (`--phase all` + tunnel) on **testhost.internal.tlgnet.net** (LXC 117,
-  10.1.1.129, VM04): Caddy 2.11.4 + cloudflare DNS module, Let's Encrypt DNS-01, both `/mcp`
-  spellings held 130 s through the Cloudflare Tunnel `plamotest.gunp.la`, all three T13
-  restores. **testhost is kept** (owner's call) — it is exactly what #195's release gate
-  reuses; it is running, claimed in local mode, and its Keycloak fixture is up. Branch
-  `feat/194-tls-deployment-gate` left in place. The `.agents/spikes/190/` Keycloak is a
-  separate fixture from the gate's.
-- **Next: #195, the M6 release.** The gate now includes `.agents/testing-and-review.md`
-  step 4b — a release runs `deployment_gate.py --phase all` (with `--tunnel-*`) against the
-  **tagged** commit on testhost and pastes its results block into the notes. Then the bump
-  (three files via PR), tag, `--prerelease`; the open M6 P3s **#206/#210/#213/#214** need a
-  defer-or-fix call before the tag, **#30** closes with the release. Only then the LXC
-  upgrade (back up first; `ALLOWED_HOSTS`; relink MCP clients; refresh the personal Gunpla
-  skill).

@@ -149,7 +149,7 @@ Being honest up front beats you finding out at 11pm:
 | **Internationalisation foundations** | ✅ Milestone 5.1: instance-wide language, formatting locale, time zone, date/hour style, and reference currency; the `en-AU` source catalogue and fallback; a reviewed [translation workflow](docs/translating.md); locale-aware dates, times, numbers, counts, money, and file sizes; structured REST/import diagnostics with translated known identifiers and an English compatibility fallback; and RTL-aware layout utilities. No non-English catalogue ships yet. Upgrades default existing instances to `en-AU`/UTC; naive CSV timestamps are read prospectively in the configured instance zone, stored history is never reinterpreted, and downgrading past the settings migration loses its settings row. |
 | **Authentication, OAuth-compatible remote MCP, a tested TLS deployment** | ✅ Milestone 6 — owner login (password or OpenID Connect), personal access tokens, MCP OAuth for Claude web / ChatGPT web / MCP Inspector, and the reference Caddy deployment plus the other tested ways to expose an instance (`docs/operations.md`) |
 | **MCP `2026-07-28` compatibility** | 🔨 Milestone 6.1 — dual-era, without dropping current clients |
-| **UI redesign** | 🔨 Milestone 6.5 — moving off the stock-component look, so the gallery and showcase get built in the new one; direction still being explored, and opinions are welcome on the tracker |
+| **UI redesign** | 🔨 Milestone 6.5 — moving off the stock-component look, so the gallery and showcase get built in the new one; the direction is settled (`docs/design.md` §13) and the build is next |
 | **Photo gallery per kit** | 🔨 Milestone 7 |
 | **Public read-only showcase page** | 🔨 Milestone 8 — after the admin and MCP paths are protected |
 

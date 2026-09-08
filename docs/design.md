@@ -2354,11 +2354,12 @@ Unchanged from the original plan:
    is §5.9
 10. 🔨 **M6.1 — MCP modernisation:** dual-era compatibility for the existing protocol
     generation and `2026-07-28`, with conformance and real-client coverage
-11. 🔨 **M6.5 — UI redesign:** move off the stock Tailwind look; direction still
-    under exploration, deliberately undecided (21/08/2026). Sequenced after M5.1 so
-    the Settings surface isn't styled twice, and before M7/M8 so the gallery and
-    the showcase are built in the new look once. Board interaction gaps deferred
-    from the #120 consolidation (#122) land here
+11. 🔨 **M6.5 — UI redesign:** move off the stock Tailwind look. Direction
+    **decided 09/09/2026 — Workbench, §13** — after three directions were drawn on
+    the same screens; the build is split in §13.6. Sequenced after M5.1 so the
+    Settings surface isn't styled twice, and before M7/M8 so the gallery and the
+    showcase are built in the new look once. Board interaction gaps deferred from
+    the #120 consolidation (#122) land here: Home replaces the board (§13.2)
 12. 🔨 **M7 — Photos:** local-volume upload + gallery, archive integration, and the
     §9.2 storage decision closed before implementation
 13. 🔨 **M8 — Public showcase:** genuinely separate anonymous read routes and a
@@ -2609,3 +2610,97 @@ meets it: the archive's bundled `README.txt` and `docs/import-export.md`. An
 escape-and-strip pair (fidelity dependent on both halves staying in sync forever) and
 a second "spreadsheet-safe" export variant (two formats, guaranteed drift) were both
 considered and declined.
+
+---
+
+## 13. UI redesign (M6.5) — direction decided 09/09/2026
+
+**Decision.** The interface moves off the stock Tailwind vocabulary to one house
+look, *Workbench*: warm near-black surfaces (the light theme a warm off-white), one
+amber accent, hairline borders, flat surfaces without shadows, uppercase
+micro-labels, tabular figures, Inter as the only typeface, stroke icons, no emoji.
+Two alternatives were drawn on the same screens and set aside — a cool, shadowed
+*Console* and an unboxed *Editorial* — and the owner's reason for Workbench is that
+it best suits what the app is: a tool at a bench, not a storefront. Console stays a
+candidate for a second selectable theme later; under the token system below that is
+one more token file, so choosing now closes nothing.
+
+### 13.1 Tokens and the theme switch
+
+- **Every colour, radius and border is a semantic token** — `--bg`, `--surface`,
+  `--border`, `--text`, `--muted`, `--faint`, `--accent`, the six status colours —
+  defined once in `frontend/src/index.css` and exposed to Tailwind v4 through
+  `@theme`. Components use the token utilities, never a palette utility (`zinc-*`,
+  `indigo-*`); the light theme is the same tokens under `[data-theme="light"]`. A
+  palette utility in a component after M6.5 is a regression, not a style choice.
+- **Light / dark / system is a per-browser preference**, held in `localStorage` and
+  applied by an inline script before first paint so a dark browser never flashes
+  white. This is the one deliberate exception to §6.1's instance-wide rule, because
+  "system" only means something on the device asking: a phone in dark mode and a
+  desktop in light are both right. Every other setting stays instance-wide.
+- **Inter is bundled with the app**, never fetched from a font host: a private
+  instance makes no third-party request to render.
+- **Icons are stroke icons from one set (Lucide).** The emoji go.
+
+### 13.2 Home replaces the board
+
+The kanban was drawn for a dozen kits; at 52 in the backlog and 92 received it
+scrolls past usefulness, and every card is drag-only (#122). **Home** is the start
+page instead — status at a glance, the bench first:
+
+- **On the bench** — the kits in `building`, as wide cards: name, grade, scale, kit
+  number, started date, days since, the latest note, an edit control.
+- **Backlog** and **Recently completed** — the six most recent kits each, the true
+  count in the heading, and a *view all* link to Kits filtered to that status and
+  sorted newest first. "Recent" is when the kit entered the status
+  (`status_updated_at`): creation for a kit that started in the backlog, receipt
+  for one an order delivered.
+- **In the mail** — three columns of *order* cards (Pre-ordered, Ordered, In
+  transit): retailer, the date of the order's last status change (placed,
+  shipped), its first kit line, "and n more", tracking once shipped; capped and
+  linked to Orders filtered the same way. An order sits under Pre-ordered only when
+  every kit line is a pre-order; a mixed order sits under Ordered with a
+  *pre-order* tag on the line.
+- **Editing from a card is a visible control** in its corner that opens the same
+  edit dialog as the list pages — not a right-click menu, which has no touch
+  equivalent, and not a bare click, which fights drag. Drag-and-drop is not carried
+  to Home: with capped lists and an edit path on every card, the column move it
+  offered is the dialog's status field, travelling with the dates a real
+  transition carries (#120's reasoning).
+
+### 13.3 Sidebar
+
+Fixed while the page scrolls. Wordmark only — the tagline moves to the sign-in
+screen and About. Home, Kits, Orders, Inventory, Retailers; Settings on its own
+below; then a footer with the theme switch and Sign out and, in OIDC mode only, who
+the owner is bound as ("Jamie · via Google"), the one identity a single-owner app
+has to show. In local mode the footer is two controls: nothing to manage, so no
+profile card.
+
+### 13.4 List pages
+
+Kits, Orders, Inventory and Retailers keep their tables and gain what Home links
+to: **filter and sort in the URL** (`?status=building&sort=recent`), so a *view all*
+link is a page state and a bookmark. Each row carries one edit control. Orders keeps
+its expandable lines, kit lines showing their kit status and catalog lines noting
+that stock applies on receipt (§3.9).
+
+### 13.5 Not in M6.5
+
+A phone/tablet layout — wanted, and to be its own UI rather than a squeezed
+desktop, after this lands. Photos and the showcase (M7, M8) are built in this look
+once.
+
+### 13.6 Implementation split
+
+Each a PR off `main`, in this order, so no page is styled twice (filed as #231–#234,
+milestone M6.5):
+
+1. **Tokens, theme switch, Inter, Lucide** — every component and page onto the
+   token utilities; the sidebar (§13.3); the sign-in screen.
+2. **List-page filter and sort in the URL** (§13.4) and the row edit control.
+   Backend: sort and limit on the kit and order list endpoints, on REST and MCP
+   alike (rule 1), declared in the route registry.
+3. **Home** (§13.2), replacing the board page and the drag-and-drop dependency; the
+   per-status counts come from one service function both surfaces share.
+4. Settings, About, the e2e suite and the README screenshots in the new look.
