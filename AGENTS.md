@@ -569,9 +569,11 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     per (action, client address) plus one verification bucket for the instance
     and a reserved one for a browser that has signed in before (`app/auth/budget.py`;
     a guesser's failures slow the guesser's address, never the owner's, a ladder
-    decays instead of re-arming its ceiling, and the owner's own browser is admitted
-    under a flood while a brand-new one is explicitly the operator's ingress to
-    protect; the setup token and the OIDC start spend no verification token), the
+    decays instead of re-arming its ceiling, and a browser still holding a session
+    cookie the database recognises — idled out, or ended by a host-side reset — is
+    admitted under a flood, while one that signed out normally, or holds no cookie
+    for any other reason, is explicitly the operator's ingress to protect; the setup
+    token and the OIDC start spend no verification token), the
     refusal budget the audit recorder reads (ten rows per address and sixty per
     instance a minute, the rest one summary row), and the MCP registration quota
     — remain correct only while the Dockerfile pins uvicorn to one worker; move

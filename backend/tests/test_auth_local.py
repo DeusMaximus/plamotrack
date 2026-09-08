@@ -33,6 +33,7 @@ from app.auth.budget import (
     VERIFICATIONS_PER_MINUTE,
     FailureBudget,
     FailureBudgets,
+    VerificationBudget,
 )
 from app.auth.sessions import (
     CSRF_HEADER,
@@ -48,6 +49,7 @@ from app.models import AuditEvent, Owner
 from app.models import Session as SessionRow
 from app.routers.auth import BUDGET_ATTR
 from app.services import audit
+from app.services import auth as auth_service
 
 pytestmark = pytest.mark.anyio
 
@@ -769,19 +771,33 @@ async def _known_cookie(anon_client) -> str:
     return raw
 
 
+def _small_buckets(now: dict, *, general: int = 4, reserved: int = 3) -> FailureBudgets:
+    """The budgets with small buckets: every drained token is one full-cost
+    Argon2 check, and the invariant is the same at four as at thirty (the
+    round-1 head's thirty-strong floods put the CI Backend job past its cap)."""
+    budgets = FailureBudgets(clock=lambda: now["t"])
+    budgets.verification = VerificationBudget(
+        clock=budgets.clock, capacity=general, tokens=float(general)
+    )
+    budgets.known = VerificationBudget(
+        clock=budgets.clock, capacity=reserved, tokens=float(reserved)
+    )
+    setattr(app.state, BUDGET_ATTR, budgets)
+    return budgets
+
+
 async def test_a_known_browser_is_admitted_from_the_reserved_bucket_under_a_flood(anon_client):
-    """Codex #222 round 1, f1: with the general bucket drained, each two-second
-    refill was taken by the next fresh address before the owner's retry, for as
-    long as the stream cared to continue. A browser that presents any session
-    cookie the instance ever stored — here a revoked one, from a new address —
-    is verified from the reserved bucket and gets in every time; a brand-new
-    browser competes with the flood, as documented."""
+    """Codex #222 round 1, f1: with the general bucket drained, each refill was
+    taken by the next fresh address before the owner's retry, for as long as the
+    stream cared to continue. A browser that presents any session cookie the
+    instance ever stored — here a revoked one, from a new address — is verified
+    from the reserved bucket and gets in every time; a brand-new browser
+    competes with the flood, as documented."""
     raw = await _known_cookie(anon_client)
     now = {"t": 1000.0}
-    budgets = FailureBudgets(clock=lambda: now["t"])
-    setattr(app.state, BUDGET_ATTR, budgets)
+    budgets = _small_buckets(now)
     flood = _Flood()
-    await flood.run(VERIFICATIONS_PER_MINUTE)
+    await flood.run(budgets.verification.capacity)
     assert budgets.verification.tokens < 1
     async with _client_from("198.51.100.20") as new_browser:
         contested = await new_browser.post(
@@ -790,13 +806,13 @@ async def test_a_known_browser_is_admitted_from_the_reserved_bucket_under_a_floo
     assert contested.status_code == 429
     known_headers = {**ORIGIN, "Cookie": f"{PLAIN_COOKIE_NAME}={raw}"}
     async with _client_from("198.51.100.21") as known_browser:
-        for _ in range(4):
+        for _ in range(3):
             ok = await known_browser.post(
                 "/auth/login", json={"password": PASSWORD}, headers=known_headers
             )
             assert ok.status_code == 200
             # One general token refills; a fresh address takes it first.
-            now["t"] += 2.0
+            now["t"] += 60.0 / budgets.verification.capacity
             await flood.run(1)
             assert budgets.verification.tokens < 1
     async with get_sessionmaker()() as session:
@@ -819,12 +835,11 @@ async def test_the_reserved_bucket_is_bounded_and_falls_back_to_the_general_one(
     competes like everyone else."""
     raw = await _known_cookie(anon_client)
     now = {"t": 1000.0}
-    budgets = FailureBudgets(clock=lambda: now["t"])
-    setattr(app.state, BUDGET_ATTR, budgets)
-    await _Flood().run(VERIFICATIONS_PER_MINUTE)
+    budgets = _small_buckets(now)
+    await _Flood().run(budgets.verification.capacity)
     known_headers = {**ORIGIN, "Cookie": f"{PLAIN_COOKIE_NAME}={raw}"}
     statuses = []
-    for i in range(KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE + 1):
+    for i in range(budgets.known.capacity + 1):
         async with _client_from(f"198.51.100.{i + 30}") as replayer:
             statuses.append(
                 (
@@ -833,5 +848,44 @@ async def test_the_reserved_bucket_is_bounded_and_falls_back_to_the_general_one(
                     )
                 ).status_code
             )
-    assert statuses == [403] * KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE + [429]
+    assert statuses == [403] * budgets.known.capacity + [429]
     assert budgets.known.tokens < 1
+    assert KNOWN_BROWSER_VERIFICATIONS_PER_MINUTE < VERIFICATIONS_PER_MINUTE
+
+
+async def test_the_reserved_path_is_what_the_browser_still_holds(anon_client):
+    """Codex #222 round 2, f4: the runbook had promised the reserved path to
+    "the browser you signed in with", but a normal logout clears the cookie —
+    an ordinary signed-out browser holds nothing and competes with the flood.
+    Through a real cookie jar, both halves: after `POST /auth/logout` the jar
+    is empty and the next login from it is the general bucket's (429 with the
+    bucket drained); after a host-side revocation the jar keeps the cookie, the
+    row is kept revoked, and the next login is the reserved bucket's (200)."""
+    csrf = await _claim(anon_client)
+    now = {"t": 1000.0}
+    budgets = _small_buckets(now)
+    flood = _Flood()
+    await flood.run(budgets.verification.capacity)
+    out = await anon_client.post("/auth/logout", headers={**ORIGIN, "X-CSRF-Token": csrf})
+    assert out.status_code in (200, 204)
+    assert anon_client.cookies.get(PLAIN_COOKIE_NAME) is None
+    signed_out = await anon_client.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+    assert signed_out.status_code == 429
+
+    # The other lifecycle: signed in, then every session revoked from the host.
+    now["t"] += 60.0  # the general bucket refills, so this login is admitted…
+    signed_in = await anon_client.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+    assert signed_in.status_code == 200
+    assert anon_client.cookies.get(PLAIN_COOKIE_NAME)
+    await flood.run(budgets.verification.capacity - 1)  # …and drained again (that login spent one)
+    assert budgets.verification.tokens < 1
+    async with get_sessionmaker()() as session:
+        await auth_service.revoke_all_sessions(session, target="recovery revoke-sessions")
+        await session.commit()
+    assert (await anon_client.get("/auth/session")).json()["state"] == "anonymous"
+    assert anon_client.cookies.get(PLAIN_COOKIE_NAME), (
+        "the server cannot clear it; the jar keeps it"
+    )
+    recovered = await anon_client.post("/auth/login", json={"password": PASSWORD}, headers=ORIGIN)
+    assert recovered.status_code == 200
+    assert budgets.known.tokens == budgets.known.capacity - 1
