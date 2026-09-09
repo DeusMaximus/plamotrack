@@ -4,6 +4,8 @@ import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
 import { ApiError, api, authSessionQuery, setCsrfToken } from "../api/client";
+import { providerName } from "../lib/labels";
+import { BrandMark } from "./BrandMark";
 import { Button, Card, ErrorBanner, Field, Input } from "./ui";
 
 /** The authentication boundary (§5.5 families 2–3; #188). Every render of the app
@@ -88,15 +90,6 @@ function oidcErrorKey(code: string): OidcErrorKey {
   return (OIDC_ERROR_KEYS as Record<string, OidcErrorKey | undefined>)[code] ?? "auth.oidcError_failed";
 }
 
-function providerName(issuer: string | null): string {
-  if (!issuer) return "your identity provider";
-  try {
-    return new URL(issuer).host;
-  } catch {
-    return issuer;
-  }
-}
-
 /** Ask the API for the provider's authorization URL and go there. The response
  *  sets the login-binding cookie, so the navigation happens in this tab; the
  *  callback brings the browser back to `/` with the session cookie, or with
@@ -140,7 +133,7 @@ function OidcSetupScreen({ issuer }: { issuer: string | null }) {
           <ErrorBanner message={error} />
           <Field label={t("auth.setupTokenLabel")} required error={errors.token?.message}>
             <Input autoFocus autoComplete="off" {...register("token", { required: true })} />
-            <p className="mt-1 text-xs text-zinc-400">{t("auth.setupTokenHint")}</p>
+            <p className="mt-1 text-xs text-faint">{t("auth.setupTokenHint")}</p>
           </Field>
           <Button
             type="submit"
@@ -196,18 +189,23 @@ function OidcLoginScreen({ issuer }: { issuer: string | null }) {
 
 function Centered({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 p-6">
+    <div className="flex min-h-screen items-center justify-center bg-bg p-6">
       <div className="w-full max-w-sm">{children}</div>
     </div>
   );
 }
 
+/** The wordmark with the tagline — the tagline lives here and on About, not in
+ *  the sidebar (§13.3). The wordmark is a brand identifier, not copy. */
 function Wordmark() {
   const { t } = useTranslation();
   return (
-    <div className="mb-6 text-center">
-      <h1 className="text-2xl font-bold tracking-tight text-indigo-600">plamotrack</h1>
-      <p className="mt-0.5 text-xs text-zinc-400">{t("layout.tagline")}</p>
+    <div className="mb-6 flex flex-col items-center text-center">
+      <h1 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight text-text">
+        <BrandMark size={24} />
+        <span>plamotrack</span>
+      </h1>
+      <p className="mt-1 text-xs text-muted">{t("layout.tagline")}</p>
     </div>
   );
 }
@@ -248,7 +246,7 @@ function SetupScreen({ onDone }: { onDone: () => void }) {
           <ErrorBanner message={error} />
           <Field label={t("auth.setupTokenLabel")} required error={errors.token?.message}>
             <Input autoFocus autoComplete="off" {...register("token", { required: true })} />
-            <p className="mt-1 text-xs text-zinc-400">{t("auth.setupTokenHint")}</p>
+            <p className="mt-1 text-xs text-faint">{t("auth.setupTokenHint")}</p>
           </Field>
           <Field label={t("auth.passwordLabel")} required error={errors.password?.message}>
             <Input
@@ -256,7 +254,7 @@ function SetupScreen({ onDone }: { onDone: () => void }) {
               autoComplete="new-password"
               {...register("password", { required: true, minLength: 12 })}
             />
-            <p className="mt-1 text-xs text-zinc-400">{t("auth.passwordHint")}</p>
+            <p className="mt-1 text-xs text-faint">{t("auth.passwordHint")}</p>
           </Field>
           <Field label={t("auth.confirmPasswordLabel")} required error={errors.confirm?.message}>
             <Input

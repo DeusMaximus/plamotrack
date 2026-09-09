@@ -1,6 +1,8 @@
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
 
+import { PageTitle } from "../../components/ui";
+
 /** Section slugs are route segments (App.tsx nests them under /settings) and
  *  stay canonical/untranslated; only the labels go through the catalogue. */
 const SECTIONS = [
@@ -16,8 +18,8 @@ export function SettingsPage() {
   return (
     <div className="max-w-4xl">
       <div>
-        <h1 className="text-2xl font-bold">{t("settings.title")}</h1>
-        <p className="mt-0.5 text-sm text-zinc-500">{t("settings.subtitle")}</p>
+        <PageTitle>{t("settings.title")}</PageTitle>
+        <p className="mt-0.5 text-sm text-muted">{t("settings.subtitle")}</p>
       </div>
       {/* Stacked on small screens (sections in a scrollable row), sidebar on sm+. */}
       <div className="mt-6 sm:flex sm:gap-8">
@@ -30,10 +32,10 @@ export function SettingsPage() {
               key={section.to}
               to={section.to}
               className={({ isActive }) =>
-                `whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium ${
+                `whitespace-nowrap rounded-sm px-3 py-2 text-sm font-medium ${
                   isActive
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900"
+                    ? "bg-accent-soft text-accent"
+                    : "text-muted hover:bg-chip hover:text-text"
                 }`
               }
             >

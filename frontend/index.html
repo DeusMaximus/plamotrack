@@ -4,7 +4,11 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
     <title>plamotrack</title>
+    <!-- Blocking, before the bundle: the theme is on <html> before anything
+         paints (design §13.1). public/theme.js says why it is not inline. -->
+    <script src="/theme.js"></script>
   </head>
   <body>
     <div id="root"></div>

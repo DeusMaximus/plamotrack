@@ -15,9 +15,21 @@ import { KIT_STATUSES } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { StatusBadge } from "../components/StatusBadge";
-import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
+import {
+  Button,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  Input,
+  MICRO_LABEL_CLASS,
+  PageTitle,
+  RatingStars,
+  Select,
+  TABLE_HEAD_ROW_CLASS,
+  Textarea,
+} from "../components/ui";
 import { formatDate, formatNumber, isoToLocalDateInput, localMidnightISO } from "../lib/format";
-import { dateWithElapsed, statusLabel } from "../lib/labels";
+import { dateWithElapsed, ratingTooltip, statusLabel } from "../lib/labels";
 import { usePresentationVersion } from "../lib/presentation";
 
 const COMMON_GRADES = ["HG", "RG", "EG", "SD", "MG", "MGEX", "RE/100", "FM", "PG"];
@@ -202,7 +214,7 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
             <Input type="date" {...register("build_completed")} />
           </Field>
         </div>
-        <p className="-mt-2 text-xs text-zinc-500">{t("kits.autoFillNote")}</p>
+        <p className="-mt-2 text-xs text-muted">{t("kits.autoFillNote")}</p>
         <Field label={t("kits.buildNotes")}>
           <Textarea {...register("build_notes")} placeholder={t("kits.buildNotesPlaceholder")} />
         </Field>
@@ -262,8 +274,8 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
   };
 
   return (
-    <div className="space-y-2 rounded-md border border-zinc-200 p-3">
-      <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+    <div className="space-y-2 rounded-sm border border-border p-3">
+      <div className={MICRO_LABEL_CLASS}>
         {t("kits.appliedUpgrades")}
       </div>
       <ErrorBanner message={error} />
@@ -273,7 +285,7 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
             <span>
               {application.upgrade.name}
               {application.quantity_used > 1 && ` ×${formatNumber(application.quantity_used)}`}
-              <span className="text-xs text-zinc-400">
+              <span className="text-xs text-faint">
                 {t("common.dotSeparator")}
                 {formatDate(application.applied_at)}
               </span>
@@ -292,7 +304,7 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
         ))}
       </ul>
       {withdrawing && (
-        <div className="space-y-2 rounded-md bg-zinc-50 p-2 text-sm">
+        <div className="space-y-2 rounded-sm bg-surface-alt p-2 text-sm">
           <p>
             {t("kits.withdrawPrompt", {
               name: withdrawing.upgrade.name,
@@ -384,7 +396,7 @@ export function KitsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">{t("kits.title")}</h1>
+        <PageTitle>{t("kits.title")}</PageTitle>
         <div className="flex gap-2">
           <ExportCsvButton table="kits" />
           <Button onClick={() => setModal({ mode: "add" })}>{t("kits.addButton")}</Button>
@@ -438,27 +450,27 @@ export function KitsPage() {
           {kits?.length === 0 ? t("kits.emptyNone") : t("kits.emptyFiltered")}
         </EmptyState>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+        <div className="overflow-x-auto rounded-md border border-border bg-surface">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                <th className="px-3 py-2">{t("kits.headerKit")}</th>
-                <th className="px-3 py-2">{t("kits.grade")}</th>
-                <th className="px-3 py-2">{t("kits.scale")}</th>
-                <th className="px-3 py-2">{t("kits.status")}</th>
-                <th className="px-3 py-2">{t("kits.headerRating")}</th>
-                <th className="px-3 py-2">{t("kits.headerStarted")}</th>
-                <th className="px-3 py-2">{t("kits.headerCompleted")}</th>
-                <th className="px-3 py-2" />
+              <tr className={TABLE_HEAD_ROW_CLASS}>
+                <th className="px-3 py-2.5">{t("kits.headerKit")}</th>
+                <th className="px-3 py-2.5">{t("kits.grade")}</th>
+                <th className="px-3 py-2.5">{t("kits.scale")}</th>
+                <th className="px-3 py-2.5">{t("kits.status")}</th>
+                <th className="px-3 py-2.5">{t("kits.headerRating")}</th>
+                <th className="px-3 py-2.5">{t("kits.headerStarted")}</th>
+                <th className="px-3 py-2.5">{t("kits.headerCompleted")}</th>
+                <th className="px-3 py-2.5" />
               </tr>
             </thead>
             <tbody>
               {visible.map((kit) => (
-                <tr key={kit.id} className="border-b border-zinc-100 last:border-0 hover:bg-zinc-50">
+                <tr key={kit.id} className="border-b border-rule last:border-0 hover:bg-chip">
                   <td className="px-3 py-2">
                     <div className="font-medium">{kit.name}</div>
                     {(kit.kit_number || kit.series) && (
-                      <div className="text-xs text-zinc-400">
+                      <div className="text-xs text-faint">
                         {[kit.kit_number, kit.series]
                           .filter(Boolean)
                           .join(t("common.dotSeparator"))}
@@ -474,12 +486,16 @@ export function KitsPage() {
                     <StatusBadge status={kit.status} />
                   </td>
                   <td className="px-3 py-2">
-                    {kit.rating ? "★".repeat(kit.rating) + "☆".repeat(5 - kit.rating) : "—"}
+                    {kit.rating ? (
+                      <RatingStars rating={kit.rating} title={ratingTooltip(kit.rating)} />
+                    ) : (
+                      "—"
+                    )}
                   </td>
-                  <td className="px-3 py-2 text-zinc-500" title={t("kits.buildStarted")}>
+                  <td className="px-3 py-2 text-muted" title={t("kits.buildStarted")}>
                     {kit.build_started_at ? formatDate(kit.build_started_at) : "—"}
                   </td>
-                  <td className="px-3 py-2 text-zinc-500" title={t("kits.completedTitle")}>
+                  <td className="px-3 py-2 text-muted" title={t("kits.completedTitle")}>
                     {completedCell(kit)}
                   </td>
                   <td className="px-3 py-2 text-end">

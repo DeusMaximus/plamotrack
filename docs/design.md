@@ -2634,8 +2634,11 @@ one more token file, so choosing now closes nothing.
   `indigo-*`); the light theme is the same tokens under `[data-theme="light"]`. A
   palette utility in a component after M6.5 is a regression, not a style choice.
 - **Light / dark / system is a per-browser preference**, held in `localStorage` and
-  applied by an inline script before first paint so a dark browser never flashes
-  white. This is the one deliberate exception to §6.1's instance-wide rule, because
+  applied before first paint so a dark browser never flashes white — by a blocking
+  script in the document head (`frontend/public/theme.js`), a first-party file
+  rather than an inline one because the bundled nginx serves the app under
+  `script-src 'self'` (§5.6); `src/lib/theme.ts` is its runtime twin and one test
+  holds the two to the same answers. This is the one deliberate exception to §6.1's instance-wide rule, because
   "system" only means something on the device asking: a phone in dark mode and a
   desktop in light are both right. Every other setting stays instance-wide.
 - **Inter is bundled with the app**, never fetched from a font host: a private

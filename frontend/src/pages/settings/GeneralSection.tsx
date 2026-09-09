@@ -24,7 +24,7 @@ export function GeneralSection() {
       ) : settings ? (
         <CurrencyCard settings={settings} />
       ) : (
-        <p className="text-sm text-zinc-500">{t("common.loading")}</p>
+        <p className="text-sm text-muted">{t("common.loading")}</p>
       )}
     </div>
   );
@@ -95,14 +95,14 @@ function CurrencyCard({ settings }: { settings: InstanceSettings }) {
             ))}
           </datalist>
         </Field>
-        <p className="text-xs text-zinc-500">{t("settings.general.currencyNote")}</p>
+        <p className="text-xs text-muted">{t("settings.general.currencyNote")}</p>
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={!isDirty || isSubmitting}>
             {isSubmitting ? t("settings.general.saving") : t("common.save")}
           </Button>
           {/* isDirty gates the confirmation so editing again retires it. */}
           {saved && !isDirty && (
-            <span role="status" className="text-sm text-green-700">
+            <span role="status" className="text-sm text-status-complete">
               {t("settings.general.saved")}
             </span>
           )}

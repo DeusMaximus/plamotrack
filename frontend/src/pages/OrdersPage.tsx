@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Control,
@@ -25,7 +26,17 @@ import { counted, countedPhrase, dateWithElapsed, itemTypeLabel, itemTypeTitle }
 import { usePresentationVersion } from "../lib/presentation";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
-import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
+import {
+  Button,
+  Chip,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  Input,
+  PageTitle,
+  Select,
+  TABLE_HEAD_ROW_CLASS,
+} from "../components/ui";
 import {
   currencyOptions,
   formatDate,
@@ -310,7 +321,7 @@ function LineEditor({
   );
 
   return (
-    <div className="space-y-2 rounded-lg border border-zinc-200 bg-zinc-50 p-3">
+    <div className="space-y-2 rounded-md border border-border bg-surface-alt p-3">
       <div className="flex items-center gap-2">
         <Select
           {...register(`items.${index}.item_type`, {
@@ -349,16 +360,16 @@ function LineEditor({
         {/* Stated, not editable: the header picker sets it for new lines, and a
             recorded line keeps what it was bought in. Shown so a mixed-currency
             order — which REST, MCP and CSV can all create — is legible here. */}
-        <span className="text-sm text-zinc-600">{lineCurrency}</span>
+        <span className="text-sm text-muted">{lineCurrency}</span>
         <div className="flex-1" />
         {canRemove && (
           <button
             type="button"
             onClick={onRemove}
             aria-label={t("orders.removeLine")}
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600"
+            className="rounded-sm p-1 text-faint hover:bg-chip hover:text-text"
           >
-            ✕
+            <X size={14} aria-hidden />
           </button>
         )}
       </div>
@@ -387,7 +398,7 @@ function LineEditor({
             <Input placeholder={t("orders.kitNumberPlaceholder")} {...register(`items.${index}.kit_number`)} />
           </div>
           {(lineErrors?.kit_name || lineErrors?.kit_grade) && (
-            <span className="col-span-3 text-xs text-red-600">
+            <span className="col-span-3 text-xs text-danger">
               {lineErrors?.kit_name?.message ?? lineErrors?.kit_grade?.message}
             </span>
           )}
@@ -419,7 +430,7 @@ function LineEditor({
                 onChange={field.onChange}
               />
               {fieldState.error && (
-                <span className="mt-1 block text-xs text-red-600">{fieldState.error.message}</span>
+                <span className="mt-1 block text-xs text-danger">{fieldState.error.message}</span>
               )}
             </div>
           )}
@@ -428,7 +439,7 @@ function LineEditor({
 
       {showSnapshot && (
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-zinc-500">≈</span>
+          <span className="text-sm text-muted">≈</span>
           <Input
             type="number"
             // The snapshot's own currency, not the order's — §6 lets them differ.
@@ -439,8 +450,8 @@ function LineEditor({
             className="!w-28"
             {...register(`items.${index}.converted_price`)}
           />
-          <span className="text-sm text-zinc-600">{snapshotCode}</span>
-          <span className="text-xs text-zinc-500">{t("orders.snapshotNote")}</span>
+          <span className="text-sm text-muted">{snapshotCode}</span>
+          <span className="text-xs text-muted">{t("orders.snapshotNote")}</span>
         </div>
       )}
     </div>
@@ -811,8 +822,13 @@ function OrderForm({
                 <Button type="button" onClick={addRetailer} disabled={retailerPending}>
                   {t("common.add")}
                 </Button>
-                <Button type="button" variant="secondary" onClick={() => setNewRetailerName(null)}>
-                  ✕
+                <Button
+                  type="button"
+                  variant="secondary"
+                  aria-label={t("common.cancel")}
+                  onClick={() => setNewRetailerName(null)}
+                >
+                  <X size={14} aria-hidden />
                 </Button>
               </div>
             )}
@@ -879,7 +895,7 @@ function OrderForm({
 
         {!order && (
           <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <label className="flex items-center gap-2 text-sm text-text">
               <input
                 type="checkbox"
                 {...register("received", {
@@ -891,12 +907,12 @@ function OrderForm({
                     }
                   },
                 })}
-                className="h-4 w-4 accent-indigo-600"
+                className="h-4 w-4"
               />
               {t("orders.alreadyInHand")}
             </label>
             {watch("received") && (
-              <label className="flex items-center gap-2 text-sm text-zinc-700">
+              <label className="flex items-center gap-2 text-sm text-text">
                 {t("orders.receivedOnPrefix")}
                 <Input
                   type="date"
@@ -910,14 +926,14 @@ function OrderForm({
                 shipment becomes two plamotrack orders, so per-line pre-order
                 status rendered an order-level fact as a line-level choice. */}
             <label
-              className={`flex items-center gap-2 text-sm ${watch("received") ? "text-zinc-400" : "text-zinc-700"}`}
+              className={`flex items-center gap-2 text-sm ${watch("received") ? "text-faint" : "text-text"}`}
               title={watch("received") ? t("orders.inHandNotPreOrder") : undefined}
             >
               <input
                 type="checkbox"
                 disabled={watch("received")}
                 {...register("pre_order")}
-                className="h-4 w-4 accent-indigo-600"
+                className="h-4 w-4"
               />
               {t("orders.preOrderToggle")}
             </label>
@@ -933,7 +949,7 @@ function OrderForm({
               <Field label={t("orders.shippedOn")}>
                 <Input type="date" max={todayISO()} {...register("shipped_date")} />
               </Field>
-              <p className="mt-1 text-xs text-zinc-500">
+              <p className="mt-1 text-xs text-muted">
                 {order.shipped_at ? t("orders.shippedCorrectHelp") : t("orders.shippedSetHelp")}
               </p>
             </div>
@@ -941,7 +957,7 @@ function OrderForm({
               <Field label={t("orders.receivedOn")}>
                 <Input type="date" max={todayISO()} {...register("received_date")} />
               </Field>
-              <p className="mt-1 text-xs text-zinc-500">
+              <p className="mt-1 text-xs text-muted">
                 {order.received_at ? t("orders.receivedCorrectHelp") : t("orders.receivedSetHelp")}
               </p>
             </div>
@@ -950,7 +966,7 @@ function OrderForm({
 
         <div className="space-y-2">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-zinc-700">{t("orders.itemsHeading")}</h3>
+            <h3 className="text-sm font-semibold text-text">{t("orders.itemsHeading")}</h3>
             <Button
               type="button"
               variant="secondary"
@@ -970,7 +986,7 @@ function OrderForm({
             </Button>
           </div>
           {order && (
-            <p className="text-xs text-zinc-500">{t("orders.editLinesHelp")}</p>
+            <p className="text-xs text-muted">{t("orders.editLinesHelp")}</p>
           )}
           {fields.map((field, index) => (
             <LineEditor
@@ -1113,7 +1129,7 @@ export function OrdersPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">{t("orders.title")}</h1>
+        <PageTitle>{t("orders.title")}</PageTitle>
         <div className="flex gap-2">
           <ExportCsvButton table="orders" />
           <Button onClick={() => setModal({ mode: "add" })}>{t("orders.newOrder")}</Button>
@@ -1125,34 +1141,34 @@ export function OrdersPage() {
       {isError ? (
         <ErrorBanner message={t("orders.loadFailed", { message: (error as Error).message })} />
       ) : orders?.length ? (
-        <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+        <div className="overflow-x-auto rounded-md border border-border bg-surface">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
+              <tr className={TABLE_HEAD_ROW_CLASS}>
                 <th className="w-8 px-3 py-2" />
-                <th className="px-3 py-2">{t("orders.headerDate")}</th>
-                <th className="px-3 py-2">{t("orders.headerRetailer")}</th>
-                <th className="px-3 py-2">{t("orders.headerOrderNumber")}</th>
-                <th className="px-3 py-2">{t("orders.headerStatus")}</th>
-                <th className="px-3 py-2">{t("orders.headerShipped")}</th>
-                <th className="px-3 py-2">{t("orders.headerReceived")}</th>
-                <th className="px-3 py-2">{t("orders.headerItems")}</th>
-                <th className="px-3 py-2">{t("orders.headerTotal")}</th>
-                <th className="px-3 py-2">{t("orders.headerTracking")}</th>
-                <th className="px-3 py-2" />
+                <th className="px-3 py-2.5">{t("orders.headerDate")}</th>
+                <th className="px-3 py-2.5">{t("orders.headerRetailer")}</th>
+                <th className="px-3 py-2.5">{t("orders.headerOrderNumber")}</th>
+                <th className="px-3 py-2.5">{t("orders.headerStatus")}</th>
+                <th className="px-3 py-2.5">{t("orders.headerShipped")}</th>
+                <th className="px-3 py-2.5">{t("orders.headerReceived")}</th>
+                <th className="px-3 py-2.5">{t("orders.headerItems")}</th>
+                <th className="px-3 py-2.5">{t("orders.headerTotal")}</th>
+                <th className="px-3 py-2.5">{t("orders.headerTracking")}</th>
+                <th className="px-3 py-2.5" />
               </tr>
             </thead>
             <tbody>
               {orders.map((order) => (
                 <Fragment key={order.id}>
                   <tr
-                    className="cursor-pointer border-b border-zinc-100 last:border-0 hover:bg-zinc-50"
+                    className="cursor-pointer border-b border-rule last:border-0 hover:bg-chip"
                     onClick={() => toggle(order.id)}
                   >
                     {/* Narrower padding than its neighbours: the 24x24 control
                         is wider than the bare glyph it replaced, and the default
                         px-3 pushed the table enough to wrap retailer names. */}
-                    <td className="px-1 py-2 text-zinc-400">
+                    <td className="px-1 py-2 text-faint">
                       {/* A real button, because the row's own click handler is
                           unreachable from a keyboard — nothing focuses a <tr>.
                           The row click stays as a convenience for the mouse, so
@@ -1177,58 +1193,56 @@ export function OrdersPage() {
                         // an equivalent alternative and would technically exempt
                         // it, but leaning on that inside an accessibility fix is
                         // not worth the four characters it saves.
-                        className="flex h-6 w-6 items-center justify-center rounded leading-none hover:bg-zinc-200 hover:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        className="flex h-6 w-6 items-center justify-center rounded-sm leading-none hover:bg-chip hover:text-text focus:outline-none focus:ring-2 focus:ring-accent"
                         onClick={(event) => {
                           event.stopPropagation();
                           toggle(order.id);
                         }}
                       >
-                        {expanded.has(order.id) ? "▾" : "▸"}
+                        {expanded.has(order.id) ? (
+                          <ChevronDown size={14} aria-hidden />
+                        ) : (
+                          <ChevronRight size={14} aria-hidden className="rtl:-scale-x-100" />
+                        )}
                       </button>
                     </td>
                     <td className="px-3 py-2">{formatDate(order.order_date)}</td>
                     <td className="px-3 py-2 font-medium">
                       {retailerName.get(order.retailer_id) ?? "…"}
                     </td>
-                    <td className="px-3 py-2 text-zinc-600">{order.order_number ?? "—"}</td>
+                    <td className="px-3 py-2 text-muted">{order.order_number ?? "—"}</td>
                     {/* No date tooltips on the pills any more — the Shipped and
                         Received columns beside them carry the dates for every
                         row at once, which is what the tooltip couldn't (#120). */}
                     <td className="px-3 py-2">
+                      {/* The order's state in the kit pipeline's colours (§13.1):
+                          received is complete's green, shipped is in-transit's
+                          amber, pending is ordered's blue. */}
                       {order.received_at ? (
-                        <span className="rounded-full bg-green-100 px-2 py-0.5 text-xs font-medium text-green-700">
-                          {t("orders.pillReceived")}
-                        </span>
+                        <Chip tone="text-status-complete">{t("orders.pillReceived")}</Chip>
                       ) : order.shipped_at ? (
-                        <span className="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-700">
-                          {t("orders.pillShipped")}
-                        </span>
+                        <Chip tone="text-status-in-transit">{t("orders.pillShipped")}</Chip>
                       ) : isPreOrder(order) ? (
                         // Derived, not stored (#95): a pending order whose kits are
                         // all pre_ordered is the pre-order; once it ships nobody
                         // cares, so there is nothing to persist.
-                        <span
-                          className="whitespace-nowrap rounded-full bg-violet-100 px-2 py-0.5 text-xs font-medium text-violet-700"
-                          title={t("orders.preOrderTooltip")}
-                        >
+                        <Chip tone="text-status-pre-ordered" title={t("orders.preOrderTooltip")}>
                           {t("orders.pillPreOrder")}
-                        </span>
+                        </Chip>
                       ) : (
-                        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-medium text-amber-700">
-                          {t("orders.pillPending")}
-                        </span>
+                        <Chip tone="text-status-ordered">{t("orders.pillPending")}</Chip>
                       )}
                     </td>
                     {/* nowrap: "in transit · 6 d" split across lines reads as two
                         facts, and the dates never benefit from wrapping. */}
                     <td
-                      className="whitespace-nowrap px-3 py-2 text-zinc-500"
+                      className="whitespace-nowrap px-3 py-2 text-muted"
                       title={t("orders.shippedTooltip")}
                     >
                       {order.shipped_at ? formatDate(order.shipped_at) : "—"}
                     </td>
                     <td
-                      className="whitespace-nowrap px-3 py-2 text-zinc-500"
+                      className="whitespace-nowrap px-3 py-2 text-muted"
                       title={t("orders.receivedTooltip")}
                     >
                       {receivedCell(order)}
@@ -1254,7 +1268,7 @@ export function OrdersPage() {
                           target="_blank"
                           rel="noreferrer"
                           onClick={(event) => event.stopPropagation()}
-                          className="text-indigo-600 hover:underline"
+                          className="text-accent hover:underline"
                         >
                           {order.tracking_number ?? t("orders.trackingLinkFallback")}
                         </a>
@@ -1281,7 +1295,7 @@ export function OrdersPage() {
                     </td>
                   </tr>
                   {expanded.has(order.id) && (
-                    <tr className="border-b border-zinc-100 bg-zinc-50/60 last:border-0">
+                    <tr className="border-b border-rule bg-surface-alt last:border-0">
                       <td />
                       <td colSpan={10} className="px-3 py-2">
                         <ul className="space-y-1">
@@ -1293,16 +1307,16 @@ export function OrdersPage() {
                                   itemTypeLabel(item.item_type));
                             return (
                               <li key={item.id} className="flex items-center gap-3 text-sm">
-                                <span className="w-24 rounded bg-zinc-200 px-1.5 py-0.5 text-center text-xs text-zinc-600">
+                                <span className="w-24 rounded-sm bg-chip px-1.5 py-0.5 text-center text-xs text-muted">
                                   {itemTypeLabel(item.item_type)}
                                 </span>
                                 <span className="font-medium">{label}</span>
-                                <span className="text-zinc-500">
+                                <span className="text-muted">
                                   {formatNumber(item.quantity)} ×{" "}
                                   {formatMoney(item.unit_price_minor, item.currency_code)}
                                 </span>
                                 {item.item_type === "kit" && (
-                                  <span className="text-xs text-zinc-400">
+                                  <span className="text-xs text-faint">
                                     {t("orders.spawnedKits", counted({}, item.spawned_kit_ids.length))}
                                   </span>
                                 )}
@@ -1338,7 +1352,7 @@ export function OrdersPage() {
  *  the delivery date, and when a ship date exists too, the days in transit
  *  beside it. Shipped-but-not-received counts transit live instead — the
  *  at-a-glance pipeline timing the status pill's tooltip could only show one
- *  row at a time. Elapsed like the kits column: calendar distance, rounded. */
+ *  row at a time. Elapsed like the kits column: calendar distance, rounded-sm. */
 function receivedCell(order: Order): string {
   if (!order.received_at) {
     if (!order.shipped_at) return "—";

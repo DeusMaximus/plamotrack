@@ -8,7 +8,19 @@ import type { PackingQuality, Retailer, ShippingSpeed, WouldOrderAgain } from ".
 import { PACKING_QUALITIES, SHIPPING_SPEEDS, WOULD_ORDER_AGAIN } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
-import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
+import {
+  Button,
+  Chip,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  Input,
+  PageTitle,
+  RatingStars,
+  Select,
+  TABLE_HEAD_ROW_CLASS,
+  Textarea,
+} from "../components/ui";
 import {
   packingQualityLabel,
   ratingTooltip,
@@ -17,10 +29,12 @@ import {
 } from "../lib/labels";
 import { usePresentationVersion } from "../lib/presentation";
 
-const AGAIN_STYLES: Record<WouldOrderAgain, string> = {
-  yes: "bg-green-100 text-green-700",
-  maybe: "bg-amber-100 text-amber-700",
-  no: "bg-red-100 text-red-700",
+/** Would order again, in the pipeline's own vocabulary (§13.1): complete's
+ * green, in-transit's amber, and danger for no. */
+const AGAIN_TONES: Record<WouldOrderAgain, string> = {
+  yes: "text-status-complete",
+  maybe: "text-status-in-transit",
+  no: "text-danger",
 };
 
 interface RetailerFormValues {
@@ -184,7 +198,7 @@ export function RetailersPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">{t("retailers.title")}</h1>
+        <PageTitle>{t("retailers.title")}</PageTitle>
         <div className="flex gap-2">
           <ExportCsvButton table="retailers" />
           <Button onClick={() => setModal({})}>{t("retailers.addButton")}</Button>
@@ -196,22 +210,22 @@ export function RetailersPage() {
       {isError ? (
         <ErrorBanner message={t("retailers.loadFailed", { message: (error as Error).message })} />
       ) : retailers?.length ? (
-        <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+        <div className="overflow-x-auto rounded-md border border-border bg-surface">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                <th className="px-3 py-2">{t("common.name")}</th>
-                <th className="px-3 py-2">{t("retailers.headerRating")}</th>
-                <th className="px-3 py-2">{t("retailers.headerPacking")}</th>
-                <th className="px-3 py-2">{t("retailers.headerShipping")}</th>
-                <th className="px-3 py-2">{t("retailers.headerAgain")}</th>
-                <th className="px-3 py-2">{t("retailers.notes")}</th>
-                <th className="px-3 py-2" />
+              <tr className={TABLE_HEAD_ROW_CLASS}>
+                <th className="px-3 py-2.5">{t("common.name")}</th>
+                <th className="px-3 py-2.5">{t("retailers.headerRating")}</th>
+                <th className="px-3 py-2.5">{t("retailers.headerPacking")}</th>
+                <th className="px-3 py-2.5">{t("retailers.headerShipping")}</th>
+                <th className="px-3 py-2.5">{t("retailers.headerAgain")}</th>
+                <th className="px-3 py-2.5">{t("retailers.notes")}</th>
+                <th className="px-3 py-2.5" />
               </tr>
             </thead>
             <tbody>
               {retailers.map((retailer) => (
-                <tr key={retailer.id} className="border-b border-zinc-100 last:border-0">
+                <tr key={retailer.id} className="border-b border-rule last:border-0">
                   <td className="px-3 py-2">
                     <div className="font-medium">{retailer.name}</div>
                     {retailer.url && (
@@ -219,19 +233,18 @@ export function RetailersPage() {
                         href={retailer.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-xs text-indigo-600 hover:underline"
+                        className="text-xs text-accent hover:underline"
                       >
                         {retailer.url.replace(/^https?:\/\//, "")}
                       </a>
                     )}
                   </td>
-                  <td
-                    className="px-3 py-2"
-                    title={retailer.rating ? ratingTooltip(retailer.rating) : ""}
-                  >
-                    {retailer.rating
-                      ? "★".repeat(retailer.rating) + "☆".repeat(5 - retailer.rating)
-                      : "—"}
+                  <td className="px-3 py-2">
+                    {retailer.rating ? (
+                      <RatingStars rating={retailer.rating} title={ratingTooltip(retailer.rating)} />
+                    ) : (
+                      "—"
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     {retailer.packing_quality ? packingQualityLabel(retailer.packing_quality) : "—"}
@@ -241,16 +254,14 @@ export function RetailersPage() {
                   </td>
                   <td className="px-3 py-2">
                     {retailer.would_order_again ? (
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${AGAIN_STYLES[retailer.would_order_again]}`}
-                      >
+                      <Chip tone={AGAIN_TONES[retailer.would_order_again]}>
                         {wouldOrderAgainLabel(retailer.would_order_again)}
-                      </span>
+                      </Chip>
                     ) : (
                       "—"
                     )}
                   </td>
-                  <td className="max-w-48 truncate px-3 py-2 text-zinc-500" title={retailer.notes ?? ""}>
+                  <td className="max-w-48 truncate px-3 py-2 text-muted" title={retailer.notes ?? ""}>
                     {retailer.notes ?? "—"}
                   </td>
                   <td className="px-3 py-2 text-end">
