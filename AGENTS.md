@@ -179,7 +179,8 @@ dev server proxies `/api/*` there, stripping the prefix):
 npm install
 npm run dev                  # Vite on :5173
 npm run build                # tsc type-check + production build — run before committing
-npm run lint                 # oxlint
+npm run lint                 # oxlint, then scripts/check-palette.mjs: no stock Tailwind
+                             # palette utility under src/ — tokens only (design §13.1)
 npm run test:e2e             # Playwright happy-path (needs chromium: npx playwright install chromium);
                              # reuses running dev servers, creates + cleans its own data
 ```

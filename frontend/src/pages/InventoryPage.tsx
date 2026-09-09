@@ -16,7 +16,17 @@ import type {
 } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
-import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
+import {
+  Button,
+  Chip,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  Input,
+  PageTitle,
+  Select,
+  TABLE_HEAD_ROW_CLASS,
+} from "../components/ui";
 import { currencyOptions, formatMoney, formatNumber, majorToMinor, minorToMajor, stepFor } from "../lib/format";
 import { counted, itemTypeLabel, itemTypePlural } from "../lib/labels";
 import { usePresentationVersion } from "../lib/presentation";
@@ -390,7 +400,7 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
     <Modal title={t("inventory.applyTitle", { name: upgrade.name })} onClose={onClose}>
       <div className="space-y-3">
         <ErrorBanner message={error} />
-        <p className="text-sm text-zinc-500">
+        <p className="text-sm text-muted">
           {t("inventory.applyOnHand", counted({}, upgrade.quantity_on_hand))}
         </p>
         <Field label={t("inventory.kit")} required>
@@ -566,7 +576,7 @@ export function InventoryPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">{t("inventory.title")}</h1>
+        <PageTitle>{t("inventory.title")}</PageTitle>
         <div className="flex gap-2">
           <ExportCsvButton table={EXPORT_TABLE[tab]} />
           <Button onClick={() => setAddOpen(true)}>
@@ -575,7 +585,7 @@ export function InventoryPage() {
         </div>
       </div>
 
-      <div className="flex gap-1 border-b border-zinc-200">
+      <div className="flex gap-1 border-b border-border">
         {TABS.map((tabOption) => (
           <button
             key={tabOption}
@@ -587,8 +597,8 @@ export function InventoryPage() {
             }}
             className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
               tab === tabOption
-                ? "border-indigo-600 text-indigo-700"
-                : "border-transparent text-zinc-500 hover:text-zinc-800"
+                ? "border-accent text-accent"
+                : "border-transparent text-muted hover:text-text"
             }`}
           >
             {t(`inventory.tabs.${tabOption}`)}
@@ -618,21 +628,21 @@ export function InventoryPage() {
         (tools.isError ? (
           <ErrorBanner message={t("inventory.loadFailed.tools", { message: (tools.error as Error).message })} />
         ) : filteredTools.length ? (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+          <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">{t("common.name")}</th>
-                  <th className="px-3 py-2">{t("inventory.category")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerRefCost")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerCondition")}</th>
-                  <th className="px-3 py-2" />
+                <tr className={TABLE_HEAD_ROW_CLASS}>
+                  <th className="px-3 py-2.5">{t("common.name")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.category")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerRefCost")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerCondition")}</th>
+                  <th className="px-3 py-2.5" />
                 </tr>
               </thead>
               <tbody>
                 {filteredTools.map((tool) => (
-                  <tr key={tool.id} className="border-b border-zinc-100 last:border-0">
+                  <tr key={tool.id} className="border-b border-rule last:border-0">
                     <td className="px-3 py-2 font-medium">{tool.name}</td>
                     <td className="px-3 py-2">{tool.category}</td>
                     <td className="px-3 py-2">
@@ -650,7 +660,7 @@ export function InventoryPage() {
                             tool.unit_cost_reference_currency,
                           )}
                     </td>
-                    <td className="px-3 py-2 text-zinc-500">{tool.condition_notes ?? "—"}</td>
+                    <td className="px-3 py-2 text-muted">{tool.condition_notes ?? "—"}</td>
                     <td className="px-3 py-2 text-end">
                       <div className="flex justify-end gap-1">
                         <Button variant="secondary" onClick={() => setEditing(tool)}>
@@ -687,15 +697,15 @@ export function InventoryPage() {
             })}
           />
         ) : filteredConsumables.length ? (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+          <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">{t("common.name")}</th>
-                  <th className="px-3 py-2">{t("inventory.category")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerLowStockAt")}</th>
-                  <th className="px-3 py-2" />
+                <tr className={TABLE_HEAD_ROW_CLASS}>
+                  <th className="px-3 py-2.5">{t("common.name")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.category")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerLowStockAt")}</th>
+                  <th className="px-3 py-2.5" />
                 </tr>
               </thead>
               <tbody>
@@ -704,21 +714,21 @@ export function InventoryPage() {
                     item.low_stock_threshold !== null &&
                     item.quantity_on_hand <= item.low_stock_threshold;
                   return (
-                    <tr key={item.id} className="border-b border-zinc-100 last:border-0">
+                    <tr key={item.id} className="border-b border-rule last:border-0">
                       <td className="px-3 py-2 font-medium">{item.name}</td>
                       <td className="px-3 py-2">{item.category}</td>
                       <td className="px-3 py-2">
                         <span
-                          className={`me-2 tabular-nums ${low ? "font-semibold text-red-600" : ""}`}
+                          className={`me-2 tabular-nums ${low ? "font-semibold text-danger" : ""}`}
                           data-testid="stock-count"
                         >
                           {formatNumber(item.quantity_on_hand)}
                         </span>
                         <StockStepper item={item} queryKey="consumables" onError={setActionError} />
                         {low && (
-                          <span className="ms-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                          <Chip tone="text-danger" className="ms-2">
                             {t("inventory.restock")}
-                          </span>
+                          </Chip>
                         )}
                       </td>
                       <td className="px-3 py-2">
@@ -759,19 +769,19 @@ export function InventoryPage() {
         (upgrades.isError ? (
           <ErrorBanner message={t("inventory.loadFailed.upgrades", { message: (upgrades.error as Error).message })} />
         ) : upgrades.data?.length ? (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+          <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">{t("common.name")}</th>
-                  <th className="px-3 py-2">{t("inventory.manufacturer")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2" />
+                <tr className={TABLE_HEAD_ROW_CLASS}>
+                  <th className="px-3 py-2.5">{t("common.name")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.manufacturer")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2.5" />
                 </tr>
               </thead>
               <tbody>
                 {upgrades.data.map((upgrade) => (
-                  <tr key={upgrade.id} className="border-b border-zinc-100 last:border-0">
+                  <tr key={upgrade.id} className="border-b border-rule last:border-0">
                     <td className="px-3 py-2 font-medium">{upgrade.name}</td>
                     <td className="px-3 py-2">{upgrade.manufacturer}</td>
                     <td className="px-3 py-2">
@@ -816,22 +826,22 @@ export function InventoryPage() {
             })}
           />
         ) : filteredDisplayItems.length ? (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+          <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">{t("common.name")}</th>
-                  <th className="px-3 py-2">{t("inventory.category")}</th>
-                  <th className="px-3 py-2">{t("inventory.scale")}</th>
-                  <th className="px-3 py-2">{t("inventory.manufacturer")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2">{t("inventory.notes")}</th>
-                  <th className="px-3 py-2" />
+                <tr className={TABLE_HEAD_ROW_CLASS}>
+                  <th className="px-3 py-2.5">{t("common.name")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.category")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.scale")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.manufacturer")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.notes")}</th>
+                  <th className="px-3 py-2.5" />
                 </tr>
               </thead>
               <tbody>
                 {filteredDisplayItems.map((row) => (
-                  <tr key={row.id} className="border-b border-zinc-100 last:border-0">
+                  <tr key={row.id} className="border-b border-rule last:border-0">
                     <td className="px-3 py-2 font-medium">{row.name}</td>
                     <td className="px-3 py-2">{row.category}</td>
                     <td className="px-3 py-2">{row.scale ?? "—"}</td>
@@ -842,7 +852,7 @@ export function InventoryPage() {
                       </span>
                       <StockStepper item={row} queryKey="display-items" onError={setActionError} />
                     </td>
-                    <td className="px-3 py-2 text-zinc-500">{row.notes ?? "—"}</td>
+                    <td className="px-3 py-2 text-muted">{row.notes ?? "—"}</td>
                     <td className="px-3 py-2 text-end">
                       <div className="flex justify-end gap-1">
                         <Button variant="secondary" onClick={() => setEditing(row)}>

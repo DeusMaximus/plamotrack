@@ -519,6 +519,10 @@ export interface AuthSession {
   auth_mode: "local" | "oidc";
   /** The provider's issuer URL, for naming it on the login screen. OIDC mode only. */
   oidc_issuer: string | null;
+  /** The owner's display name — the email or name the provider supplied at the
+   *  binding — for the sidebar's identity line (§13.3). Only on the owner's own
+   *  read, and null in local mode, which stores none. */
+  display_name: string | null;
 }
 
 /** `POST /auth/oidc/start` (#191): where the browser goes next. The response also

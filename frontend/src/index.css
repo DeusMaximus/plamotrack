@@ -1,5 +1,132 @@
 @import "tailwindcss";
 
-body {
-  @apply bg-zinc-100 text-zinc-900 antialiased;
+/* Workbench (design §13, §13.1): every colour, radius and border the interface
+ * uses is one of the semantic tokens below, defined once for the dark default
+ * and redefined under `[data-theme="light"]` — `public/theme.js` sets the
+ * attribute before first paint, `src/lib/theme.ts` keeps it current. The
+ * `@theme` block hands them to Tailwind as utilities (`bg-surface`,
+ * `text-muted`, `border-rule`, `text-status-building`, `rounded-md`) and
+ * *removes* the stock palette, radii and shadows, so a stock palette or
+ * shadow utility in a component produces no CSS at all; `npm run lint` also
+ * refuses the spelling (scripts/check-palette.mjs). A palette utility after
+ * M6.5 is a regression, not a style choice. */
+
+:root {
+  color-scheme: dark;
+  --bg: #141413;
+  --surface: #1a1a19;
+  --surface-alt: #181817;
+  --border: #2e2d2a;
+  --border-strong: #3a3733;
+  --rule: #262523;
+  --text: #ebe7df;
+  --muted: #9d988e;
+  /* Icons, disabled and decorative content — the 3:1 floor, never running
+   * text or a hint someone has to read (that is --muted, 4.5:1). */
+  --faint: #6c675e;
+  --accent: #e2a44b;
+  --accent-ink: #1b1207;
+  --accent-soft: rgb(226 164 75 / 0.14);
+  --chip: rgb(255 255 255 / 0.05);
+  --danger: #f08a78;
+  --backdrop: rgb(0 0 0 / 0.6);
+  --status-pre-ordered: #b7a6ff;
+  --status-ordered: #7fb4ff;
+  --status-in-transit: #f0b95c;
+  --status-backlog: #5fd3c0;
+  --status-building: #ff9d5c;
+  --status-complete: #7fd88f;
+}
+
+/* The light set. The artboard's accent (#b4741c) and five of its six status
+ * hues were drawn for surfaces, not 12px text: on the chip they measured
+ * 3.45–4.36:1 and white on the accent 3.85:1 (Codex #235 P3-1). These are the
+ * same hues darkened until every composed pair clears 4.5:1 — the pairs are
+ * enumerated in src/lib/tokens.test.ts, which reads this file. */
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f3f1ec;
+  --surface: #ffffff;
+  --surface-alt: #f8f6f2;
+  --border: #dcd7cd;
+  --border-strong: #cfc9bd;
+  --rule: #ebe7df;
+  --text: #1e1c19;
+  --muted: #6b665d;
+  --faint: #8e887d;
+  --accent: #885610;
+  --accent-ink: #ffffff;
+  --accent-soft: rgb(136 86 16 / 0.1);
+  --chip: rgb(0 0 0 / 0.05);
+  --danger: #b42318;
+  --backdrop: rgb(30 28 25 / 0.4);
+  --status-pre-ordered: #6d4fd8;
+  --status-ordered: #2966c1;
+  --status-in-transit: #935c0a;
+  --status-backlog: #0c7666;
+  --status-building: #a74f16;
+  --status-complete: #267633;
+}
+
+/* `inline`, so a utility carries `var(--surface)` itself and follows whichever
+ * `[data-theme]` is above the element, rather than a `--color-surface` fixed
+ * where the theme block was resolved. */
+@theme inline {
+  --color-*: initial;
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-alt: var(--surface-alt);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-rule: var(--rule);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--accent);
+  --color-accent-ink: var(--accent-ink);
+  --color-accent-soft: var(--accent-soft);
+  --color-chip: var(--chip);
+  --color-danger: var(--danger);
+  --color-backdrop: var(--backdrop);
+  --color-status-pre-ordered: var(--status-pre-ordered);
+  --color-status-ordered: var(--status-ordered);
+  --color-status-in-transit: var(--status-in-transit);
+  --color-status-backlog: var(--status-backlog);
+  --color-status-building: var(--status-building);
+  --color-status-complete: var(--status-complete);
+
+  /* Three radii: controls, chips and nav rows; panels and tables; dialogs. */
+  --radius-*: initial;
+  --radius-sm: 3px;
+  --radius-md: 4px;
+  --radius-lg: 6px;
+
+  /* Flat surfaces — hairlines separate, nothing floats. */
+  --shadow-*: initial;
+
+  /* Bundled by main.tsx (@fontsource-variable/inter); no font host is contacted. */
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+}
+
+@layer base {
+  html {
+    background-color: var(--bg);
+    color: var(--text);
+  }
+  body {
+    @apply bg-bg text-text antialiased;
+  }
+  /* Figures line up in columns and dates; a table is the usual place. Headers
+   * start where their column starts — the UA default centres a <th>. */
+  th,
+  td {
+    font-variant-numeric: tabular-nums;
+  }
+  th {
+    text-align: start;
+  }
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--accent);
+  }
 }

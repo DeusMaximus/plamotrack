@@ -4,7 +4,7 @@ export function SectionHeader({ title, description }: { title: string; descripti
   return (
     <div>
       <h2 className="text-lg font-semibold">{title}</h2>
-      <p className="mt-0.5 text-sm text-zinc-500">{description}</p>
+      <p className="mt-0.5 text-sm text-muted">{description}</p>
     </div>
   );
 }

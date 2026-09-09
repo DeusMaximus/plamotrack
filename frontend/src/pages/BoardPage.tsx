@@ -25,7 +25,7 @@ import { useTranslation } from "react-i18next";
 import { api } from "../api/client";
 import type { Kit, KitStatus } from "../api/types";
 import { StatusBadge } from "../components/StatusBadge";
-import { EmptyState, ErrorBanner } from "../components/ui";
+import { EmptyState, ErrorBanner, PageTitle, RatingStars } from "../components/ui";
 import { formatNumber } from "../lib/format";
 import { ratingTooltip, statusLabel } from "../lib/labels";
 import { usePresentationVersion } from "../lib/presentation";
@@ -79,13 +79,13 @@ const RECEIVED_ID = "received";
 const RECEIVED_GROUP: ReadonlySet<KitStatus> = new Set(BUILD_COLUMNS);
 
 const COLUMN_ACCENTS: Record<string, string> = {
-  pre_ordered: "border-t-purple-400",
-  ordered: "border-t-blue-400",
-  in_transit: "border-t-amber-400",
-  backlog: "border-t-teal-400", // inherited in_hand's teal in the merge
-  building: "border-t-orange-400",
-  complete: "border-t-green-500",
-  [RECEIVED_ID]: "border-t-teal-400",
+  pre_ordered: "border-t-status-pre-ordered",
+  ordered: "border-t-status-ordered",
+  in_transit: "border-t-status-in-transit",
+  backlog: "border-t-status-backlog", // inherited in_hand's teal in the merge
+  building: "border-t-status-building",
+  complete: "border-t-status-complete",
+  [RECEIVED_ID]: "border-t-status-backlog",
 };
 
 const VIEW_STORAGE_KEY = "plamotrack.boardView";
@@ -106,23 +106,22 @@ function KitCard({
 }) {
   return (
     <div
-      className={`rounded-lg border border-zinc-200 bg-white p-3 text-sm ${
-        isOverlay ? "rotate-2 shadow-xl ring-2 ring-indigo-400" : "shadow-sm"
+      className={`rounded-md border border-border bg-surface p-3 text-sm ${
+        isOverlay ? "rotate-2 ring-2 ring-accent" : ""
       }`}
     >
       <div className="font-medium leading-snug">{kit.name}</div>
-      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-zinc-500">
-        <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-medium text-zinc-600">
+      <div className="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-muted">
+        <span className="rounded-sm bg-chip px-1.5 py-0.5 font-medium text-muted">
           {kit.grade}
         </span>
         {kit.scale && <span>{kit.scale}</span>}
-        {kit.kit_number && <span className="text-zinc-400">{kit.kit_number}</span>}
+        {kit.kit_number && <span className="text-muted">{kit.kit_number}</span>}
         {showStatus && <StatusBadge status={kit.status} />}
       </div>
       {kit.rating != null && (
-        <div className="mt-1 text-xs text-amber-500" title={ratingTooltip(kit.rating)}>
-          {"★".repeat(kit.rating)}
-          <span className="text-zinc-300">{"★".repeat(5 - kit.rating)}</span>
+        <div className="mt-1.5">
+          <RatingStars rating={kit.rating} title={ratingTooltip(kit.rating)} />
         </div>
       )}
     </div>
@@ -159,11 +158,11 @@ function Column({
   return (
     <div className="flex w-full min-w-56 max-w-80 shrink-0 flex-col">
       <div
-        className={`rounded-t-lg border-t-4 bg-white px-3 py-2 ${COLUMN_ACCENTS[id]} border-x border-zinc-200`}
+        className={`rounded-t-md border-t-4 bg-surface px-3 py-2 ${COLUMN_ACCENTS[id]} border-x border-border`}
       >
         <span className="text-sm font-semibold">{title}</span>
         <span
-          className="ms-2 rounded-full bg-zinc-100 px-1.5 text-xs text-zinc-500"
+          className="ms-2 rounded-full bg-chip px-1.5 text-xs text-muted"
           data-testid={`column-count-${id}`}
         >
           {formatNumber(kits.length)}
@@ -171,8 +170,8 @@ function Column({
       </div>
       <div
         ref={setNodeRef}
-        className={`flex-1 space-y-2 rounded-b-lg border border-t-0 border-zinc-200 p-2 transition-colors ${
-          isOver ? "bg-indigo-50 ring-2 ring-inset ring-indigo-300" : "bg-zinc-50"
+        className={`flex-1 space-y-2 rounded-b-md border border-t-0 border-border p-2 transition-colors ${
+          isOver ? "bg-accent-soft ring-2 ring-inset ring-accent/40" : "bg-surface-alt"
         }`}
         style={{ minHeight: "8rem" }}
       >
@@ -180,7 +179,7 @@ function Column({
           <DraggableCard key={kit.id} kit={kit} showStatus={showStatus} />
         ))}
         {kits.length === 0 && (
-          <div className="px-2 py-6 text-center text-xs text-zinc-400">
+          <div className="px-2 py-6 text-center text-xs text-faint">
             {isOver ? t("board.dropHere") : "—"}
           </div>
         )}
@@ -275,20 +274,20 @@ export function BoardPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">
+        <PageTitle>
           {view === "build" ? t("board.buildPipeline") : t("board.ordersPipeline")}
-        </h1>
+        </PageTitle>
         <div className="flex items-center gap-3">
-          <span className="hidden text-sm text-zinc-500 sm:inline">{t("board.dragHint")}</span>
-          <div className="flex rounded-lg border border-zinc-300 bg-white p-0.5">
+          <span className="hidden text-sm text-muted sm:inline">{t("board.dragHint")}</span>
+          <div className="flex rounded-md border border-border-strong bg-surface p-0.5">
             {(["build", "orders"] as const).map((option) => (
               <button
                 key={option}
                 onClick={() => selectView(option)}
-                className={`rounded-md px-3 py-1 text-sm font-medium ${
+                className={`rounded-sm px-3 py-1 text-sm font-medium ${
                   view === option
-                    ? "bg-indigo-600 text-white"
-                    : "text-zinc-600 hover:text-zinc-900"
+                    ? "bg-accent text-accent-ink"
+                    : "text-muted hover:text-text"
                 }`}
               >
                 {option === "build" ? t("board.buildView") : t("board.ordersView")}

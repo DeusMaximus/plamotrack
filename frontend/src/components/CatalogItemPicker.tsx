@@ -80,7 +80,7 @@ export function CatalogItemPicker({
   if (value?.mode === "existing") {
     return (
       <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-1 rounded-md bg-indigo-50 px-2 py-1 text-sm text-indigo-800">
+        <span className="inline-flex items-center gap-1 rounded-sm bg-accent-soft px-2 py-1 text-sm text-accent">
           {value.name}
         </span>
         <Button type="button" variant="secondary" onClick={() => onChange(null)}>
@@ -92,14 +92,14 @@ export function CatalogItemPicker({
 
   if (value?.mode === "new") {
     return (
-      <div className="space-y-2 rounded-md border border-dashed border-indigo-300 bg-indigo-50/50 p-2">
+      <div className="space-y-2 rounded-sm border border-dashed border-accent/40 bg-accent-soft p-2">
         <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-indigo-700">
+          <span className="text-xs font-medium text-accent">
             {t("catalogPicker.newItem", { type: itemTypeLabel(itemType) })}
           </span>
           <button
             type="button"
-            className="text-xs text-zinc-500 hover:text-zinc-700"
+            className="text-xs text-muted hover:text-text"
             onClick={() => onChange(null)}
           >
             {t("catalogPicker.backToSearch")}
@@ -182,15 +182,15 @@ export function CatalogItemPicker({
         placeholder={t("catalogPicker.searchPlaceholder", { type: itemTypePlural(itemType) })}
       />
       {open && debounced.length > 0 && (
-        <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-md border border-zinc-200 bg-white shadow-lg">
+        <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-sm border border-border bg-surface">
           {isFetching && (
-            <div className="px-3 py-2 text-xs text-zinc-400">{t("catalogPicker.searching")}</div>
+            <div className="px-3 py-2 text-xs text-muted">{t("catalogPicker.searching")}</div>
           )}
           {matches.map((result) => (
             <button
               key={result.id}
               type="button"
-              className="flex w-full items-center justify-between px-3 py-2 text-start text-sm hover:bg-indigo-50"
+              className="flex w-full items-center justify-between px-3 py-2 text-start text-sm hover:bg-accent-soft"
               // onClick, not onMouseDown: a keyboard's Enter/Space activates a
               // button through click and never fires mousedown (#104). The
               // mousedown-first ordering the old handler relied on is covered
@@ -199,20 +199,20 @@ export function CatalogItemPicker({
             >
               <span>
                 {result.name}
-                <span className="ms-2 text-xs text-zinc-400">
+                <span className="ms-2 text-xs text-muted">
                   {[result.category ?? result.manufacturer, result.scale]
                     .filter(Boolean)
                     .join(t("common.dotSeparator"))}
                 </span>
               </span>
-              <span className="text-xs text-zinc-400">
+              <span className="text-xs text-muted">
                 {t("catalogPicker.onHand", counted({}, result.quantity_on_hand))}
               </span>
             </button>
           ))}
           <button
             type="button"
-            className="w-full border-t border-zinc-100 px-3 py-2 text-start text-sm font-medium text-indigo-600 hover:bg-indigo-50"
+            className="w-full border-t border-rule px-3 py-2 text-start text-sm font-medium text-accent hover:bg-accent-soft"
             onClick={() =>
               onChange({
                 mode: "new",

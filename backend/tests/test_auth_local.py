@@ -102,6 +102,7 @@ async def test_session_reports_unclaimed_then_owner(anon_client):
     body = unclaimed.json()
     assert body["state"] == "unclaimed"
     assert body["csrf_token"] is None
+    assert body["display_name"] is None
     # It carries what a login screen needs and nothing else — no version.
     assert body["interface_language"] and body["formatting_locale"]
     assert "version" not in body
@@ -111,6 +112,8 @@ async def test_session_reports_unclaimed_then_owner(anon_client):
     assert owner_view.json()["state"] == "owner"
     # The CSRF token is stable per session, so the one setup returned still matches.
     assert owner_view.json()["csrf_token"] == csrf
+    # Local mode stores no display name (§13.3: the identity line is OIDC's).
+    assert owner_view.json()["display_name"] is None
 
 
 async def test_session_reports_anonymous_when_claimed_without_a_cookie(anon_client):

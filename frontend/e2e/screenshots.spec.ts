@@ -34,7 +34,9 @@ const day = (daysAgo: number) => iso(daysAgo).slice(0, 10);
 test.describe.configure({ mode: "serial" });
 test.skip(!process.env.SCREENSHOTS, "screenshot capture runs only with SCREENSHOTS=1");
 
-test.use({ deviceScaleFactor: 2, viewport: { width: 1440, height: 900 } });
+// Dark: the default look (design §13). A browser with no stored preference
+// follows its device, and Playwright's device is light unless told otherwise.
+test.use({ deviceScaleFactor: 2, viewport: { width: 1440, height: 900 }, colorScheme: "dark" });
 
 test("seed the demo collection and capture the README screenshots", async ({ page }) => {
   test.setTimeout(180_000);

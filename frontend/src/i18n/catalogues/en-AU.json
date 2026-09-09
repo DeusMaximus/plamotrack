@@ -8,7 +8,14 @@
     "settings": "Settings"
   },
   "layout": {
-    "tagline": "pre-order → panel-lined masterpiece"
+    "tagline": "pre-order → panel-lined masterpiece",
+    "identityVia": "via {{provider}}"
+  },
+  "theme": {
+    "label": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "Follow the device"
   },
   "auth": {
     "setupTitle": "Set up plamotrack",
@@ -34,7 +41,8 @@
     "oidcError_expired": "That sign-in took too long or was already used. Start again.",
     "oidcError_failed": "The identity provider's answer couldn't be verified. Try again; if it keeps failing, check the API log.",
     "oidcError_setupRequired": "This instance has no owner bound yet. Enter the setup token from the API log and sign in again.",
-    "oidcError_identityRefused": "That account isn't this instance's owner. Sign in with the account that set it up, or run the rebind recovery command on the host."
+    "oidcError_identityRefused": "That account isn't this instance's owner. Sign in with the account that set it up, or run the rebind recovery command on the host.",
+    "providerFallback": "your identity provider"
   },
   "common": {
     "close": "Close",

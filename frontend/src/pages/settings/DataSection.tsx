@@ -152,7 +152,7 @@ export function DataSection() {
             {t("data.templatePackButton")}
           </Button>
         </div>
-        <p className="mt-2 text-xs text-zinc-500">{t("data.starterBlurb")}</p>
+        <p className="mt-2 text-xs text-muted">{t("data.starterBlurb")}</p>
       </Card>
 
       <Card title={t("data.importTitle")} description={t("data.importDescription")}>
@@ -167,8 +167,8 @@ export function DataSection() {
             setDragging(false);
             pickFile(event.dataTransfer.files[0] ?? null);
           }}
-          className={`rounded-lg border-2 border-dashed px-4 py-6 text-center ${
-            dragging ? "border-indigo-400 bg-indigo-50" : "border-zinc-300 bg-zinc-50"
+          className={`rounded-md border border-dashed px-4 py-6 text-center ${
+            dragging ? "border-accent bg-accent-soft" : "border-border-strong bg-surface-alt"
           }`}
         >
           <input
@@ -181,22 +181,22 @@ export function DataSection() {
           />
           {file ? (
             <div className="space-y-1">
-              <p className="text-sm font-medium text-zinc-800">{file.name}</p>
-              <p className="text-xs text-zinc-500">{formatFileSize(file.size)}</p>
+              <p className="text-sm font-medium text-text">{file.name}</p>
+              <p className="text-xs text-muted">{formatFileSize(file.size)}</p>
               <button
                 type="button"
                 onClick={reset}
-                className="text-xs text-indigo-600 hover:underline"
+                className="text-xs text-accent hover:underline"
               >
                 {t("data.chooseDifferent")}
               </button>
             </div>
           ) : (
             <div className="space-y-1">
-              <p className="text-sm text-zinc-600">{t("data.dropHere")}</p>
+              <p className="text-sm text-muted">{t("data.dropHere")}</p>
               <label
                 htmlFor="import-file"
-                className="cursor-pointer text-xs text-indigo-600 hover:underline"
+                className="cursor-pointer text-xs text-accent hover:underline"
               >
                 {t("data.browse")}
               </label>
@@ -206,7 +206,7 @@ export function DataSection() {
 
         <div className="mt-3 flex flex-wrap items-end gap-3">
           <label className="block">
-            <span className="mb-1 block text-xs font-medium text-zinc-600">
+            <span className="mb-1 block text-xs font-medium text-muted">
               {t("data.modeLabel")}
             </span>
             <Select
@@ -229,22 +229,22 @@ export function DataSection() {
             {busy === "preview" ? t("data.reading") : t("data.previewChanges")}
           </Button>
         </div>
-        <p className="mt-1.5 text-xs text-zinc-500">{t(`importMode.${mode}.blurb`)}</p>
+        <p className="mt-1.5 text-xs text-muted">{t(`importMode.${mode}.blurb`)}</p>
 
         {plan && (
           <div className="mt-4 space-y-3">
             <ImportPreview plan={plan} />
 
             {mode === "replace_all" && !blocked && (
-              <label className="block rounded-md border border-red-200 bg-red-50 px-3 py-2">
-                <span className="mb-1 block text-xs font-medium text-red-700">
+              <label className="block rounded-sm border border-danger/40 bg-danger/10 px-3 py-2">
+                <span className="mb-1 block text-xs font-medium text-danger">
                   {t("data.replaceConfirm")}
                 </span>
                 <input
                   value={confirmText}
                   onChange={(event) => setConfirmText(event.target.value)}
                   placeholder="REPLACE"
-                  className="w-40 rounded-md border border-red-300 bg-white px-2.5 py-1.5 text-sm focus:border-red-500 focus:outline-none"
+                  className="w-40 rounded-sm border border-danger/40 bg-surface px-2.5 py-1.5 text-sm text-text focus:border-danger focus:outline-none"
                 />
               </label>
             )}
@@ -261,7 +261,7 @@ export function DataSection() {
         )}
 
         {result && (
-          <div className="mt-4 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800">
+          <div className="mt-4 rounded-sm border border-status-complete/40 bg-status-complete/10 px-3 py-2 text-sm text-status-complete">
             <p className="font-medium">{t("data.complete")}</p>
             <p className="mt-0.5">
               {t("data.result.created", counted({}, result.created))}
