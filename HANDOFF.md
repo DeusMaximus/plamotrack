@@ -65,9 +65,13 @@ Template:
   `offset`; (4) the inventory edit dialog says Save (it said Add); (5) the quick-add retailer
   control is icon-only, named "New retailer"; (6) the converted total is the lines' snapshots and
   says nothing when a line lacks one.
-- **State:** branch = `m6.5-workbench` + `c4cdcc3`, pushed; PR #236. Green: `npm run lint`, `npm test`
-  (537), `npm run build`, the e2e serially on an empty DB (51 + 1 skipped), ruff; the full backend
-  suite was in flight at hand-off time (the touched suites green) — the PR body gets its count.
+- **State:** branch = `m6.5-workbench` + `c4cdcc3` + `514e0a3`, pushed; PR #236, **CI green at
+  `514e0a3`**. `514e0a3`: `test_int4_bounds` refused the tools' bare `limit: int` — every integer an
+  MCP tool takes declares its ceiling — so `limit` is `PositiveInt4` on both doors (replacing
+  `Query(ge=1)`); that moved the parity test's `limit=0` refusal to the schema and mutant B5
+  survived until the test asked *both* lists for an unknown sort. Green: `npm run lint`, `npm test`
+  (537), `npm run build`, the e2e serially on an empty DB (51 + 1 skipped), ruff, the full backend
+  suite 2672 passed (three sequential chunks).
   Both dev servers restarted on the dev DB; the dev DB untouched. One trap met twice today: a
   preview `api` on the dev DB makes Playwright *reuse* it — the setup project refuses (correctly)
   and nothing runs; free :8000 first. The from-empty scripts live in the session scratchpad only.
