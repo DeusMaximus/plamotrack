@@ -1,3 +1,4 @@
+import { Download } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -24,7 +25,7 @@ export function ExportCsvButton({ table, label }: { table: string; label?: strin
   }
 
   return (
-    <Button variant="secondary" onClick={run} disabled={busy} title={error ?? undefined}>
+    <Button variant="secondary" icon={Download} onClick={run} disabled={busy} title={error ?? undefined}>
       {busy
         ? t("common.exporting")
         : error

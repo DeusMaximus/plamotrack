@@ -2,8 +2,9 @@ import logging
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
+from typing import Literal
 
-from sqlalchemy import func, select
+from sqlalchemy import DateTime, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1331,10 +1332,44 @@ async def get_order(session: AsyncSession, order_id: uuid.UUID) -> Order:
     return order
 
 
-async def list_orders(session: AsyncSession) -> list[Order]:
+#: How an order list is ordered (§13.4, #232). `placed` is the order the list
+#: always had (newest order date first); `recent` is the order's last status
+#: change — received, else shipped, else placed — newest first, the clock Home's
+#: "in the mail" columns read. Same vocabulary on REST and MCP as for kits.
+OrderSort = Literal["placed", "recent"]
+ORDER_SORTS: tuple[OrderSort, ...] = ("placed", "recent")
+
+
+def _order_order(sort: OrderSort):
+    if sort == "recent":
+        # A date against two instants: the day it was placed counts as its
+        # midnight, so an order shipped on the 20th outranks one placed the 19th.
+        last_change = func.coalesce(
+            Order.received_at, Order.shipped_at, cast(Order.order_date, DateTime(timezone=True))
+        )
+        return (last_change.desc(), Order.order_date.desc(), Order.id)
+    return (Order.order_date.desc(), Order.id)
+
+
+async def list_orders(
+    session: AsyncSession,
+    *,
+    pending_only: bool = False,
+    sort: OrderSort = "placed",
+    limit: int | None = None,
+) -> list[Order]:
+    from app.services.kits import check_list_options
+
+    check_list_options(sort, ORDER_SORTS, limit)
     stmt = (
         select(Order)
-        .order_by(Order.order_date.desc(), Order.id)
+        .order_by(*_order_order(sort))
         .options(selectinload(Order.items).selectinload(OrderItem.kits))
     )
+    if pending_only:
+        # Not yet received — the same predicate the MCP tool applied by hand
+        # before #232, in the query now so `limit` counts pending rows.
+        stmt = stmt.where(Order.received_at.is_(None))
+    if limit is not None:
+        stmt = stmt.limit(limit)
     return list((await session.scalars(stmt)).all())

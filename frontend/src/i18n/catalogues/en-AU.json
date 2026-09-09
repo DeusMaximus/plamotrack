@@ -66,7 +66,16 @@
       "days_one": "{{date}} · {{countDisplay}} d",
       "days_other": "{{date}} · {{countDisplay}} d"
     },
-    "urlPlaceholder": "https://…"
+    "urlPlaceholder": "https://…",
+    "editNamed": "Edit {{name}}",
+    "search": "Search"
+  },
+  "list": {
+    "range": "{{from}}–{{to}} of {{total}}",
+    "pagination": "Pages",
+    "page": "Page {{page}}",
+    "sortLabel": "Sort",
+    "filterByStatus": "Filter by status"
   },
   "validation": {
     "nameRequired": "Name is required",
@@ -294,6 +303,10 @@
     },
     "value": {
       "out_of_range": "{{value}} is out of range — whole numbers here go from −2,147,483,648 to 2,147,483,647."
+    },
+    "list": {
+      "sort_unknown": "That sort isn't one this list offers.",
+      "limit_invalid": "The limit has to be at least 1."
     }
   },
   "board": {
@@ -518,7 +531,7 @@
   },
   "retailers": {
     "title": "Retailers",
-    "addButton": "+ Add retailer",
+    "addButton": "Add retailer",
     "addTitle": "Add retailer",
     "editTitle": "Edit {{name}}",
     "loadFailed": "Failed to load retailers: {{message}}",
@@ -533,11 +546,13 @@
     "headerPacking": "Packing",
     "headerShipping": "Shipping",
     "headerAgain": "Again?",
-    "empty": "No retailers yet — add where you buy."
+    "empty": "No retailers yet — add where you buy.",
+    "searchPlaceholder": "Search retailers…",
+    "emptyFiltered": "No retailers match the search."
   },
   "kits": {
     "title": "Kits",
-    "addButton": "+ Add kit",
+    "addButton": "Add kit",
     "addTitle": "Add kit",
     "addSubmit": "Add kit",
     "editTitle": "Edit {{name}}",
@@ -575,11 +590,14 @@
     "headerStarted": "Started",
     "headerCompleted": "Completed",
     "completedTitle": "Build completed · elapsed days",
-    "confirmDelete": "Delete \"{{name}}\"? This cannot be undone."
+    "confirmDelete": "Delete \"{{name}}\"? This cannot be undone.",
+    "sortRecent": "Newest first",
+    "sortCreated": "Oldest first",
+    "sortName": "Name A–Z"
   },
   "inventory": {
     "title": "Inventory",
-    "addButton": "+ Add {{type}}",
+    "addButton": "Add {{type}}",
     "addTitle": "Add {{type}}",
     "editTitle": "Edit {{name}}",
     "tabs": {
@@ -710,7 +728,7 @@
   },
   "orders": {
     "title": "Orders",
-    "newOrder": "+ New order",
+    "newOrder": "New order",
     "newTitle": "New order",
     "editTitle": "Edit order",
     "loadFailed": "Failed to load orders: {{message}}",
@@ -742,7 +760,7 @@
     "receivedCorrectHelp": "Correcting this re-dates the kits this delivery brought in — unless they have been moved since, in which case they keep their own dates.",
     "receivedSetHelp": "Setting a date marks the order received — stock is applied and pipeline kits move to Backlog. Leave blank if it hasn't arrived.",
     "itemsHeading": "Items",
-    "addLine": "+ Add line",
+    "addLine": "Add line",
     "editLinesHelp": "A kit detail you change here is applied to every kit this line spawned; one you leave alone stays as it is on each of them, so kits edited individually keep their own. Removing a line undoes it (kits deleted, stock reversed) — kits that are building/complete, rated, or have photos are protected.",
     "quantity": "Quantity",
     "unitPrice": "Unit price",
@@ -786,7 +804,19 @@
     "thisOrder": "this order",
     "unknownItem": "(unknown item)",
     "confirmDelete": "Delete the {{date}} order from {{retailer}}?\n\nThis undoes the entry: kits it spawned are deleted and any applied stock is reversed. Progressed kits or consumed stock will block it.",
-    "empty": "No orders yet — record one and it will spawn your kits."
+    "empty": "No orders yet — record one and it will spawn your kits.",
+    "quickAddRetailer": "New retailer",
+    "searchPlaceholder": "Search retailer, order or tracking number…",
+    "allStatuses": "All statuses",
+    "allRetailers": "All retailers",
+    "filterByRetailer": "Filter by retailer",
+    "filterByStatus": "Filter by status",
+    "sortPlaced": "Newest first",
+    "sortRecent": "Recently changed",
+    "stockOnReceipt": "stock applies on receipt",
+    "shippingLine": "Shipping",
+    "shippingLineWith": "Shipping · {{service}}",
+    "emptyFiltered": "No orders match these filters."
   },
   "settings": {
     "title": "Settings",

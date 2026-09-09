@@ -1,6 +1,7 @@
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.db import SessionDep
 from app.models.enums import KitStatus
@@ -18,8 +19,15 @@ async def list_kits(
     status: KitStatus | None = None,
     grade: str | None = None,
     series: str | None = None,
+    sort: kits_service.KitSort = "created",
+    limit: Annotated[int | None, Query(ge=1)] = None,
 ):
-    return await kits_service.list_kits(session, status=status, grade=grade, series=series)
+    """`sort=recent` is the pipeline clock (`status_updated_at`, newest first);
+    `limit` the first N of that order — what Home's strips and "view all" links
+    read (§13.4). The same options on the `list_kits` MCP tool."""
+    return await kits_service.list_kits(
+        session, status=status, grade=grade, series=series, sort=sort, limit=limit
+    )
 
 
 # Declared before /{kit_id} so the literal segment wins over the uuid parameter.

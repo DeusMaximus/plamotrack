@@ -666,3 +666,62 @@ async def test_pending_display_line_defers_its_increment(client, retailer):
     # Delete undoes the entry, stock included — the display table is not exempt.
     assert (await client.delete(f"/orders/{order['id']}")).status_code == 204
     assert (await client.get("/display-items")).json()[0]["quantity_on_hand"] == 1
+
+
+# --- sort and limit (§13.4, #232) ------------------------------------------------
+
+
+async def _seed_three_clocks(client, retailer) -> None:
+    """One order per clock the `recent` sort reads: received (placed earliest,
+    received latest), shipped-not-received, and pending (placed after the
+    shipment). `placed` and `recent` disagree on every position."""
+
+    async def make(number: str, order_date: str, **extra) -> dict:
+        resp = await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": order_date,
+                "order_number": number,
+                "currency_code": "JPY",
+                "items": [kit_line()],
+                **extra,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        return resp.json()
+
+    await make("R", "2026-01-10", received=True, received_at="2026-03-01T10:00:00+00:00")
+    await make("S", "2026-02-01", shipped_at="2026-02-20T10:00:00+00:00")
+    await make("P", "2026-02-25")
+
+
+def _numbers(resp) -> list[str]:
+    assert resp.status_code == 200, resp.text
+    return [order["order_number"] for order in resp.json()]
+
+
+async def test_list_orders_sort_recent_is_the_last_status_change(client, retailer):
+    await _seed_three_clocks(client, retailer)
+    assert _numbers(await client.get("/orders")) == ["P", "S", "R"]
+    assert _numbers(await client.get("/orders", params={"sort": "placed"})) == ["P", "S", "R"]
+    # Received on 1 March beats placed on 25 February beats shipped on 20 February.
+    assert _numbers(await client.get("/orders", params={"sort": "recent"})) == ["R", "P", "S"]
+
+
+async def test_list_orders_limit_and_pending_only_compose_with_the_sort(client, retailer):
+    await _seed_three_clocks(client, retailer)
+    assert _numbers(await client.get("/orders", params={"sort": "recent", "limit": 1})) == ["R"]
+    assert _numbers(await client.get("/orders", params={"pending_only": "true"})) == ["P", "S"]
+    # The limit counts pending rows, not rows before the filter.
+    assert _numbers(
+        await client.get("/orders", params={"pending_only": "true", "sort": "recent", "limit": 1})
+    ) == ["P"]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [{"sort": "newest"}, {"sort": ""}, {"limit": "0"}, {"limit": "-1"}, {"limit": "ten"}],
+)
+async def test_list_orders_refuses_a_sort_or_limit_outside_the_vocabulary(client, retailer, params):
+    assert (await client.get("/orders", params=params)).status_code == 422

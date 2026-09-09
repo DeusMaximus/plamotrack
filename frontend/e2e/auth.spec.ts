@@ -42,7 +42,7 @@ test("a signed-out browser must sign in, and sign out really ends the session", 
 
   // A cookie-borne write through the SPA: the session works, CSRF token and all.
   await page.goto("/retailers");
-  await page.getByRole("button", { name: "+ Add retailer" }).click();
+  await page.getByRole("button", { name: "Add retailer" }).click();
   await page.getByLabel("Name").fill(SHOP);
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByText(SHOP)).toBeVisible();

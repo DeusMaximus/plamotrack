@@ -1,4 +1,5 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Pencil, Plus, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
@@ -11,7 +12,7 @@ import type {
   KitUpdate,
   UpgradeApplicationDetail,
 } from "../api/types";
-import { KIT_STATUSES } from "../api/types";
+import { KIT_SORTS, KIT_STATUSES, type KitSort } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import { StatusBadge } from "../components/StatusBadge";
@@ -20,9 +21,11 @@ import {
   EmptyState,
   ErrorBanner,
   Field,
+  IconButton,
   Input,
   MICRO_LABEL_CLASS,
   PageTitle,
+  Pager,
   RatingStars,
   Select,
   TABLE_HEAD_ROW_CLASS,
@@ -30,7 +33,11 @@ import {
 } from "../components/ui";
 import { formatDate, formatNumber, isoToLocalDateInput, localMidnightISO } from "../lib/format";
 import { dateWithElapsed, ratingTooltip, statusLabel } from "../lib/labels";
+import { paginate, useEnumParam, usePageParam, useTextParam } from "../lib/listState";
 import { usePresentationVersion } from "../lib/presentation";
+
+/** Rows per page on the list pages (§13.4). */
+const PAGE_SIZE = 10;
 
 const COMMON_GRADES = ["HG", "RG", "EG", "SD", "MG", "MGEX", "RE/100", "FM", "PG"];
 
@@ -78,10 +85,22 @@ function completedCell(kit: Kit): string {
   return dateWithElapsed(date, days);
 }
 
-function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
+/** Add or edit one kit. Delete lives here, not on the row (§13.4): the row's
+ *  one control opens this dialog, and the destructive action sits next to the
+ *  fields it destroys, behind the same confirmation as before. */
+function KitFormModal({
+  kit,
+  onClose,
+  onDelete,
+}: {
+  kit?: Kit;
+  onClose: () => void;
+  onDelete?: (kit: Kit) => Promise<void>;
+}) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const {
     register,
     handleSubmit,
@@ -219,11 +238,34 @@ function KitFormModal({ kit, onClose }: { kit?: Kit; onClose: () => void }) {
           <Textarea {...register("build_notes")} placeholder={t("kits.buildNotesPlaceholder")} />
         </Field>
         {kit && <AppliedUpgradesSection kitId={kit.id} />}
-        <div className="flex justify-end gap-2 pt-1">
-          <Button type="button" variant="secondary" onClick={onClose}>
+        <div className="flex items-center gap-2 pt-1">
+          {kit && onDelete && (
+            <Button
+              type="button"
+              variant="danger"
+              className="me-auto"
+              disabled={isSubmitting || deleting}
+              onClick={async () => {
+                if (!window.confirm(t("kits.confirmDelete", { name: kit.name }))) return;
+                setError(null);
+                setDeleting(true);
+                try {
+                  await onDelete(kit);
+                  onClose();
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+            >
+              {t("common.delete")}
+            </Button>
+          )}
+          <Button type="button" variant="secondary" className="ms-auto" onClick={onClose}>
             {t("common.cancel")}
           </Button>
-          <Button type="submit" disabled={isSubmitting}>
+          <Button type="submit" disabled={isSubmitting || deleting}>
             {kit ? t("common.save") : t("kits.addSubmit")}
           </Button>
         </div>
@@ -351,25 +393,32 @@ export function KitsPage() {
   usePresentationVersion();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [statusFilter, setStatusFilter] = useState<KitStatus | "">("");
-  const [seriesFilter, setSeriesFilter] = useState("");
-  const [search, setSearch] = useState("");
+  // The list's state is the URL (§13.4, #232): a "view all" link from Home
+  // and a bookmark land on a filtered, sorted page. The sort is the server's
+  // — one definition of "recent" for the page, Home and the MCP tool — the
+  // filters and the search narrow the loaded list here.
+  const [statusFilter, setStatusFilter] = useEnumParam<KitStatus | "">(
+    "status",
+    ["", ...KIT_STATUSES],
+    "",
+  );
+  const [seriesFilter, setSeriesFilter] = useTextParam("series");
+  const [search, setSearch] = useTextParam("q", true);
+  const [sort, setSort] = useEnumParam<KitSort>("sort", KIT_SORTS, "recent");
+  const [page, setPage] = usePageParam();
   const [modal, setModal] = useState<{ mode: "add" } | { mode: "edit"; kit: Kit } | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
 
   const {
     data: kits,
     isLoading,
     isError,
     error,
-  } = useQuery({ queryKey: ["kits"], queryFn: () => api.listKits() });
+  } = useQuery({ queryKey: ["kits", { sort }], queryFn: () => api.listKits({ sort }) });
 
-  const deleteMutation = useMutation({
-    mutationFn: (id: string) => api.deleteKit(id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["kits"] }),
-    onError: (err) =>
-      setActionError(err instanceof ApiError ? err.message : t("common.deleteFailed")),
-  });
+  const removeKit = async (kit: Kit) => {
+    await api.deleteKit(kit.id);
+    await queryClient.invalidateQueries({ queryKey: ["kits"] });
+  };
 
   // Distinct series among the loaded kits, for the filter dropdown. Alphabetical:
   // a filter is scanned by eye, unlike the form's typeahead, which ranks by use.
@@ -392,28 +441,41 @@ export function KitsPage() {
     }
     return rows;
   }, [kits, statusFilter, seriesFilter, search]);
+  const paged = paginate(visible, page, PAGE_SIZE);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <PageTitle>{t("kits.title")}</PageTitle>
+        <PageTitle count={kits === undefined ? undefined : visible.length}>{t("kits.title")}</PageTitle>
         <div className="flex gap-2">
           <ExportCsvButton table="kits" />
-          <Button onClick={() => setModal({ mode: "add" })}>{t("kits.addButton")}</Button>
+          <Button icon={Plus} onClick={() => setModal({ mode: "add" })}>
+            {t("kits.addButton")}
+          </Button>
         </div>
       </div>
 
-      <div className="flex gap-2">
-        <Input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder={t("kits.searchPlaceholder")}
-          className="max-w-xs"
-        />
+      <div className="flex flex-wrap gap-2">
+        <div className="relative w-full max-w-xs">
+          <Search
+            size={15}
+            aria-hidden
+            className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-faint"
+          />
+          <Input
+            type="search"
+            aria-label={t("common.search")}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={t("kits.searchPlaceholder")}
+            className="ps-8"
+          />
+        </div>
         <Select
+          aria-label={t("list.filterByStatus")}
           value={statusFilter}
           onChange={(event) => setStatusFilter(event.target.value as KitStatus | "")}
-          className="max-w-40"
+          className="!w-auto max-w-40"
         >
           <option value="">{t("kits.allStatuses")}</option>
           {KIT_STATUSES.map((status) => (
@@ -427,7 +489,7 @@ export function KitsPage() {
             aria-label={t("kits.filterBySeries")}
             value={seriesFilter}
             onChange={(event) => setSeriesFilter(event.target.value)}
-            className="max-w-52"
+            className="!w-auto max-w-52"
           >
             <option value="">{t("kits.allSeries")}</option>
             {seriesOptions.map((value) => (
@@ -437,9 +499,17 @@ export function KitsPage() {
             ))}
           </Select>
         )}
+        <Select
+          aria-label={t("list.sortLabel")}
+          value={sort}
+          onChange={(event) => setSort(event.target.value as KitSort)}
+          className="!w-auto"
+        >
+          <option value="recent">{t("kits.sortRecent")}</option>
+          <option value="created">{t("kits.sortCreated")}</option>
+          <option value="name">{t("kits.sortName")}</option>
+        </Select>
       </div>
-
-      <ErrorBanner message={actionError} />
 
       {isError ? (
         <ErrorBanner message={t("kits.loadFailed", { message: (error as Error).message })} />
@@ -465,7 +535,7 @@ export function KitsPage() {
               </tr>
             </thead>
             <tbody>
-              {visible.map((kit) => (
+              {paged.rows.map((kit) => (
                 <tr key={kit.id} className="border-b border-rule last:border-0 hover:bg-chip">
                   <td className="px-3 py-2">
                     <div className="font-medium">{kit.name}</div>
@@ -498,27 +568,20 @@ export function KitsPage() {
                   <td className="px-3 py-2 text-muted" title={t("kits.completedTitle")}>
                     {completedCell(kit)}
                   </td>
-                  <td className="px-3 py-2 text-end">
-                    <div className="flex justify-end gap-1">
-                      <Button variant="secondary" onClick={() => setModal({ mode: "edit", kit })}>
-                        {t("common.edit")}
-                      </Button>
-                      <Button
-                        variant="danger"
-                        onClick={() => {
-                          if (window.confirm(t("kits.confirmDelete", { name: kit.name }))) {
-                            deleteMutation.mutate(kit.id);
-                          }
-                        }}
-                      >
-                        {t("common.delete")}
-                      </Button>
-                    </div>
+                  {/* One control per row (§13.4): edit opens the dialog, where Delete lives. */}
+                  <td className="px-2 py-2 text-end">
+                    <IconButton
+                      label={t("common.editNamed", { name: kit.name })}
+                      onClick={() => setModal({ mode: "edit", kit })}
+                    >
+                      <Pencil size={15} aria-hidden />
+                    </IconButton>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <Pager paged={paged} onPage={setPage} />
         </div>
       )}
 
@@ -526,6 +589,7 @@ export function KitsPage() {
         <KitFormModal
           kit={modal.mode === "edit" ? modal.kit : undefined}
           onClose={() => setModal(null)}
+          onDelete={removeKit}
         />
       )}
     </div>

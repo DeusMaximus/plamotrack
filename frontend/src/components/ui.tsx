@@ -5,8 +5,12 @@ import type {
   SelectHTMLAttributes,
   TextareaHTMLAttributes,
 } from "react";
-import { Star } from "lucide-react";
+import { Star, type LucideIcon } from "lucide-react";
 import { forwardRef } from "react";
+import { useTranslation } from "react-i18next";
+
+import { formatNumber } from "../lib/format";
+import { pageWindow, type Paged } from "../lib/listState";
 
 const BUTTON_VARIANTS = {
   primary: "bg-accent text-accent-ink hover:opacity-90 disabled:opacity-50",
@@ -17,14 +21,45 @@ const BUTTON_VARIANTS = {
 
 export function Button({
   variant = "primary",
+  icon: Icon,
   className = "",
+  children,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: keyof typeof BUTTON_VARIANTS }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: keyof typeof BUTTON_VARIANTS;
+  /** A leading stroke icon (§13): the label stays the accessible name. */
+  icon?: LucideIcon;
+}) {
   return (
     <button
-      className={`rounded-sm px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed ${BUTTON_VARIANTS[variant]} ${className}`}
+      className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed ${BUTTON_VARIANTS[variant]} ${className}`}
       {...props}
-    />
+    >
+      {Icon && <Icon size={15} aria-hidden />}
+      {children}
+    </button>
+  );
+}
+
+/** An icon-only control — a row's edit pencil, a dialog's close — named for
+ *  assistive tech and the tooltip by `label`. Faint at rest (the 3:1 UI floor),
+ *  the text colour on hover. */
+export function IconButton({
+  label,
+  className = "",
+  children,
+  ...props
+}: ButtonHTMLAttributes<HTMLButtonElement> & { label: string }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      className={`inline-flex h-7 w-7 items-center justify-center rounded-sm text-faint transition-colors hover:bg-chip hover:text-text focus:outline-none focus:ring-1 focus:ring-accent ${className}`}
+      {...props}
+    >
+      {children}
+    </button>
   );
 }
 
@@ -136,9 +171,61 @@ export function RatingStars({ rating, title }: { rating: number; title: string }
   );
 }
 
-/** The page's h1 (§13): the name, semibold and tight, nothing louder. */
-export function PageTitle({ children }: { children: ReactNode }) {
-  return <h1 className="text-[22px] font-semibold tracking-tight text-text">{children}</h1>;
+/** The page's h1 (§13): the name, semibold and tight, nothing louder — with
+ *  the list's count beside it when the page is a list (§13.4). */
+export function PageTitle({ children, count }: { children: ReactNode; count?: number }) {
+  return (
+    <h1 className="flex items-baseline gap-2.5 text-[22px] font-semibold tracking-tight text-text">
+      {children}
+      {count !== undefined && (
+        <span className="text-[13px] font-medium tabular-nums text-muted">{formatNumber(count)}</span>
+      )}
+    </h1>
+  );
+}
+
+/** A list table's footer (§13.4): the range shown and, past one page, the
+ *  pager — the ends and a window around the current page. The page is URL
+ *  state, so the caller owns it. */
+export function Pager({ paged, onPage }: { paged: Paged<unknown>; onPage: (page: number) => void }) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-center justify-between gap-4 border-t border-rule px-3.5 py-3 text-xs text-muted tabular-nums">
+      <span>
+        {t("list.range", {
+          from: formatNumber(paged.from),
+          to: formatNumber(paged.to),
+          total: formatNumber(paged.total),
+        })}
+      </span>
+      {paged.pages > 1 && (
+        <nav aria-label={t("list.pagination")} className="flex items-center gap-1">
+          {pageWindow(paged.page, paged.pages).map((page, index) =>
+            page === null ? (
+              <span key={`gap-${index}`} aria-hidden className="px-1 text-faint">
+                …
+              </span>
+            ) : (
+              <button
+                key={page}
+                type="button"
+                aria-label={t("list.page", { page: formatNumber(page) })}
+                aria-current={page === paged.page ? "page" : undefined}
+                onClick={() => onPage(page)}
+                className={`min-w-6.5 rounded-sm px-1.5 py-1 text-xs tabular-nums ${
+                  page === paged.page
+                    ? "bg-accent-soft font-semibold text-accent"
+                    : "text-muted hover:bg-chip hover:text-text"
+                }`}
+              >
+                {formatNumber(page)}
+              </button>
+            ),
+          )}
+        </nav>
+      )}
+    </div>
+  );
 }
 
 /** Uppercase micro-label (§13): section labels, table headers, counts' captions. */

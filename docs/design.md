@@ -1,6 +1,6 @@
 # plamotrack — Design Notes
 
-**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 08/09/2026
+**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 10/09/2026
 
 ---
 
@@ -2052,7 +2052,7 @@ is `/mcp/` on the API port (streamable HTTP).
   served by the same function as REST's `GET /meta` so the two cannot disagree.
   What `create_order`'s "omit currency_code" advice used to point at as a `meta`
   resource that never existed
-- `list_kits(status?, grade?, series?)`
+- `list_kits(status?, grade?, series?, sort?, limit?)` — `sort` is `created` (oldest first), `recent` (the status clock, newest first) or `name`; `limit` the first N of that order (§13.4)
 - `list_kit_series()` — the series spellings in use, most frequent first; the
   select-or-create device for a free-text column (#96) — agents check it before
   writing a spelling nobody uses
@@ -2103,7 +2103,7 @@ is `/mcp/` on the API port (streamable HTTP).
   dispatch as the REST endpoint; retailer matched by name case-insensitively,
   created if new; `received_at` backdates an arrival logged after the fact (§3.9);
   `shipped_at` (#95) needs no flag and lands spawned kits in_transit
-- `list_orders(pending_only?)` — find the order a shipping or arrival email belongs to
+- `list_orders(pending_only?, sort?, limit?)` — find the order a shipping or arrival email belongs to; `sort` is `placed` (newest order date first) or `recent` (the last status change: received, else shipped, else placed); `limit` the first N
 - `get_order(id)` — one order in full, line ids and spawned kits included; the read an
   edit starts from (#97)
 - `update_order(id, changes, remove_missing_lines?)` — header corrections and/or the
@@ -2684,9 +2684,19 @@ profile card.
 
 Kits, Orders, Inventory and Retailers keep their tables and gain what Home links
 to: **filter and sort in the URL** (`?status=building&sort=recent`), so a *view all*
-link is a page state and a bookmark. Each row carries one edit control. Orders keeps
-its expandable lines, kit lines showing their kit status and catalog lines noting
-that stock applies on receipt (§3.9).
+link is a page state and a bookmark. Each row carries one edit control; Delete moves
+inside the edit dialog, next to the fields it destroys. Orders keeps its expandable
+lines, kit lines showing their kit status and catalog lines noting that stock applies
+on receipt (§3.9), with a shipping line closing the box and the lines' converted total
+under the order's own (§6). Built as #232 (2026-09-10), with what the Orders artboard
+added: the count beside the page title, a pager of ten rows a page whose page is one
+more URL parameter (`?page=2`, clamped onto the last page when the list shrinks — a
+filter, sort or search change resets it), and the sort as the server's — `GET /kits`
+and `GET /orders` take `sort` and `limit`, on REST and the MCP list tools alike, so
+"recent" means one thing for the page, Home and an agent: a kit's `status_updated_at`,
+an order's last status change (received, else shipped, else placed). The filters and
+the search narrow the loaded list in the browser; the page holds the whole list, and
+a personal collection is a few hundred rows.
 
 ### 13.5 Not in M6.5
 

@@ -64,8 +64,8 @@ async function bumpQuantityInTheBrowser(page: Page, orderNumber: string, quantit
 
 test("a snapshot typed into the form survives a later quantity edit", async ({ page }) => {
   await page.goto("/orders");
-  await page.getByRole("button", { name: "+ New order" }).click();
-  await page.getByLabel("Retailer").selectOption({ label: SHOP });
+  await page.getByRole("button", { name: "New order" }).click();
+  await page.getByRole("dialog").getByRole("combobox", { name: /^Retailer/ }).selectOption({ label: SHOP });
   await page.getByLabel("Currency").fill(foreign);
   await page.getByLabel("Order number").fill(TYPED_ORDER);
 
@@ -76,7 +76,7 @@ test("a snapshot typed into the form survives a later quantity edit", async ({ p
   await page.getByPlaceholder("Kit name *").first().fill(`E2E Snapshot Kit ${suffix}`);
   await page.getByPlaceholder("Grade *").first().fill("HG");
 
-  await page.getByRole("button", { name: "+ Add line" }).click();
+  await page.getByRole("button", { name: "Add line" }).click();
   await page.getByLabel("Unit price").nth(1).fill("12");
   await page.getByPlaceholder("Kit name *").nth(1).fill(`E2E Bare Kit ${suffix}`);
   await page.getByPlaceholder("Grade *").nth(1).fill("HG");

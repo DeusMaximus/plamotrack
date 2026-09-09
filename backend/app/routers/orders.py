@@ -1,6 +1,7 @@
 import uuid
+from typing import Annotated
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 
 from app.db import SessionDep
 from app.schemas.orders import OrderCreate, OrderRead, OrderReceive, OrderShip, OrderUpdate
@@ -10,8 +11,18 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 
 
 @router.get("", response_model=list[OrderRead])
-async def list_orders(session: SessionDep):
-    return await orders_service.list_orders(session)
+async def list_orders(
+    session: SessionDep,
+    pending_only: bool = False,
+    sort: orders_service.OrderSort = "placed",
+    limit: Annotated[int | None, Query(ge=1)] = None,
+):
+    """`sort=recent` orders by the last status change — received, else shipped,
+    else placed — newest first; `pending_only` keeps the orders not yet received;
+    `limit` the first N (§13.4). The same options on the `list_orders` MCP tool."""
+    return await orders_service.list_orders(
+        session, pending_only=pending_only, sort=sort, limit=limit
+    )
 
 
 @router.post("", response_model=OrderRead, status_code=201)

@@ -325,7 +325,7 @@ Personal access tokens keep working in that mode too.
 | Tool | What it does |
 |---|---|
 | `get_meta` | App version and the instance's reference currency — what an omitted `currency_code` means |
-| `list_kits` | Filter by status, grade or series |
+| `list_kits` | Filter by status, grade or series; `sort=recent` for the kits that last moved, `limit` for the first N |
 | `list_kit_series` | Series names already in use — check before writing a new spelling |
 | `get_kit` | One kit, in full |
 | `create_kit` | Add a kit that *wasn't* bought — a gift, a trade, a carry-over from before tracking; purchases go through `create_order` |
@@ -339,7 +339,7 @@ Personal access tokens keep working in that mode too.
 | `list_retailers` | Every shop on record, report card included |
 | `create_retailer` / `update_retailer` | Add a shop; rate it, note the crushed box, fill in the report card |
 | `create_order` | Full order with lines; kits fan out, retailers are matched by name or created |
-| `list_orders` | Optionally pending-only — how an agent finds the order a shipping email belongs to |
+| `list_orders` | Optionally pending-only — how an agent finds the order a shipping email belongs to; `sort=recent` by the last status change, `limit` for the first N |
 | `get_order` | One order in full — the read an edit starts from |
 | `update_order` | Correct an order: header fields and/or the line set; refuses to silently drop lines you didn't restate |
 | `mark_order_received` | Applies stock, advances that order's kits to backlog — with an optional arrival date, for deliveries logged after the fact |

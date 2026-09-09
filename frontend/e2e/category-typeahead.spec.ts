@@ -27,7 +27,7 @@ test("each new-item line resolves its own category vocabulary", async ({ page })
   await api.dispose();
 
   await page.goto("/orders");
-  await page.getByRole("button", { name: "+ New order" }).click();
+  await page.getByRole("button", { name: "New order" }).click();
 
   // Line 1: a new tool. Line 2: a new consumable — both pickers in "new item"
   // mode at once, which is the state the shared id could not survive.
@@ -35,7 +35,7 @@ test("each new-item line resolves its own category vocabulary", async ({ page })
   await page.getByPlaceholder("Search tools…").fill(`New nipper ${suffix}`);
   await page.getByRole("button", { name: /Create new tool/ }).click();
 
-  await page.getByRole("button", { name: "+ Add line" }).click();
+  await page.getByRole("button", { name: "Add line" }).click();
   await page.locator('select:has(option[value="consumable"])').nth(1).selectOption("consumable");
   await page.getByPlaceholder("Search consumables…").fill(`New paint ${suffix}`);
   await page.getByRole("button", { name: /Create new consumable/ }).click();

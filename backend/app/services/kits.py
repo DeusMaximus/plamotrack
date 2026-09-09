@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -93,13 +94,51 @@ async def create_kit(session: AsyncSession, data: KitCreate) -> Kit:
     return kit
 
 
+#: How a kit list is ordered (§13.4, #232). `created` is the order the list
+#: always had (oldest first); `recent` is the pipeline clock — the moment the
+#: kit entered its current status, `status_updated_at` — newest first, which is
+#: what Home's "view all" links and an agent asking "what moved lately" want;
+#: `name` is alphabetical. One vocabulary for REST and MCP: the router types the
+#: query parameter with it and the tool passes its string here, so both refuse
+#: the same spellings.
+KitSort = Literal["created", "recent", "name"]
+KIT_SORTS: tuple[KitSort, ...] = ("created", "recent", "name")
+
+
+def _kit_order(sort: KitSort):
+    if sort == "recent":
+        # Ties (kits received by one order share the instant) break by creation,
+        # then id, so the order is stable across reads.
+        return (Kit.status_updated_at.desc(), Kit.created_at.desc(), Kit.id)
+    if sort == "name":
+        return (func.lower(Kit.name), Kit.id)
+    return (Kit.created_at, Kit.id)
+
+
+def check_list_options(sort: str, sorts: tuple[str, ...], limit: int | None) -> None:
+    """The value space of a list's `sort` and `limit`, refused as a domain error
+    so REST (400) and MCP (ToolError) answer alike for a value the router's own
+    typing did not already stop."""
+    if sort not in sorts:
+        raise InvalidInputError(
+            f"sort must be one of {', '.join(sorts)}, not {sort!r}",
+            code=error_codes.LIST_SORT_UNKNOWN,
+        )
+    if limit is not None and limit < 1:
+        raise InvalidInputError("limit must be at least 1", code=error_codes.LIST_LIMIT_INVALID)
+
+
 async def list_kits(
     session: AsyncSession,
     status: KitStatus | None = None,
     grade: str | None = None,
     series: str | None = None,
+    *,
+    sort: KitSort = "created",
+    limit: int | None = None,
 ) -> list[Kit]:
-    stmt = select(Kit).order_by(Kit.created_at, Kit.id)
+    check_list_options(sort, KIT_SORTS, limit)
+    stmt = select(Kit).order_by(*_kit_order(sort))
     if status is not None:
         stmt = stmt.where(Kit.status == status)
     if grade is not None:
@@ -110,6 +149,8 @@ async def list_kits(
     if series is not None:
         # Same predicate shape as grade, for the same #49 reasons.
         stmt = stmt.where(func.lower(Kit.series) == func.lower(series))
+    if limit is not None:
+        stmt = stmt.limit(limit)
     return list((await session.scalars(stmt)).all())
 
 

@@ -405,3 +405,62 @@ async def test_withdraw_tool_requires_the_restore_choice(client):
     # Nothing happened: the application survives and the stock stays spent.
     assert len((await client.get(f"/kits/{kit['id']}/applications")).json()) == 1
     assert (await client.get("/upgrades")).json()[0]["quantity_on_hand"] == 3
+
+
+# --- sort and limit on the list tools (§13.4, #232) -------------------------------
+
+
+async def test_list_sort_and_limit_match_rest(client, retailer):
+    """One service function, one vocabulary: the tool's `sort`/`limit` return
+    the rows REST returns, in the same order, and refuse the same strangers."""
+    zaku = (await client.post("/kits", json={"name": "Zaku II", "grade": "HG"})).json()
+    await client.post("/kits", json={"name": "Gouf", "grade": "HG"})
+    await client.post("/kits", json={"name": "Dom", "grade": "HG", "status": "building"})
+    await client.patch(f"/kits/{zaku['id']}", json={"status": "building"})
+    for number, order_date, extra in (
+        ("R", "2026-01-10", {"received": True, "received_at": "2026-03-01T10:00:00+00:00"}),
+        ("S", "2026-02-01", {"shipped_at": "2026-02-20T10:00:00+00:00"}),
+        ("P", "2026-02-25", {}),
+    ):
+        resp = await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": order_date,
+                "order_number": number,
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": f"Kit {number}", "grade": "HG"},
+                    }
+                ],
+                **extra,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+    async with Client(mcp) as mcp_client:
+        kits_tool = (await mcp_client.call_tool("list_kits", {"sort": "recent", "limit": 2})).data
+        orders_tool = (
+            await mcp_client.call_tool("list_orders", {"sort": "recent", "pending_only": True})
+        ).data
+        with pytest.raises(ToolError, match="sort must be one of"):
+            await mcp_client.call_tool("list_kits", {"sort": "newest"})
+        with pytest.raises(ToolError, match="limit must be at least 1"):
+            await mcp_client.call_tool("list_orders", {"limit": 0})
+
+    kits_rest = (await client.get("/kits", params={"sort": "recent", "limit": 2})).json()
+    orders_rest = (
+        await client.get("/orders", params={"sort": "recent", "pending_only": "true"})
+    ).json()
+    assert [k["id"] for k in kits_tool] == [k["id"] for k in kits_rest]
+    # "Kit P" first: the pending order spawned it just now, after Zaku moved.
+    # The other two spawned kits sit at the back — a supplied shipped_at or
+    # received_at is the kit's status clock (#120), and those were backdated.
+    assert [k["name"] for k in kits_tool] == ["Kit P", "Zaku II"]
+    assert [o["id"] for o in orders_tool] == [o["id"] for o in orders_rest]
+    assert [o["order_number"] for o in orders_tool] == ["P", "S"]
