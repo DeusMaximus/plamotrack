@@ -39,10 +39,24 @@ test("follow the device means the device's scheme, live", async ({ page }) => {
 });
 
 test("the theme is on <html> before the app runs", async ({ page }) => {
-  // A stored choice against the device: what the head script does before the
-  // bundle loads is what the first paint gets.
+  // A stored choice against the device, and *when* it lands: the head script
+  // runs while the parser is still in <head>, so the document is "loading" at
+  // the first data-theme write; the bundle is a deferred module and would write
+  // it at "interactive". Without the readyState the assertion below is also
+  // satisfied by the module alone (measured: removing the script tag survived).
   await page.emulateMedia({ colorScheme: "dark" });
-  await page.addInitScript(() => localStorage.setItem("plamotrack.theme", "light"));
+  await page.addInitScript(() => {
+    localStorage.setItem("plamotrack.theme", "light");
+    new MutationObserver((records, observer) => {
+      if (records.some((record) => record.attributeName === "data-theme")) {
+        (window as unknown as { __themeSetAt?: string }).__themeSetAt = document.readyState;
+        observer.disconnect();
+      }
+    }).observe(document, { subtree: true, attributes: true, attributeFilter: ["data-theme"] });
+  });
   await page.goto("/kits");
   expect(await theme(page)).toBe("light");
+  const setAt = () =>
+    page.evaluate(() => (window as unknown as { __themeSetAt?: string }).__themeSetAt);
+  expect(await setAt()).toBe("loading");
 });
