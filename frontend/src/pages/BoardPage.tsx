@@ -116,7 +116,7 @@ function KitCard({
           {kit.grade}
         </span>
         {kit.scale && <span>{kit.scale}</span>}
-        {kit.kit_number && <span className="text-faint">{kit.kit_number}</span>}
+        {kit.kit_number && <span className="text-muted">{kit.kit_number}</span>}
         {showStatus && <StatusBadge status={kit.status} />}
       </div>
       {kit.rating != null && (

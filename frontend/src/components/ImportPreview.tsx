@@ -48,7 +48,7 @@ function CountPills({ counts }: { counts: Record<RowAction, number> }) {
   const { t } = useTranslation();
   const shown = ROW_ACTIONS.filter((action) => (counts[action] ?? 0) > 0);
   if (shown.length === 0)
-    return <span className="text-xs text-faint">{t("importPreview.nothingToDo")}</span>;
+    return <span className="text-xs text-muted">{t("importPreview.nothingToDo")}</span>;
   return (
     <span className="flex flex-wrap items-center gap-1">
       {shown.map((action) => (
@@ -67,7 +67,7 @@ function RowDetail({ row }: { row: PlannedRow }) {
   const { t } = useTranslation();
   return (
     <tr className={row.action === "error" ? "bg-danger/5" : undefined}>
-      <td className="px-3 py-1.5 text-end align-top text-xs text-faint tabular-nums">
+      <td className="px-3 py-1.5 text-end align-top text-xs text-muted tabular-nums">
         {row.row_number ? formatNumber(row.row_number) : "—"}
       </td>
       <td className="px-3 py-1.5 align-top">
@@ -80,7 +80,7 @@ function RowDetail({ row }: { row: PlannedRow }) {
       <td className="px-3 py-1.5 align-top">
         <div className="text-text">{row.label}</div>
         {row.matched_by && (
-          <div className="text-[11px] text-faint">
+          <div className="text-[11px] text-muted">
             {t("importPreview.matchedOn", { field: matchedByLabel(row.matched_by) })}
           </div>
         )}

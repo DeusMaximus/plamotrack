@@ -24,6 +24,15 @@ const PALETTE_UTILITY = new RegExp(
   "g",
 );
 
+// Arbitrary values bypass the tokens the same way (Codex #235 P3-3,
+// `rounded-[2px]`): any radius or shadow, and a colour literal on a colour
+// utility. A non-colour arbitrary value — `text-[11px]`, `tracking-[0.08em]` —
+// is a size, not a colour, and stays allowed.
+const ARBITRARY_VALUE = new RegExp(
+  `(?<![\\w-])(?:[\\w-]+:)*(?:(?:rounded(?:-[a-z]{1,2})?|shadow)-\\[[^\\]]*\\]|(?:${PREFIXES})-\\[(?:#|rgba?\\(|hsla?\\(|oklch\\(|oklab\\(|color:)[^\\]]*\\])`,
+  "g",
+);
+
 const offenders = [];
 for (const entry of readdirSync(src, { recursive: true, withFileTypes: true })) {
   if (!entry.isFile() || !/\.(?:tsx?|css)$/.test(entry.name)) continue;
@@ -31,18 +40,20 @@ for (const entry of readdirSync(src, { recursive: true, withFileTypes: true })) 
   readFileSync(path, "utf8")
     .split("\n")
     .forEach((line, index) => {
-      for (const match of line.matchAll(PALETTE_UTILITY)) {
-        offenders.push(`${relative(here + "/..", path)}:${index + 1}: ${match[0]}`);
+      for (const pattern of [PALETTE_UTILITY, ARBITRARY_VALUE]) {
+        for (const match of line.matchAll(pattern)) {
+          offenders.push(`${relative(here + "/..", path)}:${index + 1}: ${match[0]}`);
+        }
       }
     });
 }
 
 if (offenders.length > 0) {
   console.error(
-    `${offenders.length} stock palette utilit${offenders.length === 1 ? "y" : "ies"} under src/ — ` +
+    `${offenders.length} stock palette or arbitrary colour/radius/shadow utilit${offenders.length === 1 ? "y" : "ies"} under src/ — ` +
       "use the semantic tokens in src/index.css (design §13.1):",
   );
   for (const offender of offenders) console.error(`  ${offender}`);
   process.exit(1);
 }
-console.log("check-palette: no stock palette utilities under src/");
+console.log("check-palette: no stock palette or arbitrary colour/radius/shadow utilities under src/");

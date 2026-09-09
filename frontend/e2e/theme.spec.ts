@@ -60,3 +60,30 @@ test("the theme is on <html> before the app runs", async ({ page }) => {
     page.evaluate(() => (window as unknown as { __themeSetAt?: string }).__themeSetAt);
   expect(await setAt()).toBe("loading");
 });
+
+test("arrow keys move from the focused radio, not from a choice another tab made (#235 P3-2)", async ({
+  page,
+  context,
+}) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto("/kits");
+  const dark = page.getByRole("radio", { name: "Dark" });
+  await dark.click();
+  await expect(dark).toBeFocused();
+
+  // Another tab of this origin chooses Light: a real storage event reaches this
+  // one, which follows the choice without taking focus from the Dark radio.
+  const other = await context.newPage();
+  await other.goto("/kits");
+  await other.getByRole("radio", { name: "Light" }).click();
+  await expect(page.getByRole("radio", { name: "Light" })).toHaveAttribute("aria-checked", "true");
+  await expect(dark).toBeFocused();
+
+  // The radio pattern: the arrow moves from the focused radio (Dark → device).
+  await dark.press("ArrowRight");
+  const device = page.getByRole("radio", { name: "Follow the device" });
+  await expect(device).toHaveAttribute("aria-checked", "true");
+  await expect(device).toBeFocused();
+  expect(await theme(page)).toBe("light");
+  await other.close();
+});

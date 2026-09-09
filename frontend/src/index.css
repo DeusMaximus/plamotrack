@@ -21,6 +21,8 @@
   --rule: #262523;
   --text: #ebe7df;
   --muted: #9d988e;
+  /* Icons, disabled and decorative content — the 3:1 floor, never running
+   * text or a hint someone has to read (that is --muted, 4.5:1). */
   --faint: #6c675e;
   --accent: #e2a44b;
   --accent-ink: #1b1207;
@@ -36,6 +38,11 @@
   --status-complete: #7fd88f;
 }
 
+/* The light set. The artboard's accent (#b4741c) and five of its six status
+ * hues were drawn for surfaces, not 12px text: on the chip they measured
+ * 3.45–4.36:1 and white on the accent 3.85:1 (Codex #235 P3-1). These are the
+ * same hues darkened until every composed pair clears 4.5:1 — the pairs are
+ * enumerated in src/lib/tokens.test.ts, which reads this file. */
 [data-theme="light"] {
   color-scheme: light;
   --bg: #f3f1ec;
@@ -46,19 +53,19 @@
   --rule: #ebe7df;
   --text: #1e1c19;
   --muted: #6b665d;
-  --faint: #9b958a;
-  --accent: #b4741c;
+  --faint: #8e887d;
+  --accent: #885610;
   --accent-ink: #ffffff;
-  --accent-soft: rgb(180 116 28 / 0.12);
+  --accent-soft: rgb(136 86 16 / 0.1);
   --chip: rgb(0 0 0 / 0.05);
   --danger: #b42318;
   --backdrop: rgb(30 28 25 / 0.4);
   --status-pre-ordered: #6d4fd8;
-  --status-ordered: #2d6fd2;
-  --status-in-transit: #b26f0c;
-  --status-backlog: #0f8f7c;
-  --status-building: #d0621b;
-  --status-complete: #2e8f3e;
+  --status-ordered: #2966c1;
+  --status-in-transit: #935c0a;
+  --status-backlog: #0c7666;
+  --status-building: #a74f16;
+  --status-complete: #267633;
 }
 
 /* `inline`, so a utility carries `var(--surface)` itself and follows whichever

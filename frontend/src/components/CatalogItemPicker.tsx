@@ -184,7 +184,7 @@ export function CatalogItemPicker({
       {open && debounced.length > 0 && (
         <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-sm border border-border bg-surface">
           {isFetching && (
-            <div className="px-3 py-2 text-xs text-faint">{t("catalogPicker.searching")}</div>
+            <div className="px-3 py-2 text-xs text-muted">{t("catalogPicker.searching")}</div>
           )}
           {matches.map((result) => (
             <button
@@ -199,13 +199,13 @@ export function CatalogItemPicker({
             >
               <span>
                 {result.name}
-                <span className="ms-2 text-xs text-faint">
+                <span className="ms-2 text-xs text-muted">
                   {[result.category ?? result.manufacturer, result.scale]
                     .filter(Boolean)
                     .join(t("common.dotSeparator"))}
                 </span>
               </span>
-              <span className="text-xs text-faint">
+              <span className="text-xs text-muted">
                 {t("catalogPicker.onHand", counted({}, result.quantity_on_hand))}
               </span>
             </button>

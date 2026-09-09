@@ -1316,7 +1316,7 @@ export function OrdersPage() {
                                   {formatMoney(item.unit_price_minor, item.currency_code)}
                                 </span>
                                 {item.item_type === "kit" && (
-                                  <span className="text-xs text-faint">
+                                  <span className="text-xs text-muted">
                                     {t("orders.spawnedKits", counted({}, item.spawned_kit_ids.length))}
                                   </span>
                                 )}

@@ -146,13 +146,25 @@ function ThemeSwitch() {
       aria-label={t("theme.label")}
       className="mx-1 flex gap-0.5 rounded-sm border border-border bg-surface p-[3px]"
       onKeyDown={(event) => {
-        const step = event.key === "ArrowRight" || event.key === "ArrowDown" ? 1 : 0;
-        const back = event.key === "ArrowLeft" || event.key === "ArrowUp" ? -1 : 0;
-        if (!step && !back) return;
+        const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
+        const back = event.key === "ArrowLeft" || event.key === "ArrowUp";
+        const edge =
+          event.key === "Home" ? 0 : event.key === "End" ? THEME_PREFERENCES.length - 1 : null;
+        if (!forward && !back && edge === null) return;
         event.preventDefault();
-        const index = THEME_PREFERENCES.indexOf(preference);
+        // From the focused radio, not the stored preference: another tab can
+        // change the preference under a focus that stayed put — the storage
+        // handler deliberately never moves focus — and the radio pattern moves
+        // from where the keyboard is (#235 P3-2).
+        const focused = (event.target as HTMLElement).closest<HTMLElement>("[data-theme-option]")
+          ?.dataset.themeOption as ThemePreference | undefined;
+        const from = focused ? THEME_PREFERENCES.indexOf(focused) : -1;
+        const start = from === -1 ? THEME_PREFERENCES.indexOf(preference) : from;
+        const count = THEME_PREFERENCES.length;
         const next =
-          THEME_PREFERENCES[(index + step + back + THEME_PREFERENCES.length) % THEME_PREFERENCES.length];
+          edge !== null
+            ? THEME_PREFERENCES[edge]
+            : THEME_PREFERENCES[(start + (forward ? 1 : -1) + count) % count];
         setPreference(next);
         (event.currentTarget.querySelector(`[data-theme-option="${next}"]`) as HTMLElement | null)?.focus();
       }}
@@ -171,7 +183,7 @@ function ThemeSwitch() {
             data-theme-option={option}
             tabIndex={checked ? 0 : -1}
             onClick={() => setPreference(option)}
-            className={`flex h-6.5 flex-1 items-center justify-center rounded-[2px] ${
+            className={`flex h-6.5 flex-1 items-center justify-center rounded-sm ${
               checked ? "bg-chip text-text" : "text-faint hover:text-muted"
             }`}
           >
@@ -199,7 +211,7 @@ function Identity({ name, issuer }: { name: string; issuer: string | null }) {
       </span>
       <span className="min-w-0">
         <span className="block truncate font-medium text-text">{name}</span>
-        <span className="block truncate text-faint">{via}</span>
+        <span className="block truncate text-muted">{via}</span>
       </span>
     </div>
   );

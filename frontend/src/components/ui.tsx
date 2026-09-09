@@ -30,7 +30,7 @@ export function Button({
 
 const CONTROL_CLASSES =
   "w-full rounded-sm border border-border-strong bg-surface px-2.5 py-1.5 text-sm text-text " +
-  "placeholder:text-faint focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent " +
+  "placeholder:text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent " +
   "disabled:opacity-60";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(

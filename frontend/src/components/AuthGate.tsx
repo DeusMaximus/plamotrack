@@ -133,7 +133,7 @@ function OidcSetupScreen({ issuer }: { issuer: string | null }) {
           <ErrorBanner message={error} />
           <Field label={t("auth.setupTokenLabel")} required error={errors.token?.message}>
             <Input autoFocus autoComplete="off" {...register("token", { required: true })} />
-            <p className="mt-1 text-xs text-faint">{t("auth.setupTokenHint")}</p>
+            <p className="mt-1 text-xs text-muted">{t("auth.setupTokenHint")}</p>
           </Field>
           <Button
             type="submit"
@@ -246,7 +246,7 @@ function SetupScreen({ onDone }: { onDone: () => void }) {
           <ErrorBanner message={error} />
           <Field label={t("auth.setupTokenLabel")} required error={errors.token?.message}>
             <Input autoFocus autoComplete="off" {...register("token", { required: true })} />
-            <p className="mt-1 text-xs text-faint">{t("auth.setupTokenHint")}</p>
+            <p className="mt-1 text-xs text-muted">{t("auth.setupTokenHint")}</p>
           </Field>
           <Field label={t("auth.passwordLabel")} required error={errors.password?.message}>
             <Input
@@ -254,7 +254,7 @@ function SetupScreen({ onDone }: { onDone: () => void }) {
               autoComplete="new-password"
               {...register("password", { required: true, minLength: 12 })}
             />
-            <p className="mt-1 text-xs text-faint">{t("auth.passwordHint")}</p>
+            <p className="mt-1 text-xs text-muted">{t("auth.passwordHint")}</p>
           </Field>
           <Field label={t("auth.confirmPasswordLabel")} required error={errors.confirm?.message}>
             <Input

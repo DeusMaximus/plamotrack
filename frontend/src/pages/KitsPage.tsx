@@ -285,7 +285,7 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
             <span>
               {application.upgrade.name}
               {application.quantity_used > 1 && ` ×${formatNumber(application.quantity_used)}`}
-              <span className="text-xs text-faint">
+              <span className="text-xs text-muted">
                 {t("common.dotSeparator")}
                 {formatDate(application.applied_at)}
               </span>
@@ -470,7 +470,7 @@ export function KitsPage() {
                   <td className="px-3 py-2">
                     <div className="font-medium">{kit.name}</div>
                     {(kit.kit_number || kit.series) && (
-                      <div className="text-xs text-faint">
+                      <div className="text-xs text-muted">
                         {[kit.kit_number, kit.series]
                           .filter(Boolean)
                           .join(t("common.dotSeparator"))}
