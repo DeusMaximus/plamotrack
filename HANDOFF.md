@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-10 — Claude Code (Fable 5.1) — #232 (M6.5 PR 2/4) built on `feat/232-list-urls-sort-edit-control`: URL filter/sort/page on the four list pages, one edit control per row with Delete in the dialog, `sort`/`limit` on the kit and order lists (REST + MCP); **PR # open against `m6.5-workbench`**, awaiting the owner's reviewer call
+## 2026-09-10 — Claude Code (Fable 5.1) — #232 (M6.5 PR 2/4) built on `feat/232-list-urls-sort-edit-control`: URL filter/sort/page on the four list pages, one edit control per row with Delete in the dialog, `sort`/`limit` on the kit and order lists (REST + MCP); **PR #236 open against `m6.5-workbench`**, awaiting the owner's reviewer call
 
 - **Done:** backend `list_kits(sort=created|recent|name, limit=)` and `list_orders(pending_only=,
   sort=placed|recent, limit=)` — "recent" is a kit's `status_updated_at`, an order's last status
@@ -65,13 +65,13 @@ Template:
   `offset`; (4) the inventory edit dialog says Save (it said Add); (5) the quick-add retailer
   control is icon-only, named "New retailer"; (6) the converted total is the lines' snapshots and
   says nothing when a line lacks one.
-- **State:** branch = `m6.5-workbench` + `c4cdcc3`, pushed; PR #. Green: `npm run lint`, `npm test`
+- **State:** branch = `m6.5-workbench` + `c4cdcc3`, pushed; PR #236. Green: `npm run lint`, `npm test`
   (537), `npm run build`, the e2e serially on an empty DB (51 + 1 skipped), ruff; the full backend
   suite was in flight at hand-off time (the touched suites green) — the PR body gets its count.
   Both dev servers restarted on the dev DB; the dev DB untouched. One trap met twice today: a
   preview `api` on the dev DB makes Playwright *reuse* it — the setup project refuses (correctly)
   and nothing runs; free :8000 first. The from-empty scripts live in the session scratchpad only.
-- **Next:** the owner picks the reviewer for # (Codex did #235 with a visual leg; the brief
+- **Next:** the owner picks the reviewer for #236 (Codex did #235 with a visual leg; the brief
   shape is on record) → respond → merge into `m6.5-workbench`. Then #233 (Home: replaces the
   board, drops dnd-kit, per-status counts from one service function, `/board` → Home; the
   `?status=&sort=recent` links now exist) off `m6.5-workbench`, then #234. Merge `main` into the
