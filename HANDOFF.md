@@ -41,6 +41,42 @@ Template:
 
 ---
 
+## 2026-09-10 — Claude Code (Fable 5.1) — #232 (M6.5 PR 2/4) built on `feat/232-list-urls-sort-edit-control`: URL filter/sort/page on the four list pages, one edit control per row with Delete in the dialog, `sort`/`limit` on the kit and order lists (REST + MCP); **PR # open against `m6.5-workbench`**, awaiting the owner's reviewer call
+
+- **Done:** backend `list_kits(sort=created|recent|name, limit=)` and `list_orders(pending_only=,
+  sort=placed|recent, limit=)` — "recent" is a kit's `status_updated_at`, an order's last status
+  change (received, else shipped, else placed); one validator (`check_list_options`; codes
+  `list.sort_unknown` / `list.limit_invalid` in the module, the shared fixture and the catalogue);
+  routers typed with the Literal + `Query(ge=1)`; the MCP tools pass their strings through;
+  `pending_only` moved into the query (REST gained it for parity). Frontend: `src/lib/listState.ts`
+  (total readers, `paginate`, `pageWindow`, the hooks, `useWriteParams` for several keys in one
+  navigation) and the four pages onto URL state — Kits `status/series/q/sort/page`, Orders
+  `status/retailer/q/sort/page`, Inventory `tab/category/page`, Retailers `q/page`; the count beside
+  the title; the toolbar; a ten-row pager; a pencil `IconButton` per row; Delete inside every edit
+  dialog; the Orders lines box (kit status chips, "stock applies on receipt", the shipping line, the
+  lines' converted total under the order's); icons on the header buttons, the "+ " gone from the
+  labels. Docs: design §7 tools, §13.4 built, README rows. Tests: backend sort/limit/pending (rows
+  diverging), MCP parity; unit 22; e2e `list-urls.spec.ts` (4); locators moved (labels,
+  `getByLabel("Retailer")` → the combobox role, inventory edit says Save). README screenshots
+  regenerated on the throwaway DB. Mutants B1–B6, U1–U4, E1–E3 all killed (table on the PR).
+- **Decisions:** (1) filters and the search narrow the loaded list in the browser; only the sort is
+  the server's (the page holds the whole list; Home will pass status + limit); (2) Kits default
+  `recent`, Orders `placed`; the API defaults are unchanged; (3) ten rows a page, client-side, no
+  `offset`; (4) the inventory edit dialog says Save (it said Add); (5) the quick-add retailer
+  control is icon-only, named "New retailer"; (6) the converted total is the lines' snapshots and
+  says nothing when a line lacks one.
+- **State:** branch = `m6.5-workbench` + `c4cdcc3`, pushed; PR #. Green: `npm run lint`, `npm test`
+  (537), `npm run build`, the e2e serially on an empty DB (51 + 1 skipped), ruff; the full backend
+  suite was in flight at hand-off time (the touched suites green) — the PR body gets its count.
+  Both dev servers restarted on the dev DB; the dev DB untouched. One trap met twice today: a
+  preview `api` on the dev DB makes Playwright *reuse* it — the setup project refuses (correctly)
+  and nothing runs; free :8000 first. The from-empty scripts live in the session scratchpad only.
+- **Next:** the owner picks the reviewer for # (Codex did #235 with a visual leg; the brief
+  shape is on record) → respond → merge into `m6.5-workbench`. Then #233 (Home: replaces the
+  board, drops dnd-kit, per-status counts from one service function, `/board` → Home; the
+  `?status=&sort=recent` links now exist) off `m6.5-workbench`, then #234. Merge `main` into the
+  integration branch after each hand-off; the packaged-stack run before the release merge.
+
 ## 2026-09-10 — Claude Code (Fable 5.1) — #231 (M6.5 PR 1/4) built on `feat/231-workbench-tokens-theme-sidebar`: Workbench tokens, per-browser theme, bundled Inter, Lucide, new sidebar, every page swept; PR #235 against the integration branch `m6.5-workbench` — **MERGED `f99e085`** (squash, 2026-09-10) after Codex round 1 (GO + 3 P3, fixed); M6.5 lands on `main` in one release (owner's call)
 
 - **Done:** `frontend/src/index.css` holds the §13.1 tokens (dark default, light under
@@ -224,106 +260,3 @@ Template:
   from `docker compose logs api`, mint PATs and relink every MCP client, refresh the personal
   Gunpla skill to the deployed version (memory: it deliberately lags main). Then M6.1 /
   M6.5 per the roadmap; the lows #223–#226 whenever.
-
-## 2026-09-08 — Claude Code (Fable 5.1) — #195 held behind the owner's security scan: the four mediums fixed as #221 → **PR #222; Codex round 1 NO-GO (f1, f2 P2; f3 P3) fixed at `6395a5d`; round 2 NO-GO (f4 P3, docs) fixed at `b4d9aa4`; round 3 NO-GO (f5 P3, docs) fixed at `ec171fd`; PR #222 MERGED `94fd2f9`; the gate rerun found #228 → PR #229 MERGED `37ef344`; release branch at `511ea90` (tree `c270127`), **gate GREEN on it, CI green — awaiting the owner's go: merge #220 → tag → release**; release PR #220 waits (rebase + gate rerun after #222 merges)
-
-- **Done:** (1) **#195 run to the edge of the outward steps** (2026-09-07): `release/0.3.0`
-  at `ed48038` (tree `92015d9`) → **PR #220** (bump 0.3.0, design §5 flipped to Built,
-  operations *Upgrading to 0.3.0*, AGENTS roadmap 6 struck), CI green; the whole release
-  gate run on that tree — local packaged stack under Compose project `plamotrack-release`
-  (fresh volume; the dev volume was kept), `/api/meta` and MCP `serverInfo` 0.3.0, manifest
-  0.3.0/d5e9362140ea, matrix 0 failing, T10 clean; `deployment_gate.py --phase all` + tunnel
-  on testhost after a fresh-install reset — GREEN, exit 0, every phase (results comment on
-  #220). Notes, #30 and #195 closing comments drafted. (2) **The owner then ran a Codex
-  Security scan on `ed48038`**: NO-GO for Internet exposure until four medium availability
-  findings are fixed. Filed **#221**; fixed on `fix/scan-0.3.0-availability` → **PR #222**
-  (four commits, one per item): item 4 `FailureBudgets` — a ladder per (action, client
-  address) with decay + an instance-wide verification bucket (`app/auth/budget.py`,
-  `services/auth.py`, `services/oidc.py`, `routers/auth.py`); item 3 `RefusalBudget` on
-  the audit recorder + `AUDIT_RETENTION_DAYS` (closes #210); item 1 `RoutePolicy.max_body_bytes`
-  + one bounded reader (`app/auth/body.py`) in the pre-routing gate and the three protocol
-  guards (+ `BoundedBody` on consent), nginx exact locations generated as a second region
-  of `render_ingress.py`, 413 envelope `ingress.body_too_large`, `MAX_FORM_FIELDS`; item 2
-  `ClientRecords` on FastMCP's client collection (24 h lifetime until `keep` at issuance —
-  a permanent record stays permanent through FastMCP's refresh writes — cap 1024, quota
-  20/h/address, `count_live`/`cull_expired` on the store, `cull_if_due` from the registration
-  guard and `authorize`, FastMCP's CIMD cache a `BoundedCache`), 503
-  `auth.mcp_registrations_full`. Docs: design §5.6 rows + T8 + §5.9 item 11 (the calls),
-  operations, AGENTS rule 14, `.env.example`, the CI row in testing-and-review. Verified:
-  full backend **2641 passed**; CI Backend/Frontend/Integration green at `4b35c73`
-  (Integration = the matrix's new `body_budget_rows`/`origin_flood_rows` through the
-  packaged nginx + the new refusal-row count step); 25 `scan-` mutants in the tracked
-  harness **all killed**; six behavioural control probes **6 red on main / 6 green** on
-  the branch (file kept out of the tree; verbatim in the brief). Four lows filed, not
-  blockers: #223 CSV formula syntax, #224 OIDC endpoint validation, #225 MCP untrusted-text
-  marking, #226 HSTS. The release notes draft gained a scan section and lost #210.
-- **Decisions:** 0.3.0 not 0.2.11 (every caller's contract changed). The seven deliberate
-  calls are on PR #222 (the verification bucket can delay the owner by seconds under a
-  distributed flood; the suppressed count is written with a later window's first recorded
-  refusal; the registration cap is checked before the write, a race overshoots by nginx's
-  burst; the constants are constants; nginx's 413 has no `params.limit`; consent GET
-  unbounded; a CIMD lookup at the cap is an unknown client). Reviewer: **Codex** (M6
-  security work) — brief printed in the 2026-09-08 session chat, scratchpad copy.
-- **Round 1 (Codex, GPT-6) — NO-GO, fixed at `6395a5d`:** f1 (P2) the setup token and the OIDC start charged
-  the verification bucket for a cheap comparison, and the general bucket alone let a stream of fresh
-  addresses hold the owner out → `refuse_throttled(verification=False)` on both cheap paths, and a login
-  presenting any session cookie the instance ever stored (rows are never deleted) is verified from a
-  reserved bucket of 10/min (`FailureBudgets.known`), falling back to the general one; the
-  new-browser-under-flood case is documented as the ingress's boundary (operations 429 paragraph,
-  design §5.6/§5.9 item 11). f2 (P2) `/mcp/token` and `/mcp/revoke` materialise CIMD clients through
-  `get_client` with no cull reached → the client-collection cull now lives in `ClientRecords.put` on a
-  new key (`cull_expired(collection)`). f3 (P3) a disconnect mid-body was replayed as a whole body →
-  `read_bounded` raises `Disconnected`, the gate and the three guards answer nothing. Tests for each;
-  scan-26…31 added (31/31 killed); full backend **2653**; response posted; coverage record updated.
-- **Round 2 (Codex) — NO-GO on f4 (P3, documentation), fixed at `b4d9aa4`:** the runbook promised the
-  reserved login path to "the browser you signed in with"; a normal logout clears that cookie. The
-  three documents now state the contract as built (a recognised cookie — idled out or host-revoked —
-  plus an open ladder and capacity; a logged-out / expired / cleared / restored-past-row browser
-  competes, the ingress is the boundary; a shared address shares a ladder); a cookie-jar lifecycle
-  test; the flood tests on small buckets (they had put the Backend CI job past its 15-min cap,
-  cancelled at `6395a5d` — now 20 with the reason in the workflow); **#227** filed for the device
-  capability as a product contract. Round 2 explicitly ran no replays, control or mutants; re-run
-  at `b4d9aa4`: 31/31 killed, control 6 red on `c527176` / 6 green, full backend **2654**.
-- **Round 3 (Codex) — NO-GO on f5 (P3, documentation), fixed at `ec171fd`:** the runbook said "at most
-  thirty passwords a minute in total"; the policy is two additive token buckets (30 + 10, continuous
-  refill). The 429 paragraph is rewritten as one contract (ladder → reserved bucket → general bucket,
-  capacity + refill, every cookie state, a restore's present-but-unrecognised cookie); budget comments
-  matched; an accounting test pins 30 + 10, the 41st refused, both refill rates; lesson filed ("A
-  runbook paragraph is one promise"). Rounds 2 and 3 both explicitly ran neither the control nor the
-  mutants; author's record at `ec171fd`: 31/31 killed, full backend **2655**, CI green (Backend 12m49s).
-- **PR #222 MERGED → `94fd2f9`** (squash, 2026-09-08; #221 and #210 closed) after the owner ran the
-  control (6 red) and the mutants (31 killed) himself. `release/0.3.0` rebased onto it → `9f2c52a`
-  (tree `36b2749`), PR #220 updated; the design.md conflicts resolved (item 10's note before item
-  11; dates to 08/09). **Gate rerun on that tree: local step 4 green; the deployment gate stopped
-  in T13** — the runbook's `pg_restore` after `down -v; up -d db --wait` met "the database system
-  is shutting down": the socket healthcheck is satisfied by the image's temporary init server
-  (`listen_addresses=''`). Filed **#228**, fixed on `fix/db-healthcheck-init-race` → **PR #229**
-  (TCP probe in compose and CI's service container, a runbook sentence; verified 3× on a fresh
-  volume). The lockout/local/oidc phases were green before the stop (matrices 179 and 182 ok rows).
-- **PR #229 MERGED → `37ef344`** (#228 closed) on the owner's word; `release/0.3.0` rebased again →
-  **`511ea90`, tree `c270127`**, PR #220 updated, CI green (Backend 12m50s). **Gate run #3 on that tree
-  GREEN**: local step 4 green; `--phase all` green through T13 on the fixed healthcheck (local matrix
-  177 ok, oidc 181 ok, three restores); the tunnel rows failed only because the workstation's temporary
-  IPv6 rotated mid-run — the tunnel phase rerun alone passed (attribution to the current address,
-  both spellings held 130 s+, matrix 87 ok, audit row = visitor); the first tunnel rerun crashed on a
-  peer reset mid-hold → **#230** filed (harness gap, not a blocker). Results comment on #220; the
-  notes draft (scratchpad `release-notes-v0.3.0-alpha.md`) carries the three observed blocks, the
-  #221 section, the #228 line, and no longer lists #210.
-- **State:** `main` = `37ef344` + these entries. PR #220 open at `511ea90`; **no tag exists**. testhost
-  left in mode R after the tunnel phase's restore (OIDC mode, Keycloak up). Gate state dir
-  `~/.plamotrack-gate/testhost…/` holds run #3 (`…release-run-1`, `…release-run-2-stopped` beside it). **Recommendation given (2026-09-08): stop the Codex rounds** — the NO-GOs
-  are the reviewer's own unrun verification, not defects — and merge once the owner has run the two
-  mechanical checks himself (the control file in a `c527176` worktree → 6 red; `mutation_test.py -k
-  scan-` → 31 killed). A round-4 brief exists (scratchpad `brief-222-r4.md`) if a reviewer's name is
-  wanted on those two items; GLM would do for that. PR #220
-  open at `ed48038`, **stale once #222 merges** (rebase; the only expected conflict is
-  design.md's "Last revised" line — keep 08/09; §5.9 item 11 and the §5.6 rows are #222's).
-  No tag exists. testhost left in the gate's end state (OIDC mode, Keycloak up); a rerun
-  needs the fresh-install reset (`down -v`, `.env` from `.env.example`, `git archive` the
-  tree) — the memory file `plamotrack-194-deployment-gate-setup` has the exact steps. Gate
-  state dir `~/.plamotrack-gate/testhost…/` (the #194 run's moved aside). Dev overlay up;
-  tree clean; LXC untouched.
-- **Next:** owner merges #220 (squash) → verify the merge commit's tree is `c270127` → tag `v0.3.0-alpha — the instance has an owner` on the
-  merge commit → push tag → `gh release create --prerelease --verify-tag` with the notes
-  (scratchpad `release-notes-v0.3.0-alpha.md`, the gate block replaced by the rerun's) →
-  post the #30/#195 comments, close both, close the M6 milestone. Then the LXC upgrade.
