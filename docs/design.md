@@ -2693,7 +2693,10 @@ once.
 
 ### 13.6 Implementation split
 
-Each a PR off `main`, in this order, so no page is styled twice (filed as #231–#234,
+Each a PR against the integration branch `m6.5-workbench` — cut from `main`, `main`
+merged into it as `main` moves, landed on `main` in one release (v0.4.0-alpha), so a
+`git clone` mid-milestone gets the 0.3.0 interface rather than a redesign in progress
+(decided 2026-09-10) — in this order, so no page is styled twice (filed as #231–#234,
 milestone M6.5):
 
 1. **Tokens, theme switch, Inter, Lucide** — every component and page onto the
