@@ -90,8 +90,18 @@ Template:
   pre-paint test now records `document.readyState` at the first `data-theme` write and kills
   it (`1effab1`). The owner signed off the look on the dev stack. **Tree parked on the feature
   branch, both dev servers stopped**, for the review window.
-- **Next:** the Codex round on #235 → respond per `.agents/testing-and-review.md` → merge it
-  into `m6.5-workbench`. Then #232 (URL
+- **Codex round 1 on #235 (GPT-6): GO + 3 P3, all reproduced at `46a7da5` and fixed at
+  `7982565`** — P3-1 light-theme contrast (the artboard's light accent and five status hues
+  measured 3.45–4.36:1 on the chip; the light set is the same hues darkened, informational
+  `text-faint` moved to `text-muted`, new `src/lib/tokens.test.ts` parses `index.css` and
+  asserts every composed pair in both themes); P3-2 the theme switch's arrows moved from the
+  stored preference, not the focused radio (fixed; two-page e2e with a real `storage` event);
+  P3-3 `rounded-[2px]` (now `rounded-sm`; the guard refuses arbitrary radius/shadow/colour
+  values too). Response and the round-1 coverage record on the PR. **Observation, not a
+  finding:** a *parallel* local Playwright run on this Mac timed out `preorder-toggle` and
+  `dialog-keyboard`'s picker selection at their 5 s waits, twice; serial (`--workers=1`,
+  CI's setting) is green — a load flake of the #17 shape, untouched.
+- **Next:** owner merges #235 into `m6.5-workbench` (GO stands; the P3s are fixed). Then #232 (URL
   filter/sort, row edit control, sort/limit on REST **and** MCP), #233 (Home, drop dnd-kit),
   #234 (Settings, About, e2e, README) per design §13.6 — each branched from and targeting
   `m6.5-workbench`. Before the release merge: the packaged-stack run above.
