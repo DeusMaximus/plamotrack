@@ -83,8 +83,15 @@ Template:
   (fixtures from 2026-09-08). Both dev servers running from this session. Not done: a
   packaged-stack (`docker compose up --build`) run to see `theme.js` served under the CSP —
   do it before merge; and the LXC still runs what #195 shipped.
-- **Next:** owner reviews the look on the dev stack (sign in; the sidebar switch is the theme);
-  GLM review of #235 per the roster; merge it into `m6.5-workbench`. Then #232 (URL
+- **Review (owner's call, 2026-09-10): Codex (GPT-6), not GLM** — the round has a visual leg
+  (captures in both themes against the Workbench artboards) that needs a reviewer that reads
+  images; the brief was printed in the session chat and the PR body carries the coverage
+  record and a 12-row mutant table. E3 (head script removed) had survived the theme e2e; the
+  pre-paint test now records `document.readyState` at the first `data-theme` write and kills
+  it (`1effab1`). The owner signed off the look on the dev stack. **Tree parked on the feature
+  branch, both dev servers stopped**, for the review window.
+- **Next:** the Codex round on #235 → respond per `.agents/testing-and-review.md` → merge it
+  into `m6.5-workbench`. Then #232 (URL
   filter/sort, row edit control, sort/limit on REST **and** MCP), #233 (Home, drop dnd-kit),
   #234 (Settings, About, e2e, README) per design §13.6 — each branched from and targeting
   `m6.5-workbench`. Before the release merge: the packaged-stack run above.
