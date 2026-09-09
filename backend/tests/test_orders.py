@@ -719,6 +719,49 @@ async def test_list_orders_limit_and_pending_only_compose_with_the_sort(client, 
     ) == ["P"]
 
 
+async def _seed_near_midnight_pair(client, retailer) -> None:
+    """A placed on 2 August with no shipment; B placed earlier and shipped at
+    15:00Z on 1 August. Which is the later change depends on whose midnight
+    "2 August" means: Brisbane's (UTC+10, no DST) is 14:00Z on the 1st, an hour
+    *before* B's shipment; Los Angeles's (UTC−7 in August) is 07:00Z on the 2nd,
+    after it; the database session's UTC midnight puts A first too."""
+    for number, order_date, extra in (
+        ("A", "2026-08-02", {}),
+        ("B", "2026-07-31", {"shipped_at": "2026-08-01T15:00:00+00:00"}),
+    ):
+        resp = await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": order_date,
+                "order_number": number,
+                "currency_code": "JPY",
+                "items": [kit_line()],
+                **extra,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+
+async def test_list_orders_sort_recent_reads_the_placement_date_in_the_instance_zone(
+    client, retailer
+):
+    """A date against two instants: the day an order was placed is its midnight in
+    the *instance's* time zone (§13.4, rule 11), not the SQL session's — the cast
+    alone read the session zone, so the same rows ranked one way under a Brisbane
+    session and the other under UTC (Codex #236 P2-1). Two zones either side of
+    UTC, so a clock that ignores the setting fails one of them."""
+    await _seed_near_midnight_pair(client, retailer)
+    resp = await client.patch("/settings", json={"time_zone": "Australia/Brisbane"})
+    assert resp.status_code == 200, resp.text
+    assert _numbers(await client.get("/orders", params={"sort": "recent"})) == ["B", "A"]
+    resp = await client.patch("/settings", json={"time_zone": "America/Los_Angeles"})
+    assert resp.status_code == 200, resp.text
+    assert _numbers(await client.get("/orders", params={"sort": "recent"})) == ["A", "B"]
+    # `placed` is the date alone — no zone can move it.
+    assert _numbers(await client.get("/orders", params={"sort": "placed"})) == ["A", "B"]
+
+
 @pytest.mark.parametrize(
     "params",
     [{"sort": "newest"}, {"sort": ""}, {"limit": "0"}, {"limit": "-1"}, {"limit": "ten"}],

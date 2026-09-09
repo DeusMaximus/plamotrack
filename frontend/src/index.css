@@ -22,8 +22,10 @@
   --text: #ebe7df;
   --muted: #9d988e;
   /* Icons, disabled and decorative content — the 3:1 floor, never running
-   * text or a hint someone has to read (that is --muted, 4.5:1). */
-  --faint: #6c675e;
+   * text or a hint someone has to read (that is --muted, 4.5:1). Held on the
+   * chip as well as the surfaces: a hovered row is the chip, and its edit
+   * pencil sits on it at rest (Codex #236 P3-5 measured 2.72:1 there). */
+  --faint: #746f66;
   --accent: #e2a44b;
   --accent-ink: #1b1207;
   --accent-soft: rgb(226 164 75 / 0.14);
@@ -53,7 +55,7 @@
   --rule: #ebe7df;
   --text: #1e1c19;
   --muted: #6b665d;
-  --faint: #8e887d;
+  --faint: #878176;
   --accent: #885610;
   --accent-ink: #ffffff;
   --accent-soft: rgb(136 86 16 / 0.1);

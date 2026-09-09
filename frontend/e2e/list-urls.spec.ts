@@ -88,6 +88,32 @@ test("the row's one control opens the dialog, and Delete lives there", async ({ 
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(/Kits\s*2/);
 });
 
+test("the search box keeps a burst of keystrokes, makes no history, and follows Back", async ({
+  page,
+}) => {
+  await page.goto("/kits");
+  await page.getByLabel("Filter by status").selectOption("backlog"); // one history entry
+  await expect(page).toHaveURL(/[?&]status=backlog(&|$)/);
+  const box = page.getByRole("searchbox", { name: "Search" });
+  // No delay between keys: React Router navigates in a transition, and an input
+  // that read its value from the URL lost keystrokes to it (Codex #236 P3-2).
+  await box.pressSequentially(PREFIX);
+  await expect(box).toHaveValue(PREFIX);
+  await expect(page).toHaveURL((url) => url.searchParams.get("q") === PREFIX);
+  // Kit 12 is backlog and no test deletes it — the count depends on which tests
+  // ran before this one.
+  await expect(ours(page).filter({ hasText: name(12) })).toBeVisible();
+  // One step back is before the filter — the keystrokes made no entries — and
+  // the box follows the URL there and back again.
+  await page.goBack();
+  await expect(page).toHaveURL(/\/kits$/);
+  await expect(box).toHaveValue("");
+  await expect(page.getByLabel("Filter by status")).toHaveValue("");
+  await page.goForward();
+  await expect(box).toHaveValue(PREFIX);
+  await expect(page.getByLabel("Filter by status")).toHaveValue("backlog");
+});
+
 test("the orders page reads its sort and status from the URL too", async ({ page }) => {
   await page.goto("/orders?sort=recent&status=received");
   await expect(page.getByLabel("Sort")).toHaveValue("recent");

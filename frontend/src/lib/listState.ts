@@ -8,8 +8,8 @@
  *  the search resets the page: the page was a position in a list that no
  *  longer exists. */
 
-import { useCallback } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useCallback, useEffect, useState } from "react";
+import { useLocation, useNavigationType, useSearchParams } from "react-router-dom";
 
 export const PAGE_PARAM = "page";
 
@@ -134,6 +134,32 @@ export function useTextParam(key: string, replace = false): [string, Setter<stri
   const [params] = useSearchParams();
   const write = useParamWriter(key, "", replace);
   return [params.get(key) ?? "", write];
+}
+
+/** A search box's text. The box owns its value and the URL follows: React
+ *  Router navigates inside a transition, and a controlled input whose update is
+ *  deferred is restored to its old value once the event ends, so a burst of
+ *  keystrokes kept only the last one or two (Codex #236 P3-2). Every write is a
+ *  `replace` — keystrokes make no history — and any navigation the box did not
+ *  make (Back, Forward, a link) resets the box to what the URL says. */
+export function useSearchParam(key: string): [string, Setter<string>] {
+  const [inUrl, write] = useTextParam(key, true);
+  const [draft, setDraft] = useState(inUrl);
+  const { key: locationKey } = useLocation();
+  const navigationType = useNavigationType();
+  useEffect(() => {
+    // A REPLACE is this box's own write, already in `draft`; a new location
+    // reached any other way carries the value to show.
+    if (navigationType !== "REPLACE") setDraft(inUrl);
+  }, [locationKey, navigationType, inUrl]);
+  const set = useCallback(
+    (next: string) => {
+      setDraft(next);
+      write(next);
+    },
+    [write],
+  );
+  return [draft, set];
 }
 
 /** The page, 1-based; setting 1 removes the parameter. */

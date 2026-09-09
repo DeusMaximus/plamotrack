@@ -33,7 +33,7 @@ import {
 } from "../components/ui";
 import { formatDate, formatNumber, isoToLocalDateInput, localMidnightISO } from "../lib/format";
 import { dateWithElapsed, ratingTooltip, statusLabel } from "../lib/labels";
-import { paginate, useEnumParam, usePageParam, useTextParam } from "../lib/listState";
+import { paginate, useEnumParam, usePageParam, useSearchParam, useTextParam } from "../lib/listState";
 import { usePresentationVersion } from "../lib/presentation";
 
 /** Rows per page on the list pages (§13.4). */
@@ -403,7 +403,7 @@ export function KitsPage() {
     "",
   );
   const [seriesFilter, setSeriesFilter] = useTextParam("series");
-  const [search, setSearch] = useTextParam("q", true);
+  const [search, setSearch] = useSearchParam("q");
   const [sort, setSort] = useEnumParam<KitSort>("sort", KIT_SORTS, "recent");
   const [page, setPage] = usePageParam();
   const [modal, setModal] = useState<{ mode: "add" } | { mode: "edit"; kit: Kit } | null>(null);

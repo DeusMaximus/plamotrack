@@ -515,7 +515,8 @@ export type KitSort = (typeof KIT_SORTS)[number];
 
 /** `GET /orders?sort=` — mirrors `services/orders.py::ORDER_SORTS`: `placed`
  *  newest order date first (the API default), `recent` by the last status
- *  change (received, else shipped, else placed) newest first. */
+ *  change — received, else shipped, else placed, a placement date being its midnight
+ *  in the instance's time zone — newest first. */
 export const ORDER_SORTS = ["placed", "recent"] as const;
 export type OrderSort = (typeof ORDER_SORTS)[number];
 

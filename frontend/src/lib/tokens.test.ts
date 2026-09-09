@@ -81,6 +81,7 @@ function pairs(t: Tokens): { name: string; fg: Rgb; ground: Rgb; floor: number }
   const bg = solid("bg");
   const chipOnSurface = over(t.chip, surface);
   const chipOnAlt = over(t.chip, surfaceAlt);
+  const chipOnBg = over(t.chip, bg);
   const out: { name: string; fg: Rgb; ground: Rgb; floor: number }[] = [];
   const text = (name: string, fg: Rgb, ground: Rgb) => out.push({ name, fg, ground, floor: 4.5 });
   const ui = (name: string, fg: Rgb, ground: Rgb) => out.push({ name, fg, ground, floor: 3 });
@@ -105,6 +106,11 @@ function pairs(t: Tokens): { name: string; fg: Rgb; ground: Rgb; floor: number }
   text("accent on accent-soft over surface (a picked catalog item)", solid("accent"), over(t["accent-soft"], surface));
   text("danger on 10% danger over surface (the error banner)", solid("danger"), over({ rgb: solid("danger"), alpha: 0.1 }, surface));
   text("muted on the chip", solid("muted"), chipOnSurface);
+  // The chip is also a row's hover ground, and a row carries its edit pencil at
+  // rest — faint has to hold its floor there too (Codex #236 P3-5: 2.72:1).
+  ui("faint on the chip over surface (a hovered row's pencil)", solid("faint"), chipOnSurface);
+  ui("faint on the chip over surface-alt", solid("faint"), chipOnAlt);
+  ui("faint on the chip over bg (a hovered nav row)", solid("faint"), chipOnBg);
   return out;
 }
 

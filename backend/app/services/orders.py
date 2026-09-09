@@ -1340,13 +1340,17 @@ OrderSort = Literal["placed", "recent"]
 ORDER_SORTS: tuple[OrderSort, ...] = ("placed", "recent")
 
 
-def _order_order(sort: OrderSort):
+def _order_order(sort: OrderSort, zone: str):
     if sort == "recent":
         # A date against two instants: the day it was placed counts as its
-        # midnight, so an order shipped on the 20th outranks one placed the 19th.
-        last_change = func.coalesce(
-            Order.received_at, Order.shipped_at, cast(Order.order_date, DateTime(timezone=True))
-        )
+        # midnight in the *instance's* time zone (rule 11), so an order shipped
+        # on the 20th outranks one placed the 19th wherever the database runs.
+        # A plain cast to timestamptz read the SQL session's zone instead, and
+        # the same two rows ranked one way under a Brisbane session and the
+        # other under UTC (Codex #236 P2-1). `timezone(zone, timestamp)` reads
+        # the naive midnight as wall-clock time in `zone` and yields the instant.
+        placed = func.timezone(zone, cast(Order.order_date, DateTime(timezone=False)))
+        last_change = func.coalesce(Order.received_at, Order.shipped_at, placed)
         return (last_change.desc(), Order.order_date.desc(), Order.id)
     return (Order.order_date.desc(), Order.id)
 
@@ -1361,9 +1365,12 @@ async def list_orders(
     from app.services.kits import check_list_options
 
     check_list_options(sort, ORDER_SORTS, limit)
+    # The instance's zone is part of the order clock (`_order_order`), read from
+    # the settings row like every other instance-wide rule (rule 11).
+    zone = (await settings_service.get_instance_settings(session)).time_zone
     stmt = (
         select(Order)
-        .order_by(*_order_order(sort))
+        .order_by(*_order_order(sort, zone))
         .options(selectinload(Order.items).selectinload(OrderItem.kits))
     )
     if pending_only:

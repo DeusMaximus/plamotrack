@@ -40,7 +40,8 @@ import {
   Select,
   TABLE_HEAD_ROW_CLASS,
 } from "../components/ui";
-import { paginate, useEnumParam, usePageParam, useTextParam } from "../lib/listState";
+import { paginate, useEnumParam, usePageParam, useSearchParam, useTextParam } from "../lib/listState";
+import { convertedTotal, orderTotal, shippingLine } from "../lib/orderMoney";
 import {
   currencyOptions,
   formatDate,
@@ -1086,25 +1087,6 @@ function OrderForm({
   );
 }
 
-function orderTotal(order: Order): string {
-  const byCurrency = new Map<string, number>();
-  for (const item of order.items) {
-    byCurrency.set(
-      item.currency_code,
-      (byCurrency.get(item.currency_code) ?? 0) + item.quantity * item.unit_price_minor,
-    );
-  }
-  if (order.shipping_cost_minor) {
-    byCurrency.set(
-      order.currency_code,
-      (byCurrency.get(order.currency_code) ?? 0) + order.shipping_cost_minor,
-    );
-  }
-  return (
-    [...byCurrency].map(([currency, minor]) => formatMoney(minor, currency)).join(" + ") || "—"
-  );
-}
-
 export function OrdersPage() {
   // Re-render when the instance's presentation settings arrive or change —
   // the plain format helpers below read them per call (#174 review, P3-1).
@@ -1124,7 +1106,7 @@ export function OrdersPage() {
     "",
   );
   const [retailerFilter, setRetailerFilter] = useTextParam("retailer");
-  const [search, setSearch] = useTextParam("q", true);
+  const [search, setSearch] = useSearchParam("q");
   const [sort, setSort] = useEnumParam<OrderSort>("sort", ORDER_SORTS, "placed");
   const [page, setPage] = usePageParam();
 
@@ -1443,62 +1425,7 @@ export function OrdersPage() {
                     <tr className="border-b border-rule last:border-0">
                       <td />
                       <td colSpan={10} className="px-3 pb-3.5 pt-0">
-                        {/* The lines box (§13.4): a kit line carries its kit's status,
-                            a catalog line says when its stock lands (§3.9), and
-                            shipping closes the box. */}
-                        <div className="overflow-hidden rounded-sm border border-rule bg-surface-alt">
-                          {order.items.map((item) => {
-                            const label =
-                              item.item_type === "kit"
-                                ? (itemName.get(item.spawned_kit_ids[0] ?? "") ?? itemTypeLabel("kit"))
-                                : (itemName.get(item.catalog_ref_id ?? "") ??
-                                  itemTypeLabel(item.item_type));
-                            const firstKit = item.kits[0];
-                            return (
-                              <div
-                                key={item.id}
-                                className="flex items-center gap-3.5 border-t border-rule px-3 py-2 text-[13px] first:border-t-0"
-                              >
-                                <span className="min-w-0 flex-1 truncate font-medium">{label}</span>
-                                <span className="w-24 shrink-0 text-xs text-muted">
-                                  {itemTypeLabel(item.item_type)}
-                                </span>
-                                {item.item_type === "kit" ? (
-                                  <span className="flex shrink-0 items-center gap-2">
-                                    {firstKit && <StatusBadge status={firstKit.status} />}
-                                    {item.spawned_kit_ids.length > 1 && (
-                                      <span className="text-xs text-muted">
-                                        {t("orders.spawnedKits", counted({}, item.spawned_kit_ids.length))}
-                                      </span>
-                                    )}
-                                  </span>
-                                ) : (
-                                  !order.received_at && (
-                                    <span className="shrink-0 text-xs text-muted">
-                                      {t("orders.stockOnReceipt")}
-                                    </span>
-                                  )
-                                )}
-                                <span className="w-32 shrink-0 text-end text-muted tabular-nums">
-                                  {formatNumber(item.quantity)} ×{" "}
-                                  {formatMoney(item.unit_price_minor, item.currency_code)}
-                                </span>
-                              </div>
-                            );
-                          })}
-                          {order.shipping_cost_minor ? (
-                            <div className="flex items-center justify-between gap-3.5 border-t border-rule bg-surface px-3 py-2 text-xs text-muted">
-                              <span>
-                                {order.delivery_service
-                                  ? t("orders.shippingLineWith", { service: order.delivery_service })
-                                  : t("orders.shippingLine")}
-                              </span>
-                              <span className="tabular-nums">
-                                {formatMoney(order.shipping_cost_minor, order.currency_code)}
-                              </span>
-                            </div>
-                          ) : null}
-                        </div>
+                        <LinesBox order={order} itemName={itemName} />
                       </td>
                     </tr>
                   )}
@@ -1529,29 +1456,64 @@ export function OrdersPage() {
   );
 }
 
+/** The expanded lines box (§13.4): a kit line carries its kit's status, a catalog
+ *  line says when its stock lands (§3.9), and shipping closes the box. One grid
+ *  for every line, so the type, status and amount columns are shared tracks — a
+ *  line's status chip cannot push its own type column over (Codex #236 P3-6). */
+function LinesBox({ order, itemName }: { order: Order; itemName: Map<string, string> }) {
+  const { t } = useTranslation();
+  const shipping = shippingLine(order);
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_6rem_max-content_8rem] overflow-hidden rounded-sm border border-rule bg-surface-alt text-[13px]">
+      {order.items.map((item, index) => {
+        const label =
+          item.item_type === "kit"
+            ? (itemName.get(item.spawned_kit_ids[0] ?? "") ?? itemTypeLabel("kit"))
+            : (itemName.get(item.catalog_ref_id ?? "") ?? itemTypeLabel(item.item_type));
+        const firstKit = item.kits[0];
+        const cell = `flex items-center py-2 ${index === 0 ? "" : "border-t border-rule"}`;
+        return (
+          <Fragment key={item.id}>
+            <span className={`${cell} min-w-0 ps-3 font-medium`}>
+              <span className="truncate">{label}</span>
+            </span>
+            <span className={`${cell} ps-3.5 text-xs text-muted`}>{itemTypeLabel(item.item_type)}</span>
+            <span className={`${cell} gap-2 ps-3.5 text-xs text-muted`}>
+              {item.item_type === "kit" ? (
+                <>
+                  {firstKit && <StatusBadge status={firstKit.status} />}
+                  {item.spawned_kit_ids.length > 1 &&
+                    t("orders.spawnedKits", counted({}, item.spawned_kit_ids.length))}
+                </>
+              ) : (
+                !order.received_at && t("orders.stockOnReceipt")
+              )}
+            </span>
+            <span className={`${cell} justify-end pe-3 ps-3.5 text-muted tabular-nums`}>
+              {formatNumber(item.quantity)} × {formatMoney(item.unit_price_minor, item.currency_code)}
+            </span>
+          </Fragment>
+        );
+      })}
+      {shipping && (
+        <div className="col-span-4 flex items-center justify-between gap-3.5 border-t border-rule bg-surface px-3 py-2 text-xs text-muted">
+          <span>
+            {shipping.service
+              ? t("orders.shippingLineWith", { service: shipping.service })
+              : t("orders.shippingLine")}
+          </span>
+          <span className="tabular-nums">{shipping.amount ?? "—"}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** The received cell, mirroring the Kits table's Started/Completed pair (#120):
  *  the delivery date, and when a ship date exists too, the days in transit
  *  beside it. Shipped-but-not-received counts transit live instead — the
  *  at-a-glance pipeline timing the status pill's tooltip could only show one
  *  row at a time. Elapsed like the kits column: calendar distance, rounded-sm. */
-/** The lines' entry-time conversion snapshots summed (§6, rule 4): shown under the
- *  order's own total when every line carries one in a currency other than the
- *  order's. Shipping has no snapshot, so it is the lines, and the sub-line says
- *  nothing when a line lacks one rather than showing a partial sum. */
-function convertedTotal(order: Order): string | null {
-  if (order.items.length === 0) return null;
-  const codes = new Set(order.items.map((item) => item.converted_currency_code));
-  if (codes.size !== 1) return null;
-  const [code] = codes;
-  if (!code || code === order.currency_code) return null;
-  let minor = 0;
-  for (const item of order.items) {
-    if (item.converted_price_minor === null) return null;
-    minor += item.quantity * item.converted_price_minor;
-  }
-  return formatMoney(minor, code);
-}
-
 function receivedCell(order: Order): string {
   if (!order.received_at) {
     if (!order.shipped_at) return "—";

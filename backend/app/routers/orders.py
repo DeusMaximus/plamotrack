@@ -18,7 +18,8 @@ async def list_orders(
     limit: PositiveInt4 | None = None,
 ):
     """`sort=recent` orders by the last status change — received, else shipped,
-    else placed — newest first; `pending_only` keeps the orders not yet received;
+    else placed, a placement date being its midnight in the instance's time zone — newest
+    first; `pending_only` keeps the orders not yet received;
     `limit` the first N (§13.4). The same options on the `list_orders` MCP tool."""
     return await orders_service.list_orders(
         session, pending_only=pending_only, sort=sort, limit=limit

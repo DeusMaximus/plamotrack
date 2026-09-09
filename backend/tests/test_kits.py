@@ -87,6 +87,28 @@ def _names(resp) -> list[str]:
     return [kit["name"] for kit in resp.json()]
 
 
+async def test_the_status_clock_is_the_api_clock_on_create_too(client, monkeypatch):
+    """`recent` compares `status_updated_at` across rows, so every path stamps it
+    from one clock. A create took the database's (the column's server default)
+    while a move took the API's, and a container clock a few milliseconds ahead
+    of its host ranked a kit created just before a move above it. The API's clock
+    is frozen here; a stamp that still came from the database would be today's."""
+    from datetime import UTC, datetime
+
+    frozen = datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return frozen if tz is None else frozen.astimezone(tz)
+
+    monkeypatch.setattr("app.models.kits.datetime", FrozenDatetime)
+    created = await client.post("/kits", json={"name": "Frozen", "grade": "HG"})
+    assert created.status_code == 201, created.text
+    stamp = datetime.fromisoformat(created.json()["status_updated_at"].replace("Z", "+00:00"))
+    assert stamp == frozen
+
+
 async def test_list_kits_sort_recent_is_the_status_clock_newest_first(client):
     await _seed_two_per_status(client)
     assert _names(await client.get("/kits")) == ["Zaku II", "Gouf", "Dom", "Acguy"]

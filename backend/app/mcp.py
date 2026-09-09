@@ -540,7 +540,8 @@ async def list_orders(
     pending_only=true to see orders still awaiting delivery — e.g. to find which
     order a shipping-notification email belongs to. sort: "placed" (newest order
     date first, the default) or "recent" (by the last status change — received,
-    else shipped, else placed — newest first). limit: only the first N in that
+    else shipped, else placed, a placement date being its midnight in the instance's
+    time zone — newest first). limit: only the first N in that
     order."""
     async with _tool_session() as session:
         orders = await orders_service.list_orders(

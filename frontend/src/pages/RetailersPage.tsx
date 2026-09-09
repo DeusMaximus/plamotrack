@@ -30,7 +30,7 @@ import {
   shippingSpeedLabel,
   wouldOrderAgainLabel,
 } from "../lib/labels";
-import { paginate, usePageParam, useTextParam } from "../lib/listState";
+import { paginate, usePageParam, useSearchParam } from "../lib/listState";
 import { usePresentationVersion } from "../lib/presentation";
 
 /** Would order again, in the pipeline's own vocabulary (§13.1): complete's
@@ -208,7 +208,7 @@ export function RetailersPage() {
   const queryClient = useQueryClient();
   const [modal, setModal] = useState<{ retailer?: Retailer } | null>(null);
   // The search and the page are the URL (§13.4, #232).
-  const [search, setSearch] = useTextParam("q", true);
+  const [search, setSearch] = useSearchParam("q");
   const [page, setPage] = usePageParam();
   const {
     data: retailers,

@@ -410,6 +410,45 @@ async def test_withdraw_tool_requires_the_restore_choice(client):
 # --- sort and limit on the list tools (§13.4, #232) -------------------------------
 
 
+async def test_list_orders_tool_reads_the_placement_date_in_the_instance_zone(client, retailer):
+    """The order clock is the service's, instance zone included: an order placed on
+    2 August against one shipped at 15:00Z on 1 August ranks under Brisbane's
+    midnight (14:00Z on the 1st) the same way on the tool as on REST, and the
+    other way under Los Angeles's (Codex #236 P2-1)."""
+    for number, order_date, extra in (
+        ("A", "2026-08-02", {}),
+        ("B", "2026-07-31", {"shipped_at": "2026-08-01T15:00:00+00:00"}),
+    ):
+        resp = await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": order_date,
+                "order_number": number,
+                "currency_code": "JPY",
+                "items": [
+                    {
+                        "item_type": "kit",
+                        "quantity": 1,
+                        "unit_price_minor": 2800,
+                        "currency_code": "JPY",
+                        "kit": {"name": f"Kit {number}", "grade": "HG"},
+                    }
+                ],
+                **extra,
+            },
+        )
+        assert resp.status_code == 201, resp.text
+
+    for zone, expected in (("Australia/Brisbane", ["B", "A"]), ("America/Los_Angeles", ["A", "B"])):
+        assert (await client.patch("/settings", json={"time_zone": zone})).status_code == 200
+        async with Client(mcp) as mcp_client:
+            tool = (await mcp_client.call_tool("list_orders", {"sort": "recent"})).data
+        rest = (await client.get("/orders", params={"sort": "recent"})).json()
+        assert [o["order_number"] for o in tool] == expected, zone
+        assert [o["order_number"] for o in rest] == expected, zone
+
+
 async def test_list_sort_and_limit_match_rest(client, retailer):
     """One service function, one vocabulary: the tool's `sort`/`limit` return
     the rows REST returns, in the same order, and refuse the same strangers."""
