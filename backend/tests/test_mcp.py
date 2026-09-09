@@ -448,9 +448,16 @@ async def test_list_sort_and_limit_match_rest(client, retailer):
         orders_tool = (
             await mcp_client.call_tool("list_orders", {"sort": "recent", "pending_only": True})
         ).data
+        # Both lists, because each service holds its own check — an unknown
+        # sort must be refused, never quietly read as the default order.
         with pytest.raises(ToolError, match="sort must be one of"):
             await mcp_client.call_tool("list_kits", {"sort": "newest"})
-        with pytest.raises(ToolError, match="limit must be at least 1"):
+        with pytest.raises(ToolError, match="sort must be one of"):
+            await mcp_client.call_tool("list_orders", {"sort": "newest"})
+        # `limit` is a PositiveInt4 on the tool (test_int4_bounds), so a zero is
+        # refused by the schema before the service's own check — either way a
+        # ToolError naming the parameter.
+        with pytest.raises(ToolError, match="limit"):
             await mcp_client.call_tool("list_orders", {"limit": 0})
 
     kits_rest = (await client.get("/kits", params={"sort": "recent", "limit": 2})).json()

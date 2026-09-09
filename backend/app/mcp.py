@@ -204,7 +204,7 @@ async def list_kits(
     grade: str | None = None,
     series: str | None = None,
     sort: str = "created",
-    limit: int | None = None,
+    limit: PositiveInt4 | None = None,
 ) -> list[dict]:
     """List kits in the collection, optionally filtered by pipeline status
     (pre_ordered, ordered, in_transit, backlog, building, complete — backlog
@@ -534,7 +534,7 @@ async def create_order(
 
 @mcp.tool
 async def list_orders(
-    pending_only: bool = False, sort: str = "placed", limit: int | None = None
+    pending_only: bool = False, sort: str = "placed", limit: PositiveInt4 | None = None
 ) -> list[dict]:
     """List orders, including received state and line items. Use
     pending_only=true to see orders still awaiting delivery — e.g. to find which

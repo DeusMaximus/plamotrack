@@ -1,9 +1,9 @@
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 
 from app.db import SessionDep
+from app.schemas.numeric import PositiveInt4
 from app.schemas.orders import OrderCreate, OrderRead, OrderReceive, OrderShip, OrderUpdate
 from app.services import orders as orders_service
 
@@ -15,7 +15,7 @@ async def list_orders(
     session: SessionDep,
     pending_only: bool = False,
     sort: orders_service.OrderSort = "placed",
-    limit: Annotated[int | None, Query(ge=1)] = None,
+    limit: PositiveInt4 | None = None,
 ):
     """`sort=recent` orders by the last status change — received, else shipped,
     else placed — newest first; `pending_only` keeps the orders not yet received;

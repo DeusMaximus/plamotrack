@@ -1,12 +1,12 @@
 import uuid
-from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
 
 from app.db import SessionDep
 from app.models.enums import KitStatus
 from app.schemas.catalog import UpgradeApplicationDetailRead
 from app.schemas.kits import KitCreate, KitRead, KitUpdate
+from app.schemas.numeric import PositiveInt4
 from app.services import kits as kits_service
 from app.services import upgrades as upgrades_service
 
@@ -20,7 +20,7 @@ async def list_kits(
     grade: str | None = None,
     series: str | None = None,
     sort: kits_service.KitSort = "created",
-    limit: Annotated[int | None, Query(ge=1)] = None,
+    limit: PositiveInt4 | None = None,
 ):
     """`sort=recent` is the pipeline clock (`status_updated_at`, newest first);
     `limit` the first N of that order — what Home's strips and "view all" links
