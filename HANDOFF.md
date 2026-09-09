@@ -41,6 +41,54 @@ Template:
 
 ---
 
+## 2026-09-10 — Claude Code (Fable 5.1) — #231 (M6.5 PR 1/4) built on `feat/231-workbench-tokens-theme-sidebar`: Workbench tokens, per-browser theme, bundled Inter, Lucide, new sidebar, every page swept; committed `eac24e1`, **PR #235 against the integration branch `m6.5-workbench`** — M6.5 lands on `main` in one release (owner's call)
+
+- **Done:** `frontend/src/index.css` holds the §13.1 tokens (dark default, light under
+  `[data-theme="light"]`) and hands them to Tailwind through `@theme inline`, which also
+  **removes** the stock palette, radii and shadows; `scripts/check-palette.mjs` refuses any
+  palette utility under `src/` and `npm run lint` runs it (CI unchanged). Theme: light / dark /
+  follow-the-device in `localStorage` (`src/lib/theme.ts`), applied before first paint by
+  **`public/theme.js` as a blocking head script — not inline, because the bundled nginx serves
+  the SPA under `script-src 'self'`**; `theme.test.ts` evaluates that file against the same
+  cases as the module (value × device axes) and `e2e/theme.spec.ts` proves switch-without-reload,
+  survive-a-reload, and follow-the-device live. `@fontsource-variable/inter` bundled (main.tsx);
+  `lucide-react` for every icon (nav, theme, close, chevrons, stars); the emoji and the ★/▾/✕
+  glyphs are gone. Sidebar (§13.3): sticky, wordmark + brand mark, Board/Kits/Orders/Inventory/
+  Retailers, Settings alone below, footer with the theme switch, an identity line in OIDC mode
+  ("name · via provider host") and Sign out; the tagline stays on sign-in and About. Backend:
+  `SessionRead.display_name` (owner's read only, null in local mode) — 3 tests. `ui.tsx` gained
+  `PageTitle`, `Chip` (dot + word in a status colour), `RatingStars`, `MICRO_LABEL_CLASS`,
+  `TABLE_HEAD_ROW_CLASS`; `StatusBadge`, order/retailer/inventory/import pills all use `Chip`.
+  README screenshots regenerated in dark (`screenshots.spec.ts` now sets `colorScheme: "dark"`).
+  Docs: design §13.1 (head script, why), AGENTS.md lint line, testing-and-review lint row.
+- **Decisions:** (1) nav's first entry stays **Board → `/board`** with a dashboard icon until
+  PR 3 lands Home — a "Home" label on a kanban would lie for one PR. (2) Order-status chips use
+  the pipeline colours: pending = ordered blue (was amber), shipped = in-transit amber, received
+  = complete green, pre-order = pre-ordered purple — the artboards. (3) Button labels keep their
+  "+ New order" text (e2e locators; PR 4 owns the e2e suite). (4) `th { text-align: start }` in
+  the base layer — the UA centred every header. (5) Row Delete buttons stay until PR 2's one
+  edit control per row. (6) **Integration branch** (owner, 2026-09-10): `m6.5-workbench`, cut
+  from `e89f114`; #231–#234 open against it, `main` is merged *into* it whenever `main` moves
+  (never rebased — the PRs stack on it), and it lands on `main` through a release PR with a
+  merge commit, that commit gated, tagged v0.4.0-alpha — so a `git clone` mid-milestone (the
+  README's install path) gets the 0.3.0 interface, not a redesign in progress. Recorded in
+  AGENTS.md (Git conventions) and design §13.6.
+- **State:** `feat/231-workbench-tokens-theme-sidebar` = `e89f114` + `eac24e1` + a merge of
+  `main`, pushed; **PR #235** open against `m6.5-workbench` (= `main` after this hand-off
+  commit, by merge). Checkout left on the feature branch so the dev stack shows the new look. Green: `npm run lint`,
+  `npm test` (509), `npm run build`, backend `ruff`, `pytest tests/test_auth_local.py
+  tests/test_auth_oidc.py` (122), full Playwright from an empty `plamotrack_e2e` (43 passed,
+  self-cleaning) plus `theme.spec.ts` (3). The dev DB's owner password is **not** the e2e
+  default, so e2e against it stops at setup — use the from-empty recipe. Dev DB untouched
+  (fixtures from 2026-09-08). Both dev servers running from this session. Not done: a
+  packaged-stack (`docker compose up --build`) run to see `theme.js` served under the CSP —
+  do it before merge; and the LXC still runs what #195 shipped.
+- **Next:** owner reviews the look on the dev stack (sign in; the sidebar switch is the theme);
+  GLM review of #235 per the roster; merge it into `m6.5-workbench`. Then #232 (URL
+  filter/sort, row edit control, sort/limit on REST **and** MCP), #233 (Home, drop dnd-kit),
+  #234 (Settings, About, e2e, README) per design §13.6 — each branched from and targeting
+  `m6.5-workbench`. Before the release merge: the packaged-stack run above.
+
 ## 2026-09-09 — Claude Code (Fable 5.1) — M6.5 direction decided: **Workbench** (design §13); mockups on a private design canvas; dev DB seeded with fixtures; docs committed, the four-PR split filed as #231–#234; no code yet
 
 - **Done:** a design walkthrough with the owner on the running dev stack, then three
@@ -257,45 +305,3 @@ Template:
   merge commit → push tag → `gh release create --prerelease --verify-tag` with the notes
   (scratchpad `release-notes-v0.3.0-alpha.md`, the gate block replaced by the rerun's) →
   post the #30/#195 comments, close both, close the M6 milestone. Then the LXC upgrade.
-
-## 2026-09-07 — Claude Code (Fable 5.1) — #213 closed (already fixed); #214 fixed on `fix/214-rebind-purges-mcp-oauth-state` → PR #219 reviewed GO + 1 P3, fixed, **MERGED → `b333ebf`**; #206 closed / #210 deferred; #195 next
-
-- **Done:** (1) **#213 closed** as already fixed: rounds 2–3 of #212 keyed both refresh
-  paths on the grant id (`exchange_refresh_token` and `_try_transparent_refresh` both take
-  `_one_transition(…, upstream_token_id)`); the comment on the issue points at the two lines.
-  What is not on record is a rotating-provider test — test coverage, not a defect. (2) **#214
-  fixed** on the branch, **PR #219**: `recovery rebind-oidc` purges the four grant collections
-  of `mcp_oauth_state` in its own transaction under every grant's advisory lock, records
-  `auth.mcp_grant_revoked` per grant (`ended_by=rebind`), and the command then asks the
-  provider, best effort, to revoke what the records held (`revoke_purged_grants_upstream` →
-  `OidcProvider.revoke_token`, after the commit). New leaf `app/auth/mcp_oauth_state.py`
-  holds the collection names, `GRANT_COLLECTIONS`, the lock key and the store — the proxy
-  imports the service, so the service could not import the proxy. (3) **PR #219 reviewed**
-  at `0c76771` by Cursor Grok 4.6 — picked in T3 Chat **by mistake** instead of GLM; Cursor
-  is available until **2026-09-15** and then gone, not back — **GO + 1 P3**: an unexchanged
-  authorization code (in the purge set *because* it holds the provider's tokens) was deleted
-  unread, its tokens never revoked upstream. **Fixed at `cc51a01`**: code records read under
-  `idp_tokens` (the review named the top-level read as the wrong remedy), revoked at the
-  provider, `codes_purged` on the `RECOVERY_RUN` row and in the output; no grant row, no lock
-  for a code (deliberate call 7). Round-1 control at `0c76771` red on the upstream list;
-  rbp-17/18/19, **19/19 killed**; full backend **2598** at `cc51a01`. `b5ff8ed` = roster/brief
-  note on Cursor. Response + coverage record posted on the PR. Lesson filed: "The
-  classification you wrote is a promise the same branch keeps". Docs: operations, design
-  §5.6/§5.9, AGENTS 13.
-- **Decisions:** #206 **closed not-planned** and #210 **deferred** past the M6 release (owner's
-  call, 2026-09-07): #206 discloses only the Streamable HTTP verb set on a path called `/mcp`;
-  #210 needs measurement, a policy and a packaged-stack proof, on an Origin-only flood behind
-  nginx at zero adoption, with `prune-audit` already the retention answer — one known-limitation
-  line each in the release notes. #214's residual (deliberate call 1 on the PR): a grant
-  *issued* concurrently with the rebind can leave one record, refused at its next use and
-  purged by the next rebind. Cursor's #219 round is recorded in `.agents/testing-and-review.md`
-  as history, with a footer in `review-brief.md` for the window to the 15th; GLM stays default.
-- **State:** **PR #219 squash-merged → `b333ebf`** (owner's call, 2026-09-07), #214 closed,
-  branch deleted; `main` = `b333ebf` + these hand-offs, pushed. No fold-in owed — the 19
-  `rbp-` cases are tracked (harness now 589 cases / 51 files). Tree clean. Control worktrees
-  removed. testhost (LXC 117) untouched, still claimed local, Keycloak fixture up.
-- **Next: #195**, as the previous entry lays out — gate step 4b (`deployment_gate.py --phase
-  all` + `--tunnel-*`) against the **tagged** commit on testhost, the bump (three files via
-  PR), tag, `--prerelease`, #30 closes with it; the notes carry #206/#210 as deferred and
-  lead with the §5.5 client-visible changes. Then the LXC upgrade (back up first;
-  `ALLOWED_HOSTS`; relink MCP clients; refresh the personal Gunpla skill).
