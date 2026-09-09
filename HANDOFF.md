@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-10 — Claude Code (Fable 5.1) — #231 (M6.5 PR 1/4) built on `feat/231-workbench-tokens-theme-sidebar`: Workbench tokens, per-browser theme, bundled Inter, Lucide, new sidebar, every page swept; committed `eac24e1`, **PR #235 against the integration branch `m6.5-workbench`** — M6.5 lands on `main` in one release (owner's call)
+## 2026-09-10 — Claude Code (Fable 5.1) — #231 (M6.5 PR 1/4) built on `feat/231-workbench-tokens-theme-sidebar`: Workbench tokens, per-browser theme, bundled Inter, Lucide, new sidebar, every page swept; PR #235 against the integration branch `m6.5-workbench` — **MERGED `f99e085`** (squash, 2026-09-10) after Codex round 1 (GO + 3 P3, fixed); M6.5 lands on `main` in one release (owner's call)
 
 - **Done:** `frontend/src/index.css` holds the §13.1 tokens (dark default, light under
   `[data-theme="light"]`) and hands them to Tailwind through `@theme inline`, which also
@@ -101,7 +101,12 @@ Template:
   finding:** a *parallel* local Playwright run on this Mac timed out `preorder-toggle` and
   `dialog-keyboard`'s picker selection at their 5 s waits, twice; serial (`--workers=1`,
   CI's setting) is green — a load flake of the #17 shape, untouched.
-- **Next:** owner merges #235 into `m6.5-workbench` (GO stands; the P3s are fixed). Then #232 (URL
+- **Merged:** #235 squash → **`f99e085` on `m6.5-workbench`** (owner's call; CI green on the head
+  `d36b2f5`); `feat/231-…` deleted. `main` = the 0.3.0 interface plus hand-offs, and is merged
+  into `m6.5-workbench` after each hand-off. **`feat/232-list-urls-sort-edit-control` cut from
+  `f99e085` and checked out, nothing on it yet**; both dev servers restarted on the dev DB so the
+  owner can see the merged look. #231 stays open until the release (status note on the issue).
+- **Next:** #232 on that branch, PR against `m6.5-workbench` (URL
   filter/sort, row edit control, sort/limit on REST **and** MCP), #233 (Home, drop dnd-kit),
   #234 (Settings, About, e2e, README) per design §13.6 — each branched from and targeting
   `m6.5-workbench`. Before the release merge: the packaged-stack run above.
