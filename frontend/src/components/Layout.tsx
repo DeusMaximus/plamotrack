@@ -35,9 +35,10 @@ const NAV = [
 
 export const SIDEBAR_DIVIDER_CLASS = "border-e";
 
-const NAV_ROW_CLASS = "flex h-9 items-center gap-2.5 rounded-sm px-3 text-sm font-medium";
+/** One nav row (§13.3): the sidebar's, and the Settings sections' (SettingsPage). */
+export const NAV_ROW_CLASS = "flex h-9 items-center gap-2.5 rounded-sm px-3 text-sm font-medium";
 
-function navRowClass({ isActive }: { isActive: boolean }): string {
+export function navRowClass({ isActive }: { isActive: boolean }): string {
   return `${NAV_ROW_CLASS} ${
     isActive ? "bg-accent-soft text-accent" : "text-muted hover:bg-chip hover:text-text"
   }`;

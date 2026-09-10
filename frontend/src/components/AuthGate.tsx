@@ -195,8 +195,9 @@ function Centered({ children }: { children: ReactNode }) {
   );
 }
 
-/** The wordmark with the tagline — the tagline lives here and on About, not in
- *  the sidebar (§13.3). The wordmark is a brand identifier, not copy. */
+/** The wordmark with the one-line description — it lives here and on About,
+ *  not in the sidebar (§13.3), and it is plain: the README keeps the joke. The
+ *  wordmark is a brand identifier, not copy. */
 function Wordmark() {
   const { t } = useTranslation();
   return (
@@ -205,7 +206,7 @@ function Wordmark() {
         <BrandMark size={24} />
         <span>plamotrack</span>
       </h1>
-      <p className="mt-1 text-xs text-muted">{t("layout.tagline")}</p>
+      <p className="mt-1 text-xs text-muted">{t("layout.description")}</p>
     </div>
   );
 }

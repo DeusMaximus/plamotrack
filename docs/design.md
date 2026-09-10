@@ -2365,9 +2365,10 @@ Unchanged from the original plan:
    is §5.9
 10. 🔨 **M6.1 — MCP modernisation:** dual-era compatibility for the existing protocol
     generation and `2026-07-28`, with conformance and real-client coverage
-11. 🔨 **M6.5 — UI redesign:** move off the stock Tailwind look. Direction
+11. ✅ **M6.5 — UI redesign:** move off the stock Tailwind look. Direction
     **decided 09/09/2026 — Workbench, §13** — after three directions were drawn on
-    the same screens; the build is split in §13.6. Sequenced after M5.1 so the
+    the same screens; the build is split in §13.6 and **complete on the integration
+    branch (10/09/2026, #231–#234)**, landing on `main` as v0.4.0-alpha. Sequenced after M5.1 so the
     Settings surface isn't styled twice, and before M7/M8 so the gallery and the
     showcase are built in the new look once. Board interaction gaps deferred from
     the #120 consolidation (#122) land here: Home replaces the board (§13.2)
@@ -2624,7 +2625,7 @@ considered and declined.
 
 ---
 
-## 13. UI redesign (M6.5) — direction decided 09/09/2026
+## 13. UI redesign (M6.5) ✅ — direction decided 09/09/2026, built 10/09/2026 (#231–#234)
 
 **Decision.** The interface moves off the stock Tailwind vocabulary to one house
 look, *Workbench*: warm near-black surfaces (the light theme a warm off-white), one
@@ -2655,6 +2656,15 @@ one more token file, so choosing now closes nothing.
 - **Inter is bundled with the app**, never fetched from a font host: a private
   instance makes no third-party request to render.
 - **Icons are stroke icons from one set (Lucide).** The emoji go.
+
+Built as #231 (2026-09-10). What the build changed: the light theme's accent and
+five of its status hues are the artboard's hues *darkened* until every composed
+text-on-chip pair clears 4.5:1 (`src/lib/tokens.test.ts` parses `index.css` and
+asserts each pair in both themes; Codex #235) — the artboard's light values are no
+longer literal; `--faint` is held to 3:1 on the chip as well as the surfaces, because
+a hovered row is the chip and its pencil sits on it (Codex #236); and the palette
+guard (`scripts/check-palette.mjs`, run by `npm run lint`) refuses arbitrary colour,
+radius and shadow values too, not only the stock palette.
 
 ### 13.2 Home replaces the board
 
@@ -2712,6 +2722,12 @@ the owner is bound as ("Jamie · via Google"), the one identity a single-owner a
 has to show. In local mode the footer is two controls: nothing to manage, so no
 profile card.
 
+Built as #231 (2026-09-10), Home first from #233. The line that moved off the
+sidebar is a plain one-line description ("A self-hosted Gunpla and plamo collection
+and build tracker."), on the sign-in screen and About (#234); the README keeps its
+own tagline. The Settings sections' navigation is the sidebar's row shape, and the
+Access tokens table the list pages' (#234).
+
 ### 13.4 List pages
 
 Kits, Orders, Inventory and Retailers keep their tables and gain what Home links
@@ -2755,11 +2771,12 @@ merged into it as `main` moves, landed on `main` in one release (v0.4.0-alpha), 
 (decided 2026-09-10) — in this order, so no page is styled twice (filed as #231–#234,
 milestone M6.5):
 
-1. **Tokens, theme switch, Inter, Lucide** — every component and page onto the
-   token utilities; the sidebar (§13.3); the sign-in screen.
-2. **List-page filter and sort in the URL** (§13.4) and the row edit control.
+1. ✅ **Tokens, theme switch, Inter, Lucide** — every component and page onto the
+   token utilities; the sidebar (§13.3); the sign-in screen. #231, PR #235 → `f99e085`.
+2. ✅ **List-page filter and sort in the URL** (§13.4) and the row edit control.
    Backend: sort and limit on the kit and order list endpoints, on REST and MCP
-   alike (rule 1), declared in the route registry.
-3. **Home** (§13.2), replacing the board page and the drag-and-drop dependency; the
-   per-status counts come from one service function both surfaces share.
-4. Settings, About, the e2e suite and the README screenshots in the new look.
+   alike (rule 1), declared in the route registry. #232, PR #236 → `3faca69`.
+3. ✅ **Home** (§13.2), replacing the board page and the drag-and-drop dependency; the
+   per-status counts come from one service function both surfaces share. #233,
+   PR #237 → `8bac10a`.
+4. ✅ Settings, About, the e2e suite and the README screenshots in the new look. #234.
