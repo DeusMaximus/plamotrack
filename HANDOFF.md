@@ -41,6 +41,51 @@ Template:
 
 ---
 
+## 2026-09-11 — Claude Code (Fable 5.1) — #241 built on `fix/241-upstream-revocation` → PR #245, one Codex Astra round (NO-GO on a cancelled Backend job only, no findings), **MERGED → `459c8b3`**; integration branch **`m6.1-fastmcp4` cut**; next #243
+
+- **Done:** #241 whole, five commits. `9e99c31` httpx to the runtime deps (lock: only the
+  project's own entry moves). `96cbe69` `_revoke_upstream` delegates to `OidcProvider.revoke_token`
+  (the app's own httpx, HTTP Basic as the code exchange), skips only when no discovery document
+  is held, and has no catch-all — a defect is the binding's 500 after the local end; the fake
+  records `Authorization` and gains `revoke_error`; six tests (the control with a
+  FastMCP-4-shaped upstream client lacking `revoke_token`, the access-only hint, the
+  defect → 500 with the grant already dead, refused / no endpoint, a fresh process with the
+  provider down) and the witness asserts Basic; design §5.6's row; lesson "The fake stood in
+  for the very object under test". `815b7dd` six `241-` mutants in the tracked harness.
+  `687c9ed` the prose (module docstring, two test comments, design §5.9) follows the code.
+  **Verified:** full backend **2700 passed** at `815b7dd` (the head differs by prose in three
+  files); negative control on unfixed `main` **3 red / 26 green** — both control cases on
+  `[] == [upstream refresh]`, the defect case on `200 == 500`; mutants **6/6 killed**; ruff
+  clean. The PR body carries the four deliberate calls, both tables and the coverage record.
+- **The round (Codex, GPT-6 Astra):** NO-GO solely because the Backend CI job was cancelled at
+  its 20-minute cap at 66 % — no P1–P3; it re-measured the control (3/26), the six mutants
+  (6/6, failing assertions captured), the full suite (2700 at `687c9ed`), retained all four
+  deliberate calls, added 34 supplementary cases, and corrected one count (five new test
+  functions / seven cases, the table's last row the existing witness — PR body amended). The
+  cancellation profiled against the base's Backend log: **uniformly** 3.4× slower (median 17 s vs
+  5 s per progress line, same slow regions, pre-test steps normal) — a slow runner, not a stalled
+  test; attempt 2 on the same head green (2700 in 14m37s, job 15m40s). Response posted
+  (issuecomment-5624914927); squash-merged on the owner's word, branch deleted.
+- **Decisions:** the four deliberate calls on PR #245 (a defect is the 500, not a warning;
+  share the provider client, no dead public-client branch — OIDC mode requires the secret; one
+  proxy guard, the never-held document, none for "no endpoint" which the provider client
+  checks; `upstream_transport` stays for exchange and refresh until #243). Reviewer: **Codex
+  Astra**, a fresh chat — it reviewed this file's rounds 12–15 on #212; the brief was printed in
+  the 2026-09-11 session chat (scratchpad copy `245-review-brief.md`).
+- **State:** `main` = `459c8b3` + this entry, pushed; #241 closed by the merge. **`m6.1-fastmcp4`**
+  cut from that `main` and pushed — the base for #243, #242 (stacked) and #244; merge `main` into
+  it when `main` moves, never rebase (AGENTS → Git conventions). Checkout on `main`, tree clean,
+  dev overlay up. Codex's spike branch `spike/m61-fastmcp4` (`bbb58e7`, local) untouched. The LXC: last recorded 0.3.0 with the 0.4.0 upgrade queued (unconfirmed).
+  Evidence outside git: the spike's `/private/tmp/plamotrack-m61-fastmcp4-20260908`; this
+  session's scratchpad logs for #241 (negative control, mutants, full suite).
+- **Next:** **#243** on a branch from `m6.1-fastmcp4`, rebuilt from the spike's commits
+  (`0ff1633`…`1c41ae6`: lock regenerated against `main`'s — httpx is already a runtime dep; the
+  httpx2 twin replaces the `upstream_transport` authlib injection; the mechanical test fixes; the
+  discovery flag; the `private_key_jwt` refusal accepted; the null 405 id; the era probes with the
+  four envelope assertions corrected to the challenge contract; the report to `.agents/spikes/241/`).
+  Then #242 stacked, #244, the release PR (merge commit, gated, v0.5.0-alpha suggested). If the
+  Backend cap bites again at a normal count, that is a CI issue to file, not a branch's.
+
 ## 2026-09-11 — Claude Code (Fable 5.1) — M6.1 planned and filed: Codex's FastMCP 4 spike verified; **#241** (prep, `main`) → **#243** (bump) + **#242** (CIMD) + **#244** (gate) on integration branch `m6.1-fastmcp4`; the #241 Codex brief printed; the integration-branch rule generalised
 
 - **Done:** (1) 2026-09-08 — the brief for the FastMCP 4 compatibility spike printed; Codex ran it
@@ -233,52 +278,3 @@ Template:
   #234 (Settings, About, the e2e suite, README captures in the new look) off `m6.5-workbench`;
   merge `main` into the integration branch after each hand-off; a packaged-stack run before the
   release merge; hold the release hand-off commit until after the merge.
-
-## 2026-09-10 — Claude Code (Fable 5.1) — #232 (M6.5 PR 2/4) reviewed by Codex (GPT-6) over four rounds and **MERGED into `m6.5-workbench` as `3faca69`** (squash); the order `recent` clock moved into the application; the kit status clock has one source; next #233 (Home) off `m6.5-workbench`
-
-- **Done:** **Round 1 NO-GO (P2 + 5 P3)** — the order `recent` clock cast `order_date` in the SQL
-  session's zone; the search box lost burst keystrokes (React Router navigates in a transition, and
-  a controlled input read from the URL is restored before the update commits); the converted total
-  suppressed on the header currency; a zero shipping cost hidden; the pencil 2.72:1 on a hovered
-  row; the lines box's type column drifting — fixed `edd3ada`, plus a no-op merge of the base
-  (`0baa1db`) to clear GitHub's stale "conflicting" state, which had also silently skipped CI on
-  the branch. Found meanwhile: the kit status clock had two sources (create = Postgres `now()`,
-  move = API clock; OrbStack's db clock runs 5–20 ms ahead of the host) → a Python default on the
-  model, pinned by a frozen-clock test. **Round 2 NO-GO (P2 + P3)** — Postgres's zone files lack 97
-  names the settings accept and read CET/EET/MET/WET as fixed offsets → the clock and the sort left
-  SQL (`last_status_change`, a stable Python sort, `limit` after; an every-accepted-zone test;
-  Havana's transition policy named in §13.4) `edd3564`; a same-currency snapshot of a different
-  amount hidden → amounts compared. **Round 3 GO + P3** — equal instants across zone
-  representations compared unequal (PEP 495: a `fold`-sensitive local datetime ≠ any other zone's)
-  so the date tie-break never ran → `_recent_key` = clock − epoch, a timedelta, `5aa246d`. 32
-  mutants over four rounds, all killed (table + exact edits on the PR; superseded anchors marked).
-  README captures regenerated (round 2). Lesson: `.agents/lessons.md` → "Four rounds in one
-  function". Roster row updated in `.agents/testing-and-review.md`.
-- **Decisions:** (7) `useSearchParam` — the box owns its value, the URL follows with `replace`, any
-  non-REPLACE navigation resets the box to the URL; (8) `convertedTotal` is suppressed only when
-  every line is in the snapshot currency *and* the snapshots sum to the lines' subtotal; (9) a
-  shipping line with a service and no cost shows the service and a dash, never a zero; (10) every
-  *generated* kit status stamp is the API's clock — a supplied ship/receipt instant is recorded as
-  given; (11) `--faint` retuned (dark `#746f66`, light `#878176`) so it holds 3:1 on the chip, the
-  hover ground; (12) the `recent` order sort is computed by the application and loads every
-  (pending-filtered) order before slicing — Codex measured 326 ms / 30 MiB at 3,000 orders — the
-  milestone's trade (rank first, load the selected rows, if a collection ever needs it); (13) on a
-  transition day a repeated midnight is its *first* occurrence and a skipped one reads with the
-  offset that held before it (Postgres picks the second); (14) ties compare as instants.
-- **State:** `m6.5-workbench` = `f99e085` (#231) + `3faca69` (#232) + merges of `main`; the
-  feature branch deleted. CI green at `5aa246d` (run 34435324567). Green at that tree: backend 2680
-  (three sequential chunks — one pytest at a time), unit 548, e2e 55 serial + 1 skipped, lint,
-  build, ruff. Dev servers off; the dev DB untouched (its owner password is not the e2e default —
-  the from-empty recipe is in the testing doc; free :8000 first). Checkout parked on
-  `m6.5-workbench`. **Reviewer calibration:** Codex GPT-6 found two hidden P2s in the order clock
-  across rounds 1–2 and the tie P3 in round 3, each with a ready reproduction and both halves of
-  the remedy; it re-measured every mutant and corrected the author's table twice (B4 three not
-  two; "ten" was thirteen); the visual leg (contrast composed in the browser, artboard comparison)
-  worked. Four rounds in one function is the signal `testing-and-review.md` names — see the lesson.
-- **Next:** **#233 (Home)** off `m6.5-workbench`: replaces the board, drops dnd-kit, per-status
-  counts from one service function, `/board` → Home; the `?status=&sort=recent` links exist;
-  Home's strips call `list_kits`/`list_orders` with `sort=recent` and a `limit`. Then #234. Merge
-  `main` into the integration branch after each hand-off; a packaged-stack run before the release
-  merge; hold the release hand-off commit until after the merge (the 0.3.0 lesson). Open
-  observation from round 1, not fixed: two Playwright specs flake under parallel local workers
-  (serial is CI's setting and green).
