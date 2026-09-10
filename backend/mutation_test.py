@@ -5934,6 +5934,52 @@ CASES += [
     ),
 ]
 
+# --- #241: provider revocation off FastMCP's upstream client (M6.1 prep). ----------
+CASES += [
+    (
+        "241-1. a process that never held the document reaches for it anyway",
+        MCP_OAUTH,
+        '        if provider.cached_metadata is None:\n            log.info("MCP OAuth: provider document not held; local revocation stands")\n            return\n',
+        '        if False:\n            log.info("MCP OAuth: provider document not held; local revocation stands")\n            return\n',
+        "fresh_process_with_the_provider_down",
+    ),
+    (
+        "241-2. the hint names the other token",
+        MCP_OAUTH,
+        '            (grant.refresh_token, "refresh_token")\n            if grant.refresh_token\n            else (grant.access_token, "access_token")\n',
+        '            (grant.refresh_token, "access_token")\n            if grant.refresh_token\n            else (grant.access_token, "refresh_token")\n',
+        "kills_every_credential_of_the_grant",
+    ),
+    (
+        "241-3. the revocation request carries no client authentication",
+        OIDC_SVC,
+        "                response = await self._http.post(\n                    metadata.revocation_endpoint,\n                    data=form,\n                    auth=(self.client_id, self._client_secret),\n                )\n",
+        "                response = await self._http.post(\n                    metadata.revocation_endpoint,\n                    data=form,\n                )\n",
+        "kills_every_credential_of_the_grant",
+    ),
+    (
+        "241-4. the best-effort catch forgives a defect again",
+        OIDC_SVC,
+        '        except httpx.HTTPError as exc:\n            log.warning("OIDC revocation failed: %s", type(exc).__name__)\n            return False\n',
+        '        except Exception as exc:\n            log.warning("OIDC revocation failed: %s", type(exc).__name__)\n            return False\n',
+        "defect_in_the_upstream_revocation",
+    ),
+    (
+        "241-5. the provider is asked before the local end",
+        MCP_OAUTH,
+        "                    grant = await self._upstream_token_store.get(key=mapping.upstream_token_id)\n                    await self._upstream_token_store.delete(key=mapping.upstream_token_id)\n",
+        "                    grant = await self._upstream_token_store.get(key=mapping.upstream_token_id)\n                    if grant is not None:\n                        await self._revoke_upstream(grant)\n                    await self._upstream_token_store.delete(key=mapping.upstream_token_id)\n",
+        "defect_in_the_upstream_revocation",
+    ),
+    (
+        "241-6. a refused revocation counts as accepted",
+        OIDC_SVC,
+        '            log.warning("OIDC revocation refused: status=%s", response.status_code)\n            return False\n',
+        '            log.warning("OIDC revocation refused: status=%s", response.status_code)\n            return True\n',
+        "upstream_revocation_after_a_rebind_is_best_effort",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
