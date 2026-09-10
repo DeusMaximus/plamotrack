@@ -41,6 +41,44 @@ Template:
 
 ---
 
+## 2026-09-10 — Claude Code (Fable 5.1) — #233 (M6.5 PR 3/4) built on `feat/233-home`: Home replaces the board, the order stage on the wire, `GET /summary` + `get_summary` from one function; **committed locally `d6c8def`, NOT pushed, no PR yet** — the owner's word opens it against `m6.5-workbench`
+
+- **Done:** `services/order_stage.py` — one predicate for where an order sits (`received`, else
+  `in_transit`, else `pre_ordered` when every spawned kit is still one and there is at least one,
+  else `ordered`); a computed `stage` on `OrderRead` (REST and the order tools alike); `GET /summary`
+  (`routers/summary.py`, tag `summary` → family 4) and the `get_summary` tool over
+  `services/summary.py::collection_summary` — kits per status, orders per stage, both statements
+  under one `REPEATABLE READ READ ONLY` snapshot (rule 7.2, the export shape). Frontend:
+  `pages/HomePage.tsx` (bench cards, the two strips capped at six with the server's counts and a
+  *view all* link, three mail columns capped at three) over `lib/home.ts` (the pure rules); the two
+  dialogs extracted verbatim into `components/KitFormModal.tsx` / `OrderFormModal.tsx`;
+  `lib/invalidate.ts` (the one list of keys a kit write and an order write dirty, `summary`
+  included); the Orders `?status=` filter speaks the stage vocabulary and reads `order.stage`;
+  `BoardPage`, `kitStatusMutation` (#50's policy) and `@dnd-kit/core` deleted; `/board` → `/`;
+  nav Home first (no `end` — React Router already treats `/` as a whole segment). Docs: README,
+  AGENTS.md, design §1.1/§4/§7/§13.2 ("Built as #233"), translating, operations; the
+  board/drag comment sweep; `docs/screenshots/home.png` replaces the two board captures.
+- **Decisions:** (1) the stage is on the wire, not derived in the browser; (2) the Orders URL
+  vocabulary changed to the wire's (`in_transit`, `ordered`, `pre_ordered`, `received`) — #232 is
+  unreleased; the chip *words* on Orders and the column words on Home follow their artboards;
+  (3) the summary reads one snapshot; (4) order counts bucket loaded rows, not SQL; (5) caps
+  3 / 6 / none; (6) *day 1* on the start day; (7) catalog names from the four lists, fetched only
+  when a card names a catalog line; (8) #50's test goes with the drag; (9) e2e counts are deltas
+  against `/summary`, the empty case stubs by pathname.
+- **State:** `feat/233-home` = `a9e2911` + `d6c8def`, clean, local only. Green at that tree:
+  backend 2693 (one run, 17:38), unit 558, e2e 61 + 1 skipped serially from an empty DB (all
+  tables 0 after), ruff, lint, build. Control 12/12 red on the base (assertion lines in the PR
+  body). Mutants: `home-` ×10 10/10 killed by the harness on `d6c8def`; 8 unit + 2 e2e killed by hand, 1 e2e mutant (NavLink
+  `end`) dead → removed. PR body ready in the session scratchpad (`pr-body-233.md`), brief
+  printed in the chat. Dev DB untouched; the Browser pane has a live owner session on it (used
+  for the look); Vite left running, the `api` preview stopped. `.claude/launch.json` is tracked
+  (`api`, `frontend`) — I overwrote it once from the wrong cwd and restored it.
+- **Next:** owner says push → `git push -u origin feat/233-home`, `gh pr create --base
+  m6.5-workbench --body-file <the scratchpad body>` (it carries `Closes #233, closes #122`); Codex round (the brief). Then
+  #234 (Settings, About, the e2e suite, README captures in the new look) off `m6.5-workbench`;
+  merge `main` into the integration branch after each hand-off; a packaged-stack run before the
+  release merge; hold the release hand-off commit until after the merge.
+
 ## 2026-09-10 — Claude Code (Fable 5.1) — #232 (M6.5 PR 2/4) reviewed by Codex (GPT-6) over four rounds and **MERGED into `m6.5-workbench` as `3faca69`** (squash); the order `recent` clock moved into the application; the kit status clock has one source; next #233 (Home) off `m6.5-workbench`
 
 - **Done:** **Round 1 NO-GO (P2 + 5 P3)** — the order `recent` clock cast `order_date` in the SQL
@@ -243,36 +281,3 @@ Template:
   2026-09-09). Brief for it: this entry, design §13.1 / §13.3 / §13.6, and #231 itself;
   the reference artboards are on the owner's private design canvas — ask the owner for
   exported PNGs if exact spacing or colour is in doubt. M6.1's two-PR plan from the spike hand-off is unaffected.
-
-## 2026-09-08 — Codex (GPT-6) — M6.1 FastMCP 4 compatibility spike completed locally
-
-- **Done:** Fable's attached brief on `spike/m61-fastmcp4`, forked from `main` at
-  `925c56d`. Report: `.agents/spikes/2026-09-m61-fastmcp4.md` **on that branch**.
-  Commits `0ff1633` (FastMCP 4.0.3 / SDK 2.2.0 lock), `0fc80ca` (httpx must be a
-  runtime dependency), `43e0d82` (mechanical test adaptations), `1c41ae6` (16 era
-  probes), `bbb58e7` (report). No PR, push, GitHub comment or deployment.
-- **Findings:** the production FastMCP 4 upstream OAuth client lacks `revoke_token`:
-  exchange/refresh and local revocation work, but provider revocation is never sent;
-  the old httpx test factory masks it. Custom discovery omits the issuer-response
-  flag. CIMD clients now use the bounded memory cache rather than persistent client
-  rows, invalidating five lifecycle assertions; a DCR request for private_key_jwt
-  is refused before our public-client canonicalization. No runtime app/ingress code
-  was edited. Modern and legacy tools work; issuer identity stays byte-identical.
-- **State:** baseline **2655 passed**; unchanged upgraded suite **2644 passed / 11
-  failed**. Final full suite at `1c41ae6`: **2661 passed / 10 failed**. Same era file
-  on untouched 3.4.5: **11 red / 5 green**; on 4.0.3: **4 red / 12 green**. Four reds are the
-  brief's pre-existing envelope mismatch (empty anonymous challenge; invalid_token
-  rather than REST auth.bearer_invalid), intentionally retained for the decision.
-  Packaged local matrix **186 passed / 0 failed**; real 4.x auto/legacy and frozen
-  3.x clients work on both `/mcp` spellings. No optional long hold, packaged OIDC,
-  remote gate or browser-client/conformance run. Ruff and frontend build pass.
-- **Cleanup:** temporary main worktree removed; isolated Compose stack and its own
-  volume removed; normal dev DB overlay healthy. Unrelated Keycloak left alone.
-  Evidence logs/scripts are outside git at
-  `/private/tmp/plamotrack-m61-fastmcp4-20260908`. Final checkout is the spike;
-  `main` gains only this handoff and verbatim rotation, no lock or code changes.
-- **Next:** preparation PR for independent HTTP/revocation coupling, then an atomic
-  bump plus OAuth/era compatibility PR. Proposed M6.1 issues and acceptance matrix
-  are in the report, not filed. Do not call this branch a finished migration.
-  v0.3.0-alpha is the existing release; the prior handoff's LXC upgrade and open
-  #223–#227/#230 follow-ups were not investigated or changed by this spike.
