@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { Plus } from "lucide-react";
 import { useEffect, useId, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -212,7 +213,7 @@ export function CatalogItemPicker({
           ))}
           <button
             type="button"
-            className="w-full border-t border-rule px-3 py-2 text-start text-sm font-medium text-accent hover:bg-accent-soft"
+            className="flex w-full items-center gap-1.5 border-t border-rule px-3 py-2 text-start text-sm font-medium text-accent hover:bg-accent-soft"
             onClick={() =>
               onChange({
                 mode: "new",
@@ -223,6 +224,8 @@ export function CatalogItemPicker({
               })
             }
           >
+            {/* A stroke icon, not the "＋" glyph (§13: one icon set). */}
+            <Plus size={14} aria-hidden className="shrink-0" />
             {t("catalogPicker.createNew", { type: itemTypeLabel(itemType), query: query.trim() })}
           </button>
         </div>

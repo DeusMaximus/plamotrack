@@ -49,6 +49,16 @@ replaced was drawn for a dozen kits and stopped being useful somewhere around fi
 
 "Backlog" means *in hand, not started*. There is no polite word for this pile. We tried.
 
+### One look, two themes
+
+The interface is one house look — warm near-black surfaces, one amber accent, hairline
+borders, Inter, stroke icons — with a light variant of the same tokens. Light, dark or
+follow-the-device is a per-browser choice in the sidebar, applied before the first
+paint so a dark browser never flashes white. Everything else is an instance-wide
+setting; this is the one thing that belongs to the device asking.
+
+![Home in the light theme](docs/screenshots/home-light.png)
+
 ### Orders that know what they turned into
 
 Order a Zaku ×2 and plamotrack creates **two kit rows**, because you own two physical
@@ -154,7 +164,7 @@ Being honest up front beats you finding out at 11pm:
 | **Internationalisation foundations** | ✅ Milestone 5.1: instance-wide language, formatting locale, time zone, date/hour style, and reference currency; the `en-AU` source catalogue and fallback; a reviewed [translation workflow](docs/translating.md); locale-aware dates, times, numbers, counts, money, and file sizes; structured REST/import diagnostics with translated known identifiers and an English compatibility fallback; and RTL-aware layout utilities. No non-English catalogue ships yet. Upgrades default existing instances to `en-AU`/UTC; naive CSV timestamps are read prospectively in the configured instance zone, stored history is never reinterpreted, and downgrading past the settings migration loses its settings row. |
 | **Authentication, OAuth-compatible remote MCP, a tested TLS deployment** | ✅ Milestone 6 — owner login (password or OpenID Connect), personal access tokens, MCP OAuth for Claude web / ChatGPT web / MCP Inspector, and the reference Caddy deployment plus the other tested ways to expose an instance (`docs/operations.md`) |
 | **MCP `2026-07-28` compatibility** | 🔨 Milestone 6.1 — dual-era, without dropping current clients |
-| **UI redesign** | 🔨 Milestone 6.5 — moving off the stock-component look, so the gallery and showcase get built in the new one; the direction is settled (`docs/design.md` §13) and the build is next |
+| **UI redesign** | ✅ Milestone 6.5 — one house look on semantic tokens with a per-browser light/dark/system switch, Home in place of the board, filter/sort/page in the list pages' URLs, one edit dialog per record (`docs/design.md` §13) |
 | **Photo gallery per kit** | 🔨 Milestone 7 |
 | **Public read-only showcase page** | 🔨 Milestone 8 — after the admin and MCP paths are protected |
 
@@ -172,9 +182,12 @@ cp .env.example .env
 docker compose up -d --build --wait
 ```
 
-Open **http://localhost:8080**. That's an empty collection — head to
-**Settings → Data management → Starter sheet** to pour an existing spreadsheet
-in, or just add an order.
+Open **http://localhost:8080**. The first visit asks for the setup token from the API
+log and a password (the alpha note above); every visit after it is this sign-in, and
+behind it an empty collection — head to **Settings → Data management → Starter sheet**
+to pour an existing spreadsheet in, or just add an order.
+
+![The sign-in screen](docs/screenshots/sign-in.png)
 
 The first run builds two images and takes a couple of minutes; after that it's
 seconds. `.env` is the whole configuration: Compose reads it to start the database

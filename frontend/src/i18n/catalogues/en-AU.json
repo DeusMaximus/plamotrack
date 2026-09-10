@@ -8,7 +8,7 @@
     "settings": "Settings"
   },
   "layout": {
-    "tagline": "pre-order → panel-lined masterpiece",
+    "description": "A self-hosted Gunpla and plamo collection and build tracker.",
     "identityVia": "via {{provider}}"
   },
   "theme": {
@@ -751,7 +751,7 @@
     "searching": "Searching…",
     "onHand_one": "{{countDisplay}} on hand",
     "onHand_other": "{{countDisplay}} on hand",
-    "createNew": "＋ Create new {{type}} “{{query}}”"
+    "createNew": "Create new {{type}} “{{query}}”"
   },
   "orders": {
     "title": "Orders",
