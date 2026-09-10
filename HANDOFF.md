@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-10 — Claude Code (Fable 5.1) — #233 (M6.5 PR 3/4) built on `feat/233-home`: Home replaces the board, the order stage on the wire, `GET /summary` + `get_summary` from one function; **committed locally `d6c8def`, NOT pushed, no PR yet** — the owner's word opens it against `m6.5-workbench`
+## 2026-09-10 — Claude Code (Fable 5.1) — #233 (M6.5 PR 3/4) built on `feat/233-home`: Home replaces the board, the order stage on the wire, `GET /summary` + `get_summary` from one function; **PR #237 open against `m6.5-workbench` at `d6c8def`** (pushed on the owner's word), Codex round next
 
 - **Done:** `services/order_stage.py` — one predicate for where an order sits (`received`, else
   `in_transit`, else `pre_ordered` when every spawned kit is still one and there is at least one,
@@ -65,7 +65,7 @@ Template:
   3 / 6 / none; (6) *day 1* on the start day; (7) catalog names from the four lists, fetched only
   when a card names a catalog line; (8) #50's test goes with the drag; (9) e2e counts are deltas
   against `/summary`, the empty case stubs by pathname.
-- **State:** `feat/233-home` = `a9e2911` + `d6c8def`, clean, local only. Green at that tree:
+- **State:** `feat/233-home` = `a9e2911` + `d6c8def`, clean, pushed; PR #237 open. Green at that tree:
   backend 2693 (one run, 17:38), unit 558, e2e 61 + 1 skipped serially from an empty DB (all
   tables 0 after), ruff, lint, build. Control 12/12 red on the base (assertion lines in the PR
   body). Mutants: `home-` ×10 10/10 killed by the harness on `d6c8def`; 8 unit + 2 e2e killed by hand, 1 e2e mutant (NavLink
@@ -73,8 +73,8 @@ Template:
   printed in the chat. Dev DB untouched; the Browser pane has a live owner session on it (used
   for the look); Vite left running, the `api` preview stopped. `.claude/launch.json` is tracked
   (`api`, `frontend`) — I overwrote it once from the wrong cwd and restored it.
-- **Next:** owner says push → `git push -u origin feat/233-home`, `gh pr create --base
-  m6.5-workbench --body-file <the scratchpad body>` (it carries `Closes #233, closes #122`); Codex round (the brief). Then
+- **Next:** the Codex round on PR #237 (brief printed in the session chat; `Closes #233, closes
+  #122` in the body) → respond → merge into `m6.5-workbench`. Then
   #234 (Settings, About, the e2e suite, README captures in the new look) off `m6.5-workbench`;
   merge `main` into the integration branch after each hand-off; a packaged-stack run before the
   release merge; hold the release hand-off commit until after the merge.
