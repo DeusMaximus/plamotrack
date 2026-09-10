@@ -785,8 +785,9 @@ only add the authentication tables. In order:
    password you want ([First run](#first-run-claim-the-instance)).
 4. **Every script and MCP client needs a personal access token** from now on
    (**Settings → Access tokens**; [Access tokens](#access-tokens)). A Claude Desktop
-   or Claude Code entry that pointed at `/mcp/` without one is refused at the
-   handshake until it sends the `Authorization` header — the README's *Wiring up the
+   or Claude Code entry that pointed at `/mcp/` without one is refused at its first
+   protected request — the handshake, or a modern client's first call — until it
+   sends the `Authorization` header — the README's *Wiring up the
    MCP server* has the exact shape.
 5. `/api/meta`, `/openapi.json` and `/api/docs` no longer answer anonymously; a
    script that read them needs the token as well.
