@@ -18,9 +18,9 @@ const KIT_B = `E2E Preorder Kit B ${suffix}`;
 
 test("the pre-order toggle spawns every kit line as pre_ordered", async ({ page }) => {
   await page.goto("/orders");
-  await page.getByRole("button", { name: "+ New order" }).click();
+  await page.getByRole("button", { name: "New order" }).click();
 
-  await page.getByRole("button", { name: "+", exact: true }).click();
+  await page.getByRole("button", { name: "New retailer" }).click();
   await page.getByPlaceholder("New retailer name").fill(SHOP);
   await page.getByRole("button", { name: "Add", exact: true }).click();
 
@@ -28,7 +28,7 @@ test("the pre-order toggle spawns every kit line as pre_ordered", async ({ page 
   await page.getByPlaceholder("Kit name *").first().fill(KIT_A);
   await page.getByPlaceholder("Grade *").first().fill("HG");
 
-  await page.getByRole("button", { name: "+ Add line" }).click();
+  await page.getByRole("button", { name: "Add line" }).click();
   await page.getByLabel("Unit price").nth(1).fill("20");
   await page.getByPlaceholder("Kit name *").nth(1).fill(KIT_B);
   await page.getByPlaceholder("Grade *").nth(1).fill("MG");

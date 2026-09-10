@@ -19,12 +19,12 @@ export function AboutSection() {
         <ErrorBanner message={error instanceof ApiError ? error.message : t("common.requestFailed")} />
       ) : meta ? (
         /* The wordmark is a brand identifier, not copy — it stays untranslated. */
-        <Card title="plamotrack" description={t("layout.tagline")}>
+        <Card title="plamotrack" description={t("layout.description")}>
           <dl>
             <div className="flex items-baseline justify-between gap-4">
-              <dt className="text-sm text-zinc-600">{t("settings.about.version")}</dt>
+              <dt className="text-sm text-muted">{t("settings.about.version")}</dt>
               <dd className="text-sm">
-                <code className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs text-zinc-700">
+                <code className="rounded-sm bg-chip px-1.5 py-0.5 font-mono text-xs text-text">
                   {meta.version}
                 </code>
               </dd>
@@ -32,7 +32,7 @@ export function AboutSection() {
           </dl>
         </Card>
       ) : (
-        <p className="text-sm text-zinc-500">{t("common.loading")}</p>
+        <p className="text-sm text-muted">{t("common.loading")}</p>
       )}
     </div>
   );

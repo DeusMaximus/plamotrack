@@ -1,6 +1,9 @@
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
 
+import { navRowClass } from "../../components/Layout";
+import { PageTitle } from "../../components/ui";
+
 /** Section slugs are route segments (App.tsx nests them under /settings) and
  *  stay canonical/untranslated; only the labels go through the catalogue. */
 const SECTIONS = [
@@ -16,26 +19,21 @@ export function SettingsPage() {
   return (
     <div className="max-w-4xl">
       <div>
-        <h1 className="text-2xl font-bold">{t("settings.title")}</h1>
-        <p className="mt-0.5 text-sm text-zinc-500">{t("settings.subtitle")}</p>
+        <PageTitle>{t("settings.title")}</PageTitle>
+        <p className="mt-0.5 text-sm text-muted">{t("settings.subtitle")}</p>
       </div>
-      {/* Stacked on small screens (sections in a scrollable row), sidebar on sm+. */}
+      {/* Stacked on small screens (sections in a scrollable row), a second pane
+          on sm+ — the rows in the sidebar's own shape (§13.3). */}
       <div className="mt-6 sm:flex sm:gap-8">
         <nav
           aria-label={t("settings.title")}
-          className="flex gap-1 overflow-x-auto sm:w-44 sm:shrink-0 sm:flex-col sm:self-start"
+          className="flex gap-0.5 overflow-x-auto sm:w-44 sm:shrink-0 sm:flex-col sm:self-start"
         >
           {SECTIONS.map((section) => (
             <NavLink
               key={section.to}
               to={section.to}
-              className={({ isActive }) =>
-                `whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium ${
-                  isActive
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900"
-                }`
-              }
+              className={(state) => `whitespace-nowrap ${navRowClass(state)}`}
             >
               {t(section.label)}
             </NavLink>

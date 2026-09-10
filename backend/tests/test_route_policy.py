@@ -162,6 +162,7 @@ _REST_SURFACE: dict[tuple[str, str], tuple[int, str]] = {
     ("/retailers/{retailer_id}", "PATCH"): (5, "write"),
     ("/settings", "GET"): (4, "read"),
     ("/settings", "PATCH"): (6, "admin"),
+    ("/summary", "GET"): (4, "read"),
     ("/tools", "GET"): (4, "read"),
     ("/tools", "POST"): (5, "write"),
     ("/tools/categories", "GET"): (4, "read"),

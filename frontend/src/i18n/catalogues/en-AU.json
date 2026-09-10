@@ -1,6 +1,6 @@
 {
   "nav": {
-    "board": "Board",
+    "home": "Home",
     "kits": "Kits",
     "orders": "Orders",
     "inventory": "Inventory",
@@ -8,7 +8,14 @@
     "settings": "Settings"
   },
   "layout": {
-    "tagline": "pre-order → panel-lined masterpiece"
+    "description": "A self-hosted Gunpla and plamo collection and build tracker.",
+    "identityVia": "via {{provider}}"
+  },
+  "theme": {
+    "label": "Theme",
+    "light": "Light",
+    "dark": "Dark",
+    "system": "Follow the device"
   },
   "auth": {
     "setupTitle": "Set up plamotrack",
@@ -34,7 +41,8 @@
     "oidcError_expired": "That sign-in took too long or was already used. Start again.",
     "oidcError_failed": "The identity provider's answer couldn't be verified. Try again; if it keeps failing, check the API log.",
     "oidcError_setupRequired": "This instance has no owner bound yet. Enter the setup token from the API log and sign in again.",
-    "oidcError_identityRefused": "That account isn't this instance's owner. Sign in with the account that set it up, or run the rebind recovery command on the host."
+    "oidcError_identityRefused": "That account isn't this instance's owner. Sign in with the account that set it up, or run the rebind recovery command on the host.",
+    "providerFallback": "your identity provider"
   },
   "common": {
     "close": "Close",
@@ -58,7 +66,16 @@
       "days_one": "{{date}} · {{countDisplay}} d",
       "days_other": "{{date}} · {{countDisplay}} d"
     },
-    "urlPlaceholder": "https://…"
+    "urlPlaceholder": "https://…",
+    "editNamed": "Edit {{name}}",
+    "search": "Search"
+  },
+  "list": {
+    "range": "{{from}}–{{to}} of {{total}}",
+    "pagination": "Pages",
+    "page": "Page {{page}}",
+    "sortLabel": "Sort",
+    "filterByStatus": "Filter by status"
   },
   "validation": {
     "nameRequired": "Name is required",
@@ -286,18 +303,49 @@
     },
     "value": {
       "out_of_range": "{{value}} is out of range — whole numbers here go from −2,147,483,648 to 2,147,483,647."
+    },
+    "list": {
+      "sort_unknown": "That sort isn't one this list offers.",
+      "limit_invalid": "The limit has to be at least 1."
     }
   },
-  "board": {
-    "buildPipeline": "Build Pipeline",
-    "ordersPipeline": "Orders Pipeline",
-    "buildView": "Build",
-    "ordersView": "Orders",
-    "received": "Received",
-    "dragHint": "drag cards to update status",
-    "dropHere": "Drop here",
-    "loadFailed": "Failed to load kits: {{message}}",
-    "moveFailed": "Move failed"
+  "home": {
+    "title": "Home",
+    "loadFailed": "Failed to load the collection: {{message}}",
+    "onTheBench": "On the bench",
+    "benchEmpty": "Nothing on the bench — pick something from the backlog.",
+    "startedOn": "Started {{date}}",
+    "dayNumber": "day {{dayDisplay}}",
+    "noStartDate": "No start date",
+    "noNotes": "No notes yet",
+    "backlog": "Backlog",
+    "backlogEmpty": "The backlog is empty. Enjoy it while it lasts.",
+    "viewAllBacklog_one": "View all {{countDisplay}} in the backlog",
+    "viewAllBacklog_other": "View all {{countDisplay}} in the backlog",
+    "recentlyCompleted": "Recently completed",
+    "completedEmpty": "Nothing completed yet.",
+    "viewAllCompleted_one": "View all {{countDisplay}} completed",
+    "viewAllCompleted_other": "View all {{countDisplay}} completed",
+    "inTheMail": "In the mail",
+    "mailEmptyPreOrdered": "No pre-orders",
+    "mailEmptyOrdered": "Nothing ordered",
+    "mailEmptyInTransit": "Nothing in transit",
+    "viewAllPreOrdered_one": "View all {{countDisplay}} pre-ordered",
+    "viewAllPreOrdered_other": "View all {{countDisplay}} pre-ordered",
+    "viewAllOrdered_one": "View all {{countDisplay}} ordered",
+    "viewAllOrdered_other": "View all {{countDisplay}} ordered",
+    "viewAllInTransit_one": "View all {{countDisplay}} in transit",
+    "viewAllInTransit_other": "View all {{countDisplay}} in transit",
+    "placedOn": "Placed {{date}}",
+    "shippedOn": "Shipped {{date}}",
+    "shippedOnVia": "Shipped {{date}} · {{service}}",
+    "quantityOf": "{{quantityDisplay}} × {{name}}",
+    "andLine": "and {{line}}",
+    "andMoreLines_one": "and {{countDisplay}} more line",
+    "andMoreLines_other": "and {{countDisplay}} more lines",
+    "preOrderTag": "pre-order",
+    "retailerUnavailable": "Retailer unavailable",
+    "editOrder": "Edit the {{retailer}} order of {{date}}"
   },
   "kitStatus": {
     "pre_ordered": "Pre-ordered",
@@ -510,7 +558,7 @@
   },
   "retailers": {
     "title": "Retailers",
-    "addButton": "+ Add retailer",
+    "addButton": "Add retailer",
     "addTitle": "Add retailer",
     "editTitle": "Edit {{name}}",
     "loadFailed": "Failed to load retailers: {{message}}",
@@ -525,11 +573,13 @@
     "headerPacking": "Packing",
     "headerShipping": "Shipping",
     "headerAgain": "Again?",
-    "empty": "No retailers yet — add where you buy."
+    "empty": "No retailers yet — add where you buy.",
+    "searchPlaceholder": "Search retailers…",
+    "emptyFiltered": "No retailers match the search."
   },
   "kits": {
     "title": "Kits",
-    "addButton": "+ Add kit",
+    "addButton": "Add kit",
     "addTitle": "Add kit",
     "addSubmit": "Add kit",
     "editTitle": "Edit {{name}}",
@@ -567,11 +617,14 @@
     "headerStarted": "Started",
     "headerCompleted": "Completed",
     "completedTitle": "Build completed · elapsed days",
-    "confirmDelete": "Delete \"{{name}}\"? This cannot be undone."
+    "confirmDelete": "Delete \"{{name}}\"? This cannot be undone.",
+    "sortRecent": "Newest first",
+    "sortCreated": "Oldest first",
+    "sortName": "Name A–Z"
   },
   "inventory": {
     "title": "Inventory",
-    "addButton": "+ Add {{type}}",
+    "addButton": "Add {{type}}",
     "addTitle": "Add {{type}}",
     "editTitle": "Edit {{name}}",
     "tabs": {
@@ -698,11 +751,11 @@
     "searching": "Searching…",
     "onHand_one": "{{countDisplay}} on hand",
     "onHand_other": "{{countDisplay}} on hand",
-    "createNew": "＋ Create new {{type}} “{{query}}”"
+    "createNew": "Create new {{type}} “{{query}}”"
   },
   "orders": {
     "title": "Orders",
-    "newOrder": "+ New order",
+    "newOrder": "New order",
     "newTitle": "New order",
     "editTitle": "Edit order",
     "loadFailed": "Failed to load orders: {{message}}",
@@ -734,7 +787,7 @@
     "receivedCorrectHelp": "Correcting this re-dates the kits this delivery brought in — unless they have been moved since, in which case they keep their own dates.",
     "receivedSetHelp": "Setting a date marks the order received — stock is applied and pipeline kits move to Backlog. Leave blank if it hasn't arrived.",
     "itemsHeading": "Items",
-    "addLine": "+ Add line",
+    "addLine": "Add line",
     "editLinesHelp": "A kit detail you change here is applied to every kit this line spawned; one you leave alone stays as it is on each of them, so kits edited individually keep their own. Removing a line undoes it (kits deleted, stock reversed) — kits that are building/complete, rated, or have photos are protected.",
     "quantity": "Quantity",
     "unitPrice": "Unit price",
@@ -778,7 +831,19 @@
     "thisOrder": "this order",
     "unknownItem": "(unknown item)",
     "confirmDelete": "Delete the {{date}} order from {{retailer}}?\n\nThis undoes the entry: kits it spawned are deleted and any applied stock is reversed. Progressed kits or consumed stock will block it.",
-    "empty": "No orders yet — record one and it will spawn your kits."
+    "empty": "No orders yet — record one and it will spawn your kits.",
+    "quickAddRetailer": "New retailer",
+    "searchPlaceholder": "Search retailer, order or tracking number…",
+    "allStatuses": "All statuses",
+    "allRetailers": "All retailers",
+    "filterByRetailer": "Filter by retailer",
+    "filterByStatus": "Filter by status",
+    "sortPlaced": "Newest first",
+    "sortRecent": "Recently changed",
+    "stockOnReceipt": "stock applies on receipt",
+    "shippingLine": "Shipping",
+    "shippingLineWith": "Shipping · {{service}}",
+    "emptyFiltered": "No orders match these filters."
   },
   "settings": {
     "title": "Settings",

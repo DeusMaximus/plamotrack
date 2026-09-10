@@ -4,9 +4,10 @@ Guidance for AI coding agents (Claude Code, Codex, …) and humans working in th
 
 **plamotrack** is a self-hosted, open-source Gunpla/plamo collection & build tracker:
 kits move through a pipeline (pre_ordered → ordered → in_transit → backlog →
-building → complete; backlog = in hand, not started) on a drag-and-drop Kanban
-board with Build and Orders views, alongside quantity-tracked tools, consumables,
-third-party upgrades, and display gear (stands, bases, diorama scenery). Ships as a
+building → complete; backlog = in hand, not started), shown at a glance on a Home
+page (the bench, the backlog, what's in the mail) and in full on list pages,
+alongside quantity-tracked tools, consumables, third-party upgrades, and display
+gear (stands, bases, diorama scenery). Ships as a
 Docker Compose stack: FastAPI REST API + embedded MCP server (same process, shared service
 layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
 
@@ -114,10 +115,12 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   enabled tags must equal SUPPORTED_INTERFACE_LANGUAGES
                         #   (backend/tests/test_settings.py holds the pair together);
                         #   extraction keeps en-AU strings byte-identical (e2e proves it)
-    components/         # Layout, Modal, ui primitives, CatalogItemPicker (§3.9 select-or-create)
-    pages/              # BoardPage (Kanban), KitsPage, OrdersPage, InventoryPage,
-                        #   RetailersPage, and settings/ (SettingsPage + sections,
-                        #   including Data management at /settings/data)
+    components/         # Layout, Modal, ui primitives, CatalogItemPicker (§3.9 select-or-create),
+                        #   KitFormModal + OrderFormModal — the one edit dialog per record,
+                        #   shared by the list pages and Home (#233)
+    pages/              # HomePage (§13.2: bench, strips, mail), KitsPage, OrdersPage,
+                        #   InventoryPage, RetailersPage, and settings/ (SettingsPage +
+                        #   sections, including Data management at /settings/data)
   e2e/                  # Playwright happy-path (runs against the dev stack, self-cleaning)
 docs/design.md          # product intent + architectural decision record (§n targets)
 docs/import-export.md   # user-facing CSV format + matching reference
@@ -179,7 +182,8 @@ dev server proxies `/api/*` there, stripping the prefix):
 npm install
 npm run dev                  # Vite on :5173
 npm run build                # tsc type-check + production build — run before committing
-npm run lint                 # oxlint
+npm run lint                 # oxlint, then scripts/check-palette.mjs: no stock Tailwind
+                             # palette utility under src/ — tokens only (design §13.1)
 npm run test:e2e             # Playwright happy-path (needs chromium: npx playwright install chromium);
                              # reuses running dev servers, creates + cleans its own data
 ```
@@ -689,9 +693,10 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
    OAuth-compatible MCP, tested TLS/VPS deployment path~~ ✅ (§5, v0.3.0-alpha)
 6.1. MCP modernisation: dual-era current + `2026-07-28` compatibility with
      conformance and client coverage
-6.5. UI redesign: move off the stock Tailwind look — direction decided
-     2026-09-09 (Workbench, design §13; the PR split is §13.6); before M7/M8 so
-     the gallery and showcase are built in the new look once (#122 rides here)
+6.5. ~~UI redesign: move off the stock Tailwind look — Workbench, design §13,
+     built as #231–#234 on the integration branch `m6.5-workbench`; before M7/M8
+     so the gallery and showcase are built in the new look once (#122 rode here)~~ ✅
+     (lands on `main` as v0.4.0-alpha)
 7. Photo upload + gallery ← decide storage backend default first (§9.2)
 8. Public read-only routes + showcase page ← only after admin/MCP paths are protected
 9. Open-source operations: contribution guide, release automation, support matrix,

@@ -83,7 +83,7 @@ test("a notes-only edit does not resurrect a stale stock count", async ({ page }
   await patchTool(before.id, { quantity_on_hand: 9 });
 
   await dialog.getByLabel("Condition notes").fill("after");
-  await dialog.getByRole("button", { name: "Add", exact: true }).click();
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog).toBeHidden();
 
   const after = await tool(STALE_TOOL);
@@ -95,7 +95,7 @@ test("an edit that does change the stock still sends it", async ({ page }) => {
   // The control on the test above: "never send quantity" would also pass it.
   const dialog = await openEditor(page, COUNTED_TOOL);
   await dialog.getByLabel("Quantity on hand").fill("3");
-  await dialog.getByRole("button", { name: "Add", exact: true }).click();
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog).toBeHidden();
 
   expect((await tool(COUNTED_TOOL)).quantity_on_hand).toBe(3);
@@ -110,7 +110,7 @@ test("changing only the cost currency rescales the amount with it", async ({ pag
   const dialog = await openEditor(page, PRICED_TOOL);
   await expect(dialog.getByLabel("Reference cost")).toHaveValue("45.00");
   await dialog.getByLabel("Cost currency").selectOption("JPY");
-  await dialog.getByRole("button", { name: "Add", exact: true }).click();
+  await dialog.getByRole("button", { name: "Save", exact: true }).click();
   await expect(dialog).toBeHidden();
 
   const after = await tool(PRICED_TOOL);

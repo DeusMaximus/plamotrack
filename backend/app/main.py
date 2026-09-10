@@ -71,6 +71,7 @@ from app.routers import (
     portability,
     retailers,
     settings,
+    summary,
     tokens,
 )
 from app.schemas.errors import ERROR_RESPONSES
@@ -89,6 +90,7 @@ ROUTERS = (
     portability.router,
     meta.router,
     settings.router,
+    summary.router,
     auth.router,
     tokens.router,
 )

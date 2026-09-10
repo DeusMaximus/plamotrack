@@ -1,21 +1,17 @@
 import type { KitStatus } from "../api/types";
 import { statusLabel } from "../lib/labels";
+import { Chip } from "./ui";
 
-const STATUS_STYLES: Record<KitStatus, string> = {
-  pre_ordered: "bg-purple-100 text-purple-700",
-  ordered: "bg-blue-100 text-blue-700",
-  in_transit: "bg-amber-100 text-amber-700",
-  backlog: "bg-teal-100 text-teal-700", // inherited in_hand's teal in the merge
-  building: "bg-orange-100 text-orange-700",
-  complete: "bg-green-100 text-green-700",
+/** The pipeline's six colours (§13.1), one token per status. */
+const STATUS_TONES: Record<KitStatus, string> = {
+  pre_ordered: "text-status-pre-ordered",
+  ordered: "text-status-ordered",
+  in_transit: "text-status-in-transit",
+  backlog: "text-status-backlog",
+  building: "text-status-building",
+  complete: "text-status-complete",
 };
 
 export function StatusBadge({ status }: { status: KitStatus }) {
-  return (
-    <span
-      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STATUS_STYLES[status]}`}
-    >
-      {statusLabel(status)}
-    </span>
-  );
+  return <Chip tone={STATUS_TONES[status]}>{statusLabel(status)}</Chip>;
 }

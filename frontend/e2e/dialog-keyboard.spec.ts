@@ -96,7 +96,7 @@ const inDialog = (page: Page) =>
 test("a dialog takes focus, keeps it, and gives it back", async ({ page }) => {
   await page.goto("/retailers");
 
-  const trigger = page.getByRole("button", { name: "+ Add retailer" });
+  const trigger = page.getByRole("button", { name: "Add retailer" });
   await trigger.focus();
   await expect(await focusDescription(page)).toContain("button");
 
@@ -154,7 +154,7 @@ test("a dialog takes focus, keeps it, and gives it back", async ({ page }) => {
 
 test("the close button also returns focus to the opener", async ({ page }) => {
   await page.goto("/retailers");
-  const trigger = page.getByRole("button", { name: "+ Add retailer" });
+  const trigger = page.getByRole("button", { name: "Add retailer" });
   await trigger.focus();
   await page.keyboard.press("Enter");
 
@@ -195,7 +195,7 @@ test("the order dialog holds focus through dynamic rows and the catalog picker",
   // list on open. The order form adds and removes line rows while it is open and
   // contains a picker whose result list unmounts under the focus it just took.
   await page.goto("/orders");
-  const trigger = page.getByRole("button", { name: "+ New order" });
+  const trigger = page.getByRole("button", { name: "New order" });
   await trigger.focus();
   await page.keyboard.press("Enter");
 
@@ -204,8 +204,8 @@ test("the order dialog holds focus through dynamic rows and the catalog picker",
 
   // Grow the form, so anything that cached the focusable list on open is now
   // wrong about what is inside it.
-  await dialog.getByRole("button", { name: "+ Add line" }).click();
-  await dialog.getByRole("button", { name: "+ Add line" }).click();
+  await dialog.getByRole("button", { name: "Add line" }).click();
+  await dialog.getByRole("button", { name: "Add line" }).click();
 
   // A consumable line, whose picker is the control that unmounts under focus.
   // Identified by what it offers rather than by position — resilient to a line
@@ -255,11 +255,11 @@ test("a keyboard user can select a catalog search result (#104)", async ({ page 
   // alternative to this working is not "type the name", it is "create a
   // duplicate", which is exactly what select-or-create exists to prevent.
   await page.goto("/orders");
-  await page.getByRole("button", { name: "+ New order" }).click();
+  await page.getByRole("button", { name: "New order" }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog).toBeVisible();
 
-  await dialog.getByLabel("Retailer").selectOption(retailerId);
+  await dialog.getByRole("combobox", { name: /^Retailer/ }).selectOption(retailerId);
   await dialog.locator('select:has(option[value="consumable"])').selectOption("consumable");
   await dialog.getByLabel("Unit price").fill("6.50");
 
@@ -321,7 +321,7 @@ test("submitting from the keyboard does not drop focus while the request is in f
   });
 
   await page.goto("/retailers");
-  const trigger = page.getByRole("button", { name: "+ Add retailer" });
+  const trigger = page.getByRole("button", { name: "Add retailer" });
   await trigger.focus();
   await page.keyboard.press("Enter");
 
@@ -368,7 +368,7 @@ test("a dialog mutating around you does not take your focus", async ({ page }) =
   // control, so focus moves for a good reason and the test would be measuring
   // the app's own behaviour rather than the observer's.
   await page.goto("/orders");
-  const trigger = page.getByRole("button", { name: "+ New order" });
+  const trigger = page.getByRole("button", { name: "New order" });
   await trigger.focus();
   await page.keyboard.press("Enter");
 

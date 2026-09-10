@@ -2,6 +2,7 @@ import type {
   AccessToken,
   AccessTokenCreate,
   AccessTokenMinted,
+  AuthSession,
   CatalogSearchResult,
   Consumable,
   ConsumableCreate,
@@ -14,9 +15,9 @@ import type {
   ImportResult,
   InstanceSettings,
   InstanceSettingsUpdate,
-  AuthSession,
   Kit,
   KitCreate,
+  KitSort,
   KitStatus,
   KitUpdate,
   Meta,
@@ -25,11 +26,13 @@ import type {
   OrderCreate,
   OrderReceive,
   OrderShip,
+  OrderSort,
   OrderUpdate,
   Retailer,
   RetailerCreate,
   RetailerUpdate,
   StockAdjustment,
+  Summary,
   Tool,
   ToolCreate,
   ToolUpdate,
@@ -161,9 +164,11 @@ export async function downloadFile(path: string, fallbackName: string): Promise<
 }
 
 export const api = {
-  listKits: (filters?: { status?: KitStatus | "" }) => {
+  listKits: (filters?: { status?: KitStatus | ""; sort?: KitSort; limit?: number }) => {
     const params = new URLSearchParams();
     if (filters?.status) params.set("status", filters.status);
+    if (filters?.sort) params.set("sort", filters.sort);
+    if (filters?.limit) params.set("limit", String(filters.limit));
     const qs = params.size > 0 ? `?${params.toString()}` : "";
     return request<Kit[]>(`/kits${qs}`);
   },
@@ -228,6 +233,9 @@ export const api = {
   deleteRetailer: (id: string) => request<void>(`/retailers/${id}`, { method: "DELETE" }),
 
   getMeta: () => request<Meta>("/meta"),
+  /** The collection at a glance (§13.2): Home's heading counts, from one
+   *  server-side snapshot — the same numbers the list pages total. */
+  getSummary: () => request<Summary>("/summary"),
 
   /** The SPA bootstrap (#188): claim state, whether this browser is the owner,
    *  the language/locale for the setup and login screens, and the CSRF token. */
@@ -255,7 +263,14 @@ export const api = {
   updateSettings: (data: InstanceSettingsUpdate) =>
     request<InstanceSettings>("/settings", patch(data)),
 
-  listOrders: () => request<Order[]>("/orders"),
+  listOrders: (filters?: { sort?: OrderSort; pendingOnly?: boolean; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (filters?.sort) params.set("sort", filters.sort);
+    if (filters?.pendingOnly) params.set("pending_only", "true");
+    if (filters?.limit) params.set("limit", String(filters.limit));
+    const qs = params.size > 0 ? `?${params.toString()}` : "";
+    return request<Order[]>(`/orders${qs}`);
+  },
   /** One order, fresh — what the editor hydrates from (#67): the list is a
    *  cache exactly as stale as the page is old. */
   getOrder: (id: string) => request<Order>(`/orders/${id}`),
@@ -292,6 +307,13 @@ export const metaQuery = {
   queryKey: ["meta"],
   queryFn: api.getMeta,
   staleTime: Infinity,
+} as const;
+
+/** Home's counts (§13.2, #233). Under the default staleTime like any list; the
+ * writes that move a count invalidate it through `lib/invalidate.ts`. */
+export const summaryQuery = {
+  queryKey: ["summary"],
+  queryFn: api.getSummary,
 } as const;
 
 /** The auth session (#188). Short staleTime so a login/logout elsewhere in the

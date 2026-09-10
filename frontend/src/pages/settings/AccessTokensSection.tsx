@@ -5,7 +5,16 @@ import { useTranslation } from "react-i18next";
 
 import { api, ApiError, tokensQuery } from "../../api/client";
 import type { AccessToken, AccessTokenMinted, TokenScope } from "../../api/types";
-import { Button, Card, EmptyState, ErrorBanner, Field, Input, Select } from "../../components/ui";
+import {
+  Button,
+  Card,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  Input,
+  Select,
+  TABLE_HEAD_ROW_CLASS,
+} from "../../components/ui";
 import { formatDateTime, formatNumber } from "../../lib/format";
 import { SectionHeader } from "./SectionHeader";
 
@@ -96,7 +105,7 @@ function CreateCard({ onMinted }: { onMinted: (minted: AccessTokenMinted) => voi
             <option value="write">{t("settings.tokens.scopeWrite")}</option>
           </Select>
         </Field>
-        <p className="text-xs text-zinc-500">{t("settings.tokens.scopeNote")}</p>
+        <p className="text-xs text-muted">{t("settings.tokens.scopeNote")}</p>
         <Field label={t("settings.tokens.expiryLabel")} className="max-w-48">
           <Select {...register("expiry")}>
             <option value="">{t("settings.tokens.expiryNever")}</option>
@@ -133,11 +142,11 @@ function MintedCard({ minted, onDone }: { minted: AccessTokenMinted; onDone: () 
   return (
     <Card title={t("settings.tokens.mintedTitle")} description={t("settings.tokens.mintedDescription")}>
       <div className="space-y-3">
-        <p className="text-sm text-zinc-700">{minted.name}</p>
+        <p className="text-sm text-text">{minted.name}</p>
         <div className="flex items-start gap-2">
           <code
             data-testid="minted-token"
-            className="min-w-0 flex-1 select-all break-all rounded-md border border-zinc-200 bg-zinc-50 px-2.5 py-1.5 font-mono text-sm"
+            className="min-w-0 flex-1 select-all break-all rounded-sm border border-border bg-surface-alt px-2.5 py-1.5 font-mono text-sm"
           >
             {minted.token}
           </code>
@@ -145,7 +154,7 @@ function MintedCard({ minted, onDone }: { minted: AccessTokenMinted; onDone: () 
             {copied ? t("settings.tokens.copied") : t("settings.tokens.copy")}
           </Button>
         </div>
-        <p className="text-xs text-zinc-500">{t("settings.tokens.usageHint")}</p>
+        <p className="text-xs text-muted">{t("settings.tokens.usageHint")}</p>
         <Button type="button" onClick={onDone}>
           {t("settings.tokens.done")}
         </Button>
@@ -180,24 +189,26 @@ function TokenList() {
         }
       />
       {tokens === undefined ? (
-        <p className="text-sm text-zinc-500">{t("common.loading")}</p>
+        <p className="text-sm text-muted">{t("common.loading")}</p>
       ) : tokens.length === 0 ? (
         <EmptyState>{t("settings.tokens.empty")}</EmptyState>
       ) : (
-        <div className="overflow-x-auto">
+        // The list pages' table shape (§13.4): micro-label head row on the
+        // alternate surface, hairlines between rows.
+        <div className="overflow-x-auto rounded-md border border-border">
           <table className="w-full text-sm">
-            <thead className="text-left text-xs font-medium text-zinc-500">
-              <tr>
-                <th className="pb-2 pr-3">{t("settings.tokens.colName")}</th>
-                <th className="pb-2 pr-3">{t("settings.tokens.colPrefix")}</th>
-                <th className="pb-2 pr-3">{t("settings.tokens.colAccess")}</th>
-                <th className="pb-2 pr-3">{t("settings.tokens.colCreated")}</th>
-                <th className="pb-2 pr-3">{t("settings.tokens.colLastUsed")}</th>
-                <th className="pb-2 pr-3">{t("settings.tokens.colExpires")}</th>
-                <th className="pb-2" />
+            <thead>
+              <tr className={TABLE_HEAD_ROW_CLASS}>
+                <th className="px-3 py-2.5">{t("settings.tokens.colName")}</th>
+                <th className="px-3 py-2.5">{t("settings.tokens.colPrefix")}</th>
+                <th className="px-3 py-2.5">{t("settings.tokens.colAccess")}</th>
+                <th className="px-3 py-2.5">{t("settings.tokens.colCreated")}</th>
+                <th className="px-3 py-2.5">{t("settings.tokens.colLastUsed")}</th>
+                <th className="px-3 py-2.5">{t("settings.tokens.colExpires")}</th>
+                <th className="px-3 py-2.5" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-100">
+            <tbody>
               {tokens.map((token) => (
                 <TokenRow
                   key={token.id}
@@ -230,24 +241,27 @@ function TokenRow({
   const inactive = revoked || expired;
   const writes = token.scopes.includes("collection:write");
   return (
-    <tr data-testid="token-row" className={inactive ? "text-zinc-400" : ""}>
-      <td className="py-2 pr-3 font-medium">{token.name}</td>
-      <td className="py-2 pr-3 font-mono text-xs">ptk_{token.token_prefix}_…</td>
-      <td className="py-2 pr-3">
+    <tr
+      data-testid="token-row"
+      className={`border-b border-rule last:border-0 ${inactive ? "text-faint" : ""}`}
+    >
+      <td className="px-3 py-2 font-medium">{token.name}</td>
+      <td className="px-3 py-2 font-mono text-xs">ptk_{token.token_prefix}_…</td>
+      <td className="px-3 py-2">
         {writes ? t("settings.tokens.accessWrite") : t("settings.tokens.accessRead")}
       </td>
-      <td className="py-2 pr-3 whitespace-nowrap">{formatDateTime(token.created_at)}</td>
-      <td className="py-2 pr-3 whitespace-nowrap">
+      <td className="px-3 py-2 whitespace-nowrap">{formatDateTime(token.created_at)}</td>
+      <td className="px-3 py-2 whitespace-nowrap">
         {token.last_used_at ? formatDateTime(token.last_used_at) : t("settings.tokens.neverUsed")}
       </td>
-      <td className="py-2 pr-3 whitespace-nowrap">
+      <td className="px-3 py-2 whitespace-nowrap">
         {expired
           ? t("settings.tokens.expired")
           : token.expires_at
             ? formatDateTime(token.expires_at)
             : t("settings.tokens.noExpiry")}
       </td>
-      <td className="py-2 text-right whitespace-nowrap">
+      <td className="px-3 py-2 text-end whitespace-nowrap">
         {revoked ? (
           <span className="text-xs">
             {t("settings.tokens.revoked", { when: formatDateTime(token.revoked_at as string) })}

@@ -237,6 +237,25 @@ export interface Order {
   shipped_at: string | null;
   received_at: string | null;
   items: OrderItem[];
+  /** Where the order sits (§13.2, #233), derived on the server from the dates
+   *  and the spawned kits — received, in_transit (shipped), pre_ordered (every
+   *  kit still a pre-order) or ordered. Never stored; the Orders filter, Home's
+   *  columns and the summary counts all read this one field. */
+  stage: OrderStage;
+}
+
+/** Mirrors `services/order_stage.py::ORDER_STAGES` — the Orders page's
+ *  `?status=` vocabulary and Home's three *In the mail* columns (the first
+ *  three), in pipeline order. */
+export const ORDER_STAGES = ["pre_ordered", "ordered", "in_transit", "received"] as const;
+export type OrderStage = (typeof ORDER_STAGES)[number];
+
+/** `GET /summary` (§13.2, #233) — mirrors backend/app/schemas/summary.py: the
+ *  collection at a glance, one count per kit status and per order stage, every
+ *  bucket present (an empty one is 0). */
+export interface Summary {
+  kits: Record<KitStatus, number>;
+  orders: Record<OrderStage, number>;
 }
 
 export interface OrderKitDetails {
@@ -507,6 +526,19 @@ export interface InstanceSettingsUpdate {
  *  the setup and login screens render in, and (owner only) the CSRF token that
  *  travels back in `X-CSRF-Token` on every unsafe request. No version, no
  *  collection data. Mirrors backend/app/schemas/auth.py. */
+/** `GET /kits?sort=` (§13.4, #232) — mirrors `services/kits.py::KIT_SORTS`:
+ *  `created` oldest first (the API default), `recent` by the status clock
+ *  newest first, `name` alphabetical. */
+export const KIT_SORTS = ["created", "recent", "name"] as const;
+export type KitSort = (typeof KIT_SORTS)[number];
+
+/** `GET /orders?sort=` — mirrors `services/orders.py::ORDER_SORTS`: `placed`
+ *  newest order date first (the API default), `recent` by the last status
+ *  change — received, else shipped, else placed, a placement date being its midnight
+ *  in the instance's time zone — newest first. */
+export const ORDER_SORTS = ["placed", "recent"] as const;
+export type OrderSort = (typeof ORDER_SORTS)[number];
+
 export interface AuthSession {
   state: "unclaimed" | "anonymous" | "owner";
   interface_language: string;
@@ -519,6 +551,10 @@ export interface AuthSession {
   auth_mode: "local" | "oidc";
   /** The provider's issuer URL, for naming it on the login screen. OIDC mode only. */
   oidc_issuer: string | null;
+  /** The owner's display name — the email or name the provider supplied at the
+   *  binding — for the sidebar's identity line (§13.3). Only on the owner's own
+   *  read, and null in local mode, which stores none. */
+  display_name: string | null;
 }
 
 /** `POST /auth/oidc/start` (#191): where the browser goes next. The response also

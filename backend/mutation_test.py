@@ -133,6 +133,9 @@ MODE = ROOT / "app/auth/mode.py"
 # #192 (M6-7): the moa- set — MCP OAuth.
 MCP_OAUTH = ROOT / "app/auth/mcp_oauth.py"
 MCP_OAUTH_STATE = ROOT / "app/auth/mcp_oauth_state.py"
+# The #233 (home-) set: Home's counts and the order stage.
+STAGE = ROOT / "app/services/order_stage.py"
+SUMM = ROOT / "app/services/summary.py"
 RECOVERY = ROOT / "app/auth/recovery.py"
 # #193 (M6-8): the aud- set — audit events, request budgets and log hygiene.
 # Four targets outside app/ join the clean-tree check: the nginx template
@@ -5842,6 +5845,95 @@ CASES += [
     ),
 ]
 
+# --- the `home-` set (#233): the order stage and the summary counts (§13.2) ------------
+# One predicate (`services/order_stage.py`) read by the `stage` field on every order
+# row, the per-stage counts (`services/summary.py`) and, through them, Home's columns
+# and the Orders filter; one function for REST's GET /summary and the tool. Each
+# mutant below moves one order between stages, or one count, and is killed by
+# tests/test_summary.py — the MCP parity test for the tool's body, the route-policy
+# suite for the scope declaration.
+CASES += [
+    (
+        "home-1. a received order is not received",
+        STAGE,
+        '    if order.received_at is not None:\n        return "received"\n',
+        "",
+        "every_order_row_carries_its_stage or order_counts_are_per_stage",
+    ),
+    (
+        "home-2. a shipped order is not in transit",
+        STAGE,
+        '    if order.shipped_at is not None:\n        return "in_transit"\n',
+        "",
+        "every_order_row_carries_its_stage or order_counts_are_per_stage",
+    ),
+    (
+        "home-3. one pre-ordered kit makes the order a pre-order (all → any)",
+        STAGE,
+        "    if kits and all(kit.status == KitStatus.PRE_ORDERED for kit in kits):",
+        "    if kits and any(kit.status == KitStatus.PRE_ORDERED for kit in kits):",
+        "every_order_row_carries_its_stage or order_counts_are_per_stage",
+    ),
+    (
+        "home-4. an order with no kits is a pre-order (the at-least-one guard dropped)",
+        STAGE,
+        "    if kits and all(kit.status == KitStatus.PRE_ORDERED for kit in kits):",
+        "    if all(kit.status == KitStatus.PRE_ORDERED for kit in kits):",
+        "every_order_row_carries_its_stage or order_counts_are_per_stage",
+    ),
+    (
+        "home-5. the stage on the wire is always ordered",
+        SCH,
+        "        return order_stage(self)\n",
+        '        return "ordered"\n',
+        "every_order_row_carries_its_stage or shipping_and_receiving_move_the_stage",
+    ),
+    (
+        "home-6. a status with several kits counts one",
+        SUMM,
+        "        kit_counts[KitStatus(status).value] = count\n",
+        "        kit_counts[KitStatus(status).value] = min(count, 1)\n",
+        "kit_counts_are_per_status or order_counts_are_per_stage_and_match",
+    ),
+    (
+        "home-7. every order counts as ordered",
+        SUMM,
+        "        order_counts[order_stage(order)] += 1\n",
+        '        order_counts["ordered"] += 1\n',
+        "order_counts_are_per_stage_and_match or shipping_and_receiving_move_the_stage",
+    ),
+    (
+        # Codex #237 round 1: the complement of home-7 — every order still lands
+        # in its own bucket, but each bucket reads one however many it holds.
+        "home-11. a stage with several orders counts one",
+        SUMM,
+        "        order_counts[order_stage(order)] += 1\n",
+        "        order_counts[order_stage(order)] = 1\n",
+        "order_counts_are_per_stage_and_match",
+    ),
+    (
+        "home-8. the two statements read two snapshots",
+        SUMM,
+        "    await begin_read_snapshot(session)\n",
+        "    pass  # neutered\n",
+        "the_summary_reads_one_snapshot",
+    ),
+    (
+        "home-9. the tool answers with the meta document",
+        MCP,
+        '        return (await collection_summary(session)).model_dump(mode="json")\n',
+        '        return (await instance_meta(session)).model_dump(mode="json")\n',
+        "get_summary_and_list_orders_match_rest_on_mcp",
+    ),
+    (
+        "home-10. the tool ships unscoped",
+        REG,
+        '    "get_summary": Scope.READ,\n',
+        "",
+        "the_mcp_tool_scope_map_matches_the_live_registry",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
@@ -5898,6 +5990,8 @@ TEST_FILES = [
     # The #189 (pat-) fold-in: the token suite; pat-12/16/23 also kill in
     # test_route_policy.py / test_authorization.py, listed above.
     "tests/test_auth_tokens.py",
+    # The #233 (home-) fold-in: every home- kill but home-10 lives here.
+    "tests/test_summary.py",
     # The #204 (f13-) fold-in: every f13- kill lives here, bar f13-11's second
     # witness in test_authorization.py (already listed).
     "tests/test_auth_unrouted.py",

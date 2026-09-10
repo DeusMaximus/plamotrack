@@ -1,5 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { Pencil, Plus, Search } from "lucide-react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
@@ -8,19 +9,36 @@ import type { PackingQuality, Retailer, ShippingSpeed, WouldOrderAgain } from ".
 import { PACKING_QUALITIES, SHIPPING_SPEEDS, WOULD_ORDER_AGAIN } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
-import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "../components/ui";
+import {
+  Button,
+  Chip,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  IconButton,
+  Input,
+  PageTitle,
+  Pager,
+  RatingStars,
+  Select,
+  TABLE_HEAD_ROW_CLASS,
+  Textarea,
+} from "../components/ui";
 import {
   packingQualityLabel,
   ratingTooltip,
   shippingSpeedLabel,
   wouldOrderAgainLabel,
 } from "../lib/labels";
+import { paginate, usePageParam, useSearchParam } from "../lib/listState";
 import { usePresentationVersion } from "../lib/presentation";
 
-const AGAIN_STYLES: Record<WouldOrderAgain, string> = {
-  yes: "bg-green-100 text-green-700",
-  maybe: "bg-amber-100 text-amber-700",
-  no: "bg-red-100 text-red-700",
+/** Would order again, in the pipeline's own vocabulary (§13.1): complete's
+ * green, in-transit's amber, and danger for no. */
+const AGAIN_TONES: Record<WouldOrderAgain, string> = {
+  yes: "text-status-complete",
+  maybe: "text-status-in-transit",
+  no: "text-danger",
 };
 
 interface RetailerFormValues {
@@ -33,16 +51,23 @@ interface RetailerFormValues {
   notes: string;
 }
 
+/** Rows per page on the list pages (§13.4). */
+const PAGE_SIZE = 10;
+
 function RetailerFormModal({
   retailer,
   onClose,
+  onDelete,
 }: {
   retailer?: Retailer;
   onClose: () => void;
+  /** Delete lives in the dialog, not on the row (§13.4). */
+  onDelete?: (retailer: Retailer) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const {
     register,
     handleSubmit,
@@ -140,11 +165,34 @@ function RetailerFormModal({
         <Field label={t("retailers.notes")}>
           <Textarea {...register("notes")} placeholder={t("retailers.notesPlaceholder")} />
         </Field>
-        <div className="flex justify-end gap-2 pt-1">
-          <Button type="button" variant="secondary" onClick={onClose}>
+        <div className="flex items-center gap-2 pt-1">
+          {retailer && onDelete && (
+            <Button
+              type="button"
+              variant="danger"
+              className="me-auto"
+              disabled={isSubmitting || deleting}
+              onClick={async () => {
+                if (!window.confirm(t("common.confirmDelete", { name: retailer.name }))) return;
+                setError(null);
+                setDeleting(true);
+                try {
+                  await onDelete(retailer);
+                  onClose();
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+            >
+              {t("common.delete")}
+            </Button>
+          )}
+          <Button type="button" variant="secondary" className="ms-auto" onClick={onClose}>
             {t("common.cancel")}
           </Button>
-          <Button type="submit" disabled={isSubmitting}>
+          <Button type="submit" disabled={isSubmitting || deleting}>
             {retailer ? t("common.save") : t("common.add")}
           </Button>
         </div>
@@ -155,11 +203,13 @@ function RetailerFormModal({
 
 export function RetailersPage() {
   const { t } = useTranslation();
-  // Rating tooltips are locale-formatted; see the note on `BoardPage`.
+  // Rating tooltips are locale-formatted; see the note on `HomePage`.
   usePresentationVersion();
   const queryClient = useQueryClient();
   const [modal, setModal] = useState<{ retailer?: Retailer } | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  // The search and the page are the URL (§13.4, #232).
+  const [search, setSearch] = useSearchParam("q");
+  const [page, setPage] = usePageParam();
   const {
     data: retailers,
     isLoading,
@@ -170,48 +220,71 @@ export function RetailersPage() {
     queryFn: api.listRetailers,
   });
 
-  const remove = async (retailer: Retailer) => {
-    if (!window.confirm(t("common.confirmDelete", { name: retailer.name }))) return;
-    setActionError(null);
-    try {
-      await api.deleteRetailer(retailer.id);
-      await queryClient.invalidateQueries({ queryKey: ["retailers"] });
-    } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
-    }
+  const removeRetailer = async (retailer: Retailer) => {
+    await api.deleteRetailer(retailer.id);
+    await queryClient.invalidateQueries({ queryKey: ["retailers"] });
   };
+
+  const visible = useMemo(() => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return retailers ?? [];
+    return (retailers ?? []).filter((retailer) =>
+      [retailer.name, retailer.url, retailer.notes]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => value.toLowerCase().includes(needle)),
+    );
+  }, [retailers, search]);
+  const paged = paginate(visible, page, PAGE_SIZE);
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">{t("retailers.title")}</h1>
+        <PageTitle count={retailers === undefined ? undefined : visible.length}>
+          {t("retailers.title")}
+        </PageTitle>
         <div className="flex gap-2">
           <ExportCsvButton table="retailers" />
-          <Button onClick={() => setModal({})}>{t("retailers.addButton")}</Button>
+          <Button icon={Plus} onClick={() => setModal({})}>
+            {t("retailers.addButton")}
+          </Button>
         </div>
       </div>
 
-      <ErrorBanner message={actionError} />
+      <div className="relative w-full max-w-xs">
+        <Search
+          size={15}
+          aria-hidden
+          className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-faint"
+        />
+        <Input
+          type="search"
+          aria-label={t("common.search")}
+          value={search}
+          onChange={(event) => setSearch(event.target.value)}
+          placeholder={t("retailers.searchPlaceholder")}
+          className="ps-8"
+        />
+      </div>
 
       {isError ? (
         <ErrorBanner message={t("retailers.loadFailed", { message: (error as Error).message })} />
-      ) : retailers?.length ? (
-        <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+      ) : paged.total > 0 ? (
+        <div className="overflow-x-auto rounded-md border border-border bg-surface">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                <th className="px-3 py-2">{t("common.name")}</th>
-                <th className="px-3 py-2">{t("retailers.headerRating")}</th>
-                <th className="px-3 py-2">{t("retailers.headerPacking")}</th>
-                <th className="px-3 py-2">{t("retailers.headerShipping")}</th>
-                <th className="px-3 py-2">{t("retailers.headerAgain")}</th>
-                <th className="px-3 py-2">{t("retailers.notes")}</th>
-                <th className="px-3 py-2" />
+              <tr className={TABLE_HEAD_ROW_CLASS}>
+                <th className="px-3 py-2.5">{t("common.name")}</th>
+                <th className="px-3 py-2.5">{t("retailers.headerRating")}</th>
+                <th className="px-3 py-2.5">{t("retailers.headerPacking")}</th>
+                <th className="px-3 py-2.5">{t("retailers.headerShipping")}</th>
+                <th className="px-3 py-2.5">{t("retailers.headerAgain")}</th>
+                <th className="px-3 py-2.5">{t("retailers.notes")}</th>
+                <th className="px-3 py-2.5" />
               </tr>
             </thead>
             <tbody>
-              {retailers.map((retailer) => (
-                <tr key={retailer.id} className="border-b border-zinc-100 last:border-0">
+              {paged.rows.map((retailer) => (
+                <tr key={retailer.id} className="border-b border-rule last:border-0">
                   <td className="px-3 py-2">
                     <div className="font-medium">{retailer.name}</div>
                     {retailer.url && (
@@ -219,19 +292,18 @@ export function RetailersPage() {
                         href={retailer.url}
                         target="_blank"
                         rel="noreferrer"
-                        className="text-xs text-indigo-600 hover:underline"
+                        className="text-xs text-accent hover:underline"
                       >
                         {retailer.url.replace(/^https?:\/\//, "")}
                       </a>
                     )}
                   </td>
-                  <td
-                    className="px-3 py-2"
-                    title={retailer.rating ? ratingTooltip(retailer.rating) : ""}
-                  >
-                    {retailer.rating
-                      ? "★".repeat(retailer.rating) + "☆".repeat(5 - retailer.rating)
-                      : "—"}
+                  <td className="px-3 py-2">
+                    {retailer.rating ? (
+                      <RatingStars rating={retailer.rating} title={ratingTooltip(retailer.rating)} />
+                    ) : (
+                      "—"
+                    )}
                   </td>
                   <td className="px-3 py-2">
                     {retailer.packing_quality ? packingQualityLabel(retailer.packing_quality) : "—"}
@@ -241,38 +313,47 @@ export function RetailersPage() {
                   </td>
                   <td className="px-3 py-2">
                     {retailer.would_order_again ? (
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${AGAIN_STYLES[retailer.would_order_again]}`}
-                      >
+                      <Chip tone={AGAIN_TONES[retailer.would_order_again]}>
                         {wouldOrderAgainLabel(retailer.would_order_again)}
-                      </span>
+                      </Chip>
                     ) : (
                       "—"
                     )}
                   </td>
-                  <td className="max-w-48 truncate px-3 py-2 text-zinc-500" title={retailer.notes ?? ""}>
+                  <td className="max-w-48 truncate px-3 py-2 text-muted" title={retailer.notes ?? ""}>
                     {retailer.notes ?? "—"}
                   </td>
-                  <td className="px-3 py-2 text-end">
-                    <div className="flex justify-end gap-1">
-                      <Button variant="secondary" onClick={() => setModal({ retailer })}>
-                        {t("common.edit")}
-                      </Button>
-                      <Button variant="danger" onClick={() => remove(retailer)}>
-                        {t("common.delete")}
-                      </Button>
-                    </div>
+                  <td className="px-2 py-2 text-end">
+                    <IconButton
+                      label={t("common.editNamed", { name: retailer.name })}
+                      onClick={() => setModal({ retailer })}
+                    >
+                      <Pencil size={15} aria-hidden />
+                    </IconButton>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+          <Pager paged={paged} onPage={setPage} />
         </div>
       ) : (
-        <EmptyState>{isLoading ? t("common.loading") : t("retailers.empty")}</EmptyState>
+        <EmptyState>
+          {isLoading
+            ? t("common.loading")
+            : retailers?.length
+              ? t("retailers.emptyFiltered")
+              : t("retailers.empty")}
+        </EmptyState>
       )}
 
-      {modal && <RetailerFormModal retailer={modal.retailer} onClose={() => setModal(null)} />}
+      {modal && (
+        <RetailerFormModal
+          retailer={modal.retailer}
+          onClose={() => setModal(null)}
+          onDelete={removeRetailer}
+        />
+      )}
     </div>
   );
 }

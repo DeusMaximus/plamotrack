@@ -98,17 +98,16 @@ async def _session_read(
 ):
     settings_row = await settings_service.get_instance_settings(session)
     provider = _oidc(request)
+    is_owner = state is auth_service.InstanceState.OWNER
+    owner = await auth_service.owner_row(session) if is_owner else None
     return SessionRead(
         state=state.value,
         interface_language=settings_row.interface_language,
         formatting_locale=settings_row.formatting_locale,
-        csrf_token=(
-            credentials.csrf_token_for(raw_token)
-            if state is auth_service.InstanceState.OWNER and raw_token
-            else None
-        ),
+        csrf_token=(credentials.csrf_token_for(raw_token) if is_owner and raw_token else None),
         auth_mode="oidc" if provider is not None else "local",
         oidc_issuer=provider.issuer if provider is not None else None,
+        display_name=owner.display_name if owner is not None else None,
     )
 
 

@@ -18,18 +18,18 @@ const TODAY = (() => {
 
 test.describe.configure({ mode: "serial" });
 
-// Wide enough that all seven board columns fit without horizontal scrolling —
-// the drag test measures element positions, which scrolling would invalidate.
-test.use({ viewport: { width: 1920, height: 900 } });
+// Wide enough for Home's two-up bench cards and three mail columns to sit
+// side by side, as the README captures do.
+test.use({ viewport: { width: 1440, height: 900 } });
 
 test("create order → receive → kits and stock update", async ({ page }) => {
   page.on("dialog", (dialog) => dialog.accept());
 
   await page.goto("/orders");
-  await page.getByRole("button", { name: "+ New order" }).click();
+  await page.getByRole("button", { name: "New order" }).click();
 
   // Retailer quick-add
-  await page.getByRole("button", { name: "+", exact: true }).click();
+  await page.getByRole("button", { name: "New retailer" }).click();
   await page.getByPlaceholder("New retailer name").fill(SHOP);
   await page.getByRole("button", { name: "Add", exact: true }).click();
 
@@ -39,7 +39,7 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   await page.getByPlaceholder("Grade *").fill("HG");
 
   // Line 2: a brand-new consumable via the select-or-create typeahead
-  await page.getByRole("button", { name: "+ Add line" }).click();
+  await page.getByRole("button", { name: "Add line" }).click();
   await page.locator('select:has(option[value="consumable"])').nth(1).selectOption("consumable");
   await page.getByLabel("Quantity").nth(1).fill("3");
   await page.getByLabel("Unit price").nth(1).fill("2");
@@ -95,30 +95,28 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   await expect(kitRow.getByText("Backlog").first()).toBeVisible();
 });
 
-test("kanban drag moves the kit to Building", async ({ page }) => {
-  await page.goto("/board");
+test("the kit's status changes from Home's edit dialog (#233 — the drag is gone)", async ({
+  page,
+}) => {
+  // Home lists the backlog by the status clock, newest first, and the kit the
+  // order just delivered is the newest — its row is on the first strip.
+  await page.goto("/");
+  const row = page.getByRole("region", { name: "Backlog" }).getByText(KIT, { exact: true });
+  await expect(row).toBeVisible();
+  await page.getByRole("button", { name: `Edit ${KIT}` }).click();
+  const dialog = page.getByRole("dialog", { name: `Edit ${KIT}` });
+  await dialog.getByLabel("Status").selectOption("building");
+  await dialog.getByRole("button", { name: "Save" }).click();
+  await expect(dialog).toHaveCount(0);
 
-  const handle = page.locator(".cursor-grab", { hasText: KIT });
-  await expect(handle).toBeVisible();
-  const buildingHeader = page.getByText("Building", { exact: true });
-  await expect(buildingHeader).toBeVisible();
-
-  const handleBox = (await handle.boundingBox())!;
-  const targetBox = (await buildingHeader.boundingBox())!;
-
-  await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + handleBox.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(targetBox.x + 30, targetBox.y + 90, { steps: 15 });
-  await page.mouse.up();
-
-  // Optimistic UI: the card is under Building immediately; the API agrees shortly.
+  // The bench shows it, with the start date the transition stamped (#94), and
+  // the API agrees — the same PATCH the Kits page and an agent make.
+  const bench = page.getByRole("region", { name: "On the bench" });
+  await expect(bench.getByRole("heading", { level: 3, name: KIT })).toBeVisible();
+  await expect(bench.getByText(/^Started /).first()).toBeVisible();
   const api = await apiContext();
-  await expect
-    .poll(async () => {
-      const kits = (await (await api.get("/kits")).json()) as { name: string; status: string }[];
-      return kits.find((kit) => kit.name === KIT)?.status;
-    })
-    .toBe("building");
+  const kits = (await (await api.get("/kits")).json()) as { name: string; status: string }[];
+  expect(kits.find((kit) => kit.name === KIT)?.status).toBe("building");
   await api.dispose();
 });
 

@@ -427,7 +427,9 @@ describe("runtime behaviour the app relies on", () => {
 
   it("interpolates byte-exactly, escaping nothing", () => {
     expect(i18n.t("api.exportFailed", { status: 404 })).toBe("Export failed (404)");
-    expect(i18n.t("board.loadFailed", { message: "<oops>" })).toBe("Failed to load kits: <oops>");
+    expect(i18n.t("home.loadFailed", { message: "<oops>" })).toBe(
+      "Failed to load the collection: <oops>",
+    );
   });
 
   it("uses the formatting locale for every shared counted phrase without changing plural selection", () => {

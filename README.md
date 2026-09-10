@@ -2,10 +2,11 @@
 
 **Track every kit, tool, and terrible financial decision from pre-order to panel-lined masterpiece.**
 
-A self-hosted Gunpla/plamo collection and build tracker. Kits move across a drag-and-drop
-Kanban board from *pre-ordered* to *complete*; orders know which kits they turned into;
-nippers, cement and decal sheets get counted; and an embedded MCP server means you can
-just tell Claude "the Sinanju arrived" instead of clicking things.
+A self-hosted Gunpla/plamo collection and build tracker. Kits move through a pipeline
+from *pre-ordered* to *complete*, with a Home page that shows the bench, the backlog and
+what's in the mail at a glance; orders know which kits they turned into; nippers, cement
+and decal sheets get counted; and an embedded MCP server means you can just tell Claude
+"the Sinanju arrived" instead of clicking things.
 
 Your data lives in your Postgres, on your hardware, and leaves as plain CSV whenever you
 want it to.
@@ -28,21 +29,35 @@ want it to.
 
 ---
 
-![The build pipeline — drag a card, the kit's status follows](docs/screenshots/board.png)
+![Home — the bench first, then the backlog and the shelf, then what's in the mail](docs/screenshots/home.png)
 
 ## What it actually does
 
-### A board that admits you have a backlog
+### A start page that admits you have a backlog
 
-Six statuses — pre-ordered, ordered, in transit, backlog, building, complete — with two
-views over them. **Build** shows the three that matter on a Sunday afternoon
-(backlog → building → complete). **Orders** shows the money still in flight, with
-everything that's arrived collapsed into one Received column so it doesn't fill your
-screen with things you already own.
+Six statuses — pre-ordered, ordered, in transit, backlog, building, complete — and a
+Home page that reads them the way a Sunday afternoon does. **On the bench** is what
+you're building, each kit with its start date, a day counter and your latest note.
+**Backlog** and **Recently completed** show the six most recent of each with the true
+count beside the heading, and a *view all* link into the full list, already filtered.
+**In the mail** is the money still in flight — pre-ordered, ordered, in transit — as
+order cards with the retailer, the carrier and the tracking number once it ships.
+
+Every card carries an edit control that opens the same dialog the list pages use, so a
+status change travels with the dates it should. There is no drag-and-drop: the board it
+replaced was drawn for a dozen kits and stopped being useful somewhere around fifty.
 
 "Backlog" means *in hand, not started*. There is no polite word for this pile. We tried.
 
-![The orders view — money in flight on the left, everything that landed on the right](docs/screenshots/board-orders.png)
+### One look, two themes
+
+The interface is one house look — warm near-black surfaces, one amber accent, hairline
+borders, Inter, stroke icons — with a light variant of the same tokens. Light, dark or
+follow-the-device is a per-browser choice in the sidebar, applied before the first
+paint so a dark browser never flashes white. Everything else is an instance-wide
+setting; this is the one thing that belongs to the device asking.
+
+![Home in the light theme](docs/screenshots/home-light.png)
 
 ### Orders that know what they turned into
 
@@ -142,14 +157,14 @@ Being honest up front beats you finding out at 11pm:
 
 | | Status |
 |---|---|
-| Kits, orders, inventory, retailers, Kanban board | ✅ Built |
+| Kits, orders, inventory, retailers, the Home page | ✅ Built |
 | CSV import / export | ✅ Built |
 | MCP server | ✅ Built |
 | Bundled `docker compose up` for the whole local stack | ✅ Built |
 | **Internationalisation foundations** | ✅ Milestone 5.1: instance-wide language, formatting locale, time zone, date/hour style, and reference currency; the `en-AU` source catalogue and fallback; a reviewed [translation workflow](docs/translating.md); locale-aware dates, times, numbers, counts, money, and file sizes; structured REST/import diagnostics with translated known identifiers and an English compatibility fallback; and RTL-aware layout utilities. No non-English catalogue ships yet. Upgrades default existing instances to `en-AU`/UTC; naive CSV timestamps are read prospectively in the configured instance zone, stored history is never reinterpreted, and downgrading past the settings migration loses its settings row. |
 | **Authentication, OAuth-compatible remote MCP, a tested TLS deployment** | ✅ Milestone 6 — owner login (password or OpenID Connect), personal access tokens, MCP OAuth for Claude web / ChatGPT web / MCP Inspector, and the reference Caddy deployment plus the other tested ways to expose an instance (`docs/operations.md`) |
 | **MCP `2026-07-28` compatibility** | 🔨 Milestone 6.1 — dual-era, without dropping current clients |
-| **UI redesign** | 🔨 Milestone 6.5 — moving off the stock-component look, so the gallery and showcase get built in the new one; the direction is settled (`docs/design.md` §13) and the build is next |
+| **UI redesign** | ✅ Milestone 6.5 — one house look on semantic tokens with a per-browser light/dark/system switch, Home in place of the board, filter/sort/page in the list pages' URLs, one edit dialog per record (`docs/design.md` §13) |
 | **Photo gallery per kit** | 🔨 Milestone 7 |
 | **Public read-only showcase page** | 🔨 Milestone 8 — after the admin and MCP paths are protected |
 
@@ -167,9 +182,12 @@ cp .env.example .env
 docker compose up -d --build --wait
 ```
 
-Open **http://localhost:8080**. That's an empty collection — head to
-**Settings → Data management → Starter sheet** to pour an existing spreadsheet
-in, or just add an order.
+Open **http://localhost:8080**. The first visit asks for the setup token from the API
+log and a password (the alpha note above); every visit after it is this sign-in, and
+behind it an empty collection — head to **Settings → Data management → Starter sheet**
+to pour an existing spreadsheet in, or just add an order.
+
+![The sign-in screen](docs/screenshots/sign-in.png)
 
 The first run builds two images and takes a couple of minutes; after that it's
 seconds. `.env` is the whole configuration: Compose reads it to start the database
@@ -325,7 +343,8 @@ Personal access tokens keep working in that mode too.
 | Tool | What it does |
 |---|---|
 | `get_meta` | App version and the instance's reference currency — what an omitted `currency_code` means |
-| `list_kits` | Filter by status, grade or series |
+| `get_summary` | The collection at a glance — kits per status, orders per stage (pre-ordered, ordered, in transit, received); the numbers Home shows |
+| `list_kits` | Filter by status, grade or series; `sort=recent` for the kits that last moved, `limit` for the first N |
 | `list_kit_series` | Series names already in use — check before writing a new spelling |
 | `get_kit` | One kit, in full |
 | `create_kit` | Add a kit that *wasn't* bought — a gift, a trade, a carry-over from before tracking; purchases go through `create_order` |
@@ -339,7 +358,7 @@ Personal access tokens keep working in that mode too.
 | `list_retailers` | Every shop on record, report card included |
 | `create_retailer` / `update_retailer` | Add a shop; rate it, note the crushed box, fill in the report card |
 | `create_order` | Full order with lines; kits fan out, retailers are matched by name or created |
-| `list_orders` | Optionally pending-only — how an agent finds the order a shipping email belongs to |
+| `list_orders` | Optionally pending-only — how an agent finds the order a shipping email belongs to; `sort=recent` by the last status change, `limit` for the first N |
 | `get_order` | One order in full — the read an edit starts from |
 | `update_order` | Correct an order: header fields and/or the line set; refuses to silently drop lines you didn't restate |
 | `mark_order_received` | Applies stock, advances that order's kits to backlog — with an optional arrival date, for deliveries logged after the fact |

@@ -144,6 +144,7 @@ async def test_session_reports_oidc_mode_and_unclaimed_on_a_fresh_instance():
     assert body["auth_mode"] == "oidc"
     assert body["oidc_issuer"] == ISSUER
     assert body["csrf_token"] is None
+    assert body["display_name"] is None
 
 
 async def test_the_shipped_local_app_reports_local_mode(anon_client):
@@ -334,6 +335,9 @@ async def test_the_first_login_with_the_setup_token_binds_the_owner():
         session = await browser.get("/auth/session")
         assert session.json()["state"] == "owner"
         assert session.json()["csrf_token"]
+        # The identity the sidebar shows (§13.3): what the provider called the
+        # owner, on the owner's own read.
+        assert session.json()["display_name"] == "owner@example.test"
         assert setup_token_state(live).digest is None
     owner = await _owner()
     assert (owner.oidc_issuer, owner.oidc_subject) == (ISSUER, OWNER_SUB)
@@ -349,6 +353,20 @@ async def test_the_first_login_with_the_setup_token_binds_the_owner():
     assert exchange["grant_type"] == "authorization_code"
     assert exchange["code_verifier"]
     assert exchange["_authorization"].startswith("Basic ")
+
+
+async def test_display_name_is_on_the_owners_read_alone():
+    """§13.3's identity line is for the owner; the anonymous read of a bound
+    instance (family 2) must not say who owns it."""
+    fake = FakeIdp()
+    async with oidc_app(fake) as (live, browser):
+        token = _issue_setup_token(live)
+        assert _auth_error(await _sign_in(fake, browser, setup_token=token)) is None
+        assert (await browser.get("/auth/session")).json()["display_name"] == "owner@example.test"
+        async with fresh_browser(live) as stranger:
+            body = (await stranger.get("/auth/session")).json()
+    assert body["state"] == "anonymous"
+    assert body["display_name"] is None
 
 
 @pytest.mark.parametrize("provider_error", [None, "access_denied"])

@@ -28,6 +28,11 @@ class SessionRead(BaseModel):
     auth_mode: Literal["local", "oidc"] = "local"
     #: The provider's issuer URL, so the login screen can name it. OIDC mode only.
     oidc_issuer: str | None = None
+    #: The owner's display name — the email or name the provider supplied at the
+    #: binding (OIDC mode, #191) — for the sidebar's identity line (§13.3). On the
+    #: owner's own read only: the anonymous families learn nothing about who owns
+    #: the instance. Null in local mode, which stores none.
+    display_name: str | None = None
 
 
 class SetupRequest(BaseModel):

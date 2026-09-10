@@ -1,6 +1,6 @@
 # plamotrack — Design Notes
 
-**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 08/09/2026
+**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 10/09/2026
 
 ---
 
@@ -52,13 +52,15 @@ else's UI. This is the same app, owned outright.
 
 ### 1.1 Goals
 
-- ✅ A drag-and-drop Kanban board for build status (Pre-ordered → Ordered → In Transit
-  → Backlog → Building → Complete), not a static view.
+- ✅ Build status at a glance (Pre-ordered → Ordered → In Transit → Backlog → Building
+  → Complete), not a static view.
   *(Revised 06/08/2026: the original design had separate In Hand and Backlog statuses.
   They turned out to be the same pile with two names, and were merged — Backlog now
-  means "in hand, not started" and occupies In Hand's old pipeline position. The board
-  defaults to a Build view of Backlog/Building/Complete; an Orders view shows the
-  ordering states with everything received rolled into one aggregate column.)*
+  means "in hand, not started" and occupies In Hand's old pipeline position. Revised
+  again 10/09/2026, #233: the drag-and-drop Kanban board this goal was first met with
+  was drawn for a dozen kits and scrolled past usefulness at fifty; Home replaced it
+  (§13.2) — the bench, the backlog and the shelf as capped strips with true counts, the
+  orders in the mail as cards, and every status change through the kit dialog.)*
 - ✅ Full CRUD via the web UI, without touching a database or an app-builder tool
 - ✅ MCP-native: agents can add orders, update build status, and adjust stock without a
   human touching the UI
@@ -591,9 +593,14 @@ Standard CRUD plus a few purpose-built endpoints.
 
 **Built ✅**
 
-- `GET/POST /kits`, `GET/PATCH/DELETE /kits/{id}` — PATCH handles Kanban drag (status
-  change). Order-spawned kits refuse direct deletion (409) — undo happens at the order
-  line, so purchase records and the collection can't drift apart
+- `GET/POST /kits`, `GET/PATCH/DELETE /kits/{id}` — PATCH is the status change too
+  (the kit dialog's status field, an agent's `update_kit_status`). Order-spawned kits
+  refuse direct deletion (409) — undo happens at the order line, so purchase records
+  and the collection can't drift apart
+- `GET /summary` (#233, §13.2) — kits per status and orders per stage from one
+  `REPEATABLE READ` snapshot; Home's heading counts, and the totals the list pages
+  show behind its *view all* links. Every order row carries a derived `stage`
+  (`received`, `in_transit`, `pre_ordered`, `ordered`) from the same predicate
 - `GET /kits/series` — distinct series spellings, most frequent first, for the
   select-or-create control
 - `GET/POST /tools|/consumables|/upgrades|/display-items` + `PATCH/DELETE /{id}` on each — deletes are
@@ -2052,7 +2059,11 @@ is `/mcp/` on the API port (streamable HTTP).
   served by the same function as REST's `GET /meta` so the two cannot disagree.
   What `create_order`'s "omit currency_code" advice used to point at as a `meta`
   resource that never existed
-- `list_kits(status?, grade?, series?)`
+- `get_summary()` (#233) — the collection at a glance: kits per pipeline status,
+  orders per stage; the same function as REST's `GET /summary`, so the counts an
+  agent reads are the counts Home shows. Rows come from the list tools, and every
+  order row carries its `stage`
+- `list_kits(status?, grade?, series?, sort?, limit?)` — `sort` is `created` (oldest first), `recent` (the status clock, newest first) or `name`; `limit` the first N of that order (§13.4)
 - `list_kit_series()` — the series spellings in use, most frequent first; the
   select-or-create device for a free-text column (#96) — agents check it before
   writing a spelling nobody uses
@@ -2103,7 +2114,7 @@ is `/mcp/` on the API port (streamable HTTP).
   dispatch as the REST endpoint; retailer matched by name case-insensitively,
   created if new; `received_at` backdates an arrival logged after the fact (§3.9);
   `shipped_at` (#95) needs no flag and lands spawned kits in_transit
-- `list_orders(pending_only?)` — find the order a shipping or arrival email belongs to
+- `list_orders(pending_only?, sort?, limit?)` — find the order a shipping or arrival email belongs to; `sort` is `placed` (newest order date first) or `recent` (the last status change: received, else shipped, else placed, a placement date read as its midnight in the instance's time zone); `limit` the first N
 - `get_order(id)` — one order in full, line ids and spawned kits included; the read an
   edit starts from (#97)
 - `update_order(id, changes, remove_missing_lines?)` — header corrections and/or the
@@ -2354,9 +2365,10 @@ Unchanged from the original plan:
    is §5.9
 10. 🔨 **M6.1 — MCP modernisation:** dual-era compatibility for the existing protocol
     generation and `2026-07-28`, with conformance and real-client coverage
-11. 🔨 **M6.5 — UI redesign:** move off the stock Tailwind look. Direction
+11. ✅ **M6.5 — UI redesign:** move off the stock Tailwind look. Direction
     **decided 09/09/2026 — Workbench, §13** — after three directions were drawn on
-    the same screens; the build is split in §13.6. Sequenced after M5.1 so the
+    the same screens; the build is split in §13.6 and **complete on the integration
+    branch (10/09/2026, #231–#234)**, landing on `main` as v0.4.0-alpha. Sequenced after M5.1 so the
     Settings surface isn't styled twice, and before M7/M8 so the gallery and the
     showcase are built in the new look once. Board interaction gaps deferred from
     the #120 consolidation (#122) land here: Home replaces the board (§13.2)
@@ -2613,7 +2625,7 @@ considered and declined.
 
 ---
 
-## 13. UI redesign (M6.5) — direction decided 09/09/2026
+## 13. UI redesign (M6.5) ✅ — direction decided 09/09/2026, built 10/09/2026 (#231–#234)
 
 **Decision.** The interface moves off the stock Tailwind vocabulary to one house
 look, *Workbench*: warm near-black surfaces (the light theme a warm off-white), one
@@ -2634,13 +2646,25 @@ one more token file, so choosing now closes nothing.
   `indigo-*`); the light theme is the same tokens under `[data-theme="light"]`. A
   palette utility in a component after M6.5 is a regression, not a style choice.
 - **Light / dark / system is a per-browser preference**, held in `localStorage` and
-  applied by an inline script before first paint so a dark browser never flashes
-  white. This is the one deliberate exception to §6.1's instance-wide rule, because
+  applied before first paint so a dark browser never flashes white — by a blocking
+  script in the document head (`frontend/public/theme.js`), a first-party file
+  rather than an inline one because the bundled nginx serves the app under
+  `script-src 'self'` (§5.6); `src/lib/theme.ts` is its runtime twin and one test
+  holds the two to the same answers. This is the one deliberate exception to §6.1's instance-wide rule, because
   "system" only means something on the device asking: a phone in dark mode and a
   desktop in light are both right. Every other setting stays instance-wide.
 - **Inter is bundled with the app**, never fetched from a font host: a private
   instance makes no third-party request to render.
 - **Icons are stroke icons from one set (Lucide).** The emoji go.
+
+Built as #231 (2026-09-10). What the build changed: the light theme's accent and
+five of its status hues are the artboard's hues *darkened* until every composed
+text-on-chip pair clears 4.5:1 (`src/lib/tokens.test.ts` parses `index.css` and
+asserts each pair in both themes; Codex #235) — the artboard's light values are no
+longer literal; `--faint` is held to 3:1 on the chip as well as the surfaces, because
+a hovered row is the chip and its pencil sits on it (Codex #236); and the palette
+guard (`scripts/check-palette.mjs`, run by `npm run lint`) refuses arbitrary colour,
+radius and shadow values too, not only the stock palette.
 
 ### 13.2 Home replaces the board
 
@@ -2668,6 +2692,27 @@ page instead — status at a glance, the bench first:
   offered is the dialog's status field, travelling with the dates a real
   transition carries (#120's reasoning).
 
+Built as #233 (2026-09-10). What the build decided: the **order's stage is the
+server's** — `received`, else `in_transit` (shipped), else `pre_ordered` (every
+spawned kit still a pre-order, at least one), else `ordered` — one predicate
+(`services/order_stage.py`) behind a derived `stage` on every order row, the per-stage
+counts and, through them, Home's columns and the Orders page's `?status=` filter,
+whose vocabulary is now that of the wire (`?status=in_transit`, where #232 had
+`shipped`); so a *view all* link, a heading count and a list page's total are one
+number by construction, and the browser derives nothing. The **counts come from one
+function** for REST (`GET /summary`) and MCP (`get_summary`), read under one
+`REPEATABLE READ` snapshot (rule 7.2) so the kit side and the order side of a receive
+cannot be seen half-applied. The **mail columns cap at three cards**, the artboard's
+number; the strips at six; the bench is never capped. A card names its **first line**
+and either the one other line by name or how many more there are; a mixed order's
+pre-ordered line carries the *pre-order* tag, an order that is wholly a pre-order does
+not (the column says it). The **day counter** reads *day 1* on the start day. The
+two dialogs are **one component each** (`KitFormModal`, `OrderFormModal`), shared by
+the list pages and Home, and the writes they make invalidate the summary through one
+list of keys (`lib/invalidate.ts`). `/board` redirects to Home; `@dnd-kit/core` is
+gone, and with it the #50 optimistic-move policy — a status change is one PATCH from
+the dialog, nothing is queued or rolled back.
+
 ### 13.3 Sidebar
 
 Fixed while the page scrolls. Wordmark only — the tagline moves to the sign-in
@@ -2677,13 +2722,40 @@ the owner is bound as ("Jamie · via Google"), the one identity a single-owner a
 has to show. In local mode the footer is two controls: nothing to manage, so no
 profile card.
 
+Built as #231 (2026-09-10), Home first from #233. The line that moved off the
+sidebar is a plain one-line description ("A self-hosted Gunpla and plamo collection
+and build tracker."), on the sign-in screen and About (#234); the README keeps its
+own tagline. The Settings sections' navigation is the sidebar's row shape, and the
+Access tokens table the list pages' (#234).
+
 ### 13.4 List pages
 
 Kits, Orders, Inventory and Retailers keep their tables and gain what Home links
 to: **filter and sort in the URL** (`?status=building&sort=recent`), so a *view all*
-link is a page state and a bookmark. Each row carries one edit control. Orders keeps
-its expandable lines, kit lines showing their kit status and catalog lines noting
-that stock applies on receipt (§3.9).
+link is a page state and a bookmark. Each row carries one edit control; Delete moves
+inside the edit dialog, next to the fields it destroys. Orders keeps its expandable
+lines, kit lines showing their kit status and catalog lines noting that stock applies
+on receipt (§3.9), with a shipping line closing the box and the lines' converted total
+under the order's own (§6). Built as #232 (2026-09-10), with what the Orders artboard
+added: the count beside the page title, a pager of ten rows a page whose page is one
+more URL parameter (`?page=2`, clamped onto the last page when the list shrinks — a
+filter, sort or search change resets it), and the sort as the server's — `GET /kits`
+and `GET /orders` take `sort` and `limit`, on REST and the MCP list tools alike, so
+"recent" means one thing for the page, Home and an agent: a kit's `status_updated_at`
+(every generated stamp is the API's clock, so a create and a move never rank by two
+clocks; a supplied ship or receipt instant is recorded as given), an order's last
+status change (received, else shipped, else placed — a placement date being its
+midnight in the instance's time zone, rule 11). That order clock is computed by the
+application, in its own zone database, and the list is sorted there — the clocks
+compared as instants, so a UTC shipment and a zone-local midnight at the same
+instant tie and the placement date decides: a cast in SQL
+read the database session's zone (Codex #236 round 1), and handing the zone's name to
+Postgres read *its* zone files, which lack 97 of the names the settings accept and
+take CET, EET, MET and WET as fixed offsets (round 2). Two choices on a transition day
+are named rather than left to a library: a midnight that happens twice is its first
+occurrence, and a midnight a transition skipped is read with the offset that held
+before it. The filters and the search narrow the loaded list in the browser; the page
+holds the whole list, and a personal collection is a few hundred rows.
 
 ### 13.5 Not in M6.5
 
@@ -2699,11 +2771,12 @@ merged into it as `main` moves, landed on `main` in one release (v0.4.0-alpha), 
 (decided 2026-09-10) — in this order, so no page is styled twice (filed as #231–#234,
 milestone M6.5):
 
-1. **Tokens, theme switch, Inter, Lucide** — every component and page onto the
-   token utilities; the sidebar (§13.3); the sign-in screen.
-2. **List-page filter and sort in the URL** (§13.4) and the row edit control.
+1. ✅ **Tokens, theme switch, Inter, Lucide** — every component and page onto the
+   token utilities; the sidebar (§13.3); the sign-in screen. #231, PR #235 → `f99e085`.
+2. ✅ **List-page filter and sort in the URL** (§13.4) and the row edit control.
    Backend: sort and limit on the kit and order list endpoints, on REST and MCP
-   alike (rule 1), declared in the route registry.
-3. **Home** (§13.2), replacing the board page and the drag-and-drop dependency; the
-   per-status counts come from one service function both surfaces share.
-4. Settings, About, the e2e suite and the README screenshots in the new look.
+   alike (rule 1), declared in the route registry. #232, PR #236 → `3faca69`.
+3. ✅ **Home** (§13.2), replacing the board page and the drag-and-drop dependency; the
+   per-status counts come from one service function both surfaces share. #233,
+   PR #237 → `8bac10a`.
+4. ✅ Settings, About, the e2e suite and the README screenshots in the new look. #234.

@@ -1,4 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Pencil, Plus } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
@@ -16,15 +17,31 @@ import type {
 } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
-import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "../components/ui";
+import {
+  Button,
+  Chip,
+  EmptyState,
+  ErrorBanner,
+  Field,
+  IconButton,
+  Input,
+  PageTitle,
+  Pager,
+  Select,
+  TABLE_HEAD_ROW_CLASS,
+} from "../components/ui";
 import { currencyOptions, formatMoney, formatNumber, majorToMinor, minorToMajor, stepFor } from "../lib/format";
 import { counted, itemTypeLabel, itemTypePlural } from "../lib/labels";
+import { paginate, useEnumParam, usePageParam, useTextParam, useWriteParams } from "../lib/listState";
 import { usePresentationVersion } from "../lib/presentation";
 
 type Tab = "tools" | "consumables" | "upgrades" | "display-items";
 type InventoryItem = Tool | Consumable | Upgrade | DisplayItem;
 
 const TABS: Tab[] = ["tools", "consumables", "upgrades", "display-items"];
+
+/** Rows per page on the list pages (§13.4). */
+const PAGE_SIZE = 10;
 
 /** The CSV table key, which is the spec registry's key and not the route segment:
  * `/display-items` is the REST resource, `display_items.csv` is the file. Every
@@ -118,10 +135,12 @@ function ItemFormModal({
   tab,
   item,
   onClose,
+  onDelete,
 }: {
   tab: Tab;
   item?: InventoryItem;
   onClose: () => void;
+  onDelete?: (item: InventoryItem) => Promise<void>;
 }) {
   const { t } = useTranslation();
   const { data: meta } = useQuery(metaQuery);
@@ -141,7 +160,13 @@ function ItemFormModal({
     );
   }
   return (
-    <ItemForm tab={tab} item={item} onClose={onClose} referenceCurrency={meta.reference_currency} />
+    <ItemForm
+      tab={tab}
+      item={item}
+      onClose={onClose}
+      onDelete={onDelete}
+      referenceCurrency={meta.reference_currency}
+    />
   );
 }
 
@@ -149,16 +174,20 @@ function ItemForm({
   tab,
   item,
   onClose,
+  onDelete,
   referenceCurrency,
 }: {
   tab: Tab;
   item?: InventoryItem;
   onClose: () => void;
+  /** Delete lives in the dialog, not on the row (§13.4). */
+  onDelete?: (item: InventoryItem) => Promise<void>;
   referenceCurrency: string;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   // The typeahead half of the category vocabulary (#127) — the same device the kit
   // form gives series. The server folds a case-insensitive match onto the stored
   // spelling either way; this is what makes picking the stored spelling easy.
@@ -348,12 +377,35 @@ function ItemForm({
             <Input {...register("notes")} placeholder={t("inventory.notesPlaceholder")} />
           </Field>
         )}
-        <div className="flex justify-end gap-2 pt-1">
-          <Button type="button" variant="secondary" onClick={onClose}>
+        <div className="flex items-center gap-2 pt-1">
+          {item && onDelete && (
+            <Button
+              type="button"
+              variant="danger"
+              className="me-auto"
+              disabled={isSubmitting || deleting}
+              onClick={async () => {
+                if (!window.confirm(t("common.confirmDelete", { name: item.name }))) return;
+                setError(null);
+                setDeleting(true);
+                try {
+                  await onDelete(item);
+                  onClose();
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+            >
+              {t("common.delete")}
+            </Button>
+          )}
+          <Button type="button" variant="secondary" className="ms-auto" onClick={onClose}>
             {t("common.cancel")}
           </Button>
-          <Button type="submit" disabled={isSubmitting}>
-            {t("common.add")}
+          <Button type="submit" disabled={isSubmitting || deleting}>
+            {item ? t("common.save") : t("common.add")}
           </Button>
         </div>
       </form>
@@ -390,7 +442,7 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
     <Modal title={t("inventory.applyTitle", { name: upgrade.name })} onClose={onClose}>
       <div className="space-y-3">
         <ErrorBanner message={error} />
-        <p className="text-sm text-zinc-500">
+        <p className="text-sm text-muted">
           {t("inventory.applyOnHand", counted({}, upgrade.quantity_on_hand))}
         </p>
         <Field label={t("inventory.kit")} required>
@@ -496,17 +548,19 @@ export function InventoryPage() {
   usePresentationVersion();
   const { t } = useTranslation();
   const queryClient = useQueryClient();
-  const [tab, setTab] = useState<Tab>("tools");
+  // The tab, the category and the page are the URL (§13.4, #232).
+  const [tab] = useEnumParam<Tab>("tab", TABS, "tools");
+  const [categoryFilter, setCategoryFilter] = useTextParam("category");
+  const [page, setPage] = usePageParam();
+  const writeParams = useWriteParams();
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<InventoryItem | null>(null);
   const [applying, setApplying] = useState<Upgrade | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [categoryFilter, setCategoryFilter] = useState("");
 
+  // The dialog confirms and reports; this is the deletion itself (§13.4).
   const removeItem = async (item: InventoryItem) => {
-    if (!window.confirm(t("common.confirmDelete", { name: item.name }))) return;
-    setActionError(null);
-    try {
+    {
       if (tab === "tools") {
         await api.deleteTool(item.id);
       } else if (tab === "consumables") {
@@ -517,8 +571,6 @@ export function InventoryPage() {
         await api.deleteDisplayItem(item.id);
       }
       await queryClient.invalidateQueries({ queryKey: [tab] });
-    } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
     }
   };
 
@@ -562,33 +614,60 @@ export function InventoryPage() {
   const filteredTools = inCategory(tools.data);
   const filteredConsumables = inCategory(consumables.data);
   const filteredDisplayItems = inCategory(displayItems.data);
+  const filteredUpgrades = upgrades.data ?? [];
+  const pagedTools = paginate(filteredTools, page, PAGE_SIZE);
+  const pagedConsumables = paginate(filteredConsumables, page, PAGE_SIZE);
+  const pagedUpgrades = paginate(filteredUpgrades, page, PAGE_SIZE);
+  const pagedDisplayItems = paginate(filteredDisplayItems, page, PAGE_SIZE);
+  const shownCount =
+    tab === "tools"
+      ? pagedTools.total
+      : tab === "consumables"
+        ? pagedConsumables.total
+        : tab === "upgrades"
+          ? pagedUpgrades.total
+          : pagedDisplayItems.total;
+  const loaded =
+    tab === "tools"
+      ? tools.data
+      : tab === "consumables"
+        ? consumables.data
+        : tab === "upgrades"
+          ? upgrades.data
+          : displayItems.data;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-2xl font-bold">{t("inventory.title")}</h1>
+        <PageTitle count={loaded === undefined ? undefined : shownCount}>
+          {t("inventory.title")}
+        </PageTitle>
         <div className="flex gap-2">
           <ExportCsvButton table={EXPORT_TABLE[tab]} />
-          <Button onClick={() => setAddOpen(true)}>
+          <Button icon={Plus} onClick={() => setAddOpen(true)}>
             {t("inventory.addButton", { type: itemTypeLabel(TAB_ITEM_TYPE[tab]) })}
           </Button>
         </div>
       </div>
 
-      <div className="flex gap-1 border-b border-zinc-200">
+      <div className="flex gap-1 border-b border-border">
         {TABS.map((tabOption) => (
           <button
             key={tabOption}
-            onClick={() => {
-              setTab(tabOption);
+            onClick={() =>
               // Vocabularies are per-table — a tool category filter is
-              // meaningless on the consumables tab.
-              setCategoryFilter("");
-            }}
+              // meaningless on the consumables tab — and the page was a
+              // position in the previous table. One navigation for all three.
+              writeParams({
+                tab: tabOption === "tools" ? null : tabOption,
+                category: null,
+                page: null,
+              })
+            }
             className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
               tab === tabOption
-                ? "border-indigo-600 text-indigo-700"
-                : "border-transparent text-zinc-500 hover:text-zinc-800"
+                ? "border-accent text-accent"
+                : "border-transparent text-muted hover:text-text"
             }`}
           >
             {t(`inventory.tabs.${tabOption}`)}
@@ -599,7 +678,7 @@ export function InventoryPage() {
       {tab !== "upgrades" && categoryOptions.length > 0 && (
         <Select
           aria-label={t("inventory.filterByCategory")}
-          className="w-auto"
+          className="!w-auto"
           value={categoryFilter}
           onChange={(event) => setCategoryFilter(event.target.value)}
         >
@@ -617,22 +696,22 @@ export function InventoryPage() {
       {tab === "tools" &&
         (tools.isError ? (
           <ErrorBanner message={t("inventory.loadFailed.tools", { message: (tools.error as Error).message })} />
-        ) : filteredTools.length ? (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+        ) : pagedTools.total ? (
+          <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">{t("common.name")}</th>
-                  <th className="px-3 py-2">{t("inventory.category")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerRefCost")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerCondition")}</th>
-                  <th className="px-3 py-2" />
+                <tr className={TABLE_HEAD_ROW_CLASS}>
+                  <th className="px-3 py-2.5">{t("common.name")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.category")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerRefCost")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerCondition")}</th>
+                  <th className="px-3 py-2.5" />
                 </tr>
               </thead>
               <tbody>
-                {filteredTools.map((tool) => (
-                  <tr key={tool.id} className="border-b border-zinc-100 last:border-0">
+                {pagedTools.rows.map((tool) => (
+                  <tr key={tool.id} className="border-b border-rule last:border-0">
                     <td className="px-3 py-2 font-medium">{tool.name}</td>
                     <td className="px-3 py-2">{tool.category}</td>
                     <td className="px-3 py-2">
@@ -650,21 +729,22 @@ export function InventoryPage() {
                             tool.unit_cost_reference_currency,
                           )}
                     </td>
-                    <td className="px-3 py-2 text-zinc-500">{tool.condition_notes ?? "—"}</td>
+                    <td className="px-3 py-2 text-muted">{tool.condition_notes ?? "—"}</td>
                     <td className="px-3 py-2 text-end">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="secondary" onClick={() => setEditing(tool)}>
-                          {t("common.edit")}
-                        </Button>
-                        <Button variant="danger" onClick={() => removeItem(tool)}>
-                          {t("common.delete")}
-                        </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        <IconButton
+                          label={t("common.editNamed", { name: tool.name })}
+                          onClick={() => setEditing(tool)}
+                        >
+                          <Pencil size={15} aria-hidden />
+                        </IconButton>
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <Pager paged={pagedTools} onPage={setPage} />
           </div>
         ) : (
           <EmptyState>
@@ -686,39 +766,39 @@ export function InventoryPage() {
               message: (consumables.error as Error).message,
             })}
           />
-        ) : filteredConsumables.length ? (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+        ) : pagedConsumables.total ? (
+          <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">{t("common.name")}</th>
-                  <th className="px-3 py-2">{t("inventory.category")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerLowStockAt")}</th>
-                  <th className="px-3 py-2" />
+                <tr className={TABLE_HEAD_ROW_CLASS}>
+                  <th className="px-3 py-2.5">{t("common.name")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.category")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerLowStockAt")}</th>
+                  <th className="px-3 py-2.5" />
                 </tr>
               </thead>
               <tbody>
-                {filteredConsumables.map((item) => {
+                {pagedConsumables.rows.map((item) => {
                   const low =
                     item.low_stock_threshold !== null &&
                     item.quantity_on_hand <= item.low_stock_threshold;
                   return (
-                    <tr key={item.id} className="border-b border-zinc-100 last:border-0">
+                    <tr key={item.id} className="border-b border-rule last:border-0">
                       <td className="px-3 py-2 font-medium">{item.name}</td>
                       <td className="px-3 py-2">{item.category}</td>
                       <td className="px-3 py-2">
                         <span
-                          className={`me-2 tabular-nums ${low ? "font-semibold text-red-600" : ""}`}
+                          className={`me-2 tabular-nums ${low ? "font-semibold text-danger" : ""}`}
                           data-testid="stock-count"
                         >
                           {formatNumber(item.quantity_on_hand)}
                         </span>
                         <StockStepper item={item} queryKey="consumables" onError={setActionError} />
                         {low && (
-                          <span className="ms-2 rounded-full bg-red-100 px-2 py-0.5 text-xs font-medium text-red-700">
+                          <Chip tone="text-danger" className="ms-2">
                             {t("inventory.restock")}
-                          </span>
+                          </Chip>
                         )}
                       </td>
                       <td className="px-3 py-2">
@@ -727,13 +807,13 @@ export function InventoryPage() {
                           : formatNumber(item.low_stock_threshold)}
                       </td>
                       <td className="px-3 py-2 text-end">
-                        <div className="flex justify-end gap-1">
-                          <Button variant="secondary" onClick={() => setEditing(item)}>
-                            {t("common.edit")}
-                          </Button>
-                          <Button variant="danger" onClick={() => removeItem(item)}>
-                            {t("common.delete")}
-                          </Button>
+                        <div className="flex items-center justify-end gap-1">
+                          <IconButton
+                          label={t("common.editNamed", { name: item.name })}
+                          onClick={() => setEditing(item)}
+                        >
+                          <Pencil size={15} aria-hidden />
+                        </IconButton>
                         </div>
                       </td>
                     </tr>
@@ -741,6 +821,7 @@ export function InventoryPage() {
                 })}
               </tbody>
             </table>
+            <Pager paged={pagedConsumables} onPage={setPage} />
           </div>
         ) : (
           <EmptyState>
@@ -758,20 +839,20 @@ export function InventoryPage() {
       {tab === "upgrades" &&
         (upgrades.isError ? (
           <ErrorBanner message={t("inventory.loadFailed.upgrades", { message: (upgrades.error as Error).message })} />
-        ) : upgrades.data?.length ? (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+        ) : pagedUpgrades.total ? (
+          <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">{t("common.name")}</th>
-                  <th className="px-3 py-2">{t("inventory.manufacturer")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2" />
+                <tr className={TABLE_HEAD_ROW_CLASS}>
+                  <th className="px-3 py-2.5">{t("common.name")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.manufacturer")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2.5" />
                 </tr>
               </thead>
               <tbody>
-                {upgrades.data.map((upgrade) => (
-                  <tr key={upgrade.id} className="border-b border-zinc-100 last:border-0">
+                {pagedUpgrades.rows.map((upgrade) => (
+                  <tr key={upgrade.id} className="border-b border-rule last:border-0">
                     <td className="px-3 py-2 font-medium">{upgrade.name}</td>
                     <td className="px-3 py-2">{upgrade.manufacturer}</td>
                     <td className="px-3 py-2">
@@ -781,7 +862,7 @@ export function InventoryPage() {
                       <StockStepper item={upgrade} queryKey="upgrades" onError={setActionError} />
                     </td>
                     <td className="px-3 py-2 text-end">
-                      <div className="flex justify-end gap-1">
+                      <div className="flex items-center justify-end gap-1">
                         <Button
                           variant="secondary"
                           onClick={() => setApplying(upgrade)}
@@ -789,18 +870,19 @@ export function InventoryPage() {
                         >
                           {t("inventory.applyToKit")}
                         </Button>
-                        <Button variant="secondary" onClick={() => setEditing(upgrade)}>
-                          {t("common.edit")}
-                        </Button>
-                        <Button variant="danger" onClick={() => removeItem(upgrade)}>
-                          {t("common.delete")}
-                        </Button>
+                        <IconButton
+                          label={t("common.editNamed", { name: upgrade.name })}
+                          onClick={() => setEditing(upgrade)}
+                        >
+                          <Pencil size={15} aria-hidden />
+                        </IconButton>
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <Pager paged={pagedUpgrades} onPage={setPage} />
           </div>
         ) : (
           <EmptyState>
@@ -815,23 +897,23 @@ export function InventoryPage() {
               message: (displayItems.error as Error).message,
             })}
           />
-        ) : filteredDisplayItems.length ? (
-          <div className="overflow-x-auto rounded-lg border border-zinc-200 bg-white">
+        ) : pagedDisplayItems.total ? (
+          <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-start text-xs uppercase tracking-wide text-zinc-500">
-                  <th className="px-3 py-2">{t("common.name")}</th>
-                  <th className="px-3 py-2">{t("inventory.category")}</th>
-                  <th className="px-3 py-2">{t("inventory.scale")}</th>
-                  <th className="px-3 py-2">{t("inventory.manufacturer")}</th>
-                  <th className="px-3 py-2">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2">{t("inventory.notes")}</th>
-                  <th className="px-3 py-2" />
+                <tr className={TABLE_HEAD_ROW_CLASS}>
+                  <th className="px-3 py-2.5">{t("common.name")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.category")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.scale")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.manufacturer")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
+                  <th className="px-3 py-2.5">{t("inventory.notes")}</th>
+                  <th className="px-3 py-2.5" />
                 </tr>
               </thead>
               <tbody>
-                {filteredDisplayItems.map((row) => (
-                  <tr key={row.id} className="border-b border-zinc-100 last:border-0">
+                {pagedDisplayItems.rows.map((row) => (
+                  <tr key={row.id} className="border-b border-rule last:border-0">
                     <td className="px-3 py-2 font-medium">{row.name}</td>
                     <td className="px-3 py-2">{row.category}</td>
                     <td className="px-3 py-2">{row.scale ?? "—"}</td>
@@ -842,21 +924,22 @@ export function InventoryPage() {
                       </span>
                       <StockStepper item={row} queryKey="display-items" onError={setActionError} />
                     </td>
-                    <td className="px-3 py-2 text-zinc-500">{row.notes ?? "—"}</td>
+                    <td className="px-3 py-2 text-muted">{row.notes ?? "—"}</td>
                     <td className="px-3 py-2 text-end">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="secondary" onClick={() => setEditing(row)}>
-                          {t("common.edit")}
-                        </Button>
-                        <Button variant="danger" onClick={() => removeItem(row)}>
-                          {t("common.delete")}
-                        </Button>
+                      <div className="flex items-center justify-end gap-1">
+                        <IconButton
+                          label={t("common.editNamed", { name: row.name })}
+                          onClick={() => setEditing(row)}
+                        >
+                          <Pencil size={15} aria-hidden />
+                        </IconButton>
                       </div>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+            <Pager paged={pagedDisplayItems} onPage={setPage} />
           </div>
         ) : (
           <EmptyState>
@@ -872,7 +955,14 @@ export function InventoryPage() {
         ))}
 
       {addOpen && <ItemFormModal tab={tab} onClose={() => setAddOpen(false)} />}
-      {editing && <ItemFormModal tab={tab} item={editing} onClose={() => setEditing(null)} />}
+      {editing && (
+        <ItemFormModal
+          tab={tab}
+          item={editing}
+          onClose={() => setEditing(null)}
+          onDelete={removeItem}
+        />
+      )}
       {applying && <ApplyUpgradeModal upgrade={applying} onClose={() => setApplying(null)} />}
     </div>
   );

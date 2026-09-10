@@ -99,7 +99,7 @@ sentence without changing the code that asks for it.
 ```
 
 - Keys are grouped and dot-separated at runtime: `nav`, `common`, page groups
-  such as `board` and `orders`, and domain vocabulary such as `kitStatus` and
+  such as `home` and `orders`, and domain vocabulary such as `kitStatus` and
   `itemType`.
 - Leaves use camelCase, except vocabulary leaves that mirror a canonical wire
   value. For example, `kitStatus.pre_ordered` deliberately retains

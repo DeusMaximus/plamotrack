@@ -48,6 +48,7 @@ from app.services import kits as kits_service
 from app.services import orders as orders_service
 from app.services import upgrades as upgrades_service
 from app.services.meta import instance_meta
+from app.services.summary import collection_summary
 
 mcp = FastMCP(
     "plamotrack",
@@ -199,18 +200,45 @@ async def get_meta() -> dict:
 
 
 @mcp.tool
+async def get_summary() -> dict:
+    """The collection at a glance: how many kits sit in each pipeline status
+    (pre_ordered, ordered, in_transit, backlog, building, complete) and how many
+    orders in each stage — pre_ordered (every kit on it still a pre-order),
+    ordered, in_transit (shipped, not yet received) or received. Read this before
+    listing rows: "what's on the bench?" is kits.building, "what's in the mail?"
+    is the first three order stages. The same function serves REST's GET /summary
+    and Home's headings, so the counts cannot disagree. For the rows use
+    list_kits(status=...) and list_orders(pending_only=true) — every order row
+    carries its stage."""
+    async with _tool_session() as session:
+        return (await collection_summary(session)).model_dump(mode="json")
+
+
+@mcp.tool
 async def list_kits(
-    status: str | None = None, grade: str | None = None, series: str | None = None
+    status: str | None = None,
+    grade: str | None = None,
+    series: str | None = None,
+    sort: str = "created",
+    limit: PositiveInt4 | None = None,
 ) -> list[dict]:
     """List kits in the collection, optionally filtered by pipeline status
     (pre_ordered, ordered, in_transit, backlog, building, complete — backlog
     means in hand but not started), grade (HG, RG, MG, PG, SD, ...) and/or
     series (exact name, case-insensitively — get the spellings in use from
-    list_kit_series)."""
+    list_kit_series). sort: "created" (oldest first, the default), "recent"
+    (the kits that most recently changed status first — what moved lately) or
+    "name". limit: only the first N in that order, e.g. sort="recent", limit=5
+    for the five kits that last moved."""
     parsed_status = _parse_status(status) if status else None
     async with _tool_session() as session:
         kits = await kits_service.list_kits(
-            session, status=parsed_status, grade=grade, series=series
+            session,
+            status=parsed_status,
+            grade=grade,
+            series=series,
+            sort=sort,  # type: ignore[arg-type]  # the service refuses a stranger
+            limit=limit,
         )
         return [KitRead.model_validate(k).model_dump(mode="json") for k in kits]
 
@@ -250,8 +278,8 @@ async def get_kit(kit_id: str) -> dict:
 
 @mcp.tool
 async def update_kit_status(kit_id: str, status: str) -> dict:
-    """Move a kit to a new pipeline status (equivalent to dragging its Kanban
-    card). Valid statuses: pre_ordered, ordered, in_transit, backlog (= in
+    """Move a kit to a new pipeline status (what the kit dialog's status field
+    does in the browser). Valid statuses: pre_ordered, ordered, in_transit, backlog (= in
     hand, not started), building, complete. Entering building/complete stamps
     build_started_at/build_completed_at with now — only when that date is still
     null, so a real date already recorded is never overwritten; use update_kit
@@ -521,14 +549,23 @@ async def create_order(
 
 
 @mcp.tool
-async def list_orders(pending_only: bool = False) -> list[dict]:
-    """List orders (newest first), including received state and line items.
-    Use pending_only=true to see orders still awaiting delivery — e.g. to find
-    which order a shipping-notification email belongs to."""
+async def list_orders(
+    pending_only: bool = False, sort: str = "placed", limit: PositiveInt4 | None = None
+) -> list[dict]:
+    """List orders, including received state and line items. Use
+    pending_only=true to see orders still awaiting delivery — e.g. to find which
+    order a shipping-notification email belongs to. sort: "placed" (newest order
+    date first, the default) or "recent" (by the last status change — received,
+    else shipped, else placed, a placement date being its midnight in the instance's
+    time zone — newest first). limit: only the first N in that
+    order."""
     async with _tool_session() as session:
-        orders = await orders_service.list_orders(session)
-        if pending_only:
-            orders = [order for order in orders if order.received_at is None]
+        orders = await orders_service.list_orders(
+            session,
+            pending_only=pending_only,
+            sort=sort,  # type: ignore[arg-type]  # the service refuses a stranger
+            limit=limit,
+        )
         return [OrderRead.model_validate(order).model_dump(mode="json") for order in orders]
 
 

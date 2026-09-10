@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -153,7 +154,7 @@ export function Modal({
   // rendered in place, marking the page inert would disable the dialog too.
   return createPortal(
     <div
-      className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/40 p-4 pt-12"
+      className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-backdrop p-4 pt-12"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -164,16 +165,16 @@ export function Modal({
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        className={`w-full ${wide ? "max-w-3xl" : "max-w-md"} rounded-xl bg-white p-5 shadow-xl focus:outline-none`}
+        className={`w-full ${wide ? "max-w-3xl" : "max-w-md"} rounded-lg border border-border-strong bg-surface p-5 focus:outline-none`}
       >
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">{title}</h2>
+          <h2 className="text-lg font-semibold text-text">{title}</h2>
           <button
             onClick={onClose}
             aria-label={t("common.close")}
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
+            className="rounded-sm p-1 text-faint hover:bg-chip hover:text-text"
           >
-            ✕
+            <X size={16} aria-hidden />
           </button>
         </div>
         {children}
