@@ -23,6 +23,7 @@ const kitIds: string[] = [];
 const orderIds: string[] = [];
 let retailerId: string;
 let movedKitId: string;
+let toolId: string;
 let before: Summary;
 
 test.beforeAll(async () => {
@@ -87,12 +88,33 @@ test.beforeAll(async () => {
     tracking_url: `https://example.com/track/33AAB${suffix}`,
     items: [line(name("Shipped")), line(name("Shipped too")), line(name("Shipped three"))],
   });
-  // A URL and no number (Codex #237 P3-3): the card must still link it.
-  await order({
+  // A URL and no number (Codex #237 P3-3): the card must still link it. Its
+  // second line is a catalog item, so a card names a catalog row and the tool
+  // list is fetched (round 2, P3-6 drives that list's failure).
+  const urlOnly = await order({
     order_date: "2026-09-02",
     shipped_at: "2026-09-03T10:00:00+00:00",
     tracking_url: `https://example.com/track/url-only-${suffix}`,
-    items: [line(name("Url only"))],
+    items: [
+      line(name("Url only")),
+      {
+        item_type: "tool",
+        quantity: 1,
+        unit_price_minor: 1200,
+        currency_code: "JPY",
+        new_item: { name: name("Nippers"), category: "cutting" },
+      },
+    ],
+  });
+  toolId = (urlOnly.items![1] as { catalog_ref_id: string }).catalog_ref_id;
+  // A URL with a blank number (round 2, P3-5): stored as given by the API, and
+  // the card must read it as no number, not as an empty link.
+  await order({
+    order_date: "2026-09-02",
+    shipped_at: "2026-09-03T11:00:00+00:00",
+    tracking_number: "   ",
+    tracking_url: `https://example.com/track/blank-${suffix}`,
+    items: [line(name("Blank number"))],
   });
   // A pending order whose one kit the owner moves by hand (Codex #237 P2): the
   // order's stage follows its kits, so the card must change column.
@@ -105,6 +127,7 @@ test.afterAll(async () => {
   const api = await apiContext();
   for (const id of orderIds) await api.delete(`/orders/${id}`);
   for (const id of kitIds) await api.delete(`/kits/${id}`); // a 404 is a row a test deleted
+  if (toolId) await api.delete(`/tools/${toolId}`); // the order that referenced it is gone
   if (retailerId) await api.delete(`/retailers/${retailerId}`);
   await api.dispose();
 });
@@ -184,7 +207,46 @@ test("the three sections render from the collection, with the server's counts", 
     "href",
     `https://example.com/track/url-only-${suffix}`,
   );
+  await expect(urlOnly.getByText(`and ${name("Nippers")}`)).toBeVisible();
+  // A blank number is no number (round 2, P3-5): the fallback word, visibly.
+  const blank = mail.getByRole("article").filter({ hasText: name("Blank number") });
+  const blankLink = blank.getByRole("link", { name: "link" });
+  await expect(blankLink).toHaveAttribute("href", `https://example.com/track/blank-${suffix}`);
+  expect((await blankLink.boundingBox())!.height).toBeGreaterThan(8);
   await expect(pre.getByRole("link")).toHaveCount(0);
+});
+
+test("a failed supporting read shows the banner and never reads as an unknown retailer or a bare type (Codex #237 P3-6)", async ({
+  page,
+}) => {
+  // The retailer list refused (both attempts — TanStack retries once): the
+  // cards stay, the counts stay, the banner says the load failed, and the card
+  // says the retailer is unavailable — not that it is unknown.
+  await page.route(
+    (url) => url.pathname === "/api/retailers",
+    (route) => route.fulfill({ status: 503, contentType: "application/json", body: "{}" }),
+  );
+  await page.goto("/");
+  const mail = page.getByRole("region", { name: "In the mail" });
+  const pre = mail.getByRole("article").filter({ hasText: name("Pre") });
+  await expect(pre).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("Failed to load the collection");
+  await expect(pre.getByText("Retailer unavailable")).toBeVisible();
+  await expect(pre.getByText("an unknown retailer")).toHaveCount(0);
+  await expect(page.getByTestId("home-count-mail")).not.toHaveText("");
+  await page.unrouteAll(); // a matcher is compared by identity; drop every stub
+
+  // The tool list refused: the card names the line by its type while the
+  // banner says why — never silently.
+  await page.route(
+    (url) => url.pathname === "/api/tools",
+    (route) => route.fulfill({ status: 503, contentType: "application/json", body: "{}" }),
+  );
+  await page.goto("/");
+  const urlOnly = mail.getByRole("article").filter({ hasText: name("Url only") });
+  await expect(urlOnly.getByText("and tool", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toContainText("Failed to load the collection");
+  await expect(pre.getByText(SHOP, { exact: true })).toBeVisible();
 });
 
 test("a kit moved by hand moves its order's card to the stage the server now reports (Codex #237 P2)", async ({

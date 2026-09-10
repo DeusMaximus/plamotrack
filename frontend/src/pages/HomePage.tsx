@@ -20,6 +20,7 @@ import {
   completedOn,
   mailCardLines,
   needsCatalogNames,
+  trackingOf,
   type LineSummary,
   type MailStage,
 } from "../lib/home";
@@ -71,7 +72,8 @@ export function HomePage() {
     queryKey: ["orders", { pendingOnly: true, sort: "recent" }],
     queryFn: () => api.listOrders({ pendingOnly: true, sort: "recent" }),
   });
-  const { data: retailers } = useQuery({ queryKey: ["retailers"], queryFn: api.listRetailers });
+  const retailersQuery = useQuery({ queryKey: ["retailers"], queryFn: api.listRetailers });
+  const retailers = retailersQuery.data;
   // Warms the shared cache so the order dialog has the reference currency on open.
   useQuery(metaQuery);
 
@@ -79,22 +81,26 @@ export function HomePage() {
   // kit-only mailbox never asks for them. Same keys as the Orders page, so a
   // visit there has already paid for them.
   const wantNames = needsCatalogNames(pending.data ?? []);
-  const { data: tools } = useQuery({ queryKey: ["tools"], queryFn: api.listTools, enabled: wantNames });
-  const { data: consumables } = useQuery({
+  const toolsQuery = useQuery({ queryKey: ["tools"], queryFn: api.listTools, enabled: wantNames });
+  const consumablesQuery = useQuery({
     queryKey: ["consumables"],
     queryFn: api.listConsumables,
     enabled: wantNames,
   });
-  const { data: upgrades } = useQuery({
+  const upgradesQuery = useQuery({
     queryKey: ["upgrades"],
     queryFn: api.listUpgrades,
     enabled: wantNames,
   });
-  const { data: displayItems } = useQuery({
+  const displayItemsQuery = useQuery({
     queryKey: ["display-items"],
     queryFn: api.listDisplayItems,
     enabled: wantNames,
   });
+  const { data: tools } = toolsQuery;
+  const { data: consumables } = consumablesQuery;
+  const { data: upgrades } = upgradesQuery;
+  const { data: displayItems } = displayItemsQuery;
   const catalogName = useMemo(() => {
     const map = new Map<string, string>();
     for (const row of [
@@ -122,7 +128,22 @@ export function HomePage() {
     await invalidateOrderViews(queryClient);
   };
 
-  const failed = [summary, bench, backlog, completed, pending].find((query) => query.isError);
+  // Every read the page made, the supporting ones included (Codex #237 P3-6):
+  // a refused retailer or catalog list is a failed read of existing records,
+  // and a card that quietly said "an unknown retailer" or "tool" hid it. The
+  // cards and counts stay; the banner says what failed.
+  const failed = [
+    summary,
+    bench,
+    backlog,
+    completed,
+    pending,
+    retailersQuery,
+    toolsQuery,
+    consumablesQuery,
+    upgradesQuery,
+    displayItemsQuery,
+  ].find((query) => query.isError);
   const counts = summary.data;
   const inTheMail = counts
     ? MAIL_STAGES.reduce((total, stage) => total + counts.orders[stage], 0)
@@ -230,6 +251,7 @@ export function HomePage() {
               orders={pending.data === undefined ? undefined : mail[stage]}
               total={counts?.orders[stage]}
               retailerName={retailerName}
+              retailersUnavailable={retailersQuery.isError}
               catalogName={catalogName}
               onEdit={(order) => setDialog({ kind: "order", order })}
             />
@@ -330,7 +352,11 @@ function BenchCard({ kit, onEdit }: { kit: Kit; onEdit: () => void }) {
 }
 
 /** The Backlog / Recently completed strip: the most recent rows, a pencil on
- *  each, and the *view all* link that lands on Kits filtered and sorted. */
+ *  each, and the *view all* link that lands on Kits filtered and sorted. A row
+ *  wraps: the name keeps a floor of 9 rem and the meta (grade and scale, or
+ *  stars and a date) drops under it when the two cannot share the line —
+ *  a full date style beside a two-up strip left the name one letter
+ *  (Codex #237 P3-4). */
 function KitStrip({
   kits,
   total,
@@ -356,15 +382,15 @@ function KitStrip({
       {kits.map((kit, index) => (
         <div
           key={kit.id}
-          className={`flex h-10 items-center gap-3 px-3.5 ${index === 0 ? "" : "border-t border-rule"}`}
+          className={`flex min-h-10 flex-wrap items-center gap-x-3 gap-y-0.5 px-3.5 py-1.5 ${index === 0 ? "" : "border-t border-rule"}`}
         >
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{kit.name}</span>
-          <span className="flex shrink-0 items-center gap-2.5 whitespace-nowrap text-[12.5px] tabular-nums text-muted">
+          <span className="min-w-36 flex-1 truncate text-sm font-medium text-text">{kit.name}</span>
+          <span className="ms-auto flex shrink-0 items-center gap-2.5 whitespace-nowrap text-[12.5px] tabular-nums text-muted">
             {meta(kit)}
+            <IconButton label={t("common.editNamed", { name: kit.name })} onClick={() => onEdit(kit)}>
+              <Pencil size={15} aria-hidden />
+            </IconButton>
           </span>
-          <IconButton label={t("common.editNamed", { name: kit.name })} onClick={() => onEdit(kit)}>
-            <Pencil size={15} aria-hidden />
-          </IconButton>
         </div>
       ))}
       {total !== undefined && total > 0 && (
@@ -389,6 +415,7 @@ function MailColumn({
   orders,
   total,
   retailerName,
+  retailersUnavailable,
   catalogName,
   onEdit,
 }: {
@@ -396,6 +423,9 @@ function MailColumn({
   orders: Order[] | undefined;
   total: number | undefined;
   retailerName: Map<string, string>;
+  /** The retailer list failed to load: the card says so rather than calling a
+   *  real retailer unknown (Codex #237 P3-6). */
+  retailersUnavailable: boolean;
   catalogName: (id: string) => string | undefined;
   onEdit: (order: Order) => void;
 }) {
@@ -427,7 +457,11 @@ function MailColumn({
               key={order.id}
               order={order}
               stage={stage}
-              retailer={retailerName.get(order.retailer_id) ?? t("orders.unknownRetailer")}
+              retailer={
+                retailersUnavailable
+                  ? t("home.retailerUnavailable")
+                  : (retailerName.get(order.retailer_id) ?? t("orders.unknownRetailer"))
+              }
               catalogName={catalogName}
               onEdit={() => onEdit(order)}
             />
@@ -475,13 +509,10 @@ function OrderCard({
           })
         : t("home.shippedOn", { date: formatDate(order.shipped_at) })
       : t("home.placedOn", { date: formatDate(order.order_date) });
-  // Tracking once shipped, whenever either field is present (Codex #237 P3-3):
+  // Tracking once shipped, whenever either field has content (`trackingOf`):
   // a URL without a number links the Orders page's fallback word, a number
   // without a URL is plain text — the same rule as the Orders table.
-  const tracking =
-    stage === "in_transit" && (order.tracking_number || order.tracking_url)
-      ? { number: order.tracking_number, url: order.tracking_url }
-      : null;
+  const tracking = trackingOf(order, stage);
   return (
     <article className="relative flex min-w-0 flex-col gap-1 rounded-md border border-border bg-surface px-3.5 py-3">
       <IconButton

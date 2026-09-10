@@ -13,6 +13,7 @@ import {
   mailCardLines,
   needsCatalogNames,
   summarizeLine,
+  trackingOf,
 } from "./home";
 
 function kit(name: string, status: Kit["status"] = "ordered"): Kit {
@@ -183,6 +184,31 @@ describe("mailCardLines", () => {
     const half: OrderItem = { ...kitLine("Half", "pre_ordered", 2) };
     half.kits[1] = kit("Half", "backlog");
     expect(summarizeLine(half, mixed, nameOf).preOrder).toBe(false);
+  });
+});
+
+describe("trackingOf", () => {
+  const shipped = (fields: Partial<Order>) => ({ ...order("in_transit", [kitLine("A")]), ...fields });
+  it.each([
+    [null, null, null],
+    ["", null, null],
+    ["   ", null, null],
+    ["AU237", null, { number: "AU237", url: null }],
+    [null, "https://t.example/1", { number: null, url: "https://t.example/1" }],
+    ["", "https://t.example/1", { number: null, url: "https://t.example/1" }],
+    ["   ", "https://t.example/1", { number: null, url: "https://t.example/1" }],
+    [" AU237 ", "https://t.example/1", { number: "AU237", url: "https://t.example/1" }],
+    ["AU237", "   ", { number: "AU237", url: null }],
+  ])("number %j, url %j → %j", (number, url, expected) => {
+    expect(trackingOf(shipped({ tracking_number: number, tracking_url: url }), "in_transit")).toEqual(
+      expected,
+    );
+  });
+
+  it("shows nothing before the order ships, whatever the fields hold", () => {
+    const pending = { ...order("ordered", [kitLine("A")]), tracking_number: "AU237", tracking_url: "https://t.example/1" };
+    expect(trackingOf(pending, "ordered")).toBeNull();
+    expect(trackingOf(pending, "pre_ordered")).toBeNull();
   });
 });
 

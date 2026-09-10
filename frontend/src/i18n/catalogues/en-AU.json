@@ -344,6 +344,7 @@
     "andMoreLines_one": "and {{countDisplay}} more line",
     "andMoreLines_other": "and {{countDisplay}} more lines",
     "preOrderTag": "pre-order",
+    "retailerUnavailable": "Retailer unavailable",
     "editOrder": "Edit the {{retailer}} order of {{date}}"
   },
   "kitStatus": {

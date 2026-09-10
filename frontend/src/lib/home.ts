@@ -105,6 +105,20 @@ export function mailCardLines(
   return { headline, rest: { kind: "many", count: others.length } };
 }
 
+/** What a shipped order's card shows for tracking (Codex #237 P3-3, P3-5): the
+ *  number, the URL, or both — a blank or whitespace number is no number (the
+ *  API stores it as given), so a URL beside one links the fallback word rather
+ *  than an empty anchor. Nothing before the order ships, nothing when neither
+ *  field has content. */
+export type Tracking = { number: string | null; url: string | null };
+
+export function trackingOf(order: Order, stage: OrderStage): Tracking | null {
+  if (stage !== "in_transit") return null;
+  const number = order.tracking_number?.trim() || null;
+  const url = order.tracking_url?.trim() || null;
+  return number || url ? { number, url } : null;
+}
+
 /** Whether any card would name a catalog line — the four catalog lists are
  *  fetched only then, so a kit-only mailbox costs the start page nothing. */
 export function needsCatalogNames(orders: readonly Order[]): boolean {

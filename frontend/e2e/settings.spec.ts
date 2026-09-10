@@ -262,6 +262,25 @@ test("Home's mail cards keep the retailer readable under full dates at every wid
   const retailer = (await (await api.post("/retailers", { data: { name: shop } })).json()) as {
     id: string;
   };
+  // Two completed kits, rated, with a full-date completion (round 2, P3-4):
+  // their names must keep usable space on the completed strip when it goes
+  // two-up beside a full date.
+  const done: string[] = [];
+  for (const kitName of [`e2e-237-done-A-${suffix}`, `e2e-237-done-B-${suffix}`]) {
+    const kit = (await (
+      await api.post("/kits", {
+        data: {
+          name: kitName,
+          grade: "MG",
+          status: "complete",
+          build_started_at: "2025-09-16T00:00:00Z",
+          build_completed_at: "2025-09-17T00:00:00Z",
+        },
+      })
+    ).json()) as { id: string };
+    await api.patch(`/kits/${kit.id}`, { data: { rating: 4 } });
+    done.push(kit.id);
+  }
   const order = (await (
     await api.post("/orders", {
       data: {
@@ -285,7 +304,8 @@ test("Home's mail cards keep the retailer readable under full dates at every wid
   ).json()) as { id: string };
   try {
     await api.patch("/settings", { data: { date_style: "full" } });
-    for (const width of [768, 1024, 1440]) {
+    // 1072 is where the strips go two-up (48 rem of content beside the sidebar).
+    for (const width of [768, 1024, 1072, 1440]) {
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/");
       const card = page
@@ -307,9 +327,17 @@ test("Home's mail cards keep the retailer readable under full dates at every wid
         }).length;
       });
       expect(spill, `${width}px: content past the card`).toBe(0);
+      // The completed strip: each name keeps room to be read beside the stars
+      // and the full date (round 2, P3-4 measured 9.7 px at 1072).
+      const completed = page.getByRole("region", { name: "Recently completed" });
+      for (const kitName of [`e2e-237-done-A-${suffix}`, `e2e-237-done-B-${suffix}`]) {
+        const nameBox = (await completed.getByText(kitName, { exact: true }).boundingBox())!;
+        expect(nameBox.width, `${width}px: completed name width`).toBeGreaterThan(120);
+      }
     }
   } finally {
     await api.patch("/settings", { data: { date_style: original.date_style } });
+    for (const id of done) await api.delete(`/kits/${id}`);
     await api.delete(`/orders/${order.id}`);
     await api.delete(`/retailers/${retailer.id}`);
     await api.dispose();
