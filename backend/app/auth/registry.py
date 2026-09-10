@@ -390,7 +390,8 @@ def iter_mounted_routes(app: FastAPI) -> Iterator[MountedRoute]:
 
 #: Routers whose GETs are collection reads (family 4) and whose other verbs are
 #: collection writes (family 5).
-_COLLECTION_TAGS = frozenset({"kits", "inventory", "catalog", "retailers", "orders"})
+#: `summary` (#233) is the collection at a glance — a GET only, family 4.
+_COLLECTION_TAGS = frozenset({"kits", "inventory", "catalog", "retailers", "orders", "summary"})
 
 _SAFE = frozenset({"GET", "HEAD"})
 
@@ -674,6 +675,7 @@ def _classify_mounted(route: MountedRoute) -> RoutePolicy | None:
 MCP_TOOL_SCOPES: dict[str, Scope] = {
     # reads
     "get_meta": Scope.READ,
+    "get_summary": Scope.READ,
     "list_kits": Scope.READ,
     "list_kit_series": Scope.READ,
     "get_kit": Scope.READ,

@@ -1686,9 +1686,9 @@ class _Planner:
         case 5).
 
         `update_kit` stamps `status_updated_at` on every status change, because the
-        board's "most recently moved" ordering is read off it. The importer assigns
+        `recent` sort (Home's strips, `GET /kits?sort=recent`) is read off it. The importer assigns
         `status` directly, so a merge that moved a kit from `ordered` to `building`
-        left the timestamp reading whenever it last moved for real — the board
+        left the timestamp reading whenever it last moved for real — the page
         silently lied about it, and the further back the original move was, the
         further from the truth.
 

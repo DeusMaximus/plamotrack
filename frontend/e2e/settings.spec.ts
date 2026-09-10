@@ -49,7 +49,7 @@ test.afterAll("restore the instance settings", async () => {
 });
 
 test("Settings replaces Data in the sidebar and the sections navigate", async ({ page }) => {
-  await page.goto("/board");
+  await page.goto("/");
   await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Data", exact: true })).toHaveCount(0);
 
@@ -250,7 +250,7 @@ test("a cold page load re-renders once the settings row arrives (#174 review, P3
 });
 
 
-test("a cold Board load re-renders its counts once the settings row arrives (#177 review, P3-1)", async ({
+test("a cold Home load re-renders its counts once the settings row arrives (#177 review, P3-1)", async ({
   page,
 }) => {
   // The locale axis, not the zone axis: `interface_language` stays en-AU, so
@@ -262,7 +262,7 @@ test("a cold Board load re-renders its counts once the settings row arrives (#17
   await api.patch("/settings", { data: { formatting_locale: "ar-EG" } });
   const kit = (await (
     await api.post("/kits", {
-      data: { name: `e2e-177-boardcount-${Date.now()}`, grade: "HG", status: "backlog" },
+      data: { name: `e2e-177-homecount-${Date.now()}`, grade: "HG", status: "backlog" },
     })
   ).json()) as { id: string };
 
@@ -271,11 +271,11 @@ test("a cold Board load re-renders its counts once the settings row arrives (#17
     const gate = new Promise<void>((resolve) => (release = resolve));
     await page.route("**/api/settings", async (route) => {
       if (route.request().method() !== "GET") return route.fallback();
-      await gate; // the kits list resolves first — the window under test
+      await gate; // the summary resolves first — the window under test
       await route.continue();
     });
-    await page.goto("/board");
-    const count = page.getByTestId("column-count-backlog");
+    await page.goto("/");
+    const count = page.getByTestId("home-count-backlog");
     // Boot defaults while the row is held: Western digits, and at least the
     // kit just created, so this is not asserting an empty column.
     await expect(count).toHaveText(/^[0-9]+$/);

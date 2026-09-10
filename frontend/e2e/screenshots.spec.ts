@@ -11,7 +11,7 @@
  *   # recipe in .agents/testing-and-review.md, then:
  *   ( cd frontend && DATABASE_URL="$DSN" SCREENSHOTS=1 npx playwright test e2e/screenshots.spec.ts )
  *
- * Writes six 2× PNGs into docs/screenshots/, same names and logical sizes as
+ * Writes five 2× PNGs into docs/screenshots/, same names and logical sizes as
  * the originals. Everything seeded here is invented demo data — the README
  * says so under the retailers screenshot, so keep it that way: no real shops,
  * no real ratings. The one cross-reference the README prose makes must hold:
@@ -294,24 +294,18 @@ test("seed the demo collection and capture the README screenshots", async ({ pag
     await page.screenshot({ path: path.join(OUT, file) });
   };
 
-  await shot("/board", "board.png", { width: 1440, height: 900 }, async () => {
-    await expect(page.getByText("Build Pipeline")).toBeVisible();
+  // Home (§13.2, #233): the bench, the two strips and the mail columns, all
+  // populated by the seed above.
+  await shot("/", "home.png", { width: 1440, height: 1000 }, async () => {
+    await expect(page.getByRole("heading", { level: 1, name: "Home" })).toBeVisible();
+    // The bench card, a completed row and an in-transit card, from the seed.
+    await expect(
+      page.getByRole("heading", { level: 3, name: "HG Sinanju Stein (Narrative Ver.)" }),
+    ).toBeVisible();
     await expect(page.getByText("MG RX-78-2 Ver. 3.0")).toBeVisible();
+    await expect(page.getByText("HG Unicorn Gundam (Perfectibility)")).toBeVisible();
+    await expect(page.getByTestId("home-count-mail")).not.toHaveText("0");
   });
-
-  await shot(
-    "/board",
-    "board-orders.png",
-    { width: 1800, height: 820 },
-    async () => {
-      await expect(page.getByText("Build Pipeline")).toBeVisible();
-    },
-    async () => {
-      await page.getByRole("button", { name: "Orders", exact: true }).click();
-      await expect(page.getByText("Orders Pipeline")).toBeVisible();
-      await expect(page.getByText("HG Unicorn Gundam (Perfectibility)")).toBeVisible();
-    },
-  );
 
   await shot(
     "/orders",

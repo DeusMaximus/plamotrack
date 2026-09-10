@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Box,
-  LayoutDashboard,
+  House,
   LogOut,
   Monitor,
   Moon,
@@ -22,10 +22,11 @@ import { applyInstanceSettings } from "../lib/presentation";
 import { THEME_PREFERENCES, useTheme, type ThemePreference } from "../lib/theme";
 import { BrandMark } from "./BrandMark";
 
-/** The collection's pages (§13.3). The board is the start page until Home
- *  replaces it (§13.2, M6.5 PR 3), when this first entry becomes Home. */
+/** The collection's pages (§13.3): Home first — the start page (§13.2). No
+ *  `end` on the root link: React Router's match rule treats `/` as a whole
+ *  segment, so Home reads as current only at `/` (the Home e2e pins it). */
 const NAV = [
-  { to: "/board", label: "nav.board", icon: LayoutDashboard },
+  { to: "/", label: "nav.home", icon: House },
   { to: "/kits", label: "nav.kits", icon: Box },
   { to: "/orders", label: "nav.orders", icon: ShoppingBag },
   { to: "/inventory", label: "nav.inventory", icon: Wrench },

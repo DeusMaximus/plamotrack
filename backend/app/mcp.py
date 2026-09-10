@@ -48,6 +48,7 @@ from app.services import kits as kits_service
 from app.services import orders as orders_service
 from app.services import upgrades as upgrades_service
 from app.services.meta import instance_meta
+from app.services.summary import collection_summary
 
 mcp = FastMCP(
     "plamotrack",
@@ -199,6 +200,21 @@ async def get_meta() -> dict:
 
 
 @mcp.tool
+async def get_summary() -> dict:
+    """The collection at a glance: how many kits sit in each pipeline status
+    (pre_ordered, ordered, in_transit, backlog, building, complete) and how many
+    orders in each stage — pre_ordered (every kit on it still a pre-order),
+    ordered, in_transit (shipped, not yet received) or received. Read this before
+    listing rows: "what's on the bench?" is kits.building, "what's in the mail?"
+    is the first three order stages. The same function serves REST's GET /summary
+    and Home's headings, so the counts cannot disagree. For the rows use
+    list_kits(status=...) and list_orders(pending_only=true) — every order row
+    carries its stage."""
+    async with _tool_session() as session:
+        return (await collection_summary(session)).model_dump(mode="json")
+
+
+@mcp.tool
 async def list_kits(
     status: str | None = None,
     grade: str | None = None,
@@ -262,8 +278,8 @@ async def get_kit(kit_id: str) -> dict:
 
 @mcp.tool
 async def update_kit_status(kit_id: str, status: str) -> dict:
-    """Move a kit to a new pipeline status (equivalent to dragging its Kanban
-    card). Valid statuses: pre_ordered, ordered, in_transit, backlog (= in
+    """Move a kit to a new pipeline status (what the kit dialog's status field
+    does in the browser). Valid statuses: pre_ordered, ordered, in_transit, backlog (= in
     hand, not started), building, complete. Entering building/complete stamps
     build_started_at/build_completed_at with now — only when that date is still
     null, so a real date already recorded is never overwritten; use update_kit

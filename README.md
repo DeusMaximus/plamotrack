@@ -2,10 +2,11 @@
 
 **Track every kit, tool, and terrible financial decision from pre-order to panel-lined masterpiece.**
 
-A self-hosted Gunpla/plamo collection and build tracker. Kits move across a drag-and-drop
-Kanban board from *pre-ordered* to *complete*; orders know which kits they turned into;
-nippers, cement and decal sheets get counted; and an embedded MCP server means you can
-just tell Claude "the Sinanju arrived" instead of clicking things.
+A self-hosted Gunpla/plamo collection and build tracker. Kits move through a pipeline
+from *pre-ordered* to *complete*, with a Home page that shows the bench, the backlog and
+what's in the mail at a glance; orders know which kits they turned into; nippers, cement
+and decal sheets get counted; and an embedded MCP server means you can just tell Claude
+"the Sinanju arrived" instead of clicking things.
 
 Your data lives in your Postgres, on your hardware, and leaves as plain CSV whenever you
 want it to.
@@ -28,21 +29,25 @@ want it to.
 
 ---
 
-![The build pipeline — drag a card, the kit's status follows](docs/screenshots/board.png)
+![Home — the bench first, then the backlog and the shelf, then what's in the mail](docs/screenshots/home.png)
 
 ## What it actually does
 
-### A board that admits you have a backlog
+### A start page that admits you have a backlog
 
-Six statuses — pre-ordered, ordered, in transit, backlog, building, complete — with two
-views over them. **Build** shows the three that matter on a Sunday afternoon
-(backlog → building → complete). **Orders** shows the money still in flight, with
-everything that's arrived collapsed into one Received column so it doesn't fill your
-screen with things you already own.
+Six statuses — pre-ordered, ordered, in transit, backlog, building, complete — and a
+Home page that reads them the way a Sunday afternoon does. **On the bench** is what
+you're building, each kit with its start date, a day counter and your latest note.
+**Backlog** and **Recently completed** show the six most recent of each with the true
+count beside the heading, and a *view all* link into the full list, already filtered.
+**In the mail** is the money still in flight — pre-ordered, ordered, in transit — as
+order cards with the retailer, the carrier and the tracking number once it ships.
+
+Every card carries an edit control that opens the same dialog the list pages use, so a
+status change travels with the dates it should. There is no drag-and-drop: the board it
+replaced was drawn for a dozen kits and stopped being useful somewhere around fifty.
 
 "Backlog" means *in hand, not started*. There is no polite word for this pile. We tried.
-
-![The orders view — money in flight on the left, everything that landed on the right](docs/screenshots/board-orders.png)
 
 ### Orders that know what they turned into
 
@@ -142,7 +147,7 @@ Being honest up front beats you finding out at 11pm:
 
 | | Status |
 |---|---|
-| Kits, orders, inventory, retailers, Kanban board | ✅ Built |
+| Kits, orders, inventory, retailers, the Home page | ✅ Built |
 | CSV import / export | ✅ Built |
 | MCP server | ✅ Built |
 | Bundled `docker compose up` for the whole local stack | ✅ Built |
@@ -325,6 +330,7 @@ Personal access tokens keep working in that mode too.
 | Tool | What it does |
 |---|---|
 | `get_meta` | App version and the instance's reference currency — what an omitted `currency_code` means |
+| `get_summary` | The collection at a glance — kits per status, orders per stage (pre-ordered, ordered, in transit, received); the numbers Home shows |
 | `list_kits` | Filter by status, grade or series; `sort=recent` for the kits that last moved, `limit` for the first N |
 | `list_kit_series` | Series names already in use — check before writing a new spelling |
 | `get_kit` | One kit, in full |

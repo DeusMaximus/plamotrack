@@ -59,7 +59,7 @@ const RATING_MAXIMUM = 5;
  * because a rating is a quantity the user reads and ar-EG spells those
  * ٤/٥ (#177 review, P3-1). The separator lives in the catalogue so a language
  * can reorder or respell it; the stored rating is untouched. Shared by the
- * Board card and the Retailers table so the two cannot drift. */
+ * Home strip and the Retailers table so the two cannot drift. */
 export function ratingTooltip(rating: number): string {
   return i18n.t("common.ratingOutOf", {
     ratingDisplay: formatNumber(rating),

@@ -1187,8 +1187,8 @@ async def _restamp_receipt_kits(
 
     Receiving stamps the kits it advances with the same instant it writes to the
     order, so equality against the old value identifies exactly the kits whose
-    last transition was that receipt — a kit dragged onward (or back) since then
-    carries the drag's own time and is left alone. Status is deliberately not part
+    last transition was that receipt — a kit moved onward (or back) since then
+    carries the move's own time and is left alone. Status is deliberately not part
     of the RECEIPT match: the timestamp is the receipt's signature, and a status
     check would either restate the same fact or wrongly exclude a kit the entry
     itself stamped.
