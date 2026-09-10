@@ -263,6 +263,20 @@ also the check on the fix. → 2026-08-10 (#6, PR #16, PR #18)
 de-DE. Green on CI because the runner is en_US. Compare against a formatter handed
 the same digit count, and verify under more than one locale. → 2026-08-10 (PR #18)
 
+### The fake stood in for the very object under test
+The MCP OAuth proxy asked the provider to revoke a grant's refresh token through
+FastMCP's upstream OAuth client, inside a best-effort `except Exception`. The test
+fixture injected an httpx transport, and the injection point was a factory override
+that built *authlib's* client instead of FastMCP's whenever a transport was set — so
+every revocation test exercised a client production never used. FastMCP 4 replaced
+the production client with one that has no `revoke_token`; the call raised
+`AttributeError`, the catch-all logged a warning, the provider was never asked, and
+the suite stayed green. Found by the M6.1 compatibility spike measuring the
+production factory. Two rules: an injection seam sits *below* the object under test
+(a transport under the client, not a client in place of it), and a best-effort catch
+names the failures it forgives — an `httpx.HTTPError` is the provider's problem, an
+`AttributeError` is ours. → 2026-09-11 (#241)
+
 ---
 
 ## Concurrency tests

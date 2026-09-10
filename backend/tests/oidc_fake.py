@@ -67,6 +67,10 @@ class FakeIdp:
         #: The revocation endpoint's answer, and whether discovery advertises
         #: one at all (a rebind's upstream revocation is best effort; #214).
         self.revoke_status = 200
+        #: A defect in the transport, not the provider: raised from the revocation
+        #: endpoint's handler as-is (httpx does not wrap it), so the caller's
+        #: best-effort handling is measured rather than assumed (#241).
+        self.revoke_error: Exception | None = None
         self.advertises_revocation = True
         self.discovery_status = 200
         self.token_status: int | None = None  # None → decided by the code
@@ -154,7 +158,10 @@ class FakeIdp:
                 return httpx.Response(400, json={"error": "invalid_grant"})
             return httpx.Response(200, json=self.next_token)
         if path == "/revoke":
+            if self.revoke_error is not None:
+                raise self.revoke_error
             form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()}
+            form["_authorization"] = request.headers.get("authorization", "")
             self.revoked.append(form)
             return httpx.Response(self.revoke_status)
         return httpx.Response(404)

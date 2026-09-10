@@ -56,6 +56,7 @@ from app.auth.mcp_oauth import (
     MCP_OAUTH_ATTR,
     UPSTREAM_AUTHORIZE_PARAMS,
     OwnerVerdict,
+    PlamotrackOAuthProxy,
     _lock_key,
     storage_key,
 )
@@ -1258,9 +1259,9 @@ async def test_every_transaction_and_credential_response_is_no_store_and_discove
         )
         assert revoked.status_code == 200, revoked.text
         assert revoked.headers.get_list("cache-control") == ["no-store"]
-        # The upstream revocation itself is FastMCP's own httpx call, not the
-        # injectable upstream client, so it is not observed here; the local
-        # half — the refresh token gone — is.
+        # The upstream revocation goes through the browser login's provider
+        # client (#241) and has its own witnesses; what this test observes is
+        # the local half — the refresh token gone.
         replay = await client.post(
             "/mcp/token",
             data={
@@ -1546,8 +1547,9 @@ async def test_a_successful_revocation_kills_every_credential_of_the_grant(prese
     """RFC 7009 §2.1: after a 200 from `/revoke` the token is unusable, and
     revoking either half of the pair takes the whole grant with it — the
     access token, the refresh token, and the provider's own refresh token,
-    revoked upstream through the injectable client (a witness, at last) after
-    the local record is gone. FastMCP alone left the access mapping to its
+    revoked upstream through the browser login's provider client (a witness, at
+    last — and since #241 of the production path, not an injected stand-in)
+    after the local record is gone. FastMCP alone left the access mapping to its
     hour-long TTL and posted a reference string upstream (Codex #212 f1)."""
     fake = FakeIdp()
     await _bind_owner()
@@ -1569,6 +1571,7 @@ async def test_a_successful_revocation_kills_every_credential_of_the_grant(prese
         # The provider was told about *its* credential, not ours.
         assert [r["token"] for r in fake.revoked] == [upstream_refresh]
         assert fake.revoked[0].get("token_type_hint") == "refresh_token"
+        assert fake.revoked[0]["_authorization"] == _BASIC  # as the code exchange (#241)
         assert not [f for f in fake.token_requests if f.get("grant_type") == "refresh_token"]
     collections = {collection for collection, _ in await _state_rows()}
     assert "mcp-upstream-tokens" not in collections
@@ -1603,6 +1606,149 @@ async def test_revocation_is_local_first_so_a_provider_outage_changes_nothing_fo
         fake.next_refresh = _provider_refresh(fake)
         assert (await refresh(client, client_id, tokens["refresh_token"])).status_code == 401
         assert fake.revoked == []
+    assert len(await _events(audit.MCP_GRANT_REVOKED)) == 1
+
+
+_BASIC = "Basic " + base64.b64encode(f"{CLIENT_ID}:{CLIENT_SECRET}".encode()).decode()
+
+
+class _FastMcp4UpstreamClient:
+    """The shape of FastMCP 4's upstream OAuth client (its
+    `oauth_proxy.upstream.AsyncOAuth2Client`): exchange, refresh, the secret
+    and a close — and no `revoke_token` (#241)."""
+
+    client_secret = CLIENT_SECRET
+
+    async def fetch_token(self, *args, **kwargs):
+        raise AssertionError("a revocation must not exchange a code")
+
+    async def refresh_token(self, *args, **kwargs):
+        raise AssertionError("a revocation must not refresh")
+
+    async def aclose(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize("presented", ["access_token", "refresh_token"])
+async def test_the_provider_is_asked_without_fastmcps_upstream_client(presented, monkeypatch):
+    """The control for #241. FastMCP 4's upstream client has no `revoke_token`,
+    and the old `_revoke_upstream` called exactly that on it inside a catch-all:
+    a warning, no request, and a suite kept green by the fixture's injected
+    authlib client. With the upstream client replaced by FastMCP 4's shape
+    *after* the link, the provider must still receive the RFC 7009 request,
+    authenticated as the code exchange was — the revocation goes through the
+    browser login's provider client, not FastMCP's."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        outcome = await link(client, fake)
+        tokens, client_id = outcome["body"], outcome["client_id"]
+        upstream_refresh = fake.next_token["refresh_token"]
+
+        @asynccontextmanager
+        async def fastmcp4_client(self):
+            yield _FastMcp4UpstreamClient()
+
+        monkeypatch.setattr(PlamotrackOAuthProxy, "_upstream_oauth_client", fastmcp4_client)
+        revoked = await revoke(client, client_id, tokens[presented])
+        assert revoked.status_code == 200, revoked.text
+        assert [r["token"] for r in fake.revoked] == [upstream_refresh]
+        assert fake.revoked[0]["token_type_hint"] == "refresh_token"
+        assert fake.revoked[0]["_authorization"] == _BASIC
+        assert (await initialize(client, tokens["access_token"])).status_code == 401
+
+
+async def test_a_grant_without_a_refresh_token_revokes_the_providers_access_token():
+    """The value axis of the stored record (RFC 6749 §5.1 makes the refresh
+    token optional): with none, the provider is asked about its access token,
+    with that hint, through the same client and the same authentication."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        outcome = await _link_without_refresh_token(client, fake)
+        revoked = await revoke(client, outcome["client_id"], outcome["body"]["access_token"])
+        assert revoked.status_code == 200, revoked.text
+        assert [r["token"] for r in fake.revoked] == [outcome["upstream_access"]]
+        assert fake.revoked[0]["token_type_hint"] == "access_token"
+        assert fake.revoked[0]["_authorization"] == _BASIC
+        assert (await initialize(client, outcome["body"]["access_token"])).status_code == 401
+
+
+async def test_a_defect_in_the_upstream_revocation_is_the_bindings_500_after_the_local_end():
+    """The catch-all is gone (#241). A provider outage or refusal is the
+    provider client's own `httpx.HTTPError` and stays best effort; anything
+    else is a defect and surfaces as the binding's stamped 500 — *after* the
+    local end, so the grant is dead either way and the failure is seen rather
+    than logged into a warning nobody reads (which is how FastMCP 4's missing
+    method went unnoticed under the old `except Exception`)."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        outcome = await link(client, fake)
+        tokens, client_id = outcome["body"], outcome["client_id"]
+        fake.revoke_error = RuntimeError("a defect in the revocation path")
+        failed = await revoke(client, client_id, tokens["access_token"])
+        assert failed.status_code == 500, failed.text
+        assert failed.headers.get_list("cache-control") == ["no-store"]
+        assert failed.json() == {"detail": "Internal Server Error"}
+        assert fake.revoked == []
+        # The local end came first: every credential of the grant is dead.
+        assert (await initialize(client, tokens["access_token"])).status_code == 401
+        fake.revoke_error = None
+        fake.next_refresh = _provider_refresh(fake)
+        assert (await refresh(client, client_id, tokens["refresh_token"])).status_code == 401
+    assert "mcp-upstream-tokens" not in {c for c, _ in await _state_rows()}
+    assert len(await _events(audit.MCP_GRANT_REVOKED)) == 1
+
+
+@pytest.mark.parametrize("failure", ["refused", "no_endpoint"])
+async def test_a_refused_or_unadvertised_upstream_revocation_changes_nothing_for_the_client(
+    failure,
+):
+    """The state axis of the provider half beside the outage above: the
+    provider refuses the request, or advertises no revocation endpoint at all.
+    Each is 200, the grant dead, nothing raised — and exactly the upstream
+    traffic the case allows (one request, or none)."""
+    fake = FakeIdp()
+    await _bind_owner()
+    if failure == "no_endpoint":
+        fake.advertises_revocation = False  # before the app fetches discovery
+    async with oauth_app(fake) as (_, client):
+        outcome = await link(client, fake)
+        tokens, client_id = outcome["body"], outcome["client_id"]
+        if failure == "refused":
+            fake.revoke_status = 503
+        revoked = await revoke(client, client_id, tokens["refresh_token"])
+        assert revoked.status_code == 200, revoked.text
+        assert revoked.headers.get_list("cache-control") == ["no-store"]
+        assert (await initialize(client, tokens["access_token"])).status_code == 401
+        assert ("POST /revoke" in fake.calls) == (failure == "refused")
+        assert len(fake.revoked) == (1 if failure == "refused" else 0)
+    assert "mcp-upstream-tokens" not in {c for c, _ in await _state_rows()}
+    assert len(await _events(audit.MCP_GRANT_REVOKED)) == 1
+
+
+async def test_a_fresh_process_with_the_provider_down_revokes_locally_and_asks_nothing():
+    """The soft resolve's own case, distinct from an outage after the link: a
+    process that has never held the discovery document — restarted, the
+    provider unreachable — revokes locally, asks nothing, and answers 200;
+    `_revoke_upstream` must not reach for a document the provider client
+    would then try to fetch (an `UnavailableError`, and a 500 over a grant
+    that is already gone)."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        outcome = await link(client, fake)
+    tokens, client_id = outcome["body"], outcome["client_id"]
+    fake.network_down = True  # the next process never fetches discovery
+    async with oauth_app(fake) as (_, fresh):
+        revoked = await revoke(fresh, client_id, tokens["access_token"])
+        assert revoked.status_code == 200, revoked.text
+        assert "POST /revoke" not in fake.calls
+        assert fake.revoked == []
+        fake.network_down = False
+        assert (await initialize(fresh, tokens["access_token"])).status_code == 401
+    assert "mcp-upstream-tokens" not in {c for c, _ in await _state_rows()}
     assert len(await _events(audit.MCP_GRANT_REVOKED)) == 1
 
 
