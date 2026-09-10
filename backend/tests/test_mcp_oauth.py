@@ -596,6 +596,7 @@ async def test_the_owner_can_deny_at_the_consent_page():
         assert _query(denied.headers["location"]) == {
             "error": "access_denied",
             "state": "client-state",
+            "iss": ISSUER_URL,  # RFC 9207, on every authorization response (FastMCP 4)
         }
         assert denied.headers.get_list("cache-control") == ["no-store"]
         assert not fake.token_requests
@@ -1230,7 +1231,9 @@ async def test_every_transaction_and_credential_response_is_no_store_and_discove
         assert page.status_code == 200
         assert page.headers.get_list("cache-control") == ["no-store"]
         assert any(
-            c.startswith("__MCP_CONSENT_STATE=") for c in page.headers.get_list("set-cookie")
+            # One cookie per CSRF token, the name digest-suffixed (FastMCP 4).
+            c.startswith("__MCP_CONSENT_STATE_")
+            for c in page.headers.get_list("set-cookie")
         )
         approved = await consent(client, started.headers["location"])
         assert approved.headers.get_list("cache-control") == ["no-store"]

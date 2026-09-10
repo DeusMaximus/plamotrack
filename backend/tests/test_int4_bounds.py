@@ -115,7 +115,7 @@ async def test_every_integer_an_mcp_tool_takes_declares_its_ceiling():
 
     unbounded = []
     for tool in tools:
-        for name, prop in (tool.inputSchema or {}).get("properties", {}).items():
+        for name, prop in (tool.input_schema or {}).get("properties", {}).items():
             for node in _integer_nodes(prop):
                 if "maximum" not in node and "exclusiveMaximum" not in node:
                     unbounded.append(f"{tool.name}.{name}")

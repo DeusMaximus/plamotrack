@@ -87,6 +87,19 @@ async def test_a_registration_expires_unless_a_grant_links_it():
         assert rows[unlinked] is not None, "the unlinked registration keeps its lifetime"
 
 
+#: FastMCP 4 resolves a CIMD client through its bounded document cache and
+#: stores no row for it (`OAuthProxy.get_client`: a row an earlier version
+#: persisted is a fallback until the document is refreshed, then deleted), so
+#: the lifetime, cap and cull these cases assert of a CIMD *row* describe
+#: nothing now. The contract is restated DCR-only in #242, which replaces
+#: them; strict, so the replacement cannot leave a stale expectation behind.
+_CIMD_ROWS_GONE = pytest.mark.xfail(
+    strict=True,
+    reason="#242: FastMCP 4 stores no row for a CIMD client; the contract is restated there",
+)
+
+
+@_CIMD_ROWS_GONE
 async def test_a_cimd_record_is_stored_with_the_lifetime_too(monkeypatch):
     """FastMCP persists a CIMD client on first lookup with no lifetime and
     re-puts it on every refresh; through `ClientRecords` every such write
@@ -101,6 +114,7 @@ async def test_a_cimd_record_is_stored_with_the_lifetime_too(monkeypatch):
         assert rows[CIMD_ID] is not None
 
 
+@_CIMD_ROWS_GONE
 async def test_a_refresh_does_not_put_a_linked_client_back_on_the_clock(monkeypatch):
     """FastMCP re-puts a CIMD client's record on every lookup that refreshes
     the document, with no lifetime of its own; through `ClientRecords` that
@@ -137,6 +151,7 @@ async def test_the_collection_is_capped_and_the_guard_answers_503_first(monkeypa
         assert len(await _rows(CLIENT_COLLECTION)) == 2
 
 
+@_CIMD_ROWS_GONE
 async def test_a_cimd_lookup_at_the_cap_is_not_a_client(monkeypatch):
     monkeypatch.setattr(mcp_oauth, "MAX_CLIENT_RECORDS", 1)
     monkeypatch.setattr("app.auth.mcp_oauth_state.MAX_CLIENT_RECORDS", 1)
@@ -265,6 +280,7 @@ def _any_cimd(monkeypatch) -> None:
     monkeypatch.setattr(CIMDFetcher, "fetch", fetch)
 
 
+@_CIMD_ROWS_GONE
 @pytest.mark.parametrize("endpoint", ["token", "revoke"])
 async def test_a_client_materialised_by_a_lookup_alone_rolls_over_within_the_cap(
     monkeypatch, endpoint
