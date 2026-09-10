@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-10 — Claude Code (Fable 5.1) — #234 (M6.5 PR 4/4) built on `feat/234-settings-about-e2e-readme`: Settings chrome, the plain description on sign-in and About, the last glyph, seven captures, README and design §13 marked built; **committed locally `c7965bf`, awaiting the owner's word to push / open the PR against `m6.5-workbench`**
+## 2026-09-10 — Claude Code (Fable 5.1) — #234 (M6.5 PR 4/4) built on `feat/234-settings-about-e2e-readme`: Settings chrome, the plain description on sign-in and About, the last glyph, seven captures, README and design §13 marked built; **PR #239 open against `m6.5-workbench` at `c7965bf`, no review (owner's call) — merge when CI is green, then the release**
 
 - **Done:** the Settings section navigation in the sidebar's row shape (`navRowClass` exported from
   `Layout.tsx`), `SectionHeader` at the bench card's scale, the Access tokens table in the list
@@ -62,12 +62,12 @@ Template:
   new captures only (light Home, sign-in); (5) §13 and the README row read built on the integration
   branch now — `main` serves the 0.3.0 README until the release PR.
 - **State:** `feat/234-settings-about-e2e-readme` = `m6.5-workbench` (`03673e5`, i.e. `8bac10a` +
-  the hand-off merges) + `c7965bf`, clean, **local only**. Green: unit 568, e2e 65 + 1 skipped serially
+  the hand-off merges) + `c7965bf`, clean, pushed; PR #239 open. Green: unit 568, e2e 65 + 1 skipped serially
   from an empty DB (tables 0 after, DB dropped), lint, build; screenshots spec 2 passed on a fresh
   DB. Backend untouched since `d6c8def`. No harness change (no backend). Dev servers: Vite up, `api`
   preview stopped. PR body drafted in the session scratchpad (`pr-body-234.md`).
-- **Next:** owner says push → PR against `m6.5-workbench`; a review round if the owner wants one
-  (docs/chrome PR — the release gate is the real check); merge. Then **the release**: merge `main`
+- **Next:** merge PR #239 once CI is green (no review — owner's call, the release gate is the
+  check). Then **the release**: merge `main`
   into `m6.5-workbench` once more, a packaged-stack run (`docker compose up -d --build --wait`) on
   the integration tree, the release PR onto `main` with a **merge commit** (never a squash), gate
   that commit (`deployment_gate.py --phase all` on testhost per `.agents/testing-and-review.md`),
