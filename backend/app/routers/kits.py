@@ -6,6 +6,7 @@ from app.db import SessionDep
 from app.models.enums import KitStatus
 from app.schemas.catalog import UpgradeApplicationDetailRead
 from app.schemas.kits import KitCreate, KitRead, KitUpdate
+from app.schemas.numeric import PositiveInt4
 from app.services import kits as kits_service
 from app.services import upgrades as upgrades_service
 
@@ -18,8 +19,15 @@ async def list_kits(
     status: KitStatus | None = None,
     grade: str | None = None,
     series: str | None = None,
+    sort: kits_service.KitSort = "created",
+    limit: PositiveInt4 | None = None,
 ):
-    return await kits_service.list_kits(session, status=status, grade=grade, series=series)
+    """`sort=recent` is the pipeline clock (`status_updated_at`, newest first);
+    `limit` the first N of that order — what Home's strips and "view all" links
+    read (§13.4). The same options on the `list_kits` MCP tool."""
+    return await kits_service.list_kits(
+        session, status=status, grade=grade, series=series, sort=sort, limit=limit
+    )
 
 
 # Declared before /{kit_id} so the literal segment wins over the uuid parameter.

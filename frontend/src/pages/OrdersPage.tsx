@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, X } from "lucide-react";
+import { ChevronDown, ChevronRight, Pencil, Plus, Search, X } from "lucide-react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import type {
   Control,
@@ -18,7 +18,7 @@ import type {
   OrderItemUpsert,
   OrderUpdate,
 } from "../api/types";
-import { ITEM_TYPES } from "../api/types";
+import { ITEM_TYPES, ORDER_SORTS, type OrderSort } from "../api/types";
 import type { CatalogSelection } from "../components/CatalogItemPicker";
 import { CatalogItemPicker } from "../components/CatalogItemPicker";
 import i18n from "../i18n";
@@ -26,17 +26,22 @@ import { counted, countedPhrase, dateWithElapsed, itemTypeLabel, itemTypeTitle }
 import { usePresentationVersion } from "../lib/presentation";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
+import { StatusBadge } from "../components/StatusBadge";
 import {
   Button,
   Chip,
   EmptyState,
   ErrorBanner,
   Field,
+  IconButton,
   Input,
   PageTitle,
+  Pager,
   Select,
   TABLE_HEAD_ROW_CLASS,
 } from "../components/ui";
+import { paginate, useEnumParam, usePageParam, useSearchParam, useTextParam } from "../lib/listState";
+import { convertedTotal, orderTotal, shippingLine } from "../lib/orderMoney";
 import {
   currencyOptions,
   formatDate,
@@ -474,7 +479,28 @@ function LineEditor({
  *
  * In practice OrdersPage warms all five, so the loading state is rarely seen —
  * "rarely" being exactly why the bug would have survived. */
-function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void }) {
+/** The order's state as the list filters and chips read it (#95, §13.4). */
+type OrderState = "pending" | "shipped" | "received" | "pre-order";
+const ORDER_STATES: readonly OrderState[] = ["pending", "shipped", "received", "pre-order"];
+
+function orderState(order: Order): OrderState {
+  if (order.received_at) return "received";
+  if (order.shipped_at) return "shipped";
+  return isPreOrder(order) ? "pre-order" : "pending";
+}
+
+/** Rows per page on the list pages (§13.4). */
+const PAGE_SIZE = 10;
+
+function OrderFormModal({
+  order,
+  onClose,
+  onDelete,
+}: {
+  order?: Order;
+  onClose: () => void;
+  onDelete?: (order: Order) => Promise<void>;
+}) {
   const { t } = useTranslation();
   const { data: meta } = useQuery(metaQuery);
   // The order the caller has is the list's cached copy, stale for as long as
@@ -559,6 +585,7 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
   }
   return (
     <OrderForm
+      onDelete={onDelete}
       order={order ? freshOrder : undefined}
       onClose={onClose}
       referenceCurrency={meta.reference_currency}
@@ -575,17 +602,21 @@ function OrderFormModal({ order, onClose }: { order?: Order; onClose: () => void
 function OrderForm({
   order,
   onClose,
+  onDelete,
   referenceCurrency,
   catalog,
 }: {
   order?: Order;
   onClose: () => void;
+  /** Delete lives in the dialog, not on the row (§13.4). */
+  onDelete?: (order: Order) => Promise<void>;
   referenceCurrency: string;
   catalog: { id: string; name: string }[];
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [newRetailerName, setNewRetailerName] = useState<string | null>(null);
   // Two guards on the inline create, for two different readers: the ref is what
   // stops a second click that lands before React has re-rendered (#49 — a
@@ -807,8 +838,14 @@ function OrderForm({
                     </option>
                   ))}
                 </Select>
-                <Button type="button" variant="secondary" onClick={() => setNewRetailerName("")}>
-                  +
+                <Button
+                  type="button"
+                  variant="secondary"
+                  aria-label={t("orders.quickAddRetailer")}
+                  title={t("orders.quickAddRetailer")}
+                  onClick={() => setNewRetailerName("")}
+                >
+                  <Plus size={14} aria-hidden />
                 </Button>
               </div>
             ) : (
@@ -918,7 +955,7 @@ function OrderForm({
                   type="date"
                   max={todayISO()}
                   {...register("received_date")}
-                  className="w-auto"
+                  className="!w-auto"
                 />
               </label>
             )}
@@ -970,6 +1007,7 @@ function OrderForm({
             <Button
               type="button"
               variant="secondary"
+              icon={Plus}
               onClick={() =>
                 append(
                   emptyLine(
@@ -1004,35 +1042,48 @@ function OrderForm({
           ))}
         </div>
 
-        <div className="flex justify-end gap-2">
-          <Button type="button" variant="secondary" onClick={onClose}>
+        <div className="flex items-center gap-2">
+          {order && onDelete && (
+            <Button
+              type="button"
+              variant="danger"
+              className="me-auto"
+              disabled={isSubmitting || deleting}
+              onClick={async () => {
+                const label =
+                  retailers?.find((row) => row.id === order.retailer_id)?.name ??
+                  t("orders.thisOrder");
+                if (
+                  !window.confirm(
+                    t("orders.confirmDelete", { date: formatDate(order.order_date), retailer: label }),
+                  )
+                ) {
+                  return;
+                }
+                setError(null);
+                setDeleting(true);
+                try {
+                  await onDelete(order);
+                  onClose();
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
+                } finally {
+                  setDeleting(false);
+                }
+              }}
+            >
+              {t("common.delete")}
+            </Button>
+          )}
+          <Button type="button" variant="secondary" className="ms-auto" onClick={onClose}>
             {t("common.cancel")}
           </Button>
-          <Button type="submit" disabled={isSubmitting}>
+          <Button type="submit" disabled={isSubmitting || deleting}>
             {order ? t("orders.saveChanges") : t("orders.recordOrder")}
           </Button>
         </div>
       </form>
     </Modal>
-  );
-}
-
-function orderTotal(order: Order): string {
-  const byCurrency = new Map<string, number>();
-  for (const item of order.items) {
-    byCurrency.set(
-      item.currency_code,
-      (byCurrency.get(item.currency_code) ?? 0) + item.quantity * item.unit_price_minor,
-    );
-  }
-  if (order.shipping_cost_minor) {
-    byCurrency.set(
-      order.currency_code,
-      (byCurrency.get(order.currency_code) ?? 0) + order.shipping_cost_minor,
-    );
-  }
-  return (
-    [...byCurrency].map(([currency, minor]) => formatMoney(minor, currency)).join(" + ") || "—"
   );
 }
 
@@ -1046,14 +1097,25 @@ export function OrdersPage() {
     null,
   );
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [actionError, setActionError] = useState<string | null>(null);
+  // The list's state is the URL (§13.4, #232): the sort is the server's — one
+  // definition of "recently changed" for the page, Home and the MCP tool — and
+  // the status, retailer and search narrow the loaded list here.
+  const [stateFilter, setStateFilter] = useEnumParam<OrderState | "">(
+    "status",
+    ["", ...ORDER_STATES],
+    "",
+  );
+  const [retailerFilter, setRetailerFilter] = useTextParam("retailer");
+  const [search, setSearch] = useSearchParam("q");
+  const [sort, setSort] = useEnumParam<OrderSort>("sort", ORDER_SORTS, "placed");
+  const [page, setPage] = usePageParam();
 
   const {
     data: orders,
     isLoading,
     isError,
     error,
-  } = useQuery({ queryKey: ["orders"], queryFn: api.listOrders });
+  } = useQuery({ queryKey: ["orders", { sort }], queryFn: () => api.listOrders({ sort }) });
   const { data: retailers } = useQuery({ queryKey: ["retailers"], queryFn: api.listRetailers });
   // Names for the list below only. The editor deliberately does *not* read kit
   // details from here any more — it takes them from the order it is editing, so a
@@ -1097,23 +1159,30 @@ export function OrdersPage() {
       ),
     );
 
-  const remove = async (order: Order) => {
-    const label = retailerName.get(order.retailer_id) ?? t("orders.thisOrder");
-    if (
-      !window.confirm(
-        t("orders.confirmDelete", { date: formatDate(order.order_date), retailer: label }),
-      )
-    ) {
-      return;
-    }
-    setActionError(null);
-    try {
-      await api.deleteOrder(order.id);
-      await invalidateAll();
-    } catch (err) {
-      setActionError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
-    }
+  const removeOrder = async (order: Order) => {
+    await api.deleteOrder(order.id);
+    await invalidateAll();
   };
+
+  const visible = useMemo(() => {
+    let rows = orders ?? [];
+    if (stateFilter) rows = rows.filter((order) => orderState(order) === stateFilter);
+    if (retailerFilter) rows = rows.filter((order) => order.retailer_id === retailerFilter);
+    const needle = search.trim().toLowerCase();
+    if (needle) {
+      rows = rows.filter((order) =>
+        [retailerName.get(order.retailer_id), order.order_number, order.tracking_number]
+          .filter((value): value is string => Boolean(value))
+          .some((value) => value.toLowerCase().includes(needle)),
+      );
+    }
+    return rows;
+  }, [orders, stateFilter, retailerFilter, search, retailerName]);
+  const paged = paginate(visible, page, PAGE_SIZE);
+  const retailerOptions = useMemo(
+    () => [...(retailers ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
+    [retailers],
+  );
 
   const toggle = (id: string) =>
     setExpanded((current) => {
@@ -1129,18 +1198,74 @@ export function OrdersPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-3">
-        <PageTitle>{t("orders.title")}</PageTitle>
+        <PageTitle count={orders === undefined ? undefined : visible.length}>
+          {t("orders.title")}
+        </PageTitle>
         <div className="flex gap-2">
           <ExportCsvButton table="orders" />
-          <Button onClick={() => setModal({ mode: "add" })}>{t("orders.newOrder")}</Button>
+          <Button icon={Plus} onClick={() => setModal({ mode: "add" })}>
+            {t("orders.newOrder")}
+          </Button>
         </div>
       </div>
 
-      <ErrorBanner message={actionError} />
+      <div className="flex flex-wrap gap-2">
+        <div className="relative w-full max-w-sm">
+          <Search
+            size={15}
+            aria-hidden
+            className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-faint"
+          />
+          <Input
+            type="search"
+            aria-label={t("common.search")}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder={t("orders.searchPlaceholder")}
+            className="ps-8"
+          />
+        </div>
+        <Select
+          aria-label={t("orders.filterByStatus")}
+          value={stateFilter}
+          onChange={(event) => setStateFilter(event.target.value as OrderState | "")}
+          className="!w-auto"
+        >
+          <option value="">{t("orders.allStatuses")}</option>
+          <option value="pending">{t("orders.pillPending")}</option>
+          <option value="pre-order">{t("orders.pillPreOrder")}</option>
+          <option value="shipped">{t("orders.pillShipped")}</option>
+          <option value="received">{t("orders.pillReceived")}</option>
+        </Select>
+        {retailerOptions.length > 0 && (
+          <Select
+            aria-label={t("orders.filterByRetailer")}
+            value={retailerFilter}
+            onChange={(event) => setRetailerFilter(event.target.value)}
+            className="!w-auto max-w-52"
+          >
+            <option value="">{t("orders.allRetailers")}</option>
+            {retailerOptions.map((retailer) => (
+              <option key={retailer.id} value={retailer.id}>
+                {retailer.name}
+              </option>
+            ))}
+          </Select>
+        )}
+        <Select
+          aria-label={t("list.sortLabel")}
+          value={sort}
+          onChange={(event) => setSort(event.target.value as OrderSort)}
+          className="!w-auto"
+        >
+          <option value="placed">{t("orders.sortPlaced")}</option>
+          <option value="recent">{t("orders.sortRecent")}</option>
+        </Select>
+      </div>
 
       {isError ? (
         <ErrorBanner message={t("orders.loadFailed", { message: (error as Error).message })} />
-      ) : orders?.length ? (
+      ) : paged.total > 0 ? (
         <div className="overflow-x-auto rounded-md border border-border bg-surface">
           <table className="w-full text-sm">
             <thead>
@@ -1159,7 +1284,7 @@ export function OrdersPage() {
               </tr>
             </thead>
             <tbody>
-              {orders.map((order) => (
+              {paged.rows.map((order) => (
                 <Fragment key={order.id}>
                   <tr
                     className="cursor-pointer border-b border-rule last:border-0 hover:bg-chip"
@@ -1260,7 +1385,12 @@ export function OrdersPage() {
                         ),
                       )}
                     </td>
-                    <td className="px-3 py-2">{orderTotal(order)}</td>
+                    <td className="px-3 py-2 tabular-nums">
+                      <div>{orderTotal(order)}</div>
+                      {convertedTotal(order) && (
+                        <div className="text-xs text-muted">{convertedTotal(order)}</div>
+                      )}
+                    </td>
                     <td className="px-3 py-2">
                       {order.tracking_url ? (
                         <a
@@ -1276,54 +1406,26 @@ export function OrdersPage() {
                         (order.tracking_number ?? "—")
                       )}
                     </td>
-                    <td className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
-                      {/* Ship and Receive are no longer row actions (#120) — both
-                          transitions live in the Edit dialog, next to the fields
-                          that correct them and the details a real status change
+                    <td className="px-2 py-2 text-end" onClick={(event) => event.stopPropagation()}>
+                      {/* One control per row (§13.4). Ship, Receive and Delete all
+                          live in the Edit dialog (#120), next to the fields that
+                          correct them and the details a real status change
                           travels with. */}
-                      <div className="flex justify-end gap-1">
-                        <Button
-                          variant="secondary"
-                          onClick={() => setModal({ mode: "edit", order })}
-                        >
-                          {t("common.edit")}
-                        </Button>
-                        <Button variant="danger" onClick={() => remove(order)}>
-                          {t("common.delete")}
-                        </Button>
-                      </div>
+                      <IconButton
+                        label={t("common.editNamed", {
+                          name: `${retailerName.get(order.retailer_id) ?? t("orders.thisOrder")} ${formatDate(order.order_date)}`,
+                        })}
+                        onClick={() => setModal({ mode: "edit", order })}
+                      >
+                        <Pencil size={15} aria-hidden />
+                      </IconButton>
                     </td>
                   </tr>
                   {expanded.has(order.id) && (
-                    <tr className="border-b border-rule bg-surface-alt last:border-0">
+                    <tr className="border-b border-rule last:border-0">
                       <td />
-                      <td colSpan={10} className="px-3 py-2">
-                        <ul className="space-y-1">
-                          {order.items.map((item) => {
-                            const label =
-                              item.item_type === "kit"
-                                ? (itemName.get(item.spawned_kit_ids[0] ?? "") ?? itemTypeLabel("kit"))
-                                : (itemName.get(item.catalog_ref_id ?? "") ??
-                                  itemTypeLabel(item.item_type));
-                            return (
-                              <li key={item.id} className="flex items-center gap-3 text-sm">
-                                <span className="w-24 rounded-sm bg-chip px-1.5 py-0.5 text-center text-xs text-muted">
-                                  {itemTypeLabel(item.item_type)}
-                                </span>
-                                <span className="font-medium">{label}</span>
-                                <span className="text-muted">
-                                  {formatNumber(item.quantity)} ×{" "}
-                                  {formatMoney(item.unit_price_minor, item.currency_code)}
-                                </span>
-                                {item.item_type === "kit" && (
-                                  <span className="text-xs text-muted">
-                                    {t("orders.spawnedKits", counted({}, item.spawned_kit_ids.length))}
-                                  </span>
-                                )}
-                              </li>
-                            );
-                          })}
-                        </ul>
+                      <td colSpan={10} className="px-3 pb-3.5 pt-0">
+                        <LinesBox order={order} itemName={itemName} />
                       </td>
                     </tr>
                   )}
@@ -1331,10 +1433,15 @@ export function OrdersPage() {
               ))}
             </tbody>
           </table>
+          <Pager paged={paged} onPage={setPage} />
         </div>
       ) : (
         <EmptyState>
-          {isLoading ? t("common.loading") : t("orders.empty")}
+          {isLoading
+            ? t("common.loading")
+            : orders?.length
+              ? t("orders.emptyFiltered")
+              : t("orders.empty")}
         </EmptyState>
       )}
 
@@ -1342,7 +1449,61 @@ export function OrdersPage() {
         <OrderFormModal
           order={modal.mode === "edit" ? modal.order : undefined}
           onClose={() => setModal(null)}
+          onDelete={removeOrder}
         />
+      )}
+    </div>
+  );
+}
+
+/** The expanded lines box (§13.4): a kit line carries its kit's status, a catalog
+ *  line says when its stock lands (§3.9), and shipping closes the box. One grid
+ *  for every line, so the type, status and amount columns are shared tracks — a
+ *  line's status chip cannot push its own type column over (Codex #236 P3-6). */
+function LinesBox({ order, itemName }: { order: Order; itemName: Map<string, string> }) {
+  const { t } = useTranslation();
+  const shipping = shippingLine(order);
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_6rem_max-content_8rem] overflow-hidden rounded-sm border border-rule bg-surface-alt text-[13px]">
+      {order.items.map((item, index) => {
+        const label =
+          item.item_type === "kit"
+            ? (itemName.get(item.spawned_kit_ids[0] ?? "") ?? itemTypeLabel("kit"))
+            : (itemName.get(item.catalog_ref_id ?? "") ?? itemTypeLabel(item.item_type));
+        const firstKit = item.kits[0];
+        const cell = `flex items-center py-2 ${index === 0 ? "" : "border-t border-rule"}`;
+        return (
+          <Fragment key={item.id}>
+            <span className={`${cell} min-w-0 ps-3 font-medium`}>
+              <span className="truncate">{label}</span>
+            </span>
+            <span className={`${cell} ps-3.5 text-xs text-muted`}>{itemTypeLabel(item.item_type)}</span>
+            <span className={`${cell} gap-2 ps-3.5 text-xs text-muted`}>
+              {item.item_type === "kit" ? (
+                <>
+                  {firstKit && <StatusBadge status={firstKit.status} />}
+                  {item.spawned_kit_ids.length > 1 &&
+                    t("orders.spawnedKits", counted({}, item.spawned_kit_ids.length))}
+                </>
+              ) : (
+                !order.received_at && t("orders.stockOnReceipt")
+              )}
+            </span>
+            <span className={`${cell} justify-end pe-3 ps-3.5 text-muted tabular-nums`}>
+              {formatNumber(item.quantity)} × {formatMoney(item.unit_price_minor, item.currency_code)}
+            </span>
+          </Fragment>
+        );
+      })}
+      {shipping && (
+        <div className="col-span-4 flex items-center justify-between gap-3.5 border-t border-rule bg-surface px-3 py-2 text-xs text-muted">
+          <span>
+            {shipping.service
+              ? t("orders.shippingLineWith", { service: shipping.service })
+              : t("orders.shippingLine")}
+          </span>
+          <span className="tabular-nums">{shipping.amount ?? "—"}</span>
+        </div>
       )}
     </div>
   );

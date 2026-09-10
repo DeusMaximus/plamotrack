@@ -148,7 +148,7 @@ test("saving the currency persists it and refreshes the order form's default", a
 
   // Same SPA session, no reload: the new default reaches the order form.
   await page.getByRole("link", { name: "Orders" }).click();
-  await page.getByRole("button", { name: "+ New order" }).click();
+  await page.getByRole("button", { name: "New order" }).click();
   await expect(page.getByLabel("Currency").first()).toHaveValue(target);
 });
 

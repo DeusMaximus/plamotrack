@@ -2,6 +2,7 @@ import type {
   AccessToken,
   AccessTokenCreate,
   AccessTokenMinted,
+  AuthSession,
   CatalogSearchResult,
   Consumable,
   ConsumableCreate,
@@ -14,9 +15,9 @@ import type {
   ImportResult,
   InstanceSettings,
   InstanceSettingsUpdate,
-  AuthSession,
   Kit,
   KitCreate,
+  KitSort,
   KitStatus,
   KitUpdate,
   Meta,
@@ -25,6 +26,7 @@ import type {
   OrderCreate,
   OrderReceive,
   OrderShip,
+  OrderSort,
   OrderUpdate,
   Retailer,
   RetailerCreate,
@@ -161,9 +163,11 @@ export async function downloadFile(path: string, fallbackName: string): Promise<
 }
 
 export const api = {
-  listKits: (filters?: { status?: KitStatus | "" }) => {
+  listKits: (filters?: { status?: KitStatus | ""; sort?: KitSort; limit?: number }) => {
     const params = new URLSearchParams();
     if (filters?.status) params.set("status", filters.status);
+    if (filters?.sort) params.set("sort", filters.sort);
+    if (filters?.limit) params.set("limit", String(filters.limit));
     const qs = params.size > 0 ? `?${params.toString()}` : "";
     return request<Kit[]>(`/kits${qs}`);
   },
@@ -255,7 +259,14 @@ export const api = {
   updateSettings: (data: InstanceSettingsUpdate) =>
     request<InstanceSettings>("/settings", patch(data)),
 
-  listOrders: () => request<Order[]>("/orders"),
+  listOrders: (filters?: { sort?: OrderSort; pendingOnly?: boolean; limit?: number }) => {
+    const params = new URLSearchParams();
+    if (filters?.sort) params.set("sort", filters.sort);
+    if (filters?.pendingOnly) params.set("pending_only", "true");
+    if (filters?.limit) params.set("limit", String(filters.limit));
+    const qs = params.size > 0 ? `?${params.toString()}` : "";
+    return request<Order[]>(`/orders${qs}`);
+  },
   /** One order, fresh — what the editor hydrates from (#67): the list is a
    *  cache exactly as stale as the page is old. */
   getOrder: (id: string) => request<Order>(`/orders/${id}`),

@@ -30,8 +30,8 @@ test("double-clicking Add on the inline retailer control creates one retailer", 
   page,
 }) => {
   await page.goto("/orders");
-  await page.getByRole("button", { name: "+ New order" }).click();
-  await page.getByRole("button", { name: "+", exact: true }).click();
+  await page.getByRole("button", { name: "New order" }).click();
+  await page.getByRole("button", { name: "New retailer" }).click();
   await page.getByPlaceholder("New retailer name").fill(SHOP);
 
   // Hold every POST /retailers so the second click cannot be saved by a fast API.
@@ -51,7 +51,7 @@ test("double-clicking Add on the inline retailer control creates one retailer", 
 
   // The control collapses back to the select with the new shop chosen.
   await expect(page.getByPlaceholder("New retailer name")).toHaveCount(0);
-  await expect(page.locator("select").first()).toHaveValue(/.+/);
+  await expect(page.getByRole("dialog").locator('select[name="retailer_id"]')).toHaveValue(/.+/);
 
   expect(requestsMade, "clicks that reached the network").toBe(1);
   const api = await apiContext();
@@ -79,8 +79,8 @@ test("the catalog picker offers an item created seconds ago instead of a second 
 
   // Order A: a brand-new consumable via the typeahead — this populates the cache
   // for the search term with "no results".
-  await page.getByRole("button", { name: "+ New order" }).click();
-  await page.locator("select").first().selectOption({ label: SEARCH_SHOP });
+  await page.getByRole("button", { name: "New order" }).click();
+  await page.getByRole("dialog").locator('select[name="retailer_id"]').selectOption({ label: SEARCH_SHOP });
   await page.locator('select:has(option[value="consumable"])').first().selectOption("consumable");
   await page.getByLabel("Unit price").first().fill("2");
   await page.getByPlaceholder("Search consumables…").fill(MARKER);
@@ -91,7 +91,7 @@ test("the catalog picker offers an item created seconds ago instead of a second 
 
   // Order B, immediately: the same search must now show the item, not only offer
   // to create it again.
-  await page.getByRole("button", { name: "+ New order" }).click();
+  await page.getByRole("button", { name: "New order" }).click();
   await page.locator('select:has(option[value="consumable"])').first().selectOption("consumable");
   await page.getByPlaceholder("Search consumables…").fill(MARKER);
   await expect(

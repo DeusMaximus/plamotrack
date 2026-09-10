@@ -1,7 +1,9 @@
 import logging
 import uuid
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
+from typing import Literal
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -1331,10 +1333,76 @@ async def get_order(session: AsyncSession, order_id: uuid.UUID) -> Order:
     return order
 
 
-async def list_orders(session: AsyncSession) -> list[Order]:
-    stmt = (
-        select(Order)
-        .order_by(Order.order_date.desc(), Order.id)
-        .options(selectinload(Order.items).selectinload(OrderItem.kits))
-    )
+#: How an order list is ordered (§13.4, #232). `placed` is the order the list
+#: always had (newest order date first); `recent` is the order's last status
+#: change — received, else shipped, else placed — newest first, the clock Home's
+#: "in the mail" columns read. Same vocabulary on REST and MCP as for kits.
+OrderSort = Literal["placed", "recent"]
+ORDER_SORTS: tuple[OrderSort, ...] = ("placed", "recent")
+
+
+def last_status_change(order: Order, zone: ZoneInfo) -> datetime:
+    """The clock `sort=recent` reads: received, else shipped, else placed — the
+    placement date as its midnight in the *instance's* time zone (rule 11), so
+    an order shipped late on the 1st outranks one placed on the 2nd wherever the
+    database runs. Computed here, in the application's zone database, never in
+    SQL: a cast read the SQL session's zone (Codex #236 round 1), and handing the
+    name to Postgres read its zone files instead — which lack 97 of the names
+    the settings accept (`Australia/Queensland`, an IANA link) and take CET, EET,
+    MET and WET as fixed offsets where IANA gives them seasonal rules (round 2).
+    Two named choices on a transition day (§13.4): a midnight that happens twice
+    is its first occurrence (`fold=0`), and one a transition skipped is read with
+    the offset that held before it — the hour after, in local time."""
+    if order.received_at is not None:
+        return order.received_at
+    if order.shipped_at is not None:
+        return order.shipped_at
+    return datetime.combine(order.order_date, time.min, tzinfo=zone)
+
+
+#: The instant every clock is measured from, so two clocks compare as instants.
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _recent_key(order: Order, zone: ZoneInfo) -> tuple[timedelta, date]:
+    """The `recent` sort key: the clock as an exact instant, then the placement
+    date. The invariant (Codex #236 round 3): **equal instants have equal keys
+    whatever zone represents them**, so the secondary key and the slice see the
+    tie. A stored instant is UTC and a placement midnight is zone-local, and
+    Python compares an aware datetime whose offset depends on `fold` — a
+    midnight a transition repeats or skips — as *unequal* to any other zone's
+    datetime even at the same instant (PEP 495), so a tuple of datetimes never
+    reached `order_date` for exactly those ties. `clock - epoch` is an exact
+    timedelta (no float, no microsecond loss at the date bounds) and never
+    overflows the way `.astimezone(UTC)` does for `0001-01-01` east of UTC."""
+    return (last_status_change(order, zone) - _EPOCH, order.order_date)
+
+
+async def list_orders(
+    session: AsyncSession,
+    *,
+    pending_only: bool = False,
+    sort: OrderSort = "placed",
+    limit: int | None = None,
+) -> list[Order]:
+    from app.services.kits import check_list_options
+
+    check_list_options(sort, ORDER_SORTS, limit)
+    stmt = select(Order).options(selectinload(Order.items).selectinload(OrderItem.kits))
+    if pending_only:
+        # Not yet received — the same predicate the MCP tool applied by hand
+        # before #232, in the query now so `limit` counts pending rows.
+        stmt = stmt.where(Order.received_at.is_(None))
+    if sort == "recent":
+        # The clock is the application's (`last_status_change`, in the zone the
+        # settings row names — rule 11), so the sort is too: the rows by id, a
+        # stable sort on the clock, then the slice. A personal collection is a
+        # few hundred orders, and the page loads them all regardless (§13.4).
+        zone = ZoneInfo((await settings_service.get_instance_settings(session)).time_zone)
+        rows = list((await session.scalars(stmt.order_by(Order.id))).all())
+        rows.sort(key=lambda order: _recent_key(order, zone), reverse=True)
+        return rows[:limit] if limit is not None else rows
+    stmt = stmt.order_by(Order.order_date.desc(), Order.id)
+    if limit is not None:
+        stmt = stmt.limit(limit)
     return list((await session.scalars(stmt)).all())

@@ -47,7 +47,7 @@ test("the Display tab adds an item, and blank optional fields store as null", as
   await page.getByRole("button", { name: "Display", exact: true }).click();
 
   // The noun, not the tab id — "+ Add display item", never "+ Add display-item".
-  const add = page.getByRole("button", { name: "+ Add display item" });
+  const add = page.getByRole("button", { name: "Add display item" });
   await expect(add).toBeVisible();
   await add.click();
 
@@ -77,9 +77,9 @@ test("the Display tab adds an item, and blank optional fields store as null", as
 
 test("an order line creates a display item and stocks it on receive", async ({ page }) => {
   await page.goto("/orders");
-  await page.getByRole("button", { name: "+ New order" }).click();
+  await page.getByRole("button", { name: "New order" }).click();
 
-  await page.getByRole("button", { name: "+", exact: true }).click();
+  await page.getByRole("button", { name: "New retailer" }).click();
   await page.getByPlaceholder("New retailer name").fill(SHOP);
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByPlaceholder("New retailer name")).toHaveCount(0);

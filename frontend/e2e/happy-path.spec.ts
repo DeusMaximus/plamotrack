@@ -26,10 +26,10 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   page.on("dialog", (dialog) => dialog.accept());
 
   await page.goto("/orders");
-  await page.getByRole("button", { name: "+ New order" }).click();
+  await page.getByRole("button", { name: "New order" }).click();
 
   // Retailer quick-add
-  await page.getByRole("button", { name: "+", exact: true }).click();
+  await page.getByRole("button", { name: "New retailer" }).click();
   await page.getByPlaceholder("New retailer name").fill(SHOP);
   await page.getByRole("button", { name: "Add", exact: true }).click();
 
@@ -39,7 +39,7 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   await page.getByPlaceholder("Grade *").fill("HG");
 
   // Line 2: a brand-new consumable via the select-or-create typeahead
-  await page.getByRole("button", { name: "+ Add line" }).click();
+  await page.getByRole("button", { name: "Add line" }).click();
   await page.locator('select:has(option[value="consumable"])').nth(1).selectOption("consumable");
   await page.getByLabel("Quantity").nth(1).fill("3");
   await page.getByLabel("Unit price").nth(1).fill("2");
