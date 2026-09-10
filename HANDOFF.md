@@ -41,6 +41,50 @@ Template:
 
 ---
 
+## 2026-09-11 — Claude Code (Fable 5.1) — M6.1 planned and filed: Codex's FastMCP 4 spike verified; **#241** (prep, `main`) → **#243** (bump) + **#242** (CIMD) + **#244** (gate) on integration branch `m6.1-fastmcp4`; the #241 Codex brief printed; the integration-branch rule generalised
+
+- **Done:** (1) 2026-09-08 — the brief for the FastMCP 4 compatibility spike printed; Codex ran it
+  (its entry is in `.agents/handoff/2026-09.md`; branch `spike/m61-fastmcp4` at `bbb58e7`, report
+  `.agents/spikes/2026-09-m61-fastmcp4.md` **on that branch only**, evidence under
+  `/private/tmp/plamotrack-m61-fastmcp4-20260908`). Its three headline findings re-verified against
+  FastMCP 4.0.3's source: `_revoke_upstream` calls `revoke_token` on FastMCP's upstream client, which
+  4.x's httpx2 client lacks — the `except Exception` hides the AttributeError and the provider is never
+  asked, while the fixture's `upstream_transport` injection builds authlib's old client, so the suite is
+  green for the wrong reason; CIMD clients resolve through a bounded cache and are no longer persisted
+  (`OAuthProxy.get_client`), so five `test_mcp_oauth_registrations.py` cases are obsolete; SDK 2's
+  registration handler refuses `private_key_jwt` before `register_client` runs. Codex's raw log at the
+  spike head: **2661 passed / 10 failed** — the five CIMD cases, one registration case, and four
+  era-probe assertions the brief got wrong (a failed bearer on `/mcp/` is the RFC 6750 challenge
+  header, not REST's `auth.bearer_invalid` envelope; rule 13's "on every route" wording misled).
+  Packaged local matrix 186/0; real 4.x (auto and forced-legacy) and 3.4.5 clients through nginx on
+  both spellings. (2) 2026-09-11, on the owner's "lets do it": **#241** (prep PR on 3.x — httpx as a
+  runtime dep, own the RFC 7009 upstream revocation POST behind an injectable transport, narrow the
+  catch-all, a control whose factory lacks `revoke_token`), **#242** (CIMD contract restated DCR-only,
+  an unreachable-document probe), **#243** (the atomic bump: lock, httpx2 test twin, mechanical fixes,
+  `authorization_response_iss_parameter_supported`, `private_key_jwt` refusal accepted, null 405 id,
+  era probes corrected), **#244** (gate both eras with real clients; the Built flip lives there) filed
+  under M6.1 beside #56, each with the attribution line. The Codex brief for #241 printed in chat
+  (scratchpad copy). (3) Docs: AGENTS "Git conventions" — the M6.5 paragraph generalised into the
+  integration-branch rule with M6.5 and M6.1 as instances; design §7.1 gained a sequencing paragraph;
+  #243 and #244 name their base branch.
+- **Decisions (owner, 2026-09-11):** two-PR shape — prep on 3.x first, then one atomic bump; CIMD
+  follows FastMCP 4's model (lifetime/cap/quota now DCR-only); the `private_key_jwt` refusal is the
+  contract; the discovery flag is added; the binding's 405 mirrors the SDK's null id; the four red
+  probes are fixed, not the app. **Integration branch `m6.1-fastmcp4`** cut from `main` after #241
+  merges; #243 → branch, #242 stacked on it, #244 → branch; release PR with a merge commit, gated,
+  suggested tag v0.5.0-alpha (the number is the owner's call). #241 alone goes straight to `main`.
+- **State:** `main` = `3eeca81` + this entry; tag `v0.4.0-alpha` = `64d23de`. `spike/m61-fastmcp4`
+  (`bbb58e7`, local, unpushed) merges cleanly onto `main` — #243 is rebuilt from its commits with the
+  lock regenerated against `main`'s; the report moves to `.agents/spikes/241/` in that PR.
+  `m6.5-workbench` still exists (`64d23de^2`). Tree clean, checkout on `main`, dev overlay up.
+  **The LXC** was last recorded on 0.3.0 with the 0.4.0 upgrade queued (liveness carries no version;
+  unconfirmed from here). The evidence dir under `/private/tmp` does not survive a reboot. Nothing
+  pushed this session.
+- **Next:** **#241** — the owner pastes the brief into Codex (branch `fix/241-upstream-revocation`
+  from `3eeca81`, PR to `main`, a fresh Codex chat reviews). Then cut `m6.1-fastmcp4` and start #243
+  from the spike commits. The LXC upgrade to 0.4.0 whenever; #238 and the lows (#223–#227, #230)
+  unaffected.
+
 ## 2026-09-10 — Claude Code (Fable 5.1) — **v0.4.0-alpha RELEASED** (M6.5 complete): release PR #240 merged with a merge commit `64d23de` (tree `509f832`, the gated tree), tag pushed, prerelease published, #231–#234 + #122 closed, milestone M6.5 closed; next the LXC upgrade, then M6.1
 
 - **Done:** #239 (#234) squash-merged → `2fa0219` on `m6.5-workbench` (no review, owner's call);
@@ -238,43 +282,3 @@ Template:
   merge; hold the release hand-off commit until after the merge (the 0.3.0 lesson). Open
   observation from round 1, not fixed: two Playwright specs flake under parallel local workers
   (serial is CI's setting and green).
-
-## 2026-09-10 — Claude Code (Fable 5.1) — #232 (M6.5 PR 2/4) built on `feat/232-list-urls-sort-edit-control`: URL filter/sort/page on the four list pages, one edit control per row with Delete in the dialog, `sort`/`limit` on the kit and order lists (REST + MCP); **PR #236 open against `m6.5-workbench`**, awaiting the owner's reviewer call
-
-- **Done:** backend `list_kits(sort=created|recent|name, limit=)` and `list_orders(pending_only=,
-  sort=placed|recent, limit=)` — "recent" is a kit's `status_updated_at`, an order's last status
-  change (received, else shipped, else placed); one validator (`check_list_options`; codes
-  `list.sort_unknown` / `list.limit_invalid` in the module, the shared fixture and the catalogue);
-  routers typed with the Literal + `Query(ge=1)`; the MCP tools pass their strings through;
-  `pending_only` moved into the query (REST gained it for parity). Frontend: `src/lib/listState.ts`
-  (total readers, `paginate`, `pageWindow`, the hooks, `useWriteParams` for several keys in one
-  navigation) and the four pages onto URL state — Kits `status/series/q/sort/page`, Orders
-  `status/retailer/q/sort/page`, Inventory `tab/category/page`, Retailers `q/page`; the count beside
-  the title; the toolbar; a ten-row pager; a pencil `IconButton` per row; Delete inside every edit
-  dialog; the Orders lines box (kit status chips, "stock applies on receipt", the shipping line, the
-  lines' converted total under the order's); icons on the header buttons, the "+ " gone from the
-  labels. Docs: design §7 tools, §13.4 built, README rows. Tests: backend sort/limit/pending (rows
-  diverging), MCP parity; unit 22; e2e `list-urls.spec.ts` (4); locators moved (labels,
-  `getByLabel("Retailer")` → the combobox role, inventory edit says Save). README screenshots
-  regenerated on the throwaway DB. Mutants B1–B6, U1–U4, E1–E3 all killed (table on the PR).
-- **Decisions:** (1) filters and the search narrow the loaded list in the browser; only the sort is
-  the server's (the page holds the whole list; Home will pass status + limit); (2) Kits default
-  `recent`, Orders `placed`; the API defaults are unchanged; (3) ten rows a page, client-side, no
-  `offset`; (4) the inventory edit dialog says Save (it said Add); (5) the quick-add retailer
-  control is icon-only, named "New retailer"; (6) the converted total is the lines' snapshots and
-  says nothing when a line lacks one.
-- **State:** branch = `m6.5-workbench` + `c4cdcc3` + `514e0a3`, pushed; PR #236, **CI green at
-  `514e0a3`**. `514e0a3`: `test_int4_bounds` refused the tools' bare `limit: int` — every integer an
-  MCP tool takes declares its ceiling — so `limit` is `PositiveInt4` on both doors (replacing
-  `Query(ge=1)`); that moved the parity test's `limit=0` refusal to the schema and mutant B5
-  survived until the test asked *both* lists for an unknown sort. Green: `npm run lint`, `npm test`
-  (537), `npm run build`, the e2e serially on an empty DB (51 + 1 skipped), ruff, the full backend
-  suite 2672 passed (three sequential chunks).
-  Both dev servers restarted on the dev DB; the dev DB untouched. One trap met twice today: a
-  preview `api` on the dev DB makes Playwright *reuse* it — the setup project refuses (correctly)
-  and nothing runs; free :8000 first. The from-empty scripts live in the session scratchpad only.
-- **Next:** the owner picks the reviewer for #236 (Codex did #235 with a visual leg; the brief
-  shape is on record) → respond → merge into `m6.5-workbench`. Then #233 (Home: replaces the
-  board, drops dnd-kit, per-status counts from one service function, `/board` → Home; the
-  `?status=&sort=recent` links now exist) off `m6.5-workbench`, then #234. Merge `main` into the
-  integration branch after each hand-off; the packaged-stack run before the release merge.

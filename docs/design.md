@@ -2176,6 +2176,20 @@ small client matrix, not merely raising a dependency version. Tasks, multi-round
 requests, subscriptions, and MCP Apps are not roadmap items: the current short,
 transactional tools do not need them.
 
+**Sequencing (11/09/2026).** FastMCP 4.0 (GA 31/08/2026) is the framework release the
+paragraph above waits for: one endpoint serves the `2026-07-28` era and the handshake era,
+negotiated per connection. A compatibility spike (08/09/2026, Codex; re-verified) showed
+the tool and service model survives the bump unchanged and found three things a bare bump
+would get wrong: the provider-side revocation of an MCP OAuth grant silently stops, because
+FastMCP 4's upstream client has no revoke method and the best-effort catch-all hides the
+error (#241); CIMD clients are no longer persisted, which §5.6's client-record contract
+assumed (#242); and a dynamic registration asking for `private_key_jwt` is refused by the
+SDK before this server's canonicalisation runs (#243). The work lands in that order —
+#241 on `main` first, a 3.x fix that ships alone; then the bump (#243), the CIMD contract
+(#242) and the gate (#244) on the integration branch `m6.1-fastmcp4`, released together
+(the rule is in AGENTS.md → Git conventions). The marker above flips to Built with #244,
+never with the dependency version.
+
 ---
 
 ## 8. Docker Compose Layout ✅ (Milestone 5, 10/08/2026)

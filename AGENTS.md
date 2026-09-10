@@ -49,13 +49,18 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
   moving parts, not file type: #105 — the rewrite of `AGENTS.md` plus the creation
   of `.agents/` — went through a PR because it was a lot of moving parts, and a
   docs change of that shape should again (owner's call, 2026-08-19).
-- **M6.5 lands on `main` as one release.** The four UI-redesign PRs (#231–#234) open
-  against the integration branch **`m6.5-workbench`**, not `main`, so a `git clone`
-  mid-milestone — the README's install path — gets the 0.3.0 interface rather than a
-  redesign in progress (owner's call, 2026-09-10; design §13.6). Merge `main` *into* the
-  branch whenever `main` moves, never rebase it (the PRs stack on it), and land it on
-  `main` through a release PR with a merge commit, gating that commit, tagged
-  v0.4.0-alpha. Hand-off entries stay on `main` as usual.
+- **A milestone whose PRs leave `main` in an intermediate state lands through an
+  integration branch, as one release.** `main` is what a `git clone` — the README's
+  install path — gets, so it never holds a redesign or a migration in progress. The
+  PRs open against the integration branch, not `main`; merge `main` *into* the branch
+  whenever `main` moves, never rebase it (the PRs stack on it); land it on `main`
+  through a release PR with a **merge commit**, gating that commit, tagged. CI runs on
+  every pull request whatever its base. Hand-off entries stay on `main` as usual. A PR
+  that is shippable on its own goes to `main` directly, and the branch is cut after it.
+  Instances: **M6.5** — `m6.5-workbench`, #231–#234, released as v0.4.0-alpha (owner's
+  call, 2026-09-10; design §13.6). **M6.1** — `m6.1-fastmcp4`, cut after #241 lands on
+  `main` (a 3.x fix that ships alone), carrying #243 (the FastMCP 4 bump), #242 stacked
+  on it and #244 (the gate), released together (owner's call, 2026-09-11; design §7.1).
 - **Commit or push only when the user asks.** Don't take a green test run as
   permission.
 - Anything outward-facing — pushing a tag, cutting a release, changing repo
