@@ -41,6 +41,55 @@ Template:
 
 ---
 
+## 2026-09-10 — Claude Code (Fable 5.1) — #232 (M6.5 PR 2/4) reviewed by Codex (GPT-6) over four rounds and **MERGED into `m6.5-workbench` as `3faca69`** (squash); the order `recent` clock moved into the application; the kit status clock has one source; next #233 (Home) off `m6.5-workbench`
+
+- **Done:** **Round 1 NO-GO (P2 + 5 P3)** — the order `recent` clock cast `order_date` in the SQL
+  session's zone; the search box lost burst keystrokes (React Router navigates in a transition, and
+  a controlled input read from the URL is restored before the update commits); the converted total
+  suppressed on the header currency; a zero shipping cost hidden; the pencil 2.72:1 on a hovered
+  row; the lines box's type column drifting — fixed `edd3ada`, plus a no-op merge of the base
+  (`0baa1db`) to clear GitHub's stale "conflicting" state, which had also silently skipped CI on
+  the branch. Found meanwhile: the kit status clock had two sources (create = Postgres `now()`,
+  move = API clock; OrbStack's db clock runs 5–20 ms ahead of the host) → a Python default on the
+  model, pinned by a frozen-clock test. **Round 2 NO-GO (P2 + P3)** — Postgres's zone files lack 97
+  names the settings accept and read CET/EET/MET/WET as fixed offsets → the clock and the sort left
+  SQL (`last_status_change`, a stable Python sort, `limit` after; an every-accepted-zone test;
+  Havana's transition policy named in §13.4) `edd3564`; a same-currency snapshot of a different
+  amount hidden → amounts compared. **Round 3 GO + P3** — equal instants across zone
+  representations compared unequal (PEP 495: a `fold`-sensitive local datetime ≠ any other zone's)
+  so the date tie-break never ran → `_recent_key` = clock − epoch, a timedelta, `5aa246d`. 32
+  mutants over four rounds, all killed (table + exact edits on the PR; superseded anchors marked).
+  README captures regenerated (round 2). Lesson: `.agents/lessons.md` → "Four rounds in one
+  function". Roster row updated in `.agents/testing-and-review.md`.
+- **Decisions:** (7) `useSearchParam` — the box owns its value, the URL follows with `replace`, any
+  non-REPLACE navigation resets the box to the URL; (8) `convertedTotal` is suppressed only when
+  every line is in the snapshot currency *and* the snapshots sum to the lines' subtotal; (9) a
+  shipping line with a service and no cost shows the service and a dash, never a zero; (10) every
+  *generated* kit status stamp is the API's clock — a supplied ship/receipt instant is recorded as
+  given; (11) `--faint` retuned (dark `#746f66`, light `#878176`) so it holds 3:1 on the chip, the
+  hover ground; (12) the `recent` order sort is computed by the application and loads every
+  (pending-filtered) order before slicing — Codex measured 326 ms / 30 MiB at 3,000 orders — the
+  milestone's trade (rank first, load the selected rows, if a collection ever needs it); (13) on a
+  transition day a repeated midnight is its *first* occurrence and a skipped one reads with the
+  offset that held before it (Postgres picks the second); (14) ties compare as instants.
+- **State:** `m6.5-workbench` = `f99e085` (#231) + `3faca69` (#232) + merges of `main`; the
+  feature branch deleted. CI green at `5aa246d` (run 34435324567). Green at that tree: backend 2680
+  (three sequential chunks — one pytest at a time), unit 548, e2e 55 serial + 1 skipped, lint,
+  build, ruff. Dev servers off; the dev DB untouched (its owner password is not the e2e default —
+  the from-empty recipe is in the testing doc; free :8000 first). Checkout parked on
+  `m6.5-workbench`. **Reviewer calibration:** Codex GPT-6 found two hidden P2s in the order clock
+  across rounds 1–2 and the tie P3 in round 3, each with a ready reproduction and both halves of
+  the remedy; it re-measured every mutant and corrected the author's table twice (B4 three not
+  two; "ten" was thirteen); the visual leg (contrast composed in the browser, artboard comparison)
+  worked. Four rounds in one function is the signal `testing-and-review.md` names — see the lesson.
+- **Next:** **#233 (Home)** off `m6.5-workbench`: replaces the board, drops dnd-kit, per-status
+  counts from one service function, `/board` → Home; the `?status=&sort=recent` links exist;
+  Home's strips call `list_kits`/`list_orders` with `sort=recent` and a `limit`. Then #234. Merge
+  `main` into the integration branch after each hand-off; a packaged-stack run before the release
+  merge; hold the release hand-off commit until after the merge (the 0.3.0 lesson). Open
+  observation from round 1, not fixed: two Playwright specs flake under parallel local workers
+  (serial is CI's setting and green).
+
 ## 2026-09-10 — Claude Code (Fable 5.1) — #232 (M6.5 PR 2/4) built on `feat/232-list-urls-sort-edit-control`: URL filter/sort/page on the four list pages, one edit control per row with Delete in the dialog, `sort`/`limit` on the kit and order lists (REST + MCP); **PR #236 open against `m6.5-workbench`**, awaiting the owner's reviewer call
 
 - **Done:** backend `list_kits(sort=created|recent|name, limit=)` and `list_orders(pending_only=,
@@ -227,40 +276,3 @@ Template:
   are in the report, not filed. Do not call this branch a finished migration.
   v0.3.0-alpha is the existing release; the prior handoff's LXC upgrade and open
   #223–#227/#230 follow-ups were not investigated or changed by this spike.
-
-## 2026-09-08 — Claude Code (Fable 5.1) — **v0.3.0-alpha RELEASED** (M6 complete): PR #220 → `c46b652`, tag pushed, prerelease published, #30 + #195 closed, milestone M6 closed; next the LXC upgrade
-
-- **Done:** the whole of #195's tail on the owner's word ("do the lot"): **PR #220 squash-merged →
-  `c46b652`** (closes #195); annotated tag `v0.3.0-alpha — the instance has an owner` on it,
-  pushed; `gh release create --prerelease --verify-tag` with the notes —
-  https://github.com/DeusMaximus/plamotrack/releases/tag/v0.3.0-alpha ; #30 closed with the
-  criterion-by-criterion evidence comment; #195 closed with the record; **milestone M6 closed**
-  (20 closed, 0 open). The notes lead with the upgrade path (unclaimed on upgrade, back up,
-  the setup token, a PAT for every MCP client), then §5.5's client-visible changes, the
-  features, the scan's four bounds (#221) and the healthcheck fix (#228), the four
-  migrations and what each downgrade discards, the three observed gate blocks, the known
-  limitations (#206, #214's residual, #227's boundary, one worker, mode P, `PUBLIC_BASE_URL`,
-  M6.1). Earlier today: #222 merged `94fd2f9` (the scan's mediums, three Codex rounds); #229
-  merged `37ef344` (the db healthcheck over TCP, found by the gate's restore phase); the release
-  branch rebased twice; the gate rerun green on the final tree `c270127`.
-- **Decisions:** (1) **The tagged tree differs from the gated tree by `HANDOFF.md` alone** — the
-  hand-off I committed on `main` between the rebase and the merge; no image builds from it
-  (`backend/` and `frontend/` are the build contexts), so every byte the stack runs is the
-  gated byte; stated in the notes' gate paragraph. **Lesson for the next release: hold the
-  hand-off commit until after the release PR merges, or gate the merge commit** — a tree hash
-  argument should not need a caveat. (2) The tunnel phase was rerun alone after the
-  workstation's temporary IPv6 rotated mid-run (nginx attributed correctly, to the new
-  address); the first rerun died on a Cloudflare reset mid-hold → **#230** (harness gap: a
-  peer reset should be a failed row, not a crash; not a blocker). (3) #227 filed as the
-  product question (a device capability surviving a normal logout) rather than folded in.
-- **State:** `main` = `c46b652` + this entry; tag `v0.3.0-alpha` = `c46b652`. CI on `main`
-  triggered by the merge — check it. Branches `fix/scan-0.3.0-availability`,
-  `fix/db-healthcheck-init-race`, `release/0.3.0` deleted (remote). testhost left in mode R
-  (OIDC mode, Keycloak up); gate state dirs under `~/.plamotrack-gate/` (run #3 current, two
-  older beside it). Dev overlay up; tree clean. **The LXC still runs 0.2.10 — the real
-  collection; it has not been touched.** Open from the scan: #223–#226 (lows), #227, #230.
-- **Next:** **the LXC upgrade** — back up first (dump + `.env`), set `ALLOWED_HOSTS` if not
-  already, `git pull` to `v0.3.0-alpha`, `up -d --build --wait`, claim with the setup token
-  from `docker compose logs api`, mint PATs and relink every MCP client, refresh the personal
-  Gunpla skill to the deployed version (memory: it deliberately lags main). Then M6.1 /
-  M6.5 per the roadmap; the lows #223–#226 whenever.

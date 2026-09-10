@@ -1002,3 +1002,37 @@ a time (rbp-14/15/16 already did; they proved the *delete*, not the *read*). The
 reviewer also named the remedy's wrong half — `_upstream_credential` on the code
 record's top level, where the tokens live under `idp_tokens` — which is the case for
 reading a library's record shape before writing to it, not from memory of a sibling's.
+
+## Four rounds in one function (#232, PR #236)
+
+The order list's `recent` sort reads one clock — received, else shipped, else the
+day the order was placed — and the placement date is the only member of the three
+that is not an instant. Codex found a defect in how that date became an instant in
+three consecutive rounds, each fix right and each leaving the next seam: round 1,
+`order_date::timestamptz` read the SQL *session's* zone, not the instance's; round
+2, `timezone(instance_zone, …)` handed the setting's name to Postgres, whose zone
+files lack 97 of the names the settings accept (`Australia/Queensland`, an IANA
+link) and take CET, EET, MET and WET as fixed offsets; round 3, with the clock
+computed in Python, a zone-local midnight on a transition day compared *unequal* to
+a UTC shipment at the same instant (PEP 495 makes a `fold`-sensitive datetime
+unequal to any other zone's), so the tuple key never reached its date tie-break.
+Every fix had a test that went red on the reported case and a mutant that died;
+none of them was the invariant.
+
+`testing-and-review.md` says: if rounds keep landing in the same function, stop
+patching it and look for the invariant one level up. Here it was two sentences the
+branch could have written on round 1. *The zone is an instance setting the
+application validates (rule 11), so the value it defines is computed in the
+application's zone database and nowhere else* — the SQL session, Postgres's zone
+files and the settings' `zoneinfo` are three databases, and any seam between two of
+them will find a name or a rule they disagree on. And *a sort key over instants
+compares instants in one representation* — an exact `timedelta` from an epoch, not
+aware datetimes from two zones, whose equality is a library policy rather than a
+fact about time. What the rounds cost was not the fixes; it was that each round's
+mutants proved the fix and said nothing about the seam beside it, because a mutant
+kills what a test asserts, and the author's tests asserted the reported case. The
+reviewer's coverage list — every accepted zone name, executed; a transition day;
+an exactly tied instant — is what found each seam, which is the argument for
+writing that list *before* the first fix, per member of the value space the setting
+admits, and for reading a "second round in the same place" as a request to name the
+rule rather than to patch the case.
