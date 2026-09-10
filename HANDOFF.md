@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-10 — Claude Code (Fable 5.1) — #233 (M6.5 PR 3/4) built on `feat/233-home`: Home replaces the board, the order stage on the wire, `GET /summary` + `get_summary` from one function; **PR #237 open against `m6.5-workbench` at `d6c8def`** (pushed on the owner's word), Codex round next
+## 2026-09-10 — Claude Code (Fable 5.1) — #233 (M6.5 PR 3/4) built on `feat/233-home`: Home replaces the board, the order stage on the wire, `GET /summary` + `get_summary` from one function; **PR #237 open against `m6.5-workbench`; Codex round 1 NO-GO (P2 + 2×P3) fixed at `7b4bbf1`**, response posted, round 2 next
 
 - **Done:** `services/order_stage.py` — one predicate for where an order sits (`received`, else
   `in_transit`, else `pre_ordered` when every spawned kit is still one and there is at least one,
@@ -65,16 +65,30 @@ Template:
   3 / 6 / none; (6) *day 1* on the start day; (7) catalog names from the four lists, fetched only
   when a card names a catalog line; (8) #50's test goes with the drag; (9) e2e counts are deltas
   against `/summary`, the empty case stubs by pathname.
-- **State:** `feat/233-home` = `a9e2911` + `d6c8def`, clean, pushed; PR #237 open. Green at that tree:
-  backend 2693 (one run, 17:38), unit 558, e2e 61 + 1 skipped serially from an empty DB (all
-  tables 0 after), ruff, lint, build. Control 12/12 red on the base (assertion lines in the PR
-  body). Mutants: `home-` ×10 10/10 killed by the harness on `d6c8def`; 8 unit + 2 e2e killed by hand, 1 e2e mutant (NavLink
-  `end`) dead → removed. PR body ready in the session scratchpad (`pr-body-233.md`), brief
+- **Round 1 (Codex GPT-6, at `d6c8def`): NO-GO — P2** a kit edit refreshed the counts but not the
+  order card's column (an order's `stage` is derived from its kits; `KIT_VIEW_KEYS` lacked
+  `orders`); **P3** mail card headers lost the retailer / overflowed at 768–1024 px and under full
+  dates (viewport breakpoints beside a 240 px sidebar); **P3** a tracking URL without a number was
+  dropped. All three reproduced with e2e controls written first (red at `d6c8def` on the naming
+  assertion), fixed at **`7b4bbf1`**: `orders` in `KIT_VIEW_KEYS`; the Home grids on a Tailwind
+  `@container` with `@2xl/@3xl/@4xl` variants and a wrapping card header; tracking on number *or*
+  URL (the Orders page's "link" fallback). Plus: `buildDay` comment (24-hour periods), harness
+  **home-11** (Codex's `= 1` complement), the view-all assertion relative to the fixture's rows,
+  a full-date width matrix in `settings.spec.ts`. Response + coverage-record round-1 block on the
+  PR; Codex re-measured everything in round 1 (12/0 control, 10/10 + 8/8 + E1/E2, contrast of the
+  grade chip and tag in both themes) and left a list of what stays untested (in the record).
+  CI's first Backend attempt was cancelled at the 20-min cap at 89 % — a slow runner (every file
+  1.2–3.8× slower than the last green run); the re-run passed in 12 m 33 s.
+- **State:** `feat/233-home` = `a9e2911` + `d6c8def` + `7b4bbf1`, clean, pushed; PR #237 open. Green at that tree:
+  backend 2693 (at `d6c8def`; no backend source since), unit 558, e2e 64 + 1 skipped serially
+  from an empty DB (all tables 0 after), ruff, lint, build. Control 12/12 red on the base.
+  Mutants: `home-` ×11 11/11 killed on `7b4bbf1`; 8 unit + 3 e2e (E1, E2, E4) killed by hand,
+  1 e2e mutant (NavLink `end`) dead → removed. PR body ready in the session scratchpad (`pr-body-233.md`), brief
   printed in the chat. Dev DB untouched; the Browser pane has a live owner session on it (used
   for the look); Vite left running, the `api` preview stopped. `.claude/launch.json` is tracked
   (`api`, `frontend`) — I overwrote it once from the wrong cwd and restored it.
-- **Next:** the Codex round on PR #237 (brief printed in the session chat; `Closes #233, closes
-  #122` in the body) → respond → merge into `m6.5-workbench`. Then
+- **Next:** Codex round 2 on PR #237 at `7b4bbf1` (brief printed in the session chat) → respond →
+  merge into `m6.5-workbench` (`Closes #233, closes #122` in the body). Then
   #234 (Settings, About, the e2e suite, README captures in the new look) off `m6.5-workbench`;
   merge `main` into the integration branch after each hand-off; a packaged-stack run before the
   release merge; hold the release hand-off commit until after the merge.
