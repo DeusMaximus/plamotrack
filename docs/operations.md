@@ -756,6 +756,18 @@ docker compose logs migrate
 **Back up before upgrading.** Migrations run forward automatically; rolling one
 back is a manual `alembic downgrade` and some are deliberately lossy about it.
 
+### Upgrading to 0.4.0: nothing to migrate, one look
+
+0.4.0 is the interface: no schema migration, no authentication change, no new
+setting. `git pull && docker compose up -d --build --wait` and sign in as before.
+What a client of the API notices: every order row carries a derived `stage`
+(`received`, `in_transit`, `pre_ordered`, `ordered`), `GET /summary` and the
+`get_summary` MCP tool exist, the kit and order list endpoints and tools take
+`sort` and `limit`, and `/board` redirects to `/`. A bookmark to the Orders page
+with `?status=pending|pre-order|shipped` reads as no filter — the values are the
+wire's now (`ordered`, `pre_ordered`, `in_transit`, `received`). Rolling back is
+`git checkout v0.3.0-alpha` and the same `up`; the database needs nothing.
+
 ### Upgrading to 0.3.0: the instance comes up unclaimed
 
 0.3.0 is the release that puts a lock on the door. After the `docker compose up`, an
