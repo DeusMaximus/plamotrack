@@ -250,6 +250,72 @@ test("a cold page load re-renders once the settings row arrives (#174 review, P3
 });
 
 
+test("Home's mail cards keep the retailer readable under full dates at every width (Codex #237 P3-2)", async ({
+  page,
+}) => {
+  // The date style is the one instance-wide setting that lengthens every date
+  // on a card ("Wednesday, 8 September 2026 · Australia Post"); this project
+  // owns the settings flips, so the width matrix with full dates lives here.
+  const api = await apiContext();
+  const suffix = Date.now().toString(36);
+  const shop = `Review 237 Hobby ${suffix}`;
+  const retailer = (await (await api.post("/retailers", { data: { name: shop } })).json()) as {
+    id: string;
+  };
+  const order = (await (
+    await api.post("/orders", {
+      data: {
+        retailer_id: retailer.id,
+        order_date: "2026-09-01",
+        currency_code: "JPY",
+        shipped_at: "2026-09-08T10:00:00+00:00",
+        delivery_service: "Australia Post",
+        tracking_number: `AP${suffix}`,
+        items: [
+          {
+            item_type: "kit",
+            quantity: 1,
+            unit_price_minor: 2800,
+            currency_code: "JPY",
+            kit: { name: `e2e-237-full-${suffix}`, grade: "HG" },
+          },
+        ],
+      },
+    })
+  ).json()) as { id: string };
+  try {
+    await api.patch("/settings", { data: { date_style: "full" } });
+    for (const width of [768, 1024, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/");
+      const card = page
+        .getByRole("region", { name: "In the mail" })
+        .getByRole("article")
+        .filter({ hasText: shop });
+      await expect(card.getByText(/^Shipped .*Australia Post$/)).toBeVisible();
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow, `${width}px: horizontal overflow`).toBe(0);
+      const box = (await card.getByText(shop, { exact: true }).boundingBox())!;
+      expect(box.width, `${width}px: retailer width`).toBeGreaterThan(40);
+      const spill = await card.evaluate((el) => {
+        const outer = el.getBoundingClientRect();
+        return [...el.querySelectorAll("*")].filter((child) => {
+          const r = child.getBoundingClientRect();
+          return r.width > 0 && r.right > outer.right + 1;
+        }).length;
+      });
+      expect(spill, `${width}px: content past the card`).toBe(0);
+    }
+  } finally {
+    await api.patch("/settings", { data: { date_style: original.date_style } });
+    await api.delete(`/orders/${order.id}`);
+    await api.delete(`/retailers/${retailer.id}`);
+    await api.dispose();
+  }
+});
+
 test("a cold Home load re-renders its counts once the settings row arrives (#177 review, P3-1)", async ({
   page,
 }) => {

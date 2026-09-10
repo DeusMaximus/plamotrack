@@ -5903,6 +5903,15 @@ CASES += [
         "order_counts_are_per_stage_and_match or shipping_and_receiving_move_the_stage",
     ),
     (
+        # Codex #237 round 1: the complement of home-7 — every order still lands
+        # in its own bucket, but each bucket reads one however many it holds.
+        "home-11. a stage with several orders counts one",
+        SUMM,
+        "        order_counts[order_stage(order)] += 1\n",
+        "        order_counts[order_stage(order)] = 1\n",
+        "order_counts_are_per_stage_and_match",
+    ),
+    (
         "home-8. the two statements read two snapshots",
         SUMM,
         "    await begin_read_snapshot(session)\n",

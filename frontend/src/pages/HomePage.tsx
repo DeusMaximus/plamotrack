@@ -129,7 +129,12 @@ export function HomePage() {
     : undefined;
 
   return (
-    <div className="space-y-7">
+    // `@container`: the grids below choose their columns by this element's
+    // width, not the viewport's — the sidebar takes 240 px of every viewport,
+    // and a viewport breakpoint put three mail columns into 720 px of content
+    // (Codex #237 P3-2). Two bench cards from 42 rem of content, two strips
+    // from 48 rem, two then three mail columns from 42 and 56 rem.
+    <div className="@container space-y-7">
       <PageTitle>{t("home.title")}</PageTitle>
       {failed && (
         <ErrorBanner message={t("home.loadFailed", { message: (failed.error as Error).message })} />
@@ -149,7 +154,7 @@ export function HomePage() {
         ) : bench.data.length === 0 ? (
           <p className="text-sm text-muted">{t("home.benchEmpty")}</p>
         ) : (
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid gap-4 @2xl:grid-cols-2">
             {bench.data.map((kit) => (
               <BenchCard key={kit.id} kit={kit} onEdit={() => setDialog({ kind: "kit", kit })} />
             ))}
@@ -157,7 +162,7 @@ export function HomePage() {
         )}
       </section>
 
-      <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid gap-6 @3xl:grid-cols-2">
         <section aria-labelledby="home-backlog" className="min-w-0">
           <SectionHead
             id="home-backlog"
@@ -217,7 +222,7 @@ export function HomePage() {
           count={inTheMail}
           testId="home-count-mail"
         />
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 @2xl:grid-cols-2 @4xl:grid-cols-3">
           {MAIL_STAGES.map((stage) => (
             <MailColumn
               key={stage}
@@ -298,12 +303,12 @@ function BenchCard({ kit, onEdit }: { kit: Kit; onEdit: () => void }) {
       <h3 className="pe-10 text-lg font-semibold leading-tight tracking-tight text-text">
         {kit.name}
       </h3>
-      <div className="flex items-center gap-2 text-[12.5px] tabular-nums text-muted">
+      <div className="flex flex-wrap items-center gap-2 text-[12.5px] tabular-nums text-muted">
         <GradeChip grade={kit.grade} />
         {kit.scale && <span>{kit.scale}</span>}
         {kit.kit_number && <span>{kit.kit_number}</span>}
       </div>
-      <div className="flex items-baseline gap-2.5 text-[13px] tabular-nums text-muted">
+      <div className="flex flex-wrap items-baseline gap-x-2.5 text-[13px] tabular-nums text-muted">
         {kit.build_started_at ? (
           <>
             <span>{t("home.startedOn", { date: formatDate(kit.build_started_at) })}</span>
@@ -354,7 +359,7 @@ function KitStrip({
           className={`flex h-10 items-center gap-3 px-3.5 ${index === 0 ? "" : "border-t border-rule"}`}
         >
           <span className="min-w-0 flex-1 truncate text-sm font-medium text-text">{kit.name}</span>
-          <span className="flex items-center gap-2.5 text-[12.5px] tabular-nums text-muted">
+          <span className="flex shrink-0 items-center gap-2.5 whitespace-nowrap text-[12.5px] tabular-nums text-muted">
             {meta(kit)}
           </span>
           <IconButton label={t("common.editNamed", { name: kit.name })} onClick={() => onEdit(kit)}>
@@ -470,7 +475,13 @@ function OrderCard({
           })
         : t("home.shippedOn", { date: formatDate(order.shipped_at) })
       : t("home.placedOn", { date: formatDate(order.order_date) });
-  const tracking = stage === "in_transit" ? order.tracking_number : null;
+  // Tracking once shipped, whenever either field is present (Codex #237 P3-3):
+  // a URL without a number links the Orders page's fallback word, a number
+  // without a URL is plain text — the same rule as the Orders table.
+  const tracking =
+    stage === "in_transit" && (order.tracking_number || order.tracking_url)
+      ? { number: order.tracking_number, url: order.tracking_url }
+      : null;
   return (
     <article className="relative flex min-w-0 flex-col gap-1 rounded-md border border-border bg-surface px-3.5 py-3">
       <IconButton
@@ -480,9 +491,13 @@ function OrderCard({
       >
         <Pencil size={15} aria-hidden />
       </IconButton>
-      <div className="flex items-baseline justify-between gap-2 pe-8 text-[12.5px] tabular-nums text-muted">
-        <span className="truncate font-semibold text-text">{retailer}</span>
-        <span className="shrink-0">{when}</span>
+      {/* One line when both fit, the date under the retailer when they don't
+          (a full date style, a long carrier, a narrow column) — never the
+          retailer squeezed to nothing or the date past the card (Codex #237
+          P3-2). The retailer alone truncates; the date wraps its own words. */}
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 pe-8 text-[12.5px] tabular-nums text-muted">
+        <span className="max-w-full truncate font-semibold text-text">{retailer}</span>
+        <span className="min-w-0">{when}</span>
       </div>
       {lines.headline && (
         <div className="truncate pe-7 text-sm font-medium text-text">
@@ -500,17 +515,17 @@ function OrderCard({
         </div>
       )}
       {tracking &&
-        (order.tracking_url ? (
+        (tracking.url ? (
           <a
-            href={order.tracking_url}
+            href={tracking.url}
             target="_blank"
             rel="noreferrer"
-            className="font-mono text-[11.5px] text-muted hover:text-accent"
+            className="break-all font-mono text-[11.5px] text-muted hover:text-accent"
           >
-            {tracking}
+            {tracking.number ?? t("orders.trackingLinkFallback")}
           </a>
         ) : (
-          <span className="font-mono text-[11.5px] text-muted">{tracking}</span>
+          <span className="break-all font-mono text-[11.5px] text-muted">{tracking.number}</span>
         ))}
     </article>
   );

@@ -7,8 +7,11 @@
 import type { QueryClient } from "@tanstack/react-query";
 
 /** A kit changed: the kit lists (every filter/sort/limit under the `kits`
- *  prefix) and the per-status counts. */
-export const KIT_VIEW_KEYS = ["kits", "summary"] as const;
+ *  prefix), the per-status counts — and the orders, because an order's
+ *  `stage` and the kit names on its lines are derived from its kits (§13.2):
+ *  moving a spawned kit to `pre_ordered` moves its order's card to another
+ *  column, and only a refetch shows it (Codex #237 P2). */
+export const KIT_VIEW_KEYS = ["kits", "orders", "summary"] as const;
 
 /** An order changed: the orders, the kits it spawned or advanced, the catalog
  *  stock a receipt applied, and the counts. */

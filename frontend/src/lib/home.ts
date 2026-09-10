@@ -28,8 +28,10 @@ export function bucketMail(orders: readonly Order[]): Record<MailStage, Order[]>
   return buckets;
 }
 
-/** "day N" on a bench card: the start day is day 1, each midnight-to-midnight
- *  distance after it adds one, and a start in the future (a clock skew, a
+/** "day N" on a bench card: day 1 at the start, and one more for every full
+ *  24 hours since — elapsed periods, not calendar days, so the number can
+ *  differ around local midnight and a DST change (the Kits page's elapsed
+ *  columns measure the same way). A start in the future (a clock skew, a
  *  backdate typo) reads as day 1 rather than a negative. */
 export function buildDay(startedAt: string, now: Date): number {
   const elapsed = Math.floor((now.getTime() - new Date(startedAt).getTime()) / 86_400_000);
