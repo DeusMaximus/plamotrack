@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-11 — Claude Code (Fable 5.1) — #243 built on `feat/243-fastmcp4-bump` (nine commits, head `1715d66`), the FastMCP 4.0.3 / MCP SDK 2.2.0 bump with the era probes; **local only — not pushed, no PR yet (owner's word pending)**; next: push, PR against `m6.1-fastmcp4`, a Codex round, then #242 stacked
+## 2026-09-11 — Claude Code (Fable 5.1) — #243 built on `feat/243-fastmcp4-bump` (nine commits, head `1715d66`), the FastMCP 4.0.3 / MCP SDK 2.2.0 bump with the era probes; **PR #246 open against `m6.1-fastmcp4`** (pushed on the owner's word), Codex brief printed; next: the Codex round, then #242 stacked
 
 - **Done:** #243 whole, rebuilt from the spike's commits against `main`'s lock (httpx already runtime, #241).
   `d31f9f9` the lock (fastmcp 4.0.3, mcp 2.2.0, httpx2/httpcore2 2.12.0, mcp-types, truststore; httpx-sse
@@ -75,13 +75,15 @@ Template:
   the drift); the seam reaches FastMCP's `_client` under a guard rather than patching `httpx2.AsyncClient`
   module-wide; the four probes corrected, not the server; the report at `.agents/spikes/241/`; the CI
   row proves the 401 on the wire beside the client. All seven are in the PR body's "Deliberate calls".
-- **State:** branch local, tree clean, `main` and `m6.1-fastmcp4` untouched at `dd183db`. PR body drafted
-  (scratchpad `243-pr-body.md`), the Codex brief to be printed once the PR number exists. The packaged
-  project `plamotrack-243` torn down (`down -v`); the control worktree at the scratchpad `wt-main`
-  removed. Dev overlay up. Nothing pushed.
-- **Next:** owner's word → push `feat/243-fastmcp4-bump`, open the PR against `m6.1-fastmcp4`, paste
-  the brief into a fresh Codex chat. Then #242 stacked on this branch (remove the five strict xfails
-  when the contract is restated), #244, the release PR (merge commit, gated, v0.5.0-alpha suggested).
+- **State:** `feat/243-fastmcp4-bump` = `1715d66`, pushed; **PR #246** open against `m6.1-fastmcp4`
+  (`dd183db`, = `main` less the hand-offs), body in the review-brief shape, CI triggered. `main` holds
+  this entry (local unless pushed). The Codex brief printed in the 2026-09-11 session chat (scratchpad
+  `243-review-brief.md`). The packaged project `plamotrack-243` torn down (`down -v`); the control
+  worktree removed. Dev overlay up. Checkout parked on `main` for the review window.
+- **Next:** the owner pastes the brief into a fresh Codex chat; answer the round per
+  `.agents/testing-and-review.md` (reproduce at `1715d66` first; attribution line; coverage record).
+  Merge on the owner's word (squash, as #245). Then #242 stacked on this branch (remove the five strict
+  xfails when the contract is restated), #244, the release PR (merge commit, gated, v0.5.0-alpha suggested).
 
 ## 2026-09-11 — Claude Code (Fable 5.1) — #241 built on `fix/241-upstream-revocation` → PR #245, one Codex Astra round (NO-GO on a cancelled Backend job only, no findings), **MERGED → `459c8b3`**; integration branch **`m6.1-fastmcp4` cut**; next #243
 
