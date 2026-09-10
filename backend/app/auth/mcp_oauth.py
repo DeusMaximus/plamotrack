@@ -56,8 +56,9 @@ revocation) rather than to the entry points one at a time:
 - **Revocation is the grant's** (RFC 7009 §2.1). Whichever half a client
   presents at `/revoke`, the grant record goes — locally, first, so the answer
   does not depend on the provider — and the provider is then asked, best
-  effort, to revoke *its* refresh token through the injectable upstream
-  client; `auth.mcp_grant_revoked` names the client, or names the upstream
+  effort, to revoke *its* refresh token through the browser login's provider
+  client, never FastMCP's upstream client (#241); `auth.mcp_grant_revoked`
+  names the client, or names the upstream
   (`ended_by=upstream_refresh`) when a refresh response that was not the
   owner's is what ended the grant. FastMCP alone deleted a refresh token's
   hash entry, left every access mapping to its hour-long TTL, and posted the

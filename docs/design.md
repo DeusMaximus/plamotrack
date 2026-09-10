@@ -1431,8 +1431,9 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
    refresh token's hash entry, left every access mapping to its TTL and posted the
    `AccessToken.token` field upstream, so a revoked access token stayed usable for
    the hour; now either half presented ends the grant record locally first, then
-   the provider is asked, best effort and through the injectable client, to revoke
-   *its* refresh token, and `auth.mcp_grant_revoked` names the client. And the
+   the provider is asked, best effort — through the browser login's provider client
+   since #241, never FastMCP's upstream client — to revoke *its* refresh token, and
+   `auth.mcp_grant_revoked` names the client. And the
    presented token is **located, not authorized** (round 3, f9): the SDK's
    revocation handler finds a token through the provider's `load_access_token`,
    which on this proxy is the bearer path — the upstream set read and refreshed

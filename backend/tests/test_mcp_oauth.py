@@ -1259,9 +1259,9 @@ async def test_every_transaction_and_credential_response_is_no_store_and_discove
         )
         assert revoked.status_code == 200, revoked.text
         assert revoked.headers.get_list("cache-control") == ["no-store"]
-        # The upstream revocation itself is FastMCP's own httpx call, not the
-        # injectable upstream client, so it is not observed here; the local
-        # half — the refresh token gone — is.
+        # The upstream revocation goes through the browser login's provider
+        # client (#241) and has its own witnesses; what this test observes is
+        # the local half — the refresh token gone.
         replay = await client.post(
             "/mcp/token",
             data={
@@ -1547,8 +1547,9 @@ async def test_a_successful_revocation_kills_every_credential_of_the_grant(prese
     """RFC 7009 §2.1: after a 200 from `/revoke` the token is unusable, and
     revoking either half of the pair takes the whole grant with it — the
     access token, the refresh token, and the provider's own refresh token,
-    revoked upstream through the injectable client (a witness, at last) after
-    the local record is gone. FastMCP alone left the access mapping to its
+    revoked upstream through the browser login's provider client (a witness, at
+    last — and since #241 of the production path, not an injected stand-in)
+    after the local record is gone. FastMCP alone left the access mapping to its
     hour-long TTL and posted a reference string upstream (Codex #212 f1)."""
     fake = FakeIdp()
     await _bind_owner()
