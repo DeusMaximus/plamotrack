@@ -41,6 +41,48 @@ Template:
 
 ---
 
+## 2026-09-11 — Claude Code (Fable 5.1) — #243 built on `feat/243-fastmcp4-bump` (nine commits, head `1715d66`), the FastMCP 4.0.3 / MCP SDK 2.2.0 bump with the era probes; **local only — not pushed, no PR yet (owner's word pending)**; next: push, PR against `m6.1-fastmcp4`, a Codex round, then #242 stacked
+
+- **Done:** #243 whole, rebuilt from the spike's commits against `main`'s lock (httpx already runtime, #241).
+  `d31f9f9` the lock (fastmcp 4.0.3, mcp 2.2.0, httpx2/httpcore2 2.12.0, mcp-types, truststore; httpx-sse
+  gone; nothing else moves). `93a6144` the mechanical adaptations (legacy 406 probe pins its session,
+  `input_schema`, RFC 9207 `iss` on the denial, the digest-suffixed consent cookie) and the **five
+  CIMD-row cases `xfail(strict=True)` naming #242**. `0d76aac` the seam: `_create_upstream_oauth_client`
+  returns FastMCP's own client always and re-homes its `_client` onto `upstream_transport` (now httpx2)
+  under a type guard; `FakeIdp.upstream_handler` is the httpx2 twin; a control asserts the class with and
+  without the transport and reads Basic off the exchange. `1021aab` the binding's 405 writes the SDK's
+  null id (`exclude_unset`), the literal body test unchanged. `867ccef` `discovery_metadata` sets
+  `authorization_response_iss_parameter_supported`; the `private_key_jwt` DCR refusal (SDK 2's 400
+  before `register_client`) accepted — parametrize row dropped, a refusal test and an `iss`-on-the-code-
+  redirect test added. `98b1c78` `tests/test_mcp_eras.py`, 16 cases, the four brief-contract assertions
+  corrected to the mount's RFC 6750 challenge (no envelope), the no-routing-headers case pinned to the
+  SDK's `-32020`. `a4347e4` docs (design §7.1 both eras + the §11 marker still Planned; AGENTS rule 13's
+  mount-refusal and DCR sentences; design §5.5 row; operations "first protected request"; the release
+  step checks both eras; the spike report → `.agents/spikes/241/findings.md` + README; `.agents/README`).
+  `75bdbdb` four `243-` mutants. `1715d66` **CI's real-client row rewritten**: SDK 2 folds the anonymous
+  401 into `MCPError(-32603, "Server returned an error response")` — the old `"401" in str(exc)` would
+  have failed the Integration job with the server refusing correctly; the row now asserts the SDK's
+  refusal plus the two wire requests (modern probe, handshake) each 401 `Bearer`.
+- **Verified:** targeted sets green before the full run (211 + 5 xfailed; the two OAuth suites 455);
+  full backend suite **2713 passed, 5 xfailed (the #242 five), 0 failed, 17m21s**; ruff clean; harness `-k 243-` **4/4 killed**; negative control (era probes
+  in a worktree of `dd183db`, 3.4.5, own venv) **10 red / 6 green**. Packaged stack under Compose project
+  `plamotrack-243` from this tree: migrate exit 0, `ingress_matrix.py` **187 ok / 0 failing**, real
+  4.0.3 clients through nginx on both spellings (`auto` → `2026-07-28`, `mode="legacy"` → `2025-11-25`,
+  31 tools, `get_meta`, `server_info.version` 0.4.0 in both eras), an unmodified 3.4.5 client the same
+  and refused with its 401 anonymously, CI's step extracted from the workflow file and run verbatim.
+- **Decisions (mine, for the owner to ratify on the PR):** strict xfail for #242's five rather than
+  delete/red; the binding mirrors the null id rather than pin both (the spike's edit would have hidden
+  the drift); the seam reaches FastMCP's `_client` under a guard rather than patching `httpx2.AsyncClient`
+  module-wide; the four probes corrected, not the server; the report at `.agents/spikes/241/`; the CI
+  row proves the 401 on the wire beside the client. All seven are in the PR body's "Deliberate calls".
+- **State:** branch local, tree clean, `main` and `m6.1-fastmcp4` untouched at `dd183db`. PR body drafted
+  (scratchpad `243-pr-body.md`), the Codex brief to be printed once the PR number exists. The packaged
+  project `plamotrack-243` torn down (`down -v`); the control worktree at the scratchpad `wt-main`
+  removed. Dev overlay up. Nothing pushed.
+- **Next:** owner's word → push `feat/243-fastmcp4-bump`, open the PR against `m6.1-fastmcp4`, paste
+  the brief into a fresh Codex chat. Then #242 stacked on this branch (remove the five strict xfails
+  when the contract is restated), #244, the release PR (merge commit, gated, v0.5.0-alpha suggested).
+
 ## 2026-09-11 — Claude Code (Fable 5.1) — #241 built on `fix/241-upstream-revocation` → PR #245, one Codex Astra round (NO-GO on a cancelled Backend job only, no findings), **MERGED → `459c8b3`**; integration branch **`m6.1-fastmcp4` cut**; next #243
 
 - **Done:** #241 whole, five commits. `9e99c31` httpx to the runtime deps (lock: only the
@@ -210,71 +252,3 @@ Template:
   no migration), close #231–#234 and #122 with the merge, close the milestone; **hold the release
   hand-off commit until after the merge** (the 0.3.0 lesson). Open follow-ups: #238 (order dialog
   waiting state), #223–#227, #230.
-
-## 2026-09-10 — Claude Code (Fable 5.1) — #233 (M6.5 PR 3/4) built on `feat/233-home`: Home replaces the board, the order stage on the wire, `GET /summary` + `get_summary` from one function; **PR #237 MERGED into `m6.5-workbench` as `8bac10a`** (squash, 2026-09-10) after Codex round 1 NO-GO (P2 + 2×P3, fixed `7b4bbf1`) and round 2 GO + 3×P3 (fixed `80468d7`, merged on the owner's word without a replay round); #238 filed; next #234
-
-- **Done:** `services/order_stage.py` — one predicate for where an order sits (`received`, else
-  `in_transit`, else `pre_ordered` when every spawned kit is still one and there is at least one,
-  else `ordered`); a computed `stage` on `OrderRead` (REST and the order tools alike); `GET /summary`
-  (`routers/summary.py`, tag `summary` → family 4) and the `get_summary` tool over
-  `services/summary.py::collection_summary` — kits per status, orders per stage, both statements
-  under one `REPEATABLE READ READ ONLY` snapshot (rule 7.2, the export shape). Frontend:
-  `pages/HomePage.tsx` (bench cards, the two strips capped at six with the server's counts and a
-  *view all* link, three mail columns capped at three) over `lib/home.ts` (the pure rules); the two
-  dialogs extracted verbatim into `components/KitFormModal.tsx` / `OrderFormModal.tsx`;
-  `lib/invalidate.ts` (the one list of keys a kit write and an order write dirty, `summary`
-  included); the Orders `?status=` filter speaks the stage vocabulary and reads `order.stage`;
-  `BoardPage`, `kitStatusMutation` (#50's policy) and `@dnd-kit/core` deleted; `/board` → `/`;
-  nav Home first (no `end` — React Router already treats `/` as a whole segment). Docs: README,
-  AGENTS.md, design §1.1/§4/§7/§13.2 ("Built as #233"), translating, operations; the
-  board/drag comment sweep; `docs/screenshots/home.png` replaces the two board captures.
-- **Decisions:** (1) the stage is on the wire, not derived in the browser; (2) the Orders URL
-  vocabulary changed to the wire's (`in_transit`, `ordered`, `pre_ordered`, `received`) — #232 is
-  unreleased; the chip *words* on Orders and the column words on Home follow their artboards;
-  (3) the summary reads one snapshot; (4) order counts bucket loaded rows, not SQL; (5) caps
-  3 / 6 / none; (6) *day 1* on the start day; (7) catalog names from the four lists, fetched only
-  when a card names a catalog line; (8) #50's test goes with the drag; (9) e2e counts are deltas
-  against `/summary`, the empty case stubs by pathname.
-- **Round 1 (Codex GPT-6, at `d6c8def`): NO-GO — P2** a kit edit refreshed the counts but not the
-  order card's column (an order's `stage` is derived from its kits; `KIT_VIEW_KEYS` lacked
-  `orders`); **P3** mail card headers lost the retailer / overflowed at 768–1024 px and under full
-  dates (viewport breakpoints beside a 240 px sidebar); **P3** a tracking URL without a number was
-  dropped. All three reproduced with e2e controls written first (red at `d6c8def` on the naming
-  assertion), fixed at **`7b4bbf1`**: `orders` in `KIT_VIEW_KEYS`; the Home grids on a Tailwind
-  `@container` with `@2xl/@3xl/@4xl` variants and a wrapping card header; tracking on number *or*
-  URL (the Orders page's "link" fallback). Plus: `buildDay` comment (24-hour periods), harness
-  **home-11** (Codex's `= 1` complement), the view-all assertion relative to the fixture's rows,
-  a full-date width matrix in `settings.spec.ts`. Response + coverage-record round-1 block on the
-  PR; Codex re-measured everything in round 1 (12/0 control, 10/10 + 8/8 + E1/E2, contrast of the
-  grade chip and tag in both themes) and left a list of what stays untested (in the record).
-  CI's first Backend attempt was cancelled at the 20-min cap at 89 % — a slow runner (every file
-  1.2–3.8× slower than the last green run); the re-run passed in 12 m 33 s.
-- **Round 2 (Codex, at `7b4bbf1`): GO + 3×P3, all fixed at `80468d7`** — full dates squeezed a completed
-  kit's name to one letter on a two-up strip (rows wrap now, 9 rem floor under the name, no fixed
-  height); a blank/whitespace tracking number hid a valid link (`lib/home.ts::trackingOf`, 10 unit
-  cases); a failed retailer or catalog read passed off as "an unknown retailer" / "tool" with no
-  banner (the banner covers the supporting reads; "Retailer unavailable" when the lookup failed —
-  Codex overruled my scope deferral, rightly: the page is new). Controls red-first at `7b4bbf1`;
-  hand mutants E5/E6 killed. Codex also ran a 42-combination width × locale matrix, a real
-  PAT-over-HTTP `get_summary`, and an ARIA snapshot; the order dialog's `Loading…` on a failed
-  catalog list is an accepted follow-up (predates the extraction) — **file it on merge**.
-- **Merged:** PR #237 squash → **`8bac10a` on `m6.5-workbench`** (CI green on `80468d7`: Backend
-  13 m 41 s, Frontend, Integration); the feature branch deleted. **#233 and #122 stay open** —
-  a merge into the integration branch closes nothing on GitHub (only `main` does); they close
-  with the release PR, like #231/#232 (status notes posted). **#238 filed**: the order dialog
-  stays on Loading… when a catalog list request fails (Codex round 2's accepted follow-up).
-- **State:** `m6.5-workbench` = `8bac10a` + merges of `main` (the hand-offs), local ahead of
-  origin by those merges; `main` holds four unpushed hand-off commits. Green at that tree:
-  backend 2693 (at `d6c8def`; no backend source since), unit 558, e2e 64 + 1 skipped serially
-  from an empty DB (all tables 0 after), ruff, lint, build. Control 12/12 red on the base.
-  Mutants: `home-` ×11 11/11 killed on `7b4bbf1` (no backend change since); 8 unit + 5 e2e (E1,
-  E2, E4, E5, E6) killed by hand, 1 e2e mutant (NavLink `end`) dead → removed. Unit 568, e2e
-  65 + 1 skipped at the round-2 head. PR body ready in the session scratchpad (`pr-body-233.md`), brief
-  printed in the chat. Dev DB untouched; the Browser pane has a live owner session on it (used
-  for the look); Vite left running, the `api` preview stopped. `.claude/launch.json` is tracked
-  (`api`, `frontend`) — I overwrote it once from the wrong cwd and restored it.
-- **Next:** #234 (Settings, About, the e2e suite, README captures in the new look) off
-  `m6.5-workbench`; then the release PR. Then
-  #234 (Settings, About, the e2e suite, README captures in the new look) off `m6.5-workbench`;
-  merge `main` into the integration branch after each hand-off; a packaged-stack run before the
-  release merge; hold the release hand-off commit until after the merge.
