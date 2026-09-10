@@ -12,8 +12,8 @@ import {
   ErrorBanner,
   Field,
   Input,
-  MICRO_LABEL_CLASS,
   Select,
+  TABLE_HEAD_ROW_CLASS,
 } from "../../components/ui";
 import { formatDateTime, formatNumber } from "../../lib/format";
 import { SectionHeader } from "./SectionHeader";
@@ -193,20 +193,22 @@ function TokenList() {
       ) : tokens.length === 0 ? (
         <EmptyState>{t("settings.tokens.empty")}</EmptyState>
       ) : (
-        <div className="overflow-x-auto">
+        // The list pages' table shape (§13.4): micro-label head row on the
+        // alternate surface, hairlines between rows.
+        <div className="overflow-x-auto rounded-md border border-border">
           <table className="w-full text-sm">
-            <thead className={`text-start ${MICRO_LABEL_CLASS}`}>
-              <tr>
-                <th className="pb-2 pr-3">{t("settings.tokens.colName")}</th>
-                <th className="pb-2 pr-3">{t("settings.tokens.colPrefix")}</th>
-                <th className="pb-2 pr-3">{t("settings.tokens.colAccess")}</th>
-                <th className="pb-2 pr-3">{t("settings.tokens.colCreated")}</th>
-                <th className="pb-2 pr-3">{t("settings.tokens.colLastUsed")}</th>
-                <th className="pb-2 pr-3">{t("settings.tokens.colExpires")}</th>
-                <th className="pb-2" />
+            <thead>
+              <tr className={TABLE_HEAD_ROW_CLASS}>
+                <th className="px-3 py-2.5">{t("settings.tokens.colName")}</th>
+                <th className="px-3 py-2.5">{t("settings.tokens.colPrefix")}</th>
+                <th className="px-3 py-2.5">{t("settings.tokens.colAccess")}</th>
+                <th className="px-3 py-2.5">{t("settings.tokens.colCreated")}</th>
+                <th className="px-3 py-2.5">{t("settings.tokens.colLastUsed")}</th>
+                <th className="px-3 py-2.5">{t("settings.tokens.colExpires")}</th>
+                <th className="px-3 py-2.5" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-rule">
+            <tbody>
               {tokens.map((token) => (
                 <TokenRow
                   key={token.id}
@@ -239,24 +241,27 @@ function TokenRow({
   const inactive = revoked || expired;
   const writes = token.scopes.includes("collection:write");
   return (
-    <tr data-testid="token-row" className={inactive ? "text-faint" : ""}>
-      <td className="py-2 pr-3 font-medium">{token.name}</td>
-      <td className="py-2 pr-3 font-mono text-xs">ptk_{token.token_prefix}_…</td>
-      <td className="py-2 pr-3">
+    <tr
+      data-testid="token-row"
+      className={`border-b border-rule last:border-0 ${inactive ? "text-faint" : ""}`}
+    >
+      <td className="px-3 py-2 font-medium">{token.name}</td>
+      <td className="px-3 py-2 font-mono text-xs">ptk_{token.token_prefix}_…</td>
+      <td className="px-3 py-2">
         {writes ? t("settings.tokens.accessWrite") : t("settings.tokens.accessRead")}
       </td>
-      <td className="py-2 pr-3 whitespace-nowrap">{formatDateTime(token.created_at)}</td>
-      <td className="py-2 pr-3 whitespace-nowrap">
+      <td className="px-3 py-2 whitespace-nowrap">{formatDateTime(token.created_at)}</td>
+      <td className="px-3 py-2 whitespace-nowrap">
         {token.last_used_at ? formatDateTime(token.last_used_at) : t("settings.tokens.neverUsed")}
       </td>
-      <td className="py-2 pr-3 whitespace-nowrap">
+      <td className="px-3 py-2 whitespace-nowrap">
         {expired
           ? t("settings.tokens.expired")
           : token.expires_at
             ? formatDateTime(token.expires_at)
             : t("settings.tokens.noExpiry")}
       </td>
-      <td className="py-2 text-end whitespace-nowrap">
+      <td className="px-3 py-2 text-end whitespace-nowrap">
         {revoked ? (
           <span className="text-xs">
             {t("settings.tokens.revoked", { when: formatDateTime(token.revoked_at as string) })}

@@ -1,6 +1,7 @@
 import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
 
+import { navRowClass } from "../../components/Layout";
 import { PageTitle } from "../../components/ui";
 
 /** Section slugs are route segments (App.tsx nests them under /settings) and
@@ -21,23 +22,18 @@ export function SettingsPage() {
         <PageTitle>{t("settings.title")}</PageTitle>
         <p className="mt-0.5 text-sm text-muted">{t("settings.subtitle")}</p>
       </div>
-      {/* Stacked on small screens (sections in a scrollable row), sidebar on sm+. */}
+      {/* Stacked on small screens (sections in a scrollable row), a second pane
+          on sm+ — the rows in the sidebar's own shape (§13.3). */}
       <div className="mt-6 sm:flex sm:gap-8">
         <nav
           aria-label={t("settings.title")}
-          className="flex gap-1 overflow-x-auto sm:w-44 sm:shrink-0 sm:flex-col sm:self-start"
+          className="flex gap-0.5 overflow-x-auto sm:w-44 sm:shrink-0 sm:flex-col sm:self-start"
         >
           {SECTIONS.map((section) => (
             <NavLink
               key={section.to}
               to={section.to}
-              className={({ isActive }) =>
-                `whitespace-nowrap rounded-sm px-3 py-2 text-sm font-medium ${
-                  isActive
-                    ? "bg-accent-soft text-accent"
-                    : "text-muted hover:bg-chip hover:text-text"
-                }`
-              }
+              className={(state) => `whitespace-nowrap ${navRowClass(state)}`}
             >
               {t(section.label)}
             </NavLink>

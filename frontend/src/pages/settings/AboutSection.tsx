@@ -19,7 +19,7 @@ export function AboutSection() {
         <ErrorBanner message={error instanceof ApiError ? error.message : t("common.requestFailed")} />
       ) : meta ? (
         /* The wordmark is a brand identifier, not copy — it stays untranslated. */
-        <Card title="plamotrack" description={t("layout.tagline")}>
+        <Card title="plamotrack" description={t("layout.description")}>
           <dl>
             <div className="flex items-baseline justify-between gap-4">
               <dt className="text-sm text-muted">{t("settings.about.version")}</dt>

@@ -11,8 +11,9 @@
  *   # recipe in .agents/testing-and-review.md, then:
  *   ( cd frontend && DATABASE_URL="$DSN" SCREENSHOTS=1 npx playwright test e2e/screenshots.spec.ts )
  *
- * Writes five 2× PNGs into docs/screenshots/, same names and logical sizes as
- * the originals. Everything seeded here is invented demo data — the README
+ * Writes seven 2× PNGs into docs/screenshots/ — five pages in the dark theme,
+ * Home again in the light theme (the token flip, §13.1), and the sign-in
+ * screen from a context with no session. Everything seeded here is invented demo data — the README
  * says so under the retailers screenshot, so keep it that way: no real shops,
  * no real ratings. The one cross-reference the README prose makes must hold:
  * Mr. Color Thinner at 0 on hand, sitting on a *pending* Mecha Supply Co
@@ -23,7 +24,7 @@ import { fileURLToPath } from "node:url";
 
 import { expect, test } from "@playwright/test";
 
-import { apiContext } from "./api";
+import { STORAGE_STATE, apiContext } from "./api";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT = path.join(HERE, "..", "..", "docs", "screenshots");
 
@@ -338,6 +339,42 @@ test("seed the demo collection and capture the README screenshots", async ({ pag
     await expect(page.getByText("Mecha Supply Co")).toBeVisible();
     await expect(page.getByText("Orbit Hobby Depot")).toBeVisible();
   });
+
+  // The light theme (§13.1): the same page, the same tokens under
+  // [data-theme="light"], from a context whose device is light and that holds
+  // no stored preference — what a light-mode browser sees on first visit.
+  const light = await page.context().browser()!.newContext({
+    storageState: STORAGE_STATE,
+    colorScheme: "light",
+    deviceScaleFactor: 2,
+    viewport: { width: 1440, height: 1000 },
+  });
+  const lightPage = await light.newPage();
+  await lightPage.goto("/");
+  await expect(lightPage.getByRole("heading", { level: 1, name: "Home" })).toBeVisible();
+  await expect(
+    lightPage.getByRole("heading", { level: 3, name: "HG Sinanju Stein (Narrative Ver.)" }),
+  ).toBeVisible();
+  await expect(lightPage.locator("html")).toHaveAttribute("data-theme", "light");
+  await lightPage.waitForTimeout(400);
+  await lightPage.screenshot({ path: path.join(OUT, "home-light.png") });
+  await light.close();
+
+  // The sign-in screen (local mode): a context with no session cookie. Inside
+  // a test, `browser.newContext()` starts from the project's `use` options —
+  // the owner's storageState included — so the empty state is said explicitly.
+  const anonymous = await page.context().browser()!.newContext({
+    storageState: { cookies: [], origins: [] },
+    colorScheme: "dark",
+    deviceScaleFactor: 2,
+    viewport: { width: 1440, height: 720 },
+  });
+  const anonymousPage = await anonymous.newPage();
+  await anonymousPage.goto("/");
+  await expect(anonymousPage.getByRole("button", { name: "Sign in" })).toBeVisible();
+  await anonymousPage.waitForTimeout(400);
+  await anonymousPage.screenshot({ path: path.join(OUT, "sign-in.png") });
+  await anonymous.close();
 
   await shot("/settings/data", "data.png", { width: 1440, height: 900 }, async () => {
     await expect(page.getByText(/export/i).first()).toBeVisible();

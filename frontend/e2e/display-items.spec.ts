@@ -88,7 +88,7 @@ test("an order line creates a display item and stocks it on receive", async ({ p
 
   // The picker's create-new branch: display is the only type showing all three.
   await page.getByPlaceholder("Search display items…").fill(SCENERY);
-  await page.getByRole("button", { name: `＋ Create new display item “${SCENERY}”` }).click();
+  await page.getByRole("button", { name: `Create new display item “${SCENERY}”` }).click();
   await page.getByPlaceholder(/^Category \(required\)/).fill("scenery");
   await page.getByPlaceholder("Manufacturer", { exact: true }).fill("Tomytec");
   await page.getByPlaceholder("Scale, e.g. 1/144").fill("1/144");
