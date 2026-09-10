@@ -1,7 +1,7 @@
 import logging
 import uuid
 from collections.abc import Iterable
-from datetime import UTC, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Literal
 from zoneinfo import ZoneInfo
 
@@ -1360,6 +1360,24 @@ def last_status_change(order: Order, zone: ZoneInfo) -> datetime:
     return datetime.combine(order.order_date, time.min, tzinfo=zone)
 
 
+#: The instant every clock is measured from, so two clocks compare as instants.
+_EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+def _recent_key(order: Order, zone: ZoneInfo) -> tuple[timedelta, date]:
+    """The `recent` sort key: the clock as an exact instant, then the placement
+    date. The invariant (Codex #236 round 3): **equal instants have equal keys
+    whatever zone represents them**, so the secondary key and the slice see the
+    tie. A stored instant is UTC and a placement midnight is zone-local, and
+    Python compares an aware datetime whose offset depends on `fold` — a
+    midnight a transition repeats or skips — as *unequal* to any other zone's
+    datetime even at the same instant (PEP 495), so a tuple of datetimes never
+    reached `order_date` for exactly those ties. `clock - epoch` is an exact
+    timedelta (no float, no microsecond loss at the date bounds) and never
+    overflows the way `.astimezone(UTC)` does for `0001-01-01` east of UTC."""
+    return (last_status_change(order, zone) - _EPOCH, order.order_date)
+
+
 async def list_orders(
     session: AsyncSession,
     *,
@@ -1382,9 +1400,7 @@ async def list_orders(
         # few hundred orders, and the page loads them all regardless (§13.4).
         zone = ZoneInfo((await settings_service.get_instance_settings(session)).time_zone)
         rows = list((await session.scalars(stmt.order_by(Order.id))).all())
-        rows.sort(
-            key=lambda order: (last_status_change(order, zone), order.order_date), reverse=True
-        )
+        rows.sort(key=lambda order: _recent_key(order, zone), reverse=True)
         return rows[:limit] if limit is not None else rows
     stmt = stmt.order_by(Order.order_date.desc(), Order.id)
     if limit is not None:

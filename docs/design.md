@@ -2698,7 +2698,9 @@ and `GET /orders` take `sort` and `limit`, on REST and the MCP list tools alike,
 clocks; a supplied ship or receipt instant is recorded as given), an order's last
 status change (received, else shipped, else placed — a placement date being its
 midnight in the instance's time zone, rule 11). That order clock is computed by the
-application, in its own zone database, and the list is sorted there: a cast in SQL
+application, in its own zone database, and the list is sorted there — the clocks
+compared as instants, so a UTC shipment and a zone-local midnight at the same
+instant tie and the placement date decides: a cast in SQL
 read the database session's zone (Codex #236 round 1), and handing the zone's name to
 Postgres read *its* zone files, which lack 97 of the names the settings accept and
 take CET, EET, MET and WET as fixed offsets (round 2). Two choices on a transition day

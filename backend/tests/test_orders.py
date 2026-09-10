@@ -830,6 +830,59 @@ async def test_list_orders_sort_recent_computes_under_every_zone_the_settings_ac
             assert [row.order_number for row in rows] == expected, zone
 
 
+async def test_list_orders_sort_recent_ties_equal_instants_across_zone_representations(
+    client, retailer
+):
+    """Equal instants must have equal keys whatever zone represents them (Codex
+    #236 round 3, P3-9): a stored shipment is UTC, a placement midnight is
+    zone-local, and Python calls an aware datetime whose offset depends on
+    `fold` — a midnight a transition repeats or skips — *unequal* to any other
+    zone's datetime at the same instant (PEP 495), so a key of raw datetimes
+    never reached the placement date on exactly those ties and the rows fell
+    back to id order. Havana: the repeated midnight of 2025-11-02 is 04:00Z, the
+    skipped one of 2025-03-09 reads as 05:00Z; a shipment at each instant ties
+    its placement, and the tie breaks on the newer placement date."""
+    ids: dict[str, str] = {}
+    for number in ("W", "X", "Y", "Z"):
+        resp = await client.post(
+            "/orders",
+            json={
+                "retailer_id": retailer["id"],
+                "order_date": "2025-01-01",
+                "order_number": number,
+                "currency_code": "JPY",
+                "items": [kit_line()],
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        ids[number] = resp.json()["id"]
+    number_of = {order_id: number for number, order_id in ids.items()}
+    # The tie-break after the clock and the date is the id, ascending. Give the
+    # *lower* id of each pair the older placement — the row a raw-datetime key
+    # wrongly put first — so the defect is red whichever ids the database dealt.
+    (nov_shipped, nov_placed) = sorted([ids["W"], ids["X"]])
+    (mar_shipped, mar_placed) = sorted([ids["Y"], ids["Z"]])
+    for order_id, placed, shipped in (
+        (nov_shipped, "2025-11-01", "2025-11-02T04:00:00+00:00"),
+        (nov_placed, "2025-11-02", None),
+        (mar_shipped, "2025-03-08", "2025-03-09T05:00:00+00:00"),
+        (mar_placed, "2025-03-09", None),
+    ):
+        resp = await client.patch(f"/orders/{order_id}", json={"order_date": placed})
+        assert resp.status_code == 200, resp.text
+        if shipped is not None:
+            # A shipment is recorded through the ship endpoint; an edit only
+            # corrects a date already set.
+            resp = await client.post(f"/orders/{order_id}/ship", json={"shipped_at": shipped})
+            assert resp.status_code == 200, resp.text
+    resp = await client.patch("/settings", json={"time_zone": "America/Havana"})
+    assert resp.status_code == 200, resp.text
+    expected = [number_of[i] for i in (nov_placed, nov_shipped, mar_placed, mar_shipped)]
+    recent = {"sort": "recent"}
+    assert _numbers(await client.get("/orders", params=recent)) == expected
+    assert _numbers(await client.get("/orders", params={**recent, "limit": 1})) == expected[:1]
+
+
 async def test_list_orders_sort_recent_names_its_transition_policy(client, retailer):
     """Havana ends DST on 2025-11-02 at 01:00 → 00:00, so that midnight happens
     twice: a repeated midnight is its *first* occurrence, 04:00Z (fold=0), and a
