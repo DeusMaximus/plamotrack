@@ -7,10 +7,11 @@ the state store's pool live there — is driven as the three parties the protoco
 has: the **MCP client** (registration, the authorization request, the token
 exchange, the transport with the issued bearer), the **owner's browser** (the
 consent page, the provider's return), and the **provider** itself — the fake in
-`tests/oidc_fake.py`, wired into both the app's `OidcProvider` and the proxy's
-upstream client through `PlamotrackOAuthProxy.upstream_transport`, so the code
-exchange, the refresh and the id_token are all real bytes through real handlers
-and only the network is played. The shipped local-mode `app` is driven where the
+`tests/oidc_fake.py`, wired into the app's `OidcProvider` and, as an httpx2
+twin, under FastMCP's own upstream client (`PlamotrackOAuthProxy.upstream_transport`,
+#243), so the code exchange, the refresh and the id_token are all real bytes
+through real handlers — FastMCP's included — and only the network is played.
+The shipped local-mode `app` is driven where the
 point is that the same paths exist there and answer 404 themselves.
 
 Axes (AGENTS.md, "sweep the values"): the **client kind** — a dynamically
@@ -38,10 +39,12 @@ from datetime import UTC, datetime
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
+import httpx2
 import pytest
 from fastmcp.exceptions import ToolError
 from fastmcp.server.auth import AccessToken
 from fastmcp.server.auth.cimd import CIMDDocument, CIMDFetcher
+from fastmcp.server.auth.oauth_proxy.upstream import AsyncOAuth2Client
 from httpx import ASGITransport, AsyncClient
 from joserfc import jwk, jwt
 from sqlalchemy import select, text
@@ -139,7 +142,7 @@ async def oauth_app(fake: FakeIdp, **overrides):
     assert provider is not None
     setattr(live.state, OIDC_PROVIDER_ATTR, provider)
     oauth = getattr(live.state, MCP_OAUTH_ATTR)
-    oauth.proxy.upstream_transport = httpx.MockTransport(fake.handler)
+    oauth.proxy.upstream_transport = httpx2.MockTransport(fake.upstream_handler)
     async with live.router.lifespan_context(live):
         async with AsyncClient(
             transport=ASGITransport(app=live, client=LOOPBACK, raise_app_exceptions=False),
@@ -2751,3 +2754,42 @@ async def test_the_upstream_revocation_after_a_rebind_is_best_effort(failure, mo
     assert accepted == 0
     assert ("POST /revoke" in fake.calls) == (failure in ("endpoint_unreachable", "refused"))
     assert "mcp-upstream-tokens" not in {c for c, _ in await _state_rows()}
+
+
+# --- the upstream seam (#243) -----------------------------------------------------------
+
+
+async def test_the_upstream_client_is_fastmcps_own_under_the_twin():
+    """The seam sits under the object under test, never in its place (#241's
+    lesson, `.agents/lessons.md` → "The fake stood in for the very object under
+    test"): with a transport set and with none, the factory returns FastMCP's
+    own upstream client — the class the code exchange and the transparent
+    refresh run on in production — and the twin is what that client reaches.
+    The fake then sees FastMCP's wire form on the code exchange: HTTP Basic
+    with the client secret (`client_secret_basic`, RFC 6749 §2.3.1), and no
+    secret in the form."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (live, client):
+        proxy = getattr(live.state, MCP_OAUTH_ATTR).proxy
+        assert proxy.upstream_transport is not None
+        under_test = proxy._create_upstream_oauth_client()
+        try:
+            assert type(under_test) is AsyncOAuth2Client, type(under_test)
+        finally:
+            await under_test.aclose()
+        held, proxy.upstream_transport = proxy.upstream_transport, None
+        try:
+            shipped = proxy._create_upstream_oauth_client()
+            try:
+                assert type(shipped) is AsyncOAuth2Client, type(shipped)
+            finally:
+                await shipped.aclose()
+        finally:
+            proxy.upstream_transport = held
+        outcome = await link(client, fake)
+        assert outcome["status"] == 200, outcome["body"]
+        [exchange] = fake.token_requests
+        assert exchange["grant_type"] == "authorization_code"
+        assert exchange["_authorization"] == _BASIC
+        assert "client_secret" not in exchange

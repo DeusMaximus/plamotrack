@@ -4,8 +4,9 @@ An RSA key, a discovery document, a JWKS, a token endpoint and a revocation
 endpoint served through an httpx `MockTransport`, so every id_token axis —
 issuer, audience, nonce, expiry, signature, subject — is a knob a test turns.
 `oidc_app` builds an auth-enabled OIDC-mode app whose `OidcProvider` talks to
-it; the MCP OAuth suite additionally points the proxy's upstream client at the
-same handler (`PlamotrackOAuthProxy.upstream_transport`).
+it; the MCP OAuth suite additionally puts the same provider under FastMCP's own
+upstream client through `upstream_handler`, its httpx2 twin
+(`PlamotrackOAuthProxy.upstream_transport`, #243).
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from contextlib import asynccontextmanager
 from urllib.parse import parse_qs
 
 import httpx
+import httpx2
 from httpx import ASGITransport, AsyncClient
 from joserfc import jwt
 from joserfc.jwk import KeySet, RSAKey
@@ -165,6 +167,31 @@ class FakeIdp:
             self.revoked.append(form)
             return httpx.Response(self.revoke_status)
         return httpx.Response(404)
+
+    def upstream_handler(self, request: httpx2.Request) -> httpx2.Response:
+        """`handler` at the seam FastMCP's upstream client speaks — httpx2, the
+        package FastMCP 4 ships in place of httpx (#243): the same provider,
+        one request translated on the way in and one response on the way out,
+        so the code exchange and the transparent refresh run on FastMCP's own
+        client over this fake rather than on a client built for the test. A
+        connection failure crosses as httpx2's; anything else is a defect and
+        crosses as-is."""
+        translated = httpx.Request(
+            request.method,
+            str(request.url),
+            headers=dict(request.headers),
+            content=request.content,
+        )
+        try:
+            response = self.handler(translated)
+        except httpx.ConnectError as exc:
+            raise httpx2.ConnectError(str(exc), request=request) from exc
+        return httpx2.Response(
+            response.status_code,
+            headers=dict(response.headers),
+            content=response.content,
+            request=request,
+        )
 
 
 def oidc_settings(*, issuer: str = ISSUER, **overrides) -> Settings:

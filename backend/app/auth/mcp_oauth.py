@@ -292,19 +292,20 @@ from functools import partial
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit
 
-import httpx
-from authlib.integrations.httpx_client import AsyncOAuth2Client
+import httpx2
 from fastmcp.server.auth import AccessToken, TokenVerifier
 from fastmcp.server.auth.auth import JWT_BEARER_ASSERTION_TYPE, TokenHandler
 from fastmcp.server.auth.cimd import CIMDAssertionValidator
 from fastmcp.server.auth.handlers.authorize import AuthorizationHandler
 from fastmcp.server.auth.oauth_proxy import OAuthProxy
 from fastmcp.server.auth.oauth_proxy.models import (
+    HTTP_TIMEOUT_SECONDS,
     ProxyDCRClient,
     UpstreamTokenSet,
     _hash_token,
     _matches_registered_redirect_uri,
 )
+from fastmcp.server.auth.oauth_proxy.upstream import AsyncOAuth2Client
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.utilities.auth import decode_jwt_header
@@ -1772,11 +1773,13 @@ class PlamotrackOAuthProxy(OAuthProxy):
         self._state_store = state_store
         self._last_cull = -math.inf
         self.assertion_validator = RestrictedKeyAssertionValidator()
-        #: Test seam: an httpx transport the upstream code exchange and refresh
-        #: go through instead of the network, so the suite can play the provider.
-        #: None on the shipped app — nothing sets it. Revocation is not on it:
-        #: that goes through the browser login's provider client (#241).
-        self.upstream_transport: httpx.AsyncBaseTransport | None = None
+        #: Test seam: an httpx2 transport — the network boundary *under*
+        #: FastMCP's own upstream client — that the code exchange and the
+        #: transparent refresh go through instead of the network, so the suite
+        #: can play the provider (`_create_upstream_oauth_client`). None on the
+        #: shipped app — nothing sets it. Revocation is not on it: that goes
+        #: through the browser login's provider client (#241).
+        self.upstream_transport: httpx2.AsyncBaseTransport | None = None
         super().__init__(
             # The SDK keeps these as attributes; on this class they are the
             # properties below, and the constructor's values are not kept.
@@ -1884,18 +1887,24 @@ class PlamotrackOAuthProxy(OAuthProxy):
             pass
 
     def _create_upstream_oauth_client(self) -> AsyncOAuth2Client:
-        if self.upstream_transport is None:
-            return super()._create_upstream_oauth_client()
-        return AsyncOAuth2Client(
-            client_id=self._upstream_client_id,
-            client_secret=(
-                self._upstream_client_secret.get_secret_value()
-                if self._upstream_client_secret is not None
-                else None
-            ),
-            token_endpoint_auth_method=self._token_endpoint_auth_method,
-            transport=self.upstream_transport,
-        )
+        """FastMCP's own upstream client, always — the factory the code exchange
+        and the transparent refresh run on in production. Under test its HTTP
+        client is re-homed onto `upstream_transport`: a transport *under* the
+        object under test, never a client in its place. The seam that stood
+        here built authlib's client whenever a transport was set, and a suite
+        green on that client hid that FastMCP 4's has no revoke method (#241;
+        `.agents/lessons.md` → "The fake stood in for the very object under
+        test"). `_client` is FastMCP 4.0's attribute (`oauth_proxy/upstream.py`),
+        and the guard makes a rename a loud failure rather than a silent bypass;
+        the client it replaces has opened nothing."""
+        client = super()._create_upstream_oauth_client()
+        if self.upstream_transport is not None:
+            if not isinstance(getattr(client, "_client", None), httpx2.AsyncClient):
+                raise TypeError("FastMCP's upstream client no longer holds an httpx2 client")
+            client._client = httpx2.AsyncClient(
+                timeout=HTTP_TIMEOUT_SECONDS, transport=self.upstream_transport
+            )
+        return client
 
     # -- the client contract: registration -------------------------------------------
 
