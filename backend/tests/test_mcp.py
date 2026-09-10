@@ -7,6 +7,7 @@ from app.services import orders
 
 EXPECTED_TOOLS = {
     "get_meta",
+    "get_summary",
     "list_kits",
     "list_kit_series",
     "get_kit",

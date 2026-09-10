@@ -57,7 +57,8 @@ async def list_kit_applications(kit_id: uuid.UUID, session: SessionDep):
 
 @router.patch("/{kit_id}", response_model=KitRead)
 async def update_kit(kit_id: uuid.UUID, data: KitUpdate, session: SessionDep):
-    """Partial update — this is also what a Kanban drag calls (status change)."""
+    """Partial update — the kit dialog's status field is a PATCH like any other
+    (#120: a status change travels with the dates a real transition carries)."""
     return await kits_service.update_kit(session, kit_id, data)
 
 

@@ -829,8 +829,8 @@ on its own.
 
 This is cosmetic, and it is deliberately not repaired by a later migration: a
 repair running today would overwrite kit statuses set by hand since, which is
-worse than the blemish. If you see such a kit, drag it to the right column (or
-edit its status) — that is the whole fix. Fresh installations are unaffected; the
+worse than the blemish. If you see such a kit, edit its status — that is the whole
+fix. Fresh installations are unaffected; the
 window was a single day of pre-public history.
 
 ## Configuration

@@ -1,7 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 
 import { Layout } from "./components/Layout";
-import { BoardPage } from "./pages/BoardPage";
+import { HomePage } from "./pages/HomePage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { KitsPage } from "./pages/KitsPage";
 import { OrdersPage } from "./pages/OrdersPage";
@@ -17,8 +17,10 @@ export default function App() {
   return (
     <Routes>
       <Route element={<Layout />}>
-        <Route index element={<Navigate to="/board" replace />} />
-        <Route path="/board" element={<BoardPage />} />
+        <Route index element={<HomePage />} />
+        {/* The former kanban board (§13.2, #233): old links and bookmarks land
+            on Home, the way /data lands on Settings below. */}
+        <Route path="/board" element={<Navigate to="/" replace />} />
         <Route path="/kits" element={<KitsPage />} />
         <Route path="/orders" element={<OrdersPage />} />
         <Route path="/inventory" element={<InventoryPage />} />

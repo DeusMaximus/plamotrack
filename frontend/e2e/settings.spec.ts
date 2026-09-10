@@ -49,7 +49,7 @@ test.afterAll("restore the instance settings", async () => {
 });
 
 test("Settings replaces Data in the sidebar and the sections navigate", async ({ page }) => {
-  await page.goto("/board");
+  await page.goto("/");
   await expect(page.getByRole("link", { name: "Settings" })).toBeVisible();
   await expect(page.getByRole("link", { name: "Data", exact: true })).toHaveCount(0);
 
@@ -250,7 +250,101 @@ test("a cold page load re-renders once the settings row arrives (#174 review, P3
 });
 
 
-test("a cold Board load re-renders its counts once the settings row arrives (#177 review, P3-1)", async ({
+test("Home's mail cards keep the retailer readable under full dates at every width (Codex #237 P3-2)", async ({
+  page,
+}) => {
+  // The date style is the one instance-wide setting that lengthens every date
+  // on a card ("Wednesday, 8 September 2026 · Australia Post"); this project
+  // owns the settings flips, so the width matrix with full dates lives here.
+  const api = await apiContext();
+  const suffix = Date.now().toString(36);
+  const shop = `Review 237 Hobby ${suffix}`;
+  const retailer = (await (await api.post("/retailers", { data: { name: shop } })).json()) as {
+    id: string;
+  };
+  // Two completed kits, rated, with a full-date completion (round 2, P3-4):
+  // their names must keep usable space on the completed strip when it goes
+  // two-up beside a full date.
+  const done: string[] = [];
+  for (const kitName of [`e2e-237-done-A-${suffix}`, `e2e-237-done-B-${suffix}`]) {
+    const kit = (await (
+      await api.post("/kits", {
+        data: {
+          name: kitName,
+          grade: "MG",
+          status: "complete",
+          build_started_at: "2025-09-16T00:00:00Z",
+          build_completed_at: "2025-09-17T00:00:00Z",
+        },
+      })
+    ).json()) as { id: string };
+    await api.patch(`/kits/${kit.id}`, { data: { rating: 4 } });
+    done.push(kit.id);
+  }
+  const order = (await (
+    await api.post("/orders", {
+      data: {
+        retailer_id: retailer.id,
+        order_date: "2026-09-01",
+        currency_code: "JPY",
+        shipped_at: "2026-09-08T10:00:00+00:00",
+        delivery_service: "Australia Post",
+        tracking_number: `AP${suffix}`,
+        items: [
+          {
+            item_type: "kit",
+            quantity: 1,
+            unit_price_minor: 2800,
+            currency_code: "JPY",
+            kit: { name: `e2e-237-full-${suffix}`, grade: "HG" },
+          },
+        ],
+      },
+    })
+  ).json()) as { id: string };
+  try {
+    await api.patch("/settings", { data: { date_style: "full" } });
+    // 1072 is where the strips go two-up (48 rem of content beside the sidebar).
+    for (const width of [768, 1024, 1072, 1440]) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.goto("/");
+      const card = page
+        .getByRole("region", { name: "In the mail" })
+        .getByRole("article")
+        .filter({ hasText: shop });
+      await expect(card.getByText(/^Shipped .*Australia Post$/)).toBeVisible();
+      const overflow = await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      );
+      expect(overflow, `${width}px: horizontal overflow`).toBe(0);
+      const box = (await card.getByText(shop, { exact: true }).boundingBox())!;
+      expect(box.width, `${width}px: retailer width`).toBeGreaterThan(40);
+      const spill = await card.evaluate((el) => {
+        const outer = el.getBoundingClientRect();
+        return [...el.querySelectorAll("*")].filter((child) => {
+          const r = child.getBoundingClientRect();
+          return r.width > 0 && r.right > outer.right + 1;
+        }).length;
+      });
+      expect(spill, `${width}px: content past the card`).toBe(0);
+      // The completed strip: each name keeps room to be read beside the stars
+      // and the full date (round 2, P3-4 measured 9.7 px at 1072).
+      const completed = page.getByRole("region", { name: "Recently completed" });
+      for (const kitName of [`e2e-237-done-A-${suffix}`, `e2e-237-done-B-${suffix}`]) {
+        const nameBox = (await completed.getByText(kitName, { exact: true }).boundingBox())!;
+        expect(nameBox.width, `${width}px: completed name width`).toBeGreaterThan(120);
+      }
+    }
+  } finally {
+    await api.patch("/settings", { data: { date_style: original.date_style } });
+    for (const id of done) await api.delete(`/kits/${id}`);
+    await api.delete(`/orders/${order.id}`);
+    await api.delete(`/retailers/${retailer.id}`);
+    await api.dispose();
+  }
+});
+
+test("a cold Home load re-renders its counts once the settings row arrives (#177 review, P3-1)", async ({
   page,
 }) => {
   // The locale axis, not the zone axis: `interface_language` stays en-AU, so
@@ -262,7 +356,7 @@ test("a cold Board load re-renders its counts once the settings row arrives (#17
   await api.patch("/settings", { data: { formatting_locale: "ar-EG" } });
   const kit = (await (
     await api.post("/kits", {
-      data: { name: `e2e-177-boardcount-${Date.now()}`, grade: "HG", status: "backlog" },
+      data: { name: `e2e-177-homecount-${Date.now()}`, grade: "HG", status: "backlog" },
     })
   ).json()) as { id: string };
 
@@ -271,11 +365,11 @@ test("a cold Board load re-renders its counts once the settings row arrives (#17
     const gate = new Promise<void>((resolve) => (release = resolve));
     await page.route("**/api/settings", async (route) => {
       if (route.request().method() !== "GET") return route.fallback();
-      await gate; // the kits list resolves first — the window under test
+      await gate; // the summary resolves first — the window under test
       await route.continue();
     });
-    await page.goto("/board");
-    const count = page.getByTestId("column-count-backlog");
+    await page.goto("/");
+    const count = page.getByTestId("home-count-backlog");
     // Boot defaults while the row is held: Western digits, and at least the
     // kit just created, so this is not asserting an empty column.
     await expect(count).toHaveText(/^[0-9]+$/);
