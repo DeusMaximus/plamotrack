@@ -41,6 +41,43 @@ Template:
 
 ---
 
+## 2026-09-10 — Claude Code (Fable 5.1) — #234 (M6.5 PR 4/4) built on `feat/234-settings-about-e2e-readme`: Settings chrome, the plain description on sign-in and About, the last glyph, seven captures, README and design §13 marked built; **committed locally `c7965bf`, awaiting the owner's word to push / open the PR against `m6.5-workbench`**
+
+- **Done:** the Settings section navigation in the sidebar's row shape (`navRowClass` exported from
+  `Layout.tsx`), `SectionHeader` at the bench card's scale, the Access tokens table in the list
+  pages' shape (`TABLE_HEAD_ROW_CLASS`, bordered); `layout.description` ("A self-hosted Gunpla and
+  plamo collection and build tracker.") replaces `layout.tagline` on the sign-in screen and About;
+  the catalog picker's "＋" is a Lucide `Plus` (`display-items.spec.ts`'s locator follows);
+  `screenshots.spec.ts` writes `home-light.png` (a light-device context, `data-theme="light"`
+  asserted) and `sign-in.png` (an anonymous context — `storageState: { cookies: [], origins: [] }`
+  said explicitly, because `browser.newContext()` inside a test starts from the project's `use`
+  options and produced a signed-in Home the first time); all seven captures regenerated from the
+  seed on a fresh DB. README: "One look, two themes" with the light capture, the sign-in capture
+  under Installing, the roadmap row ✅. design §13 header ✅ (10/09/2026, #231–#234), §11 item 11 ✅,
+  "Built as" paragraphs in §13.1 (light tokens darkened for 4.5:1, `--faint` on the chip, the
+  palette guard's arbitrary-value refusal) and §13.3 (the description line, the Settings chrome),
+  §13.6's four items ✅ with PRs and merge commits; AGENTS.md roadmap 6.5 struck through.
+- **Decisions:** (1) the app's line is plain, the README keeps the joke; (2) the Settings nav reuses
+  the sidebar's row class; (3) the tokens table takes the list pages' shape inside its card; (4) two
+  new captures only (light Home, sign-in); (5) §13 and the README row read built on the integration
+  branch now — `main` serves the 0.3.0 README until the release PR.
+- **State:** `feat/234-settings-about-e2e-readme` = `m6.5-workbench` (`03673e5`, i.e. `8bac10a` +
+  the hand-off merges) + `c7965bf`, clean, **local only**. Green: unit 568, e2e 65 + 1 skipped serially
+  from an empty DB (tables 0 after, DB dropped), lint, build; screenshots spec 2 passed on a fresh
+  DB. Backend untouched since `d6c8def`. No harness change (no backend). Dev servers: Vite up, `api`
+  preview stopped. PR body drafted in the session scratchpad (`pr-body-234.md`).
+- **Next:** owner says push → PR against `m6.5-workbench`; a review round if the owner wants one
+  (docs/chrome PR — the release gate is the real check); merge. Then **the release**: merge `main`
+  into `m6.5-workbench` once more, a packaged-stack run (`docker compose up -d --build --wait`) on
+  the integration tree, the release PR onto `main` with a **merge commit** (never a squash), gate
+  that commit (`deployment_gate.py --phase all` on testhost per `.agents/testing-and-review.md`),
+  bump the three version files to 0.4.0 via the release PR, tag `v0.4.0-alpha`, `gh release create
+  --prerelease`, notes (the theme switch, Home, the list-page URLs, `stage` on order rows, the
+  Orders `?status=` vocabulary, `/board` → `/`, `board.*` → `home.*`, `GET /summary` + `get_summary`,
+  no migration), close #231–#234 and #122 with the merge, close the milestone; **hold the release
+  hand-off commit until after the merge** (the 0.3.0 lesson). Open follow-ups: #238 (order dialog
+  waiting state), #223–#227, #230.
+
 ## 2026-09-10 — Claude Code (Fable 5.1) — #233 (M6.5 PR 3/4) built on `feat/233-home`: Home replaces the board, the order stage on the wire, `GET /summary` + `get_summary` from one function; **PR #237 MERGED into `m6.5-workbench` as `8bac10a`** (squash, 2026-09-10) after Codex round 1 NO-GO (P2 + 2×P3, fixed `7b4bbf1`) and round 2 GO + 3×P3 (fixed `80468d7`, merged on the owner's word without a replay round); #238 filed; next #234
 
 - **Done:** `services/order_stage.py` — one predicate for where an order sits (`received`, else
@@ -267,47 +304,3 @@ Template:
   filter/sort, row edit control, sort/limit on REST **and** MCP), #233 (Home, drop dnd-kit),
   #234 (Settings, About, e2e, README) per design §13.6 — each branched from and targeting
   `m6.5-workbench`. Before the release merge: the packaged-stack run above.
-
-## 2026-09-09 — Claude Code (Fable 5.1) — M6.5 direction decided: **Workbench** (design §13); mockups on a private design canvas; dev DB seeded with fixtures; docs committed, the four-PR split filed as #231–#234; no code yet
-
-- **Done:** a design walkthrough with the owner on the running dev stack, then three
-  directions drawn on the same screens (Home dashboard, Kits, Orders; dark, plus a light
-  variant) on a Claude Design canvas — a private artifact on the owner's account, not in
-  the repo. **Owner chose Workbench** (warm near-black, one amber accent, hairline borders,
-  flat surfaces, Inter, Lucide, no emoji); Console liked and kept as a possible second
-  selectable theme later; Editorial set aside. Every product decision from the walkthrough
-  is written into **`docs/design.md` §13** (13.1 tokens + per-browser light/dark/system,
-  13.2 Home replaces the board, 13.3 sidebar, 13.4 URL filter/sort on the list pages, 13.5
-  phone/tablet deferred, 13.6 the four-PR split); §11 item 11, `AGENTS.md` roadmap 6.5 and
-  the README row point at it.
-- **Decisions:** (1) theme is the one per-browser preference (localStorage, applied before
-  first paint) — everything else stays instance-wide (rule 11); (2) Home replaces the
-  kanban: Building as a hero strip, Backlog / Recently completed capped at six with true
-  counts and view-all links into the list pages filtered by status and sorted by
-  `status_updated_at`, an In-the-mail strip of ORDER cards (a mixed order sits under
-  Ordered with a pre-order tag); no drag-and-drop on Home; edit is a visible corner
-  control, not right-click; (3) Settings alone above a footer with the theme switch and
-  Sign out (+ an identity line in OIDC mode only), the sidebar fixed while the page
-  scrolls; (4) the tagline leaves the sidebar for sign-in and About; (5) phone/tablet is a
-  later, separate UI; (6) confirmed by the owner in the same session: no drag-and-drop on Home, and one
-  edit control per list row with Delete inside the dialog.
-- **State:** tree on `main` at `20b05ac` plus the doc edits above and this entry, **committed and pushed on `main`** on the
-  owner's word (docs only, per the convention), together with Codex's spike hand-off
-  commit `20b05ac`, which had been local only. **The dev DB holds INVENTED fixture data** — 15 kits across all six
-  statuses, 6 orders, 4 retailers, catalog stock, two upgrade applications — seeded
-  2026-09-08 through the service layer for the walkthrough; disposable, not the owner's
-  collection; the owner reset the dev password themselves. Copies of the mock artboards
-  sit in `frontend/node_modules/.cache/plamotrack-drafts/` (ignored; delete freely). The
-  dev overlay and both dev servers were running from this session. `spike/m61-fastmcp4`
-  is untouched, one docs commit behind `main`.
-- **Next:** M6.5 PR 1 per §13.6, on a branch off `main`: semantic tokens in
-  `frontend/src/index.css` through Tailwind v4 `@theme`, `[data-theme]` with an inline
-  pre-paint script, `@fontsource-variable/inter`, `lucide-react`, the new sidebar; then
-  sweep every `zinc-*` / `indigo-*` utility (`ui.tsx`, `Modal`, `StatusBadge`, `Layout`,
-  `AuthGate`, the pages and settings sections) onto the tokens. Then PR 2 (URL filter/sort
-  + sort/limit on the kit and order list endpoints, REST **and** MCP, registry), PR 3
-  (Home, drop dnd-kit), PR 4 (Settings, About, e2e, README screenshots). Filed as
-  **#231 → #234** (milestone M6.5), one per PR, in that order — **start with #231 in a fresh session** (owner's call,
-  2026-09-09). Brief for it: this entry, design §13.1 / §13.3 / §13.6, and #231 itself;
-  the reference artboards are on the owner's private design canvas — ask the owner for
-  exported PNGs if exact spacing or colour is in doubt. M6.1's two-PR plan from the spike hand-off is unaffected.
