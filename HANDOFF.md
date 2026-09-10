@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-10 — Claude Code (Fable 5.1) — #233 (M6.5 PR 3/4) built on `feat/233-home`: Home replaces the board, the order stage on the wire, `GET /summary` + `get_summary` from one function; **PR #237 open against `m6.5-workbench`; Codex round 1 NO-GO (P2 + 2×P3) fixed at `7b4bbf1`; round 2 GO + 3×P3 fixed at `80468d7`** — ready to merge on the owner's word
+## 2026-09-10 — Claude Code (Fable 5.1) — #233 (M6.5 PR 3/4) built on `feat/233-home`: Home replaces the board, the order stage on the wire, `GET /summary` + `get_summary` from one function; **PR #237 MERGED into `m6.5-workbench` as `8bac10a`** (squash, 2026-09-10) after Codex round 1 NO-GO (P2 + 2×P3, fixed `7b4bbf1`) and round 2 GO + 3×P3 (fixed `80468d7`, merged on the owner's word without a replay round); #238 filed; next #234
 
 - **Done:** `services/order_stage.py` — one predicate for where an order sits (`received`, else
   `in_transit`, else `pre_ordered` when every spawned kit is still one and there is at least one,
@@ -88,7 +88,13 @@ Template:
   hand mutants E5/E6 killed. Codex also ran a 42-combination width × locale matrix, a real
   PAT-over-HTTP `get_summary`, and an ARIA snapshot; the order dialog's `Loading…` on a failed
   catalog list is an accepted follow-up (predates the extraction) — **file it on merge**.
-- **State:** `feat/233-home` = `a9e2911` + `d6c8def` + `7b4bbf1` + `80468d7`, clean, pushed; PR #237 open. Green at that tree:
+- **Merged:** PR #237 squash → **`8bac10a` on `m6.5-workbench`** (CI green on `80468d7`: Backend
+  13 m 41 s, Frontend, Integration); the feature branch deleted. **#233 and #122 stay open** —
+  a merge into the integration branch closes nothing on GitHub (only `main` does); they close
+  with the release PR, like #231/#232 (status notes posted). **#238 filed**: the order dialog
+  stays on Loading… when a catalog list request fails (Codex round 2's accepted follow-up).
+- **State:** `m6.5-workbench` = `8bac10a` + merges of `main` (the hand-offs), local ahead of
+  origin by those merges; `main` holds four unpushed hand-off commits. Green at that tree:
   backend 2693 (at `d6c8def`; no backend source since), unit 558, e2e 64 + 1 skipped serially
   from an empty DB (all tables 0 after), ruff, lint, build. Control 12/12 red on the base.
   Mutants: `home-` ×11 11/11 killed on `7b4bbf1` (no backend change since); 8 unit + 5 e2e (E1,
@@ -97,8 +103,8 @@ Template:
   printed in the chat. Dev DB untouched; the Browser pane has a live owner session on it (used
   for the look); Vite left running, the `api` preview stopped. `.claude/launch.json` is tracked
   (`api`, `frontend`) — I overwrote it once from the wrong cwd and restored it.
-- **Next:** the owner merges PR #237 (squash; CI green on `80468d7` to confirm) — or a round-3 replay
-  first (brief printed in the session chat); file the order-dialog waiting-state follow-up. Then
+- **Next:** #234 (Settings, About, the e2e suite, README captures in the new look) off
+  `m6.5-workbench`; then the release PR. Then
   #234 (Settings, About, the e2e suite, README captures in the new look) off `m6.5-workbench`;
   merge `main` into the integration branch after each hand-off; a packaged-stack run before the
   release merge; hold the release hand-off commit until after the merge.
