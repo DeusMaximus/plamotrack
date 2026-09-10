@@ -87,7 +87,10 @@ revocation) rather than to the entry points one at a time:
   revocation. Every dynamically registered client is a **public** client —
   `token_endpoint_auth_method=none`, PKCE — whatever it asked for, and the
   registration response says so with no secret and no secret expiry
-  (`register_client`). The choice is scope, not a claim that a secret would
+  (`register_client`); the one request that never reaches it is a registration
+  asking for `private_key_jwt`, which MCP SDK 2 refuses first — 400
+  `invalid_client_metadata` — accepted as the contract with FastMCP 4 (#243).
+  The choice is scope, not a claim that a secret would
   protect nothing — a confidential registration's secret would guard that
   registration's stolen refresh token — but the measured clients (#190) are
   a public DCR client and two CIMD clients, and confidential DCR would mean
@@ -1912,7 +1915,12 @@ class PlamotrackOAuthProxy(OAuthProxy):
         """Every dynamically registered client is a public client — `none`,
         PKCE — whatever method it asked for, and the registration response
         says so (RFC 7591 §3.2.1: the server may substitute requested
-        metadata; the response describes what was registered). The SDK's
+        metadata; the response describes what was registered). One request
+        never reaches here: MCP SDK 2's handler refuses `private_key_jwt`
+        outright — 400 `invalid_client_metadata`, RFC 7591 §3.2.2 — before
+        this method runs, and that refusal is the contract (#243): the method
+        is a CIMD client's, verified against its document, and a registration
+        brings no document. The SDK's
         handler mints a secret for any method but `none` (its default when
         the field is absent or null is `client_secret_post`), passes the
         object here and returns **that object**, while FastMCP stores a
@@ -2047,8 +2055,9 @@ class PlamotrackOAuthProxy(OAuthProxy):
     def discovery_metadata(self) -> OAuthMetadata:
         """The authorization-server document (RFC 8414 §2), owned here rather
         than inherited: the SDK's `build_metadata` for the endpoints under the
-        issuer, PKCE, the scopes and the grant types, FastMCP's CIMD flag, and
-        then the client contract as this server actually enforces it — the
+        issuer, PKCE, the scopes and the grant types, FastMCP's CIMD flag and
+        its RFC 9207 `iss` flag, and then the client contract as this server
+        actually enforces it — the
         two methods for the token endpoint and for the revocation endpoint,
         and the one assertion algorithm. The SDK's metadata advertised the
         shared-secret methods it supports in general and none of what this
@@ -2062,6 +2071,11 @@ class PlamotrackOAuthProxy(OAuthProxy):
             self.revocation_options or RevocationOptions(),
         )
         metadata.client_id_metadata_document_supported = self._cimd_manager is not None
+        # RFC 9207: every authorization response the proxy issues carries `iss`
+        # — FastMCP 4 stamps its own redirects and the one this server's
+        # `authorize` builds — and FastMCP's own document says so; the one
+        # owned here must say the same (#243).
+        metadata.authorization_response_iss_parameter_supported = True
         metadata.token_endpoint_auth_methods_supported = list(CLIENT_AUTH_METHODS)
         metadata.token_endpoint_auth_signing_alg_values_supported = list(
             CLIENT_ASSERTION_ALGORITHMS
