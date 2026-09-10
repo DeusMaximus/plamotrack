@@ -33,7 +33,7 @@ def default_scale_for_grade(grade: str) -> str | None:
 
 
 #: Which build date entering a status stamps (#94). One map, consulted by every
-#: *live* status writer — `update_kit` (the direct edit and the board drag) and
+#: *live* status writer — `update_kit` (the dialog's status field, an agent's move) and
 #: `receive_order`'s pipeline advance — so the derivation cannot drift between
 #: them. The CSV importer deliberately does NOT derive: an imported kit whose
 #: sheet says `complete` with no completion date stays null rather than acquiring
@@ -57,7 +57,7 @@ def stamp_build_date(
 
     Only-when-null is what makes the dates the user's: a value someone set — by
     backfill, by correction, or by an earlier pass through the status — is never
-    overwritten by a later drag, and `building` → `backlog` → `building` keeps the
+    overwritten by a later move, and `building` → `backlog` → `building` keeps the
     original start. `supplied` names the fields the same request set explicitly
     (including to null); the derivation never fights an explicit value.
     """

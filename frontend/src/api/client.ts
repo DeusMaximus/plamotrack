@@ -32,6 +32,7 @@ import type {
   RetailerCreate,
   RetailerUpdate,
   StockAdjustment,
+  Summary,
   Tool,
   ToolCreate,
   ToolUpdate,
@@ -232,6 +233,9 @@ export const api = {
   deleteRetailer: (id: string) => request<void>(`/retailers/${id}`, { method: "DELETE" }),
 
   getMeta: () => request<Meta>("/meta"),
+  /** The collection at a glance (§13.2): Home's heading counts, from one
+   *  server-side snapshot — the same numbers the list pages total. */
+  getSummary: () => request<Summary>("/summary"),
 
   /** The SPA bootstrap (#188): claim state, whether this browser is the owner,
    *  the language/locale for the setup and login screens, and the CSRF token. */
@@ -303,6 +307,13 @@ export const metaQuery = {
   queryKey: ["meta"],
   queryFn: api.getMeta,
   staleTime: Infinity,
+} as const;
+
+/** Home's counts (§13.2, #233). Under the default staleTime like any list; the
+ * writes that move a count invalidate it through `lib/invalidate.ts`. */
+export const summaryQuery = {
+  queryKey: ["summary"],
+  queryFn: api.getSummary,
 } as const;
 
 /** The auth session (#188). Short staleTime so a login/logout elsewhere in the

@@ -370,7 +370,7 @@ def _check_future_receipts(rows: dict[str, list["_Row"]]) -> None:
     from `services/orders.py`, the instant's own offset (#93) — surfaced as a
     preview-time row error. Entry, receive and correction already refuse it on
     REST and MCP; without this the importer was the one writer that accepted it,
-    and the arrival stamps would carry the impossible date onto the Board
+    and the arrival stamps would carry the impossible date onto Home
     (Codex round five, P2).
 
     Reads the *change*, not the cell, for the same reason the transition check

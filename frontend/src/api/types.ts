@@ -237,6 +237,25 @@ export interface Order {
   shipped_at: string | null;
   received_at: string | null;
   items: OrderItem[];
+  /** Where the order sits (§13.2, #233), derived on the server from the dates
+   *  and the spawned kits — received, in_transit (shipped), pre_ordered (every
+   *  kit still a pre-order) or ordered. Never stored; the Orders filter, Home's
+   *  columns and the summary counts all read this one field. */
+  stage: OrderStage;
+}
+
+/** Mirrors `services/order_stage.py::ORDER_STAGES` — the Orders page's
+ *  `?status=` vocabulary and Home's three *In the mail* columns (the first
+ *  three), in pipeline order. */
+export const ORDER_STAGES = ["pre_ordered", "ordered", "in_transit", "received"] as const;
+export type OrderStage = (typeof ORDER_STAGES)[number];
+
+/** `GET /summary` (§13.2, #233) — mirrors backend/app/schemas/summary.py: the
+ *  collection at a glance, one count per kit status and per order stage, every
+ *  bucket present (an empty one is 0). */
+export interface Summary {
+  kits: Record<KitStatus, number>;
+  orders: Record<OrderStage, number>;
 }
 
 export interface OrderKitDetails {

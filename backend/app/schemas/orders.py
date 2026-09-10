@@ -1,7 +1,7 @@
 import uuid
 from datetime import date, datetime
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from app.models.enums import (
     ItemType,
@@ -13,6 +13,7 @@ from app.models.enums import (
 from app.schemas.kits import KitRead
 from app.schemas.numeric import NonNegativeInt4, PositiveInt4, Rating
 from app.services.currency import CURRENCY_CODE_PATTERN as _CURRENCY_PATTERN
+from app.services.order_stage import OrderStage, order_stage
 
 
 class RetailerCreate(BaseModel):
@@ -290,3 +291,12 @@ class OrderRead(BaseModel):
     shipped_at: datetime | None
     received_at: datetime | None
     items: list[OrderItemRead]
+
+    # Derived on the way out, never stored (#233, §13.2): where the order sits —
+    # received, in_transit, pre_ordered (every spawned kit still a pre-order) or
+    # ordered — from the same predicate the summary counts with, so Home's
+    # columns, the Orders page filter and an agent's reading of a row agree.
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def stage(self) -> OrderStage:
+        return order_stage(self)

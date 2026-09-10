@@ -203,7 +203,7 @@ function RetailerFormModal({
 
 export function RetailersPage() {
   const { t } = useTranslation();
-  // Rating tooltips are locale-formatted; see the note on `BoardPage`.
+  // Rating tooltips are locale-formatted; see the note on `HomePage`.
   usePresentationVersion();
   const queryClient = useQueryClient();
   const [modal, setModal] = useState<{ retailer?: Retailer } | null>(null);

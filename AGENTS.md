@@ -4,9 +4,10 @@ Guidance for AI coding agents (Claude Code, Codex, …) and humans working in th
 
 **plamotrack** is a self-hosted, open-source Gunpla/plamo collection & build tracker:
 kits move through a pipeline (pre_ordered → ordered → in_transit → backlog →
-building → complete; backlog = in hand, not started) on a drag-and-drop Kanban
-board with Build and Orders views, alongside quantity-tracked tools, consumables,
-third-party upgrades, and display gear (stands, bases, diorama scenery). Ships as a
+building → complete; backlog = in hand, not started), shown at a glance on a Home
+page (the bench, the backlog, what's in the mail) and in full on list pages,
+alongside quantity-tracked tools, consumables, third-party upgrades, and display
+gear (stands, bases, diorama scenery). Ships as a
 Docker Compose stack: FastAPI REST API + embedded MCP server (same process, shared service
 layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
 
@@ -114,10 +115,12 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   enabled tags must equal SUPPORTED_INTERFACE_LANGUAGES
                         #   (backend/tests/test_settings.py holds the pair together);
                         #   extraction keeps en-AU strings byte-identical (e2e proves it)
-    components/         # Layout, Modal, ui primitives, CatalogItemPicker (§3.9 select-or-create)
-    pages/              # BoardPage (Kanban), KitsPage, OrdersPage, InventoryPage,
-                        #   RetailersPage, and settings/ (SettingsPage + sections,
-                        #   including Data management at /settings/data)
+    components/         # Layout, Modal, ui primitives, CatalogItemPicker (§3.9 select-or-create),
+                        #   KitFormModal + OrderFormModal — the one edit dialog per record,
+                        #   shared by the list pages and Home (#233)
+    pages/              # HomePage (§13.2: bench, strips, mail), KitsPage, OrdersPage,
+                        #   InventoryPage, RetailersPage, and settings/ (SettingsPage +
+                        #   sections, including Data management at /settings/data)
   e2e/                  # Playwright happy-path (runs against the dev stack, self-cleaning)
 docs/design.md          # product intent + architectural decision record (§n targets)
 docs/import-export.md   # user-facing CSV format + matching reference

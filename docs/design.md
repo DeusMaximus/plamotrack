@@ -52,13 +52,15 @@ else's UI. This is the same app, owned outright.
 
 ### 1.1 Goals
 
-- ✅ A drag-and-drop Kanban board for build status (Pre-ordered → Ordered → In Transit
-  → Backlog → Building → Complete), not a static view.
+- ✅ Build status at a glance (Pre-ordered → Ordered → In Transit → Backlog → Building
+  → Complete), not a static view.
   *(Revised 06/08/2026: the original design had separate In Hand and Backlog statuses.
   They turned out to be the same pile with two names, and were merged — Backlog now
-  means "in hand, not started" and occupies In Hand's old pipeline position. The board
-  defaults to a Build view of Backlog/Building/Complete; an Orders view shows the
-  ordering states with everything received rolled into one aggregate column.)*
+  means "in hand, not started" and occupies In Hand's old pipeline position. Revised
+  again 10/09/2026, #233: the drag-and-drop Kanban board this goal was first met with
+  was drawn for a dozen kits and scrolled past usefulness at fifty; Home replaced it
+  (§13.2) — the bench, the backlog and the shelf as capped strips with true counts, the
+  orders in the mail as cards, and every status change through the kit dialog.)*
 - ✅ Full CRUD via the web UI, without touching a database or an app-builder tool
 - ✅ MCP-native: agents can add orders, update build status, and adjust stock without a
   human touching the UI
@@ -591,9 +593,14 @@ Standard CRUD plus a few purpose-built endpoints.
 
 **Built ✅**
 
-- `GET/POST /kits`, `GET/PATCH/DELETE /kits/{id}` — PATCH handles Kanban drag (status
-  change). Order-spawned kits refuse direct deletion (409) — undo happens at the order
-  line, so purchase records and the collection can't drift apart
+- `GET/POST /kits`, `GET/PATCH/DELETE /kits/{id}` — PATCH is the status change too
+  (the kit dialog's status field, an agent's `update_kit_status`). Order-spawned kits
+  refuse direct deletion (409) — undo happens at the order line, so purchase records
+  and the collection can't drift apart
+- `GET /summary` (#233, §13.2) — kits per status and orders per stage from one
+  `REPEATABLE READ` snapshot; Home's heading counts, and the totals the list pages
+  show behind its *view all* links. Every order row carries a derived `stage`
+  (`received`, `in_transit`, `pre_ordered`, `ordered`) from the same predicate
 - `GET /kits/series` — distinct series spellings, most frequent first, for the
   select-or-create control
 - `GET/POST /tools|/consumables|/upgrades|/display-items` + `PATCH/DELETE /{id}` on each — deletes are
@@ -2052,6 +2059,10 @@ is `/mcp/` on the API port (streamable HTTP).
   served by the same function as REST's `GET /meta` so the two cannot disagree.
   What `create_order`'s "omit currency_code" advice used to point at as a `meta`
   resource that never existed
+- `get_summary()` (#233) — the collection at a glance: kits per pipeline status,
+  orders per stage; the same function as REST's `GET /summary`, so the counts an
+  agent reads are the counts Home shows. Rows come from the list tools, and every
+  order row carries its `stage`
 - `list_kits(status?, grade?, series?, sort?, limit?)` — `sort` is `created` (oldest first), `recent` (the status clock, newest first) or `name`; `limit` the first N of that order (§13.4)
 - `list_kit_series()` — the series spellings in use, most frequent first; the
   select-or-create device for a free-text column (#96) — agents check it before
@@ -2670,6 +2681,27 @@ page instead — status at a glance, the bench first:
   to Home: with capped lists and an edit path on every card, the column move it
   offered is the dialog's status field, travelling with the dates a real
   transition carries (#120's reasoning).
+
+Built as #233 (2026-09-10). What the build decided: the **order's stage is the
+server's** — `received`, else `in_transit` (shipped), else `pre_ordered` (every
+spawned kit still a pre-order, at least one), else `ordered` — one predicate
+(`services/order_stage.py`) behind a derived `stage` on every order row, the per-stage
+counts and, through them, Home's columns and the Orders page's `?status=` filter,
+whose vocabulary is now that of the wire (`?status=in_transit`, where #232 had
+`shipped`); so a *view all* link, a heading count and a list page's total are one
+number by construction, and the browser derives nothing. The **counts come from one
+function** for REST (`GET /summary`) and MCP (`get_summary`), read under one
+`REPEATABLE READ` snapshot (rule 7.2) so the kit side and the order side of a receive
+cannot be seen half-applied. The **mail columns cap at three cards**, the artboard's
+number; the strips at six; the bench is never capped. A card names its **first line**
+and either the one other line by name or how many more there are; a mixed order's
+pre-ordered line carries the *pre-order* tag, an order that is wholly a pre-order does
+not (the column says it). The **day counter** reads *day 1* on the start day. The
+two dialogs are **one component each** (`KitFormModal`, `OrderFormModal`), shared by
+the list pages and Home, and the writes they make invalidate the summary through one
+list of keys (`lib/invalidate.ts`). `/board` redirects to Home; `@dnd-kit/core` is
+gone, and with it the #50 optimistic-move policy — a status change is one PATCH from
+the dialog, nothing is queued or rolled back.
 
 ### 13.3 Sidebar
 
