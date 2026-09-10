@@ -74,6 +74,14 @@ describe("convertedTotal", () => {
     expect(convertedTotal(order("AUD", [line("JPY", 1000, [1234, "AUD"])]))).toBe("$12.34");
   });
 
+  it("shows a same-currency snapshot whose amount differs from the line", () => {
+    // A recorded fact (§6): the currencies match, the amounts do not (Codex #236 round 2, P3-8).
+    expect(convertedTotal(order("AUD", [line("AUD", 1000, [1234, "AUD"])]))).toBe("$12.34");
+    expect(
+      convertedTotal(order("AUD", [line("AUD", 1000, [1000, "AUD"]), line("AUD", 50, [60, "AUD"])])),
+    ).toBe("$10.60");
+  });
+
   it("says nothing when the snapshots merely restate the lines", () => {
     expect(
       convertedTotal(order("AUD", [line("AUD", 1000, [1000, "AUD"]), line("AUD", 50, [50, "AUD"])])),

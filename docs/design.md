@@ -2694,13 +2694,18 @@ more URL parameter (`?page=2`, clamped onto the last page when the list shrinks 
 filter, sort or search change resets it), and the sort as the server's — `GET /kits`
 and `GET /orders` take `sort` and `limit`, on REST and the MCP list tools alike, so
 "recent" means one thing for the page, Home and an agent: a kit's `status_updated_at`
-(stamped from the API's clock on every path that sets it — a create and a move never
-rank by two clocks), an order's last status change (received, else shipped, else
-placed — a placement date being its midnight in the instance's time zone, rule 11,
-never the database session's: a plain cast read the session's, and ranked the same
-rows differently under Brisbane and UTC, Codex #236). The filters and the search
-narrow the loaded list in the browser; the page holds the whole list, and a personal
-collection is a few hundred rows.
+(every generated stamp is the API's clock, so a create and a move never rank by two
+clocks; a supplied ship or receipt instant is recorded as given), an order's last
+status change (received, else shipped, else placed — a placement date being its
+midnight in the instance's time zone, rule 11). That order clock is computed by the
+application, in its own zone database, and the list is sorted there: a cast in SQL
+read the database session's zone (Codex #236 round 1), and handing the zone's name to
+Postgres read *its* zone files, which lack 97 of the names the settings accept and
+take CET, EET, MET and WET as fixed offsets (round 2). Two choices on a transition day
+are named rather than left to a library: a midnight that happens twice is its first
+occurrence, and a midnight a transition skipped is read with the offset that held
+before it. The filters and the search narrow the loaded list in the browser; the page
+holds the whole list, and a personal collection is a few hundred rows.
 
 ### 13.5 Not in M6.5
 

@@ -1,10 +1,11 @@
 import logging
 import uuid
 from collections.abc import Iterable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from typing import Literal
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import DateTime, cast, func, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1340,19 +1341,23 @@ OrderSort = Literal["placed", "recent"]
 ORDER_SORTS: tuple[OrderSort, ...] = ("placed", "recent")
 
 
-def _order_order(sort: OrderSort, zone: str):
-    if sort == "recent":
-        # A date against two instants: the day it was placed counts as its
-        # midnight in the *instance's* time zone (rule 11), so an order shipped
-        # on the 20th outranks one placed the 19th wherever the database runs.
-        # A plain cast to timestamptz read the SQL session's zone instead, and
-        # the same two rows ranked one way under a Brisbane session and the
-        # other under UTC (Codex #236 P2-1). `timezone(zone, timestamp)` reads
-        # the naive midnight as wall-clock time in `zone` and yields the instant.
-        placed = func.timezone(zone, cast(Order.order_date, DateTime(timezone=False)))
-        last_change = func.coalesce(Order.received_at, Order.shipped_at, placed)
-        return (last_change.desc(), Order.order_date.desc(), Order.id)
-    return (Order.order_date.desc(), Order.id)
+def last_status_change(order: Order, zone: ZoneInfo) -> datetime:
+    """The clock `sort=recent` reads: received, else shipped, else placed — the
+    placement date as its midnight in the *instance's* time zone (rule 11), so
+    an order shipped late on the 1st outranks one placed on the 2nd wherever the
+    database runs. Computed here, in the application's zone database, never in
+    SQL: a cast read the SQL session's zone (Codex #236 round 1), and handing the
+    name to Postgres read its zone files instead — which lack 97 of the names
+    the settings accept (`Australia/Queensland`, an IANA link) and take CET, EET,
+    MET and WET as fixed offsets where IANA gives them seasonal rules (round 2).
+    Two named choices on a transition day (§13.4): a midnight that happens twice
+    is its first occurrence (`fold=0`), and one a transition skipped is read with
+    the offset that held before it — the hour after, in local time."""
+    if order.received_at is not None:
+        return order.received_at
+    if order.shipped_at is not None:
+        return order.shipped_at
+    return datetime.combine(order.order_date, time.min, tzinfo=zone)
 
 
 async def list_orders(
@@ -1365,18 +1370,23 @@ async def list_orders(
     from app.services.kits import check_list_options
 
     check_list_options(sort, ORDER_SORTS, limit)
-    # The instance's zone is part of the order clock (`_order_order`), read from
-    # the settings row like every other instance-wide rule (rule 11).
-    zone = (await settings_service.get_instance_settings(session)).time_zone
-    stmt = (
-        select(Order)
-        .order_by(*_order_order(sort, zone))
-        .options(selectinload(Order.items).selectinload(OrderItem.kits))
-    )
+    stmt = select(Order).options(selectinload(Order.items).selectinload(OrderItem.kits))
     if pending_only:
         # Not yet received — the same predicate the MCP tool applied by hand
         # before #232, in the query now so `limit` counts pending rows.
         stmt = stmt.where(Order.received_at.is_(None))
+    if sort == "recent":
+        # The clock is the application's (`last_status_change`, in the zone the
+        # settings row names — rule 11), so the sort is too: the rows by id, a
+        # stable sort on the clock, then the slice. A personal collection is a
+        # few hundred orders, and the page loads them all regardless (§13.4).
+        zone = ZoneInfo((await settings_service.get_instance_settings(session)).time_zone)
+        rows = list((await session.scalars(stmt.order_by(Order.id))).all())
+        rows.sort(
+            key=lambda order: (last_status_change(order, zone), order.order_date), reverse=True
+        )
+        return rows[:limit] if limit is not None else rows
+    stmt = stmt.order_by(Order.order_date.desc(), Order.id)
     if limit is not None:
         stmt = stmt.limit(limit)
     return list((await session.scalars(stmt)).all())

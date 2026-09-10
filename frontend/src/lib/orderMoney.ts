@@ -28,25 +28,29 @@ export function orderTotal(order: Order): string {
 }
 
 /** The lines' entry-time conversion snapshots summed: shown under the order's own
- *  total when every line carries one in a single currency, and at least one line
- *  was bought in another — the header's currency is the shipping's and says
- *  nothing about the lines the total shows (Codex #236 P3-3). Shipping has no
- *  snapshot, so it is the lines, and the sub-line says nothing when a line lacks
- *  one rather than showing a partial sum. */
+ *  total when every line carries one in a single currency, unless the sub-line
+ *  would merely restate the total above — every line bought in that currency
+ *  *and* the snapshots summing to the lines' own subtotal. The header's currency
+ *  is the shipping's and decides nothing (Codex #236 P3-3); a same-currency
+ *  snapshot whose amount differs is a recorded fact and shows (round 2, P3-8).
+ *  Shipping has no snapshot, so it is the lines, and the sub-line says nothing
+ *  when a line lacks one rather than showing a partial sum. */
 export function convertedTotal(order: Order): string | null {
   if (order.items.length === 0) return null;
   const codes = new Set(order.items.map((item) => item.converted_currency_code));
   if (codes.size !== 1) return null;
   const [code] = codes;
   if (!code) return null;
-  // Every line already in the snapshot currency: the total above says the same.
-  if (order.items.every((item) => item.currency_code === code)) return null;
   let minor = 0;
+  let subtotal = 0;
   for (const item of order.items) {
     if (item.converted_price_minor === null) return null;
     minor += item.quantity * item.converted_price_minor;
+    subtotal += item.quantity * item.unit_price_minor;
   }
-  return formatMoney(minor, code);
+  const restatesTheLines =
+    order.items.every((item) => item.currency_code === code) && minor === subtotal;
+  return restatesTheLines ? null : formatMoney(minor, code);
 }
 
 export type ShippingLine = {
