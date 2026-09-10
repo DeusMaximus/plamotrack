@@ -1771,9 +1771,10 @@ class PlamotrackOAuthProxy(OAuthProxy):
         self._state_store = state_store
         self._last_cull = -math.inf
         self.assertion_validator = RestrictedKeyAssertionValidator()
-        #: Test seam: an httpx transport the upstream code exchange, refresh
-        #: and revocation go through instead of the network, so the suite can
-        #: play the provider. None on the shipped app — nothing sets it.
+        #: Test seam: an httpx transport the upstream code exchange and refresh
+        #: go through instead of the network, so the suite can play the provider.
+        #: None on the shipped app — nothing sets it. Revocation is not on it:
+        #: that goes through the browser login's provider client (#241).
         self.upstream_transport: httpx.AsyncBaseTransport | None = None
         super().__init__(
             # The SDK keeps these as attributes; on this class they are the
@@ -2540,24 +2541,27 @@ class PlamotrackOAuthProxy(OAuthProxy):
         """Best effort, after the local record is gone: the provider's own
         refresh token (RFC 7009 says a server revoking one should revoke the
         access tokens of the grant) — or its access token when there is none —
-        through the injectable upstream client, at the endpoint the document
-        names. No endpoint, or a provider that cannot be reached, leaves the
-        local revocation standing."""
+        through the browser login's provider client (`OidcProvider.revoke_token`:
+        the app's own httpx, the client secret as HTTP Basic, as the code
+        exchange authenticates), **never** through FastMCP's upstream OAuth
+        client. FastMCP 4's has no revoke method, and the catch-all that used to
+        sit here turned the `AttributeError` into a warning while the fixture's
+        injected client kept the suite green (#241). No document held, none
+        advertising an endpoint, a provider that cannot be reached or refuses:
+        the local revocation stands. Anything else is a defect and propagates —
+        the binding's 500, after the grant is already gone."""
         await self._resolve_upstream_softly()
-        endpoint = self._upstream_revocation_endpoint
-        if endpoint is None or endpoint == UNRESOLVED_ENDPOINT:
-            log.info("MCP OAuth: no revocation endpoint at the provider; local revocation stands")
+        provider = self._provider()
+        if provider.cached_metadata is None:
+            log.info("MCP OAuth: provider document not held; local revocation stands")
             return
         credential, hint = (
             (grant.refresh_token, "refresh_token")
             if grant.refresh_token
             else (grant.access_token, "access_token")
         )
-        try:
-            async with self._upstream_oauth_client() as oauth_client:
-                await oauth_client.revoke_token(endpoint, token=credential, token_type_hint=hint)
-        except Exception as exc:  # the provider's problem, not the client's
-            log.warning("MCP OAuth: upstream revocation failed: %s", type(exc).__name__)
+        if not await provider.revoke_token(credential, token_type_hint=hint):
+            log.warning("MCP OAuth: upstream revocation did not complete; local revocation stands")
 
     # -- audit ---------------------------------------------------------------------------
 

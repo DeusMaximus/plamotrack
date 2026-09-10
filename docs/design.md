@@ -1063,7 +1063,12 @@ Each row names the control, the layer that owns it, and the §5.8 tests that pro
   own token needs a refresh the provider cannot give (the owner binding is grant
   state, not a re-verified id_token); a refresh exchange fails and the client
   relinks later; a revocation ends the grant locally whatever the provider is
-  doing. The provider's endpoints are a view of the browser login's cached
+  doing, then asks the provider through the browser login's own client
+  (`OidcProvider.revoke_token`: the app's httpx, the client secret as HTTP Basic, as
+  the code exchange authenticates) — never through FastMCP's upstream OAuth client,
+  whose FastMCP 4 replacement has no revoke method (#241; the catch-all that hid
+  that is gone — a provider outage or refusal is best effort, anything else is the
+  binding's 500 after the local end). The provider's endpoints are a view of the browser login's cached
   discovery document — every reader, FastMCP's included, sees the same one — and
   every entry point that needs them fetches first, so a provider that is down at
   start never fails the start and a restart mid-flow (between the consent page and
