@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-10 — Claude Code (Fable 5.1) — #233 (M6.5 PR 3/4) built on `feat/233-home`: Home replaces the board, the order stage on the wire, `GET /summary` + `get_summary` from one function; **PR #237 open against `m6.5-workbench`; Codex round 1 NO-GO (P2 + 2×P3) fixed at `7b4bbf1`**, response posted, round 2 next
+## 2026-09-10 — Claude Code (Fable 5.1) — #233 (M6.5 PR 3/4) built on `feat/233-home`: Home replaces the board, the order stage on the wire, `GET /summary` + `get_summary` from one function; **PR #237 open against `m6.5-workbench`; Codex round 1 NO-GO (P2 + 2×P3) fixed at `7b4bbf1`; round 2 GO + 3×P3 fixed at `80468d7`** — ready to merge on the owner's word
 
 - **Done:** `services/order_stage.py` — one predicate for where an order sits (`received`, else
   `in_transit`, else `pre_ordered` when every spawned kit is still one and there is at least one,
@@ -79,16 +79,26 @@ Template:
   grade chip and tag in both themes) and left a list of what stays untested (in the record).
   CI's first Backend attempt was cancelled at the 20-min cap at 89 % — a slow runner (every file
   1.2–3.8× slower than the last green run); the re-run passed in 12 m 33 s.
-- **State:** `feat/233-home` = `a9e2911` + `d6c8def` + `7b4bbf1`, clean, pushed; PR #237 open. Green at that tree:
+- **Round 2 (Codex, at `7b4bbf1`): GO + 3×P3, all fixed at `80468d7`** — full dates squeezed a completed
+  kit's name to one letter on a two-up strip (rows wrap now, 9 rem floor under the name, no fixed
+  height); a blank/whitespace tracking number hid a valid link (`lib/home.ts::trackingOf`, 10 unit
+  cases); a failed retailer or catalog read passed off as "an unknown retailer" / "tool" with no
+  banner (the banner covers the supporting reads; "Retailer unavailable" when the lookup failed —
+  Codex overruled my scope deferral, rightly: the page is new). Controls red-first at `7b4bbf1`;
+  hand mutants E5/E6 killed. Codex also ran a 42-combination width × locale matrix, a real
+  PAT-over-HTTP `get_summary`, and an ARIA snapshot; the order dialog's `Loading…` on a failed
+  catalog list is an accepted follow-up (predates the extraction) — **file it on merge**.
+- **State:** `feat/233-home` = `a9e2911` + `d6c8def` + `7b4bbf1` + `80468d7`, clean, pushed; PR #237 open. Green at that tree:
   backend 2693 (at `d6c8def`; no backend source since), unit 558, e2e 64 + 1 skipped serially
   from an empty DB (all tables 0 after), ruff, lint, build. Control 12/12 red on the base.
-  Mutants: `home-` ×11 11/11 killed on `7b4bbf1`; 8 unit + 3 e2e (E1, E2, E4) killed by hand,
-  1 e2e mutant (NavLink `end`) dead → removed. PR body ready in the session scratchpad (`pr-body-233.md`), brief
+  Mutants: `home-` ×11 11/11 killed on `7b4bbf1` (no backend change since); 8 unit + 5 e2e (E1,
+  E2, E4, E5, E6) killed by hand, 1 e2e mutant (NavLink `end`) dead → removed. Unit 568, e2e
+  65 + 1 skipped at the round-2 head. PR body ready in the session scratchpad (`pr-body-233.md`), brief
   printed in the chat. Dev DB untouched; the Browser pane has a live owner session on it (used
   for the look); Vite left running, the `api` preview stopped. `.claude/launch.json` is tracked
   (`api`, `frontend`) — I overwrote it once from the wrong cwd and restored it.
-- **Next:** Codex round 2 on PR #237 at `7b4bbf1` (brief printed in the session chat) → respond →
-  merge into `m6.5-workbench` (`Closes #233, closes #122` in the body). Then
+- **Next:** the owner merges PR #237 (squash; CI green on `80468d7` to confirm) — or a round-3 replay
+  first (brief printed in the session chat); file the order-dialog waiting-state follow-up. Then
   #234 (Settings, About, the e2e suite, README captures in the new look) off `m6.5-workbench`;
   merge `main` into the integration branch after each hand-off; a packaged-stack run before the
   release merge; hold the release hand-off commit until after the merge.
