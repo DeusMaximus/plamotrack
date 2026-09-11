@@ -607,12 +607,22 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     (`app/auth/body.py`) before any parser, and nginx's exact locations are
     generated from it (`scripts/render_ingress.py`, the second region);
     `tests/test_body_limits.py` fails on an anonymous body route without one.
-    **Client records in `mcp_oauth_state` live a day unless a grant links them**
-    (`ClientRecords`, which every writer goes through — FastMCP's included), are
-    capped, and culled where a record is created — `ClientRecords.put` on a new
-    key, whichever route materialised the client — as well as from the anonymous
-    entry points; the adapter reads an expired row as absent and never deletes it,
-    so a new collection with a lifetime owes the cull too. A body whose client
+    **Client records in `mcp_oauth_state` are dynamically registered clients only
+    (#242) and live a day unless a grant links them** (`ClientRecords`, which every
+    writer goes through — FastMCP's included), are capped, and culled where a
+    record is created — `ClientRecords.put` on a new key — as well as from the
+    anonymous entry points; the adapter reads an expired row as absent and never
+    deletes it, so a new collection with a lifetime owes the cull too. A CIMD
+    client (Claude web, ChatGPT web) is stored nowhere: FastMCP 4 resolves it from
+    its document through the in-process cache on every lookup — bounded here at
+    `CIMD_CACHE_ENTRIES`, the one bound on that side — so the lifetime, the cap
+    and the quota never meet it; a row a 0.3.x/0.4.0 instance persisted for one is
+    the fallback until its document is refreshed, then deleted; and once no row
+    stands behind it, that client's own `/mcp/token` and `/mcp/revoke` are `401
+    invalid_client` while its document cannot be fetched (the SDK's
+    client-authentication step: nothing spent, nothing ended), while a live
+    grant's access token and the transparent refresh behind it, which never look
+    the client up, carry on. A body whose client
     disconnects before its last message is neither replayed nor answered
     (`Disconnected`). CI's packaged matrix must exercise all four 429s and
     scan a full login/PAT/MCP run for the password, PAT and session value, plus

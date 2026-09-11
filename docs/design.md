@@ -1030,7 +1030,7 @@ Each row names the control, the layer that owns it, and the §5.8 tests that pro
 | **Open redirect and code interception** in OIDC flows | R | The browser login's `state` and `nonce`; exact redirect-URI matching; PKCE on the MCP proxy path — the client's, verified by the proxy, and the proxy's own, forwarded upstream; the upstream identity required to equal the bound `(issuer, subject)`; a non-owner identity refused with an audit event and no session — and on the MCP path refused **at issuance**, before any token is minted, because a verifier that refuses only per request would still have handed a stranger a token pair (#190 spike 7a); the proxy's consent transaction carries its own state cookie and form token, and the provider's return is accepted only from the browser that consented (FastMCP's binding cookie, proven on). | app | T6, T7 |
 | **Version and topology disclosure** | R | `/meta`, the OpenAPI schema and the docs pages behind `collection:read`; anonymous unrouted paths answer 401 rather than 404; `/healthz` says only `ok`. | app | T2 |
 | **Log and audit hygiene** | all | Audit events for: setup claimed, login success and failure, logout, session revoked, PAT minted, revoked and used after revocation, an MCP OAuth grant issued, refused and revoked, OIDC rebind, authentication mode changed (the previous mode's sessions revoked at start), recovery run, Host/Origin rejection. Each carries the principal id, credential kind, client address and route or tool — never a secret, never a request body. A pre-routing refusal earns its own row within a budget — ten per address and sixty per instance a minute, the rest counted and written as one summary row with the next recorded refusal (#210; #221 item 3) — so a flood cannot grow the table by a row per request. Retention is a table with a documented prune, by hand or on a schedule (`AUDIT_RETENTION_DAYS`). Collection-change auditing is not M6. | app | T10 |
-| **Denial of service** | P, R | Out of scope beyond: per-IP `limit_req` at the ingress on families 2, 3, 8 and 9; the app's failure ladders and verification budget; **body budgets** on every anonymous route that takes a body (#221 item 1) — declared in the route policy registry (`max_body_bytes`: 32 KiB for the family-3 actions, 16 KiB for the protocol routes), enforced before any parser by the pre-routing gate and the protocol guards, and duplicated at nginx as `client_max_body_size` on exact locations generated from the same declaration, the server-wide 32 MiB kept for imports; **bounded client records** (#221 item 2) — a registration or a CIMD record lives a day unless a grant links it, the collection is capped, an address has a registration quota, expired rows are culled from the anonymous entry points, and FastMCP's in-memory CIMD document cache is bounded; readiness hidden from outside so strangers cannot probe the database. | both | T2, T8 |
+| **Denial of service** | P, R | Out of scope beyond: per-IP `limit_req` at the ingress on families 2, 3, 8 and 9; the app's failure ladders and verification budget; **body budgets** on every anonymous route that takes a body (#221 item 1) — declared in the route policy registry (`max_body_bytes`: 32 KiB for the family-3 actions, 16 KiB for the protocol routes), enforced before any parser by the pre-routing gate and the protocol guards, and duplicated at nginx as `client_max_body_size` on exact locations generated from the same declaration, the server-wide 32 MiB kept for imports; **bounded client records** (#221 item 2; registrations only since #242) — a registration lives a day unless a grant links it, the collection is capped, an address has a registration quota, expired rows are culled from the anonymous entry points and where a record is created, and a CIMD client is no record at all: resolved from its document through FastMCP's in-memory cache on every lookup, which is bounded (`CIMD_CACHE_ENTRIES`) and is the one bound on that side — a row a 0.3.x/0.4.0 instance persisted for one is the fallback until its document is refreshed, then deleted; readiness hidden from outside so strangers cannot probe the database. | both | T2, T8 |
 
 **Safe failure.** The first rule is that a failure denies; the second is that it denies
 *new* things and leaves the owner's existing access alone where it can.
@@ -1852,6 +1852,28 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
     (f2); and a body whose client disconnects before its last message is neither
     replayed nor answered (f3) — the server's framing decides where a body ends,
     a declared length shorter than it is the server's to refuse.
+    **Restated with FastMCP 4 (M6.1, #242):** the client-record bounds describe
+    dynamically registered clients only. FastMCP 4 resolves a CIMD client (Claude
+    web, ChatGPT web) through its in-process document cache on every lookup and
+    persists nothing — a row an earlier version stored is the fallback until the
+    document has been refreshed, then deleted (`OAuthProxy.get_client`) — so the
+    lifetime, the cap and the cull above count registrations, the cull at creation
+    has one caller (the registration), and a flood of registrations costs a web
+    client nothing, where the call above ("a CIMD lookup at the cap is an unknown
+    client") locked the web clients out of a full collection. The bound on the
+    CIMD side is the document cache (`CIMD_CACHE_ENTRIES`, tighter than FastMCP
+    4's own thousand, and its store path writes through it). Once no row stands
+    behind a web client, its own exchanges depend on its document: while the
+    document's host cannot be reached and the cache holds no fresh copy — an hour
+    by default, a document served `no-store` never kept, a fresh process holding
+    none — that client's `/mcp/token` and `/mcp/revoke` are `401 invalid_client`
+    at the SDK's client-authentication step, the provider asked nothing, nothing
+    spent and nothing ended, while the grant's access token keeps working and the
+    transparent refresh behind a request proceeds (that path never looks the
+    client up), and the same refresh token and revocation succeed once the host
+    answers. Real 0.4.0 rows loaded by 4.0.3 validate as they are (the model
+    gained `application_type`, with a default) in both lifetimes; an expired one
+    backs nothing and waits for the cull (`tests/test_mcp_oauth_registrations.py`).
 
 M6.1's protocol work stays separate (§7.1). Where a target MCP client turns out to need
 the newer protocol before it can be tested, that is recorded as a dependency, not folded
