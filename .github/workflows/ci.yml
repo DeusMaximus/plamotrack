@@ -320,9 +320,9 @@ jobs:
       # The transport is bearer-only (§5.5 family 7; #189): a real MCP client
       # with the token the matrix minted lists the tools through nginx, and the
       # same client without one is refused before it lists anything — SDK 2's
-      # client probes the modern era and falls back to the handshake, and both
-      # requests are 401 on the wire (#243; the legacy-pinned and frozen-3.x
-      # siblings are #244's).
+      # client probes the modern era and falls back to the handshake, and each
+      # of those two requests, as a 4.0.3 client sends it, is 401 on the wire
+      # (#243; the legacy-pinned and frozen-3.x siblings are #244's).
       - name: Smoke-test MCP through nginx with a personal access token
         working-directory: backend
         run: |
@@ -339,11 +339,14 @@ jobs:
 
           URL = "http://127.0.0.1:8080/mcp/"
           ACCEPT = {"Accept": "application/json, text/event-stream"}
-          # The two requests an anonymous SDK 2 client sends before it gives up: the
-          # modern probe, then the handshake it falls back to. Both are 401 on the
-          # wire with the bare RFC 6750 challenge; the client folds that into a
-          # status-less stand-in (INTERNAL_ERROR, "Server returned an error
-          # response"), so the status is read off the wire beside it (#243).
+          # The two requests an anonymous SDK 2 client sends before it gives up,
+          # as a 4.0.3 client sends them (the M6.1 spike's capture; Codex #246
+          # round 1): the modern probe, id 1, then the handshake it falls back
+          # to, id 2 at 2025-11-25. Both are 401 on the wire with the bare RFC
+          # 6750 challenge (local mode's; OIDC mode's adds resource_metadata);
+          # the client folds that into a status-less stand-in (INTERNAL_ERROR,
+          # "Server returned an error response"), so the status is read off
+          # the wire beside it (#243).
           DISCOVER = (
               {
                   "jsonrpc": "2.0",
@@ -362,10 +365,10 @@ jobs:
           INITIALIZE = (
               {
                   "jsonrpc": "2.0",
-                  "id": 1,
+                  "id": 2,
                   "method": "initialize",
                   "params": {
-                      "protocolVersion": "2025-06-18",
+                      "protocolVersion": "2025-11-25",
                       "capabilities": {},
                       "clientInfo": {"name": "ci", "version": "0"},
                   },

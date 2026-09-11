@@ -372,8 +372,9 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     neither; a presented-and-failed bearer is 401 `auth.bearer_invalid` on every route
     the dependency covers, the anonymous families included — on the `/mcp` mount, which
     is FastMCP's, it is the RFC 6750 challenge instead (`WWW-Authenticate: Bearer
-    error="invalid_token"`, `no-store`; a bare `Bearer` for an absent credential), in
-    both protocol eras (#243) — and a bearer on a family-3 action is 403. Per-tool
+    error="invalid_token"`, `no-store`; a bare `Bearer` for an absent credential in local
+    mode, with `resource_metadata` in OIDC mode), in both protocol eras (#243) — and a
+    bearer on a family-3 action is 403. Per-tool
     scope is one FastMCP middleware on `tools/call` (`app/auth/mcp_auth.py`) reading
     `MCP_TOOL_SCOPES`, refusing before arguments are parsed; the in-memory test client
     carries no header, so it reads an injected principal off the server object only

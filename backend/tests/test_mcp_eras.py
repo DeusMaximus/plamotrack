@@ -155,11 +155,15 @@ async def test_modern_auth_refusal_is_the_mounts_challenge(http_client, method, 
     """The mount's refusal contract, in the modern era as in the handshake era
     (`test_mcp_takes_a_bearer_and_never_a_cookie`,
     `test_mcp_refuses_a_failed_bearer_the_same_way`): an absent credential
-    earns the bare RFC 6750 challenge from FastMCP's `RequireAuthMiddleware`,
-    a presented-and-failed one `error="invalid_token"` — never REST's
-    `auth.bearer_invalid` envelope, which the mount does not speak — with
-    `no-store` and no session either way. `server/discover` is protected too:
-    discovery of the *protocol* is not the anonymous family."""
+    earns the bare RFC 6750 challenge and an empty body (FastMCP's
+    `RequireAuthMiddleware._send_missing_auth`), a presented-and-failed one
+    `error="invalid_token"` with the SDK's JSON body (`_send_auth_error`) —
+    never REST's `auth.bearer_invalid` envelope, which the mount does not
+    speak — with `no-store` and no session either way; each pair is
+    byte-identical across the eras (Codex #246 round 1). The bare `Bearer` is
+    local mode's, the shipped `app` here — OIDC mode's challenge adds
+    `resource_metadata`. `server/discover` is protected too: discovery of the
+    *protocol* is not the anonymous family."""
     async with app.router.lifespan_context(app):
         headers = modern_headers(
             method, token="not-a-valid-bearer" if credential == "failed" else None

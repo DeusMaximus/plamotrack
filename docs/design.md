@@ -2184,9 +2184,15 @@ control on the mount is measured against: `tests/test_mcp_eras.py` drives the be
 refusal, the per-tool scope hook, the verb binding, the body budget and the per-request
 owner comparison on a proxy token through the modern era, and the in-memory client
 through both. The refusal contract on the mount is the RFC 6750 challenge in both eras
-(a bare `Bearer` for an absent credential, `error="invalid_token"` for a failed one, with
-`no-store` and no session), never REST's envelope — the spike's brief assumed otherwise
-and its four probes were corrected, not the server.
+(a bare `Bearer` for an absent credential — `resource_metadata` added in OIDC mode —
+and `error="invalid_token"` for a failed one, with `no-store` and no session, each pair
+byte-identical across the eras), never REST's envelope — the spike's brief assumed
+otherwise and its four probes were corrected, not the server. The bump also moves the
+MCP proxy's provider exchange, both refresh paths and a fetched client-assertion JWKS
+onto httpx2 and the system trust store (truststore) beside the CIMD fetch; the browser
+login and the provider revocation stay on the app's own httpx. Compatibility with a
+deployed provider's certificate chain behind a private CA is #244's to measure, not
+something this bump proved inert (Codex #246 round 1).
 
 M6.1 adds the modern protocol only through an SDK/framework release that serves modern
 and legacy clients from the same endpoint. Completion means conformance coverage plus a
