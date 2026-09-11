@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-11 — Claude Code (Opus 4.8) — #244 built on `feat/244-era-gate` (head `5eb84fa`, clean off `m6.1-fastmcp4` = `c6cd383`): both protocol eras gated with real clients + the #56 description/schema test; PR #250 open (now `1a05b82`), remote deployment gate GREEN on testhost; Codex round 1 (NO-GO, 1 P2 + 4 P3) answered and fixed, CI green; next the final integration review → merge → v0.4.1-alpha
+## 2026-09-11 — Claude Code (Opus 4.8) — #244 built on `feat/244-era-gate` (head `5eb84fa`, clean off `m6.1-fastmcp4` = `c6cd383`): both protocol eras gated with real clients + the #56 description/schema test; PR #250 open (now `1a05b82`), remote deployment gate GREEN on testhost; Codex rounds 1–2 answered (r1 1 P2 + 4 P3; r2 1 P3, all fixed, now `949acc9`), CI green; next the final integration review → merge → v0.4.1-alpha
 
 - **Done:** #244 whole (closes #244 + #56), one commit `5eb84fa`.
   - **Modern hold-and-cancel.** The `2026-07-28` mount serves no long-lived stream
@@ -95,8 +95,14 @@ Template:
 - **Owner (this session):** release is **v0.4.1-alpha** (not v0.5.0); a **final integration /
   release-candidate review runs before `m6.1-fastmcp4` merges to `main`**, carrying the remaining
   acceptance rows. Not permission to merge/tag/release.
-- **State:** `main` = this entry. PR #250 (`feat/244-era-gate`, `1a05b82`) open against `m6.1-fastmcp4`
-  (= `c6cd383`), **CI green**, round 1 answered — awaiting the next Codex round or the owner's word.
+- **State:** `main` = this entry. PR #250 (`feat/244-era-gate`, `949acc9`) open against `m6.1-fastmcp4`
+  (= `c6cd383`), **CI green**, rounds 1–2 answered — awaiting the owner's word / the final review.
+  **Round 2 (Codex) = NO-GO, one P3 (finding 6):** `phase_modern_hold` seeded `gone = bool(during)`, so a
+  held PID lingering through every cleanup poll (complete or partial) still reported "gone after abort";
+  fixed at `949acc9` with a positive-confirmation `_backends_released` helper + a tracked regression
+  (`test_hold_observer.py`) and its mutation control. Same class as F2 — the invariant is now explicit.
+  Codex also demonstrated a real **3.x grant surviving the 4.x upgrade/restart/backup-restore** with a
+  fixture provider, de-risking that acceptance row (record it formally at the final review).
   #244/#56 close on merge. Scratchpad holds the PR body, the brief, the review response and all gate
   results. testhost left in the gate end-state (OIDC, mode R); dev overlay up.
 - **Next:** the next Codex round on #250 (if any) → merge into `m6.1-fastmcp4` → the **release PR**
