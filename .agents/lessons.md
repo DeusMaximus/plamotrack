@@ -379,6 +379,18 @@ Round 7 said stop; the owner's call was to make the general guard (the write gat
 rule 7.1) a prerequisite PR and rebase onto it, which deleted ~220 lines of
 `importing.py` and ~580 of its tests. → 2026-08-15 (#79, #80)
 
+Again on #244/#250, three rounds walking up the modern-hold gate: round 1 (F2) the
+cleanup was vacuous (0 before/after, never observed a held backend); round 2 (F6)
+the reworked cleanup defaulted its verdict (`gone = bool(during)`, so a lingering
+backend passed); round 3 (F7) the thing all three trusted — a `psql` read — reported
+a SQL error as emptiness (no `ON_ERROR_STOP`, so a statement timeout exited 0 with
+empty stdout and every reader saw "no rows"). Each fix was correct for the angle
+reported and left the next angle open; the convergent fix was the boundary, not the
+caller — `Host.psql` now refuses to return an error as absence, covering every
+reader at once. The reviewer named the pattern in round 2 ("rounds landing in the
+same function are a signal about the invariant"); the round-3 brief was scoped to
+replay the round-2 fix precisely because of it. → 2026-09-11 (#244, #250)
+
 ### The reviews are finding things the tests do not — five for five
 Three rounds on #103, every finding real, two of them changing code rather than
 tests and neither reachable by anything in-tree (a focus trap letting focus reach
