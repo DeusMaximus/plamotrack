@@ -5827,7 +5827,9 @@ CASES += [
         MCP_OAUTH,
         "            await self._store.cull_expired(collection or CLIENT_COLLECTION)\n            live = await self._store.count_live(collection or CLIENT_COLLECTION)\n",
         "            live = await self._store.count_live(collection or CLIENT_COLLECTION)\n",
-        "materialised_by_a_lookup_alone_rolls_over",
+        # Re-pointed by #242: a lookup materialises no record under FastMCP 4,
+        # so the cull at creation has one caller and one witness.
+        "registration_rolls_expired_records_over",
     ),
     (
         "scan-30. a disconnect ends the body as if it were complete",
@@ -6010,6 +6012,25 @@ CASES += [
         "        metadata.authorization_response_iss_parameter_supported = True\n",
         "        metadata.authorization_response_iss_parameter_supported = False\n",
         "discovery_advertises_exactly_the_admitted_client_authentication",
+    ),
+]
+
+# --- #242: the client-record bounds restated DCR-only under FastMCP 4 — the
+# adapter's rule at the seam, and the document cache as the CIMD side's bound. ----------
+CASES += [
+    (
+        "242-1. a later write puts a permanent record back on the clock",
+        MCP_OAUTH,
+        "        if ttl is None and not (existing is not None and existing_ttl is None):\n",
+        "        if ttl is None:\n",
+        "permanent_record_stays_permanent_through_a_later_write",
+    ),
+    (
+        "242-2. the app's document-cache bound is looser than FastMCP's own",
+        MCP_OAUTH,
+        "CIMD_CACHE_ENTRIES = 256\n",
+        "CIMD_CACHE_ENTRIES = 2048\n",
+        "proxy_installs_the_bounded_cache_on_fastmcps_fetcher",
     ),
 ]
 
