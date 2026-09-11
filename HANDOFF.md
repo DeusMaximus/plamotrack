@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-11 — Claude Code (Fable 5.1) — #242 built on `feat/242-cimd-dcr-only` (four commits, head `a323b52`, from `m6.1-fastmcp4` = `c1949a4`): the client-record contract restated DCR-only, the five strict xfails replaced, the 0.4.0-row transition and the document outage probed; PR #248 → one Codex round (GO + 2×P3, answered at `a323b52`, #249 filed); **awaiting the owner's merge into the branch**; next #244
+## 2026-09-11 — Claude Code (Fable 5.1) — #242 built on `feat/242-cimd-dcr-only` (four commits, head `a323b52`, from `m6.1-fastmcp4` = `c1949a4`): the client-record contract restated DCR-only, the five strict xfails replaced, the 0.4.0-row transition and the document outage probed; PR #248 → one Codex round (GO + 2×P3, answered at `a323b52`, #249 filed) → **MERGED into `m6.1-fastmcp4` as `c6cd383`** (squash); next #244
 
 - **Done:** #242 whole. `e0b5f24` the suite and the proxy: `tests/test_mcp_oauth_registrations.py`
   12 → 17 functions / 20 cases — a CIMD client stored nowhere before or after its link, the
@@ -95,13 +95,16 @@ Template:
   SDK's reading). Codex re-measured everything (11/9, 3/3, 643/57, CI 2725) and added 34
   supplementary cases, listed in the PR's coverage record with its "left unexamined" list as open
   rows. Response posted (issuecomment-5628824763).
-- **State:** branch `feat/242-cimd-dcr-only` at `a323b52`, pushed; **PR #248 open against
-  `m6.1-fastmcp4`** (= `c1949a4`, unchanged), body updated for the round,
-  bound to the desktop session for CI; the Codex brief printed in chat (scratchpad copy
-  `242-review-brief.md`); the control worktree removed. `main` = this entry. Checkout back on the
-  feature branch, tree clean, dev overlay up. #243 stays open until the release lands.
-- **Next:** the owner's word to squash-merge #248 into `m6.1-fastmcp4` (CI on `a323b52` was pending
-  at the time of writing; #242 stays open until the release lands the branch on `main`, as #243 does). Then **#244** (both eras gated with real clients — Claude web and ChatGPT web
+- **State:** **`m6.1-fastmcp4` = `c6cd383`** (PR #248 squash-merged on the owner's word after CI green on
+  `a323b52`: Backend 13m59s, Integration, Frontend; the feature branch deleted). #242 and #243 stay
+  open until the release PR lands the branch on `main`. `main` = this entry. Checkout on `main`,
+  tree clean, dev overlay up. The control worktree is gone; the scratchpad holds the PR body, the
+  brief, the response and the capture (`row_0_4_0_captured.json`).
+- **Next:** **#244** on a branch from `m6.1-fastmcp4` (both eras gated with real clients — Claude web
+  and ChatGPT web through a real document fetch belong there — the private-CA/TLS path, the CI legacy
+  + frozen-3.x rows, the Built flip; #249's `Age` limitation is a known-limitation line for the notes,
+  not a blocker), then the release PR (merge commit, gated, v0.5.0-alpha suggested; hold the hand-off
+  until after the merge). Merge `main` into the integration branch first if `main` has moved. Then **#244** (both eras gated with real clients — Claude web and ChatGPT web
   through a real document fetch belong there — the private-CA/TLS path, the CI legacy + frozen-3.x
   rows, the Built flip), then the release PR (merge commit, gated, v0.5.0-alpha suggested; hold
   the hand-off until after).
