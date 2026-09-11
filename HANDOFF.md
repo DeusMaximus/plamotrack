@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-11 — Claude Code (Opus 4.8) — #244 built on `feat/244-era-gate` (head `5eb84fa`, clean off `m6.1-fastmcp4` = `c6cd383`): both protocol eras gated with real clients + the #56 description/schema test; PR #250 open, CI green, the remote deployment gate GREEN on testhost; next the Codex round → merge → the release PR
+## 2026-09-11 — Claude Code (Opus 4.8) — #244 built on `feat/244-era-gate` (head `5eb84fa`, clean off `m6.1-fastmcp4` = `c6cd383`): both protocol eras gated with real clients + the #56 description/schema test; PR #250 open (now `1a05b82`), remote deployment gate GREEN on testhost; Codex round 1 (NO-GO, 1 P2 + 4 P3) answered and fixed, CI green; next the final integration review → merge → v0.4.1-alpha
 
 - **Done:** #244 whole (closes #244 + #56), one commit `5eb84fa`.
   - **Modern hold-and-cancel.** The `2026-07-28` mount serves no long-lived stream
@@ -77,14 +77,34 @@ Template:
 - **Decisions (owner, this session):** modern hold on an existing call via env-gated instrumentation,
   no new method/subscription (Q1); the remote gate run in this PR (Q2 Full); Built flip deferred to
   the release PR (Q3). Reviewer: **Codex (GPT-6)** — brief printed in chat (scratchpad `pr244-codex-brief.md`).
-- **State:** `main` = this entry. PR #250 (`feat/244-era-gate`, `5eb84fa`) open against `m6.1-fastmcp4`
-  (= `c6cd383`), CI green, awaiting the Codex round. #244/#56 close on merge. Scratchpad holds the PR
-  body, the brief, and both gate results blocks. Local packaged validation stack torn down; dev overlay up.
-- **Next:** the Codex round on #250 → merge into `m6.1-fastmcp4` → the **release PR** (merge commit,
-  gated, v0.5.0-alpha suggested; hold the hand-off commit until after the merge). The release acceptance
-  run does the real-client matrix (Inspector, Claude web, ChatGPT web, Claude Desktop/Code) and a
-  conformance run against an unauthenticated build (the runner has no auth flag), then the Built flip.
-  #249 is a known-limitation line for the notes. Open: #223–#227, #230, #238.
+- **Round 1 (Codex, GPT-6) = NO-GO, 1 P2 + 4 P3 — all confirmed and fixed at `1a05b82`** (PR #250
+  now that head, CI all-green, response issuecomment-5631143524). Every finding was verification
+  passing for the wrong reason, not a transport defect: F1 [P2] `hold_stream_modern` only reported
+  `max_gap` → stalled/35 s-gap/completed-body streams passed; F2 the modern-hold cleanup was vacuous
+  (0 before/after, never observed a held backend); F3 arming ran before the try/finally (a startup
+  failure left the flag armed); F4 the create_order description *still* said "omit currency_code"
+  unscoped (#56 not actually closed) and the tests read only the schema + a backtick-less guard; F5
+  the frozen check used `except Exception`. Fixes: a shared `_observe_hold` asserting no >30 s silence
+  and no early close/terminal-chunk (both the modern and legacy holds — a sweep) + offline
+  `tests/test_hold_observer.py`; the pytest and gate now observe a live held PID *during* and assert
+  it gone after; arm/disarm in try/finally; the description scoped + tests check its clauses and any
+  `meta` spelling; the frozen refusal asserted as `httpx.HTTPStatusError` 401. Every negative control
+  reproduced; the restructured `modern-hold` phase re-run **green live on testhost** (PID 12197/12374
+  held during, gone after, both spellings). Coverage record corrected on the PR (CI step = write-PAT
+  on `/mcp/`; the 130 s tunnel holds are legacy).
+- **Owner (this session):** release is **v0.4.1-alpha** (not v0.5.0); a **final integration /
+  release-candidate review runs before `m6.1-fastmcp4` merges to `main`**, carrying the remaining
+  acceptance rows. Not permission to merge/tag/release.
+- **State:** `main` = this entry. PR #250 (`feat/244-era-gate`, `1a05b82`) open against `m6.1-fastmcp4`
+  (= `c6cd383`), **CI green**, round 1 answered — awaiting the next Codex round or the owner's word.
+  #244/#56 close on merge. Scratchpad holds the PR body, the brief, the review response and all gate
+  results. testhost left in the gate end-state (OIDC, mode R); dev overlay up.
+- **Next:** the next Codex round on #250 (if any) → merge into `m6.1-fastmcp4` → the **release PR**
+  (merge commit, gated, **v0.4.1-alpha**; hold the hand-off commit until after the merge), which is
+  the owner's required final integration review: the real-client matrix (Inspector, Claude web,
+  ChatGPT web, Claude Desktop/Code), a conformance run against an unauthenticated build (the runner
+  has no auth flag), modern-hold through the Cloudflare Tunnel, and 3.x→4.x grant continuity — then
+  the Built flip. #249 is a known-limitation line for the notes. Open: #223–#227, #230, #238.
 
 ## 2026-09-11 — Claude Code (Fable 5.1) — #242 built on `feat/242-cimd-dcr-only` (four commits, head `a323b52`, from `m6.1-fastmcp4` = `c1949a4`): the client-record contract restated DCR-only, the five strict xfails replaced, the 0.4.0-row transition and the document outage probed; PR #248 → one Codex round (GO + 2×P3, answered at `a323b52`, #249 filed) → **MERGED into `m6.1-fastmcp4` as `c6cd383`** (squash); next #244
 
