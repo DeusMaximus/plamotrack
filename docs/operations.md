@@ -523,9 +523,11 @@ expire), and a request body to any of the OAuth routes is capped at 16 KiB. None
 of this touches a linked client, and none of it touches Claude web or ChatGPT web:
 a client that brings a metadata document is not stored at all — the instance
 fetches the document when the client shows up, keeps it in memory for as long as
-the document's own cache headers allow (an hour when they say nothing), and
-fetches it again after that — so a flood of registrations cannot lock those
-clients out. The flip side: while such a client's document cannot be fetched (its
+the document's own cache headers allow — `max-age` or `Expires`, an hour when
+they say nothing, never under `no-store` — counted from the moment it arrived
+(a copy an intermediate cache had already aged is kept for its full lifetime
+from receipt; #249), and fetches it again after that — so a flood of
+registrations cannot lock those clients out. The flip side: while such a client's document cannot be fetched (its
 host unreachable from the instance, and no fresh copy in memory — after a
 restart, for one), that client's own token refresh and revocation are refused
 with `401 invalid_client` and nothing is lost by it — its access token keeps

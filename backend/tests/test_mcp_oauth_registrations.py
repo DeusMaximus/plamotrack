@@ -21,10 +21,12 @@ does not.
 
 from __future__ import annotations
 
+import time
 from datetime import UTC, datetime, timedelta
+from email.utils import formatdate
 
 import pytest
-from fastmcp.server.auth.cimd import CIMDFetcher, CIMDFetchError
+from fastmcp.server.auth.cimd import CIMDDocument, CIMDFetcher, CIMDFetchError
 from fastmcp.server.auth.oauth_proxy.models import ProxyDCRClient
 from fastmcp.server.auth.ssrf import SSRFFetchError, SSRFFetchResponse
 from pydantic import AnyUrl
@@ -337,10 +339,12 @@ async def test_a_lookup_alone_materialises_no_record(monkeypatch, endpoint, answ
     moved to where a record is created. Under FastMCP 4 the lookup writes
     nothing (#242): the client authenticates from its document, the endpoint
     answers on the token — `401 invalid_grant` for a refresh token this
-    server never issued (FastMCP's token handler: the MCP specification's 401
-    for an invalid or expired token, over RFC 6749 §5.2's 400); RFC 7009's
-    200 for a revocation of one — and the collection is empty behind it. The
-    cull at creation has one caller now, the registration (next)."""
+    server never issued (FastMCP's token handler, which carries the MCP
+    specification's 401 for an invalid access token into the token endpoint,
+    where RFC 6749 §5.2 says 400 — the SDK's call, pinned as observed on both
+    versions and in four places in `test_mcp_oauth.py`); RFC 7009's 200 for a
+    revocation of one — and the collection is empty behind it. The cull at
+    creation has one caller now, the registration (next)."""
     _any_cimd(monkeypatch)
     fake = FakeIdp()
     await _bind_owner()
@@ -426,13 +430,20 @@ async def test_the_proxy_installs_the_bounded_cache_on_fastmcps_fetcher():
 # --- the transition: a row a 0.4.0 instance stored for a CIMD client (#242) ---------------
 
 #: What a 0.4.0 instance wrote to `mcp_oauth_state` for a CIMD client on its
-#: first lookup — `ProxyDCRClient.model_dump(mode="json")`, the adapter's
-#: serialisation, under FastMCP 3.4.5 (captured 11/09/2026 in a 3.4.5 venv):
-#: this suite's document, its name changed so the row and a fresh fetch can be
-#: told apart. FastMCP 4.0.3's model adds `application_type`, with a default,
-#: and nothing else, so the row validates as it is — through the adapter's
-#: `raise_on_validation_error=True`, where a field the new model required
-#: would have been a 500 on that client's every request.
+#: first lookup, under the shipped 0.4.0 lock — FastMCP 3.4.5, MCP SDK 1.29.0,
+#: py-key-value-aio 0.4.5, Pydantic 2.13.4 (a worktree of `dd183db`, its own
+#: venv from that lock): this suite's document resolved through the real old
+#: proxy, the row read back through the encryption wrapper, equal to the
+#: adapter's own `_serialize_model` of the resolved client, the fetch
+#: timestamp fixed and the document's name changed so the row and a fresh
+#: fetch can be told apart (captured 11/09/2026; a first capture from a
+#: throwaway `pip install fastmcp==3.4.5` had resolved MCP SDK 1.30.0, whose
+#: model already carried `issuer` — Codex #248 round 1, finding 1). Relative
+#: to this row, 4.0.3's model adds exactly `application_type` (FastMCP 4) and
+#: `issuer` (MCP SDK 2), both with defaults — pinned below — so the row
+#: validates as it is through the adapter's `raise_on_validation_error=True`,
+#: where a field the new model required would have been a 500 on that client's
+#: every request.
 ROW_FROM_0_4_0 = {
     "redirect_uris": None,
     "token_endpoint_auth_method": "none",
@@ -453,7 +464,6 @@ ROW_FROM_0_4_0 = {
     "client_secret": None,
     "client_id_issued_at": None,
     "client_secret_expires_at": None,
-    "issuer": None,
     "allowed_redirect_uri_patterns": None,
     "cimd_document": {
         "client_id": CIMD_ID,
@@ -475,6 +485,23 @@ ROW_FROM_0_4_0 = {
     },
     "cimd_fetched_at": 1757548800.0,
 }
+
+
+def test_the_captured_row_is_the_current_model_less_the_two_fields_added_since():
+    """The literal's provenance, held against the model it is loaded into: its
+    keys are the current `ProxyDCRClient`'s less exactly `application_type`
+    and `issuer` — and `allow_unregistered_redirect_uris`, a field on both
+    versions that the model excludes from serialisation, so no row ever held
+    it — and its document's keys are the current `CIMDDocument`'s. A field the
+    model gains or loses moves this before it moves a 500."""
+    assert ProxyDCRClient.model_fields["allow_unregistered_redirect_uris"].exclude is True
+    assert set(ProxyDCRClient.model_fields) - set(ROW_FROM_0_4_0) == {
+        "application_type",
+        "issuer",
+        "allow_unregistered_redirect_uris",
+    }
+    assert set(ROW_FROM_0_4_0) <= set(ProxyDCRClient.model_fields)
+    assert set(ROW_FROM_0_4_0["cimd_document"]) == set(CIMDDocument.model_fields)
 
 
 async def _seed_row_from_0_4_0(live, *, ttl: float | None) -> None:
@@ -627,6 +654,40 @@ async def test_the_documents_own_cache_policy_decides_what_a_brief_outage_costs(
         assert refreshed.status_code == during_outage, refreshed.text
         if during_outage != 200:
             assert refreshed.json()["error"] == "invalid_client"
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="#249: the fetcher starts a full lifetime at receipt, reading neither Age nor Date",
+)
+async def test_a_document_already_aged_upstream_is_stale_on_arrival(monkeypatch):
+    """RFC 9111 §4.2: freshness is the lifetime less the response's current
+    age, the age it arrived with included. A document served `max-age=60`
+    with `Age: 120` (and a `Date` to match) is stale on arrival, so an outage
+    at the next lookup must reach the client's own refresh as `401
+    invalid_client`. The pinned fetcher starts its sixty seconds at receipt
+    and reads neither `Age` nor `Date`, so the refresh is answered from the
+    stale copy (Codex #248 round 1, finding 2 — inherited: 3.4.5 does the
+    same). Strict, so the day FastMCP honours `Age` this goes green and the
+    qualification in `docs/operations.md` and design §5.9 comes out with the
+    mark (#249)."""
+    _serve_document(
+        monkeypatch,
+        {
+            "Cache-Control": "must-revalidate, max-age=60",
+            "Age": "120",
+            "Date": formatdate(time.time() - 120, usegmt=True),
+        },
+    )
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        tokens = await _cimd_link(client, fake)
+        _host_unreachable(monkeypatch)
+        fake.next_refresh = _provider_refresh(fake)
+        refused = await refresh(client, CIMD_ID, tokens["refresh_token"])
+        assert refused.status_code == 401, refused.text
+        assert refused.json()["error"] == "invalid_client"
 
 
 async def test_after_a_restart_an_unreachable_document_refuses_the_clients_own_exchanges_only(

@@ -1865,8 +1865,11 @@ matrix rows and tests it names; the credential decisions inside them are #30's.
     4's own thousand, and its store path writes through it). Once no row stands
     behind a web client, its own exchanges depend on its document: while the
     document's host cannot be reached and the cache holds no fresh copy — an hour
-    by default, a document served `no-store` never kept, a fresh process holding
-    none — that client's `/mcp/token` and `/mcp/revoke` are `401 invalid_client`
+    by default, `max-age` and `Expires` honoured from receipt (a response already
+    aged upstream keeps a full lifetime, the fetcher reading neither `Age` nor
+    `Date`: #249, inherited from 3.4.5, held by a strict xfail), a document served
+    `no-store` never kept, a fresh process holding none — that client's
+    `/mcp/token` and `/mcp/revoke` are `401 invalid_client`
     at the SDK's client-authentication step, the provider asked nothing, nothing
     spent and nothing ended, while the grant's access token keeps working and the
     transparent refresh behind a request proceeds (that path never looks the
