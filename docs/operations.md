@@ -516,12 +516,26 @@ authenticate the way those documents say, on every endpoint.
 
 Because anyone can register, a registration is bounded: it lives **24 hours unless
 a grant links it** — a client that registers and never completes the sign-in is
-forgotten, one that does is kept for as long as it is linked — and the same
-lifetime applies to a metadata document the instance fetched for a client that
-never linked. An address may register twenty clients an hour (`429` past that),
-the instance keeps at most 1024 live client records (`503` with `Retry-After`
-past that, until unlinked ones expire), and a request body to any of the OAuth
-routes is capped at 16 KiB. None of this touches a linked client.
+forgotten, one that does is kept for as long as it is linked. An address may
+register twenty clients an hour (`429` past that), the instance keeps at most 1024
+live registrations (`503` with `Retry-After` past that, until unlinked ones
+expire), and a request body to any of the OAuth routes is capped at 16 KiB. None
+of this touches a linked client, and none of it touches Claude web or ChatGPT web:
+a client that brings a metadata document is not stored at all — the instance
+fetches the document when the client shows up, keeps it in memory for as long as
+the document's own cache headers allow — `max-age` or `Expires`, an hour when
+they say nothing, never under `no-store` — counted from the moment it arrived
+(a copy an intermediate cache had already aged is kept for its full lifetime
+from receipt; #249), and fetches it again after that — so a flood of
+registrations cannot lock those clients out. The flip side: while such a client's document cannot be fetched (its
+host unreachable from the instance, and no fresh copy in memory — after a
+restart, for one), that client's own token refresh and revocation are refused
+with `401 invalid_client` and nothing is lost by it — its access token keeps
+working, the instance still refreshes the grant with the provider behind that
+token, and the same refresh succeeds once the document is reachable again. An
+instance upgraded from 0.3.x or 0.4.0, or restored from a dump taken on one, may
+hold a stored copy of such a document from before; it is used as the fallback
+until the first successful fetch and removed then — nothing to do.
 
 Ending a link: a client that revokes either of its tokens (`POST /mcp/revoke`) ends
 the whole grant at once — its access token, its refresh token, and, best effort,
