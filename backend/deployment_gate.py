@@ -198,8 +198,16 @@ class Host:
         return output.split()[0]
 
     def psql(self, sql: str) -> list[str]:
+        # `-v ON_ERROR_STOP=1` so a SQL error (a statement timeout on an
+        # observation query, a dropped connection) exits psql non-zero and
+        # raises here, instead of exiting 0 with empty stdout — which every
+        # reader would misread as "no rows" (a released backend, a zero count).
+        # The boundary refuses to return an error as emptiness, so no caller has
+        # to distinguish the two (Codex #250 F7 — the observation-model gap one
+        # level up from F2/F6).
         output = self.compose(
-            'exec -T db sh -c \'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA\'',
+            "exec -T db sh -c "
+            '\'exec psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA\'',
             input_text=sql,
         )
         return [line for line in output.splitlines() if line.strip()]
