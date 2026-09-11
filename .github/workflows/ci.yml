@@ -378,9 +378,24 @@ jobs:
 
 
           async def check() -> None:
+              # Auto negotiates the modern era, mode="legacy" the handshake era;
+              # the same 4.0.3 client lists the tools through nginx either way,
+              # so the server serves both eras from the one endpoint (#244).
               async with Client(URL, auth=os.environ["PLAMOTRACK_PAT"]) as client:
                   tools = await client.list_tools()
                   assert any(tool.name == "list_kits" for tool in tools)
+                  assert client.protocol_version == "2026-07-28", client.protocol_version
+              async with Client(
+                  URL, auth=os.environ["PLAMOTRACK_PAT"], mode="legacy"
+              ) as legacy:
+                  legacy_tools = await legacy.list_tools()
+                  assert any(tool.name == "list_kits" for tool in legacy_tools)
+                  assert legacy.protocol_version in {
+                      "2024-11-05",
+                      "2025-03-26",
+                      "2025-06-18",
+                      "2025-11-25",
+                  }, legacy.protocol_version
               try:
                   async with Client(URL) as client:
                       await client.list_tools()
@@ -393,6 +408,53 @@ jobs:
                   assert refused.status_code == 401, (body["method"], refused.status_code)
                   assert refused.headers.get("www-authenticate") == "Bearer", refused.headers
                   assert "mcp-session-id" not in refused.headers
+
+
+          asyncio.run(check())
+          PY
+
+      # #244: the upgraded server still serves an *unmodified* legacy client. A
+      # frozen FastMCP 3.4.5 / MCP SDK 1.29.0 in its own venv lists the tools
+      # through nginx with the live token — its client negotiates the
+      # handshake-era (2025-11-25), the generation shipping before the bump.
+      - name: Smoke-test a frozen FastMCP 3.4.5 client through nginx
+        run: |
+          PAT="$(cat "$RUNNER_TEMP/plamotrack-pat")"
+          test -n "$PAT" || { echo "the matrix wrote no token"; exit 1; }
+          echo "::add-mask::$PAT"
+          FROZEN="$RUNNER_TEMP/frozen-mcp"
+          uv venv "$FROZEN" > /dev/null
+          # Pin the SDK too: `fastmcp==3.4.5` alone floats mcp to 1.30.0, not the
+          # 1.29.0 that shipped in the 0.4.0 lock (the generation before the bump;
+          # #248 round 1, f1). This row is that exact pre-bump client.
+          uv pip install --python "$FROZEN/bin/python" 'fastmcp==3.4.5' 'mcp==1.29.0' > /dev/null
+          PLAMOTRACK_PAT="$PAT" "$FROZEN/bin/python" - <<'PY'
+          import asyncio
+          import os
+          from importlib.metadata import version
+
+          import httpx
+          from fastmcp import Client
+
+          assert version("fastmcp") == "3.4.5", version("fastmcp")
+          assert version("mcp").startswith("1.29."), version("mcp")
+          URL = "http://127.0.0.1:8080/mcp/"
+
+
+          async def check() -> None:
+              async with Client(URL, auth=os.environ["PLAMOTRACK_PAT"]) as client:
+                  tools = await client.list_tools()
+                  assert any(tool.name == "list_kits" for tool in tools)
+              # Anonymous, the frozen client is refused with a 401 before it lists
+              # anything — the specific auth refusal, not any exception (an
+              # unrelated transport or programming error must fail CI; Codex #250 F5).
+              try:
+                  async with Client(URL) as client:
+                      await client.list_tools()
+              except httpx.HTTPStatusError as exc:
+                  assert exc.response.status_code == 401, exc
+              else:
+                  raise AssertionError("the endpoint answered a frozen client without a token")
 
 
           asyncio.run(check())
