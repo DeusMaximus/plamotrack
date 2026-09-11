@@ -343,7 +343,12 @@ def test_hold_stream_fails_when_the_chain_ends_the_stream_early(fake_mcp, chunke
     server, base = fake_mcp(ping_every=0.1, close_early_after=0.4, chunked=chunked)
     ok, message = hold_stream(base, Bearer("ptk_x_y", "id"), "/mcp/", 3, close_grace=1)
     assert not ok
-    assert message.startswith("the chain ended the stream after 0.")
+    # The observer now names *how* the stream ended early (#244, Codex #250 F1):
+    # a chunked stream sends the terminal chunk, a plain one just closes the socket.
+    if chunked:
+        assert message.startswith("the stream completed (terminal chunk) after 0.")
+    else:
+        assert message.startswith("the chain closed the stream after 0.")
     assert " of 3" in message
     assert not server.deleted.is_set()
 

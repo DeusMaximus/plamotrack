@@ -433,6 +433,7 @@ jobs:
           import os
           from importlib.metadata import version
 
+          import httpx
           from fastmcp import Client
 
           assert version("fastmcp") == "3.4.5", version("fastmcp")
@@ -444,12 +445,14 @@ jobs:
               async with Client(URL, auth=os.environ["PLAMOTRACK_PAT"]) as client:
                   tools = await client.list_tools()
                   assert any(tool.name == "list_kits" for tool in tools)
-              # Anonymous, the frozen client is refused before it lists anything.
+              # Anonymous, the frozen client is refused with a 401 before it lists
+              # anything — the specific auth refusal, not any exception (an
+              # unrelated transport or programming error must fail CI; Codex #250 F5).
               try:
                   async with Client(URL) as client:
                       await client.list_tools()
-              except Exception:  # noqa: BLE001 — any refusal is acceptable here
-                  pass
+              except httpx.HTTPStatusError as exc:
+                  assert exc.response.status_code == 401, exc
               else:
                   raise AssertionError("the endpoint answered a frozen client without a token")
 

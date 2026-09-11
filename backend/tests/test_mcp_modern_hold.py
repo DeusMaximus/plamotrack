@@ -83,6 +83,21 @@ async def _held_backends() -> int:
         return int(result.scalar_one())
 
 
+async def _held_pids() -> set[int]:
+    """The backend PIDs holding the probe's transaction (idle in transaction
+    under the marker) — the live backends, so cleanup is asserted against the
+    same PID seen during the hold, not a count that was zero before and after
+    (Codex #250 F2)."""
+    async with session_scope() as session:
+        result = await session.execute(
+            text(
+                f"select pid from pg_stat_activity where query like '%{HOLD_MARKER}%' "
+                "and state = 'idle in transaction' and pid <> pg_backend_pid()"
+            )
+        )
+        return {int(pid) for pid in result.scalars().all()}
+
+
 def _isolated_app(hold_seconds: int):
     """An isolated instance whose one tool is `get_meta`, with the modern-hold
     probe armed to `hold_seconds` — never the shipped `app.mcp.mcp`."""
@@ -139,6 +154,7 @@ async def test_a_modern_call_held_past_the_window_streams_pings_and_cancels(monk
         assert await _held_backends() == 0
         info: dict = {}
         pings = 0
+        held_during: set[int] = set()
         async with httpx.AsyncClient(base_url=server.base, timeout=20) as client:
             async with client.stream(
                 "POST", "/", json=_call_get_meta(), headers=_HEADERS
@@ -151,6 +167,8 @@ async def test_a_modern_call_held_past_the_window_streams_pings_and_cancels(monk
                     if line.startswith(": ping"):
                         pings += 1
                     if pings >= 2:
+                        # Still streaming: a real backend must be holding now.
+                        held_during = await _held_pids()
                         break  # abort mid-hold by leaving the stream
         # The response committed SSE, with no session and no-cache, and pinged.
         assert info["status"] == 200
@@ -158,12 +176,16 @@ async def test_a_modern_call_held_past_the_window_streams_pings_and_cancels(monk
         assert info["session"] is None
         assert "no-cache" in (info["cache_control"] or "")
         assert pings >= 2
-        # The abort cancelled the handler server-side and returned the held
-        # connection: the probe's backend is gone within a short window.
+        # A backend genuinely held the transaction during the stream (removing the
+        # probe's SELECT would make this empty — the cleanup claim non-vacuous).
+        assert held_during, "no backend held the probe transaction during the hold"
+        # The abort cancelled the handler server-side and returned that same
+        # backend: the PIDs seen during the hold are gone within a short window.
         for _ in range(40):
-            if await _held_backends() == 0:
+            if not (held_during & await _held_pids()):
                 break
             await anyio.sleep(0.25)
+        assert not (held_during & await _held_pids())
         assert await _held_backends() == 0
 
 

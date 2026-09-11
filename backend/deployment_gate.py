@@ -536,14 +536,33 @@ def _held_backends(ctx: Context) -> int:
     return int(rows[0]) if rows else 0
 
 
+def _held_pids(ctx: Context) -> set[str]:
+    """The backend PIDs currently holding the probe's transaction (idle in
+    transaction under the marker) — the actual live backends, so 'gone after
+    abort' is asserted against the same PIDs seen during the hold, not a mere
+    count that was zero before and after (Codex #250 F2)."""
+    rows = ctx.host.psql(
+        "select pid from pg_stat_activity where query like "
+        f"'%{HOLD_PROBE_MARKER}%' and state = 'idle in transaction' "
+        "and pid <> pg_backend_pid();"
+    )
+    return {row.strip() for row in rows if row.strip()}
+
+
 def phase_modern_hold(ctx: Context) -> None:
     """T12's modern twin (#244): the `2026-07-28` era through the proxy chain on
     both `/mcp` spellings. The era has no standalone stream and no long tool, so
     the stack is armed with `PLAMOTRACK_ENABLE_TEST_HOLD` (isolated test
     instance) to make `get_meta` hold a database connection; the client holds
-    the modern SSE past the ping interval, aborts by closing the socket, and the
-    held backend must then be gone — server-side cancellation and connection
-    cleanup. Disarms the flag afterwards whatever happens."""
+    the modern SSE past the ping interval, aborts by closing the socket, and a
+    backend that was **observed live during the hold** must then be gone —
+    server-side cancellation and connection cleanup, not a count that read zero
+    both before and after (Codex #250 F2). The arming, the holds and the
+    disarm are one protected scope so a startup failure cannot leave the flag
+    armed (Codex #250 F3); the disarm runs whatever happened, and a disarm
+    failure does not mask the original error."""
+    import threading  # noqa: PLC0415
+
     from ingress_matrix import Bearer, hold_stream_modern  # noqa: PLC0415
 
     host = ctx.host
@@ -552,27 +571,61 @@ def phase_modern_hold(ctx: Context) -> None:
     hold = max(ctx.hold, 20)
     if _held_backends(ctx) != 0:
         raise GateError("a hold-probe backend is already present before arming")
-    host.env_set(PLAMOTRACK_ENABLE_TEST_HOLD=str(hold + 60))
-    host.up()
+    body_error: BaseException | None = None
     try:
+        host.env_set(PLAMOTRACK_ENABLE_TEST_HOLD=str(hold + 60))
+        host.up()
         for path in ("/mcp/", "/mcp"):
-            ok, message = hold_stream_modern(ctx.base, bearer, path, hold)
-            gone = False
-            for _ in range(40):
-                if _held_backends(ctx) == 0:
+            outcome: dict = {}
+
+            def run(path: str = path, outcome: dict = outcome) -> None:
+                outcome["ok"], outcome["message"] = hold_stream_modern(ctx.base, bearer, path, hold)
+
+            worker = threading.Thread(target=run, daemon=True)
+            worker.start()
+            during: set[str] = set()
+            deadline = time.monotonic() + hold
+            while worker.is_alive() and time.monotonic() < deadline:
+                during = _held_pids(ctx)
+                if during:
+                    break
+                time.sleep(1)
+            worker.join(timeout=hold + 90)
+            ok = outcome.get("ok", False)
+            gone = bool(during)
+            for _ in range(60):
+                if during and not (during & _held_pids(ctx)):
                     gone = True
                     break
+                if not during:
+                    gone = False
+                    break
                 time.sleep(0.5)
+            held_ok = ok and bool(during) and gone
             ctx.results.record(
                 f"modern hold {path}",
-                f"{message}; cleanup {'ok' if gone else 'a backend LINGERS'}",
-                ok and gone,
+                f"{outcome.get('message', '(no result)')}; backend pid(s) "
+                f"{sorted(during) or 'NONE'} held during, "
+                f"{'gone' if gone else 'LINGERING'} after abort",
+                held_ok,
             )
-            if not (ok and gone):
+            if not held_ok:
                 raise GateError(f"modern hold on {path} failed")
+    except BaseException as error:
+        body_error = error
+        raise
     finally:
-        host.env_set(PLAMOTRACK_ENABLE_TEST_HOLD=None)
-        host.up()
+        try:
+            host.env_set(PLAMOTRACK_ENABLE_TEST_HOLD=None)
+            host.up()
+        except Exception as cleanup_error:  # noqa: BLE001
+            if body_error is None:
+                raise
+            ctx.results.record(
+                "modern-hold: disarm after failure",
+                f"the probe flag disarm also failed: {cleanup_error}",
+                ok=False,
+            )
 
 
 def phase_break_glass(ctx: Context) -> None:

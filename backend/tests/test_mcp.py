@@ -528,21 +528,28 @@ async def test_create_order_description_points_only_at_real_surfaces():
     async with Client(mcp) as client:
         tools = {t.name: (t.description or "") for t in await client.list_tools()}
     description = tools["create_order"]
+    lowered = description.lower()
     # #56 (2): the pointer for the instance currency is get_meta, a real tool —
-    # never the phantom `meta` resource the old docstring named.
+    # never the phantom `meta` resource the old docstring named. The only "meta"
+    # in the description must be get_meta: a plain, backticked or otherwise-spelled
+    # `meta` resource reference is the phantom (Codex #250 F4 slipped a backticked
+    # one past the old "meta resource" substring guard).
     assert "get_meta" in tools
-    assert "get_meta" in description
-    assert "meta resource" not in description.lower()
+    assert "get_meta" in lowered
+    assert "meta" not in lowered.replace("get_meta", "")
     # Every other tool the description directs an agent to is real.
     for named in ("search_catalog", "list_catalog_categories", "mark_order_received"):
         assert named in description, named
         assert named in tools, named
 
 
-async def test_create_order_schema_makes_the_order_currency_optional_and_the_line_required():
-    # #56 (1): the description says omit currency_code to take the instance
-    # default — true only at the order level. The exposed input schema must show
-    # exactly that asymmetry, or the description is lying to an agent.
+async def test_create_order_description_and_schema_agree_on_the_currency_asymmetry():
+    # #56 (1): the exposed input schema makes the order-level currency optional
+    # and each line's required; the *description* must say the same, or it lies
+    # to an agent. The old wording ("omit currency_code …") did not scope the
+    # omission to the order header, so both the schema and the description are
+    # checked here (Codex #250 F4 — the schema-only test passed on the misleading
+    # wording).
     async with Client(mcp) as client:
         tool = next(t for t in await client.list_tools() if t.name == "create_order")
     schema = tool.input_schema
@@ -551,6 +558,11 @@ async def test_create_order_schema_makes_the_order_currency_optional_and_the_lin
     item = schema["properties"]["items"]["items"]
     assert "currency_code" in item["properties"]
     assert "currency_code" in item["required"]  # per line: required
+    # Normalise whitespace: the docstring wraps clauses across lines.
+    normalized = " ".join((tool.description or "").lower().split())
+    assert "item line's currency_code is required" in normalized  # per line: required
+    assert "order-level currency_code" in normalized  # the omission is scoped to it
+    assert "omit" in normalized
 
 
 async def test_create_order_rejects_a_line_without_a_currency():

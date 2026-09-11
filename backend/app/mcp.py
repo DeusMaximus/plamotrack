@@ -523,9 +523,10 @@ async def create_order(
     Include the
     retailer's order_number from the confirmation email when available (support
     reference — only unique per retailer, never treat it as an identifier). Prices
-    are integer minor units (cents/yen) with an ISO 4217 currency_code; omit
-    currency_code to use the instance's own reference currency, which get_meta
-    reports."""
+    are integer minor units (cents/yen) with an ISO 4217 currency_code. Each item
+    line's currency_code is required; the order-level currency_code is what may be
+    omitted, and omitting it takes the instance's own reference currency, which
+    get_meta reports."""
     try:
         parsed_date = date.fromisoformat(order_date)
     except ValueError:
