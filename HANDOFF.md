@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-11 — Claude Code (Fable 5.1) — #242 built on `feat/242-cimd-dcr-only` (three commits, head `e0b5f24`, from `m6.1-fastmcp4` = `c1949a4`): the client-record contract restated DCR-only, the five strict xfails replaced, the 0.4.0-row transition and the document outage probed; **pushed, PR #248 open against the branch**, the Codex brief printed; next #244
+## 2026-09-11 — Claude Code (Fable 5.1) — #242 built on `feat/242-cimd-dcr-only` (four commits, head `a323b52`, from `m6.1-fastmcp4` = `c1949a4`): the client-record contract restated DCR-only, the five strict xfails replaced, the 0.4.0-row transition and the document outage probed; PR #248 → one Codex round (GO + 2×P3, answered at `a323b52`, #249 filed); **awaiting the owner's merge into the branch**; next #244
 
 - **Done:** #242 whole. `e0b5f24` the suite and the proxy: `tests/test_mcp_oauth_registrations.py`
   12 → 17 functions / 20 cases — a CIMD client stored nowhere before or after its link, the
@@ -81,13 +81,27 @@ Template:
   no FastMCP writer drives it; our 256 bound kept beside FastMCP's 1000; the outage contract
   recorded, not changed (no database copy of the document); the 0.4.0 row a captured literal;
   the SDK's 401 pinned; scan-29 re-pointed not retired; the upgrade note left to the release.
-- **State:** branch `feat/242-cimd-dcr-only` at `e0b5f24`, pushed; **PR #248 open against
-  `m6.1-fastmcp4`** (= `c1949a4`, unchanged), body complete (suite count edited in after the run),
+- **The round (Codex, GPT-6):** GO, two P3s, one prose slip — all reproduced and answered at
+  `a323b52`. f1: the captured 0.4.0 row carried `issuer`, which the shipped lock's MCP 1.29.0 model
+  lacks — my throwaway `pip install fastmcp==3.4.5` had resolved MCP 1.30.0; recaptured in a
+  `dd183db` worktree under the real lock through the real old proxy and the encryption wrapper
+  (diff: `issuer` alone), the comment records the versions, and a new case pins the literal's key
+  set against the current model (adds exactly `application_type` + `issuer`; the excluded
+  `allow_unregistered_redirect_uris` named). f2: FastMCP's fetcher reads neither `Age` nor `Date`
+  (RFC 9111 §4.2 — a response aged upstream keeps a full lifetime from receipt), inherited from
+  3.4.5; **#249 filed**, the operations paragraph and the design §5.9 amendment qualified ("from
+  receipt"), the case a **strict xfail naming #249**. Prose: seven unchanged cases, not nine; call
+  6's rationale qualified (the MCP 401 is for access-token usage; the token-endpoint 401 is the
+  SDK's reading). Codex re-measured everything (11/9, 3/3, 643/57, CI 2725) and added 34
+  supplementary cases, listed in the PR's coverage record with its "left unexamined" list as open
+  rows. Response posted (issuecomment-5628824763).
+- **State:** branch `feat/242-cimd-dcr-only` at `a323b52`, pushed; **PR #248 open against
+  `m6.1-fastmcp4`** (= `c1949a4`, unchanged), body updated for the round,
   bound to the desktop session for CI; the Codex brief printed in chat (scratchpad copy
   `242-review-brief.md`); the control worktree removed. `main` = this entry. Checkout back on the
   feature branch, tree clean, dev overlay up. #243 stays open until the release lands.
-- **Next:** the Codex round on #248 (this file's reviewer for fifteen rounds; GLM is the roster
-  default — owner's call), the response, the merge into the integration branch on the owner's word. Then **#244** (both eras gated with real clients — Claude web and ChatGPT web
+- **Next:** the owner's word to squash-merge #248 into `m6.1-fastmcp4` (CI on `a323b52` was pending
+  at the time of writing; #242 stays open until the release lands the branch on `main`, as #243 does). Then **#244** (both eras gated with real clients — Claude web and ChatGPT web
   through a real document fetch belong there — the private-CA/TLS path, the CI legacy + frozen-3.x
   rows, the Built flip), then the release PR (merge commit, gated, v0.5.0-alpha suggested; hold
   the hand-off until after).
