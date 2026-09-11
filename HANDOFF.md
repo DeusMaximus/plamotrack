@@ -41,6 +41,51 @@ Template:
 
 ---
 
+## 2026-09-11 — Claude Code (Opus 4.8) — #244 built on `feat/244-era-gate` (head `5eb84fa`, clean off `m6.1-fastmcp4` = `c6cd383`): both protocol eras gated with real clients + the #56 description/schema test; PR #250 open, CI green, the remote deployment gate GREEN on testhost; next the Codex round → merge → the release PR
+
+- **Done:** #244 whole (closes #244 + #56), one commit `5eb84fa`.
+  - **Modern hold-and-cancel.** The `2026-07-28` mount serves no long-lived stream
+    (`subscriptions/listen` is not wired; every tool is short), so the held stream is built
+    around an existing `get_meta` call made to wait by `app/mcp_hold_probe.py` — an env-gated
+    (`PLAMOTRACK_ENABLE_TEST_HOLD`), off-by-default FastMCP middleware holding a DB connection
+    idle-in-transaction under a marker. Adds no tool and no route (registry/enumeration
+    untouched); never armed in the shipped image. `json_response=False` makes the SDK commit
+    SSE + ping past 15 s with no notification (the owner's insight). `tests/test_mcp_modern_hold.py`
+    proves it over a **real uvicorn socket** (ASGITransport buffers, useless for streaming): SSE
+    commit, no session id, no-cache, keepalive pings, abort → server-side cancellation → the held
+    connection returned; parser bounds; the shipped mount carries no probe. `pg_sleep` was rejected —
+    Postgres does not interrupt it on client disconnect, so cleanup was unobservable.
+  - **Through the proxy chain:** `ingress_matrix.hold_stream_modern` + the gate's new `modern-hold`
+    phase (in `ALL` after `local`) — arms the flag, holds+aborts the modern SSE on both `/mcp`
+    spellings, asserts the backend gone in `pg_stat_activity`, disarms.
+  - **CI (`ci.yml`):** a 4.0.3 client in `auto` (asserts 2026-07-28) + `mode="legacy"`, and a
+    **frozen fastmcp 3.4.5 / mcp 1.29.0** client (both pinned — 3.4.5 alone floats to 1.30.0,
+    #248 f1). **#56:** three `test_mcp.py` guards on `create_order`'s description vs the exposed
+    input schema (get_meta not a `meta` resource; order currency optional, line required; a line
+    without a currency refused).
+  - **Docs:** design §7.1 records the coverage + the instrumentation; §5.8 T12 gains the modern
+    twin. **The Built flip is NOT here (owner's Q3)** — README/§7.1/§11 stay Planned; §7.1's
+    contradictory "flips with #244" sentence corrected to the release PR.
+- **Verified:** full suite **2741 passed, 1 xfailed** (fixed the one drift-guard I tripped —
+  `test_deployment_hygiene`'s ALL-tuple); ruff clean; **CI #250 all three jobs pass**; #56 negative
+  control (mutate the description → pointer test reds; mutate the schema → asymmetry test reds).
+  **Remote gate GREEN on testhost** (Q2 Full — a fresh install of this tree behind Caddy DNS-01 +
+  a Cloudflare Tunnel): every phase 0 failing incl. `modern-hold` both spellings (cleanup ok),
+  holds 75 s/130 s past the 15 s ping and Cloudflare's 125 s cliff, matrices 180/182/87 ok, T13
+  three restores, visitor attribution 87.121.75.73, T10 clean. Results on PR #250
+  (issuecomment-5629938030). testhost left in the gate end-state (OIDC, mode R); the real LXC untouched.
+- **Decisions (owner, this session):** modern hold on an existing call via env-gated instrumentation,
+  no new method/subscription (Q1); the remote gate run in this PR (Q2 Full); Built flip deferred to
+  the release PR (Q3). Reviewer: **Codex (GPT-6)** — brief printed in chat (scratchpad `pr244-codex-brief.md`).
+- **State:** `main` = this entry. PR #250 (`feat/244-era-gate`, `5eb84fa`) open against `m6.1-fastmcp4`
+  (= `c6cd383`), CI green, awaiting the Codex round. #244/#56 close on merge. Scratchpad holds the PR
+  body, the brief, and both gate results blocks. Local packaged validation stack torn down; dev overlay up.
+- **Next:** the Codex round on #250 → merge into `m6.1-fastmcp4` → the **release PR** (merge commit,
+  gated, v0.5.0-alpha suggested; hold the hand-off commit until after the merge). The release acceptance
+  run does the real-client matrix (Inspector, Claude web, ChatGPT web, Claude Desktop/Code) and a
+  conformance run against an unauthenticated build (the runner has no auth flag), then the Built flip.
+  #249 is a known-limitation line for the notes. Open: #223–#227, #230, #238.
+
 ## 2026-09-11 — Claude Code (Fable 5.1) — #242 built on `feat/242-cimd-dcr-only` (four commits, head `a323b52`, from `m6.1-fastmcp4` = `c1949a4`): the client-record contract restated DCR-only, the five strict xfails replaced, the 0.4.0-row transition and the document outage probed; PR #248 → one Codex round (GO + 2×P3, answered at `a323b52`, #249 filed) → **MERGED into `m6.1-fastmcp4` as `c6cd383`** (squash); next #244
 
 - **Done:** #242 whole. `e0b5f24` the suite and the proxy: `tests/test_mcp_oauth_registrations.py`
@@ -251,46 +296,3 @@ Template:
   from the spike commits. The LXC upgrade to 0.4.0 whenever; #238 and the lows (#223–#227, #230)
   unaffected.
 
-## 2026-09-10 — Claude Code (Fable 5.1) — **v0.4.0-alpha RELEASED** (M6.5 complete): release PR #240 merged with a merge commit `64d23de` (tree `509f832`, the gated tree), tag pushed, prerelease published, #231–#234 + #122 closed, milestone M6.5 closed; next the LXC upgrade, then M6.1
-
-- **Done:** #239 (#234) squash-merged → `2fa0219` on `m6.5-workbench` (no review, owner's call);
-  the version bumped to 0.4.0 in the three files (`900e2ea`, with an *Upgrading to 0.4.0* note in
-  `docs/operations.md`); **release PR #240** (`m6.5-workbench` → `main`, `Closes` the five)
-  merged with a **merge commit `64d23de`** on the owner's "do the lot"; annotated tag
-  `v0.4.0-alpha — the Workbench interface` on it, pushed; `gh release create --prerelease
-  --verify-tag` with the notes — https://github.com/DeusMaximus/plamotrack/releases/tag/v0.4.0-alpha ;
-  **milestone M6.5 closed** (5/0). The notes lead with the upgrade path (nothing to migrate,
-  pull + build), the client-visible changes (`stage` on order rows, `GET /summary` +
-  `get_summary`, `sort`/`limit`, `/board` → `/`, the Orders `?status=` vocabulary, `board.*` →
-  `home.*`), the features, the three observed gate blocks, the known limitations (no phone
-  layout, #238, one worker, #223–#227, #230, M6.1).
-- **The gate, on tree `509f832`:** local packaged stack under Compose project
-  `plamotrack-release` (fresh volume; the dev `.env` gained `ALLOWED_HOSTS` for the run and
-  was restored) — migrate `Exited (0)`, matrix 0 failing, refusal rows 10, `/api/meta` and the
-  MCP `serverInfo` 0.4.0, archive manifest 0.4.0 / `d5e9362140ea`, T10 clean, `down -v`.
-  `deployment_gate.py --phase all` on testhost after a fresh-install reset (`down -v`, the tree
-  **wiped** before `git archive` — a stale `BoardPage.tsx` would have reached the frontend build —
-  `.env` regenerated by `host-prepare.sh`) — every phase green (local 179 ok, oidc 182 ok, T13 ×3).
-  The **tunnel phase crashed at DNS** (the route `plamotest.gunp.la` had been removed; the owner
-  re-added it → `http://10.1.1.129:8080`), then failed twice on the visitor attribution only — the
-  Mac's public address changed between the fetch and the check (an IPv6 temporary address
-  rotating, then the family flipping between connections) — and passed on the third run with
-  IPv4 pinned on both sides (`curl -4` for the visitor; a process-local `sitecustomize.py` on
-  `PYTHONPATH` restricting `socket.getaddrinfo` to `AF_INET`; scratchpad only, not committed).
-  **Lesson for the next release:** run the tunnel phase IPv4-pinned from the start, or give the
-  driver a `--visitor-family` option (#230's neighbour — the crash on an unresolvable name is
-  the same harness gap: a failed row, not a traceback).
-- **Decisions:** (1) the hand-off commits `main` gained mid-milestone were merged into the
-  integration branch before the release PR, so the merge commit's tree is the branch's — a
-  tree-hash argument with no caveat this time; (2) the release hand-off is this entry, after the
-  tag; (3) `m6.5-workbench` left in place (delete when the owner likes; it is `64d23de^2`).
-- **State:** `main` = `64d23de` + this entry; tag `v0.4.0-alpha` = `64d23de`. CI on `main`
-  triggered by the merge — check it. testhost left in the gate's end state (mode R, OIDC,
-  Keycloak up); gate state dirs under `~/.plamotrack-gate/` (this run's current; the 0.3.0 run's
-  aside as `…release-0.3.0-run-3`). Dev overlay up (`plamotrack-db-1`); Vite preview may still
-  be running from this session; the `api` preview stopped. **The LXC still runs 0.3.0** — the real
-  collection, untouched. Open: #238 (order dialog waiting state), #223–#227, #230.
-- **Next:** **the LXC upgrade** — back up (dump + `.env`), `git pull` to `v0.4.0-alpha`,
-  `up -d --build --wait`, sign in as before (nothing to claim, no migration); refresh the personal
-  Gunpla skill to the deployed version (memory: it lags main by design). Then M6.1 (FastMCP 4,
-  two PRs pending the owner's plan), #238, the lows.
