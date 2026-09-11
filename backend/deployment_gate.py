@@ -549,6 +549,19 @@ def _held_pids(ctx: Context) -> set[str]:
     return {row.strip() for row in rows if row.strip()}
 
 
+def _backends_released(during: set[str], poll, *, tries: int = 60, pause: float = 0.5) -> bool:
+    """Positive confirmation that none of the `during` PIDs remain after the
+    abort — polled up to `tries` times. A backend that lingers through every
+    poll (or a partial set where one PID stays) is never read as released; the
+    verdict is not defaulted to success (Codex #250 F6 — the same class as F2:
+    the cleanup must be confirmed, never assumed)."""
+    for _ in range(tries):
+        if not (during & poll()):
+            return True
+        time.sleep(pause)
+    return False
+
+
 def phase_modern_hold(ctx: Context) -> None:
     """T12's modern twin (#244): the `2026-07-28` era through the proxy chain on
     both `/mcp` spellings. The era has no standalone stream and no long tool, so
@@ -592,21 +605,13 @@ def phase_modern_hold(ctx: Context) -> None:
                 time.sleep(1)
             worker.join(timeout=hold + 90)
             ok = outcome.get("ok", False)
-            gone = bool(during)
-            for _ in range(60):
-                if during and not (during & _held_pids(ctx)):
-                    gone = True
-                    break
-                if not during:
-                    gone = False
-                    break
-                time.sleep(0.5)
-            held_ok = ok and bool(during) and gone
+            released = bool(during) and _backends_released(during, lambda: _held_pids(ctx))
+            held_ok = ok and released
             ctx.results.record(
                 f"modern hold {path}",
                 f"{outcome.get('message', '(no result)')}; backend pid(s) "
                 f"{sorted(during) or 'NONE'} held during, "
-                f"{'gone' if gone else 'LINGERING'} after abort",
+                f"{'gone' if released else 'LINGERING/absent'} after abort",
                 held_ok,
             )
             if not held_ok:

@@ -147,3 +147,25 @@ def test_a_startup_failure_still_disarms_the_hold_flag(fail_ups):
     with pytest.raises(gate.GateError, match="simulated startup failure"):
         gate.phase_modern_hold(ctx)
     assert host.env.get("PLAMOTRACK_ENABLE_TEST_HOLD") is None
+
+
+@pytest.mark.parametrize(
+    ("name", "during", "polls", "expect"),
+    [
+        ("released immediately", {"101", "102"}, [set()], True),
+        ("released after two polls", {"101"}, [{"101"}, {"101"}, set()], True),
+        ("lingers through every poll", {"101", "102"}, [{"101", "102"}], False),
+        ("partial release — one PID stays", {"101", "102"}, [{"102"}], False),
+    ],
+)
+def test_backends_released_confirms_absence_never_assumes_it(name, during, polls, expect):
+    """The cleanup verdict is a positive confirmation that the held PIDs are
+    gone: a lingering or partially-lingering backend polled to exhaustion is
+    False, never defaulted to success (Codex #250 F6). `polls` scripts the
+    successive `pg_stat_activity` reads; the last entry repeats."""
+    seq = list(polls)
+
+    def poll() -> set[str]:
+        return seq.pop(0) if len(seq) > 1 else seq[0]
+
+    assert gate._backends_released(during, poll, tries=5, pause=0) is expect, name
