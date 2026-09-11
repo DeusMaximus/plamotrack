@@ -41,6 +41,40 @@ Template:
 
 ---
 
+## 2026-09-11 — Claude Code (Opus 4.8) — PR #250 (#244 + #56) squash-MERGED into `m6.1-fastmcp4` as `d57af8b` after Codex rounds 1–3 (all NO-GO→fixed, CI green at `c884d09`); left on the integration branch on the owner's word; next is the mandatory final integration/release-candidate review, then the release PR onto `main` (v0.4.1-alpha)
+
+- **Done:** PR #250 (`feat/244-era-gate`, head `c884d09` — CI green: Backend/Frontend/Integration
+  pass; CodeRabbit skipped, reviews disabled for this base) **squash-merged into `m6.1-fastmcp4`**
+  → **`d57af8b`** (`M6.1: gate both protocol eras with real clients (#244), and the create_order
+  description/schema test (#56) (#250)`), on the owner's word ("merge into the integration branch
+  and we'll leave it there for now"). Feature branch deleted; squash style matches #246/#248.
+  Integration-branch tip: `c6cd383` → `d57af8b`.
+- **This session was the merge only** — no code changed, no review run, no release step. The
+  release-cadence memory (`plamotrack-release-cadence-027`) + the index were updated to the new tip.
+- **Note — nothing closed:** the merge landed on the **integration branch, not `main`**, so
+  `Closes #244`/`#56` did NOT fire — **#244 and #56 stay open** until the release PR merges to
+  `main` (a merge into the integration branch closes no issues; same as #241/#243/#242).
+- **Decisions (owner, standing — restated, still live):** release is **v0.4.1-alpha**; a
+  **mandatory final integration/release-candidate review runs before `m6.1-fastmcp4` merges to
+  `main`**, carrying the remaining acceptance rows; the **Built flip is deferred to the release PR**
+  (README/design §7.1/§11 stay Planned). **This is not permission to merge to `main`, tag, or
+  release** — each needs the owner's explicit go.
+- **State:** `main` = this entry (checkout on `main`, tree clean). `m6.1-fastmcp4` = `d57af8b`,
+  CI green, now holds the whole M6.1 branch (#241/#243/#242/#244) ready for the final review.
+  Nothing in flight. Rounds 1–3 on #250 are fully answered/recorded (see the #244 entry below;
+  lesson under "When rounds keep landing in one function, the fix is an invariant one level up" in
+  `.agents/lessons.md` — F2→F6→F7, closed at the `Host.psql` boundary with `-v ON_ERROR_STOP=1`).
+  testhost is in the gate end-state (OIDC, mode R) from the #244 remote gate; the real LXC untouched
+  (last recorded 0.4.0, unconfirmed from here). Scratchpad holds the #250 briefs/responses/gate results.
+- **Next:** the **final integration/release-candidate review** of the whole `m6.1-fastmcp4` branch
+  before it merges to `main` — the real-client matrix (MCP Inspector, Claude web, ChatGPT web,
+  Claude Desktop/Code), a conformance run against an unauthenticated build (the runner has no auth
+  flag), modern-hold through the Cloudflare Tunnel, and 3.x→4.x grant continuity (Codex demonstrated
+  a released 3.x grant surviving the 4.x upgrade/restart/backup-restore with a fixture provider —
+  record it formally here). Then the **release PR** onto `main` (merge commit, gated, **v0.4.1-alpha**,
+  Built flip; hold the release hand-off commit until after the merge), tag `v0.4.1-alpha`, then the
+  LXC upgrade. Open: #223–#227, #230, #238; #249 is a known-limitation line for the notes.
+
 ## 2026-09-11 — Claude Code (Opus 4.8) — #244 built on `feat/244-era-gate` (head `5eb84fa`, clean off `m6.1-fastmcp4` = `c6cd383`): both protocol eras gated with real clients + the #56 description/schema test; PR #250 open (now `1a05b82`), remote deployment gate GREEN on testhost; Codex rounds 1–3 answered (r1 1 P2 + 4 P3; r2 1 P3; r3 1 P3, all fixed, now `c884d09`), CI green; next the final integration review → merge → v0.4.1-alpha
 
 - **Done:** #244 whole (closes #244 + #56), one commit `5eb84fa`.
@@ -284,48 +318,3 @@ Template:
   four envelope assertions corrected to the challenge contract; the report to `.agents/spikes/241/`).
   Then #242 stacked, #244, the release PR (merge commit, gated, v0.5.0-alpha suggested). If the
   Backend cap bites again at a normal count, that is a CI issue to file, not a branch's.
-
-## 2026-09-11 — Claude Code (Fable 5.1) — M6.1 planned and filed: Codex's FastMCP 4 spike verified; **#241** (prep, `main`) → **#243** (bump) + **#242** (CIMD) + **#244** (gate) on integration branch `m6.1-fastmcp4`; the #241 Codex brief printed; the integration-branch rule generalised
-
-- **Done:** (1) 2026-09-08 — the brief for the FastMCP 4 compatibility spike printed; Codex ran it
-  (its entry is in `.agents/handoff/2026-09.md`; branch `spike/m61-fastmcp4` at `bbb58e7`, report
-  `.agents/spikes/2026-09-m61-fastmcp4.md` **on that branch only**, evidence under
-  `/private/tmp/plamotrack-m61-fastmcp4-20260908`). Its three headline findings re-verified against
-  FastMCP 4.0.3's source: `_revoke_upstream` calls `revoke_token` on FastMCP's upstream client, which
-  4.x's httpx2 client lacks — the `except Exception` hides the AttributeError and the provider is never
-  asked, while the fixture's `upstream_transport` injection builds authlib's old client, so the suite is
-  green for the wrong reason; CIMD clients resolve through a bounded cache and are no longer persisted
-  (`OAuthProxy.get_client`), so five `test_mcp_oauth_registrations.py` cases are obsolete; SDK 2's
-  registration handler refuses `private_key_jwt` before `register_client` runs. Codex's raw log at the
-  spike head: **2661 passed / 10 failed** — the five CIMD cases, one registration case, and four
-  era-probe assertions the brief got wrong (a failed bearer on `/mcp/` is the RFC 6750 challenge
-  header, not REST's `auth.bearer_invalid` envelope; rule 13's "on every route" wording misled).
-  Packaged local matrix 186/0; real 4.x (auto and forced-legacy) and 3.4.5 clients through nginx on
-  both spellings. (2) 2026-09-11, on the owner's "lets do it": **#241** (prep PR on 3.x — httpx as a
-  runtime dep, own the RFC 7009 upstream revocation POST behind an injectable transport, narrow the
-  catch-all, a control whose factory lacks `revoke_token`), **#242** (CIMD contract restated DCR-only,
-  an unreachable-document probe), **#243** (the atomic bump: lock, httpx2 test twin, mechanical fixes,
-  `authorization_response_iss_parameter_supported`, `private_key_jwt` refusal accepted, null 405 id,
-  era probes corrected), **#244** (gate both eras with real clients; the Built flip lives there) filed
-  under M6.1 beside #56, each with the attribution line. The Codex brief for #241 printed in chat
-  (scratchpad copy). (3) Docs: AGENTS "Git conventions" — the M6.5 paragraph generalised into the
-  integration-branch rule with M6.5 and M6.1 as instances; design §7.1 gained a sequencing paragraph;
-  #243 and #244 name their base branch.
-- **Decisions (owner, 2026-09-11):** two-PR shape — prep on 3.x first, then one atomic bump; CIMD
-  follows FastMCP 4's model (lifetime/cap/quota now DCR-only); the `private_key_jwt` refusal is the
-  contract; the discovery flag is added; the binding's 405 mirrors the SDK's null id; the four red
-  probes are fixed, not the app. **Integration branch `m6.1-fastmcp4`** cut from `main` after #241
-  merges; #243 → branch, #242 stacked on it, #244 → branch; release PR with a merge commit, gated,
-  suggested tag v0.5.0-alpha (the number is the owner's call). #241 alone goes straight to `main`.
-- **State:** `main` = `3eeca81` + this entry; tag `v0.4.0-alpha` = `64d23de`. `spike/m61-fastmcp4`
-  (`bbb58e7`, local, unpushed) merges cleanly onto `main` — #243 is rebuilt from its commits with the
-  lock regenerated against `main`'s; the report moves to `.agents/spikes/241/` in that PR.
-  `m6.5-workbench` still exists (`64d23de^2`). Tree clean, checkout on `main`, dev overlay up.
-  **The LXC** was last recorded on 0.3.0 with the 0.4.0 upgrade queued (liveness carries no version;
-  unconfirmed from here). The evidence dir under `/private/tmp` does not survive a reboot. Nothing
-  pushed this session.
-- **Next:** **#241** — the owner pastes the brief into Codex (branch `fix/241-upstream-revocation`
-  from `3eeca81`, PR to `main`, a fresh Codex chat reviews). Then cut `m6.1-fastmcp4` and start #243
-  from the spike commits. The LXC upgrade to 0.4.0 whenever; #238 and the lows (#223–#227, #230)
-  unaffected.
-
