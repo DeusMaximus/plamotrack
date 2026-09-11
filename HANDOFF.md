@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-09-11 — Claude Code (Fable 5.1) — #243 built on `feat/243-fastmcp4-bump` (nine commits, head `1715d66`), the FastMCP 4.0.3 / MCP SDK 2.2.0 bump with the era probes; **PR #246 open against `m6.1-fastmcp4`** (pushed on the owner's word), Codex brief printed; next: the Codex round, then #242 stacked
+## 2026-09-11 — Claude Code (Fable 5.1) — #243 built on `feat/243-fastmcp4-bump` (ten commits, head `4d6f6c7`), the FastMCP 4.0.3 / MCP SDK 2.2.0 bump with the era probes; PR #246 → one Codex round (GO, no findings, two claims corrected) → **MERGED into `m6.1-fastmcp4` as `c1949a4`** (squash); next #242 stacked on the integration branch
 
 - **Done:** #243 whole, rebuilt from the spike's commits against `main`'s lock (httpx already runtime, #241).
   `d31f9f9` the lock (fastmcp 4.0.3, mcp 2.2.0, httpx2/httpcore2 2.12.0, mcp-types, truststore; httpx-sse
@@ -75,15 +75,24 @@ Template:
   the drift); the seam reaches FastMCP's `_client` under a guard rather than patching `httpx2.AsyncClient`
   module-wide; the four probes corrected, not the server; the report at `.agents/spikes/241/`; the CI
   row proves the 401 on the wire beside the client. All seven are in the PR body's "Deliberate calls".
-- **State:** `feat/243-fastmcp4-bump` = `1715d66`, pushed; **PR #246** open against `m6.1-fastmcp4`
-  (`dd183db`, = `main` less the hand-offs), body in the review-brief shape, CI triggered. `main` holds
-  this entry (local unless pushed). The Codex brief printed in the 2026-09-11 session chat (scratchpad
-  `243-review-brief.md`). The packaged project `plamotrack-243` torn down (`down -v`); the control
-  worktree removed. Dev overlay up. Checkout parked on `main` for the review window.
-- **Next:** the owner pastes the brief into a fresh Codex chat; answer the round per
-  `.agents/testing-and-review.md` (reproduce at `1715d66` first; attribution line; coverage record).
-  Merge on the owner's word (squash, as #245). Then #242 stacked on this branch (remove the five strict
-  xfails when the contract is restated), #244, the release PR (merge commit, gated, v0.5.0-alpha suggested).
+- **The round (Codex, GPT-6):** GO, no P1–P3; every number re-measured and matching (control 10/6
+  with the per-case reasons, suite 2713/5/0, 4/4 mutants on the named assertions, the five strict
+  xfails run with the marks off — each red on the row assertion, CI green at `1715d66`); 26
+  supplementary cases (the two 401 writers per era and mode, the 75-entry route snapshot, the
+  metadata diff, Host/Origin under modern requests in both modes, `application_type`). Two claims
+  corrected at `4d6f6c7`: the TLS scope (exchange, both refreshes and a fetched client-assertion
+  JWKS move onto httpx2/truststore beside CIMD — not confined to CIMD, not proved inert; #244 measures
+  a private CA) and CI's fixture (now the SDK's real fallback: `initialize` at 2025-11-25, id 2);
+  the bare `Bearer` named as local mode's. Response posted (issuecomment-5627478871). The owner's
+  note: Codex spent heavily on a control-tracing pass — that is the brief's first job, and its output
+  is where the corrections came from; not a distraction on this round.
+- **State:** `m6.1-fastmcp4` = `c1949a4` (PR #246 squash-merged on the owner's word, branch deleted);
+  #243 stays open until the release PR lands the branch on `main`. `main` = the hand-offs (pushed).
+  Packaged project torn down; control worktree removed; dev overlay up; checkout on `main`.
+- **Next:** **#242** on a branch from `m6.1-fastmcp4` (restate the CIMD contract DCR-only, replace the
+  five strict xfails, the unreachable-document probe, the 3.x-state transition); then #244 (both eras
+  gated with real clients, the private-CA/TLS path, the CI legacy + frozen-3.x rows, the Built flip);
+  then the release PR (merge commit, gated, v0.5.0-alpha suggested; hold the hand-off until after).
 
 ## 2026-09-11 — Claude Code (Fable 5.1) — #241 built on `fix/241-upstream-revocation` → PR #245, one Codex Astra round (NO-GO on a cancelled Backend job only, no findings), **MERGED → `459c8b3`**; integration branch **`m6.1-fastmcp4` cut**; next #243
 
