@@ -490,6 +490,7 @@ def test_the_gate_s_all_phases_end_with_t13_and_the_tunnel_is_opt_in():
         "precheck",
         "lockout",
         "local",
+        "modern-hold",
         "break-glass",
         "trusted-proxies",
         "oidc",

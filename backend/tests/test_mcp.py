@@ -511,3 +511,69 @@ async def test_list_sort_and_limit_match_rest(client, retailer):
     assert [k["name"] for k in kits_tool] == ["Kit P", "Zaku II"]
     assert [o["id"] for o in orders_tool] == [o["id"] for o in orders_rest]
     assert [o["order_number"] for o in orders_tool] == ["P", "S"]
+
+
+# --- #56: create_order's description matches its schema -----------------------------------
+#
+# The tool's docstring once told an agent two false things and a validation
+# failure followed (#56): that a per-line `currency_code` could be omitted (the
+# item schema requires it), and to consult a `meta` resource that does not
+# exist. These assert the description and the exposed input schema agree, so a
+# regression of either is loud. The value axis is currency present/absent at the
+# line level; the asymmetry (order-level optional, per-line required) is read
+# from the schema an agent actually consumes.
+
+
+async def test_create_order_description_points_only_at_real_surfaces():
+    async with Client(mcp) as client:
+        tools = {t.name: (t.description or "") for t in await client.list_tools()}
+    description = tools["create_order"]
+    # #56 (2): the pointer for the instance currency is get_meta, a real tool —
+    # never the phantom `meta` resource the old docstring named.
+    assert "get_meta" in tools
+    assert "get_meta" in description
+    assert "meta resource" not in description.lower()
+    # Every other tool the description directs an agent to is real.
+    for named in ("search_catalog", "list_catalog_categories", "mark_order_received"):
+        assert named in description, named
+        assert named in tools, named
+
+
+async def test_create_order_schema_makes_the_order_currency_optional_and_the_line_required():
+    # #56 (1): the description says omit currency_code to take the instance
+    # default — true only at the order level. The exposed input schema must show
+    # exactly that asymmetry, or the description is lying to an agent.
+    async with Client(mcp) as client:
+        tool = next(t for t in await client.list_tools() if t.name == "create_order")
+    schema = tool.input_schema
+    assert "currency_code" in schema["properties"]
+    assert "currency_code" not in schema["required"]  # order level: optional
+    item = schema["properties"]["items"]["items"]
+    assert "currency_code" in item["properties"]
+    assert "currency_code" in item["required"]  # per line: required
+
+
+async def test_create_order_rejects_a_line_without_a_currency():
+    # The behaviour behind the schema: a line omitting currency_code is refused
+    # by the MCP boundary (a ToolError naming the field), which is exactly what
+    # the old docstring wrongly told an agent to do.
+    async with Client(mcp) as client:
+        with pytest.raises(ToolError) as raised:
+            await client.call_tool(
+                "create_order",
+                {
+                    "retailer": "USA Gundam Store",
+                    "order_date": "2026-08-02",
+                    "currency_code": "USD",
+                    "items": [
+                        {
+                            "item_type": "kit",
+                            "quantity": 1,
+                            "unit_price_minor": 2999,
+                            # currency_code omitted — required per line
+                            "kit": {"name": "RG Sazabi", "grade": "RG"},
+                        }
+                    ],
+                },
+            )
+    assert "currency_code" in str(raised.value)

@@ -1459,6 +1459,109 @@ def hold_stream(
         raw.close()
 
 
+def hold_stream_modern(base: str, bearer: Bearer, path: str, seconds: int) -> tuple[bool, str]:
+    """T12's modern twin (§7.1; #244): the `2026-07-28` era has no standalone GET
+    channel and opens no session, so the held stream is the response to a single
+    `tools/call` POST whose handler runs past the SDK's ping interval. plamotrack
+    exposes no long-running tool, so this requires the stack to arm
+    `PLAMOTRACK_ENABLE_TEST_HOLD` (`app.mcp_hold_probe`), which makes `get_meta`
+    hold a database connection for that many seconds — an isolated test
+    instance, never the shipped image. The client reads the SSE for `seconds`
+    with the connection silent, then **aborts by closing the socket** (the
+    modern era's cancellation: there is no DELETE); the caller verifies
+    server-side cancellation and connection cleanup out of band (the deployment
+    gate reads `pg_stat_activity`).
+
+    Fails if the chain never commits `text/event-stream`, sets a session id
+    (a modern response must not), buffers the keepalive (a gap at or beyond the
+    ping interval), or ends the stream before the deadline (the handler must
+    still be holding). Reads the socket raw for the same reason
+    `hold_stream` does. Reports the longest gap between bytes."""
+    parts = urlsplit(base)
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "get_meta",
+                "arguments": {},
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientInfo": {
+                        "name": "ingress_matrix",
+                        "version": "0",
+                    },
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                },
+            },
+        }
+    ).encode()
+
+    raw = socket.create_connection((parts.hostname, default_port(base)), timeout=10)
+    if parts.scheme == "https":
+        raw = TLS_CONTEXT.wrap_socket(raw, server_hostname=parts.hostname)
+    request = (
+        f"POST {path} HTTP/1.1\r\nHost: {parts.netloc}\r\n"
+        f"Authorization: Bearer {bearer.raw}\r\n"
+        "Accept: application/json, text/event-stream\r\nContent-Type: application/json\r\n"
+        "MCP-Protocol-Version: 2026-07-28\r\nMcp-Method: tools/call\r\nMcp-Name: get_meta\r\n"
+        f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+    ).encode() + body
+    try:
+        raw.sendall(request)
+        raw.settimeout(5)
+        header_deadline = time.monotonic() + max(seconds, 30)
+        head = b""
+        while b"\r\n\r\n" not in head:
+            try:
+                piece = raw.recv(4096)
+            except TimeoutError:
+                if time.monotonic() > header_deadline:
+                    return False, "no response headers within the hold window (a buffering proxy?)"
+                continue
+            if not piece:
+                return False, "closed before any response headers"
+            head += piece
+        header_block, body_bytes = head.split(b"\r\n\r\n", 1)
+        status_line, *header_lines = header_block.decode("latin-1").split("\r\n")
+        status = int(status_line.split(" ", 2)[1])
+        headers = {
+            name.strip().lower(): value.strip()
+            for name, value in (line.split(":", 1) for line in header_lines if ":" in line)
+        }
+        if status != 200 or not headers.get("content-type", "").startswith("text/event-stream"):
+            return False, f"POST answered {status} {headers.get('content-type')!r}"
+        if "mcp-session-id" in headers:
+            return False, "a modern response set mcp-session-id (it must not)"
+
+        started = time.monotonic()
+        last = started
+        chunks, received, max_gap = (1, len(body_bytes), 0.0) if body_bytes else (0, 0, 0.0)
+        while time.monotonic() - started < seconds:
+            try:
+                piece = raw.recv(4096)
+            except TimeoutError:
+                continue
+            now = time.monotonic()
+            if not piece:
+                return False, (
+                    f"the chain ended the stream after {now - started:.1f} s of {seconds}"
+                    f" ({chunks} chunk(s), max gap {max_gap:.1f} s) — the handler stopped holding"
+                )
+            max_gap, last = max(max_gap, now - last), now
+            chunks, received = chunks + 1, received + len(piece)
+        held = time.monotonic() - started
+        if chunks == 0:
+            return False, f"no bytes in {held:.1f} s (the stream committed but never pinged)"
+        return True, (
+            f"held {held:.1f} s (asked {seconds}); {chunks} chunk(s), {received} bytes;"
+            f" max gap {max_gap:.1f} s; no session id; aborted by close"
+        )
+    finally:
+        raw.close()
+
+
 def revoked_rows(tokens: Tokens) -> list[Row]:
     """After the read token is revoked: refused everywhere, in the same shape."""
     invalid = 'Bearer error="invalid_token"'

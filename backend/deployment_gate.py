@@ -24,8 +24,14 @@ made from outside, through the TLS front. Phases, in the order `all` runs them:
                   `PUBLIC_BASE_URL` names it, after which the dependency's 401 is
                   what an anonymous write earns. Nothing is lost in between.
   local           the ingress matrix (`ingress_matrix.py`) over https in local mode:
-                  claim, login, the PAT rows, the stream held on both spellings, a
-                  real MCP client's `tools/list`, the T10 log scan.
+                  claim, login, the PAT rows, the legacy stream held on both spellings,
+                  a real MCP client's `tools/list`, the T10 log scan.
+  modern-hold     the `2026-07-28` twin (#244): with the stack armed
+                  (`PLAMOTRACK_ENABLE_TEST_HOLD`, an isolated test instance) a modern
+                  `tools/call` SSE is held past the ping interval and aborted on both
+                  `/mcp` spellings, and the held database backend must then be gone —
+                  server-side cancellation and connection cleanup. The flag is
+                  disarmed again afterwards.
   break-glass     `recovery reset-password` and `revoke-sessions` from the host, and
                   what the old and new sessions see (T13's first clause).
   trusted-proxies what nginx records as the client before and after
@@ -514,6 +520,59 @@ def phase_local(ctx: Context) -> None:
     )
     expect(ctx, "/api/readyz from outside", get(ctx, "/api/readyz"), 404)
     scan_logs(ctx, [log_secrets])
+
+
+#: The marker `app.mcp_hold_probe` leaves on the held connection's last
+#: statement — typed here as a literal, an independent snapshot like the cookie
+#: names above, so the gate finds exactly that backend in pg_stat_activity.
+HOLD_PROBE_MARKER = "plamotrack_hold_probe"
+
+
+def _held_backends(ctx: Context) -> int:
+    rows = ctx.host.psql(
+        "select count(*) from pg_stat_activity where query like "
+        f"'%{HOLD_PROBE_MARKER}%' and pid <> pg_backend_pid();"
+    )
+    return int(rows[0]) if rows else 0
+
+
+def phase_modern_hold(ctx: Context) -> None:
+    """T12's modern twin (#244): the `2026-07-28` era through the proxy chain on
+    both `/mcp` spellings. The era has no standalone stream and no long tool, so
+    the stack is armed with `PLAMOTRACK_ENABLE_TEST_HOLD` (isolated test
+    instance) to make `get_meta` hold a database connection; the client holds
+    the modern SSE past the ping interval, aborts by closing the socket, and the
+    held backend must then be gone — server-side cancellation and connection
+    cleanup. Disarms the flag afterwards whatever happens."""
+    from ingress_matrix import Bearer, hold_stream_modern  # noqa: PLC0415
+
+    host = ctx.host
+    pat = ctx.load("pat-local")
+    bearer = Bearer(raw=pat, token_id="")
+    hold = max(ctx.hold, 20)
+    if _held_backends(ctx) != 0:
+        raise GateError("a hold-probe backend is already present before arming")
+    host.env_set(PLAMOTRACK_ENABLE_TEST_HOLD=str(hold + 60))
+    host.up()
+    try:
+        for path in ("/mcp/", "/mcp"):
+            ok, message = hold_stream_modern(ctx.base, bearer, path, hold)
+            gone = False
+            for _ in range(40):
+                if _held_backends(ctx) == 0:
+                    gone = True
+                    break
+                time.sleep(0.5)
+            ctx.results.record(
+                f"modern hold {path}",
+                f"{message}; cleanup {'ok' if gone else 'a backend LINGERS'}",
+                ok and gone,
+            )
+            if not (ok and gone):
+                raise GateError(f"modern hold on {path} failed")
+    finally:
+        host.env_set(PLAMOTRACK_ENABLE_TEST_HOLD=None)
+        host.up()
 
 
 def phase_break_glass(ctx: Context) -> None:
@@ -1144,13 +1203,23 @@ PHASES = {
     "precheck": phase_precheck,
     "lockout": phase_lockout,
     "local": phase_local,
+    "modern-hold": phase_modern_hold,
     "break-glass": phase_break_glass,
     "trusted-proxies": phase_trusted_proxies,
     "oidc": phase_oidc,
     "t13": phase_t13,
     "tunnel": phase_tunnel,
 }
-ALL = ("precheck", "lockout", "local", "break-glass", "trusted-proxies", "oidc", "t13")
+ALL = (
+    "precheck",
+    "lockout",
+    "local",
+    "modern-hold",
+    "break-glass",
+    "trusted-proxies",
+    "oidc",
+    "t13",
+)
 
 
 def main(argv: list[str]) -> int:

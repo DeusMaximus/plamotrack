@@ -2,6 +2,7 @@
 so agents hit identical business logic (fan-out/increment dispatch, de-dup search,
 stock guards) without any duplicated rules."""
 
+import os
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -82,6 +83,13 @@ mcp = FastMCP(
 from app.auth.mcp_auth import ToolScopeMiddleware  # noqa: E402
 
 mcp.add_middleware(ToolScopeMiddleware(mcp))
+
+# Test-only modern-hold instrumentation (#244): off unless the environment arms
+# it, so it runs after the scope check above and never in the shipped image.
+# See app/mcp_hold_probe.py — it adds no tool and no route.
+from app.mcp_hold_probe import hold_probe_seconds, install_hold_probe  # noqa: E402
+
+install_hold_probe(mcp, hold_probe_seconds(os.environ))
 
 
 @asynccontextmanager

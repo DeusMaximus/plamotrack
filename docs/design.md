@@ -1109,7 +1109,7 @@ feeling.
 | T9 | **Proxy trust.** A spoofed `X-Forwarded-For` from an untrusted peer is ignored for rate-limit keying and audit; from a `TRUSTED_PROXIES` peer it is honoured; `X-Forwarded-Host` never changes a redirect or a cookie; a `TRUSTED_PROXIES` peer sending `X-Forwarded-For: 127.0.0.1` still gets 404 from `/readyz`; every **self** `Location` names `PUBLIC_BASE_URL`'s scheme and host; a provider redirect names the configured endpoint and carries the canonical callback as its `redirect_uri`; a client redirect obeys its kind's binding, each kind its own row — a DCR client to a registered URI only (a different port on a registered loopback URI allowed, a different host refused), a DCR client under an operator allowlist needing both the allowlist and its registration, the synthesised upstream-id client refused or held to its configured callback, CIMD per its declaration; a forged `X-Forwarded-Host` changes none of them; an unbound `redirect_uri` is 400 with no `Location`; and a trailing-slash spelling of a callback or authorize path is 404 with no `Location` and no query string echoed. | pytest |
 | T10 | **Leakage.** Captured logs contain no token, password or session id across a full login, PAT and MCP run; `Cache-Control: no-store` on families 2–7 and on family 8's transaction and credential responses — consent GET and POST, callback, token, revoke, and their failure paths — with discovery asserted to carry its declared public caching instead; the archive's table registry contains no auth table (a rule-9 spec test); `GET /auth/session` and `/healthz` carry no version. | pytest |
 | T11 | **Timing shape.** An unknown token prefix and a wrong secret produce identical status and body; the compare is `compare_digest` by construction, and the test asserts the code path, not a stopwatch. | pytest |
-| T12 | **The deployment path.** The documented Caddy + compose configuration on a fresh VM: TLS, setup, login, a PAT REST call, MCP initialize through the proxy with a stream held open past 60 s, OAuth discovery through Caddy → nginx → api, `/api/readyz` 404 from outside, an `ALLOWED_HOSTS` lockout and its recovery. Scripted where possible; results recorded in the release notes. **Scripted (#194):** `backend/deployment_gate.py` runs it from a workstation over ssh — the matrix over https with the stream held on both `/mcp` spellings and its longest inter-byte gap reported (the SDK pings every 15 s, so a hold that only waited would prove nothing), both mode-R lockouts, the `TRUSTED_PROXIES` observation, the OIDC-mode matrix signed in, and the tunnel variant — and prints the results block the release notes carry. | release gate |
+| T12 | **The deployment path.** The documented Caddy + compose configuration on a fresh VM: TLS, setup, login, a PAT REST call, MCP initialize through the proxy with a stream held open past 60 s, OAuth discovery through Caddy → nginx → api, `/api/readyz` 404 from outside, an `ALLOWED_HOSTS` lockout and its recovery. Scripted where possible; results recorded in the release notes. **Scripted (#194):** `backend/deployment_gate.py` runs it from a workstation over ssh — the matrix over https with the legacy stream held on both `/mcp` spellings and its longest inter-byte gap reported (the SDK pings every 15 s, so a hold that only waited would prove nothing), both mode-R lockouts, the `TRUSTED_PROXIES` observation, the OIDC-mode matrix signed in, and the tunnel variant — and prints the results block the release notes carry. **Its modern twin (#244), the `modern-hold` phase:** with the stack armed by `PLAMOTRACK_ENABLE_TEST_HOLD` (an isolated test instance), a `2026-07-28` `tools/call` SSE is held past the ping interval and aborted on both spellings, and the held database backend is then gone in `pg_stat_activity` — the era's cancellation (there is no session to DELETE) and connection cleanup. | release gate |
 | T13 | **Recovery.** The break-glass reset revokes sessions and restores access; a restore from the complete set — database (the OAuth state is a table in it, #192) and `.env` — brings back sessions, PATs and an *existing* MCP link — proved through public behaviour: the old client's refresh token returns 200 from `POST /mcp/token`, the access token completes an MCP initialize, and zero registrations occur after the restore; a restore without the env secrets leaves data intact and credentials re-mintable; a restore without the store — a dump taken before the link, or a signing key rotated — leaves data, sessions and PATs intact and MCP links to re-establish, as documented; `tests/test_mcp_oauth.py` proves the store-and-key rows in-process. **Scripted (#194):** the `break-glass` and `t13` phases of `backend/deployment_gate.py` — the reset and the revocation from the host, then a real DCR client linked through the chain and the three restores with the documented commands verbatim, each asserted through public behaviour (the old refresh token's status, an initialize with the new access token, the registration count). | release gate |
 
 ### 5.9 Implementation split
@@ -2236,8 +2236,25 @@ assumed (#242); and a dynamic registration asking for `private_key_jwt` is refus
 SDK before this server's canonicalisation runs (#243). The work lands in that order —
 #241 on `main` first, a 3.x fix that ships alone; then the bump (#243), the CIMD contract
 (#242) and the gate (#244) on the integration branch `m6.1-fastmcp4`, released together
-(the rule is in AGENTS.md → Git conventions). The marker above flips to Built with #244,
-never with the dependency version.
+(the rule is in AGENTS.md → Git conventions).
+
+**The gate (#244).** Completion is coverage of both eras with real clients, not the version
+bump. What proves it: `tests/test_mcp_eras.py` drives every control on the mount through the
+modern era and the in-memory client through both; `tests/test_mcp_modern_hold.py` and the
+deployment gate's `modern-hold` phase are the modern twin of the legacy held-stream — the
+`2026-07-28` era commits `text/event-stream` and keepalive-pings a handler that runs past the
+ping interval even with no notification (`json_response=False`), so a held modern SSE is
+observed, aborted, and its server-side cancellation and connection cleanup verified on both
+`/mcp` spellings (the mount exposes no long-running tool, so the hold is built around an
+existing `get_meta` call made to wait by env-gated test instrumentation,
+`app/mcp_hold_probe.py`, off in the shipped image — the same class of test-only seam as the
+principal injection of §5.5); CI lists the tools through nginx with a 4.0.3 client in both
+`auto` (modern) and `mode="legacy"` and with a frozen FastMCP 3.4.5 / SDK 1.29.0 client; and
+a real-client acceptance matrix (MCP Inspector, Claude web and ChatGPT web through the
+provider's OAuth, Claude Desktop and Claude Code by PAT, a conformance run) plus the packaged
+deployment gate (T12/T13, both auth modes) is recorded in the release notes as observed. The
+marker above, README's roadmap row and §11 flip to Built **in the release PR** that lands the
+branch on `main` — after that gate and matrix pass — never with the dependency version.
 
 ---
 
