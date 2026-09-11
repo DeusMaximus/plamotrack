@@ -87,7 +87,10 @@ revocation) rather than to the entry points one at a time:
   revocation. Every dynamically registered client is a **public** client —
   `token_endpoint_auth_method=none`, PKCE — whatever it asked for, and the
   registration response says so with no secret and no secret expiry
-  (`register_client`). The choice is scope, not a claim that a secret would
+  (`register_client`); the one request that never reaches it is a registration
+  asking for `private_key_jwt`, which MCP SDK 2 refuses first — 400
+  `invalid_client_metadata` — accepted as the contract with FastMCP 4 (#243).
+  The choice is scope, not a claim that a secret would
   protect nothing — a confidential registration's secret would guard that
   registration's stolen refresh token — but the measured clients (#190) are
   a public DCR client and two CIMD clients, and confidential DCR would mean
@@ -292,19 +295,20 @@ from functools import partial
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit
 
-import httpx
-from authlib.integrations.httpx_client import AsyncOAuth2Client
+import httpx2
 from fastmcp.server.auth import AccessToken, TokenVerifier
 from fastmcp.server.auth.auth import JWT_BEARER_ASSERTION_TYPE, TokenHandler
 from fastmcp.server.auth.cimd import CIMDAssertionValidator
 from fastmcp.server.auth.handlers.authorize import AuthorizationHandler
 from fastmcp.server.auth.oauth_proxy import OAuthProxy
 from fastmcp.server.auth.oauth_proxy.models import (
+    HTTP_TIMEOUT_SECONDS,
     ProxyDCRClient,
     UpstreamTokenSet,
     _hash_token,
     _matches_registered_redirect_uri,
 )
+from fastmcp.server.auth.oauth_proxy.upstream import AsyncOAuth2Client
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.utilities.auth import decode_jwt_header
@@ -1772,11 +1776,13 @@ class PlamotrackOAuthProxy(OAuthProxy):
         self._state_store = state_store
         self._last_cull = -math.inf
         self.assertion_validator = RestrictedKeyAssertionValidator()
-        #: Test seam: an httpx transport the upstream code exchange and refresh
-        #: go through instead of the network, so the suite can play the provider.
-        #: None on the shipped app — nothing sets it. Revocation is not on it:
-        #: that goes through the browser login's provider client (#241).
-        self.upstream_transport: httpx.AsyncBaseTransport | None = None
+        #: Test seam: an httpx2 transport — the network boundary *under*
+        #: FastMCP's own upstream client — that the code exchange and the
+        #: transparent refresh go through instead of the network, so the suite
+        #: can play the provider (`_create_upstream_oauth_client`). None on the
+        #: shipped app — nothing sets it. Revocation is not on it: that goes
+        #: through the browser login's provider client (#241).
+        self.upstream_transport: httpx2.AsyncBaseTransport | None = None
         super().__init__(
             # The SDK keeps these as attributes; on this class they are the
             # properties below, and the constructor's values are not kept.
@@ -1884,18 +1890,24 @@ class PlamotrackOAuthProxy(OAuthProxy):
             pass
 
     def _create_upstream_oauth_client(self) -> AsyncOAuth2Client:
-        if self.upstream_transport is None:
-            return super()._create_upstream_oauth_client()
-        return AsyncOAuth2Client(
-            client_id=self._upstream_client_id,
-            client_secret=(
-                self._upstream_client_secret.get_secret_value()
-                if self._upstream_client_secret is not None
-                else None
-            ),
-            token_endpoint_auth_method=self._token_endpoint_auth_method,
-            transport=self.upstream_transport,
-        )
+        """FastMCP's own upstream client, always — the factory the code exchange
+        and the transparent refresh run on in production. Under test its HTTP
+        client is re-homed onto `upstream_transport`: a transport *under* the
+        object under test, never a client in its place. The seam that stood
+        here built authlib's client whenever a transport was set, and a suite
+        green on that client hid that FastMCP 4's has no revoke method (#241;
+        `.agents/lessons.md` → "The fake stood in for the very object under
+        test"). `_client` is FastMCP 4.0's attribute (`oauth_proxy/upstream.py`),
+        and the guard makes a rename a loud failure rather than a silent bypass;
+        the client it replaces has opened nothing."""
+        client = super()._create_upstream_oauth_client()
+        if self.upstream_transport is not None:
+            if not isinstance(getattr(client, "_client", None), httpx2.AsyncClient):
+                raise TypeError("FastMCP's upstream client no longer holds an httpx2 client")
+            client._client = httpx2.AsyncClient(
+                timeout=HTTP_TIMEOUT_SECONDS, transport=self.upstream_transport
+            )
+        return client
 
     # -- the client contract: registration -------------------------------------------
 
@@ -1903,7 +1915,12 @@ class PlamotrackOAuthProxy(OAuthProxy):
         """Every dynamically registered client is a public client — `none`,
         PKCE — whatever method it asked for, and the registration response
         says so (RFC 7591 §3.2.1: the server may substitute requested
-        metadata; the response describes what was registered). The SDK's
+        metadata; the response describes what was registered). One request
+        never reaches here: MCP SDK 2's handler refuses `private_key_jwt`
+        outright — 400 `invalid_client_metadata`, RFC 7591 §3.2.2 — before
+        this method runs, and that refusal is the contract (#243): the method
+        is a CIMD client's, verified against its document, and a registration
+        brings no document. The SDK's
         handler mints a secret for any method but `none` (its default when
         the field is absent or null is `client_secret_post`), passes the
         object here and returns **that object**, while FastMCP stores a
@@ -2038,8 +2055,9 @@ class PlamotrackOAuthProxy(OAuthProxy):
     def discovery_metadata(self) -> OAuthMetadata:
         """The authorization-server document (RFC 8414 §2), owned here rather
         than inherited: the SDK's `build_metadata` for the endpoints under the
-        issuer, PKCE, the scopes and the grant types, FastMCP's CIMD flag, and
-        then the client contract as this server actually enforces it — the
+        issuer, PKCE, the scopes and the grant types, FastMCP's CIMD flag and
+        its RFC 9207 `iss` flag, and then the client contract as this server
+        actually enforces it — the
         two methods for the token endpoint and for the revocation endpoint,
         and the one assertion algorithm. The SDK's metadata advertised the
         shared-secret methods it supports in general and none of what this
@@ -2053,6 +2071,11 @@ class PlamotrackOAuthProxy(OAuthProxy):
             self.revocation_options or RevocationOptions(),
         )
         metadata.client_id_metadata_document_supported = self._cimd_manager is not None
+        # RFC 9207: every authorization response the proxy issues carries `iss`
+        # — FastMCP 4 stamps its own redirects and the one this server's
+        # `authorize` builds — and FastMCP's own document says so; the one
+        # owned here must say the same (#243).
+        metadata.authorization_response_iss_parameter_supported = True
         metadata.token_endpoint_auth_methods_supported = list(CLIENT_AUTH_METHODS)
         metadata.token_endpoint_auth_signing_alg_values_supported = list(
             CLIENT_ASSERTION_ALGORITHMS

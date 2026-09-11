@@ -15,7 +15,10 @@ page); the requests under test are not.
 `token_endpoint_auth_method=none`, PKCE — whatever it asked for, and the
 registration response says exactly that (RFC 7591 §3.2.1: substituted
 metadata, described truthfully; no `client_secret`, no
-`client_secret_expires_at`). Registration is open, so a downstream secret
+`client_secret_expires_at`); the one request never canonicalised is a
+registration asking for `private_key_jwt`, which MCP SDK 2 refuses before
+this server's registration runs — accepted as the contract with FastMCP 4
+(#243). Registration is open, so a downstream secret
 would be minted to whoever asks and would authenticate nothing that PKCE and
 the rotating refresh token do not; the authority is the owner's upstream
 login and the grant machinery. A CIMD client authenticates as its document
@@ -60,6 +63,7 @@ from joserfc import jwt
 from joserfc.jwk import ECKey, RSAKey
 
 from app.auth.mcp_oauth import MCP_OAUTH_ATTR
+from app.auth.mcp_oauth_state import CLIENT_COLLECTION
 from app.services import audit
 from tests.oidc_fake import OWNER_SUB, FakeIdp
 from tests.test_mcp_oauth import (
@@ -159,13 +163,14 @@ def grant_records(rows) -> bool:
 
 @pytest.mark.parametrize(
     "requested",
-    ["absent", None, "none", "client_secret_post", "client_secret_basic", "private_key_jwt"],
+    ["absent", None, "none", "client_secret_post", "client_secret_basic"],
 )
 async def test_every_dynamic_registration_is_a_public_client(requested):
     """RFC 7591 §3.2.1: the registration response describes what was
     registered. Whatever method a registration asks for — none, the SDK's
-    default when the field is absent or null, either shared-secret method,
-    private_key_jwt — the client is registered public, the response says
+    default when the field is absent or null, either shared-secret method
+    (`private_key_jwt` is the next test's: refused, not canonicalised, since
+    FastMCP 4) — the client is registered public, the response says
     `none` and carries no secret and no secret expiry, and the stored client
     agrees. The whole lifecycle then runs on `client_id` alone: the code
     exchange, a refresh, a revocation that ends the grant. The reviewed head
@@ -335,6 +340,30 @@ async def test_the_hint_is_advice_and_either_half_ends_the_grant(presented, hint
 
 
 # --- CIMD clients authenticate as their document says ---------------------------------------
+
+
+async def test_a_dynamic_registration_asking_for_private_key_jwt_is_refused():
+    """The one method the registration does not canonicalise. MCP SDK 2's
+    handler refuses it before `register_client` runs — 400
+    `invalid_client_metadata` naming the method (RFC 7591 §3.2.2), `no-store`,
+    nothing stored — and that refusal is the contract (#243): the method is a
+    CIMD client's, verified against its document (the CIMD rows below), and a
+    registration brings no document. FastMCP 3 let the request through and
+    this server registered a public client for it; the parametrised case above
+    held that row until the bump."""
+    async with oauth_app(FakeIdp()) as (_, client):
+        before = [row for row in await _state_rows() if row[0] == CLIENT_COLLECTION]
+        refused = await client.post(
+            "/mcp/register", json={**REGISTRATION, "token_endpoint_auth_method": "private_key_jwt"}
+        )
+        assert refused.status_code == 400, refused.text
+        body = refused.json()
+        assert body["error"] == "invalid_client_metadata", body
+        assert "private_key_jwt" in body["error_description"], body
+        assert "client_id" not in body
+        assert refused.headers.get_list("cache-control") == ["no-store"]
+        after = [row for row in await _state_rows() if row[0] == CLIENT_COLLECTION]
+        assert after == before == []
 
 
 async def cimd_link(client, fake: FakeIdp, key: RSAKey | None) -> dict:
@@ -544,6 +573,10 @@ async def test_discovery_advertises_exactly_the_admitted_client_authentication(p
         document = response.json()
     assert document["token_endpoint_auth_methods_supported"] == ["none", "private_key_jwt"]
     assert document["revocation_endpoint_auth_methods_supported"] == ["none", "private_key_jwt"]
+    # RFC 9207 (#243): the document owned here says what FastMCP 4's own says,
+    # and what every authorization response does — the next test measures the
+    # redirect, the lifecycle suite's denial case the error redirect.
+    assert document["authorization_response_iss_parameter_supported"] is True
     assert document["token_endpoint_auth_signing_alg_values_supported"] == ["RS256"]
     assert document["revocation_endpoint_auth_signing_alg_values_supported"] == ["RS256"]
     for field in (
@@ -561,6 +594,26 @@ async def test_discovery_advertises_exactly_the_admitted_client_authentication(p
     assert document["scopes_supported"] == ["openid"]
     assert document["grant_types_supported"] == ["authorization_code", "refresh_token"]
     assert document["client_id_metadata_document_supported"] is True
+
+
+async def test_every_authorization_response_names_the_issuer():
+    """RFC 9207 §2: the `iss` on the code redirect is the issuer discovery
+    names, byte for byte — the one FastMCP 4 stamps and the document above
+    advertises. A client that checks it (SDK 2's does, when the document says
+    so) would otherwise refuse every code this server issues."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        registered = await client.post("/mcp/register", json=REGISTRATION)
+        assert registered.status_code == 201, registered.text
+        _, challenge = _pkce()
+        started = await authorize(client, registered.json()["client_id"], challenge=challenge)
+        approved = await consent(client, started.headers["location"])
+        returned = await idp_return(client, fake, approved.headers["location"])
+        assert returned.status_code == 302, returned.text
+        query = _query(returned.headers["location"])
+        assert "code" in query
+        assert query["iss"] == f"{BASE}/mcp"
 
 
 async def test_an_assertion_algorithm_not_advertised_is_refused(monkeypatch):

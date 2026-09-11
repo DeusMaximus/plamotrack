@@ -318,8 +318,11 @@ jobs:
             || { echo "expected between 1 and 10 rows — the per-address refusal budget"; exit 1; }
 
       # The transport is bearer-only (§5.5 family 7; #189): a real MCP client
-      # with the token the matrix minted lists the tools through nginx, and
-      # the same client without one is refused at the handshake.
+      # with the token the matrix minted lists the tools through nginx, and the
+      # same client without one is refused before it lists anything — SDK 2's
+      # client probes the modern era and falls back to the handshake, and each
+      # of those two requests, as a 4.0.3 client sends it, is 401 on the wire
+      # (#243; the legacy-pinned and frozen-3.x siblings are #244's).
       - name: Smoke-test MCP through nginx with a personal access token
         working-directory: backend
         run: |
@@ -330,22 +333,66 @@ jobs:
           import asyncio
           import os
 
+          import httpx
           from fastmcp import Client
+          from mcp.shared.exceptions import MCPError
+
+          URL = "http://127.0.0.1:8080/mcp/"
+          ACCEPT = {"Accept": "application/json, text/event-stream"}
+          # The two requests an anonymous SDK 2 client sends before it gives up,
+          # as a 4.0.3 client sends them (the M6.1 spike's capture; Codex #246
+          # round 1): the modern probe, id 1, then the handshake it falls back
+          # to, id 2 at 2025-11-25. Both are 401 on the wire with the bare RFC
+          # 6750 challenge (local mode's; OIDC mode's adds resource_metadata);
+          # the client folds that into a status-less stand-in (INTERNAL_ERROR,
+          # "Server returned an error response"), so the status is read off
+          # the wire beside it (#243).
+          DISCOVER = (
+              {
+                  "jsonrpc": "2.0",
+                  "id": 1,
+                  "method": "server/discover",
+                  "params": {
+                      "_meta": {
+                          "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                          "io.modelcontextprotocol/clientInfo": {"name": "ci", "version": "0"},
+                          "io.modelcontextprotocol/clientCapabilities": {},
+                      }
+                  },
+              },
+              {**ACCEPT, "MCP-Protocol-Version": "2026-07-28", "Mcp-Method": "server/discover"},
+          )
+          INITIALIZE = (
+              {
+                  "jsonrpc": "2.0",
+                  "id": 2,
+                  "method": "initialize",
+                  "params": {
+                      "protocolVersion": "2025-11-25",
+                      "capabilities": {},
+                      "clientInfo": {"name": "ci", "version": "0"},
+                  },
+              },
+              ACCEPT,
+          )
 
 
           async def check() -> None:
-              async with Client(
-                  "http://127.0.0.1:8080/mcp/", auth=os.environ["PLAMOTRACK_PAT"]
-              ) as client:
+              async with Client(URL, auth=os.environ["PLAMOTRACK_PAT"]) as client:
                   tools = await client.list_tools()
                   assert any(tool.name == "list_kits" for tool in tools)
               try:
-                  async with Client("http://127.0.0.1:8080/mcp/") as client:
+                  async with Client(URL) as client:
                       await client.list_tools()
-              except Exception as exc:  # the handshake is refused: 401
-                  assert "401" in str(exc), exc
+              except MCPError as exc:  # refused before anything was listed
+                  assert exc.code == -32603, exc  # the SDK's INTERNAL_ERROR stand-in
               else:
                   raise AssertionError("the MCP endpoint answered without a token")
+              for body, headers in (DISCOVER, INITIALIZE):
+                  refused = httpx.post(URL, json=body, headers=headers)
+                  assert refused.status_code == 401, (body["method"], refused.status_code)
+                  assert refused.headers.get("www-authenticate") == "Bearer", refused.headers
+                  assert "mcp-session-id" not in refused.headers
 
 
           asyncio.run(check())

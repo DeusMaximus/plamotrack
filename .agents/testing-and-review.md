@@ -559,8 +559,11 @@ v0.2.4.1, v0.2.4.2), so it is not a formality either.
    (`__version__`), `backend/pyproject.toml`, and the `plamotrack-backend` entry in
    `backend/uv.lock` via `uv lock` (never hand-edited). Through a PR like anything
    else. Two tests hold the version, one of which pins `pyproject.toml` against `app/__init__.py` (#78).
-3. **Check the two surfaces**, not the edit: `GET /meta` and the MCP handshake's
-   `serverInfo.version` both report the new number.
+3. **Check the surfaces**, not the edit: `GET /meta`, the legacy MCP handshake's
+   `serverInfo.version` and a modern client's `server_info` (`Client(...)` in its
+   default `auto` mode, which negotiates `2026-07-28`; `mode="legacy"` for the
+   handshake) all report the new number — the two eras are decided per request and
+   one can be right while the other is stale (#243).
 4. **Packaged stack, from the tagged commit:**
    ```bash
    docker compose up -d --wait --build     # --build is load-bearing; see AGENTS.md

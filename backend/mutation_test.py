@@ -5980,6 +5980,39 @@ CASES += [
     ),
 ]
 
+# --- #243: the FastMCP 4 bump — the seam under FastMCP's own upstream client, the
+# binding's 405 mirroring the SDK's null id, the RFC 9207 discovery flag. --------------
+CASES += [
+    (
+        "243-1. the twin is bypassed and FastMCP's client reaches for the network",
+        MCP_OAUTH,
+        "        client = super()._create_upstream_oauth_client()\n        if self.upstream_transport is not None:\n",
+        "        client = super()._create_upstream_oauth_client()\n        if False:\n",
+        "the_upstream_client_is_fastmcps_own_under_the_twin",
+    ),
+    (
+        "243-2. the binding's 405 keeps SDK 1's id",
+        DEP,
+        '            id=None,\n            error=ErrorData(code=INVALID_REQUEST, message="Method Not Allowed"),\n',
+        '            id="server-error",\n            error=ErrorData(code=INVALID_REQUEST, message="Method Not Allowed"),\n',
+        "the_binding_refusal_is_the_sdk_protocol_error",
+    ),
+    (
+        "243-3. the binding's null id is dropped from the document",
+        DEP,
+        "            error.model_dump_json(by_alias=True, exclude_unset=True),\n",
+        "            error.model_dump_json(by_alias=True, exclude_none=True),\n",
+        "the_binding_refusal_is_the_sdk_protocol_error",
+    ),
+    (
+        "243-4. discovery denies the issuer parameter every redirect carries",
+        MCP_OAUTH,
+        "        metadata.authorization_response_iss_parameter_supported = True\n",
+        "        metadata.authorization_response_iss_parameter_supported = False\n",
+        "discovery_advertises_exactly_the_admitted_client_authentication",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
