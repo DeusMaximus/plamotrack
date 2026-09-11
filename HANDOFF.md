@@ -41,6 +41,57 @@ Template:
 
 ---
 
+## 2026-09-11 — Claude Code (Fable 5.1) — #242 built on `feat/242-cimd-dcr-only` (three commits, head `e0b5f24`, from `m6.1-fastmcp4` = `c1949a4`): the client-record contract restated DCR-only, the five strict xfails replaced, the 0.4.0-row transition and the document outage probed; **pushed, PR #248 open against the branch**, the Codex brief printed; next #244
+
+- **Done:** #242 whole. `e0b5f24` the suite and the proxy: `tests/test_mcp_oauth_registrations.py`
+  12 → 17 functions / 20 cases — a CIMD client stored nowhere before or after its link, the
+  adapter's permanent-stays-permanent rule driven over the record's three states, a CIMD client
+  resolving and linking at the registrations' cap, a lookup from `/mcp/token` or `/mcp/revoke`
+  materialising no record (`401 invalid_grant` / `200`, the collection empty), the cull at
+  creation rolling expired rows over on its one caller (the registration), FastMCP 4's own
+  cache bound looser than ours with its store path writing through ours; **the transition** —
+  a real 3.4.5 row (captured in a throwaway 3.4.5 venv, `ProxyDCRClient.model_dump(mode="json")`,
+  pasted as a literal) in both lifetimes is the fallback while the document is unreachable
+  (resolves, links), deleted at the first successful fetch, then an unreachable document leaves
+  the client unknown; an expired row backs nothing and waits for the cull; **the outage** — the
+  document's own cache policy decides a brief outage's cost in a running process (kept an hour
+  by default → 200; `no-store` → 401), and after a restart an unreachable document makes the
+  client's own refresh and revocation `401 invalid_client` (provider asked nothing, grant
+  standing, no revocation row) while the access token works and the transparent refresh reaches
+  the provider, and the same refresh token and revocation succeed once the host answers (the real
+  `CIMDFetcher.fetch` in front of a faked `ssrf_safe_fetch_response`). The proxy: `ClientRecords`'
+  docstring, the `CIMD_CACHE_ENTRIES` note, the writer inventory and the cull comment restated;
+  the dead `except ClientRecordsFull` in `get_client` removed (no lookup writes now). `71abf65`
+  the harness: scan-29 re-pointed at the registration rollover; `242-1` (a later write re-arms a
+  permanent record), `242-2` (our cache bound raised above FastMCP's). `dbe5ed1` the docs: AGENTS
+  rule 14's client-records paragraph, design §5.6's row, a dated amendment closing §5.9 item 11,
+  operations' MCP-client paragraph (the transition sentence lives there; the "Upgrading to
+  0.5.0" section is the release PR's).
+- **Verified:** the file green here (20); **negative control** in a worktree of `dd183db`
+  (3.4.5, own venv) **11 red / 9 green** — every red on the row assertion, the fallback's 200, or
+  3.x's missing `MAX_CACHE_SIZE`; the greens the DCR-side behaviours both versions share (the PR
+  body has the table); harness `-k 242-` **2/2** and `-k scan-29` **1/1** killed (643 cases / 57
+  files re-derived); full backend suite **2725 passed, 0 failed, 0 xfailed, 20m42s** (the five strict xfails gone); ruff clean. Measured, not assumed: `401
+  invalid_grant` for a never-issued refresh token is FastMCP's `TokenHandler` (MCP spec's 401
+  over RFC 6749's 400), already pinned four times in `test_mcp_oauth.py`; FastMCP 4's proxy calls
+  `get_client` nowhere but the CIMD manager, so the transparent refresh never resolves the client;
+  `application_type` is the one field 4.0.3 added to `ProxyDCRClient`, with a default.
+- **Decisions (mine, for the owner to ratify on the PR — eight "Deliberate calls" in the body):**
+  the dead except removed rather than kept; the adapter rule kept and tested at the seam though
+  no FastMCP writer drives it; our 256 bound kept beside FastMCP's 1000; the outage contract
+  recorded, not changed (no database copy of the document); the 0.4.0 row a captured literal;
+  the SDK's 401 pinned; scan-29 re-pointed not retired; the upgrade note left to the release.
+- **State:** branch `feat/242-cimd-dcr-only` at `e0b5f24`, pushed; **PR #248 open against
+  `m6.1-fastmcp4`** (= `c1949a4`, unchanged), body complete (suite count edited in after the run),
+  bound to the desktop session for CI; the Codex brief printed in chat (scratchpad copy
+  `242-review-brief.md`); the control worktree removed. `main` = this entry. Checkout back on the
+  feature branch, tree clean, dev overlay up. #243 stays open until the release lands.
+- **Next:** the Codex round on #248 (this file's reviewer for fifteen rounds; GLM is the roster
+  default — owner's call), the response, the merge into the integration branch on the owner's word. Then **#244** (both eras gated with real clients — Claude web and ChatGPT web
+  through a real document fetch belong there — the private-CA/TLS path, the CI legacy + frozen-3.x
+  rows, the Built flip), then the release PR (merge commit, gated, v0.5.0-alpha suggested; hold
+  the hand-off until after).
+
 ## 2026-09-11 — Claude Code (Fable 5.1) — #243 built on `feat/243-fastmcp4-bump` (ten commits, head `4d6f6c7`), the FastMCP 4.0.3 / MCP SDK 2.2.0 bump with the era probes; PR #246 → one Codex round (GO, no findings, two claims corrected) → **MERGED into `m6.1-fastmcp4` as `c1949a4`** (squash); next #242 stacked on the integration branch
 
 - **Done:** #243 whole, rebuilt from the spike's commits against `main`'s lock (httpx already runtime, #241).
@@ -226,40 +277,3 @@ Template:
   `up -d --build --wait`, sign in as before (nothing to claim, no migration); refresh the personal
   Gunpla skill to the deployed version (memory: it lags main by design). Then M6.1 (FastMCP 4,
   two PRs pending the owner's plan), #238, the lows.
-
-## 2026-09-10 — Claude Code (Fable 5.1) — #234 (M6.5 PR 4/4) built on `feat/234-settings-about-e2e-readme`: Settings chrome, the plain description on sign-in and About, the last glyph, seven captures, README and design §13 marked built; **PR #239 open against `m6.5-workbench` at `c7965bf`, no review (owner's call) — merge when CI is green, then the release**
-
-- **Done:** the Settings section navigation in the sidebar's row shape (`navRowClass` exported from
-  `Layout.tsx`), `SectionHeader` at the bench card's scale, the Access tokens table in the list
-  pages' shape (`TABLE_HEAD_ROW_CLASS`, bordered); `layout.description` ("A self-hosted Gunpla and
-  plamo collection and build tracker.") replaces `layout.tagline` on the sign-in screen and About;
-  the catalog picker's "＋" is a Lucide `Plus` (`display-items.spec.ts`'s locator follows);
-  `screenshots.spec.ts` writes `home-light.png` (a light-device context, `data-theme="light"`
-  asserted) and `sign-in.png` (an anonymous context — `storageState: { cookies: [], origins: [] }`
-  said explicitly, because `browser.newContext()` inside a test starts from the project's `use`
-  options and produced a signed-in Home the first time); all seven captures regenerated from the
-  seed on a fresh DB. README: "One look, two themes" with the light capture, the sign-in capture
-  under Installing, the roadmap row ✅. design §13 header ✅ (10/09/2026, #231–#234), §11 item 11 ✅,
-  "Built as" paragraphs in §13.1 (light tokens darkened for 4.5:1, `--faint` on the chip, the
-  palette guard's arbitrary-value refusal) and §13.3 (the description line, the Settings chrome),
-  §13.6's four items ✅ with PRs and merge commits; AGENTS.md roadmap 6.5 struck through.
-- **Decisions:** (1) the app's line is plain, the README keeps the joke; (2) the Settings nav reuses
-  the sidebar's row class; (3) the tokens table takes the list pages' shape inside its card; (4) two
-  new captures only (light Home, sign-in); (5) §13 and the README row read built on the integration
-  branch now — `main` serves the 0.3.0 README until the release PR.
-- **State:** `feat/234-settings-about-e2e-readme` = `m6.5-workbench` (`03673e5`, i.e. `8bac10a` +
-  the hand-off merges) + `c7965bf`, clean, pushed; PR #239 open. Green: unit 568, e2e 65 + 1 skipped serially
-  from an empty DB (tables 0 after, DB dropped), lint, build; screenshots spec 2 passed on a fresh
-  DB. Backend untouched since `d6c8def`. No harness change (no backend). Dev servers: Vite up, `api`
-  preview stopped. PR body drafted in the session scratchpad (`pr-body-234.md`).
-- **Next:** merge PR #239 once CI is green (no review — owner's call, the release gate is the
-  check). Then **the release**: merge `main`
-  into `m6.5-workbench` once more, a packaged-stack run (`docker compose up -d --build --wait`) on
-  the integration tree, the release PR onto `main` with a **merge commit** (never a squash), gate
-  that commit (`deployment_gate.py --phase all` on testhost per `.agents/testing-and-review.md`),
-  bump the three version files to 0.4.0 via the release PR, tag `v0.4.0-alpha`, `gh release create
-  --prerelease`, notes (the theme switch, Home, the list-page URLs, `stage` on order rows, the
-  Orders `?status=` vocabulary, `/board` → `/`, `board.*` → `home.*`, `GET /summary` + `get_summary`,
-  no migration), close #231–#234 and #122 with the merge, close the milestone; **hold the release
-  hand-off commit until after the merge** (the 0.3.0 lesson). Open follow-ups: #238 (order dialog
-  waiting state), #223–#227, #230.
