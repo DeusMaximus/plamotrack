@@ -19,13 +19,17 @@ import { fileURLToPath } from "node:url";
 import { expect, test as setup } from "@playwright/test";
 
 import { API, API_CREDENTIALS, APP, AUTH_DIR, OWNER_PASSWORD, STORAGE_STATE } from "./api";
+import { SCREENSHOTS, captureSetupScreen } from "./screenshots";
 
 const BACKEND = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "backend");
 
-setup("claim the owner (if unclaimed) and sign in", async ({ request }) => {
+setup("claim the owner (if unclaimed) and sign in", async ({ request, browser }) => {
   const state = (await (await request.get(`${API}/auth/session`)).json()) as { state: string };
 
   if (state.state === "unclaimed") {
+    // The docs' "Set up plamotrack" capture (screenshots.ts) has to happen here:
+    // claiming is one-way, and nothing on the host unclaims an instance again.
+    if (SCREENSHOTS) await captureSetupScreen(browser);
     // Same config path as the API the suite runs against: the repo-root .env,
     // overridden by DATABASE_URL when the from-empty recipe sets one.
     execFileSync(
