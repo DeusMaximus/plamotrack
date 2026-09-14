@@ -41,6 +41,16 @@ Template:
 
 ---
 
+## 2026-09-15 — Claude Code (Fable 5.1) — M6.1 final integration review: the real-client acceptance run GREEN on testhost through the Cloudflare Tunnel (Claude web, ChatGPT web, Gemini Spark, Mistral, Inspector 2.6.0, Claude Code 2.1.270, mcp-remote 0.14.2, the 4.0.3 client, modern-hold through the tunnel, conformance 0.1.16); 3.x→4.x grant continuity across upgrade + documented restore recorded; next the release PR (v0.4.1-alpha)
+
+- **Done:** local `m6.1-fastmcp4` reset to `origin` (`d57af8b`) and `main` merged in → **`c3c356b`** (docs only; unpushed). testhost reset fresh-install to the **v0.4.0-alpha tree** in the documented tunnel + OIDC shape (`PUBLIC_BASE_URL=https://plamotest.gunp.la`, `WEB_BIND=10.1.1.129`, `TRUSTED_PROXIES=10.1.1.155`, Keycloak fixture); owner claimed headlessly through the tunnel; the owner linked Claude web (CIMD), ChatGPT web (CIMD), Gemini Spark (DCR) and Mistral (DCR) at 0.4.0; documented backup; **upgrade** to the branch tree with the documented command (28 s, migrate 0, no new migration); round 1; backup at 4.x; **documented restore** (`down -v` … `pg_restore` … `up --build`, 31 s); `--phase modern-hold --hold 130` through the tunnel; round 2 after every access token expired; Inspector by DCR; Claude Code and `mcp-remote` by PAT; the 4.0.3 client both eras; the conformance runner against a source-run `create_app()`.
+- **Verified (every number observed; the block is `~/.plamotrack-gate/testhost.internal.tlgnet.net.rc-0.4.1/results-real-client-run.md`, copy in the session scratchpad):** all four web grants continued across the upgrade **and** the restore with no re-registration, no re-consent, no refusal; upstream tokens re-put ×4 on the first 4.x call (transparent refresh through httpx2); after the restore `POST /mcp/token` 200 ×4, refresh tokens rotated ×4, JTI 8→14, **both persisted CIMD rows deleted at the first document fetch (#242's transition, in production shape)**; owner cookie + 0.4.0 PAT valid after the restore. **Eras:** Claude web and Claude Code speak `2026-07-28` (stateless, routing headers; Claude web on bare `/mcp`); ChatGPT, Gemini, Mistral, Inspector `2025-11-25`; `mcp-remote` does its own legacy initialize then relays the client's modern calls. Modern hold through Cloudflare: both spellings 130 s, 15 s gaps, backend released. API log 0 warnings/errors for the run. Conformance 0.1.16: 8 transport scenarios pass (initialize, ping, logging level, tools/resources/prompts list, multiple SSE streams, DNS rebinding); 20 need fixtures plamotrack has none of; the two "passed" tool-call scenarios are vacuous (the per-tool middleware refuses anonymous `tools/call` even on the pre-auth app and the runner counted the refusal text as content) — the runner has **no `2026-07-28` server scenarios**; tool execution is proven by the real clients.
+- **Findings, none blocking:** Gemini Spark's first link registered a client and obtained a code it never redeemed (the publicly reported Gemini behaviour), second attempt fine; Gemini and Mistral re-handshake per step (7 and 19 initializes for one question); Mistral reuses a session after its own DELETE (404s, same on 0.4.0) and probes `/.well-known/mcp/server-card/mcp/`; ChatGPT's pre-handshake 400 is unchanged from 0.4.0. Nothing to file against the server.
+- **Decisions (mine, for the owner):** the restore round doubles as the restart row (the documented restore restarts every service); Mistral added as a bonus row on the owner's initiative; the conformance tool-call "passes" recorded as vacuous rather than claimed; Claude Desktop's native connector not run separately (same account-level connector as Claude web).
+- **State:** testhost left **on the branch tree in tunnel + OIDC shape**, grants live, Keycloak up, `PLAMOTRACK_ENABLE_TEST_HOLD` disarmed, tcpdump stopped; the branch archive `/root/plamotrack-m6.1-c3c356b.tgz` and backups under `/root/backups/` on the host. Secrets of the run (owner cookie, PAT, capture, DB snapshots, results) in `~/.plamotrack-gate/testhost.internal.tlgnet.net.rc-0.4.1/` (0600). The integration branch is being pushed with `main` merged in; the release commit (bump, Built flip, upgrade note, README pointers) follows this entry. The gate on the tagged tree still needs the usual fresh-install reset first.
+- **Docs:** the Mintlify site — **PR DeusMaximus/plamotrack-docs#4** (branch `docs/m6.1-v0.4.1`, 8 pages, `mint broken-links` clean) gains the v0.4.1 changelog entry (date placeholder "September 2026" — set at tag time), a "Which clients work" table and "Protocol versions" section on the MCP overview, Gemini Spark and Mistral sections plus an update/restore note on the web-clients page, the Claude Code / first-request notes, the corrected `create_order` currency rule, and client lists on the OIDC and tunnel pages — to be merged **with** the release (the site documents released behaviour only). `README.md` gains three pointers to https://docs.gunp.la (top, Installing, Wiring up MCP) in the release commit.
+- **Next:** the **release PR** onto `main`: bump to **0.4.1** (three files, `uv lock`), the Built flip (README row, design §7.1, §11), an "Upgrading to 0.4.1" section in operations, notes carrying this block + the gate's blocks **as observed** and #249 as a known limitation; merge commit, gate step 4 + 4b on that tree (testhost reset first), tag `v0.4.1-alpha`, `--prerelease`; hold this hand-off commit until after the merge. Then the LXC upgrade. Open: #223–#227, #230, #238, #247, #249, #251.
+
 ## 2026-09-11 — Claude Code (Opus 4.8) — PR #250 (#244 + #56) squash-MERGED into `m6.1-fastmcp4` as `d57af8b` after Codex rounds 1–3 (all NO-GO→fixed, CI green at `c884d09`); left on the integration branch on the owner's word; next is the mandatory final integration/release-candidate review, then the release PR onto `main` (v0.4.1-alpha)
 
 - **Done:** PR #250 (`feat/244-era-gate`, head `c884d09` — CI green: Backend/Frontend/Integration
@@ -273,48 +283,3 @@ Template:
   five strict xfails, the unreachable-document probe, the 3.x-state transition); then #244 (both eras
   gated with real clients, the private-CA/TLS path, the CI legacy + frozen-3.x rows, the Built flip);
   then the release PR (merge commit, gated, v0.5.0-alpha suggested; hold the hand-off until after).
-
-## 2026-09-11 — Claude Code (Fable 5.1) — #241 built on `fix/241-upstream-revocation` → PR #245, one Codex Astra round (NO-GO on a cancelled Backend job only, no findings), **MERGED → `459c8b3`**; integration branch **`m6.1-fastmcp4` cut**; next #243
-
-- **Done:** #241 whole, five commits. `9e99c31` httpx to the runtime deps (lock: only the
-  project's own entry moves). `96cbe69` `_revoke_upstream` delegates to `OidcProvider.revoke_token`
-  (the app's own httpx, HTTP Basic as the code exchange), skips only when no discovery document
-  is held, and has no catch-all — a defect is the binding's 500 after the local end; the fake
-  records `Authorization` and gains `revoke_error`; six tests (the control with a
-  FastMCP-4-shaped upstream client lacking `revoke_token`, the access-only hint, the
-  defect → 500 with the grant already dead, refused / no endpoint, a fresh process with the
-  provider down) and the witness asserts Basic; design §5.6's row; lesson "The fake stood in
-  for the very object under test". `815b7dd` six `241-` mutants in the tracked harness.
-  `687c9ed` the prose (module docstring, two test comments, design §5.9) follows the code.
-  **Verified:** full backend **2700 passed** at `815b7dd` (the head differs by prose in three
-  files); negative control on unfixed `main` **3 red / 26 green** — both control cases on
-  `[] == [upstream refresh]`, the defect case on `200 == 500`; mutants **6/6 killed**; ruff
-  clean. The PR body carries the four deliberate calls, both tables and the coverage record.
-- **The round (Codex, GPT-6 Astra):** NO-GO solely because the Backend CI job was cancelled at
-  its 20-minute cap at 66 % — no P1–P3; it re-measured the control (3/26), the six mutants
-  (6/6, failing assertions captured), the full suite (2700 at `687c9ed`), retained all four
-  deliberate calls, added 34 supplementary cases, and corrected one count (five new test
-  functions / seven cases, the table's last row the existing witness — PR body amended). The
-  cancellation profiled against the base's Backend log: **uniformly** 3.4× slower (median 17 s vs
-  5 s per progress line, same slow regions, pre-test steps normal) — a slow runner, not a stalled
-  test; attempt 2 on the same head green (2700 in 14m37s, job 15m40s). Response posted
-  (issuecomment-5624914927); squash-merged on the owner's word, branch deleted.
-- **Decisions:** the four deliberate calls on PR #245 (a defect is the 500, not a warning;
-  share the provider client, no dead public-client branch — OIDC mode requires the secret; one
-  proxy guard, the never-held document, none for "no endpoint" which the provider client
-  checks; `upstream_transport` stays for exchange and refresh until #243). Reviewer: **Codex
-  Astra**, a fresh chat — it reviewed this file's rounds 12–15 on #212; the brief was printed in
-  the 2026-09-11 session chat (scratchpad copy `245-review-brief.md`).
-- **State:** `main` = `459c8b3` + this entry, pushed; #241 closed by the merge. **`m6.1-fastmcp4`**
-  cut from that `main` and pushed — the base for #243, #242 (stacked) and #244; merge `main` into
-  it when `main` moves, never rebase (AGENTS → Git conventions). Checkout on `main`, tree clean,
-  dev overlay up. Codex's spike branch `spike/m61-fastmcp4` (`bbb58e7`, local) untouched. The LXC: last recorded 0.3.0 with the 0.4.0 upgrade queued (unconfirmed).
-  Evidence outside git: the spike's `/private/tmp/plamotrack-m61-fastmcp4-20260908`; this
-  session's scratchpad logs for #241 (negative control, mutants, full suite).
-- **Next:** **#243** on a branch from `m6.1-fastmcp4`, rebuilt from the spike's commits
-  (`0ff1633`…`1c41ae6`: lock regenerated against `main`'s — httpx is already a runtime dep; the
-  httpx2 twin replaces the `upstream_transport` authlib injection; the mechanical test fixes; the
-  discovery flag; the `private_key_jwt` refusal accepted; the null 405 id; the era probes with the
-  four envelope assertions corrected to the challenge contract; the report to `.agents/spikes/241/`).
-  Then #242 stacked, #244, the release PR (merge commit, gated, v0.5.0-alpha suggested). If the
-  Backend cap bites again at a normal count, that is a CI issue to file, not a branch's.
