@@ -369,8 +369,12 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     id) in `Authorization` only — never a query parameter — resolved by **one** helper,
     `services/tokens.resolve_bearer`, from both the REST resolver and the FastMCP
     `TokenVerifier` on the `/mcp` mount, so a token is valid on both surfaces or on
-    neither; a presented-and-failed bearer is 401 `auth.bearer_invalid` on every route,
-    the anonymous families included, and a bearer on a family-3 action is 403. Per-tool
+    neither; a presented-and-failed bearer is 401 `auth.bearer_invalid` on every route
+    the dependency covers, the anonymous families included — on the `/mcp` mount, which
+    is FastMCP's, it is the RFC 6750 challenge instead (`WWW-Authenticate: Bearer
+    error="invalid_token"`, `no-store`; a bare `Bearer` for an absent credential in local
+    mode, with `resource_metadata` in OIDC mode), in both protocol eras (#243) — and a
+    bearer on a family-3 action is 403. Per-tool
     scope is one FastMCP middleware on `tools/call` (`app/auth/mcp_auth.py`) reading
     `MCP_TOOL_SCOPES`, refusing before arguments are parsed; the in-memory test client
     carries no header, so it reads an injected principal off the server object only
@@ -462,7 +466,9 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     the synthesised upstream-id client refused, a CIMD client (Claude web, ChatGPT web)
     by its document — and the allowlist, when set, applies to every kind. **One
     downstream client contract** (round 4, f11–f13): every dynamically registered client
-    is **public** (`none` + PKCE) whatever it asked for and the registration response says
+    is **public** (`none` + PKCE) whatever it asked for — except `private_key_jwt`, which
+    MCP SDK 2 refuses outright (400 `invalid_client_metadata`) before `register_client`
+    runs, accepted as the contract with FastMCP 4 (#243) — and the registration response says
     so (`register_client` makes the SDK's object truthful before it is stored *or*
     returned — the SDK returns that same object); a CIMD client authenticates as its
     document says, `none` or `private_key_jwt`, on `/token` **and** `/revoke`
@@ -601,12 +607,22 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     (`app/auth/body.py`) before any parser, and nginx's exact locations are
     generated from it (`scripts/render_ingress.py`, the second region);
     `tests/test_body_limits.py` fails on an anonymous body route without one.
-    **Client records in `mcp_oauth_state` live a day unless a grant links them**
-    (`ClientRecords`, which every writer goes through — FastMCP's included), are
-    capped, and culled where a record is created — `ClientRecords.put` on a new
-    key, whichever route materialised the client — as well as from the anonymous
-    entry points; the adapter reads an expired row as absent and never deletes it,
-    so a new collection with a lifetime owes the cull too. A body whose client
+    **Client records in `mcp_oauth_state` are dynamically registered clients only
+    (#242) and live a day unless a grant links them** (`ClientRecords`, which every
+    writer goes through — FastMCP's included), are capped, and culled where a
+    record is created — `ClientRecords.put` on a new key — as well as from the
+    anonymous entry points; the adapter reads an expired row as absent and never
+    deletes it, so a new collection with a lifetime owes the cull too. A CIMD
+    client (Claude web, ChatGPT web) is stored nowhere: FastMCP 4 resolves it from
+    its document through the in-process cache on every lookup — bounded here at
+    `CIMD_CACHE_ENTRIES`, the one bound on that side — so the lifetime, the cap
+    and the quota never meet it; a row a 0.3.x/0.4.0 instance persisted for one is
+    the fallback until its document is refreshed, then deleted; and once no row
+    stands behind it, that client's own `/mcp/token` and `/mcp/revoke` are `401
+    invalid_client` while its document cannot be fetched (the SDK's
+    client-authentication step: nothing spent, nothing ended), while a live
+    grant's access token and the transparent refresh behind it, which never look
+    the client up, carry on. A body whose client
     disconnects before its last message is neither replayed nor answered
     (`Disconnected`). CI's packaged matrix must exercise all four 429s and
     scan a full login/PAT/MCP run for the password, PAT and session value, plus
@@ -696,8 +712,8 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
      REST/import diagnostics; no non-English translation required
 6. ~~Secure remote access: single-owner browser auth, scoped REST/MCP tokens,
    OAuth-compatible MCP, tested TLS/VPS deployment path~~ ✅ (§5, v0.3.0-alpha)
-6.1. MCP modernisation: dual-era current + `2026-07-28` compatibility with
-     conformance and client coverage
+6.1. ~~MCP modernisation: dual-era current + `2026-07-28` compatibility with
+     conformance and client coverage~~ ✅ (§7.1, `m6.1-fastmcp4` = #241–#244, v0.4.1-alpha)
 6.5. ~~UI redesign: move off the stock Tailwind look — Workbench, design §13,
      built as #231–#234 on the integration branch `m6.5-workbench`; before M7/M8
      so the gallery and showcase are built in the new look once (#122 rode here)~~ ✅

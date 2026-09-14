@@ -87,7 +87,10 @@ revocation) rather than to the entry points one at a time:
   revocation. Every dynamically registered client is a **public** client —
   `token_endpoint_auth_method=none`, PKCE — whatever it asked for, and the
   registration response says so with no secret and no secret expiry
-  (`register_client`). The choice is scope, not a claim that a secret would
+  (`register_client`); the one request that never reaches it is a registration
+  asking for `private_key_jwt`, which MCP SDK 2 refuses first — 400
+  `invalid_client_metadata` — accepted as the contract with FastMCP 4 (#243).
+  The choice is scope, not a claim that a secret would
   protect nothing — a confidential registration's secret would guard that
   registration's stolen refresh token — but the measured clients (#190) are
   a public DCR client and two CIMD clients, and confidential DCR would mean
@@ -292,19 +295,20 @@ from functools import partial
 from typing import Any, Literal
 from urllib.parse import parse_qsl, urlencode, urlparse, urlsplit
 
-import httpx
-from authlib.integrations.httpx_client import AsyncOAuth2Client
+import httpx2
 from fastmcp.server.auth import AccessToken, TokenVerifier
 from fastmcp.server.auth.auth import JWT_BEARER_ASSERTION_TYPE, TokenHandler
 from fastmcp.server.auth.cimd import CIMDAssertionValidator
 from fastmcp.server.auth.handlers.authorize import AuthorizationHandler
 from fastmcp.server.auth.oauth_proxy import OAuthProxy
 from fastmcp.server.auth.oauth_proxy.models import (
+    HTTP_TIMEOUT_SECONDS,
     ProxyDCRClient,
     UpstreamTokenSet,
     _hash_token,
     _matches_registered_redirect_uri,
 )
+from fastmcp.server.auth.oauth_proxy.upstream import AsyncOAuth2Client
 from fastmcp.server.auth.providers.jwt import JWTVerifier
 from fastmcp.server.dependencies import get_http_request
 from fastmcp.utilities.auth import decode_jwt_header
@@ -512,8 +516,11 @@ REGISTRATIONS_PER_ADDRESS = 20
 REGISTRATION_WINDOW_SECONDS = 60.0 * 60.0
 #: Addresses the quota remembers at most; expired windows go first.
 REGISTRATION_QUOTA_ENTRIES = 4096
-#: CIMD documents FastMCP's fetcher keeps in memory at most — its cache was a
-#: plain dict keyed by every URL ever looked up.
+#: CIMD documents FastMCP's fetcher keeps in memory at most. FastMCP 3's cache
+#: was a plain dict keyed by every URL ever looked up; FastMCP 4 bounds its own
+#: at a thousand and resolves a CIMD client through it on every lookup, storing
+#: no row (#242), so this is the one bound on the CIMD side — the tighter one,
+#: and the fetcher's store path writes through it.
 CIMD_CACHE_ENTRIES = 256
 _REGISTRATIONS_FULL = (
     "This instance cannot register another MCP client right now; "
@@ -528,17 +535,23 @@ class ClientRecordsFull(Exception):
 
 
 class ClientRecords(PydanticAdapter[ProxyDCRClient]):
-    """FastMCP's client collection under two rules (#221 item 2). A record is
+    """FastMCP's client collection under two rules (#221 item 2), and the
+    collection holds dynamically registered clients only (#242). A record is
     written with `UNLINKED_CLIENT_TTL_SECONDS` unless `keep` — issuance — made
     it permanent, and a permanent record stays permanent through every later
-    write: FastMCP's own writes (a registration, a CIMD document fetched or
-    refreshed on each lookup) supply no lifetime and would have stored every
-    anonymous registration and every URL ever presented as a client id for
-    good — or, once the lifetime existed, put a linked client's record back on
-    the clock at its next refresh. And a *new* record past `MAX_CLIENT_RECORDS`
-    live ones is refused (`ClientRecordsFull`); an update of a live record — a
-    CIMD refresh, the link — is never refused, so a full collection cannot
-    break a client that already exists."""
+    write: FastMCP's registration supplies no lifetime and would have stored
+    every anonymous registration for good, and the rule holds at the seam for
+    any later writer that supplies none (FastMCP 3's CIMD refresh was one, and
+    put a linked client's record back on the clock). And a *new* record past
+    `MAX_CLIENT_RECORDS` live ones is refused (`ClientRecordsFull`); an update
+    of a live record — the link — is never refused, so a full collection
+    cannot break a client that already exists. A CIMD client (Claude web,
+    ChatGPT web) is no record: FastMCP 4 resolves it through the bounded
+    document cache on every lookup and writes this collection only to delete
+    a row an earlier version persisted, once the document has been refreshed
+    (`OAuthProxy.get_client`); until then that row is the fallback. So the
+    lifetime, the cap and the cull count registrations, and a flood of them
+    costs a web client nothing."""
 
     def __init__(self, *, store: OAuthStateStore, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -555,10 +568,13 @@ class ClientRecords(PydanticAdapter[ProxyDCRClient]):
         existing, existing_ttl = await super().ttl(key=key, collection=collection)
         if existing is None:
             # A new record is the one thing that grows this collection — a
-            # registration, or a CIMD document materialised by any route that
-            # looks a client up (`/mcp/token` and `/mcp/revoke` included, which
-            # no other cull reaches: Codex #222 round 1, f2). The expired rows
-            # go first, so the physical size never exceeds the live cap.
+            # registration, its only writer now. The cull lives here rather
+            # than at the entry points because under FastMCP 3 a CIMD lookup
+            # from `/mcp/token` or `/mcp/revoke` materialised a record with no
+            # cull reached (Codex #222 round 1, f2); a lookup writes nothing
+            # now (#242), and the rule stays where a record is created. The
+            # expired rows go first, so the physical size never exceeds the
+            # live cap.
             await self._store.cull_expired(collection or CLIENT_COLLECTION)
             live = await self._store.count_live(collection or CLIENT_COLLECTION)
             if live >= MAX_CLIENT_RECORDS:
@@ -1772,11 +1788,13 @@ class PlamotrackOAuthProxy(OAuthProxy):
         self._state_store = state_store
         self._last_cull = -math.inf
         self.assertion_validator = RestrictedKeyAssertionValidator()
-        #: Test seam: an httpx transport the upstream code exchange and refresh
-        #: go through instead of the network, so the suite can play the provider.
-        #: None on the shipped app — nothing sets it. Revocation is not on it:
-        #: that goes through the browser login's provider client (#241).
-        self.upstream_transport: httpx.AsyncBaseTransport | None = None
+        #: Test seam: an httpx2 transport — the network boundary *under*
+        #: FastMCP's own upstream client — that the code exchange and the
+        #: transparent refresh go through instead of the network, so the suite
+        #: can play the provider (`_create_upstream_oauth_client`). None on the
+        #: shipped app — nothing sets it. Revocation is not on it: that goes
+        #: through the browser login's provider client (#241).
+        self.upstream_transport: httpx2.AsyncBaseTransport | None = None
         super().__init__(
             # The SDK keeps these as attributes; on this class they are the
             # properties below, and the constructor's values are not kept.
@@ -1815,8 +1833,9 @@ class PlamotrackOAuthProxy(OAuthProxy):
         )
         # The client records under their bounds (#221 item 2): the same
         # storage and collection as the adapter the SDK built, so every
-        # writer — the SDK's registration, its CIMD fetch and refresh, this
-        # class — goes through the lifetime and the cap.
+        # writer — the SDK's registration, this class, and the SDK's delete of
+        # a row an earlier version persisted for a CIMD client (#242) — goes
+        # through the lifetime and the cap.
         sdk_clients = self._client_store
         if getattr(sdk_clients, "_default_collection", CLIENT_COLLECTION) != CLIENT_COLLECTION:
             raise RuntimeError(
@@ -1829,8 +1848,9 @@ class PlamotrackOAuthProxy(OAuthProxy):
             default_collection=CLIENT_COLLECTION,
             raise_on_validation_error=True,
         )
-        # And the in-memory CIMD document cache, a plain dict on FastMCP's
-        # fetcher keyed by every URL ever presented as a client id.
+        # And the in-memory CIMD document cache on FastMCP's fetcher — the
+        # bound on the CIMD side, since a CIMD client is resolved through it on
+        # every lookup and stored nowhere (#242).
         fetcher = getattr(self._cimd_manager, "_fetcher", None)
         if fetcher is None or not isinstance(getattr(fetcher, "_cache", None), dict):
             raise RuntimeError(
@@ -1884,18 +1904,24 @@ class PlamotrackOAuthProxy(OAuthProxy):
             pass
 
     def _create_upstream_oauth_client(self) -> AsyncOAuth2Client:
-        if self.upstream_transport is None:
-            return super()._create_upstream_oauth_client()
-        return AsyncOAuth2Client(
-            client_id=self._upstream_client_id,
-            client_secret=(
-                self._upstream_client_secret.get_secret_value()
-                if self._upstream_client_secret is not None
-                else None
-            ),
-            token_endpoint_auth_method=self._token_endpoint_auth_method,
-            transport=self.upstream_transport,
-        )
+        """FastMCP's own upstream client, always — the factory the code exchange
+        and the transparent refresh run on in production. Under test its HTTP
+        client is re-homed onto `upstream_transport`: a transport *under* the
+        object under test, never a client in its place. The seam that stood
+        here built authlib's client whenever a transport was set, and a suite
+        green on that client hid that FastMCP 4's has no revoke method (#241;
+        `.agents/lessons.md` → "The fake stood in for the very object under
+        test"). `_client` is FastMCP 4.0's attribute (`oauth_proxy/upstream.py`),
+        and the guard makes a rename a loud failure rather than a silent bypass;
+        the client it replaces has opened nothing."""
+        client = super()._create_upstream_oauth_client()
+        if self.upstream_transport is not None:
+            if not isinstance(getattr(client, "_client", None), httpx2.AsyncClient):
+                raise TypeError("FastMCP's upstream client no longer holds an httpx2 client")
+            client._client = httpx2.AsyncClient(
+                timeout=HTTP_TIMEOUT_SECONDS, transport=self.upstream_transport
+            )
+        return client
 
     # -- the client contract: registration -------------------------------------------
 
@@ -1903,7 +1929,12 @@ class PlamotrackOAuthProxy(OAuthProxy):
         """Every dynamically registered client is a public client — `none`,
         PKCE — whatever method it asked for, and the registration response
         says so (RFC 7591 §3.2.1: the server may substitute requested
-        metadata; the response describes what was registered). The SDK's
+        metadata; the response describes what was registered). One request
+        never reaches here: MCP SDK 2's handler refuses `private_key_jwt`
+        outright — 400 `invalid_client_metadata`, RFC 7591 §3.2.2 — before
+        this method runs, and that refusal is the contract (#243): the method
+        is a CIMD client's, verified against its document, and a registration
+        brings no document. The SDK's
         handler mints a secret for any method but `none` (its default when
         the field is absent or null is `client_secret_post`), passes the
         object here and returns **that object**, while FastMCP stores a
@@ -2038,8 +2069,9 @@ class PlamotrackOAuthProxy(OAuthProxy):
     def discovery_metadata(self) -> OAuthMetadata:
         """The authorization-server document (RFC 8414 §2), owned here rather
         than inherited: the SDK's `build_metadata` for the endpoints under the
-        issuer, PKCE, the scopes and the grant types, FastMCP's CIMD flag, and
-        then the client contract as this server actually enforces it — the
+        issuer, PKCE, the scopes and the grant types, FastMCP's CIMD flag and
+        its RFC 9207 `iss` flag, and then the client contract as this server
+        actually enforces it — the
         two methods for the token endpoint and for the revocation endpoint,
         and the one assertion algorithm. The SDK's metadata advertised the
         shared-secret methods it supports in general and none of what this
@@ -2053,6 +2085,11 @@ class PlamotrackOAuthProxy(OAuthProxy):
             self.revocation_options or RevocationOptions(),
         )
         metadata.client_id_metadata_document_supported = self._cimd_manager is not None
+        # RFC 9207: every authorization response the proxy issues carries `iss`
+        # — FastMCP 4 stamps its own redirects and the one this server's
+        # `authorize` builds — and FastMCP's own document says so; the one
+        # owned here must say the same (#243).
+        metadata.authorization_response_iss_parameter_supported = True
         metadata.token_endpoint_auth_methods_supported = list(CLIENT_AUTH_METHODS)
         metadata.token_endpoint_auth_signing_alg_values_supported = list(
             CLIENT_ASSERTION_ALGORITHMS
@@ -2127,13 +2164,13 @@ class PlamotrackOAuthProxy(OAuthProxy):
             # nobody uses it (the spike named every client's kind), so it is
             # refused as an unknown client.
             return None
-        try:
-            client = await super().get_client(client_id)
-        except ClientRecordsFull:
-            # A CIMD document fetched for a URL never seen while the collection
-            # is at its cap: not stored, so not a client (#221 item 2).
-            return None
+        client = await super().get_client(client_id)
         if client is None or client.cimd_document is not None:
+            # A CIMD client is FastMCP's: resolved from its document on every
+            # lookup, bound to the document's `redirect_uris`, and stored
+            # nowhere, so the collection's cap never meets it (#242 — under
+            # FastMCP 3 the lookup wrote a row, and at the cap the refused
+            # write was caught here and read as an unknown client).
             return client
         return BoundDCRClient(**client.model_dump(), allow_unregistered_redirect_uris=False)
 

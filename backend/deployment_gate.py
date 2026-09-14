@@ -24,8 +24,14 @@ made from outside, through the TLS front. Phases, in the order `all` runs them:
                   `PUBLIC_BASE_URL` names it, after which the dependency's 401 is
                   what an anonymous write earns. Nothing is lost in between.
   local           the ingress matrix (`ingress_matrix.py`) over https in local mode:
-                  claim, login, the PAT rows, the stream held on both spellings, a
-                  real MCP client's `tools/list`, the T10 log scan.
+                  claim, login, the PAT rows, the legacy stream held on both spellings,
+                  a real MCP client's `tools/list`, the T10 log scan.
+  modern-hold     the `2026-07-28` twin (#244): with the stack armed
+                  (`PLAMOTRACK_ENABLE_TEST_HOLD`, an isolated test instance) a modern
+                  `tools/call` SSE is held past the ping interval and aborted on both
+                  `/mcp` spellings, and the held database backend must then be gone —
+                  server-side cancellation and connection cleanup. The flag is
+                  disarmed again afterwards.
   break-glass     `recovery reset-password` and `revoke-sessions` from the host, and
                   what the old and new sessions see (T13's first clause).
   trusted-proxies what nginx records as the client before and after
@@ -192,8 +198,16 @@ class Host:
         return output.split()[0]
 
     def psql(self, sql: str) -> list[str]:
+        # `-v ON_ERROR_STOP=1` so a SQL error (a statement timeout on an
+        # observation query, a dropped connection) exits psql non-zero and
+        # raises here, instead of exiting 0 with empty stdout — which every
+        # reader would misread as "no rows" (a released backend, a zero count).
+        # The boundary refuses to return an error as emptiness, so no caller has
+        # to distinguish the two (Codex #250 F7 — the observation-model gap one
+        # level up from F2/F6).
         output = self.compose(
-            'exec -T db sh -c \'exec psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA\'',
+            "exec -T db sh -c "
+            '\'exec psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA\'',
             input_text=sql,
         )
         return [line for line in output.splitlines() if line.strip()]
@@ -514,6 +528,117 @@ def phase_local(ctx: Context) -> None:
     )
     expect(ctx, "/api/readyz from outside", get(ctx, "/api/readyz"), 404)
     scan_logs(ctx, [log_secrets])
+
+
+#: The marker `app.mcp_hold_probe` leaves on the held connection's last
+#: statement — typed here as a literal, an independent snapshot like the cookie
+#: names above, so the gate finds exactly that backend in pg_stat_activity.
+HOLD_PROBE_MARKER = "plamotrack_hold_probe"
+
+
+def _held_backends(ctx: Context) -> int:
+    rows = ctx.host.psql(
+        "select count(*) from pg_stat_activity where query like "
+        f"'%{HOLD_PROBE_MARKER}%' and pid <> pg_backend_pid();"
+    )
+    return int(rows[0]) if rows else 0
+
+
+def _held_pids(ctx: Context) -> set[str]:
+    """The backend PIDs currently holding the probe's transaction (idle in
+    transaction under the marker) — the actual live backends, so 'gone after
+    abort' is asserted against the same PIDs seen during the hold, not a mere
+    count that was zero before and after (Codex #250 F2)."""
+    rows = ctx.host.psql(
+        "select pid from pg_stat_activity where query like "
+        f"'%{HOLD_PROBE_MARKER}%' and state = 'idle in transaction' "
+        "and pid <> pg_backend_pid();"
+    )
+    return {row.strip() for row in rows if row.strip()}
+
+
+def _backends_released(during: set[str], poll, *, tries: int = 60, pause: float = 0.5) -> bool:
+    """Positive confirmation that none of the `during` PIDs remain after the
+    abort — polled up to `tries` times. A backend that lingers through every
+    poll (or a partial set where one PID stays) is never read as released; the
+    verdict is not defaulted to success (Codex #250 F6 — the same class as F2:
+    the cleanup must be confirmed, never assumed)."""
+    for _ in range(tries):
+        if not (during & poll()):
+            return True
+        time.sleep(pause)
+    return False
+
+
+def phase_modern_hold(ctx: Context) -> None:
+    """T12's modern twin (#244): the `2026-07-28` era through the proxy chain on
+    both `/mcp` spellings. The era has no standalone stream and no long tool, so
+    the stack is armed with `PLAMOTRACK_ENABLE_TEST_HOLD` (isolated test
+    instance) to make `get_meta` hold a database connection; the client holds
+    the modern SSE past the ping interval, aborts by closing the socket, and a
+    backend that was **observed live during the hold** must then be gone —
+    server-side cancellation and connection cleanup, not a count that read zero
+    both before and after (Codex #250 F2). The arming, the holds and the
+    disarm are one protected scope so a startup failure cannot leave the flag
+    armed (Codex #250 F3); the disarm runs whatever happened, and a disarm
+    failure does not mask the original error."""
+    import threading  # noqa: PLC0415
+
+    from ingress_matrix import Bearer, hold_stream_modern  # noqa: PLC0415
+
+    host = ctx.host
+    pat = ctx.load("pat-local")
+    bearer = Bearer(raw=pat, token_id="")
+    hold = max(ctx.hold, 20)
+    if _held_backends(ctx) != 0:
+        raise GateError("a hold-probe backend is already present before arming")
+    body_error: BaseException | None = None
+    try:
+        host.env_set(PLAMOTRACK_ENABLE_TEST_HOLD=str(hold + 60))
+        host.up()
+        for path in ("/mcp/", "/mcp"):
+            outcome: dict = {}
+
+            def run(path: str = path, outcome: dict = outcome) -> None:
+                outcome["ok"], outcome["message"] = hold_stream_modern(ctx.base, bearer, path, hold)
+
+            worker = threading.Thread(target=run, daemon=True)
+            worker.start()
+            during: set[str] = set()
+            deadline = time.monotonic() + hold
+            while worker.is_alive() and time.monotonic() < deadline:
+                during = _held_pids(ctx)
+                if during:
+                    break
+                time.sleep(1)
+            worker.join(timeout=hold + 90)
+            ok = outcome.get("ok", False)
+            released = bool(during) and _backends_released(during, lambda: _held_pids(ctx))
+            held_ok = ok and released
+            ctx.results.record(
+                f"modern hold {path}",
+                f"{outcome.get('message', '(no result)')}; backend pid(s) "
+                f"{sorted(during) or 'NONE'} held during, "
+                f"{'gone' if released else 'LINGERING/absent'} after abort",
+                held_ok,
+            )
+            if not held_ok:
+                raise GateError(f"modern hold on {path} failed")
+    except BaseException as error:
+        body_error = error
+        raise
+    finally:
+        try:
+            host.env_set(PLAMOTRACK_ENABLE_TEST_HOLD=None)
+            host.up()
+        except Exception as cleanup_error:  # noqa: BLE001
+            if body_error is None:
+                raise
+            ctx.results.record(
+                "modern-hold: disarm after failure",
+                f"the probe flag disarm also failed: {cleanup_error}",
+                ok=False,
+            )
 
 
 def phase_break_glass(ctx: Context) -> None:
@@ -1144,13 +1269,23 @@ PHASES = {
     "precheck": phase_precheck,
     "lockout": phase_lockout,
     "local": phase_local,
+    "modern-hold": phase_modern_hold,
     "break-glass": phase_break_glass,
     "trusted-proxies": phase_trusted_proxies,
     "oidc": phase_oidc,
     "t13": phase_t13,
     "tunnel": phase_tunnel,
 }
-ALL = ("precheck", "lockout", "local", "break-glass", "trusted-proxies", "oidc", "t13")
+ALL = (
+    "precheck",
+    "lockout",
+    "local",
+    "modern-hold",
+    "break-glass",
+    "trusted-proxies",
+    "oidc",
+    "t13",
+)
 
 
 def main(argv: list[str]) -> int:

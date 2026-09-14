@@ -11,6 +11,10 @@ and decal sheets get counted; and an embedded MCP server means you can just tell
 Your data lives in your Postgres, on your hardware, and leaves as plain CSV whenever you
 want it to.
 
+**The documentation lives at [docs.gunp.la](https://docs.gunp.la)** — installing, first
+run, everyday use, the deployment paths, authentication and the AI/MCP guides, with
+screenshots. This README is the short version.
+
 > ### ⚠️ This is a public alpha
 >
 > **There is a single owner login, personal access tokens, and a tested HTTPS path.** A
@@ -163,7 +167,7 @@ Being honest up front beats you finding out at 11pm:
 | Bundled `docker compose up` for the whole local stack | ✅ Built |
 | **Internationalisation foundations** | ✅ Milestone 5.1: instance-wide language, formatting locale, time zone, date/hour style, and reference currency; the `en-AU` source catalogue and fallback; a reviewed [translation workflow](docs/translating.md); locale-aware dates, times, numbers, counts, money, and file sizes; structured REST/import diagnostics with translated known identifiers and an English compatibility fallback; and RTL-aware layout utilities. No non-English catalogue ships yet. Upgrades default existing instances to `en-AU`/UTC; naive CSV timestamps are read prospectively in the configured instance zone, stored history is never reinterpreted, and downgrading past the settings migration loses its settings row. |
 | **Authentication, OAuth-compatible remote MCP, a tested TLS deployment** | ✅ Milestone 6 — owner login (password or OpenID Connect), personal access tokens, MCP OAuth for Claude web / ChatGPT web / MCP Inspector, and the reference Caddy deployment plus the other tested ways to expose an instance (`docs/operations.md`) |
-| **MCP `2026-07-28` compatibility** | 🔨 Milestone 6.1 — dual-era, without dropping current clients |
+| **MCP `2026-07-28` compatibility** | ✅ Milestone 6.1 — both protocol generations from the one `/mcp/` endpoint, negotiated per request; Claude.ai, ChatGPT, Gemini Spark, Mistral, MCP Inspector, Claude Code and the `mcp-remote` bridge verified against a v0.4.1 candidate, linked before the upgrade and still linked after it and after a restore |
 | **UI redesign** | ✅ Milestone 6.5 — one house look on semantic tokens with a per-browser light/dark/system switch, Home in place of the board, filter/sort/page in the list pages' URLs, one edit dialog per record (`docs/design.md` §13) |
 | **Photo gallery per kit** | 🔨 Milestone 7 |
 | **Public read-only showcase page** | 🔨 Milestone 8 — after the admin and MCP paths are protected |
@@ -171,6 +175,10 @@ Being honest up front beats you finding out at 11pm:
 ---
 
 ## Installing it
+
+> The step-by-step version, with what to expect on screen, is
+> [docs.gunp.la/installation](https://docs.gunp.la/installation) and
+> [docs.gunp.la/first-run](https://docs.gunp.la/first-run).
 
 **You'll need:** [Docker](https://docs.docker.com/get-started/get-docker/) and about
 three minutes. Nothing else — the images build from this repo.
@@ -237,6 +245,9 @@ Backups, restores, upgrading, and the full configuration reference live in
 ---
 
 ## Wiring up the MCP server
+
+> Per-client guides — Claude Desktop, Claude Code, and Claude.ai, ChatGPT, Gemini and
+> Mistral on the web — are under [docs.gunp.la/mcp/overview](https://docs.gunp.la/mcp/overview).
 
 plamotrack speaks MCP over streamable HTTP at `<your instance>/mcp/`:
 

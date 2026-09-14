@@ -302,13 +302,17 @@ def method_not_allowed(policy: RoutePolicy) -> Response:
     gets the framework's plain 405."""
     headers = {"Allow": allow_header(policy.methods)}
     if policy.credential == CredentialPolicy.MCP_TRANSPORT:
+        # JSON-RPC 2.0 §5: a request whose id could not be read is answered
+        # with a null id. MCP SDK 2's `_create_error_response` writes exactly
+        # that (SDK 1 wrote `"server-error"`), set rather than absent, so the
+        # binding's document stays byte-equal to the transport's (#243).
         error = JSONRPCError(
             jsonrpc="2.0",
-            id="server-error",
+            id=None,
             error=ErrorData(code=INVALID_REQUEST, message="Method Not Allowed"),
         )
         return Response(
-            error.model_dump_json(by_alias=True, exclude_none=True),
+            error.model_dump_json(by_alias=True, exclude_unset=True),
             status_code=405,
             headers={**headers, "Content-Type": CONTENT_TYPE_JSON},
         )

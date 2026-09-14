@@ -1332,6 +1332,100 @@ def token_rows(
     ]
 
 
+#: The SDK pings an idle SSE stream every ~15 s (sse-starlette's default). A gap
+#: past two intervals is a buffering or stalled chain, not a live keepalive — the
+#: held stream is failing, not holding.
+MODERN_MAX_SILENCE = 30.0
+_LAST_CHUNK = b"\r\n0\r\n\r\n"
+
+
+def _observe_hold(
+    raw, seconds: int, initial_bytes: bytes, *, max_silence: float = MODERN_MAX_SILENCE
+) -> tuple[bool, int, int, float, str]:
+    """Read an SSE stream for `seconds`, **asserting** — not merely reporting —
+    that it keeps flowing: no silence (before the first byte, between bytes, or
+    trailing) exceeds `max_silence`, and the chain neither closes the socket nor
+    sends the chunked terminator within the window (the handler must still be
+    holding). Returns `(ok, chunks, received, max_gap, reason)`.
+
+    A held stream that goes silent, buffers, or completes early is a gate
+    failure the caller must surface: reporting `max_gap` alone let an
+    initial-ping-then-silence stream pass with `max gap 0.0 s`, and a completed
+    body on a still-open socket pass as if it were holding (#244, Codex #250 F1).
+    `raw.recv` and `time.monotonic` are the only ambient inputs, so the observer
+    is exercised offline by `tests/test_hold_observer.py` with a scripted socket
+    and clock."""
+    started = time.monotonic()
+    last = started
+    chunks, received, max_gap = (1, len(initial_bytes), 0.0) if initial_bytes else (0, 0, 0.0)
+    tail = initial_bytes[-len(_LAST_CHUNK) :]
+    if tail.endswith(_LAST_CHUNK):
+        return False, chunks, received, max_gap, "the stream completed before the hold began"
+    raw.settimeout(2.0)
+    while time.monotonic() - started < seconds:
+        try:
+            piece = raw.recv(4096)
+        except TimeoutError:
+            gap = time.monotonic() - last
+            if gap > max_silence:
+                return (
+                    False,
+                    chunks,
+                    received,
+                    max(max_gap, gap),
+                    f"silent {gap:.1f} s (> {max_silence:g} s) after "
+                    f"{time.monotonic() - started:.1f} s of {seconds} — buffered or stalled",
+                )
+            continue
+        now = time.monotonic()
+        if not piece:
+            return (
+                False,
+                chunks,
+                received,
+                max_gap,
+                f"the chain closed the stream after {now - started:.1f} s of {seconds}",
+            )
+        gap = now - last
+        tail = (tail + piece)[-len(_LAST_CHUNK) :]
+        max_gap, last = max(max_gap, gap), now
+        chunks, received = chunks + 1, received + len(piece)
+        if gap > max_silence:
+            return (
+                False,
+                chunks,
+                received,
+                max_gap,
+                f"a {gap:.1f} s gap (> {max_silence:g} s) between bytes — buffered or stalled",
+            )
+        if tail.endswith(_LAST_CHUNK):
+            return (
+                False,
+                chunks,
+                received,
+                max_gap,
+                f"the stream completed (terminal chunk) after {now - started:.1f} s of {seconds}",
+            )
+    max_gap = max(max_gap, time.monotonic() - last)
+    if chunks == 0:
+        return (
+            False,
+            chunks,
+            received,
+            max_gap,
+            f"no bytes in {seconds} s (committed but never pinged)",
+        )
+    if max_gap > max_silence:
+        return (
+            False,
+            chunks,
+            received,
+            max_gap,
+            f"max gap {max_gap:.1f} s exceeds {max_silence:g} s",
+        )
+    return True, chunks, received, max_gap, f"max gap {max_gap:.1f} s (< {max_silence:g} s)"
+
+
 def hold_stream(
     base: str, bearer: Bearer, path: str, seconds: int, *, close_grace: float = 10.0
 ) -> tuple[bool, str]:
@@ -1401,36 +1495,23 @@ def hold_stream(
         }
         if status != 200 or not headers.get("content-type", "").startswith("text/event-stream"):
             return False, f"GET answered {status} {headers.get('content-type')!r}"
-        chunked = headers.get("transfer-encoding", "").lower() == "chunked"
-        last_chunk = b"\r\n0\r\n\r\n"
 
-        started = time.monotonic()
-        last = started
-        chunks, received, max_gap = (1, len(body), 0.0) if body else (0, 0, 0.0)
-        tail = body[-len(last_chunk) :]
-        raw.settimeout(5)
+        # The stream must keep flowing for the whole window (the observer asserts
+        # no stall and no early close/completion), then the DELETE must end it.
+        held_start = time.monotonic()
+        ok, chunks, received, max_gap, reason = _observe_hold(raw, seconds, body)
+        held = time.monotonic() - held_start
+        if not ok:
+            return False, f"{reason} ({chunks} chunk(s), max gap {max_gap:.1f} s)"
+
+        tail = b""
 
         def ended(piece: bytes) -> bool:
             nonlocal tail
             if not piece:
                 return True
-            tail = (tail + piece)[-len(last_chunk) :]
-            return chunked and tail.endswith(last_chunk)
-
-        while time.monotonic() - started < seconds:
-            try:
-                piece = raw.recv(4096)
-            except TimeoutError:
-                continue
-            now = time.monotonic()
-            if ended(piece):
-                return False, (
-                    f"the chain ended the stream after {now - started:.1f} s of {seconds}"
-                    f" ({chunks} chunk(s), max gap {max_gap:.1f} s)"
-                )
-            max_gap, last = max(max_gap, now - last), now
-            chunks, received = chunks + 1, received + len(piece)
-        held = time.monotonic() - started
+            tail = (tail + piece)[-len(_LAST_CHUNK) :]
+            return tail.endswith(_LAST_CHUNK)
 
         deleted = send(base, Row("delete session", "DELETE", path, 200, headers=with_session))
         delete_at = time.monotonic()
@@ -1454,6 +1535,98 @@ def hold_stream(
         return True, (
             f"held {held:.1f} s (asked {seconds}); {chunks} chunk(s), {received} bytes;"
             f" max gap {max_gap:.1f} s; ended {closed_after:.1f} s after DELETE"
+        )
+    finally:
+        raw.close()
+
+
+def hold_stream_modern(base: str, bearer: Bearer, path: str, seconds: int) -> tuple[bool, str]:
+    """T12's modern twin (§7.1; #244): the `2026-07-28` era has no standalone GET
+    channel and opens no session, so the held stream is the response to a single
+    `tools/call` POST whose handler runs past the SDK's ping interval. plamotrack
+    exposes no long-running tool, so this requires the stack to arm
+    `PLAMOTRACK_ENABLE_TEST_HOLD` (`app.mcp_hold_probe`), which makes `get_meta`
+    hold a database connection for that many seconds — an isolated test
+    instance, never the shipped image. The client reads the SSE for `seconds`
+    with the connection silent, then **aborts by closing the socket** (the
+    modern era's cancellation: there is no DELETE); the caller verifies
+    server-side cancellation and connection cleanup out of band (the deployment
+    gate reads `pg_stat_activity`).
+
+    Fails if the chain never commits `text/event-stream`, sets a session id
+    (a modern response must not), buffers the keepalive (a gap at or beyond the
+    ping interval), or ends the stream before the deadline (the handler must
+    still be holding). Reads the socket raw for the same reason
+    `hold_stream` does. Reports the longest gap between bytes."""
+    parts = urlsplit(base)
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {
+                "name": "get_meta",
+                "arguments": {},
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+                    "io.modelcontextprotocol/clientInfo": {
+                        "name": "ingress_matrix",
+                        "version": "0",
+                    },
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                },
+            },
+        }
+    ).encode()
+
+    raw = socket.create_connection((parts.hostname, default_port(base)), timeout=10)
+    if parts.scheme == "https":
+        raw = TLS_CONTEXT.wrap_socket(raw, server_hostname=parts.hostname)
+    request = (
+        f"POST {path} HTTP/1.1\r\nHost: {parts.netloc}\r\n"
+        f"Authorization: Bearer {bearer.raw}\r\n"
+        "Accept: application/json, text/event-stream\r\nContent-Type: application/json\r\n"
+        "MCP-Protocol-Version: 2026-07-28\r\nMcp-Method: tools/call\r\nMcp-Name: get_meta\r\n"
+        f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n"
+    ).encode() + body
+    try:
+        raw.sendall(request)
+        raw.settimeout(5)
+        header_deadline = time.monotonic() + max(seconds, 30)
+        head = b""
+        while b"\r\n\r\n" not in head:
+            try:
+                piece = raw.recv(4096)
+            except TimeoutError:
+                if time.monotonic() > header_deadline:
+                    return False, "no response headers within the hold window (a buffering proxy?)"
+                continue
+            if not piece:
+                return False, "closed before any response headers"
+            head += piece
+        header_block, body_bytes = head.split(b"\r\n\r\n", 1)
+        status_line, *header_lines = header_block.decode("latin-1").split("\r\n")
+        status = int(status_line.split(" ", 2)[1])
+        headers = {
+            name.strip().lower(): value.strip()
+            for name, value in (line.split(":", 1) for line in header_lines if ":" in line)
+        }
+        if status != 200 or not headers.get("content-type", "").startswith("text/event-stream"):
+            return False, f"POST answered {status} {headers.get('content-type')!r}"
+        if "mcp-session-id" in headers:
+            return False, "a modern response set mcp-session-id (it must not)"
+
+        held_start = time.monotonic()
+        ok, chunks, received, max_gap, reason = _observe_hold(raw, seconds, body_bytes)
+        held = time.monotonic() - held_start
+        if not ok:
+            return (
+                False,
+                f"{reason} ({chunks} chunk(s), {received} bytes) — the handler stopped holding",
+            )
+        return True, (
+            f"held {held:.1f} s (asked {seconds}); {chunks} chunk(s), {received} bytes;"
+            f" {reason}; no session id; aborted by close"
         )
     finally:
         raw.close()

@@ -343,7 +343,12 @@ def test_hold_stream_fails_when_the_chain_ends_the_stream_early(fake_mcp, chunke
     server, base = fake_mcp(ping_every=0.1, close_early_after=0.4, chunked=chunked)
     ok, message = hold_stream(base, Bearer("ptk_x_y", "id"), "/mcp/", 3, close_grace=1)
     assert not ok
-    assert message.startswith("the chain ended the stream after 0.")
+    # The observer now names *how* the stream ended early (#244, Codex #250 F1):
+    # a chunked stream sends the terminal chunk, a plain one just closes the socket.
+    if chunked:
+        assert message.startswith("the stream completed (terminal chunk) after 0.")
+    else:
+        assert message.startswith("the chain closed the stream after 0.")
     assert " of 3" in message
     assert not server.deleted.is_set()
 
@@ -490,6 +495,7 @@ def test_the_gate_s_all_phases_end_with_t13_and_the_tunnel_is_opt_in():
         "precheck",
         "lockout",
         "local",
+        "modern-hold",
         "break-glass",
         "trusted-proxies",
         "oidc",
@@ -715,3 +721,40 @@ def test_the_tunnel_runbook_names_every_required_tunnel_argument():
     conf = (repo / "deploy/caddy/caddy.service.d/cloudflare.conf").read_text(encoding="utf-8")
     assert "systemctl edit" not in conf
     assert "sudoedit /etc/caddy/cloudflare.env" in conf
+
+
+def test_host_psql_refuses_to_read_a_sql_error_as_empty(monkeypatch):
+    """The observation boundary (Codex #250 F7): psql runs with ON_ERROR_STOP=1,
+    so a SQL error is a non-zero exit that raises — never exit 0 with empty
+    stdout, which readers (`_held_pids`, `_held_backends`, `t13_counters`) would
+    misread as no rows. A genuine empty result (no matching rows) still returns
+    []."""
+    import types
+
+    outcome = {"returncode": 0, "stdout": "", "stderr": ""}
+    seen = {}
+
+    def fake_run(argv, *, input, capture_output, text):
+        seen["argv"] = argv
+        return types.SimpleNamespace(
+            returncode=outcome["returncode"], stdout=outcome["stdout"], stderr=outcome["stderr"]
+        )
+
+    monkeypatch.setattr(gate.subprocess, "run", fake_run)
+    host = gate.Host("user@host", "/opt/plamotrack")
+
+    # A normal read: the command carries ON_ERROR_STOP=1 (the flag the fix adds).
+    outcome.update(returncode=0, stdout="12197\n")
+    assert host.psql("select pid from pg_stat_activity") == ["12197"]
+    assert "ON_ERROR_STOP=1" in seen["argv"][-1]
+
+    # A SQL error (e.g. a statement timeout) exits non-zero → GateError, not [].
+    outcome.update(
+        returncode=3, stdout="", stderr="ERROR: canceling statement due to statement timeout"
+    )
+    with pytest.raises(gate.GateError):
+        host.psql("select pid from pg_stat_activity")
+
+    # A genuine no-rows result is exit 0 with empty stdout → [].
+    outcome.update(returncode=0, stdout="", stderr="")
+    assert host.psql("select pid from pg_stat_activity where false") == []

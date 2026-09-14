@@ -464,7 +464,18 @@ async def _assert_mount_profile(client):
     assert stream.status_code == 200
     assert stream.headers["content-type"].startswith("text/event-stream")
     assert stream.headers.get_list("cache-control") == ["no-store, no-transform"]
-    not_acceptable = await client.get("/mcp/", headers=bearer)  # no Accept: text/event-stream
+    # The standalone GET of an initialised legacy session, JSON-only: SDK 2
+    # reads an implicit `Accept: */*` as admitting SSE and decides the era
+    # before it checks `Accept`, so a bare GET is no longer this probe.
+    not_acceptable = await client.get(
+        "/mcp/",
+        headers={
+            **bearer,
+            "Accept": "application/json",  # no text/event-stream
+            "MCP-Protocol-Version": "2025-06-18",
+            "mcp-session-id": stream.headers["mcp-session-id"],
+        },
+    )
     assert not_acceptable.status_code == 406
     assert not_acceptable.headers.get_list("cache-control") == ["no-store"]
     wrong_verb = await client.put("/mcp/", headers=bearer)
