@@ -770,6 +770,26 @@ docker compose logs migrate
 **Back up before upgrading.** Migrations run forward automatically; rolling one
 back is a manual `alembic downgrade` and some are deliberately lossy about it.
 
+### Upgrading to 0.4.1: nothing to migrate, MCP speaks both generations
+
+0.4.1 is the MCP layer: no schema migration, no authentication change, no new
+setting. `git pull && docker compose up -d --build --wait` and sign in as before.
+What changes underneath is the framework the `/mcp/` endpoint runs on (FastMCP 4 on
+MCP SDK 2), which serves the current protocol revision (`2026-07-28` — stateless,
+no handshake) beside the handshake revisions, decided per request from what each
+client sends; nothing a client of 0.4.0 sends stops working, and a newer client gets
+the newer transport on its first call. A client linked through the provider stays
+linked — its next refresh succeeds and nothing re-registers — and a personal access
+token keeps working. An instance upgraded from 0.3.x or 0.4.0, or restored from a
+dump taken on one, may hold a stored copy of a web client's metadata document
+(Claude web, ChatGPT web); it is the fallback until the first successful fetch and
+removed then — nothing to do ([MCP clients that sign in through the
+provider](#mcp-clients-that-sign-in-through-the-provider-oidc-mode) has what that document
+does). One thing an unusual client notices: a dynamic registration that asks for
+`private_key_jwt` is refused at registration (400) — no client in the tested set
+asks for it. Rolling back is `git checkout v0.4.0-alpha` and the same `up`; the
+database needs nothing.
+
 ### Upgrading to 0.4.0: nothing to migrate, one look
 
 0.4.0 is the interface: no schema migration, no authentication change, no new

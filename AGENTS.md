@@ -712,8 +712,8 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
      REST/import diagnostics; no non-English translation required
 6. ~~Secure remote access: single-owner browser auth, scoped REST/MCP tokens,
    OAuth-compatible MCP, tested TLS/VPS deployment path~~ ✅ (§5, v0.3.0-alpha)
-6.1. MCP modernisation: dual-era current + `2026-07-28` compatibility with
-     conformance and client coverage
+6.1. ~~MCP modernisation: dual-era current + `2026-07-28` compatibility with
+     conformance and client coverage~~ ✅ (§7.1, `m6.1-fastmcp4` = #241–#244, v0.4.1-alpha)
 6.5. ~~UI redesign: move off the stock Tailwind look — Workbench, design §13,
      built as #231–#234 on the integration branch `m6.5-workbench`; before M7/M8
      so the gallery and showcase are built in the new look once (#122 rode here)~~ ✅

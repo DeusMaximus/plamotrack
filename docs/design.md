@@ -1,6 +1,6 @@
 # plamotrack — Design Notes
 
-**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 10/09/2026
+**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 15/09/2026
 
 ---
 
@@ -76,9 +76,8 @@ else's UI. This is the same app, owned outright.
   owner login (password or OpenID Connect), scoped personal access tokens,
   OAuth-compatible MCP clients, and a tested TLS deployment path (§5; v0.3.0-alpha,
   08/09/2026)
-- 🔨 **Planned (M6.1)** Dual-era MCP compatibility: `2026-07-28` beside the handshake
-  era, from one endpoint — served since the FastMCP 4 bump (#243); Built once #244's
-  conformance run and real-client matrix have passed
+- ✅ Dual-era MCP compatibility: `2026-07-28` beside the handshake era, from one
+  endpoint, negotiated per request (§7.1; M6.1, v0.4.1-alpha, 15/09/2026)
 - 🔨 **Planned (M7)** Photo gallery per kit
 - 🔨 **Planned (M8)** A public-facing, read-only showcase page suitable for linking
 - Genuinely reusable by someone who isn't the author — this is a public repo, not a
@@ -2194,7 +2193,7 @@ skills (the first covers Gunpla) that teach an agent the naming and classificati
 conventions plamotrack deliberately doesn't encode. The app stays generic (§9.1);
 the genre knowledge lives with the agent that applies it.
 
-### 7.1 Protocol modernisation 🔨 **Planned (M6.1)**
+### 7.1 Protocol modernisation ✅ **Built (M6.1, v0.4.1-alpha, 15/09/2026)**
 
 Since the FastMCP 4 bump (#243, on the M6.1 integration branch) the server serves two
 protocol eras from the one `/mcp` endpoint, decided per request from
@@ -2255,6 +2254,19 @@ provider's OAuth, Claude Desktop and Claude Code by PAT, a conformance run) plus
 deployment gate (T12/T13, both auth modes) is recorded in the release notes as observed. The
 marker above, README's roadmap row and §11 flip to Built **in the release PR** that lands the
 branch on `main` — after that gate and matrix pass — never with the dependency version.
+
+**Built (15/09/2026).** The acceptance matrix ran on 15/09/2026 against a v0.4.1 candidate
+on the gate host through a Cloudflare Tunnel, in OIDC mode: a fresh v0.4.0-alpha install,
+Claude web (CIMD), ChatGPT web (CIMD), Gemini Spark (DCR) and Mistral (DCR) linked by the
+owner, then the documented upgrade and the documented restore, each followed by a round of
+real calls — every grant continued, no re-registration or re-consent, the two persisted CIMD
+rows retired at the first document fetch as §5.6 specifies; MCP Inspector 2.6.0 by DCR;
+Claude Code 2.1.270 and `mcp-remote` 0.14.2 by PAT; the 4.0.3 client in both modes; the
+modern hold through Cloudflare on both spellings. Eras as observed: Claude web and Claude
+Code `2026-07-28`, the rest `2025-11-25`. The conformance runner (0.1.16) has server
+scenarios for the handshake revisions only, and its tool-call scenarios cannot pass an
+unauthenticated build because the per-tool middleware refuses anonymous calls in every mode;
+its transport scenarios pass. The release notes carry the block as observed.
 
 ---
 
@@ -2443,8 +2455,9 @@ Unchanged from the original plan:
    path. This is the gate for deliberately exposing an instance. The threat model and
    route authorization matrix are in §5 (02/09/2026, #29); the implementation split
    is §5.9
-10. 🔨 **M6.1 — MCP modernisation:** dual-era compatibility for the existing protocol
-    generation and `2026-07-28`, with conformance and real-client coverage
+10. ✅ **M6.1 — MCP modernisation:** dual-era compatibility for the existing protocol
+    generation and `2026-07-28`, with conformance and real-client coverage (§7.1;
+    `m6.1-fastmcp4` = #241–#244, v0.4.1-alpha, 15/09/2026)
 11. ✅ **M6.5 — UI redesign:** move off the stock Tailwind look. Direction
     **decided 09/09/2026 — Workbench, §13** — after three directions were drawn on
     the same screens; the build is split in §13.6 and **complete on the integration
