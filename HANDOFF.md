@@ -41,6 +41,14 @@ Template:
 
 ---
 
+## 2026-09-15 — Claude Code (Fable 5.1) — **v0.4.1-alpha RELEASED** (M6.1 complete): release PR #252 merged with merge commit `971af7e` (tree `ebc0f47`, the gated tree), tag pushed, prerelease published, #242/#243/#244/#56 closed, milestone M6.1 closed, docs site updated (plamotrack-docs#4); next the LXC upgrade and the personal Gunpla skill refresh — the owner's
+
+- **Done:** release commit `994f759` on `m6.1-fastmcp4` (0.4.1 in the three files via `uv lock`; the Built flip in README's roadmap row, design §7.1 and §11 with the acceptance run recorded in §7.1, AGENTS' roadmap; *Upgrading to 0.4.1* in `docs/operations.md`; README points at https://docs.gunp.la in three places). **PR #252** (`m6.1-fastmcp4` → `main`, CI green on all jobs) merged with a **merge commit `971af7e`**, two parents, tree `ebc0f47` == the branch tip's == the gated tree (`main` was an ancestor with nothing outside the branch). Annotated tag `v0.4.1-alpha — MCP speaks both generations` on the merge commit, pushed; `gh release create --prerelease --verify-tag` → https://github.com/DeusMaximus/plamotrack/releases/tag/v0.4.1-alpha with the acceptance block and both gate blocks as observed. Milestone M6.1 closed (5/5). Docs site: PR DeusMaximus/plamotrack-docs#4 squash-merged (`0bd5b9c`, changelog entry dated 15 September 2026), live at docs.gunp.la within a minute.
+- **Gate (both green, on tree `ebc0f47`):** step 4 local packaged stack under its own Compose project — migrate exit 0 (head `d5e9362140ea`), app 0.4.1 on fastmcp 4.0.3 / mcp 2.2.0, matrix local mode 0 failing with 75 s holds, refusal budget 10 rows, `/api/meta` 0.4.1, both eras through nginx with a PAT (31 tools, `serverInfo` 0.4.1), anonymous refused, archive manifest `app_version 0.4.1` / `schema_version d5e9362140ea` / `export_version 1`, T10 scan clean (210 api + 371 web access records, 7 values absent); torn down, dev volume untouched. Step 4b testhost `--phase all` + tunnel after a fresh-install reset, 07:19–07:35, exit 0: precheck, lockout, local (180 ok), modern-hold, break-glass, trusted-proxies, oidc (182 ok), t13 (three restores as documented), tunnel (87 ok, 130 s holds both spellings, visitor attribution exact). Results in the PR comment (issuecomment-5671138175) and the notes; the gate's state dir is `~/.plamotrack-gate/testhost.internal.tlgnet.net` (the #244 run's moved to `…244-run-2026-09-11`); the acceptance run's own secrets in `…rc-0.4.1/`.
+- **Decisions (owner):** release is v0.4.1-alpha (patch, not 0.5.0); the acceptance run doubled as the mandatory final integration review; the bump a direct commit on the integration branch as for 0.4.0; the LXC upgrade and the Gunpla skill refresh are the owner's; `m6.1-fastmcp4` left in place, not deleted.
+- **State:** `main` = `971af7e` + this entry; the tagged tree differs from the gated tree by nothing (the hand-off commit lands **after** the tag, as the rule says). Checkout on `main`, tree clean. testhost: the release tree in mode R, OIDC mode, Keycloak up, the gate's end state. The real LXC: **v0.4.0-alpha until the owner upgrades** (nothing to migrate; connected MCP clients stay linked). The local `m6.1-fastmcp4` branch still exists locally and on origin.
+- **Next:** the owner upgrades the LXC to 0.4.1 (back up first; `git pull && docker compose up -d --build --wait`; sign in as before) and refreshes the personal Gunpla skill. Then whatever is next on the roadmap — M7 photos (#28 first) or M8 — and the open lows: #223–#227, #230, #238, #247, #249, #251. The conformance runner still has no `2026-07-28` server scenarios; re-run it when one ships.
+
 ## 2026-09-15 — Claude Code (Fable 5.1) — M6.1 final integration review: the real-client acceptance run GREEN on testhost through the Cloudflare Tunnel (Claude web, ChatGPT web, Gemini Spark, Mistral, Inspector 2.6.0, Claude Code 2.1.270, mcp-remote 0.14.2, the 4.0.3 client, modern-hold through the tunnel, conformance 0.1.16); 3.x→4.x grant continuity across upgrade + documented restore recorded; next the release PR (v0.4.1-alpha)
 
 - **Done:** local `m6.1-fastmcp4` reset to `origin` (`d57af8b`) and `main` merged in → **`c3c356b`** (docs only; unpushed). testhost reset fresh-install to the **v0.4.0-alpha tree** in the documented tunnel + OIDC shape (`PUBLIC_BASE_URL=https://plamotest.gunp.la`, `WEB_BIND=10.1.1.129`, `TRUSTED_PROXIES=10.1.1.155`, Keycloak fixture); owner claimed headlessly through the tunnel; the owner linked Claude web (CIMD), ChatGPT web (CIMD), Gemini Spark (DCR) and Mistral (DCR) at 0.4.0; documented backup; **upgrade** to the branch tree with the documented command (28 s, migrate 0, no new migration); round 1; backup at 4.x; **documented restore** (`down -v` … `pg_restore` … `up --build`, 31 s); `--phase modern-hold --hold 130` through the tunnel; round 2 after every access token expired; Inspector by DCR; Claude Code and `mcp-remote` by PAT; the 4.0.3 client both eras; the conformance runner against a source-run `create_app()`.
@@ -230,56 +238,3 @@ Template:
   through a real document fetch belong there — the private-CA/TLS path, the CI legacy + frozen-3.x
   rows, the Built flip), then the release PR (merge commit, gated, v0.5.0-alpha suggested; hold
   the hand-off until after).
-
-## 2026-09-11 — Claude Code (Fable 5.1) — #243 built on `feat/243-fastmcp4-bump` (ten commits, head `4d6f6c7`), the FastMCP 4.0.3 / MCP SDK 2.2.0 bump with the era probes; PR #246 → one Codex round (GO, no findings, two claims corrected) → **MERGED into `m6.1-fastmcp4` as `c1949a4`** (squash); next #242 stacked on the integration branch
-
-- **Done:** #243 whole, rebuilt from the spike's commits against `main`'s lock (httpx already runtime, #241).
-  `d31f9f9` the lock (fastmcp 4.0.3, mcp 2.2.0, httpx2/httpcore2 2.12.0, mcp-types, truststore; httpx-sse
-  gone; nothing else moves). `93a6144` the mechanical adaptations (legacy 406 probe pins its session,
-  `input_schema`, RFC 9207 `iss` on the denial, the digest-suffixed consent cookie) and the **five
-  CIMD-row cases `xfail(strict=True)` naming #242**. `0d76aac` the seam: `_create_upstream_oauth_client`
-  returns FastMCP's own client always and re-homes its `_client` onto `upstream_transport` (now httpx2)
-  under a type guard; `FakeIdp.upstream_handler` is the httpx2 twin; a control asserts the class with and
-  without the transport and reads Basic off the exchange. `1021aab` the binding's 405 writes the SDK's
-  null id (`exclude_unset`), the literal body test unchanged. `867ccef` `discovery_metadata` sets
-  `authorization_response_iss_parameter_supported`; the `private_key_jwt` DCR refusal (SDK 2's 400
-  before `register_client`) accepted — parametrize row dropped, a refusal test and an `iss`-on-the-code-
-  redirect test added. `98b1c78` `tests/test_mcp_eras.py`, 16 cases, the four brief-contract assertions
-  corrected to the mount's RFC 6750 challenge (no envelope), the no-routing-headers case pinned to the
-  SDK's `-32020`. `a4347e4` docs (design §7.1 both eras + the §11 marker still Planned; AGENTS rule 13's
-  mount-refusal and DCR sentences; design §5.5 row; operations "first protected request"; the release
-  step checks both eras; the spike report → `.agents/spikes/241/findings.md` + README; `.agents/README`).
-  `75bdbdb` four `243-` mutants. `1715d66` **CI's real-client row rewritten**: SDK 2 folds the anonymous
-  401 into `MCPError(-32603, "Server returned an error response")` — the old `"401" in str(exc)` would
-  have failed the Integration job with the server refusing correctly; the row now asserts the SDK's
-  refusal plus the two wire requests (modern probe, handshake) each 401 `Bearer`.
-- **Verified:** targeted sets green before the full run (211 + 5 xfailed; the two OAuth suites 455);
-  full backend suite **2713 passed, 5 xfailed (the #242 five), 0 failed, 17m21s**; ruff clean; harness `-k 243-` **4/4 killed**; negative control (era probes
-  in a worktree of `dd183db`, 3.4.5, own venv) **10 red / 6 green**. Packaged stack under Compose project
-  `plamotrack-243` from this tree: migrate exit 0, `ingress_matrix.py` **187 ok / 0 failing**, real
-  4.0.3 clients through nginx on both spellings (`auto` → `2026-07-28`, `mode="legacy"` → `2025-11-25`,
-  31 tools, `get_meta`, `server_info.version` 0.4.0 in both eras), an unmodified 3.4.5 client the same
-  and refused with its 401 anonymously, CI's step extracted from the workflow file and run verbatim.
-- **Decisions (mine, for the owner to ratify on the PR):** strict xfail for #242's five rather than
-  delete/red; the binding mirrors the null id rather than pin both (the spike's edit would have hidden
-  the drift); the seam reaches FastMCP's `_client` under a guard rather than patching `httpx2.AsyncClient`
-  module-wide; the four probes corrected, not the server; the report at `.agents/spikes/241/`; the CI
-  row proves the 401 on the wire beside the client. All seven are in the PR body's "Deliberate calls".
-- **The round (Codex, GPT-6):** GO, no P1–P3; every number re-measured and matching (control 10/6
-  with the per-case reasons, suite 2713/5/0, 4/4 mutants on the named assertions, the five strict
-  xfails run with the marks off — each red on the row assertion, CI green at `1715d66`); 26
-  supplementary cases (the two 401 writers per era and mode, the 75-entry route snapshot, the
-  metadata diff, Host/Origin under modern requests in both modes, `application_type`). Two claims
-  corrected at `4d6f6c7`: the TLS scope (exchange, both refreshes and a fetched client-assertion
-  JWKS move onto httpx2/truststore beside CIMD — not confined to CIMD, not proved inert; #244 measures
-  a private CA) and CI's fixture (now the SDK's real fallback: `initialize` at 2025-11-25, id 2);
-  the bare `Bearer` named as local mode's. Response posted (issuecomment-5627478871). The owner's
-  note: Codex spent heavily on a control-tracing pass — that is the brief's first job, and its output
-  is where the corrections came from; not a distraction on this round.
-- **State:** `m6.1-fastmcp4` = `c1949a4` (PR #246 squash-merged on the owner's word, branch deleted);
-  #243 stays open until the release PR lands the branch on `main`. `main` = the hand-offs (pushed).
-  Packaged project torn down; control worktree removed; dev overlay up; checkout on `main`.
-- **Next:** **#242** on a branch from `m6.1-fastmcp4` (restate the CIMD contract DCR-only, replace the
-  five strict xfails, the unreachable-document probe, the 3.x-state transition); then #244 (both eras
-  gated with real clients, the private-CA/TLS path, the CI legacy + frozen-3.x rows, the Built flip);
-  then the release PR (merge commit, gated, v0.5.0-alpha suggested; hold the hand-off until after).
