@@ -877,7 +877,7 @@ async def test_starting_in_the_other_mode_revokes_its_sessions_for_good(anon_cli
     """The switch is durable, not a per-request refusal alone: the start in the
     new mode revokes every session the old one minted, with an audit row, so
     switching back does not resurrect a cookie the operator was told is signed
-    out (docs/operations.md, "sessions are signed out")."""
+    out (docs.gunp.la, OIDC login: "Switching from password to OIDC")."""
     await _claim_locally(anon_client)
     async with oidc_app(FakeIdp()) as (live, _):
         async with live.router.lifespan_context(live):

@@ -15,7 +15,7 @@ Existing rows record an amount and no currency, so there is nothing to convert
 is an assumption about what the person entering the number meant. Instances that
 bought tools abroad should check those rows after upgrading. That is the same
 standard #12 and #6 were held to, and the reason this lands immediately after a
-tagged release (docs/operations.md: export an archive before upgrading).
+tagged release (the docs site's Updating page: back up before updating).
 
 The exponent used for the conversion is that currency's, not a flat 100: a JPY
 instance's 45.00 is ¥45 (45 minor units), not 4500.
@@ -82,7 +82,7 @@ def downgrade() -> None:
     # back into it without becoming a number that means something else; anything
     # else is dropped rather than silently relabelled. A reference currency with
     # three or four decimals also loses precision here, because scale 2 is the
-    # shape being restored — take a backup first (docs/operations.md).
+    # shape being restored — take a backup first (docs.gunp.la, Backups).
     op.execute(
         sa.text(
             "UPDATE tools "

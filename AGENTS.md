@@ -129,8 +129,10 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
   e2e/                  # Playwright happy-path (runs against the dev stack, self-cleaning)
 docs/design.md          # product intent + architectural decision record (§n targets)
 docs/import-export.md   # user-facing CSV format + matching reference
-docs/operations.md      # backup / restore / upgrade for the container stack
 docs/translating.md     # contributor how-to for proposing/reviewing a language (#22)
+                        # operator docs — install, deploy, auth, backups, updating, the
+                        #   audit log — live on the docs site (DeusMaximus/plamotrack-docs
+                        #   → https://docs.gunp.la), not in this repo; the README links there
 HANDOFF.md              # session hand-off log — the five most recent entries only
 .agents/                # process material for agents, NOT user docs (README inside)
   handoff/YYYY-MM.md    #   archived HANDOFF.md entries, verbatim; grep it, don't read it
@@ -704,7 +706,8 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
 4.5. ~~Import/export: CSV archive + manifest, preview, templates~~ ✅ (§12)
 → **Public alpha ships here.** Everything below is built in the open.
 5. ~~Installability: full local Docker Compose stack, safe loopback defaults,
-   migrations, health checks, backup/upgrade docs~~ ✅ (§8, `docs/operations.md`)
+   migrations, health checks, backup/upgrade docs~~ ✅ (§8; the operator docs have
+   since moved to https://docs.gunp.la)
    — also shipped the configurable reference currency, pulled forward from 5.1
 5.1. Instance settings + internationalisation foundation: singleton settings,
      `en-AU` source catalogue and fallback, reviewed language contributions,
@@ -732,5 +735,6 @@ access tokens for REST scripts and MCP clients (M6-3/M6-4); only liveness and th
 auth bootstrap answer anonymously — and since M6-9 (#194) there is a tested TLS path:
 Caddy with Cloudflare DNS-01 on the same host as the stack (the reference), a
 Cloudflare Tunnel variant, and the private-network case, the four documented ways to
-run it in `docs/operations.md`. Describe those and no others; every one of them was
+run it on the docs site (https://docs.gunp.la/deployment/overview, the
+`plamotrack-docs` repository). Describe those and no others; every one of them was
 run through `backend/deployment_gate.py` before the docs said so (§5.8 T12/T13).

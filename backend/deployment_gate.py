@@ -213,15 +213,15 @@ class Host:
         return [line for line in output.splitlines() if line.strip()]
 
     def dump(self, remote_path: str) -> None:
-        """docs/operations.md, "Backups": the exact-restore dump."""
+        """The docs site's Backups page: the exact-restore dump."""
         self.compose(
             'exec -T db sh -c \'exec pg_dump -U "$POSTGRES_USER" -Fc "$POSTGRES_DB"\''
             f" > {shlex.quote(remote_path)}"
         )
 
     def restore(self, remote_dump: str) -> None:
-        """docs/operations.md, "Restoring a dump": the four commands, verbatim, into
-        an empty database. `down -v` is what makes it the disaster-recovery path."""
+        """The docs site's "Restoring a dump": the four commands, verbatim, into an
+        empty database. `down -v` is what makes it the disaster-recovery path."""
         self.compose("down -v")
         self.compose("up -d db --wait")
         self.compose(

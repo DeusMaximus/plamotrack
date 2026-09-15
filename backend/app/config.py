@@ -320,7 +320,8 @@ class Settings(BaseSettings):
             raise ValueError(
                 "AUTH_MODE=oidc needs " + ", ".join(missing) + " — the callback URL is built "
                 "from PUBLIC_BASE_URL, the provider from OIDC_ISSUER, and the MCP OAuth "
-                "tokens are signed with MCP_OAUTH_SIGNING_KEY (docs/operations.md)"
+                "tokens are signed with MCP_OAUTH_SIGNING_KEY "
+                "(https://docs.gunp.la/authentication/oidc)"
             )
         # The MCP OAuth authorization server is `<PUBLIC_BASE_URL>/mcp` (§5.5
         # family 8, #192). RFC 8414 requires an https issuer and the MCP SDK
@@ -335,7 +336,7 @@ class Settings(BaseSettings):
                 "AUTH_MODE=oidc needs an https PUBLIC_BASE_URL (or localhost / 127.0.0.1 for "
                 "development): the MCP OAuth authorization server at <PUBLIC_BASE_URL>/mcp "
                 f"must be https (RFC 8414); got {self.public_base_url!r}. Put TLS in front, "
-                "or use AUTH_MODE=local (docs/operations.md)"
+                "or use AUTH_MODE=local (https://docs.gunp.la/authentication/oidc)"
             )
         return self
 

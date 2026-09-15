@@ -272,7 +272,7 @@ jobs:
           # is the anonymous probe, and a fresh stack must report itself unclaimed.
           curl --fail --silent --show-error http://127.0.0.1:8080/api/auth/session | grep -q '"state":"unclaimed"'
 
-      # A fresh install's one way in (docs/operations.md, "First run"): the API
+      # A fresh install's one way in (https://docs.gunp.la/first-run): the API
       # printed a setup token to its log at start. Read it the way an operator
       # would, so the matrix claims the stack through the packaged ingress and
       # the first-run path is exercised end to end, not just unit-tested.

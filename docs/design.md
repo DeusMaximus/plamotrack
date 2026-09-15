@@ -829,7 +829,7 @@ authenticates — §5.6 (route bypass) says why no unauthenticated mode ships.
 |---|---|---|---|---|
 | **L — loopback** (default) | `WEB_BIND=127.0.0.1`, plain HTTP, `PUBLIC_BASE_URL` unset or `http://localhost:8080` | The host only | B | Everything, local MCP clients included. The install path stays `docker compose up -d --build --wait` followed by one setup form (§5.7). |
 | **P — private network** | `WEB_BIND=<VPN or LAN address>` (or `0.0.0.0` on a network the owner trusts), plain HTTP, `PUBLIC_BASE_URL=http://<name>:<port>`, `ALLOWED_HOSTS` naming every name it is reached by | Every device on that network | A (on that network), B | Home use over a WireGuard-class mesh, where the tunnel supplies confidentiality. On a raw LAN the session cookie and bearer tokens cross the wire in clear; the docs say so and leave it the operator's call. The credential itself is required since #188/#189; confidentiality on the wire is what this mode lacks. |
-| **R — remote, behind TLS** | `WEB_BIND=127.0.0.1` on the same host as a TLS-terminating proxy (the reference configuration is Caddy → nginx → api, with the certificate from Let's Encrypt through Cloudflare's DNS-01 challenge — what the gate exercises, #194; Caddy's default challenge is the documented variant), `PUBLIC_BASE_URL=https://…`, `TRUSTED_PROXIES=127.0.0.1` (in the bundled stack a loopback entry also trusts the Compose gateway, which is where a host process arrives from). **The tunnel variant** (#194): a Cloudflare Tunnel whose connector runs on another host — `WEB_BIND` on the address the connector reaches, `PUBLIC_BASE_URL=https://<public name>`, `TRUSTED_PROXIES` naming the connector; the hop between them is plain HTTP on the operator's own network, mode P's assumption. | The internet | A, B, C, D, E | The only mode the README may describe as internet deployment, and only once every test in §5.8 passes against it — `docs/operations.md` describes it as two of its four ways (Caddy on the host; a tunnel), both run through the gate. |
+| **R — remote, behind TLS** | `WEB_BIND=127.0.0.1` on the same host as a TLS-terminating proxy (the reference configuration is Caddy → nginx → api, with the certificate from Let's Encrypt through Cloudflare's DNS-01 challenge — what the gate exercises, #194; Caddy's default challenge is the documented variant), `PUBLIC_BASE_URL=https://…`, `TRUSTED_PROXIES=127.0.0.1` (in the bundled stack a loopback entry also trusts the Compose gateway, which is where a host process arrives from). **The tunnel variant** (#194): a Cloudflare Tunnel whose connector runs on another host — `WEB_BIND` on the address the connector reaches, `PUBLIC_BASE_URL=https://<public name>`, `TRUSTED_PROXIES` naming the connector; the hop between them is plain HTTP on the operator's own network, mode P's assumption. | The internet | A, B, C, D, E | The only mode the README may describe as internet deployment, and only once every test in §5.8 passes against it — the docs site's deployment pages describe it as two of the four ways (Caddy on the host; a tunnel), both run through the gate. |
 | **Dev — source-run** | uvicorn on `127.0.0.1:8000`, Vite on `:5173`, no nginx | The developer's machine | B | Development and the e2e suite. Loopback origins are accepted against loopback hosts (§5.6, host and origin), so the Vite proxy trap recorded on #29 needs no permanent exception. |
 
 **Unsupported, and the docs will say so:** `WEB_BIND=0.0.0.0` on a public interface
@@ -1090,7 +1090,7 @@ minted in Settings; that paste is the whole cost. The LAN and mesh cases (mode P
 
 ### 5.8 The tests that gate the documentation
 
-The README and `docs/operations.md` may recommend a `WEB_BIND` other than loopback, and
+The README and the docs site's deployment pages may recommend a `WEB_BIND` other than loopback, and
 may describe mode R at all, only when every one of these exists and passes. They are
 listed so the implementation issues can be checked against them rather than against a
 feeling.
@@ -2326,7 +2326,7 @@ M5 did **not** make the stack internet-safe; M6 did, as far as its threat model 
 (§5): authentication, and a reference TLS deployment — Caddy on the same host with the
 certificate through Cloudflare's DNS-01 challenge — plus a tested Cloudflare Tunnel
 variant, with operators free to put Traefik, nginx or another proxy in front under the
-contract `docs/operations.md` states. The base Compose file still bundles no certificate
+contract the docs site's reverse-proxy page states. The base Compose file still bundles no certificate
 authority and no identity platform.
 
 ---
@@ -2441,8 +2441,9 @@ Unchanged from the original plan:
    ahead of the rest to make a public alpha honest (§10)
 6. → **Public alpha here.** Everything below happens in the open.
 7. ✅ **M5 — Installability:** full local Docker Compose stack, controlled migrations,
-   safe loopback defaults, health checks, and backup/upgrade documentation (§8,
-   `docs/operations.md`). This improves adoption without claiming the unauthenticated
+   safe loopback defaults, health checks, and backup/upgrade documentation (§8; the
+   operator documentation has since moved to https://docs.gunp.la). This improves
+   adoption without claiming the unauthenticated
    stack is internet-safe. The configurable reference currency was pulled forward from
    M5.1 and shipped here — it is a schema migration, not translation work, and its
    compatibility cost grows with every archive exported under the old column name

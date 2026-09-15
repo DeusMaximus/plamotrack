@@ -25,7 +25,7 @@ Nothing here is imported by the app.
   the connector's address (for `--tunnel-proxy`), and this workstation's public
   address as Cloudflare forwards it (for `--tunnel-visitor` —
   `curl -s https://cloudflare.com/cdn-cgi/trace | sed -n 's/^ip=//p'`), and the UI
-  steps written down for `docs/operations.md`.
+  steps written down on the docs site's Cloudflare Tunnel page.
 
 ## Run
 
