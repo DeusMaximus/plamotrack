@@ -41,6 +41,14 @@ Template:
 
 ---
 
+## 2026-09-15 — Claude Code (Fable 5.1) — `docs/operations.md` retired into the docs site (docs.gunp.la): **PR #254** (app) and **plamotrack-docs#5** open on the owner's go, CI pending; the docs PR must merge first
+
+- **Done — docs site** (`~/Code/plamotrack-docs`, branch `docs/absorb-operations-md` off `main` = `0bd5b9c`, commit `21632cf`, **PR plamotrack-docs#5**; 13 pages modified, 2 new): `docs/operations.md` audited section by section against the site, every gap filled. **New pages:** `deployment/overview.mdx` (the four-ways table with the "tested" column, plain-HTTP vs TLS, the Unsupported list — the target of the README's "four ways" links) and `configuration/audit-log.mdx` (events recorded / never recorded, sha256 fingerprints, `prune-audit` + `AUDIT_RETENTION_DAYS`, the refusal budget, access-log hygiene incl. the proxy). **Expanded:** `env-reference` (per-key detail for `WEB_BIND`/`ALLOWED_HOSTS`/`PUBLIC_BASE_URL`/`TRUSTED_PROXIES`, fuller auth/MCP rows, the Compose-network trust note, bootstrap vs runtime settings); `reverse-proxy` (5th step: proxy log hygiene); `cloudflare-tunnel` (`WEB_BIND` = the address the connector reaches — the tested shape has the connector on another machine; Cloudflare Access; idle/keepalive); `vps-caddy` (`deploy/caddy/Caddyfile` named, `/api/readyz` 404); `troubleshooting` (readyz vs healthz); `password-login` (fix: the recognised-cookie bucket is the *reserved* one, not "larger"; per-address vs shared allowance); `oidc` (issuer+subject binding, other accounts refused + audited, rebind reports the provider count); `access-tokens` (read-only includes CSV export); `claude-web-chatgpt` (`PUBLIC_BASE_URL` as identity; disconnecting in the client ends the grant; new "Registration limits and edge cases": public clients, 24 h, 20/h, 1024, 16 KiB, CIMD document caching and the `401 invalid_client` case); `backups` (scripted archive export with a PAT — operations.md's `curl` line had lacked a token since 0.3.0 — snapshot consistency, in-container variable expansion, restore with a fresh `.env`); `upgrading` (0.4.1 `private_key_jwt` clause; "Data checks for older instances" carrying the pre-0.2.7 SQL check and the pre-public-schema note inline — the 0.2.7 entry had linked into the file being deleted). Owner review in the preview: the overview page retitled *Choose how to run plamotrack: four deployment options*; Mistral's Le Chat renamed **Vibe Chat** on the MCP overview table and the web-clients page (the only two mentions in either repo). `mint broken-links` clean; the new/expanded pages rendered under `mint dev` (temporary `docs` entry in `.claude/launch.json`, reverted).
+- **Done — app repo** (branch `docs/retire-operations-md` off `main` = `a21dba3`, commit `fe0f6ab`, **PR #254**; 20 files + the deletion): `git rm docs/operations.md`. **README:** every reference is a docs.gunp.la link (deployment overview; Backups / Updating / Audit log / Configuration; `local-and-lan#got-a-421-error` ×2 — the old `#names-it-answers-to` anchor no longer existed; OIDC login + Web clients pages; a new "Anything else → troubleshooting" bullet); the prerequisites line corrected — Docker **with Compose and Git** (the block starts with `git clone`), "a few minutes" not "three". **Elsewhere:** `AGENTS.md` (layout note: operator docs live on the docs site; roadmap item 5; the "four documented ways" paragraph), `.env.example` ×2, `docker-compose.yml` ×2, `deploy/README.md`, `deploy/caddy/Caddyfile` ×2, the nginx `.envsh` comment, `app/config.py`'s two error strings (split for the 100-col limit), `deployment_gate.py` docstrings ×2, three migration comments, three test docstrings, the `ci.yml` comment, `docs/import-export.md` (→ `upgrading#kit-quantities-from-early-imports`), `docs/design.md` present-tense refs (mode R row, §5.8, §10, roadmap 7 — the past-tense "shipped" narrative near lines 1785/1791/2392 left as history), `.agents/deployment-gate/README.md`. `ruff check` + `format --check` clean; no test asserts the changed strings. Untouched by design: `.agents/lessons.md`, `.agents/spikes/*`, the handoff archives.
+- **Decisions (mine, for the owner):** operator documentation has one home, the docs site; this repo's `docs/` keeps `design.md`, `import-export.md`, `translating.md`. The docs-site additions are content the site lacked, in its own voice — not a port of the wall of text. Committed and the PRs opened on the owner's go ("all good to proceed"); not merged — that is the owner's call, and the docs PR goes first. No review requested: docs-only, no behaviour change.
+- **State:** app `main` = `a21dba3` + this entry (checkout on `main`, tree clean); `docs/retire-operations-md` pushed, PR #254 open against `main`. Docs repo `main` = `0bd5b9c`; `docs/absorb-operations-md` pushed, PR #5 open, checkout still on that branch, tree clean. A sibling session's worktree `.claude/worktrees/mystifying-herschel-*` sits on `handoff/pr-253` (= `main`); **PR #253** (screenshot capture, `chore/docs-screenshot-capture`) is open and not this session's. testhost and the LXC untouched.
+- **Next:** **merge plamotrack-docs#5 first** (the README's new links resolve only once `deployment/overview` and `configuration/audit-log` are live; the site deploys within a minute of the merge), then #254 once CI is green; delete both branches after. Then whatever is next on the roadmap. Open: #223–#227, #230, #238, #247, #249, #251, PR #253.
+
 ## 2026-09-15 — Claude Code (Fable 5.1) — **v0.4.1-alpha RELEASED** (M6.1 complete): release PR #252 merged with merge commit `971af7e` (tree `ebc0f47`, the gated tree), tag pushed, prerelease published, #242/#243/#244/#56 closed, milestone M6.1 closed, docs site updated (plamotrack-docs#4); next the LXC upgrade and the personal Gunpla skill refresh — the owner's
 
 - **Done:** release commit `994f759` on `m6.1-fastmcp4` (0.4.1 in the three files via `uv lock`; the Built flip in README's roadmap row, design §7.1 and §11 with the acceptance run recorded in §7.1, AGENTS' roadmap; *Upgrading to 0.4.1* in `docs/operations.md`; README points at https://docs.gunp.la in three places). **PR #252** (`m6.1-fastmcp4` → `main`, CI green on all jobs) merged with a **merge commit `971af7e`**, two parents, tree `ebc0f47` == the branch tip's == the gated tree (`main` was an ancestor with nothing outside the branch). Annotated tag `v0.4.1-alpha — MCP speaks both generations` on the merge commit, pushed; `gh release create --prerelease --verify-tag` → https://github.com/DeusMaximus/plamotrack/releases/tag/v0.4.1-alpha with the acceptance block and both gate blocks as observed. Milestone M6.1 closed (5/5). Docs site: PR DeusMaximus/plamotrack-docs#4 squash-merged (`0bd5b9c`, changelog entry dated 15 September 2026), live at docs.gunp.la within a minute.
@@ -170,71 +178,3 @@ Template:
   ChatGPT web, Claude Desktop/Code), a conformance run against an unauthenticated build (the runner
   has no auth flag), modern-hold through the Cloudflare Tunnel, and 3.x→4.x grant continuity — then
   the Built flip. #249 is a known-limitation line for the notes. Open: #223–#227, #230, #238.
-
-## 2026-09-11 — Claude Code (Fable 5.1) — #242 built on `feat/242-cimd-dcr-only` (four commits, head `a323b52`, from `m6.1-fastmcp4` = `c1949a4`): the client-record contract restated DCR-only, the five strict xfails replaced, the 0.4.0-row transition and the document outage probed; PR #248 → one Codex round (GO + 2×P3, answered at `a323b52`, #249 filed) → **MERGED into `m6.1-fastmcp4` as `c6cd383`** (squash); next #244
-
-- **Done:** #242 whole. `e0b5f24` the suite and the proxy: `tests/test_mcp_oauth_registrations.py`
-  12 → 17 functions / 20 cases — a CIMD client stored nowhere before or after its link, the
-  adapter's permanent-stays-permanent rule driven over the record's three states, a CIMD client
-  resolving and linking at the registrations' cap, a lookup from `/mcp/token` or `/mcp/revoke`
-  materialising no record (`401 invalid_grant` / `200`, the collection empty), the cull at
-  creation rolling expired rows over on its one caller (the registration), FastMCP 4's own
-  cache bound looser than ours with its store path writing through ours; **the transition** —
-  a real 3.4.5 row (captured in a throwaway 3.4.5 venv, `ProxyDCRClient.model_dump(mode="json")`,
-  pasted as a literal) in both lifetimes is the fallback while the document is unreachable
-  (resolves, links), deleted at the first successful fetch, then an unreachable document leaves
-  the client unknown; an expired row backs nothing and waits for the cull; **the outage** — the
-  document's own cache policy decides a brief outage's cost in a running process (kept an hour
-  by default → 200; `no-store` → 401), and after a restart an unreachable document makes the
-  client's own refresh and revocation `401 invalid_client` (provider asked nothing, grant
-  standing, no revocation row) while the access token works and the transparent refresh reaches
-  the provider, and the same refresh token and revocation succeed once the host answers (the real
-  `CIMDFetcher.fetch` in front of a faked `ssrf_safe_fetch_response`). The proxy: `ClientRecords`'
-  docstring, the `CIMD_CACHE_ENTRIES` note, the writer inventory and the cull comment restated;
-  the dead `except ClientRecordsFull` in `get_client` removed (no lookup writes now). `71abf65`
-  the harness: scan-29 re-pointed at the registration rollover; `242-1` (a later write re-arms a
-  permanent record), `242-2` (our cache bound raised above FastMCP's). `dbe5ed1` the docs: AGENTS
-  rule 14's client-records paragraph, design §5.6's row, a dated amendment closing §5.9 item 11,
-  operations' MCP-client paragraph (the transition sentence lives there; the "Upgrading to
-  0.5.0" section is the release PR's).
-- **Verified:** the file green here (20); **negative control** in a worktree of `dd183db`
-  (3.4.5, own venv) **11 red / 9 green** — every red on the row assertion, the fallback's 200, or
-  3.x's missing `MAX_CACHE_SIZE`; the greens the DCR-side behaviours both versions share (the PR
-  body has the table); harness `-k 242-` **2/2** and `-k scan-29` **1/1** killed (643 cases / 57
-  files re-derived); full backend suite **2725 passed, 0 failed, 0 xfailed, 20m42s** (the five strict xfails gone); ruff clean. Measured, not assumed: `401
-  invalid_grant` for a never-issued refresh token is FastMCP's `TokenHandler` (MCP spec's 401
-  over RFC 6749's 400), already pinned four times in `test_mcp_oauth.py`; FastMCP 4's proxy calls
-  `get_client` nowhere but the CIMD manager, so the transparent refresh never resolves the client;
-  `application_type` is the one field 4.0.3 added to `ProxyDCRClient`, with a default.
-- **Decisions (mine, for the owner to ratify on the PR — eight "Deliberate calls" in the body):**
-  the dead except removed rather than kept; the adapter rule kept and tested at the seam though
-  no FastMCP writer drives it; our 256 bound kept beside FastMCP's 1000; the outage contract
-  recorded, not changed (no database copy of the document); the 0.4.0 row a captured literal;
-  the SDK's 401 pinned; scan-29 re-pointed not retired; the upgrade note left to the release.
-- **The round (Codex, GPT-6):** GO, two P3s, one prose slip — all reproduced and answered at
-  `a323b52`. f1: the captured 0.4.0 row carried `issuer`, which the shipped lock's MCP 1.29.0 model
-  lacks — my throwaway `pip install fastmcp==3.4.5` had resolved MCP 1.30.0; recaptured in a
-  `dd183db` worktree under the real lock through the real old proxy and the encryption wrapper
-  (diff: `issuer` alone), the comment records the versions, and a new case pins the literal's key
-  set against the current model (adds exactly `application_type` + `issuer`; the excluded
-  `allow_unregistered_redirect_uris` named). f2: FastMCP's fetcher reads neither `Age` nor `Date`
-  (RFC 9111 §4.2 — a response aged upstream keeps a full lifetime from receipt), inherited from
-  3.4.5; **#249 filed**, the operations paragraph and the design §5.9 amendment qualified ("from
-  receipt"), the case a **strict xfail naming #249**. Prose: seven unchanged cases, not nine; call
-  6's rationale qualified (the MCP 401 is for access-token usage; the token-endpoint 401 is the
-  SDK's reading). Codex re-measured everything (11/9, 3/3, 643/57, CI 2725) and added 34
-  supplementary cases, listed in the PR's coverage record with its "left unexamined" list as open
-  rows. Response posted (issuecomment-5628824763).
-- **State:** **`m6.1-fastmcp4` = `c6cd383`** (PR #248 squash-merged on the owner's word after CI green on
-  `a323b52`: Backend 13m59s, Integration, Frontend; the feature branch deleted). #242 and #243 stay
-  open until the release PR lands the branch on `main`. `main` = this entry. Checkout on `main`,
-  tree clean, dev overlay up. The control worktree is gone; the scratchpad holds the PR body, the
-  brief, the response and the capture (`row_0_4_0_captured.json`).
-- **Next:** **#244** on a branch from `m6.1-fastmcp4` (both eras gated with real clients — Claude web
-  and ChatGPT web through a real document fetch belong there — the private-CA/TLS path, the CI legacy
-  + frozen-3.x rows, the Built flip; #249's `Age` limitation is a known-limitation line for the notes,
-  not a blocker), then the release PR (merge commit, gated, v0.5.0-alpha suggested; hold the hand-off
-  until after the merge). Merge `main` into the integration branch first if `main` has moved. Then **#244** (both eras gated with real clients — Claude web and ChatGPT web
-  through a real document fetch belong there — the private-CA/TLS path, the CI legacy + frozen-3.x
-  rows, the Built flip), then the release PR (merge commit, gated, v0.5.0-alpha suggested; hold
-  the hand-off until after).
