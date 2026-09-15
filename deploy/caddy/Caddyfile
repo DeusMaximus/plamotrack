@@ -1,5 +1,5 @@
-# plamotrack behind Caddy — the reference TLS deployment (docs/operations.md,
-# "Standalone VPS: Caddy with Cloudflare DNS"; design notes §5.4, mode R).
+# plamotrack behind Caddy — the reference TLS deployment
+# (https://docs.gunp.la/deployment/vps-caddy; design notes §5.4, mode R).
 #
 # Replace the name and keep the rest. Caddy obtains and renews the certificate,
 # redirects http:// to https://, passes the Host header through unchanged (so
@@ -9,8 +9,9 @@
 # responses — the MCP transport — without buffering or a read timeout. Nothing
 # else is needed, and nothing else was tested. In particular there is no `log`
 # directive: a proxy access log records full request URIs, and an OIDC
-# instance's callbacks carry one-time codes in theirs (docs/operations.md,
-# "Access logs").
+# instance's callbacks carry one-time codes in theirs
+# (https://docs.gunp.la/configuration/audit-log, "Access logs and callback
+# credentials").
 #
 # The certificate comes from Let's Encrypt through the DNS-01 challenge on
 # Cloudflare — what the deployment gate exercised (design notes §5.8, T12). It

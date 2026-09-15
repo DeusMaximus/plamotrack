@@ -669,7 +669,7 @@ async def test_a_document_already_aged_upstream_is_stale_on_arrival(monkeypatch)
     and reads neither `Age` nor `Date`, so the refresh is answered from the
     stale copy (Codex #248 round 1, finding 2 — inherited: 3.4.5 does the
     same). Strict, so the day FastMCP honours `Age` this goes green and the
-    qualification in `docs/operations.md` and design §5.9 comes out with the
+    qualification on the docs site (web clients page) and design §5.9 comes out with the
     mark (#249)."""
     _serve_document(
         monkeypatch,

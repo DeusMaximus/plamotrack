@@ -24,8 +24,8 @@ screenshots. This README is the short version.
 > login can be a password or a sign-in at your own OpenID Connect provider
 > (`AUTH_MODE=oidc`). The door stays on localhost by default; the four ways to open it —
 > a private network, your own reverse proxy, a Cloudflare Tunnel, or a VPS behind Caddy —
-> are in [docs/operations.md](docs/operations.md#four-ways-to-run-it), each with what
-> was actually tested for it. Read that before you widen anything.
+> are in the [deployment guides](https://docs.gunp.la/deployment/overview), each with
+> what was actually tested for it. Read that before you widen anything.
 >
 > The database schema is also still moving. Migrations are provided and tested in both
 > directions, but export an archive before you upgrade. It takes one click, and that's
@@ -166,7 +166,7 @@ Being honest up front beats you finding out at 11pm:
 | MCP server | ✅ Built |
 | Bundled `docker compose up` for the whole local stack | ✅ Built |
 | **Internationalisation foundations** | ✅ Milestone 5.1: instance-wide language, formatting locale, time zone, date/hour style, and reference currency; the `en-AU` source catalogue and fallback; a reviewed [translation workflow](docs/translating.md); locale-aware dates, times, numbers, counts, money, and file sizes; structured REST/import diagnostics with translated known identifiers and an English compatibility fallback; and RTL-aware layout utilities. No non-English catalogue ships yet. Upgrades default existing instances to `en-AU`/UTC; naive CSV timestamps are read prospectively in the configured instance zone, stored history is never reinterpreted, and downgrading past the settings migration loses its settings row. |
-| **Authentication, OAuth-compatible remote MCP, a tested TLS deployment** | ✅ Milestone 6 — owner login (password or OpenID Connect), personal access tokens, MCP OAuth for Claude web / ChatGPT web / MCP Inspector, and the reference Caddy deployment plus the other tested ways to expose an instance (`docs/operations.md`) |
+| **Authentication, OAuth-compatible remote MCP, a tested TLS deployment** | ✅ Milestone 6 — owner login (password or OpenID Connect), personal access tokens, MCP OAuth for Claude web / ChatGPT web / MCP Inspector, and the reference Caddy deployment plus the other tested ways to expose an instance ([docs.gunp.la/deployment](https://docs.gunp.la/deployment/overview)) |
 | **MCP `2026-07-28` compatibility** | ✅ Milestone 6.1 — both protocol generations from the one `/mcp/` endpoint, negotiated per request; Claude.ai, ChatGPT, Gemini Spark, Mistral, MCP Inspector, Claude Code and the `mcp-remote` bridge verified against a v0.4.1 candidate, linked before the upgrade and still linked after it and after a restore |
 | **UI redesign** | ✅ Milestone 6.5 — one house look on semantic tokens with a per-browser light/dark/system switch, Home in place of the board, filter/sort/page in the list pages' URLs, one edit dialog per record (`docs/design.md` §13) |
 | **Photo gallery per kit** | 🔨 Milestone 7 |
@@ -180,8 +180,9 @@ Being honest up front beats you finding out at 11pm:
 > [docs.gunp.la/installation](https://docs.gunp.la/installation) and
 > [docs.gunp.la/first-run](https://docs.gunp.la/first-run).
 
-**You'll need:** [Docker](https://docs.docker.com/get-started/get-docker/) and about
-three minutes. Nothing else — the images build from this repo.
+**You'll need:** [Docker](https://docs.docker.com/get-started/get-docker/) with Compose,
+[Git](https://git-scm.com/downloads), and a few minutes. Nothing else — the images build
+from this repo.
 
 ```bash
 git clone https://github.com/DeusMaximus/plamotrack.git && cd plamotrack
@@ -197,7 +198,7 @@ to pour an existing spreadsheet in, or just add an order.
 
 ![The sign-in screen](docs/screenshots/sign-in.png)
 
-The first run builds two images and takes a couple of minutes; after that it's
+The first run builds two images and takes a few minutes; after that it's
 seconds. `.env` is the whole configuration: Compose reads it to start the database
 and the API reads it to connect, so there's nothing to keep in sync.
 
@@ -217,13 +218,17 @@ container runs the database migrations and exits before the API starts; seeing i
 as `Exited (0)` is success, not a failure.
 
 Running it on a server and want to reach it from your laptop, or from anywhere? That
-door stays on loopback by default for a reason. See
-[Four ways to run it](docs/operations.md#four-ways-to-run-it) — a private network, your
+door stays on loopback by default for a reason. See the
+[deployment guides](https://docs.gunp.la/deployment/overview) — a private network, your
 own reverse proxy, a Cloudflare Tunnel, or a VPS behind Caddy, each with what was tested
 for it — rather than just widening the bind.
 
-Backups, restores, upgrading, and the full configuration reference live in
-**[docs/operations.md](docs/operations.md)**.
+Backups and restores, updating, the security audit log and the full configuration
+reference are on the docs site too:
+[Backups](https://docs.gunp.la/configuration/backups) ·
+[Updating & changelog](https://docs.gunp.la/configuration/upgrading) ·
+[Audit log](https://docs.gunp.la/configuration/audit-log) ·
+[Configuration](https://docs.gunp.la/configuration/env-reference).
 
 ### Something went wrong
 
@@ -240,7 +245,9 @@ Backups, restores, upgrading, and the full configuration reference live in
 - **`421 Misdirected Request`** — you reached the instance by a name it doesn't
   know (a LAN hostname, a container name). Add it to `ALLOWED_HOSTS` in `.env` and
   `docker compose up -d`. Nothing is lost while it's wrong; see
-  [Names it answers to](docs/operations.md#names-it-answers-to).
+  [Got a 421 error?](https://docs.gunp.la/deployment/local-and-lan#got-a-421-error).
+- **Anything else** — the
+  [troubleshooting guide](https://docs.gunp.la/configuration/troubleshooting).
 
 ---
 
@@ -253,7 +260,7 @@ plamotrack speaks MCP over streamable HTTP at `<your instance>/mcp/`:
 
 ```
 http://localhost:8080/mcp/          # on the machine that runs it
-https://plamotrack.example/mcp/     # behind TLS — docs/operations.md, "Four ways to run it"
+https://plamotrack.example/mcp/     # behind TLS — docs.gunp.la/deployment/overview
 ```
 
 The examples below use the loopback form; substitute yours. **Keep the trailing slash.** The bundled stack serves both spellings, but the API
@@ -263,7 +270,8 @@ the kind of thing the ingress hardening removed.
 
 Reaching the instance by anything other than `localhost` — a LAN hostname, a
 container name — needs that name in `ALLOWED_HOSTS` in `.env`, or the server
-answers `421 Misdirected Request`. `docs/operations.md` → *Names it answers to*.
+answers `421 Misdirected Request`
+([Got a 421 error?](https://docs.gunp.la/deployment/local-and-lan#got-a-421-error)).
 
 ### First, mint a token
 
@@ -343,10 +351,11 @@ web and MCP Inspector** take the URL `https://your-instance/mcp/` in their conne
 dialog, show a consent page, send you to the same provider, and get tokens of their
 own — no paste. Only the owner's account is accepted, and every such token acts as
 the owner with read and write access to the collection, never the instance
-settings. It needs TLS in front of the instance (`docs/operations.md`, "Four ways to
-run it" — Caddy on the same host is the tested reference; a Cloudflare Tunnel works
-too) or a loopback address while developing, and one more `.env` line;
-`docs/operations.md` → *MCP clients that sign in through the provider* has the setup.
+settings. It needs TLS in front of the instance (the
+[deployment guides](https://docs.gunp.la/deployment/overview) — Caddy on the same host
+is the tested reference; a Cloudflare Tunnel works too) or a loopback address while
+developing, and one more `.env` line; [OIDC login](https://docs.gunp.la/authentication/oidc)
+and [Web clients (OAuth)](https://docs.gunp.la/mcp/claude-web-chatgpt) have the setup.
 Personal access tokens keep working in that mode too.
 
 ### The tools it exposes
@@ -384,8 +393,9 @@ your entire collection is not a feature.
 > ⚠️ The MCP endpoint takes a personal access token (see *First, mint a token*
 > above) — or, in OIDC mode, a token the client obtained by signing in as the owner —
 > never the browser session, and a personal token's reach is fixed when it is minted.
-> Which network the endpoint is on is your call: `docs/operations.md`, "Four ways to
-> run it", says what each way was tested for.
+> Which network the endpoint is on is your call: the
+> [deployment guides](https://docs.gunp.la/deployment/overview) say what each way was
+> tested for.
 
 ### Teach your agent your hobby's conventions
 

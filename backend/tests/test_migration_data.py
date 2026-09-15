@@ -175,7 +175,7 @@ def test_received_at_backfills_every_order_and_advances_no_kit(walk):
     received as of their order_date — every row, not just the first. It does
     NOT advance the kits those orders spawned: a database crossing this revision
     can hold a received order with an `ordered` kit, which is the documented
-    legacy state (docs/operations.md), left alone by design."""
+    legacy state (docs.gunp.la, Updating & changelog), left alone by design."""
     walk.down(INITIAL)
     _, order_id = seed_retailer_and_order("2026-08-01")
     _, second_order = seed_retailer_and_order("2026-08-05")

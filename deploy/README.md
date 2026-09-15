@@ -1,8 +1,8 @@
 # deploy/
 
-Reference configuration for running an instance behind TLS — the files
-`docs/operations.md` ("Standalone VPS: Caddy with Cloudflare DNS") tells you to
-copy. They are what the deployment gate (design notes §5.8, T12/T13) runs against
+Reference configuration for running an instance behind TLS — the files the
+[VPS + Caddy](https://docs.gunp.la/deployment/vps-caddy) guide on the docs site tells
+you to copy. They are what the deployment gate (design notes §5.8, T12/T13) runs against
 before a release; the results are in the release notes.
 
 - `caddy/Caddyfile` — the site block: Caddy in front of the bundled stack on

@@ -61,7 +61,7 @@ def downgrade() -> None:
     # Lossy on purpose. The old column name asserts the amount is AUD, so a
     # snapshot taken in any other currency cannot move back into it without
     # becoming wrong data. Clearing those is the honest option; take a backup
-    # before downgrading (docs/operations.md).
+    # before downgrading (https://docs.gunp.la/configuration/backups).
     op.execute(
         "UPDATE order_items SET converted_price_minor = NULL "
         "WHERE converted_currency_code IS DISTINCT FROM 'AUD'"

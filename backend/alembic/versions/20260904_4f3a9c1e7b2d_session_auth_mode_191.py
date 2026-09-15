@@ -4,7 +4,7 @@ Adds `session.auth_mode` — the authentication mode (`local` or `oidc`) that
 minted each browser session. A session is authority only in the mode that
 minted it: the resolver refuses one presented under the other mode, and the
 API's start in a new mode revokes every live session the old one left, so a
-mode switch signs everyone out — as `docs/operations.md` already said — and
+mode switch signs everyone out — as the operations docs already said — and
 switching back cannot resurrect a cookie. Text plus CHECK, not a native enum
 (rule 5), matching the model's `text_enum`.
 
