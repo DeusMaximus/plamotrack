@@ -1,0 +1,12 @@
+# Every text file checks out with LF, whatever core.autocrlf the clone has (#255).
+#
+# Git for Windows' installer defaults to core.autocrlf=true, which converts text
+# files to CRLF on checkout unless a rule here says otherwise. The nginx image
+# sources frontend/nginx/*.envsh at start (`. "$f"` under `set -e`), and a CRLF
+# copy fails to parse, so the web container exits and the documented install
+# command fails. CI cannot see it: every runner checks out with LF.
+# backend/tests/test_line_endings.py asserts the effective attribute on the files
+# the image consumes. Binary detection is git's own (text=auto); the explicit
+# line below only makes the one tracked binary type unambiguous.
+* text=auto eol=lf
+*.png binary

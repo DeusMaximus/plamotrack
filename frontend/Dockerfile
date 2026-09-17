@@ -24,6 +24,10 @@ ENV NGINX_ENVSUBST_FILTER=^PLAMOTRACK_
 
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
+# The entrypoint sources the .envsh, so it must reach the image with LF endings:
+# a CRLF copy — what a default Git for Windows checkout produces — fails to
+# parse and the container exits. The repository's .gitattributes forces LF on
+# checkout (#255); backend/tests/test_line_endings.py holds it there.
 COPY --chmod=755 nginx/15-plamotrack-server-names.envsh /docker-entrypoint.d/15-plamotrack-server-names.envsh
 
 EXPOSE 80
