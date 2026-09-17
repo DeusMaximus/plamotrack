@@ -169,10 +169,13 @@ export function Modal({
       >
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-semibold text-text">{title}</h2>
+          {/* 24 px for a mouse; under `touch:` a 44 px target around the same
+              icon (§13.7), its extra 10 px a side taken back as margin so the
+              title row keeps its height. */}
           <button
             onClick={onClose}
             aria-label={t("common.close")}
-            className="rounded-sm p-1 text-faint hover:bg-chip hover:text-text"
+            className="rounded-sm p-1 text-faint hover:bg-chip hover:text-text touch:-m-2.5 touch:p-3.5"
           >
             <X size={16} aria-hidden />
           </button>

@@ -25,7 +25,7 @@ import {
   Field,
   IconButton,
   Input,
-  PageTitle,
+  PageHeader,
   Pager,
   Select,
   TABLE_HEAD_ROW_CLASS,
@@ -638,41 +638,46 @@ export function InventoryPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <PageTitle count={loaded === undefined ? undefined : shownCount}>
-          {t("inventory.title")}
-        </PageTitle>
-        <div className="flex gap-2">
-          <ExportCsvButton table={EXPORT_TABLE[tab]} />
+      <PageHeader
+        title={t("inventory.title")}
+        count={loaded === undefined ? undefined : shownCount}
+        secondary={<ExportCsvButton table={EXPORT_TABLE[tab]} />}
+        actions={
           <Button icon={Plus} onClick={() => setAddOpen(true)}>
             {t("inventory.addButton", { type: itemTypeLabel(TAB_ITEM_TYPE[tab]) })}
           </Button>
-        </div>
-      </div>
+        }
+      />
 
-      <div className="flex gap-1 border-b border-border">
-        {TABS.map((tabOption) => (
-          <button
-            key={tabOption}
-            onClick={() =>
-              // Vocabularies are per-table — a tool category filter is
-              // meaningless on the consumables tab — and the page was a
-              // position in the previous table. One navigation for all three.
-              writeParams({
-                tab: tabOption === "tools" ? null : tabOption,
-                category: null,
-                page: null,
-              })
-            }
-            className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
-              tab === tabOption
-                ? "border-accent text-accent"
-                : "border-transparent text-muted hover:text-text"
-            }`}
-          >
-            {t(`inventory.tabs.${tabOption}`)}
-          </button>
-        ))}
+      {/* On a phone the four tabs are 27 px wider than the page: the row scrolls
+          inside this box rather than taking the document sideways with it
+          (§13.7). The box is the outer element so it clips nothing of the row —
+          the active tab's underline sits on the row's own border. */}
+      <div className="max-md:-mx-4 max-md:overflow-x-auto max-md:px-4">
+        <div className="flex gap-1 border-b border-border max-md:w-max max-md:min-w-full">
+          {TABS.map((tabOption) => (
+            <button
+              key={tabOption}
+              onClick={() =>
+                // Vocabularies are per-table — a tool category filter is
+                // meaningless on the consumables tab — and the page was a
+                // position in the previous table. One navigation for all three.
+                writeParams({
+                  tab: tabOption === "tools" ? null : tabOption,
+                  category: null,
+                  page: null,
+                })
+              }
+              className={`-mb-px border-b-2 px-4 py-2 text-sm font-medium ${
+                tab === tabOption
+                  ? "border-accent text-accent"
+                  : "border-transparent text-muted hover:text-text"
+              }`}
+            >
+              {t(`inventory.tabs.${tabOption}`)}
+            </button>
+          ))}
+        </div>
       </div>
 
       {tab !== "upgrades" && categoryOptions.length > 0 && (

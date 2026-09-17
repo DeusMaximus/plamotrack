@@ -189,7 +189,9 @@ function OidcLoginScreen({ issuer }: { issuer: string | null }) {
 
 function Centered({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen items-center justify-center bg-bg p-6">
+    // `dvh`, not `vh`: on iOS 100vh is the large viewport, so a vh-high column
+    // centres its card partly under Safari's toolbar (§13.7).
+    <div className="flex min-h-dvh items-center justify-center bg-bg p-6">
       <div className="w-full max-w-sm">{children}</div>
     </div>
   );

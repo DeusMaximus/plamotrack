@@ -117,6 +117,17 @@ half that isn't shared is the half that drifts. → 2026-08-15 (#76 round 2)
 
 ---
 
+### #265: every width for the shell's choice, one width for everything inside it
+`shell.spec.ts` swept nine widths to pin *which* shell a viewport gets — both sides
+of both lines — and then ran every per-page assertion at one size per shell: 390 for
+the phone. The phone shell is 320–767 px wide. At 600 px and up More's `max-w-md`
+wrapper capped its full-bleed header 264 px short of the screen, on the iPad-mini
+width the owner had explicitly accepted into that shell, and nothing looked. Codex
+found it by measuring the header at five widths. A range is an axis inside each of
+its classes, not only at the class boundaries: the phone project now runs at 390 and
+744, and the header is measured on every route at 390, 600, 744 and 767.
+→ 2026-09-17 (PR #265, finding 2)
+
 ### An invisible codepoint is a value too
 
 KitsPage's elapsed cell spelled "3 d" with U+00A0 before the *d* — the only
@@ -258,6 +269,18 @@ unparseable input. Non-empty field, `required` satisfied, unit price saved as 0,
 silently. Caught by review; `format.ts` had no tests. The shared money fixture is
 also the check on the fix. → 2026-08-10 (#6, PR #16, PR #18)
 
+### "The page survives" asserted the draft and never asked where the keyboard was
+The rotation test opened a dialog, crossed the 768 px line and asserted the typed
+text was still there — true, because `main` keeps its place in the tree. It did not
+close the dialog. `Modal` returns focus to the node that opened it, `PageHeader`
+rendered the opener in a different subtree on each side of the line, so the node was
+gone and focus fell to `<body>`: eight failures (four pages, both directions) behind
+a green test about the same transition (Codex #265, finding 1). A state-preservation
+test owes the *end* of the interaction, not only its middle: close what was opened
+and assert where focus lands. Related: "An assertion about containment cannot see a
+mechanism that moves things within the container".
+→ 2026-09-17 (PR #265, finding 1)
+
 ### A locale-dependent assertion is green only where the runner happens to live
 `toContain("1.234")` against `Intl.NumberFormat(undefined, …)` is `1,234 IQD` in
 de-DE. Green on CI because the runner is en_US. Compare against a formatter handed
@@ -276,6 +299,19 @@ production factory. Two rules: an injection seam sits *below* the object under t
 (a transport under the client, not a client in place of it), and a best-effort catch
 names the failures it forgives — an `httpx.HTTPError` is the provider's problem, an
 `AttributeError` is ours. → 2026-09-11 (#241)
+
+### A poll after a resize is satisfied by the page it was supposed to replace
+`e2e/shell.spec.ts`'s first width matrix resized one live page through nine widths
+and polled for the expected shell at each. Where two neighbours in the list expect
+the same shell — 820 then 1180, both the rail — the poll's first read is the
+*previous* width's DOM, which already matches, so it passes before React has
+re-rendered: the test written to pin the 1280 px line stayed green with the line
+moved to 1024. The unit test and three other e2e tests caught that mutant; this one
+did not. The negative control could not have shown it — the unfixed tree has no
+shells, so every width fails there; mutating the line did. The fix is a fresh
+document per width. A poll proves a *transition*, so it belongs only where every
+step changes the answer (the rotation test, where each resize crosses a line).
+→ 2026-09-17 (#257)
 
 ---
 

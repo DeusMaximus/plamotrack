@@ -15,7 +15,7 @@ import {
   ErrorBanner,
   IconButton,
   Input,
-  PageTitle,
+  PageHeader,
   Pager,
   RatingStars,
   Select,
@@ -102,15 +102,16 @@ export function KitsPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <PageTitle count={kits === undefined ? undefined : visible.length}>{t("kits.title")}</PageTitle>
-        <div className="flex gap-2">
-          <ExportCsvButton table="kits" />
+      <PageHeader
+        title={t("kits.title")}
+        count={kits === undefined ? undefined : visible.length}
+        secondary={<ExportCsvButton table="kits" />}
+        actions={
           <Button icon={Plus} onClick={() => setModal({ mode: "add" })}>
             {t("kits.addButton")}
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       <div className="flex flex-wrap gap-2">
         <div className="relative w-full max-w-xs">

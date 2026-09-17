@@ -11,6 +11,8 @@ import { useTranslation } from "react-i18next";
 
 import { formatNumber } from "../lib/format";
 import { pageWindow, type Paged } from "../lib/listState";
+import { useShell } from "../lib/shell";
+import { BrandMark } from "./BrandMark";
 
 const BUTTON_VARIANTS = {
   primary: "bg-accent text-accent-ink hover:opacity-90 disabled:opacity-50",
@@ -32,7 +34,7 @@ export function Button({
 }) {
   return (
     <button
-      className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed ${BUTTON_VARIANTS[variant]} ${className}`}
+      className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed touch:min-h-10 ${BUTTON_VARIANTS[variant]} ${className}`}
       {...props}
     >
       {Icon && <Icon size={15} aria-hidden />}
@@ -43,7 +45,8 @@ export function Button({
 
 /** An icon-only control — a row's edit pencil, a dialog's close — named for
  *  assistive tech and the tooltip by `label`. Faint at rest (the 3:1 UI floor),
- *  the text colour on hover. */
+ *  the text colour on hover. 28 px for a mouse; the 44 px touch target under
+ *  `touch:` (§13.7), the icon the same size inside it. */
 export function IconButton({
   label,
   className = "",
@@ -55,7 +58,7 @@ export function IconButton({
       type="button"
       aria-label={label}
       title={label}
-      className={`inline-flex h-7 w-7 items-center justify-center rounded-sm text-faint transition-colors hover:bg-chip hover:text-text focus:outline-none focus:ring-1 focus:ring-accent ${className}`}
+      className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-faint transition-colors hover:bg-chip hover:text-text focus:outline-none focus:ring-1 focus:ring-accent touch:h-11 touch:w-11 ${className}`}
       {...props}
     >
       {children}
@@ -63,10 +66,12 @@ export function IconButton({
   );
 }
 
+// 16 px text in the phone shell: iOS Safari zooms the page when a control under
+// 16 px takes focus, and never zooms back (§13.7). 44 px tall under `touch:`.
 const CONTROL_CLASSES =
   "w-full rounded-sm border border-border-strong bg-surface px-2.5 py-1.5 text-sm text-text " +
   "placeholder:text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent " +
-  "disabled:opacity-60";
+  "disabled:opacity-60 max-md:text-base touch:min-h-11";
 
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   function Input({ className = "", ...props }, ref) {
@@ -184,6 +189,75 @@ export function PageTitle({ children, count }: { children: ReactNode; count?: nu
   );
 }
 
+/** The head of a page. From 768 px up it is what the pages always had: the
+ *  title (and a list's count), with the page's actions at the far end. In the
+ *  phone shell (§13.7) it is a bar across the top that stays while the page
+ *  scrolls — the title, the count and the one primary action; `secondary`
+ *  actions (Export CSV) are not on a phone, where Settings → Data management
+ *  has them. `brand` is Home's: the sidebar that carried the wordmark is gone
+ *  there, so the bar does, and the h1 stays for assistive tech.
+ *
+ *  One tree for both shapes, dressed differently: the primary action keeps its
+ *  place — second child of the second child — so it is the same DOM node on
+ *  both sides of the 768 px line. `Modal` gives focus back to the node that
+ *  opened it, and a dialog can be open while a tablet is turned; when the two
+ *  shapes were two subtrees the opener was replaced mid-dialog and the keyboard
+ *  was left on <body> (Codex #265, finding 1).
+ *
+ *  The bar is full-bleed by undoing `main`'s phone gutter (Layout's `px-4`) —
+ *  the two move together. A negative margin cannot undo an ancestor's
+ *  max-width, so a page that caps its own content keeps this outside the cap
+ *  (MorePage; finding 2). */
+export function PageHeader({
+  title,
+  count,
+  subtitle,
+  brand = false,
+  actions,
+  secondary,
+}: {
+  title: string;
+  count?: number;
+  subtitle?: string;
+  brand?: boolean;
+  actions?: ReactNode;
+  secondary?: ReactNode;
+}) {
+  const phone = useShell() === "phone";
+  return (
+    <>
+      <header
+        className={
+          phone
+            ? "sticky top-0 z-10 -mx-4 flex h-14 items-center justify-between gap-3 border-b border-rule bg-bg px-4"
+            : "flex items-center justify-between gap-3"
+        }
+      >
+        {phone && brand ? (
+          // The wordmark is a brand identifier, not copy — it stays untranslated.
+          <div className="flex items-center gap-2.5 text-[17px] font-semibold tracking-tight text-text">
+            <BrandMark />
+            <span>plamotrack</span>
+            <h1 className="sr-only">{title}</h1>
+          </div>
+        ) : (
+          <div>
+            <PageTitle count={count}>{title}</PageTitle>
+            {!phone && subtitle && <p className="mt-0.5 text-sm text-muted">{subtitle}</p>}
+          </div>
+        )}
+        {(secondary || actions) && (
+          <div className="flex gap-2">
+            {!phone && secondary}
+            {actions}
+          </div>
+        )}
+      </header>
+      {phone && subtitle && <p className="mt-3 text-sm text-muted">{subtitle}</p>}
+    </>
+  );
+}
+
 /** A list table's footer (§13.4): the range shown and, past one page, the
  *  pager — the ends and a window around the current page. The page is URL
  *  state, so the caller owns it. */
@@ -212,7 +286,7 @@ export function Pager({ paged, onPage }: { paged: Paged<unknown>; onPage: (page:
                 aria-label={t("list.page", { page: formatNumber(page) })}
                 aria-current={page === paged.page ? "page" : undefined}
                 onClick={() => onPage(page)}
-                className={`min-w-6.5 rounded-sm px-1.5 py-1 text-xs tabular-nums ${
+                className={`min-w-6.5 rounded-sm px-1.5 py-1 text-xs tabular-nums touch:min-h-11 touch:min-w-11 ${
                   page === paged.page
                     ? "bg-accent-soft font-semibold text-accent"
                     : "text-muted hover:bg-chip hover:text-text"

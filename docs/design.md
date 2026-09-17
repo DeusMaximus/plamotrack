@@ -876,7 +876,7 @@ bad code with or without one).
 
 | # | Family | Paths | `anon` | `owner` | `pat:read` | `pat:write` | `mcp` | App enforces | Ingress adds |
 |---|---|---|---|---|---|---|---|---|---|
-| 1 | SPA shell and assets | `/`, `/board`, `/kits`, `/orders`, `/inventory`, `/retailers`, `/settings/*`, `/data`, `/assets/*`, `/favicon*`; `/setup` and `/login` from M6 | allow | allow | — | — | — | nothing: static files, served by nginx (by Vite in dev) | security headers — `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`, a CSP for the bundle |
+| 1 | SPA shell and assets | `/`, `/board`, `/kits`, `/orders`, `/inventory`, `/retailers`, `/more` (§13.7), `/settings/*`, `/data`, `/assets/*`, `/favicon*`, and the home-screen install files `/manifest.json`, `/apple-touch-icon.png`, `/icon-192.png`, `/icon-512.png` (§13.7); `/setup` and `/login` from M6 | allow | allow | — | — | — | nothing: static files, served by nginx (by Vite in dev) | security headers — `frame-ancestors 'none'`, `nosniff`, `Referrer-Policy`, a CSP for the bundle |
 | 2 | Auth bootstrap | `GET /api/auth/session` | allow | allow | allow | allow | 401 (presented, wrong audience) | returns `{state: unclaimed \| anonymous \| owner, interface_language, formatting_locale}` and, for `owner`, the CSRF token. No version, no collection data. `Cache-Control: no-store`. | rate limit |
 | 3 | Auth actions | `POST /api/auth/setup` (until claimed, then 410), `POST /api/auth/login`, `POST /api/auth/logout`, `POST /api/auth/oidc/start`, `GET /api/auth/oidc/callback` — the password actions exist in local mode only and the OIDC pair in OIDC mode only, each answering **404** (`auth.not_in_this_mode`) in the other, registered rather than absent so the anonymous fallback cannot turn a mode into a challenge | allow, by necessity | logout only | 403 | 403 | 401 | Origin check on every unsafe method even with no session; failure budget; audit event on every outcome; `state` and `nonce` on OIDC; a wrong password or setup token is **403** (`auth.login_failed` / `auth.setup_token_invalid`), not 401 — a 401 owes a challenge and these routes accept no HTTP scheme | rate limit |
 | 4 | Collection reads | `GET` on `/api/kits*`, `/api/orders*`, `/api/tools*`, `/api/consumables*`, `/api/upgrades*`, `/api/display-items*`, `/api/retailers*`, `/api/catalog/search`, `/api/settings`, `/api/meta`, `/api/export/*` | 401 | allow | allow | allow | 401 | `collection:read`; `Cache-Control: no-store` | — |
@@ -2466,11 +2466,17 @@ Unchanged from the original plan:
     Settings surface isn't styled twice, and before M7/M8 so the gallery and the
     showcase are built in the new look once. Board interaction gaps deferred from
     the #120 consolidation (#122) land here: Home replaces the board (§13.2)
-12. 🔨 **M7 — Photos:** local-volume upload + gallery, archive integration, and the
+12. 🔨 **M6.6 — Phone and tablet UI:** the interface's own layout below 1280 px —
+    a bottom tab bar on a phone, an icon rail on a tablet and in a narrow window,
+    the desktop untouched — before M7 because the phone is the camera the photos
+    will come from. Decided 17/09/2026 (§13.7); four PRs, each shippable alone to
+    `main` (#257–#260), the first — the three shells, touch sizes, home-screen
+    install — built
+13. 🔨 **M7 — Photos:** local-volume upload + gallery, archive integration, and the
     §9.2 storage decision closed before implementation
-13. 🔨 **M8 — Public showcase:** genuinely separate anonymous read routes and a
+14. 🔨 **M8 — Public showcase:** genuinely separate anonymous read routes and a
     shareable frontend, built only after the admin and MCP surfaces are protected
-14. 🔨 **M9 — Open-source operations:** contribution guide, release automation,
+15. 🔨 **M9 — Open-source operations:** contribution guide, release automation,
     compatibility/support matrix, and deployment documentation polish
 
 **Between M5 and M5.1 — the hardening passes (complete).** An external review of
@@ -2854,8 +2860,8 @@ holds the whole list, and a personal collection is a few hundred rows.
 ### 13.5 Not in M6.5
 
 A phone/tablet layout — wanted, and to be its own UI rather than a squeezed
-desktop, after this lands. Photos and the showcase (M7, M8) are built in this look
-once.
+desktop, after this lands: decided and begun as M6.6, §13.7. Photos and the showcase
+(M7, M8) are built in this look once.
 
 ### 13.6 Implementation split
 
@@ -2874,3 +2880,137 @@ milestone M6.5):
    per-status counts come from one service function both surfaces share. #233,
    PR #237 → `8bac10a`.
 4. ✅ Settings, About, the e2e suite and the README screenshots in the new look. #234.
+
+### 13.7 Phone and tablet (M6.6) — decided 17/09/2026, building as #257–#260
+
+§13.5 promised a phone and tablet layout that is "its own UI rather than a squeezed
+desktop". It comes before M7 because the phone is the camera the photos will come
+from. **The layout at 1280 px and wider does not change.**
+
+**Measured on v0.4.1-alpha.** Every page and dialog was captured at 390, 744, 820,
+1024, 1080, 1133, 1180, 1210 and 1366 px on the screenshot spec's demo data. The
+interface had no breakpoint: the sidebar kept its 240 px at every width, so a 390 px
+phone gave the page 150 px — 86 after padding — and every list page scrolled
+sideways. Tablets never scrolled at page level, which hid the real defect: the Orders
+table needs 953 px and scrolls inside its own box, so its trailing columns and the
+edit control were off-screen on every iPad but a 13-inch one in landscape.
+
+| Viewport | Orders' table box, full sidebar | What was off-screen |
+|---|---|---|
+| 744–834 (iPad portrait) | 438–528 px | Shipped, Received, Items, Total, Tracking, Edit |
+| 1024–1080 (older iPads, landscape) | 718–774 px | Total, Tracking, Edit |
+| 1133–1210 (mini and 11-inch, landscape) | 827–904 px | Tracking cut, Edit |
+| 1366 (13-inch, landscape) | 1060 px | nothing |
+
+Measure a table box's `scrollWidth` against its `clientWidth`, not the document's:
+the first pass checked only the document and called iPad landscape fine. Touch had
+its own list: 14 px form controls, which make iOS Safari zoom the page on focus;
+24–28 px icon buttons; a `100vh` sidebar, which on iOS is the *large* viewport, so
+its foot could sit under Safari's toolbar; no web manifest and no touch icon.
+
+**Decisions (owner, 17/09/2026).**
+
+- **Three shells, chosen by viewport width alone** — no device or touch sniffing:
+  below 768 px the phone layout; 768–1279 px a 64 px **icon rail** in place of the
+  sidebar; 1280 px and up the sidebar of §13.3, untouched. A narrow desktop window
+  gets the rail too, deliberately: the Orders table is already clipped in a window
+  that size, and under the rail a list page's table box is the viewport less
+  130 px, so an 11-inch iPad in landscape gets the box a 13-inch one gets beside
+  the full sidebar. An iPad mini in portrait is 744 px wide and gets the phone
+  layout, which the owner accepts.
+- **Phone navigation is a bottom tab bar**: Home, Kits, Orders, Inventory, More.
+  *More* is a page (`/more`) holding what the sidebar's lower half holds —
+  Retailers, Settings, the theme switch, the OIDC identity line, Sign out.
+- **The rail** carries the brand mark, the five collection pages as icons with their
+  accessible names and tooltips, Settings, the theme switch as one button that
+  steps through the three choices, the identity's initial in OIDC mode, Sign out.
+- **Accessible names are the same in every shell** ("Edit {name}", "New order",
+  "Sign out"), so one e2e suite drives all three.
+- **On a phone**: a 16 px gutter; a page's header is a bar with its title, its count
+  and its one primary action; card rows instead of tables; search on the page and
+  every other filter and the sort in one bottom sheet writing the same URL state
+  (§13.4); dialogs as full-screen sheets with a fixed action bar; **Export CSV is
+  not in the phone page headers**, and Settings → Data management on a phone is
+  export only — the line drawn at the phone shell, by width like every other
+  layout decision here, not at touch devices.
+- **A table that stays a table folds by its *container's* width**, not the
+  device's, the way Home already lays out (§13.2).
+- **Home-screen install is a manifest and icons.** No service worker, no offline
+  mode.
+- **Four PRs straight to `main`**, each shippable alone — no integration branch
+  (§13.6's reason does not apply: no PR leaves the interface half-redesigned).
+
+**The split.** 1. The three shells, the touch basics, the manifest and icons, the
+Playwright `phone` and `tablet` projects (#257). 2. List pages on a phone — card
+rows, the filter sheet — and the table folds (#258). 3. Dialogs as sheets, order
+lines that stack (#259). 4. Home, Settings and sign-in on a phone, the full phone
+and tablet e2e, screenshots, the release (#260).
+
+**Built — #257.** What the build decided:
+
+- **The two lines are Tailwind's `md` and `xl`** (48rem, 80rem), and they are
+  drawn in two languages that cannot import each other: `src/lib/shell.ts` asks
+  `matchMedia` for the same rem queries — the `useShell()` hook, for where a shell
+  renders *different things* — and the stylesheet's `max-md:` and `touch:`
+  utilities cover the same thing at a different size. `shell.test.ts` holds the
+  two to one answer.
+- **`main` keeps its place in the tree** whichever navigation stands beside it, so
+  a rotation or a resize across a line re-dresses the page without remounting
+  it: an open dialog and a half-filled form survive an iPad mini turning from
+  1133 px to 744.
+- **The touch sizes are one variant, `touch:`** — the phone shell *or*
+  `(pointer: coarse)` at any width — so an iPad gets them beside the rail and a
+  13-inch one in landscape beside the sidebar, while 1280 px with a mouse keeps
+  the sizes it had. Icon buttons, the dialog's close, nav rows, the theme
+  segments and the pager's pages are 44 px under it; form controls 44 px tall,
+  and 16 px text in the phone shell only, where iOS would zoom; buttons 40 px,
+  the artboards' height for them.
+- **The More tab is current on the pages it holds** (`/retailers`,
+  `/settings/*`) as well as on its own: `aria-current="page"` at `/more`,
+  `"true"` on the others, and tapping it is the way back. `/more` opened at a
+  wider width is the same page beside a navigation that already offers all of
+  it.
+- **The phone header bar is `PageHeader`** (`components/ui.tsx`), which from
+  768 px up renders what the pages had. It stays while the page scrolls. On Home
+  it carries the brand mark and wordmark — the sidebar that held them is gone —
+  with the `h1` kept for assistive tech. It is **one tree dressed two ways**, so
+  a page's primary action is the same DOM node on both sides of the 768 px line:
+  `Modal` gives focus back to the node that opened it, and as two subtrees the
+  opener was replaced while a dialog was open across a rotation, leaving the
+  keyboard on `<body>` (Codex #265). A page that caps its own width keeps the
+  bar outside the cap — a negative margin undoes a gutter, not an ancestor's
+  `max-width`, and More's bar stopped 264 px short at 744 px (same review).
+- **Safe areas**: `viewport-fit=cover`, the tab bar padded by
+  `env(safe-area-inset-bottom)`, the shell by the left and right insets (a
+  phone held sideways is wide enough for the rail, which therefore scrolls),
+  and `dvh` wherever there was `vh` — `shell.test.ts` refuses a new `h-screen`.
+- **The manifest is `/manifest.json`, not `.webmanifest`**: nginx 1.27's
+  `mime.types` has no entry for the latter, so the bundled stack would serve it
+  as `application/octet-stream` beside `nosniff`; `.json` needs no ingress
+  change and falls under the existing CSP (`manifest-src` falls back to
+  `default-src 'self'`). Its link is `crossorigin="use-credentials"` so the
+  fetch carries the cookie an access proxy in front of the instance wants. The
+  PNGs — a 180 px opaque touch icon, 192 and 512 px manifest icons that double
+  as maskable, a 32 px tab icon for Safari 18 and earlier, first in the link
+  order so the amber SVG stays last — are drawn from the brand mark and the
+  tokens by `scripts/render-icons.mjs`; `install.test.ts` holds the manifest,
+  the files, `index.html` and the tokens to each other.
+- **Inventory's tab row scrolls inside its own box on a phone** — it was the one
+  page whose *document* scrolled sideways once the shell was out of the way, by
+  8 px. The tables still scroll inside theirs until #258.
+- **A mail card's line is a row: the name truncates, the *pre-order* tag stays.**
+  The tag was inline content at the end of a truncating line, so it was the
+  first thing an ellipsis took. Home's mail grid takes three columns from a
+  56rem container, where a card is 288 px and a 24-character kit name is
+  enough — on `main` that was a viewport of about 1200 px, which nothing
+  sampled; under the rail it is every 1024 px tablet, and `home.spec.ts`'s
+  width test found it there. That test now samples both thresholds and 390.
+- **The guard**: `e2e/shell.spec.ts` runs in three Playwright projects — `app`
+  (1280 px, a mouse), `phone` (390 × 844 and 744 × 1133, both ends of the phone
+  shell) and `tablet` (820 × 1180, 1180 × 820 and 1366 × 1024), the last two
+  with a touch screen. The 1280 and 1440 px
+  captures of every page and five dialogs, in both themes, were compared with
+  `main`'s pixel for pixel: identical but for the anti-aliasing noise `main`
+  shows against itself — with one deliberate exception the demo data does not
+  draw: on a mixed order's Home card the tag now sits 1.2 px higher, centred on
+  its line, and the card is 0.2 px shorter.

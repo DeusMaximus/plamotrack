@@ -1,26 +1,25 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import {
   Box,
+  Ellipsis,
   House,
   LogOut,
-  Monitor,
-  Moon,
   Settings,
   ShoppingBag,
   Store,
-  Sun,
   Wrench,
-  type LucideIcon,
 } from "lucide-react";
 import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { NavLink, Outlet } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 
-import { api, authSessionQuery, setCsrfToken, settingsQuery } from "../api/client";
+import { authSessionQuery, settingsQuery } from "../api/client";
 import { providerName } from "../lib/labels";
 import { applyInstanceSettings } from "../lib/presentation";
-import { THEME_PREFERENCES, useTheme, type ThemePreference } from "../lib/theme";
+import { useShell } from "../lib/shell";
+import { useSignOut } from "../lib/signOut";
 import { BrandMark } from "./BrandMark";
+import { ThemeCycleButton, ThemeSwitch } from "./ThemeSwitch";
 
 /** The collection's pages (§13.3): Home first — the start page (§13.2). No
  *  `end` on the root link: React Router's match rule treats `/` as a whole
@@ -33,10 +32,20 @@ const NAV = [
   { to: "/retailers", label: "nav.retailers", icon: Store },
 ] as const;
 
+/** The phone's tab bar (§13.7) has five places and the fifth is More, so
+ *  Retailers moves there with everything the sidebar's lower half holds. */
+const PHONE_TABS = NAV.filter((item) => item.to !== "/retailers");
+
+/** What lives under More on a phone: the tab reads as current on each of them,
+ *  the way a tab bar's More does, and tapping it is the way back to the list. */
+const MORE_PATHS = ["/more", "/retailers", "/settings"] as const;
+
 export const SIDEBAR_DIVIDER_CLASS = "border-e";
 
-/** One nav row (§13.3): the sidebar's, and the Settings sections' (SettingsPage). */
-export const NAV_ROW_CLASS = "flex h-9 items-center gap-2.5 rounded-sm px-3 text-sm font-medium";
+/** One nav row (§13.3): the sidebar's, and the Settings sections' (SettingsPage).
+ *  36 px for a mouse, the 44 px touch height under `touch:` (§13.7). */
+export const NAV_ROW_CLASS =
+  "flex h-9 items-center gap-2.5 rounded-sm px-3 text-sm font-medium touch:h-11";
 
 export function navRowClass({ isActive }: { isActive: boolean }): string {
   return `${NAV_ROW_CLASS} ${
@@ -44,34 +53,24 @@ export function navRowClass({ isActive }: { isActive: boolean }): string {
   }`;
 }
 
-const THEME_ICONS: Record<ThemePreference, LucideIcon> = {
-  light: Sun,
-  dark: Moon,
-  system: Monitor,
-};
+/** One rail control (§13.7): a 44 px square around a 20 px icon, named for
+ *  assistive tech and the tooltip by its caller. */
+const RAIL_ITEM_CLASS = "flex h-11 w-11 shrink-0 items-center justify-center rounded-sm";
+const RAIL_IDLE_CLASS = "text-muted hover:bg-chip hover:text-text";
+
+function railItemClass({ isActive }: { isActive: boolean }): string {
+  return `${RAIL_ITEM_CLASS} ${isActive ? "bg-accent-soft text-accent" : RAIL_IDLE_CLASS}`;
+}
+
+const TAB_CLASS =
+  "-mt-px flex h-14 flex-col items-center justify-center gap-1 border-t-2 text-[10.5px] font-semibold tracking-[0.01em]";
+
+function tabClass({ isActive }: { isActive: boolean }): string {
+  return `${TAB_CLASS} ${isActive ? "border-accent text-accent" : "border-transparent text-muted"}`;
+}
 
 export function Layout() {
-  const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const { data: session } = useQuery(authSessionQuery);
-  const signOut = async () => {
-    try {
-      await api.logout();
-    } finally {
-      // Whatever the server said, this browser is done: forget the CSRF token,
-      // re-read the session — it now reports anonymous, so the AuthGate swaps to
-      // the login screen and every page unmounts — then drop everything else so
-      // nothing from this session lingers for the next owner. The order matters:
-      // the session query has to still exist to be refetched (a cleared cache
-      // has nothing to invalidate, and the gate would keep rendering the app
-      // from its last result — caught by e2e/auth.spec.ts).
-      setCsrfToken(null);
-      await queryClient.invalidateQueries({ queryKey: authSessionQuery.queryKey });
-      queryClient.removeQueries({
-        predicate: (query) => query.queryKey[0] !== authSessionQuery.queryKey[0],
-      });
-    }
-  };
+  const shell = useShell();
   // The one place the persisted settings row becomes this browser's
   // presentation (#27): language, document lang/dir, and the formatting
   // preferences the date/number helpers read. Every browser runs the same
@@ -88,132 +87,208 @@ export function Layout() {
   useEffect(() => {
     if (settings) applyInstanceSettings(settings);
   }, [settings]);
+  // Three shells by viewport width alone (§13.7). `main` keeps its place in the
+  // tree whichever navigation stands beside it, so a rotation or a resize
+  // across a line re-dresses the page without remounting it — an open dialog
+  // and a half-filled form survive. `min-h-dvh`, not `vh`: on iOS 100vh is the
+  // *large* viewport, which put the sidebar's foot under Safari's toolbar.
   return (
-    <div className="flex min-h-screen">
-      {/* Sticky, viewport-high: the sidebar stays while the page scrolls (§13.3). */}
-      <aside
-        className={`sticky top-0 flex h-screen w-60 shrink-0 flex-col ${SIDEBAR_DIVIDER_CLASS} border-border bg-bg px-3 pb-4 pt-5`}
-      >
-        {/* The wordmark is a brand identifier, not copy — it stays untranslated.
-            Not a heading: each page has its own h1. */}
-        <div className="flex items-center gap-2.5 px-3 pb-5 text-[17px] font-semibold tracking-tight text-text">
-          <BrandMark />
-          <span>plamotrack</span>
-        </div>
-        <nav className="flex flex-col gap-0.5">
-          {NAV.map((item) => (
-            <NavLink key={item.to} to={item.to} className={navRowClass}>
-              <item.icon size={18} aria-hidden />
-              {t(item.label)}
-            </NavLink>
-          ))}
-        </nav>
-        <div className="flex-1" />
-        <nav className="flex flex-col gap-0.5">
-          <NavLink to="/settings" className={navRowClass}>
-            <Settings size={18} aria-hidden />
-            {t("nav.settings")}
-          </NavLink>
-        </nav>
-        <div className="mt-3 flex flex-col gap-1.5 border-t border-rule pt-3">
-          <ThemeSwitch />
-          {session?.auth_mode === "oidc" && session.display_name && (
-            <Identity name={session.display_name} issuer={session.oidc_issuer} />
-          )}
-          <button
-            type="button"
-            onClick={signOut}
-            className={`${NAV_ROW_CLASS} w-full text-muted hover:bg-chip hover:text-text`}
-          >
-            <LogOut size={18} aria-hidden />
-            {t("auth.signOut")}
-          </button>
-        </div>
-      </aside>
-      <main className="min-w-0 flex-1 px-8 py-7">
+    <div className="px-safe flex min-h-dvh">
+      {shell === "sidebar" ? <Sidebar /> : shell === "rail" ? <Rail /> : null}
+      <main className={`min-w-0 flex-1 ${shell === "phone" ? "pb-tab-bar px-4" : "px-8 py-7"}`}>
         <Outlet />
       </main>
+      {shell === "phone" && <TabBar />}
     </div>
   );
 }
 
-/** Light / dark / system, one segmented control (§13.1). A radio group: one of
- *  three is always chosen, and arrow keys are how a keyboard moves between them. */
-function ThemeSwitch() {
+/** 1280 px and up (§13.3): unchanged by the phone and tablet work. */
+function Sidebar() {
   const { t } = useTranslation();
-  const [preference, setPreference] = useTheme();
+  const { data: session } = useQuery(authSessionQuery);
+  const signOut = useSignOut();
   return (
-    <div
-      role="radiogroup"
-      aria-label={t("theme.label")}
-      className="mx-1 flex gap-0.5 rounded-sm border border-border bg-surface p-[3px]"
-      onKeyDown={(event) => {
-        const forward = event.key === "ArrowRight" || event.key === "ArrowDown";
-        const back = event.key === "ArrowLeft" || event.key === "ArrowUp";
-        const edge =
-          event.key === "Home" ? 0 : event.key === "End" ? THEME_PREFERENCES.length - 1 : null;
-        if (!forward && !back && edge === null) return;
-        event.preventDefault();
-        // From the focused radio, not the stored preference: another tab can
-        // change the preference under a focus that stayed put — the storage
-        // handler deliberately never moves focus — and the radio pattern moves
-        // from where the keyboard is (#235 P3-2).
-        const focused = (event.target as HTMLElement).closest<HTMLElement>("[data-theme-option]")
-          ?.dataset.themeOption as ThemePreference | undefined;
-        const from = focused ? THEME_PREFERENCES.indexOf(focused) : -1;
-        const start = from === -1 ? THEME_PREFERENCES.indexOf(preference) : from;
-        const count = THEME_PREFERENCES.length;
-        const next =
-          edge !== null
-            ? THEME_PREFERENCES[edge]
-            : THEME_PREFERENCES[(start + (forward ? 1 : -1) + count) % count];
-        setPreference(next);
-        (event.currentTarget.querySelector(`[data-theme-option="${next}"]`) as HTMLElement | null)?.focus();
-      }}
+    // Sticky, viewport-high: the sidebar stays while the page scrolls (§13.3).
+    <aside
+      className={`sticky top-0 flex h-dvh w-60 shrink-0 flex-col ${SIDEBAR_DIVIDER_CLASS} border-border bg-bg px-3 pb-4 pt-5`}
     >
-      {THEME_PREFERENCES.map((option) => {
-        const Icon = THEME_ICONS[option];
-        const checked = option === preference;
-        return (
-          <button
-            key={option}
-            type="button"
-            role="radio"
-            aria-checked={checked}
-            aria-label={t(`theme.${option}`)}
-            title={t(`theme.${option}`)}
-            data-theme-option={option}
-            tabIndex={checked ? 0 : -1}
-            onClick={() => setPreference(option)}
-            className={`flex h-6.5 flex-1 items-center justify-center rounded-sm ${
-              checked ? "bg-chip text-text" : "text-faint hover:text-muted"
-            }`}
+      {/* The wordmark is a brand identifier, not copy — it stays untranslated.
+          Not a heading: each page has its own h1. */}
+      <div className="flex items-center gap-2.5 px-3 pb-5 text-[17px] font-semibold tracking-tight text-text">
+        <BrandMark />
+        <span>plamotrack</span>
+      </div>
+      <nav className="flex flex-col gap-0.5">
+        {NAV.map((item) => (
+          <NavLink key={item.to} to={item.to} className={navRowClass}>
+            <item.icon size={18} aria-hidden />
+            {t(item.label)}
+          </NavLink>
+        ))}
+      </nav>
+      <div className="flex-1" />
+      <nav className="flex flex-col gap-0.5">
+        <NavLink to="/settings" className={navRowClass}>
+          <Settings size={18} aria-hidden />
+          {t("nav.settings")}
+        </NavLink>
+      </nav>
+      <div className="mt-3 flex flex-col gap-1.5 border-t border-rule pt-3">
+        <ThemeSwitch />
+        {session?.auth_mode === "oidc" && session.display_name && (
+          <Identity name={session.display_name} issuer={session.oidc_issuer} />
+        )}
+        <button
+          type="button"
+          onClick={signOut}
+          className={`${NAV_ROW_CLASS} w-full text-muted hover:bg-chip hover:text-text`}
+        >
+          <LogOut size={18} aria-hidden />
+          {t("auth.signOut")}
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+/** 768–1279 px (§13.7): the sidebar as a 64 px column of icons, on every device
+ *  — an iPad and a narrow desktop window alike. Each control keeps the
+ *  sidebar's accessible name and says it again as a tooltip. It scrolls, which
+ *  the sidebar never needed to: a phone held sideways is this wide and barely
+ *  taller than the rail's nine controls. */
+function Rail() {
+  const { t } = useTranslation();
+  const { data: session } = useQuery(authSessionQuery);
+  const signOut = useSignOut();
+  return (
+    <aside
+      className={`sticky top-0 flex h-dvh w-16 shrink-0 flex-col items-center gap-1 overflow-y-auto ${SIDEBAR_DIVIDER_CLASS} border-border bg-bg pb-4 pt-4.5`}
+    >
+      <div className="mb-2.5 flex h-11 w-11 shrink-0 items-center justify-center">
+        <BrandMark size={22} />
+      </div>
+      <nav aria-label={t("nav.main")} className="flex flex-col gap-1">
+        {NAV.map((item) => (
+          <NavLink
+            key={item.to}
+            to={item.to}
+            aria-label={t(item.label)}
+            title={t(item.label)}
+            className={railItemClass}
           >
-            <Icon size={15} aria-hidden />
-          </button>
-        );
-      })}
-    </div>
+            <item.icon size={20} aria-hidden />
+          </NavLink>
+        ))}
+      </nav>
+      <div className="min-h-4 flex-1" />
+      <NavLink
+        to="/settings"
+        aria-label={t("nav.settings")}
+        title={t("nav.settings")}
+        className={railItemClass}
+      >
+        <Settings size={20} aria-hidden />
+      </NavLink>
+      <div aria-hidden className="my-2 h-px w-8 shrink-0 bg-rule" />
+      <ThemeCycleButton className={`${RAIL_ITEM_CLASS} ${RAIL_IDLE_CLASS}`} />
+      {session?.auth_mode === "oidc" && session.display_name && (
+        <Identity name={session.display_name} issuer={session.oidc_issuer} variant="initial" />
+      )}
+      <button
+        type="button"
+        onClick={signOut}
+        aria-label={t("auth.signOut")}
+        title={t("auth.signOut")}
+        className={`${RAIL_ITEM_CLASS} ${RAIL_IDLE_CLASS}`}
+      >
+        <LogOut size={20} aria-hidden />
+      </button>
+    </aside>
+  );
+}
+
+/** Below 768 px (§13.7): five places along the bottom edge, clear of the home
+ *  indicator (`pb-safe`; `viewport-fit=cover` in index.html is what makes the
+ *  inset non-zero). Fixed rather than sticky so the page scrolls beneath it;
+ *  `main` reserves the room with `pb-tab-bar`. */
+function TabBar() {
+  const { t } = useTranslation();
+  const { pathname } = useLocation();
+  const underMore = MORE_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
+  return (
+    <nav
+      aria-label={t("nav.main")}
+      className="px-safe pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-border bg-bg"
+    >
+      <div className="grid grid-cols-5 px-1">
+        {PHONE_TABS.map((item) => (
+          <NavLink key={item.to} to={item.to} className={tabClass}>
+            <item.icon size={22} aria-hidden />
+            {t(item.label)}
+          </NavLink>
+        ))}
+        {/* Not a NavLink: it is current on the pages it holds as well as its
+            own, and only `/more` is the page it names. */}
+        <Link
+          to="/more"
+          aria-current={pathname === "/more" ? "page" : underMore ? "true" : undefined}
+          className={tabClass({ isActive: underMore })}
+        >
+          <Ellipsis size={22} aria-hidden />
+          {t("nav.more")}
+        </Link>
+      </div>
+    </nav>
   );
 }
 
 /** Who the owner is bound as — OIDC mode only (§13.3): the one identity a
- *  single-owner app has to show, and the provider it came from. */
-function Identity({ name, issuer }: { name: string; issuer: string | null }) {
+ *  single-owner app has to show, and the provider it came from. A row in the
+ *  sidebar, a card's head on the More page, the initial alone on the rail. */
+export function Identity({
+  name,
+  issuer,
+  variant = "row",
+}: {
+  name: string;
+  issuer: string | null;
+  variant?: "row" | "card" | "initial";
+}) {
   const { t } = useTranslation();
   const via = t("layout.identityVia", { provider: providerName(issuer) });
   const initial = Array.from(name)[0]?.toUpperCase() ?? "";
+  if (variant === "initial") {
+    return (
+      <span
+        role="img"
+        aria-label={`${name} · ${via}`}
+        title={`${name} · ${via}`}
+        className="my-2 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent-soft text-xs font-semibold text-accent"
+      >
+        {initial}
+      </span>
+    );
+  }
+  const card = variant === "card";
   return (
-    <div className="flex items-center gap-2.5 px-3 py-1.5 text-xs" title={`${name} · ${via}`}>
+    <div
+      className={`flex items-center ${card ? "gap-3 p-3.5" : "gap-2.5 px-3 py-1.5 text-xs"}`}
+      title={`${name} · ${via}`}
+    >
       <span
         aria-hidden
-        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent-soft text-[11px] font-semibold text-accent"
+        className={`flex shrink-0 items-center justify-center rounded-full bg-accent-soft font-semibold text-accent ${
+          card ? "h-9 w-9 text-[15px]" : "h-6 w-6 text-[11px]"
+        }`}
       >
         {initial}
       </span>
       <span className="min-w-0">
-        <span className="block truncate font-medium text-text">{name}</span>
-        <span className="block truncate text-muted">{via}</span>
+        <span className={`block truncate font-medium text-text ${card ? "text-[15px]" : ""}`}>
+          {name}
+        </span>
+        <span className={`block truncate text-muted ${card ? "text-[12.5px]" : ""}`}>{via}</span>
       </span>
     </div>
   );

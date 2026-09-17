@@ -5,7 +5,9 @@
     "orders": "Orders",
     "inventory": "Inventory",
     "retailers": "Retailers",
-    "settings": "Settings"
+    "settings": "Settings",
+    "more": "More",
+    "main": "Main"
   },
   "layout": {
     "description": "A self-hosted Gunpla and plamo collection and build tracker.",
@@ -15,7 +17,9 @@
     "label": "Theme",
     "light": "Light",
     "dark": "Dark",
-    "system": "Follow the device"
+    "system": "Follow the device",
+    "systemShort": "Device",
+    "cycle": "Theme: {{choice}}"
   },
   "auth": {
     "setupTitle": "Set up plamotrack",
