@@ -51,7 +51,7 @@ psqlc() { docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T
 psqlc postgres "DROP DATABASE IF EXISTS plamotrack_e2e;"      # separate calls: DROP DATABASE
 psqlc postgres "CREATE DATABASE plamotrack_e2e OWNER $POSTGRES_USER;"   # can't share a transaction
 ( cd backend  && DATABASE_URL="$DSN" uv run alembic upgrade head )
-( cd frontend && DATABASE_URL="$DSN" npx playwright test )
+( cd frontend && DATABASE_URL="$DSN" npx playwright test --workers=1 )   # one worker, CI's shape: the multi-worker local default fails specs from cross-file contention
 psqlc plamotrack_e2e "select count(*) from kits union all select count(*) from orders union all select count(*) from retailers"   # all 0
 psqlc postgres "DROP DATABASE plamotrack_e2e;"
 ```
