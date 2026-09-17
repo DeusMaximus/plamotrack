@@ -10,7 +10,11 @@ chat, in full, inside a fenced block the owner can copy** — a four-backtick fe
 because the brief itself contains three-backtick blocks. Never hand over only a path
 to a file in a temp directory: the owner's next step is paste, not `cat` (owner's
 call, 2026-08-24). Saving a scratchpad copy alongside is fine as a backup for later
-rounds; it is not the deliverable. The reasons behind the fixed parts are in
+rounds; it is not the deliverable. **Since 2026-09-17 the scratchpad copy is also
+how the brief travels:** the owner's paste into the Codex app is one line — *"Follow
+the review brief at `<path>`"* — and the reviewer reads the file, so 17 KB of
+backticks never goes through a clipboard. The brief is still printed in chat in full;
+that is what the owner reads and what the record keeps. The reasons behind the fixed parts are in
 `testing-and-review.md` → "External review" and `lessons.md` → "Review"; this file
 is the shape, not the why.
 
@@ -46,9 +50,9 @@ in play) and `.agents/testing-and-review.md` ("Writing a regression test", "Exte
 review → Responding to a review") before the diff.
 
 **Context, one paragraph.** plamotrack is a single-owner, self-hosted model-kit
-collection tracker, pre-adoption alpha, owner login + personal access tokens but no
-tested TLS path yet (milestone 6 in progress), on a
-trusted network. ‹Two or three sentences: the defect or feature in the issue's terms,
+collection tracker, pre-adoption alpha: owner login (password or OIDC), personal
+access tokens, MCP OAuth and tested TLS deployment paths since v0.3.0-alpha; the
+owner's own instance is public behind a Cloudflare Tunnel. ‹Two or three sentences: the defect or feature in the issue's terms,
 and what this branch does about it — file names, not adjectives.› No migration /
 ‹one migration, additive›. Inventory counts and purchase records, not access control.
 
@@ -169,6 +173,29 @@ routine round.
 > the coverage you added this round — surfaces and fields you examined that the PR
 > body's record did not list, and what you left unexamined — so the next round
 > starts from it rather than from the brief alone.
+
+**Codex through the Claude Code plugin (the `codex:codex-rescue` task route).** Only
+for a round with **no browser and no Docker leg** — its sandbox cannot launch
+Chromium (`testing-and-review.md` → the roster). Same attribution lines as Codex
+above. The channel is different (owner's call, 2026-09-17): a plugin round **returns
+its review in the task output and does not post on GitHub**, so replace the template's
+last paragraph ("Post it with `gh pr comment`…") with:
+
+> Return the full review as your final message. **Do not post to GitHub and do not
+> run `gh pr comment`** — this round's output goes back to the author's session. You
+> are in a `workspace-write` sandbox with no approval prompts: if something the brief
+> asks for cannot run there (a browser, the Docker socket, a write to `.git`), say so
+> at the top of your verdict and list every claim that depended on it as **not
+> re-measured** — never mark it verified by reading. Leave the tree exactly as you
+> found it: `git status --short` empty, on the same branch and head, no servers on
+> :8000 / :5173, any database or clone you made removed.
+
+Hand it over with `--prompt-file <path>` (never as a shell string — the brief is full
+of backticks and `$`), `--write` if it must run the suites, and the model and effort
+the owner names. Afterwards check what an unattended write-capable run left behind:
+branch and head, `git status`, stashes, worktrees, ports, databases, `/private/tmp`.
+If the round finds something real, the record still has to reach the PR: fix it, and
+note the pre-review and its finding in the PR body's coverage record.
 
 **Cursor (Grok 4.6, SpaceXAI).** Available until 2026-09-15 only, then gone — kept
 here for that window (it reviewed #219 on 2026-09-07, picked by mistake instead of
