@@ -15,7 +15,7 @@ import {
   Select,
   TABLE_HEAD_ROW_CLASS,
 } from "../../components/ui";
-import { formatDateTime, formatNumber } from "../../lib/format";
+import { formatDate, formatDateTime, formatNumber } from "../../lib/format";
 import { SectionHeader } from "./SectionHeader";
 
 /** Settings → Access tokens (§5.5 family 6; #189): mint, list and revoke the
@@ -194,18 +194,26 @@ function TokenList() {
         <EmptyState>{t("settings.tokens.empty")}</EmptyState>
       ) : (
         // The list pages' table shape (§13.4): micro-label head row on the
-        // alternate surface, hairlines between rows.
-        <div className="overflow-x-auto rounded-md border border-border">
+        // alternate surface, hairlines between rows. Five columns, because the
+        // Settings pane is capped — max-w-4xl less the section nav leaves the box
+        // about 650 px wide from 1210 px up, whatever the window — and seven
+        // (prefix and access as columns, three date-times in the instance's
+        // locale rendering, with seconds) pushed a populated row to 979 px, the
+        // Revoke control clipped off the box's right edge and reachable only by
+        // scrolling the box sideways. The prefix and the access level ride under
+        // the name, the way a kit's number and series do; the dates are dates,
+        // the exact instant on hover. Cell padding is a step under the list
+        // pages' px-3: five columns at px-3 miss the 652 px box by a few pixels
+        // for a populated row, and the miss lands as a wrapped second line.
+        <div data-testid="token-table" className="overflow-x-auto rounded-md border border-border">
           <table className="w-full text-sm">
             <thead>
               <tr className={TABLE_HEAD_ROW_CLASS}>
-                <th className="px-3 py-2.5">{t("settings.tokens.colName")}</th>
-                <th className="px-3 py-2.5">{t("settings.tokens.colPrefix")}</th>
-                <th className="px-3 py-2.5">{t("settings.tokens.colAccess")}</th>
-                <th className="px-3 py-2.5">{t("settings.tokens.colCreated")}</th>
-                <th className="px-3 py-2.5">{t("settings.tokens.colLastUsed")}</th>
-                <th className="px-3 py-2.5">{t("settings.tokens.colExpires")}</th>
-                <th className="px-3 py-2.5" />
+                <th className="px-2.5 py-2.5">{t("settings.tokens.colName")}</th>
+                <th className="px-2.5 py-2.5">{t("settings.tokens.colCreated")}</th>
+                <th className="px-2.5 py-2.5">{t("settings.tokens.colLastUsed")}</th>
+                <th className="px-2.5 py-2.5">{t("settings.tokens.colExpires")}</th>
+                <th className="px-2.5 py-2.5" />
               </tr>
             </thead>
             <tbody>
@@ -225,6 +233,11 @@ function TokenList() {
   );
 }
 
+/** A stored instant as a date in the table, the full date-time on hover. */
+function Instant({ iso }: { iso: string }) {
+  return <span title={formatDateTime(iso)}>{formatDate(iso)}</span>;
+}
+
 function TokenRow({
   token,
   busy,
@@ -240,33 +253,55 @@ function TokenRow({
     !revoked && token.expires_at !== null && new Date(token.expires_at).getTime() <= Date.now();
   const inactive = revoked || expired;
   const writes = token.scopes.includes("collection:write");
+  const dot = t("common.dotSeparator");
   return (
     <tr
       data-testid="token-row"
       className={`border-b border-rule last:border-0 ${inactive ? "text-faint" : ""}`}
     >
-      <td className="px-3 py-2 font-medium">{token.name}</td>
-      <td className="px-3 py-2 font-mono text-xs">ptk_{token.token_prefix}_…</td>
-      <td className="px-3 py-2">
-        {writes ? t("settings.tokens.accessWrite") : t("settings.tokens.accessRead")}
-      </td>
-      <td className="px-3 py-2 whitespace-nowrap">{formatDateTime(token.created_at)}</td>
-      <td className="px-3 py-2 whitespace-nowrap">
-        {token.last_used_at ? formatDateTime(token.last_used_at) : t("settings.tokens.neverUsed")}
-      </td>
-      <td className="px-3 py-2 whitespace-nowrap">
-        {expired
-          ? t("settings.tokens.expired")
-          : token.expires_at
-            ? formatDateTime(token.expires_at)
-            : t("settings.tokens.noExpiry")}
-      </td>
-      <td className="px-3 py-2 text-end whitespace-nowrap">
-        {revoked ? (
-          <span className="text-xs">
-            {t("settings.tokens.revoked", { when: formatDateTime(token.revoked_at as string) })}
+      <td className="px-2.5 py-2">
+        {/* A name is free text up to 100 characters: it wraps, and one long word
+            breaks rather than widening the column past the box. The facts under
+            it break only between themselves (the <wbr>s), each carrying its own
+            separator so a line never ends on a dangling dot. */}
+        <div className="font-medium wrap-anywhere">{token.name}</div>
+        <div className={`text-xs ${inactive ? "" : "text-muted"}`}>
+          <span className="whitespace-nowrap font-mono">ptk_{token.token_prefix}_…</span>
+          <wbr />
+          <span className="whitespace-nowrap">
+            {dot}
+            {writes ? t("settings.tokens.accessWrite") : t("settings.tokens.accessRead")}
           </span>
+          {revoked && (
+            <>
+              <wbr />
+              <span className="whitespace-nowrap" title={formatDateTime(token.revoked_at as string)}>
+                {dot}
+                {t("settings.tokens.revoked", { when: formatDate(token.revoked_at as string) })}
+              </span>
+            </>
+          )}
+        </div>
+      </td>
+      <td className="px-2.5 py-2">
+        <Instant iso={token.created_at} />
+      </td>
+      <td className="px-2.5 py-2">
+        {token.last_used_at ? <Instant iso={token.last_used_at} /> : t("settings.tokens.neverUsed")}
+      </td>
+      <td className="px-2.5 py-2">
+        {expired ? (
+          t("settings.tokens.expired")
+        ) : token.expires_at ? (
+          <Instant iso={token.expires_at} />
         ) : (
+          t("settings.tokens.noExpiry")
+        )}
+      </td>
+      {/* Empty once revoked: the record of when sits under the name, so the
+          action column keeps the button's width and never the sentence's. */}
+      <td className="px-2.5 py-2 text-end whitespace-nowrap">
+        {!revoked && (
           <Button type="button" variant="danger" disabled={busy} onClick={onRevoke}>
             {busy ? t("settings.tokens.revoking") : t("settings.tokens.revoke")}
           </Button>
