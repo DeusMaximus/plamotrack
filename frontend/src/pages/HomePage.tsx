@@ -9,7 +9,7 @@ import type { Kit, Order } from "../api/types";
 import { KitFormModal } from "../components/KitFormModal";
 import { OrderFormModal } from "../components/OrderFormModal";
 import { StatusBadge } from "../components/StatusBadge";
-import { EmptyState, ErrorBanner, IconButton, MICRO_LABEL_CLASS, PageTitle, RatingStars } from "../components/ui";
+import { EmptyState, ErrorBanner, IconButton, MICRO_LABEL_CLASS, PageHeader, RatingStars } from "../components/ui";
 import { formatDate, formatNumber } from "../lib/format";
 import {
   MAIL_CAP,
@@ -156,7 +156,7 @@ export function HomePage() {
     // (Codex #237 P3-2). Two bench cards from 42 rem of content, two strips
     // from 48 rem, two then three mail columns from 42 and 56 rem.
     <div className="@container space-y-7">
-      <PageTitle>{t("home.title")}</PageTitle>
+      <PageHeader title={t("home.title")} brand />
       {failed && (
         <ErrorBanner message={t("home.loadFailed", { message: (failed.error as Error).message })} />
       )}
@@ -531,14 +531,10 @@ function OrderCard({
         <span className="min-w-0">{when}</span>
       </div>
       {lines.headline && (
-        <div className="truncate pe-7 text-sm font-medium text-text">
-          <LineLabel line={lines.headline} />
-        </div>
+        <CardLine line={lines.headline} className="pe-7 text-sm font-medium text-text" />
       )}
       {lines.rest.kind === "one" && (
-        <div className="truncate text-[12.5px] text-muted">
-          <LineLabel line={lines.rest.line} and />
-        </div>
+        <CardLine line={lines.rest.line} and className="text-[12.5px] text-muted" />
       )}
       {lines.rest.kind === "many" && (
         <div className="text-[12.5px] text-muted">
@@ -564,8 +560,22 @@ function OrderCard({
 
 /** A line as a card names it: "2 × name" past one, the item type while a
  *  catalog name is still loading, "and …" for the one other line, and the
- *  *pre-order* tag on a mixed order. */
-function LineLabel({ line, and = false }: { line: LineSummary; and?: boolean }) {
+ *  *pre-order* tag on a mixed order.
+ *
+ *  A row of two, not one truncating line: the words give way and the tag
+ *  stays. As inline content the tag was the first thing an ellipsis took — in
+ *  a 288 px column, which under the rail is every 1024 px tablet, a
+ *  24-character kit name dropped it (§13.7). One component for both of a
+ *  card's lines, so the rule has one place to be wrong. */
+function CardLine({
+  line,
+  and = false,
+  className,
+}: {
+  line: LineSummary;
+  and?: boolean;
+  className: string;
+}) {
   const { t } = useTranslation();
   const name = line.label ?? itemTypeLabel(line.itemType);
   const text =
@@ -573,13 +583,13 @@ function LineLabel({ line, and = false }: { line: LineSummary; and?: boolean }) 
       ? t("home.quantityOf", { quantityDisplay: formatNumber(line.quantity), name })
       : name;
   return (
-    <>
-      {and ? t("home.andLine", { line: text }) : text}
+    <div className={`flex min-w-0 items-center ${className}`}>
+      <span className="min-w-0 truncate">{and ? t("home.andLine", { line: text }) : text}</span>
       {line.preOrder && (
-        <span className="ms-1.5 inline-flex h-4.5 items-center rounded-sm bg-chip px-1.5 align-middle text-[11px] font-semibold text-status-pre-ordered">
+        <span className="ms-1.5 inline-flex h-4.5 shrink-0 items-center rounded-sm bg-chip px-1.5 text-[11px] font-semibold text-status-pre-ordered">
           {t("home.preOrderTag")}
         </span>
       )}
-    </>
+    </div>
   );
 }

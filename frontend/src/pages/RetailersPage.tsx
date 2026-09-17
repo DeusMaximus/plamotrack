@@ -17,7 +17,7 @@ import {
   Field,
   IconButton,
   Input,
-  PageTitle,
+  PageHeader,
   Pager,
   RatingStars,
   Select,
@@ -238,17 +238,16 @@ export function RetailersPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <PageTitle count={retailers === undefined ? undefined : visible.length}>
-          {t("retailers.title")}
-        </PageTitle>
-        <div className="flex gap-2">
-          <ExportCsvButton table="retailers" />
+      <PageHeader
+        title={t("retailers.title")}
+        count={retailers === undefined ? undefined : visible.length}
+        secondary={<ExportCsvButton table="retailers" />}
+        actions={
           <Button icon={Plus} onClick={() => setModal({})}>
             {t("retailers.addButton")}
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       <div className="relative w-full max-w-xs">
         <Search

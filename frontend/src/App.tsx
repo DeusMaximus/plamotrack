@@ -4,6 +4,7 @@ import { Layout } from "./components/Layout";
 import { HomePage } from "./pages/HomePage";
 import { InventoryPage } from "./pages/InventoryPage";
 import { KitsPage } from "./pages/KitsPage";
+import { MorePage } from "./pages/MorePage";
 import { OrdersPage } from "./pages/OrdersPage";
 import { RetailersPage } from "./pages/RetailersPage";
 import { AboutSection } from "./pages/settings/AboutSection";
@@ -25,6 +26,8 @@ export default function App() {
         <Route path="/orders" element={<OrdersPage />} />
         <Route path="/inventory" element={<InventoryPage />} />
         <Route path="/retailers" element={<RetailersPage />} />
+        {/* The phone shell's fifth tab (§13.7); no other shell links to it. */}
+        <Route path="/more" element={<MorePage />} />
         <Route path="/settings" element={<SettingsPage />}>
           <Route index element={<Navigate to="general" replace />} />
           <Route path="general" element={<GeneralSection />} />

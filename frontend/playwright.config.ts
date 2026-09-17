@@ -56,6 +56,36 @@ export default defineConfig({
       dependencies: ["app"],
       use: { storageState: STORAGE_STATE },
     },
+    // The phone and tablet shells (design §13.7, #257). Chromium at those sizes
+    // with a touch screen — `hasTouch` with `isMobile` is what makes
+    // `(pointer: coarse)` match, which the touch sizes key on — not a device
+    // preset, which would want WebKit installed. `tablet` is the portrait size;
+    // a spec that wants landscape (1180 × 820) sets it. They run the specs
+    // written for them — shell.spec.ts, which `app` runs too, at the desktop
+    // size — and #258–#260 add to the list page by page. Nothing they run
+    // writes shared state, so they need no place in the ordering above.
+    {
+      name: "phone",
+      testMatch: /shell\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        storageState: STORAGE_STATE,
+        viewport: { width: 390, height: 844 },
+        hasTouch: true,
+        isMobile: true,
+      },
+    },
+    {
+      name: "tablet",
+      testMatch: /shell\.spec\.ts/,
+      dependencies: ["setup"],
+      use: {
+        storageState: STORAGE_STATE,
+        viewport: { width: 820, height: 1180 },
+        hasTouch: true,
+        isMobile: true,
+      },
+    },
   ],
   webServer: [
     {

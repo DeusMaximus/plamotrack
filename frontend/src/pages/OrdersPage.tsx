@@ -16,7 +16,7 @@ import {
   ErrorBanner,
   IconButton,
   Input,
-  PageTitle,
+  PageHeader,
   Pager,
   Select,
   TABLE_HEAD_ROW_CLASS,
@@ -170,17 +170,16 @@ export function OrdersPage() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-3">
-        <PageTitle count={orders === undefined ? undefined : visible.length}>
-          {t("orders.title")}
-        </PageTitle>
-        <div className="flex gap-2">
-          <ExportCsvButton table="orders" />
+      <PageHeader
+        title={t("orders.title")}
+        count={orders === undefined ? undefined : visible.length}
+        secondary={<ExportCsvButton table="orders" />}
+        actions={
           <Button icon={Plus} onClick={() => setModal({ mode: "add" })}>
             {t("orders.newOrder")}
           </Button>
-        </div>
-      </div>
+        }
+      />
 
       <div className="flex flex-wrap gap-2">
         <div className="relative w-full max-w-sm">

@@ -110,6 +110,34 @@
   --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
 }
 
+/* Touch sizes (design §13.7): the phone shell — below 768 px, Tailwind's `md`,
+ * the line `src/lib/shell.ts` draws — and a coarse pointer at any width. An
+ * iPad, the rail's and a 13-inch one in landscape's sidebar alike, gets 44 px
+ * controls; 1280 px with a mouse gets the sizes it always had.
+ * `shell.test.ts` holds the width here to the shell's. */
+@custom-variant touch {
+  @media (width < 48rem), (pointer: coarse) {
+    @slot;
+  }
+}
+
+/* Safe areas (design §13.7). `viewport-fit=cover` in index.html lets the page
+ * paint to the screen's edges, which is what makes these insets non-zero: the
+ * home indicator under the phone's tab bar, the notch beside a phone held
+ * sideways. They are zero everywhere else, so the wider layouts do not move. */
+@utility px-safe {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+@utility pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+/* The room the phone's fixed tab bar takes from the page beneath it: its 56 px,
+ * the inset under it, and a line's breathing space above. */
+@utility pb-tab-bar {
+  padding-bottom: calc(5rem + env(safe-area-inset-bottom));
+}
+
 @layer base {
   html {
     background-color: var(--bg);

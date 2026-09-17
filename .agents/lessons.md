@@ -277,6 +277,19 @@ production factory. Two rules: an injection seam sits *below* the object under t
 names the failures it forgives — an `httpx.HTTPError` is the provider's problem, an
 `AttributeError` is ours. → 2026-09-11 (#241)
 
+### A poll after a resize is satisfied by the page it was supposed to replace
+`e2e/shell.spec.ts`'s first width matrix resized one live page through nine widths
+and polled for the expected shell at each. Where two neighbours in the list expect
+the same shell — 820 then 1180, both the rail — the poll's first read is the
+*previous* width's DOM, which already matches, so it passes before React has
+re-rendered: the test written to pin the 1280 px line stayed green with the line
+moved to 1024. The unit test and three other e2e tests caught that mutant; this one
+did not. The negative control could not have shown it — the unfixed tree has no
+shells, so every width fails there; mutating the line did. The fix is a fresh
+document per width. A poll proves a *transition*, so it belongs only where every
+step changes the answer (the rotation test, where each resize crosses a line).
+→ 2026-09-17 (#257)
+
 ---
 
 ## Concurrency tests

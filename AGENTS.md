@@ -120,13 +120,22 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   enabled tags must equal SUPPORTED_INTERFACE_LANGUAGES
                         #   (backend/tests/test_settings.py holds the pair together);
                         #   extraction keeps en-AU strings byte-identical (e2e proves it)
-    components/         # Layout, Modal, ui primitives, CatalogItemPicker (§3.9 select-or-create),
+    components/         # Layout (the three shells, §13.7: sidebar, icon rail, phone tab bar),
+                        #   Modal, ui primitives (PageHeader is the page head in every shell),
+                        #   CatalogItemPicker (§3.9 select-or-create),
                         #   KitFormModal + OrderFormModal — the one edit dialog per record,
                         #   shared by the list pages and Home (#233)
+    lib/shell.ts        # which shell this viewport gets — `useShell()` where a shell renders
+                        #   different things; the `max-md:` / `touch:` utilities (index.css)
+                        #   where it is the same thing at another size. One pair of lines:
+                        #   shell.test.ts holds the hook and the stylesheet together
     pages/              # HomePage (§13.2: bench, strips, mail), KitsPage, OrdersPage,
-                        #   InventoryPage, RetailersPage, and settings/ (SettingsPage +
-                        #   sections, including Data management at /settings/data)
-  e2e/                  # Playwright happy-path (runs against the dev stack, self-cleaning)
+                        #   InventoryPage, RetailersPage, MorePage (the phone's fifth tab),
+                        #   and settings/ (SettingsPage + sections, including Data
+                        #   management at /settings/data)
+  e2e/                  # Playwright (runs against the dev stack, self-cleaning): the `app`
+                        #   project at the desktop size, `phone` (390 × 844) and `tablet`
+                        #   (820 × 1180) with a touch screen — shell.spec.ts runs in all three
 docs/design.md          # product intent + architectural decision record (§n targets)
 docs/import-export.md   # user-facing CSV format + matching reference
 docs/translating.md     # contributor how-to for proposing/reviewing a language (#22)
@@ -721,6 +730,12 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
      built as #231–#234 on the integration branch `m6.5-workbench`; before M7/M8
      so the gallery and showcase are built in the new look once (#122 rode here)~~ ✅
      (lands on `main` as v0.4.0-alpha)
+6.6. Phone and tablet UI: three shells by viewport width alone — a bottom tab bar
+     below 768 px, a 64 px icon rail to 1279 px, the desktop untouched from 1280 —
+     before M7 because the phone is the camera (design §13.7). Four PRs straight to
+     `main`, each shippable alone: ~~#257 the shells, touch sizes and home-screen
+     install~~ ✅, #258 list pages and table folds, #259 sheet dialogs, #260 Home,
+     Settings, sign-in, the full phone e2e and the release
 7. Photo upload + gallery ← decide storage backend default first (§9.2)
 8. Public read-only routes + showcase page ← only after admin/MCP paths are protected
 9. Open-source operations: contribution guide, release automation, support matrix,

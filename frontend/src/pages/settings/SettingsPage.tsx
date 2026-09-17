@@ -2,7 +2,7 @@ import { useTranslation } from "react-i18next";
 import { NavLink, Outlet } from "react-router-dom";
 
 import { navRowClass } from "../../components/Layout";
-import { PageTitle } from "../../components/ui";
+import { PageHeader } from "../../components/ui";
 
 /** Section slugs are route segments (App.tsx nests them under /settings) and
  *  stay canonical/untranslated; only the labels go through the catalogue. */
@@ -18,10 +18,7 @@ export function SettingsPage() {
   const { t } = useTranslation();
   return (
     <div className="max-w-4xl">
-      <div>
-        <PageTitle>{t("settings.title")}</PageTitle>
-        <p className="mt-0.5 text-sm text-muted">{t("settings.subtitle")}</p>
-      </div>
+      <PageHeader title={t("settings.title")} subtitle={t("settings.subtitle")} />
       {/* Stacked on small screens (sections in a scrollable row), a second pane
           on sm+ — the rows in the sidebar's own shape (§13.3). */}
       <div className="mt-6 sm:flex sm:gap-8">

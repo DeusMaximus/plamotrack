@@ -8,9 +8,26 @@
          the dark accent on dark. A browser that ignores `media` here takes the
          last link, the amber one, which reads on both. No <style> inside the
          SVGs: nginx serves them under `style-src 'self'` (design §5.6). -->
+    <!-- First, so a browser that reads the SVG links below still ends on the
+         amber one: the same mark as a PNG, for Safari 18 and earlier, which
+         cannot use an SVG here. scripts/render-icons.mjs draws it and the two
+         home-screen sets below from the brand mark (design §13.7). -->
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
     <link rel="icon" type="image/svg+xml" href="/favicon-light.svg" media="(prefers-color-scheme: light)" />
     <link rel="icon" type="image/svg+xml" href="/favicon-dark.svg" media="(prefers-color-scheme: dark)" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- Add to Home Screen (§13.7): a manifest and icons, no service worker and
+         no offline mode. iOS takes its icon from the touch-icon link — opaque,
+         because iOS paints a transparent one onto black — and everything else
+         from the manifest. It is `.json`, not `.webmanifest`: the bundled nginx
+         has no type for the latter and would serve it as octet-stream beside
+         `nosniff`. `use-credentials` so the fetch carries the cookie an access
+         proxy in front of the instance (Cloudflare Access) wants to see. -->
+    <link rel="manifest" href="/manifest.json" crossorigin="use-credentials" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!-- `viewport-fit=cover`: the page paints to the screen's edges, which is
+         what gives `env(safe-area-inset-*)` a value for the phone's tab bar to
+         stand clear of the home indicator (src/index.css, §13.7). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="color-scheme" content="dark light" />
     <title>plamotrack</title>
     <!-- Blocking, before the bundle: the theme is on <html> before anything

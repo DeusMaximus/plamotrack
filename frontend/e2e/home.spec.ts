@@ -289,7 +289,13 @@ test("a kit moved by hand moves its order's card to the stage the server now rep
 test("no width lets the page scroll sideways, and every mail card keeps its retailer readable (Codex #237 P3-2)", async ({
   page,
 }) => {
-  for (const width of [700, 768, 1024, 1440]) {
+  // 1024 is the viewport that hands Home exactly 56rem under the rail (§13.7):
+  // the mail grid first takes three columns there and a card is at its
+  // narrowest, 288 px. Before the shells that container width belonged to a
+  // viewport of about 1200 px, which nothing sampled, and a long kit name
+  // pushed the *pre-order* tag past the card for the ellipsis to take (#257).
+  // 390 is the phone shell's one column; 1280 is the sidebar's first width.
+  for (const width of [390, 700, 768, 1024, 1280, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto("/");
     const mail = page.getByRole("region", { name: "In the mail" });
@@ -313,6 +319,33 @@ test("no width lets the page scroll sideways, and every mail card keeps its reta
         }).length;
       });
       expect(spill, `${width}px: content past the card on ${label}`).toBe(0);
+    }
+    // The mixed order's *pre-order* tag (#257): whole, and inside its line, at
+    // every width — the words beside it are what give way. The spill check
+    // above cannot hold this alone: this fixture's line is only a few pixels
+    // too long for a 288 px card, and the card's padding absorbs that much.
+    const mixed = mail.getByRole("article").filter({ hasText: name("Mixed ordered") }).first();
+    const tag = await mixed.getByText("pre-order", { exact: true }).evaluate((el) => {
+      const row = el.parentElement!;
+      const words = row.firstElementChild!;
+      return {
+        pastItsLine: Math.max(0, el.getBoundingClientRect().right - row.getBoundingClientRect().right),
+        // Either way: a tag given less than its width wraps at its hyphen
+        // before it overflows sideways.
+        squeezed: el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight,
+        wordsTruncated: words.scrollWidth > words.clientWidth,
+        lineInsideCard: row.getBoundingClientRect().right <= el.closest("article")!.getBoundingClientRect().right,
+      };
+    });
+    expect(tag, `${width}px: the pre-order tag`).toMatchObject({
+      pastItsLine: 0,
+      squeezed: false,
+      lineInsideCard: true,
+    });
+    // The case is real, not assumed: in the 288 px card this line does not
+    // fit, so something had to give, and it was the words.
+    if (width === 1024) {
+      expect(tag.wordsTruncated, `${width}px: the line is too long for the card`).toBe(true);
     }
   }
 });
