@@ -26,11 +26,11 @@ last edited, so a large jump either way is worth a look.
 | --- | --- | --- |
 | Backend (~1750) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
 | Lint + format | `uv run ruff check --fix . && uv run ruff format .` | Before every commit. CI checks both. |
-| Frontend unit (~616) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
+| Frontend unit (~628) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. Also the compile-time check on every static `t("…")` key. |
 | Frontend lint | `npm run lint` | oxlint, then `scripts/check-palette.mjs` — refuses any stock Tailwind palette utility under `src/` (design §13.1: tokens only; `@theme` already emits no CSS for one, so the guard is what makes the regression loud). |
 | Translation coverage | `npm run i18n:report` (in `frontend/`) | Markdown table, presentation only — the catalogue tests are what gate. CI appends it to the job summary. |
-| E2E (~114) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. The `setup` project (`e2e/auth.setup.ts`) signs in as the owner first — an **unclaimed** instance is claimed through the recovery command with `E2E_OWNER_PASSWORD` (default `e2e-owner-password`); a **claimed** one is only signed into, so on a dev database you claimed yourself export `E2E_OWNER_PASSWORD` to its password or the run stops and says so. The session lands in `e2e/.auth/` (gitignored); specs' own API calls go through `e2e/api.ts` (`apiContext()`), which carries the cookie, an `Origin` and the CSRF token. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. Three browser projects since #257: `app` (the desktop default, a mouse — every spec), and `phone` (390 × 844) and `tablet` (820 × 1180), both Chromium with a touch screen (`hasTouch` + `isMobile`, which is what makes `(pointer: coarse)` match), running the specs their `testMatch` lists — `shell.spec.ts` and `lists.spec.ts` (#258; it seeds its own rows), which `app` runs too. `--project=phone` runs one (it pulls in `setup`). A phone or tablet spec sets its size and *then* loads the page: a poll after resizing a live page can be satisfied by the layout it was meant to replace (`lessons.md`). |
+| E2E (~124) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. The `setup` project (`e2e/auth.setup.ts`) signs in as the owner first — an **unclaimed** instance is claimed through the recovery command with `E2E_OWNER_PASSWORD` (default `e2e-owner-password`); a **claimed** one is only signed into, so on a dev database you claimed yourself export `E2E_OWNER_PASSWORD` to its password or the run stops and says so. The session lands in `e2e/.auth/` (gitignored); specs' own API calls go through `e2e/api.ts` (`apiContext()`), which carries the cookie, an `Origin` and the CSRF token. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. Three browser projects since #257: `app` (the desktop default, a mouse — every spec), and `phone` (390 × 844) and `tablet` (820 × 1180), both Chromium with a touch screen (`hasTouch` + `isMobile`, which is what makes `(pointer: coarse)` match), running the specs their `testMatch` lists — `shell.spec.ts` and `lists.spec.ts` (#258; it seeds its own rows), which `app` runs too. The `settings` project runs last, after all three: `settings.spec.ts` and `lists.settings.spec.ts` flip the instance-settings singleton, which every date on every page is written with. `--project=phone` runs one (it pulls in `setup`). A phone or tablet spec sets its size and *then* loads the page: a poll after resizing a live page can be satisfied by the layout it was meant to replace (`lessons.md`). |
 | Mutation harness | `uv run python mutation_test.py` | See below. |
 
 **One pytest session at a time.** Two runs against `plamotrack_test` interfere —
@@ -131,6 +131,49 @@ a page-level check calls a clipped edit control fine. What #258 learned doing it
 - **A loop over no sizes passes.** A test that filters its sizes down to none for a
   project (`phone` has no table shell) is green having looked at nothing: `test.skip`
   it there by name.
+- **The widest *ordinary* row is one point in the value space, and the settings are an
+  axis of it** (Codex #266, finding 2). The date style and the formatting locale are
+  instance settings: `full` turns "27/08/2026 · 9 d" into "Thursday, 27 August 2026 ·
+  9 d", and a table measured only under the defaults was 121 px past its box at
+  1280 px. Seed the *wide* row beside the ordinary one — a reference with nowhere to
+  break (a USPS tracking number is 22 digits, 30 with its routing prefix), a total in
+  three currencies — and run the sweep again under every date style
+  (`e2e/lists.settings.spec.ts`; in the `settings` project, which waits for every
+  other project, because the singleton is what every date on every page is written
+  with). Assert the page is *showing* the style first — format the expected string in
+  the test with `Intl`, not with the app — or a PATCH that did not take passes the lot.
+- **A rigid cell is a decision about a value, so make it by the value.** `nowrap` on
+  every date, or `overflow-wrap: anywhere` on every reference, changes the ordinary
+  rows too: a table squeezes every column that has give, so lowering one column's
+  minimum re-lays-out the rest, the desktop's included. Decide per value (a date in
+  digits is rigid, one in words wraps; a run longer than the measured one may break)
+  and the ordinary rows stay where the fold lines were measured — then prove that with
+  the pixel comparison, not by reading the CSS.
+- **Bounds passing is not content showing** (finding 1). A card that fits the screen
+  exactly can have squeezed its own title to 0 px: beside a `shrink-0` sibling of
+  unbounded length (a total in three currencies) a `min-w-0 truncate` name gives up
+  everything. Assert the identifying text is visible *and has room* (its box, not its
+  card's), and that what a card says is not clipped (`scrollWidth` against
+  `clientWidth` on the text's own element). Run the phone's tests from 320 px: wrapping
+  is decided at the narrow end.
+
+**Proving the keyboard survives a change of representation** (Codex #266, findings 3–4;
+`lists.spec.ts`, "no change of representation leaves the keyboard on `<body>`"). The
+rule is one sentence — every change of representation accounts for the focused
+control — and its instances are found one at a time by whoever thinks of them: the
+build thought of rows, a dialog's opener and one select; the review of four more
+selects and a button; a sweep of **every** control then found the pager, two links,
+Export CSV and the entire navigation, in code a reviewer had already passed. So:
+enumerate the focusable controls from the page, focus each, change the page under it
+each way it can change — a shell's line (744 ↔ 1133 px), a fold inside one shell
+(1180 ↔ 820 px: no shell change, no render, only a container query), the other shell
+line (1100 ↔ 1300 px) — and assert the keyboard is not on `<body>`. Re-read the list
+after every change (a shell swap replaces the nodes, and a probe that tagged them once
+silently skipped everything remounted — it reported 27 losses where there were 211).
+A sweep derives its subjects from the page, so say by name which controls it must
+have reached, and how many; and keep the named tests beside it, because "not nowhere"
+says nothing about *where*. A `ResizeObserver` cannot watch an inline element — a text
+link has no size — which is why the hook watches the nearest sized ancestor.
 
 **Do not use `--repeat-each` to measure flakiness.** It reuses one module load, so
 every repeat shares the fixture name and stacks duplicates. Fresh processes only.

@@ -41,6 +41,18 @@ const PHONE_TABS = NAV.filter((item) => item.to !== "/retailers");
  *  the way a tab bar's More does, and tapping it is the way back to the list. */
 const MORE_PATHS = ["/more", "/retailers", "/settings"] as const;
 
+/** The navigation is three different sets of nodes, so its controls carry focus
+ *  keys like a list's rows do (`lib/focusKey.ts`): a shell change under a
+ *  focused link hands the keyboard to the same destination's link in the new
+ *  shell. What a phone keeps under More names that tab as its stand-in; the tab
+ *  names the first of them for the way back. */
+const MORE_FOCUS = "nav:/more";
+const navFocus = (to: string) => ({
+  "data-focus-key": `nav:${to}`,
+  ...(PHONE_TABS.some((item) => item.to === to) ? {} : { "data-focus-stand-in": MORE_FOCUS }),
+});
+const SIGN_OUT_FOCUS = { "data-focus-key": "sign-out", "data-focus-stand-in": MORE_FOCUS };
+
 export const SIDEBAR_DIVIDER_CLASS = "border-e";
 
 /** One nav row (§13.3): the sidebar's, and the Settings sections' (SettingsPage).
@@ -125,7 +137,7 @@ function Sidebar() {
       </div>
       <nav className="flex flex-col gap-0.5">
         {NAV.map((item) => (
-          <NavLink key={item.to} to={item.to} className={navRowClass}>
+          <NavLink key={item.to} to={item.to} className={navRowClass} {...navFocus(item.to)}>
             <item.icon size={18} aria-hidden />
             {t(item.label)}
           </NavLink>
@@ -133,7 +145,7 @@ function Sidebar() {
       </nav>
       <div className="flex-1" />
       <nav className="flex flex-col gap-0.5">
-        <NavLink to="/settings" className={navRowClass}>
+        <NavLink to="/settings" className={navRowClass} {...navFocus("/settings")}>
           <Settings size={18} aria-hidden />
           {t("nav.settings")}
         </NavLink>
@@ -147,6 +159,7 @@ function Sidebar() {
           type="button"
           onClick={signOut}
           className={`${NAV_ROW_CLASS} w-full text-muted hover:bg-chip hover:text-text`}
+          {...SIGN_OUT_FOCUS}
         >
           <LogOut size={18} aria-hidden />
           {t("auth.signOut")}
@@ -180,6 +193,7 @@ function Rail() {
             aria-label={t(item.label)}
             title={t(item.label)}
             className={railItemClass}
+            {...navFocus(item.to)}
           >
             <item.icon size={20} aria-hidden />
           </NavLink>
@@ -191,6 +205,7 @@ function Rail() {
         aria-label={t("nav.settings")}
         title={t("nav.settings")}
         className={railItemClass}
+        {...navFocus("/settings")}
       >
         <Settings size={20} aria-hidden />
       </NavLink>
@@ -205,6 +220,7 @@ function Rail() {
         aria-label={t("auth.signOut")}
         title={t("auth.signOut")}
         className={`${RAIL_ITEM_CLASS} ${RAIL_IDLE_CLASS}`}
+        {...SIGN_OUT_FOCUS}
       >
         <LogOut size={20} aria-hidden />
       </button>
@@ -227,7 +243,7 @@ function TabBar() {
     >
       <div className="grid grid-cols-5 px-1">
         {PHONE_TABS.map((item) => (
-          <NavLink key={item.to} to={item.to} className={tabClass}>
+          <NavLink key={item.to} to={item.to} className={tabClass} {...navFocus(item.to)}>
             <item.icon size={22} aria-hidden />
             {t(item.label)}
           </NavLink>
@@ -238,6 +254,8 @@ function TabBar() {
           to="/more"
           aria-current={pathname === "/more" ? "page" : underMore ? "true" : undefined}
           className={tabClass({ isActive: underMore })}
+          data-focus-key={MORE_FOCUS}
+          data-focus-stand-in="nav:/retailers"
         >
           <Ellipsis size={22} aria-hidden />
           {t("nav.more")}

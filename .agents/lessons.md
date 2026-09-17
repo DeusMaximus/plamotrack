@@ -1188,3 +1188,69 @@ a minute. The order of focus events around a DOM removal is not something to der
 `Modal`'s comment had it measured one way for one Chromium, and this session measured
 it the other way for the next. Log it, then write the rule.
 
+
+## The rule was one sentence and it was fixed by instance (#258, PR #266 round 1)
+
+#265's review had named a class — a dialog open across a rotation loses the control
+that opened it — and #258 answered the class as it understood it: rows carry a focus
+key, `Modal` reads it at close, and a second reader was added when a screenshot
+showed the same loss with no dialog. Each addition came from an instance somebody
+met. The Status filter got the sheet opener's key because the rotation test opened
+the sheet from it; the Series, Retailer and Sort selects beside it got nothing, and
+nobody focused them. Access tokens swapped its table for cards in CSS, by its box,
+and the comment on it said why that needed no focus treatment: "Revoke confirms
+through the browser's own dialog, so no `Modal` has a node here to hand focus back
+to" — an argument about the reader that existed, not about the rule.
+
+Codex's round found those five (findings 3 and 4) and said what they were: *every
+representation change must account for the focused control, including selectors and
+CSS-only swaps — extend that inventory rather than adjust the timing again.* The
+inventory, taken literally — focus every control on the page, change the page under
+it each way it can change, ask whether the keyboard is on `<body>` — found **211**
+losses at the reviewed head. Five were the review's. The rest were the pager's pages,
+a retailer's link, Export CSV, the Orders tracking link (hidden by a fold with no
+shell change at all), and the entire navigation: #257 draws it as three sets of nodes,
+it had been merged after a GO, and neither the author nor the reviewer of either PR
+had focused a nav link and turned the tablet.
+
+What to keep. **When a finding names a class, the first act is an enumeration nobody
+chose the members of.** A list written from memory is the instances already thought
+of, which is the list the defect is not on. Here the DOM could be asked; elsewhere it
+is the route registry, the spec registry, a grep — whatever produces members without
+an author. The first version of the probe reported 27 losses, because it tagged the
+controls once and a shell change replaces the nodes, so everything remounted was
+skipped: **count what the enumeration tried, not only what it found**, and a probe
+that finds *less* than the review did is broken, not reassuring. And a comment that
+explains why a rule does not apply here is a claim like any other — the tokens
+comment was checkable in thirty seconds and nobody checked it, including the agent
+that wrote it.
+
+## The widest ordinary row under the default settings (#258, PR #266 round 1)
+
+"The demo data understated what the table needs" is two entries up: the fix was to
+seed ordinary rows and sweep every box width, and the fold lines were set from that.
+The rows were ordinary; the *settings* were the defaults. `date_style` and
+`formatting_locale` are on the Settings page (rule 11), `full` writes the Received
+cell "Thursday, 27 August 2026 · 9 d", and the cell was `nowrap` — so the owner who
+picks the long style gets the Orders table 121 px past its box at 1280 px, the
+defect the milestone exists to remove, at every width. A USPS tracking number (22
+digits against Japan Post's 13) did the same at 1366 px with the defaults.
+
+It was on the PR's own "where I'd push" list — *"the fold lines are one seed under
+one formatting locale… I did not vary any of them"* — which is the uncomfortable
+part. Naming an untested axis in the brief is honest and it is not a test: the
+reviewer spent the round measuring what the author had already identified as
+unmeasured. And Home had paid for exactly this in #237 (P3-2, the mail cards under
+full dates; `settings.spec.ts` still carries the test): the question existed in the
+repo, attached to a different page.
+
+What to keep. **A value space has a settings axis** wherever the rendered width,
+order or text of a field depends on an instance setting — dates, numbers, money,
+language. **If the brief says "I did not vary X", vary X before sending it**, or say
+why it cannot be done; the list is for what is genuinely beyond the author's reach (a
+real device, a screen reader). And the remedy that fits a table is per value, not
+per column: `nowrap` everywhere or `overflow-wrap: anywhere` everywhere both change
+the rows that were fine, because a table squeezes every column that has give. The
+spec written for the fix found a sibling on its first run — a revoked token's date,
+the one `nowrap` date on the Access tokens table — which is the usual sign that the
+axis, not the instance, was what had been missing.

@@ -28,6 +28,7 @@ import {
   Field,
   IconButton,
   Input,
+  PAGE_ACTION_FOCUS,
   PageHeader,
   Pager,
   Select,
@@ -755,7 +756,7 @@ export function InventoryPage() {
         count={loaded === undefined ? undefined : shownCount}
         secondary={<ExportCsvButton table={EXPORT_TABLE[tab]} />}
         actions={
-          <Button icon={Plus} onClick={() => setAddOpen(true)}>
+          <Button icon={Plus} onClick={() => setAddOpen(true)} data-focus-key={PAGE_ACTION_FOCUS}>
             {t("inventory.addButton", { type: itemTypeLabel(TAB_ITEM_TYPE[tab]) })}
           </Button>
         }

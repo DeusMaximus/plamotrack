@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
-import { focusByKey, focusKeyOf } from "../lib/focusKey";
+import { focusFirst, focusKeysOf } from "../lib/focusKey";
 
 /** What a keyboard can land on, in DOM order. Deliberately not a library: this
  *  list plus the trap below is the whole of what five dialogs need, and adopting
@@ -37,14 +37,16 @@ let openDialogs = 0;
  *  `main` never remounts), and a list page is card rows on one side of the
  *  768 px line and a table on the other, so the pencil that opened the dialog is
  *  not the pencil on the page when it closes. The stand-in is found by the
- *  opener's `data-focus-key` (`lib/focusKey.ts` says why a key and not the
- *  name). An opener with no key is left as it always was — focused if it is
+ *  opener's `data-focus-key`, then its `data-focus-stand-in` (`lib/focusKey.ts`
+ *  says why a key and not the name). An opener with no key is left as it always was — focused if it is
  *  still there, and otherwise wherever the browser puts focus; a control that
  *  is drawn differently per shell and opens a dialog owes itself a key, and
  *  lists.spec.ts's rotation test is where a missing one shows. */
-function restoreFocus(opener: HTMLElement | null, key: string | null): void {
-  if (opener?.isConnected) opener.focus();
-  else if (key !== null) focusByKey(key);
+function restoreFocus(opener: HTMLElement | null, keys: readonly string[]): void {
+  opener?.focus();
+  // Gone, or in the page and not drawn (a fold's hidden copy): `focus()` did
+  // nothing either way, and asking where focus is covers both.
+  if (document.activeElement !== opener) focusFirst(keys);
 }
 
 export function Modal({
@@ -69,7 +71,7 @@ export function Modal({
     // Captured before focus moves, so closing returns the user to the control
     // they opened this from rather than to the top of the document.
     const opener = document.activeElement as HTMLElement | null;
-    const openerKey = focusKeyOf(opener);
+    const openerKeys = focusKeysOf(opener);
     const appRoot = document.getElementById("root");
 
     openDialogs += 1;
@@ -89,7 +91,7 @@ export function Modal({
       // Un-inert *before* restoring focus — focus() on a node inside an inert
       // subtree silently does nothing, which would strand the user at <body>.
       if (appRoot && openDialogs === 0) appRoot.inert = false;
-      restoreFocus(opener, openerKey);
+      restoreFocus(opener, openerKeys);
     };
   }, []);
 

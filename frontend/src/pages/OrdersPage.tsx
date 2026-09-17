@@ -26,13 +26,14 @@ import {
   GradeChip,
   IconButton,
   Input,
+  PAGE_ACTION_FOCUS,
   PageHeader,
   Pager,
   Select,
   TABLE_HEAD_ROW_CLASS,
 } from "../components/ui";
 import i18n from "../i18n";
-import { formatDate, formatMoney, formatNumber } from "../lib/format";
+import { dateInDigits, formatDate, formatMoney, formatNumber } from "../lib/format";
 import { invalidateOrderViews } from "../lib/invalidate";
 import { counted, countedPhrase, dateWithElapsed, itemTypeLabel } from "../lib/labels";
 import { filterOrders } from "../lib/listFilters";
@@ -221,7 +222,7 @@ export function OrdersPage() {
         count={orders === undefined ? undefined : visible.length}
         secondary={<ExportCsvButton table="orders" />}
         actions={
-          <Button icon={Plus} onClick={() => setModal({ mode: "add" })}>
+          <Button icon={Plus} onClick={() => setModal({ mode: "add" })} data-focus-key={PAGE_ACTION_FOCUS}>
             {t("orders.newOrder")}
           </Button>
         }
@@ -273,6 +274,7 @@ export function OrdersPage() {
                 value={retailerFilter}
                 onChange={(event) => setRetailerFilter(event.target.value)}
                 className="!w-auto max-w-52"
+                data-focus-stand-in={FILTERS_FOCUS}
               >
                 <option value="">{t("orders.allRetailers")}</option>
                 {retailerOptions.map((retailer) => (
@@ -287,6 +289,7 @@ export function OrdersPage() {
               value={sort}
               onChange={(event) => setSort(event.target.value as OrderSort)}
               className="!w-auto"
+              data-focus-stand-in={FILTERS_FOCUS}
             >
               {SORT_ORDER.map((value) => (
                 <option key={value} value={value}>
@@ -331,7 +334,9 @@ export function OrdersPage() {
         // received says "27/08/2026 · 9 d" where the demo says a date. With that
         // and a seventeen-character order number the three shapes need 1040, 935
         // and 625 px — lists.spec.ts seeds those rows and gives the box every
-        // width. A line is a guess about rows nobody has typed yet: past it the
+        // width. A line is a guess about rows nobody has typed yet, so what it
+        // cannot know gives way by its value — a date written in words wraps
+        // (`dateWrap`), a long reference breaks (`Reference`) — and past that the
         // box still scrolls.
         //
         // By the box at every width, the desktop included (the owner's call,
@@ -409,12 +414,16 @@ export function OrdersPage() {
                       {retailerName.get(order.retailer_id) ?? "…"}
                       {order.order_number && (
                         <div className="hidden text-xs font-normal text-muted @max-[66rem]:block">
-                          {order.order_number}
+                          <Reference text={order.order_number} kind="orderNumber" />
                         </div>
                       )}
                     </td>
                     <td className="px-3 py-2 text-muted @max-[66rem]:hidden">
-                      {order.order_number ?? "—"}
+                      {order.order_number ? (
+                        <Reference text={order.order_number} kind="orderNumber" />
+                      ) : (
+                        "—"
+                      )}
                     </td>
                     {/* No date tooltips on the pills any more — the Shipped and
                         Received columns beside them carry the dates for every
@@ -424,15 +433,16 @@ export function OrdersPage() {
                       <StageDates order={order} className="mt-1 hidden @max-[60rem]:block" />
                     </td>
                     {/* nowrap: "in transit · 6 d" split across lines reads as two
-                        facts, and the dates never benefit from wrapping. */}
+                        facts, and a date in digits never benefits from wrapping —
+                        one in words does (`dateWrap`). */}
                     <td
-                      className="whitespace-nowrap px-3 py-2 text-muted @max-[60rem]:hidden"
+                      className={`${dateWrap(order.shipped_at)} px-3 py-2 text-muted @max-[60rem]:hidden`}
                       title={t("orders.shippedTooltip")}
                     >
                       {order.shipped_at ? formatDate(order.shipped_at) : "—"}
                     </td>
                     <td
-                      className="whitespace-nowrap px-3 py-2 text-muted @max-[60rem]:hidden"
+                      className={`${dateWrap(order.received_at)} px-3 py-2 text-muted @max-[60rem]:hidden`}
                       title={t("orders.receivedTooltip")}
                     >
                       {receivedCell(order)}
@@ -633,18 +643,20 @@ function StageDates({ order, className = "" }: { order: Order; className?: strin
   const { t } = useTranslation();
   if (!order.shipped_at && !order.received_at) return null;
   return (
-    <div className={`whitespace-nowrap text-xs text-muted ${className}`}>
+    <div className={`text-xs text-muted ${className}`}>
       {order.received_at ? (
         <>
-          <div title={t("orders.receivedTooltip")}>{receivedCell(order)}</div>
+          <div className={dateWrap(order.received_at)} title={t("orders.receivedTooltip")}>
+            {receivedCell(order)}
+          </div>
           {order.shipped_at && (
-            <div title={t("orders.shippedTooltip")}>
+            <div className={dateWrap(order.shipped_at)} title={t("orders.shippedTooltip")}>
               {t("orders.shippedDate", { date: formatDate(order.shipped_at) })}
             </div>
           )}
         </>
       ) : (
-        <div title={t("orders.shippedTooltip")}>
+        <div className={dateWrap(order.shipped_at)} title={t("orders.shippedTooltip")}>
           {formatDate(order.shipped_at as string)}
           {t("common.dotSeparator")}
           {receivedCell(order)}
@@ -654,21 +666,61 @@ function StageDates({ order, className = "" }: { order: Order; className?: strin
   );
 }
 
-/** The tracking number, a link when the order has a URL for it. */
+/** The tracking number, a link when the order has a URL for it. The link is in
+ *  a column, in the expanded lines once the column folds away, and in a card's
+ *  lines — so it carries the order's key, and where the lines are closed the
+ *  control that opens them stands in for it (`lib/focusKey.ts`). */
 function Tracking({ order }: { order: Order }) {
   const { t } = useTranslation();
-  if (!order.tracking_url) return <>{order.tracking_number ?? "—"}</>;
+  const number = order.tracking_number ? (
+    <Reference text={order.tracking_number} kind="tracking" />
+  ) : null;
+  if (!order.tracking_url) return number ?? <>—</>;
   return (
     <a
       href={order.tracking_url}
       target="_blank"
       rel="noreferrer"
       onClick={(event) => event.stopPropagation()}
+      data-focus-key={`order-tracking:${order.id}`}
+      data-focus-stand-in={`order-lines:${order.id}`}
       className="text-accent hover:underline"
     >
-      {order.tracking_number ?? t("orders.trackingLinkFallback")}
+      {number ?? t("orders.trackingLinkFallback")}
     </a>
   );
+}
+
+/** What the fold lines were measured with (§13.7): an order number that breaks
+ *  at its hyphens into runs of eight characters ("LST-12345678-0001"), and a
+ *  tracking number of thirteen with nowhere to break (Japan Post's). A longer
+ *  run — a USPS or Australia Post number is twenty-two digits and more, a
+ *  marketplace's order number nineteen — is one unbreakable word, and held
+ *  whole it pushed the row's edit control out of the box at widths where
+ *  nothing folds (Codex #266, finding 2). So a reference with a longer run than
+ *  the measured one may break anywhere, down to lines as long as the measured
+ *  run and no shorter; one without is left exactly as it was, a plain word,
+ *  and the table's ordinary rows lay out as they always did. By the value and
+ *  not for every row: `overflow-wrap: anywhere` lowers a column's minimum
+ *  width, and a table squeezes every column that has give. */
+const REFERENCE = {
+  orderNumber: { run: 8, wrap: "inline-block min-w-[8ch] wrap-anywhere" },
+  tracking: { run: 13, wrap: "inline-block min-w-[13ch] wrap-anywhere" },
+} as const;
+
+function Reference({ text, kind }: { text: string; kind: keyof typeof REFERENCE }) {
+  const { run, wrap } = REFERENCE[kind];
+  const longest = Math.max(...text.split(/[\s-]+/).map((piece) => piece.length));
+  return longest > run ? <span className={wrap}>{text}</span> : <>{text}</>;
+}
+
+/** A date the locale writes in digits stays on one line, with what follows it
+ *  ("27/08/2026 · 9 d" — #120); one it writes in words may wrap (`dateInDigits`
+ *  says why). "Thursday, 27 August 2026 · 9 d" held to a line left this table
+ *  121 px wider than its box at 1280 px. No date — "—", "in transit · 6 d" — is
+ *  the short case. */
+function dateWrap(iso: string | null | undefined): string {
+  return iso && !dateInDigits(iso) ? "" : "whitespace-nowrap";
 }
 
 const hasTracking = (order: Order) => Boolean(order.tracking_number || order.tracking_url);
@@ -729,21 +781,30 @@ function OrderCard({
           )}
         </button>
         <div className="flex min-w-0 flex-1 flex-col gap-1.5 py-2.5">
-          <div className="flex items-baseline justify-between gap-2.5 text-[15px] font-semibold">
-            <span className="min-w-0 truncate">{retailer}</span>
-            <span className="shrink-0 tabular-nums">{orderTotal(order)}</span>
+          {/* The retailer is who the order is, and the total is as long as the
+              order has currencies — "JPY 2,800 + USD 45.00 + EUR 34.00" beside
+              a name that could shrink left it 0 px (Codex #266, finding 1). So
+              the name keeps 8rem whatever stands beside it, and a total that
+              leaves it less goes to a line of its own, where it may wrap too.
+              The lines under it wrap the same way rather than ending in an
+              ellipsis: a card is the only place a phone says these, and a date
+              written in words is as long as the instance's settings make it. */}
+          <div className="flex flex-wrap items-baseline justify-end gap-x-2.5 gap-y-0.5 text-[15px] font-semibold">
+            <span className="min-w-32 flex-1 truncate">{retailer}</span>
+            <span className="text-end tabular-nums">{orderTotal(order)}</span>
           </div>
-          <div className="flex min-w-0 items-center gap-2 text-[12.5px] text-muted">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-muted">
             <OrderStageChip stage={order.stage} />
-            <span className="min-w-0 flex-1 truncate">
-              {order.received_at
-                ? receivedCell(order)
-                : order.shipped_at &&
-                  `${formatDate(order.shipped_at)}${t("common.dotSeparator")}${receivedCell(order)}`}
-            </span>
-            {converted && <span className="shrink-0 tabular-nums">{converted}</span>}
+            {(order.received_at || order.shipped_at) && (
+              <span>
+                {order.received_at
+                  ? receivedCell(order)
+                  : `${formatDate(order.shipped_at as string)}${t("common.dotSeparator")}${receivedCell(order)}`}
+              </span>
+            )}
+            {converted && <span className="ms-auto tabular-nums">{converted}</span>}
           </div>
-          <div className="truncate text-[12.5px] text-muted">
+          <div className="text-[12.5px] text-muted wrap-anywhere">
             {[
               formatDate(order.order_date),
               order.order_number,
@@ -813,7 +874,7 @@ function CardLines({ order, itemName }: { order: Order; itemName: Map<string, st
       {hasTracking(order) && (
         <div className={`${foot} bg-surface`}>
           <span>{t("orders.headerTracking")}</span>
-          <span className="min-w-0 truncate text-text">
+          <span className="min-w-0 text-end text-text wrap-anywhere">
             <Tracking order={order} />
           </span>
         </div>
@@ -872,7 +933,7 @@ function LinesBox({ order, itemName }: { order: Order; itemName: Map<string, str
       {hasTracking(order) && (
         <div className="col-span-4 hidden items-center justify-between gap-3.5 border-t border-rule bg-surface px-3 py-2 text-xs text-muted @max-[60rem]:flex">
           <span>{t("orders.headerTracking")}</span>
-          <span className="min-w-0 truncate text-text">
+          <span className="min-w-0 text-end text-text wrap-anywhere">
             <Tracking order={order} />
           </span>
         </div>

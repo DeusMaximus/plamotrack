@@ -189,6 +189,12 @@ export function PageTitle({ children, count }: { children: ReactNode; count?: nu
   );
 }
 
+/** The focus key of a page's primary action (`lib/focusKey.ts`). It is one node
+ *  in every shell, so it needs no key for itself: it carries one for the
+ *  `secondary` beside it, which a phone does not draw and which names this as
+ *  its stand-in. */
+export const PAGE_ACTION_FOCUS = "page-action";
+
 /** The head of a page. From 768 px up it is what the pages always had: the
  *  title (and a list's count), with the page's actions at the far end. In the
  *  phone shell (§13.7) it is a bar across the top that stays while the page
@@ -300,6 +306,12 @@ export function Pager({
                 type="button"
                 aria-label={t("list.page", { page: formatNumber(page) })}
                 aria-current={page === paged.page ? "page" : undefined}
+                // The pager is the table's foot in one shell and the card list's
+                // in the other, and a phone's window is shorter: a page that is
+                // in neither hands the keyboard to the current one, which is in
+                // both (`lib/focusKey.ts`).
+                data-focus-key={`page:${page}`}
+                data-focus-stand-in={`page:${paged.page}`}
                 onClick={() => onPage(page)}
                 className={`min-w-6.5 rounded-sm px-1.5 py-1 text-xs tabular-nums touch:min-h-11 touch:min-w-11 ${
                   page === paged.page

@@ -132,11 +132,16 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   different things; the `max-md:` / `touch:` utilities (index.css)
                         #   where it is the same thing at another size. One pair of lines:
                         #   shell.test.ts holds the hook and the stylesheet together
-    lib/focusKey.ts     # focus by record: a control drawn differently per shell carries
-                        #   `data-focus-key="kit:<id>"`, and `Modal` (at close) and
-                        #   `useFocusAcrossShells` (at a rotation) give the keyboard to
-                        #   whatever carries that key now. A new per-shell row control that
-                        #   opens a dialog or takes focus owes itself a key (§13.7)
+    lib/focusKey.ts     # focus by record — the rule is "every change of representation
+                        #   accounts for the focused control": one drawn differently per
+                        #   shell (or folded away, or swapped by a container query) carries
+                        #   `data-focus-key="kit:<id>"`, one some shape does not draw at all
+                        #   names what stands in for it (`data-focus-stand-in`), and `Modal`
+                        #   (at close) and `useFocusAcrossShells` (a shell change; a control
+                        #   that stopped being drawn) give the keyboard to whatever carries
+                        #   the key now. A new control of either kind owes itself one, and
+                        #   lists.spec.ts's sweep — every control, every way the page
+                        #   changes — is where a missing one shows (§13.7)
     lib/listFilters.ts  # what a list page's filters and search keep — one pure function
                         #   each, read by the page for its rows and by the filter sheet
                         #   for the count on its button, so the two cannot disagree
@@ -144,7 +149,10 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   InventoryPage, RetailersPage — card rows below 768 px, a table
                         #   from there that folds by its own box's width (`@container`),
                         #   the desktop's included; the fold lines are measured, read the
-                        #   comments before moving one (§13.7). A fold keeps a hidden copy
+                        #   comments before moving one (§13.7). What a line cannot know
+                        #   gives way by its *value*: a date in words wraps, one in digits
+                        #   never does (`dateInDigits`); a long reference breaks, an
+                        #   ordinary one is a plain word. A fold keeps a hidden copy
                         #   of what it moves, so a test reading a row's text filters for
                         #   the visible one — MorePage (the phone's fifth tab),
                         #   and settings/ (SettingsPage + sections, including Data
@@ -152,7 +160,11 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
   e2e/                  # Playwright (runs against the dev stack, self-cleaning): the `app`
                         #   project at the desktop size, `phone` (390 × 844) and `tablet`
                         #   (820 × 1180) with a touch screen — shell.spec.ts and lists.spec.ts
-                        #   run in all three. lists.spec.ts seeds its own rows: an empty
+                        #   run in all three; lists.settings.spec.ts asks the lists' fit
+                        #   questions again under every date style, in the `settings` project
+                        #   (it flips the singleton, so it runs after everything else);
+                        #   lists.ts is what the two measure with. lists.spec.ts seeds its
+                        #   own rows — the ordinary widest and the wide — since an empty
                         #   list has no table to measure
 docs/design.md          # product intent + architectural decision record (§n targets)
 docs/import-export.md   # user-facing CSV format + matching reference

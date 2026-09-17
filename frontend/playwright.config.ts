@@ -41,7 +41,10 @@ export default defineConfig({
   // order-lossless read that value in a beforeAll and assert stamps against
   // it, so the flip must never overlap them; a project dependency is the only
   // cross-file ordering Playwright offers. The trade: a failure in `app`
-  // skips `settings` for that run.
+  // skips `settings` for that run. lists.settings.spec.ts (#258) flips the
+  // formatting locale and the date style, which every date on every page is
+  // written with, so the project waits for `phone` and `tablet` too — their
+  // lists.spec.ts measures tables whose widths those dates set.
   projects: [
     { name: "setup", testMatch: /auth\.setup\.ts/ },
     {
@@ -53,7 +56,7 @@ export default defineConfig({
     {
       name: "settings",
       testMatch: /settings\.spec\.ts/,
-      dependencies: ["app"],
+      dependencies: ["app", "phone", "tablet"],
       use: { storageState: STORAGE_STATE },
     },
     // The phone and tablet shells (design §13.7, #257). Chromium at those sizes
@@ -63,9 +66,9 @@ export default defineConfig({
     // a spec that wants landscape (1180 × 820) sets it. They run the specs
     // written for them — shell.spec.ts and lists.spec.ts (#258), which `app`
     // runs too, at the desktop size — and #259–#260 add to the list page by
-    // page. lists.spec.ts seeds rows of its own and deletes them, but nothing
-    // they run touches the settings singleton, so they need no place in the
-    // ordering above.
+    // page. lists.spec.ts seeds rows of its own and deletes them, and nothing
+    // they run touches the settings singleton — but it reads dates the singleton
+    // formats, so `settings` waits for them (above).
     {
       name: "phone",
       testMatch: /(shell|lists)\.spec\.ts/,

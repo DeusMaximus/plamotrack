@@ -15,7 +15,7 @@ import {
   Select,
   TABLE_HEAD_ROW_CLASS,
 } from "../../components/ui";
-import { formatDate, formatDateTime, formatNumber } from "../../lib/format";
+import { dateInDigits, formatDate, formatDateTime, formatNumber } from "../../lib/format";
 import { SectionHeader } from "./SectionHeader";
 
 /** Settings → Access tokens (§5.5 family 6; #189): mint, list and revoke the
@@ -211,9 +211,11 @@ function TokenList() {
         // instead, chosen by the box's own width and not by the 768 px shell
         // line, so an iPad gets them inside the two-column Settings page. Both
         // are in the tree and CSS shows one — from 1210 px up the box is its
-        // 652 px cap, so the desktop always shows the table. Revoke confirms
-        // through the browser's own dialog, so no `Modal` has a node here to
-        // hand focus back to (the reason the list pages choose in JS instead).
+        // 652 px cap, so the desktop always shows the table. The two Revokes of
+        // a token carry one focus key, and when the box crosses the line under
+        // a focused one the keyboard goes to the one that is drawn
+        // (`lib/focusKey.ts`; Codex #266, finding 4 — an iPad Air turning is
+        // the rail both ways, so no shell change is there to notice it).
         <div className="@container">
           <ul
             data-testid="token-cards"
@@ -327,7 +329,14 @@ function TokenCard({
         )}
       </div>
       {!revoked && (
-        <Button type="button" variant="danger" className="shrink-0" disabled={busy} onClick={onRevoke}>
+        <Button
+          type="button"
+          variant="danger"
+          className="shrink-0"
+          disabled={busy}
+          onClick={onRevoke}
+          data-focus-key={`token:${token.id}`}
+        >
           {busy ? t("settings.tokens.revoking") : t("settings.tokens.revoke")}
         </Button>
       )}
@@ -369,7 +378,13 @@ function TokenRow({
           {revoked && (
             <>
               <wbr />
-              <span className="whitespace-nowrap" title={formatDateTime(token.revoked_at as string)}>
+              {/* …unless the date is in words (`dateInDigits`): "revoked Thursday,
+                  17 September 2026" on one line made the table 42 px wider than
+                  the 576 px box that first shows it. */}
+              <span
+                className={dateInDigits(token.revoked_at as string) ? "whitespace-nowrap" : ""}
+                title={formatDateTime(token.revoked_at as string)}
+              >
                 {dot}
                 {t("settings.tokens.revoked", { when: formatDate(token.revoked_at as string) })}
               </span>
@@ -396,7 +411,13 @@ function TokenRow({
           action column keeps the button's width and never the sentence's. */}
       <td className="px-2.5 py-2 text-end whitespace-nowrap">
         {!revoked && (
-          <Button type="button" variant="danger" disabled={busy} onClick={onRevoke}>
+          <Button
+            type="button"
+            variant="danger"
+            disabled={busy}
+            onClick={onRevoke}
+            data-focus-key={`token:${token.id}`}
+          >
             {busy ? t("settings.tokens.revoking") : t("settings.tokens.revoke")}
           </Button>
         )}

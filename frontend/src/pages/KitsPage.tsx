@@ -28,6 +28,7 @@ import {
   GradeChip,
   IconButton,
   Input,
+  PAGE_ACTION_FOCUS,
   PageHeader,
   Pager,
   RatingStars,
@@ -140,7 +141,7 @@ export function KitsPage() {
         count={kits === undefined ? undefined : visible.length}
         secondary={<ExportCsvButton table="kits" />}
         actions={
-          <Button icon={Plus} onClick={() => setModal({ mode: "add" })}>
+          <Button icon={Plus} onClick={() => setModal({ mode: "add" })} data-focus-key={PAGE_ACTION_FOCUS}>
             {t("kits.addButton")}
           </Button>
         }
@@ -192,6 +193,7 @@ export function KitsPage() {
                 value={seriesFilter}
                 onChange={(event) => setSeriesFilter(event.target.value)}
                 className="!w-auto max-w-52"
+                data-focus-stand-in={FILTERS_FOCUS}
               >
                 <option value="">{t("kits.allSeries")}</option>
                 {seriesOptions.map((value) => (
@@ -206,6 +208,7 @@ export function KitsPage() {
               value={sort}
               onChange={(event) => setSort(event.target.value as KitSort)}
               className="!w-auto"
+              data-focus-stand-in={FILTERS_FOCUS}
             >
               {SORT_ORDER.map((value) => (
                 <option key={value} value={value}>

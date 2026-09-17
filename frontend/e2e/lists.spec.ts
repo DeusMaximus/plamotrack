@@ -18,7 +18,17 @@
  * - a dialog closed after a rotation hands focus to the control for the *same
  *   record* — a `<tr>`'s pencil and a card's are different nodes (Codex #265,
  *   finding 1, the class; `Modal`'s `restoreFocus`, the answer) — and so does
- *   the rotation itself, when the keyboard was on a row (`useFocusAcrossShells`).
+ *   the rotation itself, when the keyboard was on a row (`useFocusAcrossShells`);
+ * - and the rule those are instances of, asked of every control there is: no
+ *   change of representation — a shell, a fold, a table swapped for cards by its
+ *   box — leaves the keyboard on `<body>` (Codex #266, findings 3 and 4);
+ * - a card says who it is whatever stands beside it: a total in three currencies
+ *   does not squeeze the retailer out, and a fact wraps where it would have
+ *   ended in an ellipsis (finding 1).
+ *
+ * lists.settings.spec.ts asks the fit questions again under every date style the
+ * Settings page offers (finding 2) — it changes the settings singleton, so it
+ * runs where settings.spec.ts does, after everything else.
  *
  * It seeds its own rows through the API and deletes them: CI's database is
  * empty, and an empty list has no box to measure (the from-empty suite saw only
@@ -35,10 +45,13 @@
 import { expect, request, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 
 import { API, apiContext } from "./api";
+import { expandEveryOrder, expectFits, isCut, main, shown, sweepBox } from "./lists";
 
 type Size = { width: number; height: number };
 
-// Both ends of each shell, and the four tablet widths #258's done-when names
+// Both ends of each shell — 320 px is the narrowest phone there is (Codex #266:
+// the round's fixes wrap where they used to clip, and wrapping is decided by the
+// narrow end) — and the four tablet widths #258's done-when names
 // (768, 820, 1024, 1180). `app` has a mouse: 900 and 1100 are the rail in a
 // narrow desktop window — the other pointer across the same fold lines.
 const SIZES: Record<string, Size[]> = {
@@ -48,6 +61,7 @@ const SIZES: Record<string, Size[]> = {
     { width: 1280, height: 720 },
   ],
   phone: [
+    { width: 320, height: 568 },
     { width: 390, height: 844 },
     { width: 744, height: 1133 },
   ],
@@ -104,6 +118,17 @@ const SERIES = `${TAG} Saga`;
 const NOTES = "Double-boxes everything and answers email within the hour, which is rarer than it should be.";
 const ORDER_NUMBER = `LST-${suffix}-0001`;
 const TRACKING = "EJ482113905JP";
+// The values a row can hold that are wider than the ordinary ones the fold lines
+// were measured with (Codex #266, findings 1 and 2): an order number of thirty-two
+// digits with nowhere to break — wider than a 320 px phone's card, so it has to
+// break — a USPS tracking number with its routing prefix, thirty digits, for the
+// same reason — and a total in three currencies with its converted line. Digits, like the tag, so the widths are the same every run.
+const WIDE_ORDER_NUMBER = `8123456789${suffix}12345678901234`;
+const WIDE_TRACKING = "420902109400111899223197428490";
+const WIDE_TOTAL = ["JPY 2,800", "USD 45.00", "EUR 34.00"];
+// Two currencies is the total that leaves a phone's card *some* room for the
+// retailer and not enough: three takes the whole line whatever the name is given.
+const TWO_CURRENCY_NUMBER = `LST-${suffix}-0003`;
 const SHIPPED_TITLE = "Shipped by the retailer";
 const RECEIVED_TITLE = "Delivered · days in transit";
 
@@ -218,6 +243,40 @@ test.beforeAll(async () => {
     currency_code: "JPY",
     items: [kitLine(`${TAG} Pending Kit`, "RG", 3300)],
   });
+  // The wide one, older than the three so they keep their places in the list.
+  // Its kits carry no tag: the Kits tests count this run's kits by it.
+  const wideLine = (name: string, price: number, currency: string, aud: number) => ({
+    item_type: "kit",
+    quantity: 1,
+    unit_price_minor: price,
+    currency_code: currency,
+    converted_price_minor: aud,
+    converted_currency_code: "AUD",
+    kit: { name, grade: "HG" },
+  });
+  await post(api, "/orders", {
+    retailer_id: retailer.id,
+    order_date: day(50),
+    order_number: WIDE_ORDER_NUMBER,
+    tracking_number: WIDE_TRACKING,
+    tracking_url: `https://lists-e2e.example/track/${WIDE_TRACKING}`,
+    currency_code: "JPY",
+    shipped_at: iso(48),
+    received: true,
+    received_at: iso(39),
+    items: [
+      wideLine(`Wide ${suffix} A`, 2800, "JPY", 2900),
+      wideLine(`Wide ${suffix} B`, 4500, "USD", 6800),
+      wideLine(`Wide ${suffix} C`, 3400, "EUR", 5600),
+    ],
+  });
+  await post(api, "/orders", {
+    retailer_id: retailer.id,
+    order_date: day(51),
+    order_number: TWO_CURRENCY_NUMBER,
+    currency_code: "JPY",
+    items: [wideLine(`Wide ${suffix} D`, 2800, "JPY", 2900), wideLine(`Wide ${suffix} E`, 4500, "USD", 6800)],
+  });
   await api.dispose();
 });
 
@@ -230,9 +289,6 @@ test.afterAll(async () => {
 
 // ---------------------------------------------------------------------------
 
-const main = (page: Page): Locator => page.locator("main");
-const shown = (locator: Locator): Locator => locator.filter({ visible: true });
-
 /** A list row in whichever shape the shell gives it: a table row or a card. */
 const rowOf = (page: Page, text: string): Locator =>
   shown(main(page).locator("tbody tr, li")).filter({ hasText: text });
@@ -244,9 +300,21 @@ async function openList(page: Page, path: string, anchor: string): Promise<void>
   await expect(shown(main(page).getByText(anchor)).first()).toBeVisible();
 }
 
-async function expandEveryOrder(page: Page): Promise<void> {
-  const closed = main(page).getByRole("button", { name: /^Show line items/ });
-  while ((await closed.count()) > 0) await closed.first().click();
+/** What the page itself complains of while a test drives it: uncaught errors
+ *  and console errors. The focus hook moves focus from inside a
+ *  `ResizeObserver`, and an observation begun during delivery is reported as
+ *  "ResizeObserver loop completed with undelivered notifications" — harmless to
+ *  a user and a line in every error tracker. */
+async function pageComplaints(page: Page): Promise<string[]> {
+  const complaints: string[] = [];
+  // The observer's complaint is an `error` event on `window` with no exception
+  // behind it, which `pageerror` does not carry: say it on the console.
+  await page.addInitScript(() => addEventListener("error", (event) => console.error(`window error: ${event.message}`)));
+  page.on("pageerror", (error) => complaints.push(error.message));
+  page.on("console", (message) => {
+    if (message.type() === "error") complaints.push(message.text());
+  });
+  return complaints;
 }
 
 /** The width the container queries read: the table box's content width. */
@@ -254,56 +322,6 @@ const boxWidth = (page: Page): Promise<number> =>
   shown(main(page).locator(".overflow-x-auto").filter({ has: page.locator("table") }))
     .first()
     .evaluate((box) => box.clientWidth);
-
-/** The document does not scroll sideways, no table is wider than its box, and
- *  every control of every list is inside its list and the viewport. */
-async function expectFits(page: Page, label: string): Promise<void> {
-  const report = await page.evaluate(() => {
-    const onScreen = (element: Element) => element.getClientRects().length > 0;
-    const root = document.querySelector("main");
-    if (!root) return null;
-    const boxes = [...root.querySelectorAll<HTMLElement>(".overflow-x-auto")].filter(
-      (box) => box.querySelector("table") && onScreen(box),
-    );
-    const cardLists = [...root.querySelectorAll<HTMLElement>("ul")].filter(onScreen);
-    const escaped: string[] = [];
-    let controls = 0;
-    for (const list of [...boxes, ...cardLists]) {
-      const bounds = list.getBoundingClientRect();
-      for (const control of list.querySelectorAll<HTMLElement>("button, a[href]")) {
-        if (!onScreen(control)) continue;
-        controls += 1;
-        const rect = control.getBoundingClientRect();
-        const inside =
-          rect.left >= bounds.left - 0.5 &&
-          rect.right <= bounds.right + 0.5 &&
-          rect.left >= -0.5 &&
-          rect.right <= innerWidth + 0.5;
-        if (!inside) {
-          escaped.push(
-            `${control.getAttribute("aria-label") ?? control.textContent?.trim()} [${Math.round(rect.left)}–${Math.round(rect.right)}] outside [${Math.round(bounds.left)}–${Math.round(bounds.right)}]`,
-          );
-        }
-      }
-    }
-    return {
-      document: [document.documentElement.scrollWidth, document.documentElement.clientWidth],
-      boxes: boxes.map((box) => [box.scrollWidth, box.clientWidth]),
-      lists: boxes.length + cardLists.length,
-      controls,
-      escaped,
-    };
-  });
-  if (!report) throw new Error(`${label}: no <main> on the page`);
-  // A page with no list, or a list with no control, measured nothing.
-  expect(report.lists, `${label}: no list on the page`).toBeGreaterThan(0);
-  expect(report.controls, `${label}: no control in any list`).toBeGreaterThan(0);
-  expect.soft(report.document[0], `${label}: the document scrolls sideways`).toBeLessThanOrEqual(report.document[1]);
-  for (const [scroll, client] of report.boxes) {
-    expect.soft(scroll, `${label}: a table is wider than its box`).toBeLessThanOrEqual(client);
-  }
-  expect.soft(report.escaped, `${label}: controls outside their list`).toEqual([]);
-}
 
 // ---------------------------------------------------------------------------
 
@@ -363,39 +381,6 @@ test("at no box width is a table wider than its box", async ({ page }, testInfo)
     expect.soft(overflowing?.widths, `${path}: box widths at which the list is wider than its box`).toEqual([]);
   }
 });
-
-/** Give the list's box every width from `first` to `last` and report the ones at
- *  which the list — the table, or the cards that replace it — is wider than the
- *  box or has a control past its edge. */
-function sweepBox(page: Page, first: number, last: number): Promise<{ widths: number[]; measured: number } | null> {
-  return page.evaluate(
-      ([from, to]) => {
-        const onScreen = (element: Element) => element.getClientRects().length > 0;
-        const root = document.querySelector("main") as HTMLElement;
-        const box = [...root.querySelectorAll<HTMLElement>(".overflow-x-auto")].find((el) => el.querySelector("table"));
-        if (!box) return null;
-        // The element the container queries read: the box, or the wrapper round
-        // it where a list swaps the table for cards (Access tokens).
-        const container = (box.closest('[class*="@container"]') as HTMLElement | null) ?? box;
-        const widths: number[] = [];
-        let measured = 0;
-        for (let width = from; width <= to; width += 1) {
-          container.style.width = `${width}px`;
-          const list = onScreen(box) ? box : (container.querySelector("ul") as HTMLElement);
-          if (!list || !onScreen(list)) return { widths: [-width], measured };
-          measured += 1;
-          const controls = [...list.querySelectorAll<HTMLElement>("button, a[href]")].filter(onScreen);
-          const edge = list.getBoundingClientRect().right + 0.5;
-          if (list.scrollWidth > list.clientWidth || controls.some((control) => control.getBoundingClientRect().right > edge)) {
-            widths.push(width);
-          }
-        }
-        container.style.width = "";
-        return { widths, measured };
-      },
-      [first, last],
-  );
-}
 
 test("a phone's edit controls and steppers are 44 px", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "phone", "the card rows are the phone shell's");
@@ -784,14 +769,29 @@ test("the keyboard keeps its place on a row when the rows change shape under it"
     }
   }
 
-  // The filters: a select on one side, the sheet's opener on the other.
-  await page.setViewportSize(landscape);
-  await openList(page, `/kits?q=${q}`, NAMES.twin);
-  await page.getByLabel("Filter by status").focus();
-  await page.setViewportSize(portrait);
-  await expect.soft(page.getByRole("button", { name: /^Filter and sort/ }), "the filters: 1133 → 744 px").toBeFocused({ timeout: 2_000 });
-  await page.setViewportSize(landscape);
-  await expect.soft(page.getByLabel("Filter by status"), "the filters: 744 → 1133 px").toBeFocused({ timeout: 2_000 });
+  // The filters: on a phone one button stands where the selects stood, so each
+  // of them hands it the keyboard — Codex #266, finding 3: only Status did, and
+  // Series, Retailer and both Sorts left it on <body>. The way back is one
+  // control for three, and deliberately the first of them. (Kits last: what
+  // follows is on that page.)
+  const sheetOpener = page.getByRole("button", { name: /^Filter and sort/ });
+  for (const [path, anchor, labels] of [
+    [`/orders?q=${q}`, NAMES.retailer, ["Filter by status", "Filter by retailer", "Sort"]],
+    [`/kits?q=${q}`, NAMES.twin, ["Filter by status", "Filter by series", "Sort"]],
+  ] as const) {
+    for (const label of labels) {
+      await page.setViewportSize(landscape);
+      await openList(page, path, anchor);
+      await main(page).getByLabel(label, { exact: true }).focus();
+      await page.setViewportSize(portrait);
+      await expect.soft(sheetOpener, `${path} "${label}": 1133 → 744 px`).toBeFocused({ timeout: 2_000 });
+    }
+    // Focused here and not inherited from the step above, so this says what it
+    // says whether or not that one held.
+    await sheetOpener.focus();
+    await page.setViewportSize(landscape);
+    await expect.soft(main(page).getByLabel("Filter by status"), `${path} the sheet's opener: 744 → 1133 px`).toBeFocused({ timeout: 2_000 });
+  }
 
   // The values of "where the keyboard was" that must *not* be restored. A control
   // with no key (the search box is one node in every shell, so it simply stays);
@@ -818,6 +818,262 @@ test("the keyboard keeps its place on a row when the rows change shape under it"
   await page.setViewportSize({ width: 1, height: 1 });
   await page.setViewportSize(landscape);
   await expect.soft(main(page).getByRole("button", { name: `Edit ${NAMES.bareKit}` }), "1133 → 1 → 1133 px").toBeFocused({ timeout: 2_000 });
+});
+
+test("a fold or a swap inside one shell hands the keyboard to where the control went", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "tablet", "an iPad Air turning: 1180 px one way, 820 the other — the rail both ways");
+  test.setTimeout(120_000);
+  // No shell change and no render: a container query stops drawing the focused
+  // control, the browser drops focus to <body>, and nothing keyed on the shell
+  // can notice (Codex #266, finding 4). Two tokens, so "the same token's Revoke"
+  // is a claim about the record and not about there being one button.
+  const landscape = { width: 1180, height: 820 };
+  const portrait = { width: 820, height: 1180 };
+  const complaints = await pageComplaints(page);
+  const api = await apiContext();
+  const tokens: { id: string; name: string }[] = [];
+  try {
+    for (const name of [`${TAG} first token`, `${TAG} second token`]) {
+      const minted = await api.post("/auth/tokens", { data: { name, scopes: ["collection:read"] } });
+      expect(minted.ok(), await minted.text()).toBeTruthy();
+      tokens.push({ id: ((await minted.json()) as { id: string }).id, name });
+    }
+    const revoke = (name: string) =>
+      shown(page.getByTestId(/^token-(row|card)$/)).filter({ hasText: name }).getByRole("button", { name: "Revoke" });
+    for (const [from, to] of [
+      [landscape, portrait],
+      [portrait, landscape],
+    ]) {
+      // Each of the two: whichever the list shows second is the one a key shared
+      // by every Revoke would miss, and the list's order is not this test's to know.
+      for (const { name } of tokens) {
+        await page.setViewportSize(from);
+        await page.goto("/settings/tokens");
+        const shape = () => shown(page.getByTestId("token-table")).count();
+        await expect(revoke(name)).toBeVisible();
+        const before = await shape();
+        await revoke(name).focus();
+        await page.setViewportSize(to);
+        // The precondition, said out loud: the turn did swap the table and the cards.
+        expect(await shape(), `tokens ${from.width} → ${to.width} px: the list changed shape`).toBe(1 - before);
+        await expect.soft(revoke(name), `tokens ${from.width} → ${to.width} px: Revoke of "${name.replace(TAG, "…")}"`).toBeFocused({ timeout: 2_000 });
+      }
+    }
+
+    // Which comes first when a fold stops drawing the focused control is the
+    // browser's to choose, and one Chromium was seen to choose both: the observer
+    // with `activeElement` still on the hidden control, or the browser's own
+    // fix-up — focus to <body>, a `focusout` to nowhere — and then the observer.
+    // Three guards in `lib/focusKey.ts` exist for one order or the other, and a
+    // rotation exercises whichever it gets. The box is given its width by hand,
+    // as the sweep does it. Inside an animation frame the observer is delivered
+    // in that same frame, before any task can run: that order is *forced*, and
+    // it is the one the "is this carrier drawn?" guard needs (its mutant
+    // survived one run in two before this). The other cannot be forced from
+    // outside — a task with a forced layout only invites it — and the guard it
+    // needs, the forgetting rule's, has been killed in every run by the tracking
+    // link below, which has taken that order each time. The first token in the
+    // page is the one whose hidden copy comes first.
+    for (const order of ["the observer first", "the browser's fix-up first"]) {
+      for (const [from, to, width] of [
+        [portrait, "token-table", 640],
+        [landscape, "token-cards", 400],
+      ] as const) {
+        await page.setViewportSize(from);
+        await page.goto("/settings/tokens");
+        const first = shown(page.getByTestId(/^token-(row|card)$/)).first().getByRole("button", { name: "Revoke" });
+        const name = (await shown(page.getByTestId(/^token-(row|card)$/)).first().innerText()).split("\n")[0];
+        await first.focus();
+        await page.evaluate(
+          async ([observerFirst, px]) => {
+            const container = document.querySelector('[data-testid="token-table"]')?.parentElement as HTMLElement;
+            const frame = () => new Promise<void>((done) => requestAnimationFrame(() => done()));
+            if (observerFirst) {
+              await new Promise<void>((done) =>
+                requestAnimationFrame(() => {
+                  container.style.width = `${px}px`;
+                  done();
+                }),
+              );
+            } else {
+              container.style.width = `${px}px`;
+              void container.offsetWidth;
+              await new Promise((done) => setTimeout(done, 100));
+            }
+            await frame();
+            await frame();
+          },
+          [order === "the observer first", width] as const,
+        );
+        await expect(shown(page.getByTestId(to)), `${order}: the box became the ${to}`).toHaveCount(1);
+        await expect.soft(revoke(name), `${order}, to the ${to}: Revoke of "${name.replace(TAG, "…")}"`).toBeFocused({ timeout: 2_000 });
+      }
+    }
+  } finally {
+    for (const { id } of tokens) await api.delete(`/auth/tokens/${id}`);
+    await api.dispose();
+  }
+
+  // Orders: the Tracking column folds into the expanded lines below 60rem of its
+  // box. With the lines closed the link is nowhere, and the control that opens
+  // them stands in for it; with them open it is the link in the lines.
+  const link = shown(main(page).getByRole("link", { name: TRACKING }));
+  const lines = rowOf(page, ORDER_NUMBER).getByRole("button", { name: /line items for/ });
+  await page.setViewportSize(landscape);
+  await openList(page, `/orders?q=${q}`, NAMES.retailer);
+  await expect(shown(main(page).getByRole("columnheader", { name: "Tracking" }))).toHaveCount(1);
+  await link.focus();
+  await page.setViewportSize(portrait);
+  await expect(shown(main(page).getByRole("columnheader", { name: "Tracking" })), "the column folded away").toHaveCount(0);
+  await expect.soft(lines, "tracking, lines closed: 1180 → 820 px").toBeFocused({ timeout: 2_000 });
+  // Clicked, not Enter on whatever has focus: where focus is was the question.
+  await lines.click();
+  await link.focus();
+  await page.setViewportSize(landscape);
+  await expect.soft(link, "tracking, lines open: 820 → 1180 px").toBeFocused({ timeout: 2_000 });
+  expect(await link.evaluate((a) => a.closest("td")?.getAttribute("colspan") ?? null), "…and it is the column's link").toBeNull();
+  await page.setViewportSize(portrait);
+  await expect.soft(link, "tracking, lines open: 1180 → 820 px").toBeFocused({ timeout: 2_000 });
+  expect.soft(complaints, "errors the page reported").toEqual([]);
+});
+
+test("no change of representation leaves the keyboard on <body>", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "tablet", "one project is enough: every size is set here");
+  test.setTimeout(600_000);
+  // The rule the focus tests above are instances of, asked of every control there
+  // is rather than of the ones somebody thought of — Codex #266 found four selects
+  // and a button the instances had missed, and this sweep then found the pager,
+  // a retailer's link, Export CSV, the tracking link and the whole navigation.
+  // Every focusable control on the page is focused in turn and the page changed
+  // under it, each of the three ways it can change: the phone's line (an iPad
+  // mini turning), a fold inside the rail (an iPad Air turning), and the rail's
+  // line with the sidebar. Where the keyboard ends up is the tests' above to
+  // say; here it is only never nowhere.
+  const TURNS: [string, number, number][] = [
+    ["rail → phone", 1133, 744],
+    ["phone → rail", 744, 1133],
+    ["rail, folding", 1180, 820],
+    ["rail, unfolding", 820, 1180],
+    ["sidebar → rail", 1300, 1100],
+    ["rail → sidebar", 1100, 1300],
+  ];
+  const api = await apiContext();
+  const minted = await api.post("/auth/tokens", { data: { name: `${TAG} swept token`, scopes: ["collection:read"] } });
+  expect(minted.ok(), await minted.text()).toBeTruthy();
+  const token = (await minted.json()) as { id: string };
+  // The page's own controls everywhere; the shell's on the first page only — it
+  // is the same shell on all of them.
+  const pages: [string, string, string][] = [
+    [`/kits?q=${q}`, NAMES.twin, "#root"],
+    [`/orders?q=${q}`, NAMES.retailer, "main"],
+    [`/retailers?q=${q}`, NAMES.retailer, "main"],
+    ["/inventory?tab=consumables", NAMES.consumable, "main"],
+    ["/inventory?tab=upgrades", NAMES.upgrade, "main"],
+    ["/settings/tokens", `${TAG} swept token`, "main"],
+  ];
+  const tried = new Set<string>();
+  const lost: string[] = [];
+  const complaints = await pageComplaints(page);
+  try {
+    for (const [path, anchor, scope] of pages) {
+      for (const [turn, from, to] of TURNS) {
+        await page.setViewportSize({ width: from, height: 900 });
+        await openList(page, path, anchor);
+        if (path.startsWith("/orders")) await main(page).getByRole("button", { name: /^Show line items/ }).first().click();
+        const controls = `[...document.querySelectorAll('${scope} a[href], ${scope} button, ${scope} select, ${scope} input')].filter((el) => el.getClientRects().length > 0 && !el.disabled)`;
+        const count = (await page.evaluate(`${controls}.length`)) as number;
+        for (let index = 0; index < count; index += 1) {
+          await page.setViewportSize({ width: from, height: 900 });
+          // The list is read again each time: a shell change replaces the nodes.
+          const name = (await page.evaluate(`(async () => {
+            await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+            const control = ${controls}[${index}];
+            if (!control) return null;
+            control.focus();
+            if (document.activeElement !== control) return null;
+            return control.tagName.toLowerCase() + " " + (control.getAttribute("aria-label") ?? control.textContent ?? "").trim().slice(0, 48);
+          })()`)) as string | null;
+          if (name === null) continue;
+          tried.add(name.replace(TAG, "…"));
+          await page.setViewportSize({ width: to, height: 900 });
+          const onBody = await page.evaluate(async () => {
+            await new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)));
+            return document.activeElement === document.body;
+          });
+          if (onBody) lost.push(`${path} ${turn}: ${name}`);
+        }
+      }
+    }
+  } finally {
+    await api.delete(`/auth/tokens/${token.id}`);
+    await api.dispose();
+  }
+  // A sweep that enumerated nothing passes having looked at nothing: the controls
+  // Codex #266 named, and the ones this found, by name.
+  for (const expected of [
+    "select Filter by series",
+    "select Filter by retailer",
+    "select Sort",
+    "button Export CSV",
+    "button Revoke",
+    `a ${TRACKING}`,
+    "a lists-e2e.example/a-shop-with-a-long-address",
+    "a Retailers",
+    "a More",
+    "button Sign out",
+    "button Apply to kit",
+  ]) {
+    expect.soft([...tried], "the sweep reached it").toContain(expected);
+  }
+  expect.soft(tried.size, "distinct controls swept").toBeGreaterThan(40);
+  expect.soft(complaints, "errors the page reported").toEqual([]);
+  expect(lost, "controls that left the keyboard on <body>").toEqual([]);
+});
+
+test("a card says who it is whatever stands beside it", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "phone", "the cards are the phone shell's");
+  // Codex #266, finding 1: the retailer's name could shrink and the total could
+  // not, and an order in three currencies left the name 0 px — on a card that
+  // fitted the screen exactly, so every bounds check passed it. The identifying
+  // text is on screen with room to be read; everything the card says is said in
+  // full, wrapped if it must be, never clipped to an ellipsis or squeezed out.
+  for (const size of sizesFor("phone")) {
+    await page.setViewportSize(size);
+    const at = `at ${size.width} px`;
+    await openList(page, `/orders?q=${q}`, NAMES.retailer);
+    const card = rowOf(page, WIDE_ORDER_NUMBER);
+    await card.getByRole("button", { name: /^Show line items/ }).click();
+    const name = card.getByText(NAMES.retailer, { exact: true });
+    await expect.soft(name, `${at}: the retailer`).toBeVisible();
+    expect.soft((await name.boundingBox())?.width ?? 0, `${at}: the retailer's room`).toBeGreaterThanOrEqual(128);
+    for (const fact of [...WIDE_TOTAL, "$153.00", WIDE_ORDER_NUMBER, WIDE_TRACKING, "3 items"]) {
+      const said = card.getByText(fact).first();
+      await expect.soft(said, `${at}: "${fact}"`).toBeVisible();
+      expect.soft(await isCut(said), `${at}: "${fact}" is cut or outside its card`).toBe(false);
+    }
+    // A total that fits the card's width is on one line of its own, not folded
+    // into a column beside the name: three currencies fit 390 px and not 320.
+    const total = card.getByText(WIDE_TOTAL[0]).first();
+    const lines = await total.evaluate((element) => Math.round(element.getBoundingClientRect().height / parseFloat(getComputedStyle(element).lineHeight)));
+    expect.soft(lines, `${at}: lines the total takes`).toBe(size.width >= 390 ? 1 : 2);
+    // Two currencies leave the name some room and not enough — the case a name
+    // that may shrink to nothing loses quietly.
+    const two = rowOf(page, TWO_CURRENCY_NUMBER).getByText(NAMES.retailer, { exact: true });
+    await expect.soft(two, `${at}: the retailer beside two currencies`).toBeVisible();
+    expect.soft((await two.boundingBox())?.width ?? 0, `${at}: the retailer's room beside two currencies`).toBeGreaterThanOrEqual(128);
+    // And every other list's cards: the name is there, with room.
+    for (const [path, anchor] of [
+      [`/kits?q=${q}`, NAMES.twin],
+      [`/retailers?q=${q}`, NAMES.retailer],
+      ["/inventory", NAMES.tool],
+      ["/inventory?tab=upgrades", NAMES.upgrade],
+    ] as const) {
+      await openList(page, path, anchor);
+      const title = rowOf(page, anchor).first().getByText(anchor, { exact: true }).first();
+      await expect.soft(title, `${path} ${at}: the name`).toBeVisible();
+      expect.soft((await title.boundingBox())?.width ?? 0, `${path} ${at}: the name's room`).toBeGreaterThanOrEqual(128);
+    }
+  }
 });
 
 test("a long list's pager fits a phone", async ({ page }, testInfo) => {
@@ -859,6 +1115,23 @@ test("a long list's pager fits a phone", async ({ page }, testInfo) => {
       await page.getByRole("navigation", { name: "Pages" }).getByRole("button", { name: "Page 1", exact: true }).click();
       await expect(page).toHaveURL((url) => !url.searchParams.has("page"));
       await expect(page.getByText("1–10 of 81")).toBeVisible();
+    }
+    // The pager is the table's foot in one shell and the card list's in the
+    // other — two sets of nodes — and the phone's window is the shorter. A page
+    // both offer keeps the keyboard; one only the long window offers hands it
+    // to the current page, which every window has.
+    const pager = page.getByRole("navigation", { name: "Pages" });
+    const pageButton = (n: number) => pager.getByRole("button", { name: `Page ${n}`, exact: true });
+    for (const [focused, expected] of [
+      [6, 6],
+      [2, 5],
+    ]) {
+      await page.setViewportSize({ width: 1133, height: 744 });
+      await openList(page, `/kits?q=${encodeURIComponent(pagerTag)}&page=5`, pagerTag);
+      await pageButton(focused).focus();
+      await page.setViewportSize({ width: 744, height: 1133 });
+      await expect(pageButton(2), "the phone's window at page 5 has no page 2").toHaveCount(0);
+      await expect.soft(pageButton(expected), `page ${focused} focused, 1133 → 744 px`).toBeFocused({ timeout: 2_000 });
     }
   } finally {
     for (const id of ids) await api.delete(`/kits/${id}`);

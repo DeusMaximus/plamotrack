@@ -20,6 +20,7 @@ import {
   Field,
   IconButton,
   Input,
+  PAGE_ACTION_FOCUS,
   PageHeader,
   Pager,
   RatingStars,
@@ -249,7 +250,7 @@ export function RetailersPage() {
         count={retailers === undefined ? undefined : visible.length}
         secondary={<ExportCsvButton table="retailers" />}
         actions={
-          <Button icon={Plus} onClick={() => setModal({})}>
+          <Button icon={Plus} onClick={() => setModal({})} data-focus-key={PAGE_ACTION_FOCUS}>
             {t("retailers.addButton")}
           </Button>
         }
@@ -334,6 +335,7 @@ export function RetailersPage() {
                     href={retailer.url}
                     target="_blank"
                     rel="noreferrer"
+                    data-focus-key={`retailer-url:${retailer.id}`}
                     className="-my-2 min-w-0 truncate py-2 text-accent hover:underline"
                   >
                     {retailer.url.replace(/^https?:\/\//, "")}
@@ -380,6 +382,7 @@ export function RetailersPage() {
                         href={retailer.url}
                         target="_blank"
                         rel="noreferrer"
+                        data-focus-key={`retailer-url:${retailer.id}`}
                         className="text-xs text-accent hover:underline"
                       >
                         {retailer.url.replace(/^https?:\/\//, "")}

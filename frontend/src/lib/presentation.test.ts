@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SIDEBAR_DIVIDER_CLASS } from "../components/Layout";
 import { ratingTooltip } from "./labels";
 import {
+  dateInDigits,
   formatDateTimeWith,
   formatDateWith,
   formatFileSizeWith,
@@ -137,6 +138,37 @@ describe("dates and times under instance settings", () => {
       hour_cycle: "locale",
     });
     expect(formatDate("2026-03-14")).toBe("14.3.2026");
+  });
+
+  // A list cell keeps a date in digits on one line and lets one in words wrap
+  // (#258; Codex #266, finding 2). The rule is a length, so the test is the
+  // value space: every style the Settings page offers, in the owner's locale,
+  // one with longer words, one with no spaces to break at, one whose digits
+  // and marks are not ASCII — and September, the longest month there is.
+  it.each([
+    ["en-AU", "locale", true],
+    ["en-AU", "short", true],
+    ["en-AU", "medium", false],
+    ["en-AU", "long", false],
+    ["en-AU", "full", false],
+    ["en-US", "locale", true],
+    ["de-DE", "locale", true],
+    ["de-DE", "full", false],
+    ["ja-JP", "locale", true],
+    ["ja-JP", "full", false],
+    ["sv-SE", "locale", true], // 2026-09-23: ISO order, the full ten characters
+    ["ar-EG", "full", false],
+  ])("a date written %s %s is in digits: %s", (locale, dateStyle, digits) => {
+    setFormatPreferences({
+      formatting_locale: locale,
+      time_zone: "UTC",
+      date_style: dateStyle,
+      hour_cycle: "locale",
+    });
+    expect([formatDate("2026-09-23"), dateInDigits("2026-09-23")]).toEqual([
+      formatDate("2026-09-23"),
+      digits,
+    ]);
   });
 });
 

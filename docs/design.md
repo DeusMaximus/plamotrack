@@ -3041,8 +3041,9 @@ and tablet e2e, screenshots, the release (#260).
   707), Access tokens 36rem (cards below; a populated row needs 553). Beside the
   rail that gives an 11-inch iPad Pro in landscape the whole Orders table, a
   1180 px iPad and a mini the first fold, and 1024–1080 px and every portrait
-  the second. A line is a guess about rows nobody has typed yet; past it the box
-  still scrolls, as it always did.
+  the second. A line is a guess about rows nobody has typed yet — so what a line
+  cannot know gives way instead (below), and past that the box still scrolls, as
+  it always did.
 - **A fold moves what a column said; it never drops it, and never says it
   twice.** A received order shows its delivery date with the days it took *and*
   its ship date under the chip — both columns moved. A null moves as nothing:
@@ -3063,6 +3064,38 @@ and tablet e2e, screenshots, the release (#260).
   1280 px. The build first gated the folds below 1280 px and had its spec *pin*
   the desktop's overflow so that the exception could not outlive its cause; the
   pin went with the gate.
+- **What a line cannot know gives way instead** (Codex #266, finding 2). The
+  lines were measured with the default formatting and ordinary references, and
+  neither is fixed. The date style and the formatting locale are instance
+  settings (§6.1), and `full` writes the Received cell "Thursday, 27 August 2026
+  · 9 d": held to one line, as #120 had it, the Orders table was 121 px wider
+  than its box at 1280 px and the edit control off its edge at every width. A
+  USPS tracking number is twenty-two digits where Japan Post's is thirteen, and
+  at 1366 px, where nothing folds, it alone put the table 49 px past its box. So
+  a cell's rigidity is decided **by its value**. A date the locale writes in
+  digits — ten characters at most — stays on one line with what follows it; one
+  written in words may wrap (`dateInDigits`). A reference whose longest
+  unbreakable run is no longer than the measured one (eight characters between
+  an order number's hyphens, thirteen for a tracking number) is a plain word; a
+  longer one may break anywhere, down to lines of the measured length. By the
+  value and not for every row, because `overflow-wrap: anywhere` lowers a
+  column's minimum width and a table squeezes every column that has give:
+  applied to every row it re-laid-out the ordinary ones, the desktop's included.
+  The same question found a sibling nobody had reported — a revoked token's
+  "revoked {date}" was the one date on the Access tokens table held to a line,
+  and under `full` that table was up to 73 px wider than the 576 px box that
+  first shows it. Home had paid for this once already (Codex #237, P3-2: the mail
+  cards under full dates); the list pages were built without asking it again.
+- **A card says who it is whatever stands beside it** (finding 1). An order's
+  total is as long as the order has currencies, and beside a retailer's name
+  that could shrink and a total that could not, "JPY 2,800 + USD 45.00 + EUR
+  34.00" left the name 0 px — on a card that fitted the screen exactly, so every
+  bounds check passed it. The name keeps 8rem whatever stands beside it, and a
+  total that leaves it less takes a line of its own, where it may wrap too. The
+  facts under it wrap where they used to end in an ellipsis: a card is the only
+  place a phone says them, and a date in words is as long as the settings make
+  it. A name longer than the card's whole line still ends in an ellipsis — the
+  artboards' one-line title — but never in less than the line.
 - **A fold keeps a hidden copy of what it moves**, at every width, because CSS
   can show and hide but not move. Nothing a person uses sees it — it is
   `display: none` to a screen reader, to find-in-page and to a copy — but
@@ -3107,6 +3140,30 @@ and tablet e2e, screenshots, the release (#260).
   (measured; the comment there has the order of events). The second reader was
   found by a screenshot: Playwright's full-page capture makes the viewport 1 × 1
   for a moment, and a focus ring `main` drew was missing from the branch's.
+- **The rule those are instances of: every change of representation accounts for
+  the focused control** (Codex #266, findings 3 and 4 — the class of #265's
+  finding 1). The build had answered it for the instances it thought of: the
+  rows, a dialog's opener, the Status filter. The review found four more selects
+  and the tokens' Revoke; a sweep that focuses *every* control and changes the
+  page under it found the rest — the pager's pages, a retailer's link, Export
+  CSV, the tracking link, and the whole navigation, which #257 draws as three
+  sets of nodes. Three additions. **A stand-in**: a control some shape does not
+  draw names the one that takes its place there (`data-focus-stand-in`, several
+  in order) — the Series, Retailer and Sort selects name the sheet's opener,
+  Export CSV the page's primary action, a page the phone's short pager lacks the
+  current page, the tracking link the control that opens the lines, and what a
+  phone keeps under More names that tab. The way back is one control for several,
+  and deliberately the first of them. **A control that is no longer drawn**: a
+  container query hides a focused control with no shell change and no render at
+  all — an iPad Air turning is the rail both ways — so a `ResizeObserver` on the
+  focused control (on its nearest sized ancestor when it is inline, as a text
+  link is) hands the keyboard to the *drawn* carrier of its key; both copies of
+  a CSS swap carry one key, and the forgetting rule learned that a control a
+  fold has just hidden is connected too and nobody left it. **The navigation**
+  carries keys as the rows do. The guard is the sweep itself
+  (`lists.spec.ts`, "no change of representation leaves the keyboard on
+  `<body>`"): every focusable control, the three ways the page can change under
+  it. It says only *never nowhere*; the named tests beside it say where.
 - **The pager on a phone** offers five pages at most — the ends and the current
   page with a neighbour either side — at 44 px each, on their own line when
   they do not fit beside the range: the desktop's window is nine entries from
@@ -3115,7 +3172,12 @@ and tablet e2e, screenshots, the release (#260).
   the from-empty suite had only ever seen empty lists. It carries each field's
   null as well as its widest value; its run tag is digits, because the tag is a
   word of the retailer's name and a segment of the order number, and in base 36
-  the table's width moved 25 px from one run to the next. Beyond the nine
-  sampled viewports it gives every table's box **every width** from 630 to
-  1149 px: a fold line a few pixels short is a band a few pixels wide between
-  any two sizes a suite samples.
+  the table's width moved 25 px from one run to the next. Beyond the sampled
+  viewports it gives every table's box **every width** from 634 to 1300 px: a
+  fold line a few pixels short is a band a few pixels wide between any two sizes
+  a suite samples. Since Codex #266 it also seeds the *wide* row — an order in
+  three currencies, thirty-two digits of order number, thirty of tracking — runs
+  the phone's tests from 320 px, and has a sibling, `lists.settings.spec.ts`,
+  that asks the fit questions again under every date style (in the `settings`
+  project, after everything else: it flips the singleton every date is written
+  with).
