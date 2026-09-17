@@ -15,6 +15,7 @@ import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 
 import { authSessionQuery, settingsQuery } from "../api/client";
 import { providerName } from "../lib/labels";
+import { useFocusAcrossShells } from "../lib/focusKey";
 import { applyInstanceSettings } from "../lib/presentation";
 import { useShell } from "../lib/shell";
 import { useSignOut } from "../lib/signOut";
@@ -87,6 +88,9 @@ export function Layout() {
   useEffect(() => {
     if (settings) applyInstanceSettings(settings);
   }, [settings]);
+  // A list's rows are different nodes on either side of the 768 px line; the
+  // keyboard keeps its place across it by the record it was on (#258).
+  useFocusAcrossShells(shell);
   // Three shells by viewport width alone (§13.7). `main` keeps its place in the
   // tree whichever navigation stands beside it, so a rotation or a resize
   // across a line re-dresses the page without remounting it — an open dialog

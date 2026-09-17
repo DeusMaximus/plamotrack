@@ -9,7 +9,15 @@ import type { Kit, Order } from "../api/types";
 import { KitFormModal } from "../components/KitFormModal";
 import { OrderFormModal } from "../components/OrderFormModal";
 import { StatusBadge } from "../components/StatusBadge";
-import { EmptyState, ErrorBanner, IconButton, MICRO_LABEL_CLASS, PageHeader, RatingStars } from "../components/ui";
+import {
+  EmptyState,
+  ErrorBanner,
+  GradeChip,
+  IconButton,
+  MICRO_LABEL_CLASS,
+  PageHeader,
+  RatingStars,
+} from "../components/ui";
 import { formatDate, formatNumber } from "../lib/format";
 import {
   MAIL_CAP,
@@ -297,15 +305,6 @@ function SectionHead({
         </span>
       )}
     </div>
-  );
-}
-
-/** The grade, as the compact chip the artboards draw beside a kit's name. */
-function GradeChip({ grade }: { grade: string }) {
-  return (
-    <span className="inline-flex h-5 items-center rounded-sm bg-chip px-1.5 text-[11.5px] font-semibold tracking-wide text-text">
-      {grade}
-    </span>
   );
 }
 

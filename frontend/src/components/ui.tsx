@@ -261,11 +261,26 @@ export function PageHeader({
 /** A list table's footer (§13.4): the range shown and, past one page, the
  *  pager — the ends and a window around the current page. The page is URL
  *  state, so the caller owns it. */
-export function Pager({ paged, onPage }: { paged: Paged<unknown>; onPage: (page: number) => void }) {
+export function Pager({
+  paged,
+  onPage,
+  className = "border-t border-rule",
+}: {
+  paged: Paged<unknown>;
+  onPage: (page: number) => void;
+  /** The rule above it, by default — a list whose rows are separate cards
+   *  (Orders on a phone) has no box for the pager to be the foot of. */
+  className?: string;
+}) {
   const { t } = useTranslation();
+  // A page is 44 px on a phone (§13.7): five of them, and the pages on their
+  // own line when they do not fit beside the range.
+  const phone = useShell() === "phone";
   return (
-    <div className="flex items-center justify-between gap-4 border-t border-rule px-3.5 py-3 text-xs text-muted tabular-nums">
-      <span>
+    <div
+      className={`flex items-center justify-between gap-x-4 gap-y-1 px-3.5 py-3 text-xs text-muted tabular-nums max-md:flex-wrap max-md:px-2 ${className}`}
+    >
+      <span className="max-md:px-1.5">
         {t("list.range", {
           from: formatNumber(paged.from),
           to: formatNumber(paged.to),
@@ -274,7 +289,7 @@ export function Pager({ paged, onPage }: { paged: Paged<unknown>; onPage: (page:
       </span>
       {paged.pages > 1 && (
         <nav aria-label={t("list.pagination")} className="flex items-center gap-1">
-          {pageWindow(paged.page, paged.pages).map((page, index) =>
+          {pageWindow(paged.page, paged.pages, phone).map((page, index) =>
             page === null ? (
               <span key={`gap-${index}`} aria-hidden className="px-1 text-faint">
                 …
@@ -331,4 +346,61 @@ export function Chip({
       {children}
     </span>
   );
+}
+
+/** The grade, as the compact chip the artboards draw beside a kit's name. */
+export function GradeChip({ grade }: { grade: string }) {
+  return (
+    <span className="inline-flex h-5 items-center rounded-sm bg-chip px-1.5 text-[11.5px] font-semibold tracking-wide text-text">
+      {grade}
+    </span>
+  );
+}
+
+/** A list page on a phone (§13.7): card rows in place of the table — one
+ *  bordered box, a hairline between rows, the pager as its foot. The rows are
+ *  `CardRow`s; a page whose rows are separate cards (Orders) lays out its own. */
+export function CardList({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
+  return (
+    <div className="rounded-md border border-border bg-surface">
+      <ul className="divide-y divide-rule">{children}</ul>
+      {footer}
+    </div>
+  );
+}
+
+/** One card row: what it is on the first line, its facts on the second, and
+ *  the row's one control at the end — the desktop's visible "Edit {name}"
+ *  button at the 44 px touch size, not the whole row as a tap target, so the
+ *  accessible names are the same in every shell (§13.7). `below` is a row of
+ *  its own under both, the full width of the card: Inventory's stepper line. */
+export function CardRow({
+  title,
+  action,
+  below,
+  children,
+}: {
+  title: ReactNode;
+  action: ReactNode;
+  below?: ReactNode;
+  /** The lines under the title — `CardMeta`s. */
+  children?: ReactNode;
+}) {
+  return (
+    <li className="ps-3.5 pe-0.5">
+      <div className="flex min-h-11 items-center gap-1">
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5 py-2.5">
+          <div className="truncate text-[15px] font-medium text-text">{title}</div>
+          {children}
+        </div>
+        {action}
+      </div>
+      {below}
+    </li>
+  );
+}
+
+/** A card's line of facts: chips keep their size, words give way. */
+export function CardMeta({ children }: { children: ReactNode }) {
+  return <div className="flex min-w-0 items-center gap-2 text-[12.5px] text-muted">{children}</div>;
 }

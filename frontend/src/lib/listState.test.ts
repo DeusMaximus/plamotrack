@@ -75,4 +75,36 @@ describe("pageWindow", () => {
     expect(pageWindow(6, 11)).toEqual([1, 2, null, 5, 6, 7, null, 10, 11]);
     expect(pageWindow(11, 11)).toEqual([1, 2, null, 7, 8, 9, 10, 11]);
   });
+
+  describe("compact, the phone's (§13.7)", () => {
+    it("lists every page up to five", () => {
+      expect(pageWindow(1, 1, true)).toEqual([1]);
+      expect(pageWindow(3, 5, true)).toEqual([1, 2, 3, 4, 5]);
+    });
+    it("shows the ends and the current page with its neighbours", () => {
+      expect(pageWindow(1, 11, true)).toEqual([1, 2, 3, null, 11]);
+      expect(pageWindow(2, 11, true)).toEqual([1, 2, 3, null, 11]);
+      expect(pageWindow(3, 11, true)).toEqual([1, 2, 3, 4, null, 11]);
+      expect(pageWindow(6, 11, true)).toEqual([1, null, 5, 6, 7, null, 11]);
+      expect(pageWindow(10, 11, true)).toEqual([1, null, 9, 10, 11]);
+      expect(pageWindow(11, 11, true)).toEqual([1, null, 9, 10, 11]);
+    });
+    // The bound is the point: five 44 px pages and two gaps fit a 390 px
+    // screen, a sixth page does not. Every position in every list length.
+    it("never exceeds five pages and two gaps, wherever the page is", () => {
+      for (let pages = 1; pages <= 40; pages += 1) {
+        for (let page = 1; page <= pages; page += 1) {
+          const entries = pageWindow(page, pages, true);
+          const numbers = entries.filter((entry): entry is number => entry !== null);
+          const where = `page ${page} of ${pages}`;
+          expect(numbers.length, where).toBeLessThanOrEqual(5);
+          expect(entries.length - numbers.length, where).toBeLessThanOrEqual(2);
+          expect(numbers, where).toContain(1);
+          expect(numbers, where).toContain(pages);
+          expect(numbers, where).toContain(page);
+          expect(numbers, where).toEqual([...numbers].sort((a, b) => a - b));
+        }
+      }
+    });
+  });
 });

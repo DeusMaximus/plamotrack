@@ -74,14 +74,16 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   await editDialog.getByRole("button", { name: "Save changes" }).click();
   await expect(orderRow.getByText("Shipped")).toBeVisible();
   // The Received column counts transit live while the box is on its way (#120).
-  await expect(orderRow.getByText("in transit · today")).toBeVisible();
+  // `visible`: since #258 the row also holds what the Shipped and Received
+  // columns say for where the table folds them away, hidden at this width.
+  await expect(orderRow.getByText("in transit · today").filter({ visible: true })).toBeVisible();
 
   await orderRow.getByRole("button", { name: "Edit" }).click();
   await editDialog.getByLabel("Received on").fill(TODAY);
   await editDialog.getByRole("button", { name: "Save changes" }).click();
   await expect(orderRow.getByText("Received")).toBeVisible();
   // …and switches to the delivery date with the transit time beside it.
-  await expect(orderRow.getByText(/· same day/)).toBeVisible();
+  await expect(orderRow.getByText(/· same day/).filter({ visible: true })).toBeVisible();
 
   // Stock applied…
   await page.goto("/inventory");

@@ -96,6 +96,44 @@ export function placeholderNames(value: string): { names: Set<string>; problems:
   return { names, problems };
 }
 
+/** Keys declared twice in one object, as dotted paths — read off the file's
+ *  *text*, because that is the only place they exist: `JSON.parse` keeps the
+ *  last of two and says nothing, so every check over the parsed catalogue
+ *  passes while a second `"shippedOn"` quietly replaces the first and a form
+ *  field's label becomes "Shipped {{date}}" (#258 — caught by the screenshot
+ *  run, by luck). A walk over strings, braces and brackets: a string followed
+ *  by a colon is a key of the object on top of the stack. */
+export function duplicateKeys(text: string): string[] {
+  const duplicates: string[] = [];
+  /** One entry per open container: an object's keys so far, or null for an array. */
+  const open: (Set<string> | null)[] = [];
+  const path: string[] = [];
+  let key = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (char === '"') {
+      let end = index + 1;
+      while (end < text.length && text[end] !== '"') end += text[end] === "\\" ? 2 : 1;
+      const value = text.slice(index + 1, end);
+      index = end;
+      const keys = open[open.length - 1];
+      if (keys && /^\s*:/.test(text.slice(end + 1, end + 64))) {
+        if (keys.has(value)) duplicates.push([...path, value].join("."));
+        keys.add(value);
+        key = value;
+      }
+    } else if (char === "{") {
+      if (open.length > 0) path.push(key);
+      open.push(new Set());
+    } else if (char === "[") {
+      open.push(null);
+    } else if (char === "}" || char === "]") {
+      if (open.pop() && open.length > 0) path.pop();
+    }
+  }
+  return duplicates;
+}
+
 /** One catalogue's key groups: plural variants collapsed onto their base key,
  * placeholder names unioned across variants. This is the unit two catalogues
  * are compared in — a language whose CLDR categories differ from English still

@@ -168,7 +168,6 @@ function TokenList() {
   const queryClient = useQueryClient();
   const { data: tokens, error } = useQuery(tokensQuery);
   const [actionError, setActionError] = useState<string | null>(null);
-
   const revoke = useMutation({
     mutationFn: (token: AccessToken) => api.revokeToken(token.id),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: tokensQuery.queryKey }),
@@ -205,7 +204,34 @@ function TokenList() {
         // the exact instant on hover. Cell padding is a step under the list
         // pages' px-3: five columns at px-3 miss the 652 px box by a few pixels
         // for a populated row, and the miss lands as a wrapped second line.
-        <div data-testid="token-table" className="overflow-x-auto rounded-md border border-border">
+        //
+        // `@container` (§13.7, #258): a populated row needs 553 px, and this box
+        // is the viewport less 372 px beside the rail — under that on every iPad
+        // in portrait as well as on a phone. Below 36rem (576 px) it shows card rows
+        // instead, chosen by the box's own width and not by the 768 px shell
+        // line, so an iPad gets them inside the two-column Settings page. Both
+        // are in the tree and CSS shows one — from 1210 px up the box is its
+        // 652 px cap, so the desktop always shows the table. Revoke confirms
+        // through the browser's own dialog, so no `Modal` has a node here to
+        // hand focus back to (the reason the list pages choose in JS instead).
+        <div className="@container">
+          <ul
+            data-testid="token-cards"
+            className="divide-y divide-rule rounded-md border border-border @min-[36rem]:hidden"
+          >
+            {tokens.map((token) => (
+              <TokenCard
+                key={token.id}
+                token={token}
+                busy={revoke.isPending && revoke.variables?.id === token.id}
+                onRevoke={() => onRevoke(token)}
+              />
+            ))}
+          </ul>
+          <div
+            data-testid="token-table"
+            className="overflow-x-auto rounded-md border border-border @max-[36rem]:hidden"
+          >
           <table className="w-full text-sm">
             <thead>
               <tr className={TABLE_HEAD_ROW_CLASS}>
@@ -227,6 +253,7 @@ function TokenList() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </Card>
@@ -236,6 +263,76 @@ function TokenList() {
 /** A stored instant as a date in the table, the full date-time on hover. */
 function Instant({ iso }: { iso: string }) {
   return <span title={formatDateTime(iso)}>{formatDate(iso)}</span>;
+}
+
+/** What a row and a card both say about a token's state. */
+function tokenState(token: AccessToken) {
+  const revoked = token.revoked_at !== null;
+  const expired =
+    !revoked && token.expires_at !== null && new Date(token.expires_at).getTime() <= Date.now();
+  return { revoked, expired, inactive: revoked || expired };
+}
+
+/** A token as a card row, where the box is too narrow for the table (§13.7).
+ *  The same facts, with the instants in full — the table's dates keep the time
+ *  in a tooltip, and a finger has no hover (#263's note). */
+function TokenCard({
+  token,
+  busy,
+  onRevoke,
+}: {
+  token: AccessToken;
+  busy: boolean;
+  onRevoke: () => void;
+}) {
+  const { t } = useTranslation();
+  const { revoked, expired, inactive } = tokenState(token);
+  const writes = token.scopes.includes("collection:write");
+  const fact = (label: string, value: string) => t("list.labelled", { label, value });
+  return (
+    <li
+      data-testid="token-card"
+      className={`flex items-start gap-3 px-3.5 py-3 ${inactive ? "text-faint" : ""}`}
+    >
+      <div className={`min-w-0 flex-1 space-y-1 text-xs ${inactive ? "" : "text-muted"}`}>
+        <div className={`text-sm font-medium wrap-anywhere ${inactive ? "" : "text-text"}`}>
+          {token.name}
+        </div>
+        <div>
+          <span className="font-mono">ptk_{token.token_prefix}_…</span>
+          {t("common.dotSeparator")}
+          {writes ? t("settings.tokens.accessWrite") : t("settings.tokens.accessRead")}
+        </div>
+        <div>{fact(t("settings.tokens.colCreated"), formatDateTime(token.created_at))}</div>
+        <div>
+          {fact(
+            t("settings.tokens.colLastUsed"),
+            token.last_used_at ? formatDateTime(token.last_used_at) : t("settings.tokens.neverUsed"),
+          )}
+        </div>
+        <div>
+          {fact(
+            t("settings.tokens.colExpires"),
+            expired
+              ? t("settings.tokens.expired")
+              : token.expires_at
+                ? formatDateTime(token.expires_at)
+                : t("settings.tokens.noExpiry"),
+          )}
+        </div>
+        {revoked && (
+          <div>
+            {t("settings.tokens.revoked", { when: formatDateTime(token.revoked_at as string) })}
+          </div>
+        )}
+      </div>
+      {!revoked && (
+        <Button type="button" variant="danger" className="shrink-0" disabled={busy} onClick={onRevoke}>
+          {busy ? t("settings.tokens.revoking") : t("settings.tokens.revoke")}
+        </Button>
+      )}
+    </li>
+  );
 }
 
 function TokenRow({
@@ -248,10 +345,7 @@ function TokenRow({
   onRevoke: () => void;
 }) {
   const { t } = useTranslation();
-  const revoked = token.revoked_at !== null;
-  const expired =
-    !revoked && token.expires_at !== null && new Date(token.expires_at).getTime() <= Date.now();
-  const inactive = revoked || expired;
+  const { revoked, expired, inactive } = tokenState(token);
   const writes = token.scopes.includes("collection:write");
   const dot = t("common.dotSeparator");
   return (

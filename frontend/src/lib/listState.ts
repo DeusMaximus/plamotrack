@@ -59,12 +59,25 @@ export function paginate<T>(rows: readonly T[], page: number, pageSize: number):
 }
 
 /** The pager's labels: every page when few, else the ends and a window around
- *  the current page with `null` for each gap — "1 2 3 4 5 … 11". */
-export function pageWindow(page: number, pages: number): (number | null)[] {
-  if (pages <= 7) return Array.from({ length: pages }, (_, index) => index + 1);
-  const around = new Set([1, 2, pages - 1, pages, page - 1, page, page + 1]);
-  if (page <= 4) for (let n = 1; n <= 5; n += 1) around.add(n);
-  if (page >= pages - 3) for (let n = pages - 4; n <= pages; n += 1) around.add(n);
+ *  the current page with `null` for each gap — "1 2 3 4 5 … 11".
+ *
+ *  `compact` is the phone's (§13.7): at most five pages — the two ends and the
+ *  current page with a neighbour either side, "1 … 4 5 6 … 11". A page button is
+ *  44 px there, and the full window's nine entries are wider than a 390 px
+ *  screen from the middle of a long list. */
+export function pageWindow(page: number, pages: number, compact = false): (number | null)[] {
+  if (pages <= (compact ? 5 : 7)) return Array.from({ length: pages }, (_, index) => index + 1);
+  const around = compact
+    ? new Set([1, pages, page - 1, page, page + 1])
+    : new Set([1, 2, pages - 1, pages, page - 1, page, page + 1]);
+  if (compact) {
+    // At an end the window is one-sided: keep three pages together there.
+    if (page <= 2) around.add(3);
+    if (page >= pages - 1) around.add(pages - 2);
+  } else {
+    if (page <= 4) for (let n = 1; n <= 5; n += 1) around.add(n);
+    if (page >= pages - 3) for (let n = pages - 4; n <= pages; n += 1) around.add(n);
+  }
   const sorted = [...around].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b);
   const out: (number | null)[] = [];
   for (const n of sorted) {

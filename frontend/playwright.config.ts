@@ -61,12 +61,14 @@ export default defineConfig({
     // `(pointer: coarse)` match, which the touch sizes key on — not a device
     // preset, which would want WebKit installed. `tablet` is the portrait size;
     // a spec that wants landscape (1180 × 820) sets it. They run the specs
-    // written for them — shell.spec.ts, which `app` runs too, at the desktop
-    // size — and #258–#260 add to the list page by page. Nothing they run
-    // writes shared state, so they need no place in the ordering above.
+    // written for them — shell.spec.ts and lists.spec.ts (#258), which `app`
+    // runs too, at the desktop size — and #259–#260 add to the list page by
+    // page. lists.spec.ts seeds rows of its own and deletes them, but nothing
+    // they run touches the settings singleton, so they need no place in the
+    // ordering above.
     {
       name: "phone",
-      testMatch: /shell\.spec\.ts/,
+      testMatch: /(shell|lists)\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         storageState: STORAGE_STATE,
@@ -77,7 +79,7 @@ export default defineConfig({
     },
     {
       name: "tablet",
-      testMatch: /shell\.spec\.ts/,
+      testMatch: /(shell|lists)\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         storageState: STORAGE_STATE,

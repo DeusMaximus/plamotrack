@@ -1098,3 +1098,93 @@ an exactly tied instant — is what found each seam, which is the argument for
 writing that list *before* the first fix, per member of the value space the setting
 admits, and for reading a "second round in the same place" as a request to name the
 rule rather than to patch the case.
+
+## The demo data understated what the table needs (#258)
+
+#258's fold lines arrived in the issue already measured: Orders needs 953 px, Kits
+732, Retailers 706 — on the screenshot spec's demo collection, the same data the
+audit, the mockups and #257's width table were drawn from. The build folded at those
+lines, swept every box width on that data, found nothing over, and looked done.
+
+The spec that was meant to hold it seeded rows of its own, because CI's database is
+empty, and its first run at 1280 px was red: the *unfolded* table needed 1036 px in a
+976 px box. Nothing exotic was in the seed. The demo has no order that was both
+shipped and received — every received order in it was entered as received — so its
+Received column says a date, where an order that went through the pipeline says
+"27/08/2026 · 9 d". That and a seventeen-character order number are 87 px. Every
+figure in the issue was short by about that much, the lines with them, and with the
+demo's lines an iPad mini in landscape (a 1003 px box) would have shipped with the
+edit control clipped — the defect the milestone exists to remove — under a green
+sweep. The same 87 px means `main`'s desktop has been clipping that control from
+1280 to about 1345 px all along; the audit measured 1280 on the demo and called it
+fine.
+
+A demo collection is drawn to look good in a screenshot: short names, tidy numbers,
+no row in an awkward state. That makes it the wrong data to *size* anything by, and
+the wrong data to declare a width "fine" on. What would have found it on day one is
+the question the value-axis rule already asks, put to a layout: for each column, what
+is the widest ordinary thing a row can say here, and which lifecycle state says it?
+A measurement is a test result, and it inherits the blind spots of the rows it was
+taken on; when a number arrives in an issue, the rows it was measured on are part of
+the number.
+
+Two smaller things the same spec taught on the way. Its run tag was base 36 and sat
+inside the retailer's name and the order number — the two cells that set their
+columns' minimums — so the table's width moved 25 px with the letters the clock
+dealt, and a fold line passed or failed by the minute; digits are tabular in a table
+cell and the same width every run. And nine sampled viewports are nine points: the
+second Orders fold overflowed from 866 to 927 px for an afternoon and no sampled
+width was in the band. The spec now gives the box every width
+(`testing-and-review.md` → "Proving a list fits its box").
+
+## A duplicate key is invisible after the parse (#258)
+
+Adding the strings for a folded Orders row, the branch gave `orders` a `shippedOn`
+("Shipped {{date}}") — and `orders` already had a `shippedOn`, the order form's
+"Shipped on" label, four hundred lines up. `JSON.parse` keeps the last of two keys
+and says nothing. So the catalogue was well-formed, every validator passed, the
+compile-time key check passed (the key exists), the unit suite was green, and the
+order dialog's date field was labelled "Shipped {{date}}". The e2e suite would have
+caught it only where a test finds that field by its label; what did catch it was the
+screenshot spec, which happened to — a docs tool, run for another reason.
+
+Every check the catalogue has runs over the parsed object, and the defect does not
+survive parsing: it exists only in the file's text. `duplicateKeys` in
+`src/i18n/validate.ts` reads the text, with its negative control beside it. The
+general shape: when a format's parser silently resolves an ambiguity — duplicate JSON
+keys, duplicate YAML keys, a later `.env` line, two CSS declarations — a validator
+downstream of the parser cannot see what was resolved. Ask of any "the file is
+validated" claim *which representation* is validated, and whether the mistake you are
+worried about is still there by then.
+
+## One capture in ninety-six was not noise (#258)
+
+The "1280 px and wider did not move" comparison came back the way #265's had: a
+handful of captures differing from `main` by a dozen pixels at a channel delta of
+one — what `main` shows against itself. One did not fit: 218 pixels at a delta of 200,
+a 28 × 28 box on the Orders page, in one of that state's four captures. It was the
+focus ring on the last chevron the capture script had clicked: drawn by `main`,
+missing from the branch. One in four reads as timing, and the run could have been
+called clean.
+
+It was a real defect, reached by an accident of the tool. Playwright's full-page
+capture makes the viewport **1 × 1** for an instant to measure the page. On the branch
+that is the phone shell, so the table became card rows and back; the focused chevron
+was destroyed and focus fell to `<body>`. `main` has no cards, so there the same
+flicker re-dresses the page and nothing is lost. The user-facing version is an iPad
+mini turned with a keyboard attached, or a window dragged across 768 px: the control
+under the keyboard is swapped away and the next Tab starts from the top of the page.
+#258 had already handled the case with a dialog open (the review of #265 had named
+it); the same defect with no dialog had no test and no owner.
+
+Two things to keep. **A difference outside the noise floor is a finding until it is
+explained, whatever its odds** — the recipe says so, and "one in four" is the shape of
+a race, not of an artifact. And the explanation took four attempts, three of them
+reasoned and wrong: that a fold engaging blurred the control (plain resizes across
+every line kept focus); that the size container did (it happened without one); that a
+microtask after the `focusout` would find focus already restored (it runs *before*
+the layout effect, inside React's commit). Each was cheap to test and each test took
+a minute. The order of focus events around a DOM removal is not something to derive —
+`Modal`'s comment had it measured one way for one Chromium, and this session measured
+it the other way for the next. Log it, then write the rule.
+

@@ -26,11 +26,11 @@ last edited, so a large jump either way is worth a look.
 | --- | --- | --- |
 | Backend (~1750) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
 | Lint + format | `uv run ruff check --fix . && uv run ruff format .` | Before every commit. CI checks both. |
-| Frontend unit (~471) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
+| Frontend unit (~616) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. Also the compile-time check on every static `t("…")` key. |
 | Frontend lint | `npm run lint` | oxlint, then `scripts/check-palette.mjs` — refuses any stock Tailwind palette utility under `src/` (design §13.1: tokens only; `@theme` already emits no CSS for one, so the guard is what makes the regression loud). |
 | Translation coverage | `npm run i18n:report` (in `frontend/`) | Markdown table, presentation only — the catalogue tests are what gate. CI appends it to the job summary. |
-| E2E (~95) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. The `setup` project (`e2e/auth.setup.ts`) signs in as the owner first — an **unclaimed** instance is claimed through the recovery command with `E2E_OWNER_PASSWORD` (default `e2e-owner-password`); a **claimed** one is only signed into, so on a dev database you claimed yourself export `E2E_OWNER_PASSWORD` to its password or the run stops and says so. The session lands in `e2e/.auth/` (gitignored); specs' own API calls go through `e2e/api.ts` (`apiContext()`), which carries the cookie, an `Origin` and the CSRF token. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. Three browser projects since #257: `app` (the desktop default, a mouse — every spec), and `phone` (390 × 844) and `tablet` (820 × 1180), both Chromium with a touch screen (`hasTouch` + `isMobile`, which is what makes `(pointer: coarse)` match), running the specs their `testMatch` lists — `shell.spec.ts` today, which `app` runs too. `--project=phone` runs one (it pulls in `setup`). A phone or tablet spec sets its size and *then* loads the page: a poll after resizing a live page can be satisfied by the layout it was meant to replace (`lessons.md`). |
+| E2E (~114) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. The `setup` project (`e2e/auth.setup.ts`) signs in as the owner first — an **unclaimed** instance is claimed through the recovery command with `E2E_OWNER_PASSWORD` (default `e2e-owner-password`); a **claimed** one is only signed into, so on a dev database you claimed yourself export `E2E_OWNER_PASSWORD` to its password or the run stops and says so. The session lands in `e2e/.auth/` (gitignored); specs' own API calls go through `e2e/api.ts` (`apiContext()`), which carries the cookie, an `Origin` and the CSRF token. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. Three browser projects since #257: `app` (the desktop default, a mouse — every spec), and `phone` (390 × 844) and `tablet` (820 × 1180), both Chromium with a touch screen (`hasTouch` + `isMobile`, which is what makes `(pointer: coarse)` match), running the specs their `testMatch` lists — `shell.spec.ts` and `lists.spec.ts` (#258; it seeds its own rows), which `app` runs too. `--project=phone` runs one (it pulls in `setup`). A phone or tablet spec sets its size and *then* loads the page: a poll after resizing a live page can be satisfied by the layout it was meant to replace (`lessons.md`). |
 | Mutation harness | `uv run python mutation_test.py` | See below. |
 
 **One pytest session at a time.** Two runs against `plamotrack_test` interfere —
@@ -93,6 +93,44 @@ database, capture by capture, byte for byte and then pixel for pixel:
 
 The capture and diff scripts were throwaway (about sixty lines each); the traps
 above are the part worth keeping.
+
+**Proving a list fits its box** (M6.6; first done on #258, `frontend/e2e/lists.spec.ts`).
+A table scrolls inside its own `overflow-x-auto` box, so the document never moves and
+a page-level check calls a clipped edit control fine. What #258 learned doing it:
+
+- **Measure the box, on rows.** `scrollWidth` against `clientWidth` on the table's
+  box, and every control's right edge against the box's — on a list with rows in it.
+  The from-empty suite sees empty states; a spec that measures seeds its own.
+- **Seed ordinary rows, not the demo's.** The screenshot spec's data has no order
+  that was both shipped and received, and the Orders table needs 87 px more with one
+  (1040 against 953). Give every field its widest ordinary value *and* its null — a
+  fold is where a null leaves a dangling separator or an empty line.
+- **A seed must be the same width every run.** A base-36 run tag inside a retailer's
+  name and an order number moved the table's minimum by 25 px between runs — enough
+  to pass or fail a fold line on the letters the clock dealt. Digits are tabular in
+  a table cell; use them where the tag sits in a width-setting cell.
+- **Sweep the box, don't sample the viewport.** Nine viewports are nine points; a
+  fold line a few pixels short of what its table needs is a band a few pixels wide
+  between them (the second Orders fold overflowed from 866 to 927 px and no sampled
+  width was in it). Set the container's `style.width` to every px from the narrowest
+  box to the widest — container queries answer the box, whatever set its width — and
+  collect the widths that overflow. Under a touch project *and* a mouse one: the
+  44 px pencil must not cost the table anything.
+- **To read what a fold state needs**, disable the fold (`@max-[1rem]`) and take the
+  last overflowing width plus one. Put the line over that, not on it — and say the
+  devices either side of it out loud: a rounder number 16 px higher would have folded
+  every 1366 px laptop. A container query reads the box's *content* width, so a 1 px
+  border is 2 px of the arithmetic.
+- **`getByText` sees hidden elements.** A CSS fold keeps a hidden second copy of what
+  it moves, and `expect(getByText("MS-91055")).toBeVisible()` becomes a strict-mode
+  violation at widths where nothing ever folds. A test that reads a list row's text
+  asks for the one on screen — `locator.filter({ visible: true })` — and "on screen
+  exactly once" is that with `toHaveCount(1)`, which catches dropped *and* said
+  twice. The first match for a retailer's name on a table shell is a closed
+  `<select>`'s `<option>`, which is never visible — wait on a shown match.
+- **A loop over no sizes passes.** A test that filters its sizes down to none for a
+  project (`phone` has no table shell) is green having looked at nothing: `test.skip`
+  it there by name.
 
 **Do not use `--repeat-each` to measure flakiness.** It reuses one module load, so
 every repeat shares the fixture name and stacks duplicates. Fresh processes only.
