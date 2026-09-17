@@ -19,9 +19,12 @@ jobs:
     name: Backend
     runs-on: ubuntu-latest
     # The suite was 13m46s at the M6 head and the #221 round-1 head was cancelled
-    # at 15; the flood tests were shrunk (a handful of Argon2 checks, not dozens)
-    # and this is headroom, not a licence.
-    timeout-minutes: 20
+    # at 15; the flood tests were shrunk (a handful of Argon2 checks, not dozens).
+    # On 2026-09-17 it was 13m36s on main and a frontend-only PR (#263) was
+    # cancelled at 19m49s, 87% through, on a slower shared runner — the cap was
+    # measuring the runner, not the suite. 30 is headroom against that variance,
+    # not a licence.
+    timeout-minutes: 30
     env:
       TEST_DATABASE_URL: postgresql+asyncpg://plamotrack:plamotrack@127.0.0.1:5432/plamotrack_test
     services:
