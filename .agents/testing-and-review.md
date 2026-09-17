@@ -59,6 +59,41 @@ psqlc postgres "DROP DATABASE plamotrack_e2e;"
 Every count must be zero afterwards — a spec that leaves rows behind is a spec that
 will collide with the next one.
 
+**Proving a layout did not move** (M6.6: every PR of #257–#260 owes "1280 px and
+wider unchanged"; first done on #265). Compare the branch with `main` over *one*
+database, capture by capture, byte for byte and then pixel for pixel:
+
+- **One seeded database, one API.** Seed a fresh database with the screenshot spec
+  (`SCREENSHOTS=1 SCREENSHOTS_OUT=<dir> DATABASE_URL=$DSN npx playwright test
+  e2e/screenshots.spec.ts --workers=1`); afterwards `frontend/e2e/.auth/owner.json`
+  is a storage state a plain Playwright script can load — the cookie is for
+  `localhost`, any port. Start the API from the **real checkout's** `backend/`: a
+  worktree's has no virtualenv and Playwright's own `webServer` times out there.
+- **`main` from a worktree on :5174, the branch on :5173.** Give the worktree its
+  **own copy** of `node_modules` (`cp -cR frontend/node_modules <worktree>/frontend/`).
+  A symlink puts the bundled Inter outside Vite's fs root, the page renders in a
+  fallback font, and *every* capture differs from the first pixel of the wordmark.
+  `npx vite --port 5174 --strictPort` takes about 40 s cold; let its first
+  dependency optimisation finish before capturing, or a screenshot times out.
+- **Hold still what can move:** `page.clock.setFixedTime(...)`, `deviceScaleFactor: 1`,
+  `animations: "disabled"`, `caret: "hide"`, `networkidle` and `document.fonts.ready`
+  before each capture; every route and the dialogs, both themes, 1440 × 900 and
+  1280 × 720. No image library is installed — to diff two PNGs, draw both into an
+  `OffscreenCanvas` inside a Playwright page and report the count of differing
+  pixels, their bounding box and the largest channel delta.
+- **Measure the noise floor first: `main` against itself.** It is not zero. On #265
+  about 10 of 64 captures differed between two runs of the same code, by 1–64 pixels
+  — a 15-pixel patch at the search field's icon, single pixels on borders — at a
+  channel delta of up to 28. A difference is a finding when a capture's **size**
+  differs or its bounding box lies **outside** the patches `main` shows against
+  itself, not when the bytes differ.
+- **The demo data is not every state.** It draws no mixed order (so no *pre-order*
+  tag), no expanded order row, no hover. Add the states your change touches, in a
+  throwaway database, and measure those too.
+
+The capture and diff scripts were throwaway (about sixty lines each); the traps
+above are the part worth keeping.
+
 **Do not use `--repeat-each` to measure flakiness.** It reuses one module load, so
 every repeat shares the fixture name and stacks duplicates. Fresh processes only.
 
