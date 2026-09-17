@@ -28,32 +28,37 @@ export function MorePage() {
   const { data: session } = useQuery(authSessionQuery);
   const signOut = useSignOut();
   return (
-    <div className="max-w-md space-y-5.5">
+    <div className="space-y-5.5">
+      {/* Outside the cap below: the phone's bar is full-bleed, and at the wide
+          end of the phone shell a capped ancestor stopped it 264 px short of
+          the screen (Codex #265, finding 2). */}
       <PageHeader title={t("nav.more")} />
-      <nav aria-label={t("nav.more")} className={`flex flex-col ${PANEL_CLASS}`}>
-        {DESTINATIONS.map((item) => (
-          <Link key={item.to} to={item.to} className={`${ROW_CLASS} hover:bg-chip`}>
-            <item.icon size={20} aria-hidden className="shrink-0 text-muted" />
-            <span className="flex-1">{t(item.label)}</span>
-            <ChevronRight size={18} aria-hidden className="shrink-0 text-faint rtl:-scale-x-100" />
-          </Link>
-        ))}
-      </nav>
-      <section aria-labelledby="more-theme" className="space-y-2.5">
-        <h2 id="more-theme" className={MICRO_LABEL_CLASS}>
-          {t("theme.label")}
-        </h2>
-        <ThemeSwitch labelled />
-      </section>
-      <section className={PANEL_CLASS}>
-        {session?.auth_mode === "oidc" && session.display_name && (
-          <Identity name={session.display_name} issuer={session.oidc_issuer} variant="card" />
-        )}
-        <button type="button" onClick={signOut} className={`${ROW_CLASS} hover:bg-chip`}>
-          <LogOut size={20} aria-hidden className="shrink-0 text-muted" />
-          {t("auth.signOut")}
-        </button>
-      </section>
+      <div className="max-w-md space-y-5.5">
+        <nav aria-label={t("nav.more")} className={`flex flex-col ${PANEL_CLASS}`}>
+          {DESTINATIONS.map((item) => (
+            <Link key={item.to} to={item.to} className={`${ROW_CLASS} hover:bg-chip`}>
+              <item.icon size={20} aria-hidden className="shrink-0 text-muted" />
+              <span className="flex-1">{t(item.label)}</span>
+              <ChevronRight size={18} aria-hidden className="shrink-0 text-faint rtl:-scale-x-100" />
+            </Link>
+          ))}
+        </nav>
+        <section aria-labelledby="more-theme" className="space-y-2.5">
+          <h2 id="more-theme" className={MICRO_LABEL_CLASS}>
+            {t("theme.label")}
+          </h2>
+          <ThemeSwitch labelled />
+        </section>
+        <section className={PANEL_CLASS}>
+          {session?.auth_mode === "oidc" && session.display_name && (
+            <Identity name={session.display_name} issuer={session.oidc_issuer} variant="card" />
+          )}
+          <button type="button" onClick={signOut} className={`${ROW_CLASS} hover:bg-chip`}>
+            <LogOut size={20} aria-hidden className="shrink-0 text-muted" />
+            {t("auth.signOut")}
+          </button>
+        </section>
+      </div>
     </div>
   );
 }

@@ -2,8 +2,8 @@
  * The three shells (design §13.7, #257): a bottom tab bar below 768 px, a 64 px
  * icon rail from there to 1279 px, the sidebar from 1280 px up — chosen by
  * viewport width alone. This file runs in three projects (playwright.config.ts):
- * `app` at the desktop default with a mouse, `phone` at 390 × 844 and `tablet` at
- * 820 × 1180, 1180 × 820 and 1366 × 1024, both with a touch screen. What it holds:
+ * `app` at the desktop default with a mouse, `phone` at 390 × 844 and 744 × 1133 and
+ * `tablet` at 820 × 1180, 1180 × 820 and 1366 × 1024, both with a touch screen. What it holds:
  *
  * - the width decides the shell, whatever the pointer is, and crossing a line
  *   re-dresses the page without remounting it;
@@ -25,10 +25,16 @@ type Size = { width: number; height: number };
 type Shell = "phone" | "rail" | "sidebar";
 
 // `tablet`'s third size is a 13-inch iPad in landscape: the desktop's sidebar
-// with a finger on it, the one place the touch sizes meet that shell.
+// with a finger on it, the one place the touch sizes meet that shell. `phone`'s
+// second is an iPad mini in portrait, the wide end of the phone shell: one
+// width per shell let More's header stop 264 px short of the screen there
+// (Codex #265, finding 2).
 const VIEWPORTS: Record<string, Size[]> = {
   app: [{ width: 1280, height: 720 }],
-  phone: [{ width: 390, height: 844 }],
+  phone: [
+    { width: 390, height: 844 },
+    { width: 744, height: 1133 },
+  ],
   tablet: [
     { width: 820, height: 1180 },
     { width: 1180, height: 820 },
@@ -119,6 +125,10 @@ async function reach(page: Page, control: Locator): Promise<void> {
 /** On screen, inside the viewport, and the thing a tap at its centre would hit —
  *  not the tab bar, a sticky header or a browser's idea of the fold. */
 async function expectTappable(control: Locator): Promise<void> {
+  // First, so a control that is not there fails here, by name, in five seconds
+  // — not thirty seconds into a scroll helper (Codex #265: the one red of the
+  // negative control that was a timeout rather than an assertion).
+  await expect(control).toBeVisible();
   await control.scrollIntoViewIfNeeded();
   const hit = await control.evaluate((element) => {
     const box = element.getBoundingClientRect();
@@ -172,6 +182,61 @@ test("the viewport's width alone chooses the shell, and crossing a line keeps th
   await page.setViewportSize({ width: 1366, height: 1024 });
   await expectShell(page, "sidebar");
   await expect(dialog.getByLabel("Name")).toHaveValue("typed before the rotation");
+});
+
+test("a dialog closed after a rotation gives focus back to the control that opened it (Codex #265, finding 1)", async ({
+  page,
+}) => {
+  // The page surviving a crossing is half of it; the other half is where the
+  // keyboard lands afterwards. `Modal` returns focus to the node that opened
+  // it, so that node has to be the same one on both sides of the line — every
+  // page's primary action lives in `PageHeader`, which used to render it in
+  // two different subtrees. Both directions, every page that has one.
+  for (const [path, action] of [
+    ["/retailers", "Add retailer"],
+    ["/kits", "Add kit"],
+    ["/orders", "New order"],
+    ["/inventory", "Add tool"],
+  ] as const) {
+    for (const [from, to] of [
+      [{ width: 1133, height: 744 }, { width: 744, height: 1133 }],
+      [{ width: 744, height: 1133 }, { width: 1133, height: 744 }],
+    ]) {
+      await page.setViewportSize(from);
+      await page.goto(path);
+      await expectShell(page, shellFor(from.width));
+      const opener = page.getByRole("button", { name: action, exact: true });
+      // By keyboard, so the opener is unarguably the focused element at open.
+      await opener.focus();
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await page.setViewportSize(to);
+      await expectShell(page, shellFor(to.width));
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      // Soft, so one run reports every page and direction, not the first; and
+      // a short wait, because focus returns in the same commit that closes
+      // the dialog — eight five-second waits would outlast the test.
+      await expect.soft(opener, `${path}: ${from.width} → ${to.width} px`).toBeFocused({ timeout: 2_000 });
+    }
+  }
+});
+
+test("the phone header spans the screen on every page, at both ends of the phone shell (Codex #265, finding 2)", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "phone", "the header bar is the phone shell's");
+  // The bar is full-bleed by undoing `main`'s gutter, which cannot undo an
+  // ancestor's max-width: a page that caps its own content has to keep the
+  // header outside the cap. Every route, because any page can grow a cap.
+  for (const width of [390, 600, 744, 767]) {
+    await page.setViewportSize({ width, height: 1000 });
+    for (const path of PAGES) {
+      await page.goto(path);
+      const bar = await box(page.locator("main header").first());
+      expect.soft([bar.x, bar.width, bar.height], `${path} at ${width} px`).toEqual([0, width, 56]);
+    }
+  }
 });
 
 test("every destination is reachable, and the shell marks where you are", async ({ page }, testInfo) => {

@@ -197,8 +197,17 @@ export function PageTitle({ children, count }: { children: ReactNode; count?: nu
  *  has them. `brand` is Home's: the sidebar that carried the wordmark is gone
  *  there, so the bar does, and the h1 stays for assistive tech.
  *
+ *  One tree for both shapes, dressed differently: the primary action keeps its
+ *  place — second child of the second child — so it is the same DOM node on
+ *  both sides of the 768 px line. `Modal` gives focus back to the node that
+ *  opened it, and a dialog can be open while a tablet is turned; when the two
+ *  shapes were two subtrees the opener was replaced mid-dialog and the keyboard
+ *  was left on <body> (Codex #265, finding 1).
+ *
  *  The bar is full-bleed by undoing `main`'s phone gutter (Layout's `px-4`) —
- *  the two move together. */
+ *  the two move together. A negative margin cannot undo an ancestor's
+ *  max-width, so a page that caps its own content keeps this outside the cap
+ *  (MorePage; finding 2). */
 export function PageHeader({
   title,
   count,
@@ -215,26 +224,16 @@ export function PageHeader({
   secondary?: ReactNode;
 }) {
   const phone = useShell() === "phone";
-  if (!phone) {
-    return (
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <PageTitle count={count}>{title}</PageTitle>
-          {subtitle && <p className="mt-0.5 text-sm text-muted">{subtitle}</p>}
-        </div>
-        {(secondary || actions) && (
-          <div className="flex gap-2">
-            {secondary}
-            {actions}
-          </div>
-        )}
-      </div>
-    );
-  }
   return (
     <>
-      <header className="sticky top-0 z-10 -mx-4 flex h-14 items-center justify-between gap-3 border-b border-rule bg-bg px-4">
-        {brand ? (
+      <header
+        className={
+          phone
+            ? "sticky top-0 z-10 -mx-4 flex h-14 items-center justify-between gap-3 border-b border-rule bg-bg px-4"
+            : "flex items-center justify-between gap-3"
+        }
+      >
+        {phone && brand ? (
           // The wordmark is a brand identifier, not copy — it stays untranslated.
           <div className="flex items-center gap-2.5 text-[17px] font-semibold tracking-tight text-text">
             <BrandMark />
@@ -242,11 +241,19 @@ export function PageHeader({
             <h1 className="sr-only">{title}</h1>
           </div>
         ) : (
-          <PageTitle count={count}>{title}</PageTitle>
+          <div>
+            <PageTitle count={count}>{title}</PageTitle>
+            {!phone && subtitle && <p className="mt-0.5 text-sm text-muted">{subtitle}</p>}
+          </div>
         )}
-        {actions}
+        {(secondary || actions) && (
+          <div className="flex gap-2">
+            {!phone && secondary}
+            {actions}
+          </div>
+        )}
       </header>
-      {subtitle && <p className="mt-3 text-sm text-muted">{subtitle}</p>}
+      {phone && subtitle && <p className="mt-3 text-sm text-muted">{subtitle}</p>}
     </>
   );
 }

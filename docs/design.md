@@ -2973,7 +2973,13 @@ and tablet e2e, screenshots, the release (#260).
 - **The phone header bar is `PageHeader`** (`components/ui.tsx`), which from
   768 px up renders what the pages had. It stays while the page scrolls. On Home
   it carries the brand mark and wordmark — the sidebar that held them is gone —
-  with the `h1` kept for assistive tech.
+  with the `h1` kept for assistive tech. It is **one tree dressed two ways**, so
+  a page's primary action is the same DOM node on both sides of the 768 px line:
+  `Modal` gives focus back to the node that opened it, and as two subtrees the
+  opener was replaced while a dialog was open across a rotation, leaving the
+  keyboard on `<body>` (Codex #265). A page that caps its own width keeps the
+  bar outside the cap — a negative margin undoes a gutter, not an ancestor's
+  `max-width`, and More's bar stopped 264 px short at 744 px (same review).
 - **Safe areas**: `viewport-fit=cover`, the tab bar padded by
   `env(safe-area-inset-bottom)`, the shell by the left and right insets (a
   phone held sideways is wide enough for the rail, which therefore scrolls),
@@ -3000,8 +3006,9 @@ and tablet e2e, screenshots, the release (#260).
   sampled; under the rail it is every 1024 px tablet, and `home.spec.ts`'s
   width test found it there. That test now samples both thresholds and 390.
 - **The guard**: `e2e/shell.spec.ts` runs in three Playwright projects — `app`
-  (1280 px, a mouse), `phone` (390 × 844) and `tablet` (820 × 1180, 1180 × 820
-  and 1366 × 1024), the last two with a touch screen. The 1280 and 1440 px
+  (1280 px, a mouse), `phone` (390 × 844 and 744 × 1133, both ends of the phone
+  shell) and `tablet` (820 × 1180, 1180 × 820 and 1366 × 1024), the last two
+  with a touch screen. The 1280 and 1440 px
   captures of every page and five dialogs, in both themes, were compared with
   `main`'s pixel for pixel: identical but for the anti-aliasing noise `main`
   shows against itself — with one deliberate exception the demo data does not
