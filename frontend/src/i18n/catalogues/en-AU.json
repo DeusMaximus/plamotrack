@@ -881,8 +881,6 @@
       "listDescription": "Every token minted on this instance, newest first. Revoking one stops it immediately; the row stays here as a record.",
       "empty": "No tokens yet.",
       "colName": "Name",
-      "colPrefix": "Prefix",
-      "colAccess": "Access",
       "colCreated": "Created",
       "colLastUsed": "Last used",
       "colExpires": "Expires",
