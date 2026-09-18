@@ -4,6 +4,8 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
+import { focusFirst, focusKeysOf } from "../lib/focusKey";
+
 /** What a keyboard can land on, in DOM order. Deliberately not a library: this
  *  list plus the trap below is the whole of what five dialogs need, and adopting
  *  Radix or Headless UI mid-alpha is a dependency decision that deserves its own
@@ -29,16 +31,38 @@ function focusableWithin(dialog: HTMLElement): HTMLElement[] {
  *  Nothing stacks dialogs today; this costs three lines and removes the class. */
 let openDialogs = 0;
 
+/** Give the keyboard back to whatever opened the dialog — or, when that node is
+ *  gone, to the control standing where it stood. It can be gone without the
+ *  record going anywhere: a dialog stays open while a tablet is turned (§13.7 —
+ *  `main` never remounts), and a list page is card rows on one side of the
+ *  768 px line and a table on the other, so the pencil that opened the dialog is
+ *  not the pencil on the page when it closes. The stand-in is found by the
+ *  opener's `data-focus-key`, then its `data-focus-stand-in` (`lib/focusKey.ts`
+ *  says why a key and not the name). An opener with no key is left as it always was — focused if it is
+ *  still there, and otherwise wherever the browser puts focus; a control that
+ *  is drawn differently per shell and opens a dialog owes itself a key, and
+ *  lists.spec.ts's rotation test is where a missing one shows. */
+function restoreFocus(opener: HTMLElement | null, keys: readonly string[]): void {
+  opener?.focus();
+  // Gone, or in the page and not drawn (a fold's hidden copy): `focus()` did
+  // nothing either way, and asking where focus is covers both.
+  if (document.activeElement !== opener) focusFirst(keys);
+}
+
 export function Modal({
   title,
   onClose,
   children,
   wide = false,
+  sheet = false,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   wide?: boolean;
+  /** A bottom sheet (§13.7): the same dialog — focus trap, Escape, inert page —
+   *  risen from the foot of the screen, where a thumb is. The filter sheet's. */
+  sheet?: boolean;
 }) {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -47,6 +71,7 @@ export function Modal({
     // Captured before focus moves, so closing returns the user to the control
     // they opened this from rather than to the top of the document.
     const opener = document.activeElement as HTMLElement | null;
+    const openerKeys = focusKeysOf(opener);
     const appRoot = document.getElementById("root");
 
     openDialogs += 1;
@@ -66,7 +91,7 @@ export function Modal({
       // Un-inert *before* restoring focus — focus() on a node inside an inert
       // subtree silently does nothing, which would strand the user at <body>.
       if (appRoot && openDialogs === 0) appRoot.inert = false;
-      opener?.focus?.();
+      restoreFocus(opener, openerKeys);
     };
   }, []);
 
@@ -75,9 +100,12 @@ export function Modal({
     if (!dialog) return;
     // Focus can leave the dialog without any key being pressed: remove the node
     // that has it and the browser drops focus to <body>, firing no blur and no
-    // focusout (measured in Chromium — an event listener cannot see this). The
-    // Tab handler recaptures on the *next* press, which leaves a keyboard user
-    // nowhere in between and a screen reader announcing the document.
+    // focusout (measured in Chromium when this was written, #51 — by #258 the
+    // same measurement found Chromium firing both, which `lib/focusKey.ts`
+    // depends on; an observer holds either way, and in an engine that fires
+    // neither). The Tab handler recaptures on the *next* press, which leaves a
+    // keyboard user nowhere in between and a screen reader announcing the
+    // document.
     //
     // Reachable from the order form: `CatalogItemPicker` opens its result list
     // on focus and closes it 150ms after the input blurs, and the results follow
@@ -154,7 +182,9 @@ export function Modal({
   // rendered in place, marking the page inert would disable the dialog too.
   return createPortal(
     <div
-      className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-backdrop p-4 pt-12"
+      className={`fixed inset-0 z-40 flex justify-center bg-backdrop ${
+        sheet ? "items-end" : "items-start overflow-y-auto p-4 pt-12"
+      }`}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();
       }}
@@ -165,9 +195,16 @@ export function Modal({
         aria-modal="true"
         aria-label={title}
         tabIndex={-1}
-        className={`w-full ${wide ? "max-w-3xl" : "max-w-md"} rounded-lg border border-border-strong bg-surface p-5 focus:outline-none`}
+        className={
+          sheet
+            ? // Never taller than the screen less a strip of the page above it;
+              // the sheet scrolls inside itself. Its foot clears the home
+              // indicator (`pb-safe`), as the tab bar it covers does.
+              "pb-safe max-h-[calc(100dvh-3rem)] w-full max-w-xl overflow-y-auto rounded-t-lg border border-b-0 border-border-strong bg-surface px-4 pt-3 focus:outline-none"
+            : `w-full ${wide ? "max-w-3xl" : "max-w-md"} rounded-lg border border-border-strong bg-surface p-5 focus:outline-none`
+        }
       >
-        <div className="mb-4 flex items-center justify-between">
+        <div className={`flex items-center justify-between ${sheet ? "mb-3" : "mb-4"}`}>
           <h2 className="text-lg font-semibold text-text">{title}</h2>
           {/* 24 px for a mouse; under `touch:` a 44 px target around the same
               icon (§13.7), its extra 10 px a side taken back as margin so the
@@ -180,7 +217,7 @@ export function Modal({
             <X size={16} aria-hidden />
           </button>
         </div>
-        {children}
+        {sheet ? <div className="pb-5">{children}</div> : children}
       </div>
     </div>,
     document.body,

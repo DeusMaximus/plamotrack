@@ -3,6 +3,8 @@ import { useTranslation } from "react-i18next";
 
 import { THEME_PREFERENCES, useTheme, type ThemePreference } from "../lib/theme";
 
+const THEME_FOCUS = "theme";
+
 const THEME_ICONS: Record<ThemePreference, LucideIcon> = {
   light: Sun,
   dark: Moon,
@@ -67,6 +69,15 @@ export function ThemeSwitch({ labelled = false }: { labelled?: boolean }) {
             aria-label={t(`theme.${option}`)}
             title={t(`theme.${option}`)}
             data-theme-option={option}
+            // The sidebar's segments, the rail's one button and (on a phone) the
+            // More tab are one control in three shells (`lib/focusKey.ts`): the
+            // chosen segment carries the key, being the one Tab stops on. The
+            // More page's own switch is one node at every width and needs none.
+            {...(labelled
+              ? {}
+              : checked
+                ? { "data-focus-key": THEME_FOCUS, "data-focus-stand-in": "nav:/more" }
+                : { "data-focus-stand-in": `${THEME_FOCUS} nav:/more` })}
             tabIndex={checked ? 0 : -1}
             onClick={() => setPreference(option)}
             className={`flex flex-1 items-center justify-center rounded-sm ${
@@ -105,6 +116,8 @@ export function ThemeCycleButton({ className }: { className: string }) {
       title={label}
       onClick={() => setPreference(next)}
       className={className}
+      data-focus-key={THEME_FOCUS}
+      data-focus-stand-in="nav:/more"
     >
       <Icon size={20} aria-hidden />
     </button>

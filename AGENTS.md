@@ -121,7 +121,12 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   (backend/tests/test_settings.py holds the pair together);
                         #   extraction keeps en-AU strings byte-identical (e2e proves it)
     components/         # Layout (the three shells, §13.7: sidebar, icon rail, phone tab bar),
-                        #   Modal, ui primitives (PageHeader is the page head in every shell),
+                        #   Modal (a dialog, or with `sheet` a bottom sheet),
+                        #   FilterSheet (the phone's one filter-and-sort control, §13.7),
+                        #   ui primitives (PageHeader is the page head in every shell;
+                        #   CardList/CardRow are a list page's rows on a phone — a row's
+                        #   controls are in rem with a px floor, a finger's, and the
+                        #   identifying column has a share to give way from, §13.7),
                         #   CatalogItemPicker (§3.9 select-or-create),
                         #   KitFormModal + OrderFormModal — the one edit dialog per record,
                         #   shared by the list pages and Home (#233)
@@ -129,13 +134,42 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   different things; the `max-md:` / `touch:` utilities (index.css)
                         #   where it is the same thing at another size. One pair of lines:
                         #   shell.test.ts holds the hook and the stylesheet together
+    lib/focusKey.ts     # focus by record — the rule is "every change of representation
+                        #   accounts for the focused control": one drawn differently per
+                        #   shell (or folded away, or swapped by a container query) carries
+                        #   `data-focus-key="kit:<id>"`, one some shape does not draw at all
+                        #   names what stands in for it (`data-focus-stand-in`), and `Modal`
+                        #   (at close) and `useFocusAcrossShells` (a shell change; a control
+                        #   that stopped being drawn) give the keyboard to whatever carries
+                        #   the key now. A new control of either kind owes itself one, and
+                        #   lists.spec.ts's sweep — every control, every way the page
+                        #   changes — is where a missing one shows (§13.7)
+    lib/listFilters.ts  # what a list page's filters and search keep — one pure function
+                        #   each, read by the page for its rows and by the filter sheet
+                        #   for the count on its button, so the two cannot disagree
     pages/              # HomePage (§13.2: bench, strips, mail), KitsPage, OrdersPage,
-                        #   InventoryPage, RetailersPage, MorePage (the phone's fifth tab),
+                        #   InventoryPage, RetailersPage — card rows below 768 px, a table
+                        #   from there that folds by its own box's width (`@container`),
+                        #   the desktop's included; the fold lines are measured, read the
+                        #   comments before moving one (§13.7). What a line cannot know
+                        #   gives way by its *value*: a date in words wraps, one in digits
+                        #   never does (`dateInDigits`); a reference wider than the measured
+                        #   budget breaks — measured by the browser in `ReferenceRuler`,
+                        #   never counted in characters — and an ordinary one is a plain
+                        #   word. A fold keeps a hidden copy
+                        #   of what it moves, so a test reading a row's text filters for
+                        #   the visible one — MorePage (the phone's fifth tab),
                         #   and settings/ (SettingsPage + sections, including Data
                         #   management at /settings/data)
   e2e/                  # Playwright (runs against the dev stack, self-cleaning): the `app`
                         #   project at the desktop size, `phone` (390 × 844) and `tablet`
-                        #   (820 × 1180) with a touch screen — shell.spec.ts runs in all three
+                        #   (820 × 1180) with a touch screen — shell.spec.ts and lists.spec.ts
+                        #   run in all three; lists.settings.spec.ts asks the lists' fit
+                        #   questions again under every date style, in the `settings` project
+                        #   (it flips the singleton, so it runs after everything else);
+                        #   lists.ts is what the two measure with. lists.spec.ts seeds its
+                        #   own rows — the ordinary widest and the wide — since an empty
+                        #   list has no table to measure
 docs/design.md          # product intent + architectural decision record (§n targets)
 docs/import-export.md   # user-facing CSV format + matching reference
 docs/translating.md     # contributor how-to for proposing/reviewing a language (#22)
@@ -731,10 +765,11 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
      so the gallery and showcase are built in the new look once (#122 rode here)~~ ✅
      (lands on `main` as v0.4.0-alpha)
 6.6. Phone and tablet UI: three shells by viewport width alone — a bottom tab bar
-     below 768 px, a 64 px icon rail to 1279 px, the desktop untouched from 1280 —
+     below 768 px, a 64 px icon rail to 1279 px, the desktop untouched from 1280
+     (one exception, the owner's, #258: the Orders table folds to its box there too) —
      before M7 because the phone is the camera (design §13.7). Four PRs straight to
      `main`, each shippable alone: ~~#257 the shells, touch sizes and home-screen
-     install~~ ✅, #258 list pages and table folds, #259 sheet dialogs, #260 Home,
+     install~~ ✅, ~~#258 list pages and table folds~~ ✅, #259 sheet dialogs, #260 Home,
      Settings, sign-in, the full phone e2e and the release
 7. Photo upload + gallery ← decide storage backend default first (§9.2)
 8. Public read-only routes + showcase page ← only after admin/MCP paths are protected

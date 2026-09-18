@@ -26,11 +26,11 @@ last edited, so a large jump either way is worth a look.
 | --- | --- | --- |
 | Backend (~1750) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
 | Lint + format | `uv run ruff check --fix . && uv run ruff format .` | Before every commit. CI checks both. |
-| Frontend unit (~471) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
+| Frontend unit (~628) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. Also the compile-time check on every static `t("…")` key. |
 | Frontend lint | `npm run lint` | oxlint, then `scripts/check-palette.mjs` — refuses any stock Tailwind palette utility under `src/` (design §13.1: tokens only; `@theme` already emits no CSS for one, so the guard is what makes the regression loud). |
 | Translation coverage | `npm run i18n:report` (in `frontend/`) | Markdown table, presentation only — the catalogue tests are what gate. CI appends it to the job summary. |
-| E2E (~95) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. The `setup` project (`e2e/auth.setup.ts`) signs in as the owner first — an **unclaimed** instance is claimed through the recovery command with `E2E_OWNER_PASSWORD` (default `e2e-owner-password`); a **claimed** one is only signed into, so on a dev database you claimed yourself export `E2E_OWNER_PASSWORD` to its password or the run stops and says so. The session lands in `e2e/.auth/` (gitignored); specs' own API calls go through `e2e/api.ts` (`apiContext()`), which carries the cookie, an `Origin` and the CSRF token. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. Three browser projects since #257: `app` (the desktop default, a mouse — every spec), and `phone` (390 × 844) and `tablet` (820 × 1180), both Chromium with a touch screen (`hasTouch` + `isMobile`, which is what makes `(pointer: coarse)` match), running the specs their `testMatch` lists — `shell.spec.ts` today, which `app` runs too. `--project=phone` runs one (it pulls in `setup`). A phone or tablet spec sets its size and *then* loads the page: a poll after resizing a live page can be satisfied by the layout it was meant to replace (`lessons.md`). |
+| E2E (~124) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. The `setup` project (`e2e/auth.setup.ts`) signs in as the owner first — an **unclaimed** instance is claimed through the recovery command with `E2E_OWNER_PASSWORD` (default `e2e-owner-password`); a **claimed** one is only signed into, so on a dev database you claimed yourself export `E2E_OWNER_PASSWORD` to its password or the run stops and says so. The session lands in `e2e/.auth/` (gitignored); specs' own API calls go through `e2e/api.ts` (`apiContext()`), which carries the cookie, an `Origin` and the CSRF token. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. Three browser projects since #257: `app` (the desktop default, a mouse — every spec), and `phone` (390 × 844) and `tablet` (820 × 1180), both Chromium with a touch screen (`hasTouch` + `isMobile`, which is what makes `(pointer: coarse)` match), running the specs their `testMatch` lists — `shell.spec.ts` and `lists.spec.ts` (#258; it seeds its own rows), which `app` runs too. The `settings` project runs last, after all three: `settings.spec.ts` and `lists.settings.spec.ts` flip the instance-settings singleton, which every date on every page is written with. `--project=phone` runs one (it pulls in `setup`). A phone or tablet spec sets its size and *then* loads the page: a poll after resizing a live page can be satisfied by the layout it was meant to replace (`lessons.md`). |
 | Mutation harness | `uv run python mutation_test.py` | See below. |
 
 **One pytest session at a time.** Two runs against `plamotrack_test` interfere —
@@ -93,6 +93,131 @@ database, capture by capture, byte for byte and then pixel for pixel:
 
 The capture and diff scripts were throwaway (about sixty lines each); the traps
 above are the part worth keeping.
+
+**Proving a list fits its box** (M6.6; first done on #258, `frontend/e2e/lists.spec.ts`).
+A table scrolls inside its own `overflow-x-auto` box, so the document never moves and
+a page-level check calls a clipped edit control fine. What #258 learned doing it:
+
+- **Measure the box, on rows.** `scrollWidth` against `clientWidth` on the table's
+  box, and every control's right edge against the box's — on a list with rows in it.
+  The from-empty suite sees empty states; a spec that measures seeds its own.
+- **Seed ordinary rows, not the demo's.** The screenshot spec's data has no order
+  that was both shipped and received, and the Orders table needs 87 px more with one
+  (1040 against 953). Give every field its widest ordinary value *and* its null — a
+  fold is where a null leaves a dangling separator or an empty line.
+- **A seed must be the same width every run.** A base-36 run tag inside a retailer's
+  name and an order number moved the table's minimum by 25 px between runs — enough
+  to pass or fail a fold line on the letters the clock dealt. Digits are tabular in
+  a table cell; use them where the tag sits in a width-setting cell.
+- **Sweep the box, don't sample the viewport.** Nine viewports are nine points; a
+  fold line a few pixels short of what its table needs is a band a few pixels wide
+  between them (the second Orders fold overflowed from 866 to 927 px and no sampled
+  width was in it). Set the container's `style.width` to every px from the narrowest
+  box to the widest — container queries answer the box, whatever set its width — and
+  collect the widths that overflow. Under a touch project *and* a mouse one: the
+  44 px pencil must not cost the table anything.
+- **To read what a fold state needs**, disable the fold (`@max-[1rem]`) and take the
+  last overflowing width plus one. Put the line over that, not on it — and say the
+  devices either side of it out loud: a rounder number 16 px higher would have folded
+  every 1366 px laptop. A container query reads the box's *content* width, so a 1 px
+  border is 2 px of the arithmetic.
+- **`getByText` sees hidden elements.** A CSS fold keeps a hidden second copy of what
+  it moves, and `expect(getByText("MS-91055")).toBeVisible()` becomes a strict-mode
+  violation at widths where nothing ever folds. A test that reads a list row's text
+  asks for the one on screen — `locator.filter({ visible: true })` — and "on screen
+  exactly once" is that with `toHaveCount(1)`, which catches dropped *and* said
+  twice. The first match for a retailer's name on a table shell is a closed
+  `<select>`'s `<option>`, which is never visible — wait on a shown match.
+- **A loop over no sizes passes.** A test that filters its sizes down to none for a
+  project (`phone` has no table shell) is green having looked at nothing: `test.skip`
+  it there by name.
+- **The widest *ordinary* row is one point in the value space, and the settings are an
+  axis of it** (Codex #266, finding 2). The date style and the formatting locale are
+  instance settings: `full` turns "27/08/2026 · 9 d" into "Thursday, 27 August 2026 ·
+  9 d", and a table measured only under the defaults was 121 px past its box at
+  1280 px. Seed the *wide* row beside the ordinary one — a reference with nowhere to
+  break (a USPS tracking number is 22 digits, 30 with its routing prefix), a total in
+  three currencies — and run the sweep again under every date style
+  (`e2e/lists.settings.spec.ts`; in the `settings` project, which waits for every
+  other project, because the singleton is what every date on every page is written
+  with). Assert the page is *showing* the style first — format the expected string in
+  the test with `Intl`, not with the app — or a PATCH that did not take passes the lot.
+- **A rigid cell is a decision about a value, so make it by the value.** `nowrap` on
+  every date, or `overflow-wrap: anywhere` on every reference, changes the ordinary
+  rows too: a table squeezes every column that has give, so lowering one column's
+  minimum re-lays-out the rest, the desktop's included. Decide per value (a date in
+  digits is rigid, one in words wraps; a run longer than the measured one may break)
+  and the ordinary rows stay where the fold lines were measured — then prove that with
+  the pixel comparison, not by reading the CSS.
+- **A count is not a width, and a canvas is not the cell** (round 2, finding 5). The
+  reference rule first said "a run longer than thirteen characters may break"; thirteen
+  `W`s are 183 px where thirteen digits are 115, and the table was 33 px past its box.
+  Measure the thing the constraint is in — pixels, by the browser, at the cell's own
+  font and figures. Four ways of doing that were wrong before one was right: a hidden
+  copy in the cell is scrollable overflow unless clipped; a copy inside a fold's
+  `display: none` half has no width; a copy that is DOM text is what `getByText`
+  returns, because it prefers the deepest match; and `canvas.measureText` cannot be
+  told `font-variant-numeric: tabular-nums`, so its digits are narrower than the
+  table's. The one that holds: a pseudo-element (`content: attr(…)`) in a clipped
+  zero-size ruler the table renders once, reached through a portal.
+- **`overflow-wrap: anywhere` changes the text, not only where it may break.** In
+  Chromium kerning stops at a break opportunity, and `anywhere` puts one after every
+  character: a 105 px word became 110 px and wrapped at its cell's edge with nothing
+  squeezed. So the class goes on a value that is over budget and on nothing else, and
+  "ordinary rows lay out as they did" is proved by the pixel comparison, not by reading
+  the rule.
+- **A browser preference is an axis too** (round 2, finding 6). Sizes in rem follow the
+  browser's default font size; a phone's width does not. At 32 px an 8rem reservation
+  was 256 px in a 94 px column. Launch Chromium with
+  `--blink-settings=defaultFontSize=32` in the test (a launch flag, so a browser of its
+  own — `chromium.launch`, the same `storageState`) and assert the identifying text
+  starts and ends inside its card and the screen; assert the root font size first, or
+  the flag not taking passes the lot.
+- **Bounds passing is not content showing** (finding 1). A card that fits the screen
+  exactly can have squeezed its own title to 0 px: beside a `shrink-0` sibling of
+  unbounded length (a total in three currencies) a `min-w-0 truncate` name gives up
+  everything. Assert the identifying text is visible *and has room* (its box, not its
+  card's), and that what a card says is not clipped (`scrollWidth` against
+  `clientWidth` on the text's own element). Run the phone's tests from 320 px: wrapping
+  is decided at the narrow end.
+- **"Equivalent for the seeded values" is a claim about the seed** (round 3). The author
+  called four of round 2's survivors equivalent; the reviewer distinguished three with
+  values the seed did not have — twenty narrow digits (182 px in the table's tabular
+  figures, 114 proportionally: a ruler without the figures leaves them a plain word and
+  the table past its box), a reference wider than the table's box (an unclipped ruler
+  hands it to the document), and a web font held until after the first paint (thirteen
+  digits sit either side of the budget in the fallback font and in Inter). Each is a
+  seed or a control in `lists.spec.ts` now (`NARROW_TRACKING`, `UNBOUNDED_NUMBER`,
+  `CROSSING_TRACKING`; *a reference's rule follows the font that is drawn*, which holds
+  the `.woff2` requests with `page.route` and releases them after the fallback has been
+  measured). When a survivor's argument names the value that would kill it, that value
+  is the next seed, not the closing sentence.
+- **Two points on a preference's axis, because the second decides differently** (round
+  3, finding 7). The stepper past its card at 32 px was the finding, and a fix for the
+  stepper alone passes 32 px. At 40 px the pencil and the toggle, not the stepper, left
+  the name 38 px — the same class, other instances — and only the second point showed
+  it. Test a preference at two values, the second where the first fix's neighbours are
+  at their floors. A floor the tested points never reach leaves its mutant alive (the
+  pencil's, the toggle's and the count's px floors at 40 px: F7e, F7i, F7k): say so in
+  the tuples rather than adding a third point for its own sake.
+
+**Proving the keyboard survives a change of representation** (Codex #266, findings 3–4;
+`lists.spec.ts`, "no change of representation leaves the keyboard on `<body>`"). The
+rule is one sentence — every change of representation accounts for the focused
+control — and its instances are found one at a time by whoever thinks of them: the
+build thought of rows, a dialog's opener and one select; the review of four more
+selects and a button; a sweep of **every** control then found the pager, two links,
+Export CSV and the entire navigation, in code a reviewer had already passed. So:
+enumerate the focusable controls from the page, focus each, change the page under it
+each way it can change — a shell's line (744 ↔ 1133 px), a fold inside one shell
+(1180 ↔ 820 px: no shell change, no render, only a container query), the other shell
+line (1100 ↔ 1300 px) — and assert the keyboard is not on `<body>`. Re-read the list
+after every change (a shell swap replaces the nodes, and a probe that tagged them once
+silently skipped everything remounted — it reported 27 losses where there were 211).
+A sweep derives its subjects from the page, so say by name which controls it must
+have reached, and how many; and keep the named tests beside it, because "not nowhere"
+says nothing about *where*. A `ResizeObserver` cannot watch an inline element — a text
+link has no size — which is why the hook watches the nearest sized ancestor.
 
 **Do not use `--repeat-each` to measure flakiness.** It reuses one module load, so
 every repeat shares the fixture name and stacks duplicates. Fresh processes only.

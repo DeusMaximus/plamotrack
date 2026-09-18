@@ -11,12 +11,16 @@ import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import {
   Button,
+  CardList,
+  CardMeta,
+  CardRow,
   Chip,
   EmptyState,
   ErrorBanner,
   Field,
   IconButton,
   Input,
+  PAGE_ACTION_FOCUS,
   PageHeader,
   Pager,
   RatingStars,
@@ -32,6 +36,7 @@ import {
 } from "../lib/labels";
 import { paginate, usePageParam, useSearchParam } from "../lib/listState";
 import { usePresentationVersion } from "../lib/presentation";
+import { useShell } from "../lib/shell";
 
 /** Would order again, in the pipeline's own vocabulary (§13.1): complete's
  * green, in-transit's amber, and danger for no. */
@@ -210,6 +215,8 @@ export function RetailersPage() {
   // The search and the page are the URL (§13.4, #232).
   const [search, setSearch] = useSearchParam("q");
   const [page, setPage] = usePageParam();
+  // Card rows are the phone's (§13.7).
+  const phone = useShell() === "phone";
   const {
     data: retailers,
     isLoading,
@@ -243,13 +250,13 @@ export function RetailersPage() {
         count={retailers === undefined ? undefined : visible.length}
         secondary={<ExportCsvButton table="retailers" />}
         actions={
-          <Button icon={Plus} onClick={() => setModal({})}>
+          <Button icon={Plus} onClick={() => setModal({})} data-focus-key={PAGE_ACTION_FOCUS}>
             {t("retailers.addButton")}
           </Button>
         }
       />
 
-      <div className="relative w-full max-w-xs">
+      <div className="relative w-full max-w-xs max-md:max-w-none">
         <Search
           size={15}
           aria-hidden
@@ -267,8 +274,90 @@ export function RetailersPage() {
 
       {isError ? (
         <ErrorBanner message={t("retailers.loadFailed", { message: (error as Error).message })} />
+      ) : paged.total > 0 && phone ? (
+        <CardList footer={<Pager paged={paged} onPage={setPage} />}>
+          {paged.rows.map((retailer) => (
+            <CardRow
+              key={retailer.id}
+              title={retailer.name}
+              action={
+                <IconButton
+                  label={t("common.editNamed", { name: retailer.name })}
+                  onClick={() => setModal({ retailer })}
+                  data-focus-key={`retailer:${retailer.id}`}
+                >
+                  <Pencil size={16} aria-hidden />
+                </IconButton>
+              }
+            >
+              {(retailer.rating || retailer.would_order_again) && (
+                <CardMeta>
+                  {retailer.rating && (
+                    <RatingStars rating={retailer.rating} title={ratingTooltip(retailer.rating)} />
+                  )}
+                  {/* A column header says what a bare "Yes" answers; a card has
+                      none, so the chip says it. */}
+                  {retailer.would_order_again && (
+                    <Chip tone={AGAIN_TONES[retailer.would_order_again]}>
+                      {t("list.labelled", {
+                        label: t("retailers.wouldOrderAgain"),
+                        value: wouldOrderAgainLabel(retailer.would_order_again),
+                      })}
+                    </Chip>
+                  )}
+                </CardMeta>
+              )}
+              {(retailer.packing_quality || retailer.shipping_speed) && (
+                <CardMeta>
+                  <span className="min-w-0 truncate">
+                    {[
+                      retailer.packing_quality &&
+                        t("list.labelled", {
+                          label: t("retailers.headerPacking"),
+                          value: packingQualityLabel(retailer.packing_quality),
+                        }),
+                      retailer.shipping_speed &&
+                        t("list.labelled", {
+                          label: t("retailers.headerShipping"),
+                          value: shippingSpeedLabel(retailer.shipping_speed),
+                        }),
+                    ]
+                      .filter(Boolean)
+                      .join(t("common.dotSeparator"))}
+                  </span>
+                </CardMeta>
+              )}
+              {retailer.url && (
+                <CardMeta>
+                  {/* The padding is the link's target: a line of 12.5 px text is
+                      a thin thing to tap. The margin takes it back. */}
+                  <a
+                    href={retailer.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    data-focus-key={`retailer-url:${retailer.id}`}
+                    className="-my-2 min-w-0 truncate py-2 text-accent hover:underline"
+                  >
+                    {retailer.url.replace(/^https?:\/\//, "")}
+                  </a>
+                </CardMeta>
+              )}
+              {retailer.notes && (
+                <CardMeta>
+                  <span className="min-w-0 truncate">{retailer.notes}</span>
+                </CardMeta>
+              )}
+            </CardRow>
+          ))}
+        </CardList>
       ) : paged.total > 0 ? (
-        <div className="overflow-x-auto rounded-md border border-border bg-surface">
+        // `@container`: the table folds to the width this box has, not the
+        // device's (§13.7). Below 46rem (736 px) — the 707 px the full table
+        // needs, and a little — Notes leaves its column for a second,
+        // truncated line under the name. Every iPad in portrait is under it
+        // beside the rail; beside the sidebar the box is 976 px at 1280, so the
+        // desktop never is.
+        <div className="@container overflow-x-auto rounded-md border border-border bg-surface">
           <table className="w-full text-sm">
             <thead>
               <tr className={TABLE_HEAD_ROW_CLASS}>
@@ -277,7 +366,9 @@ export function RetailersPage() {
                 <th className="px-3 py-2.5">{t("retailers.headerPacking")}</th>
                 <th className="px-3 py-2.5">{t("retailers.headerShipping")}</th>
                 <th className="px-3 py-2.5">{t("retailers.headerAgain")}</th>
-                <th className="px-3 py-2.5">{t("retailers.notes")}</th>
+                <th className="px-3 py-2.5 @max-[46rem]:hidden">
+                  {t("retailers.notes")}
+                </th>
                 <th className="px-3 py-2.5" />
               </tr>
             </thead>
@@ -291,10 +382,22 @@ export function RetailersPage() {
                         href={retailer.url}
                         target="_blank"
                         rel="noreferrer"
+                        data-focus-key={`retailer-url:${retailer.id}`}
                         className="text-xs text-accent hover:underline"
                       >
                         {retailer.url.replace(/^https?:\/\//, "")}
                       </a>
+                    )}
+                    {/* `w-0 min-w-full`: as wide as the cell turns out, without a
+                        say in how wide that is — a truncating line otherwise
+                        props its column open at the full length of the note. */}
+                    {retailer.notes && (
+                      <div
+                        className="hidden w-0 min-w-full truncate text-xs text-muted @max-[46rem]:block"
+                        title={retailer.notes}
+                      >
+                        {retailer.notes}
+                      </div>
                     )}
                   </td>
                   <td className="px-3 py-2">
@@ -319,13 +422,20 @@ export function RetailersPage() {
                       "—"
                     )}
                   </td>
-                  <td className="max-w-48 truncate px-3 py-2 text-muted" title={retailer.notes ?? ""}>
+                  <td
+                    className="max-w-48 truncate px-3 py-2 text-muted @max-[46rem]:hidden"
+                    title={retailer.notes ?? ""}
+                  >
                     {retailer.notes ?? "—"}
                   </td>
-                  <td className="px-2 py-2 text-end">
+                  {/* `touch:px-0`: the 44 px target carries its own margin around
+                      the icon, so a touch table needs no more width than a
+                      mouse's — one fold line serves both. */}
+                  <td className="px-2 py-2 text-end touch:px-0">
                     <IconButton
                       label={t("common.editNamed", { name: retailer.name })}
                       onClick={() => setModal({ retailer })}
+                      data-focus-key={`retailer:${retailer.id}`}
                     >
                       <Pencil size={15} aria-hidden />
                     </IconButton>

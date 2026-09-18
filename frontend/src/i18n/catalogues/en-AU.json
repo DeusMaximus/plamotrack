@@ -79,7 +79,12 @@
     "pagination": "Pages",
     "page": "Page {{page}}",
     "sortLabel": "Sort",
-    "filterByStatus": "Filter by status"
+    "filterByStatus": "Filter by status",
+    "filterAndSort": "Filter and sort",
+    "filterAndSortActive_one": "Filter and sort, {{countDisplay}} filter active",
+    "filterAndSortActive_other": "Filter and sort, {{countDisplay}} filters active",
+    "clearFilters": "Clear",
+    "labelled": "{{label}}: {{value}}"
   },
   "validation": {
     "nameRequired": "Name is required",
@@ -624,7 +629,9 @@
     "confirmDelete": "Delete \"{{name}}\"? This cannot be undone.",
     "sortRecent": "Newest first",
     "sortCreated": "Oldest first",
-    "sortName": "Name A–Z"
+    "sortName": "Name A–Z",
+    "showCount_one": "Show {{countDisplay}} kit",
+    "showCount_other": "Show {{countDisplay}} kits"
   },
   "inventory": {
     "title": "Inventory",
@@ -676,6 +683,7 @@
     "filterByCategory": "Filter by category",
     "allCategories": "All categories",
     "restock": "restock",
+    "lowAt": "low at {{threshold}}",
     "headerOnHand": "On hand",
     "headerRefCost": "Ref. cost",
     "headerCondition": "Condition",
@@ -844,6 +852,11 @@
     "filterByStatus": "Filter by status",
     "sortPlaced": "Newest first",
     "sortRecent": "Recently changed",
+    "showCount_one": "Show {{countDisplay}} order",
+    "showCount_other": "Show {{countDisplay}} orders",
+    "itemCount_one": "{{countDisplay}} item",
+    "itemCount_other": "{{countDisplay}} items",
+    "shippedDate": "Shipped {{date}}",
     "stockOnReceipt": "stock applies on receipt",
     "shippingLine": "Shipping",
     "shippingLineWith": "Shipping · {{service}}",

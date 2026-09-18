@@ -46,7 +46,12 @@ export function Button({
 /** An icon-only control — a row's edit pencil, a dialog's close — named for
  *  assistive tech and the tooltip by `label`. Faint at rest (the 3:1 UI floor),
  *  the text colour on hover. 28 px for a mouse; the 44 px touch target under
- *  `touch:` (§13.7), the icon the same size inside it. */
+ *  `touch:` (§13.7), the icon the same size inside it. Not `shrink-0`: in a
+ *  row narrower than what stands in it — a phone's card under a browser font
+ *  size that makes this 110 px — it gives way, down to a floor and no further;
+ *  the size is in rem and follows the preference, the floor is in px because a
+ *  finger does not (Codex #266, finding 7). At the default size the floor is
+ *  the size, so nothing moves. */
 export function IconButton({
   label,
   className = "",
@@ -58,7 +63,7 @@ export function IconButton({
       type="button"
       aria-label={label}
       title={label}
-      className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-faint transition-colors hover:bg-chip hover:text-text focus:outline-none focus:ring-1 focus:ring-accent touch:h-11 touch:w-11 ${className}`}
+      className={`inline-flex h-7 w-7 min-w-[28px] items-center justify-center rounded-sm text-faint transition-colors hover:bg-chip hover:text-text focus:outline-none focus:ring-1 focus:ring-accent touch:h-11 touch:w-11 touch:min-w-[44px] ${className}`}
       {...props}
     >
       {children}
@@ -189,6 +194,12 @@ export function PageTitle({ children, count }: { children: ReactNode; count?: nu
   );
 }
 
+/** The focus key of a page's primary action (`lib/focusKey.ts`). It is one node
+ *  in every shell, so it needs no key for itself: it carries one for the
+ *  `secondary` beside it, which a phone does not draw and which names this as
+ *  its stand-in. */
+export const PAGE_ACTION_FOCUS = "page-action";
+
 /** The head of a page. From 768 px up it is what the pages always had: the
  *  title (and a list's count), with the page's actions at the far end. In the
  *  phone shell (§13.7) it is a bar across the top that stays while the page
@@ -261,11 +272,26 @@ export function PageHeader({
 /** A list table's footer (§13.4): the range shown and, past one page, the
  *  pager — the ends and a window around the current page. The page is URL
  *  state, so the caller owns it. */
-export function Pager({ paged, onPage }: { paged: Paged<unknown>; onPage: (page: number) => void }) {
+export function Pager({
+  paged,
+  onPage,
+  className = "border-t border-rule",
+}: {
+  paged: Paged<unknown>;
+  onPage: (page: number) => void;
+  /** The rule above it, by default — a list whose rows are separate cards
+   *  (Orders on a phone) has no box for the pager to be the foot of. */
+  className?: string;
+}) {
   const { t } = useTranslation();
+  // A page is 44 px on a phone (§13.7): five of them, and the pages on their
+  // own line when they do not fit beside the range.
+  const phone = useShell() === "phone";
   return (
-    <div className="flex items-center justify-between gap-4 border-t border-rule px-3.5 py-3 text-xs text-muted tabular-nums">
-      <span>
+    <div
+      className={`flex items-center justify-between gap-x-4 gap-y-1 px-3.5 py-3 text-xs text-muted tabular-nums max-md:flex-wrap max-md:px-2 ${className}`}
+    >
+      <span className="max-md:px-1.5">
         {t("list.range", {
           from: formatNumber(paged.from),
           to: formatNumber(paged.to),
@@ -274,7 +300,7 @@ export function Pager({ paged, onPage }: { paged: Paged<unknown>; onPage: (page:
       </span>
       {paged.pages > 1 && (
         <nav aria-label={t("list.pagination")} className="flex items-center gap-1">
-          {pageWindow(paged.page, paged.pages).map((page, index) =>
+          {pageWindow(paged.page, paged.pages, phone).map((page, index) =>
             page === null ? (
               <span key={`gap-${index}`} aria-hidden className="px-1 text-faint">
                 …
@@ -285,6 +311,12 @@ export function Pager({ paged, onPage }: { paged: Paged<unknown>; onPage: (page:
                 type="button"
                 aria-label={t("list.page", { page: formatNumber(page) })}
                 aria-current={page === paged.page ? "page" : undefined}
+                // The pager is the table's foot in one shell and the card list's
+                // in the other, and a phone's window is shorter: a page that is
+                // in neither hands the keyboard to the current one, which is in
+                // both (`lib/focusKey.ts`).
+                data-focus-key={`page:${page}`}
+                data-focus-stand-in={`page:${paged.page}`}
                 onClick={() => onPage(page)}
                 className={`min-w-6.5 rounded-sm px-1.5 py-1 text-xs tabular-nums touch:min-h-11 touch:min-w-11 ${
                   page === paged.page
@@ -331,4 +363,67 @@ export function Chip({
       {children}
     </span>
   );
+}
+
+/** The grade, as the compact chip the artboards draw beside a kit's name. */
+export function GradeChip({ grade }: { grade: string }) {
+  return (
+    <span className="inline-flex h-5 items-center rounded-sm bg-chip px-1.5 text-[11.5px] font-semibold tracking-wide text-text">
+      {grade}
+    </span>
+  );
+}
+
+/** A list page on a phone (§13.7): card rows in place of the table — one
+ *  bordered box, a hairline between rows, the pager as its foot. The rows are
+ *  `CardRow`s; a page whose rows are separate cards (Orders) lays out its own. */
+export function CardList({ children, footer }: { children: ReactNode; footer?: ReactNode }) {
+  return (
+    <div className="rounded-md border border-border bg-surface">
+      <ul className="divide-y divide-rule">{children}</ul>
+      {footer}
+    </div>
+  );
+}
+
+/** One card row: what it is on the first line, its facts on the second, and
+ *  the row's one control at the end — the desktop's visible "Edit {name}"
+ *  button at the 44 px touch size, not the whole row as a tap target, so the
+ *  accessible names are the same in every shell (§13.7). `below` is a row of
+ *  its own under both, the full width of the card: Inventory's stepper line. */
+export function CardRow({
+  title,
+  action,
+  below,
+  children,
+}: {
+  title: ReactNode;
+  action: ReactNode;
+  below?: ReactNode;
+  /** The lines under the title — `CardMeta`s. */
+  children?: ReactNode;
+}) {
+  return (
+    <li className="ps-3.5 pe-0.5">
+      {/* The title's column is `flex-[1_1_8rem]`, not `flex-1`: the same room
+          at the default size — it grows to the line either way — and a share
+          to give way *from* under a browser font size that makes the pencil
+          beside it 110 px: with a basis of 0 the column got what the pencil
+          left, 38 px of a 320 px phone at 40 px; with 8rem each gives way in
+          proportion, the pencil to its 44 px floor (Codex #266, finding 7). */}
+      <div className="flex min-h-11 items-center gap-1">
+        <div className="flex min-w-0 flex-[1_1_8rem] flex-col gap-1.5 py-2.5">
+          <div className="truncate text-[15px] font-medium text-text">{title}</div>
+          {children}
+        </div>
+        {action}
+      </div>
+      {below}
+    </li>
+  );
+}
+
+/** A card's line of facts: chips keep their size, words give way. */
+export function CardMeta({ children }: { children: ReactNode }) {
+  return <div className="flex min-w-0 items-center gap-2 text-[12.5px] text-muted">{children}</div>;
 }

@@ -12,6 +12,11 @@
  *  Compile-time typing (src/i18n/i18next.d.ts) already refuses a typo in a
  *  static `t("...")` literal; this file owes the rest.
  */
+/// <reference types="node" />
+// Node's fs, as tokens.test.ts and shell.test.ts read the stylesheet: the
+// duplicate-key check needs each catalogue's text, which no import keeps.
+import { readFileSync, readdirSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -50,6 +55,7 @@ import { CATALOGUES as REGISTRY } from "./registry";
 import {
   catalogueProblems,
   compareToSource,
+  duplicateKeys,
   flattenCatalogue,
   placeholderNames,
   pluralCategories,
@@ -107,6 +113,16 @@ describe("the validators refuse what they must (standing negative controls)", ()
   it("a bare key colliding with its plural forms", () => {
     const entries = flatten({ n: "x", n_one: "y", n_other: "z" });
     expect(catalogueProblems(entries, "en-AU")).toContain('"n" exists both bare and plural-suffixed');
+  });
+
+  it("a key declared twice in one object, which the parser swallows", () => {
+    // The second wins and nothing downstream can tell: the parsed catalogue is
+    // well-formed. Same name in two different objects is not a duplicate.
+    const text = '{ "orders": { "shippedOn": "Shipped on", "n": "x", "shippedOn": "Shipped {{date}}" }, "home": { "shippedOn": "y" }, "list": [{ "a": 1 }, { "a": 2 }], "orders": {} }';
+    expect(JSON.parse(text).orders).toEqual({});
+    expect(duplicateKeys(text)).toEqual(["orders.shippedOn", "orders"]);
+    // A quote or a brace inside a value is not structure.
+    expect(duplicateKeys('{ "a": "say \\"a\\": {", "b": "}", "c": { "a": "fine" } }')).toEqual([]);
   });
 
   it("an incomplete plural set for the language", () => {
@@ -189,6 +205,20 @@ describe("the shipped manifest and catalogues pass", () => {
     // derivation is ever replaced with a hand-written list again.
     for (const tag of Object.keys(CATALOGUES)) {
       expect(i18n.hasResourceBundle(tag, "translation"), tag).toBe(true);
+    }
+  });
+
+  it("no catalogue or manifest declares a key twice", () => {
+    const files = [
+      new URL("./manifest.json", import.meta.url),
+      ...readdirSync(new URL("./catalogues/", import.meta.url))
+        .filter((name) => name.endsWith(".json"))
+        .map((name) => new URL(`./catalogues/${name}`, import.meta.url)),
+    ];
+    // Every registered catalogue is a file here, or this looked at too few.
+    expect(files.length).toBeGreaterThanOrEqual(Object.keys(CATALOGUES).length + 1);
+    for (const file of files) {
+      expect(duplicateKeys(readFileSync(file, "utf8")), file.pathname).toEqual([]);
     }
   });
 

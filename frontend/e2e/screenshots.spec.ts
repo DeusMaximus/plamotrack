@@ -411,7 +411,9 @@ async function captureSignedIn(p: Page, theme: Theme, starterSheet: Buffer): Pro
   // Orders, with the pending Mecha Supply Co order expanded so its lines show.
   await shot("orders", { width: 1440, height: 820 }, async () => {
     await p.goto("/orders");
-    await expect(p.getByText("MS-91055")).toBeVisible();
+    // `visible`: the row also holds the number for where the table folds its
+    // column away (#258), hidden at this width.
+    await expect(p.getByText("MS-91055").filter({ visible: true })).toBeVisible();
     await p.getByRole("row").filter({ hasText: "MS-91055" }).first().click();
     await expect(p.getByText("Mr. Color Thinner 400")).toBeVisible();
     return p;

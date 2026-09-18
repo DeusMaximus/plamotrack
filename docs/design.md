@@ -2468,10 +2468,11 @@ Unchanged from the original plan:
     the #120 consolidation (#122) land here: Home replaces the board (§13.2)
 12. 🔨 **M6.6 — Phone and tablet UI:** the interface's own layout below 1280 px —
     a bottom tab bar on a phone, an icon rail on a tablet and in a narrow window,
-    the desktop untouched — before M7 because the phone is the camera the photos
-    will come from. Decided 17/09/2026 (§13.7); four PRs, each shippable alone to
-    `main` (#257–#260), the first — the three shells, touch sizes, home-screen
-    install — built
+    the desktop untouched (but for the Orders table folding to its box, §13.7) —
+    before M7 because the phone is the camera the photos will come from. Decided
+    17/09/2026 (§13.7); four PRs, each shippable alone to
+    `main` (#257–#260), the first two — the three shells, touch sizes and
+    home-screen install; card rows, the filter sheet and the table folds — built
 13. 🔨 **M7 — Photos:** local-volume upload + gallery, archive integration, and the
     §9.2 storage decision closed before implementation
 14. 🔨 **M8 — Public showcase:** genuinely separate anonymous read routes and a
@@ -2885,7 +2886,9 @@ milestone M6.5):
 
 §13.5 promised a phone and tablet layout that is "its own UI rather than a squeezed
 desktop". It comes before M7 because the phone is the camera the photos will come
-from. **The layout at 1280 px and wider does not change.**
+from. **The layout at 1280 px and wider does not change** — with one exception the
+owner made on 18/09/2026, when #258 found the desktop's Orders table wider than its
+box with ordinary rows: that table folds to its box there too ("Built — #258").
 
 **Measured on v0.4.1-alpha.** Every page and dialog was captured at 390, 744, 820,
 1024, 1080, 1133, 1180, 1210 and 1366 px on the screenshot spec's demo data. The
@@ -3014,3 +3017,207 @@ and tablet e2e, screenshots, the release (#260).
   shows against itself — with one deliberate exception the demo data does not
   draw: on a mixed order's Home card the tag now sits 1.2 px higher, centred on
   its line, and the card is 0.2 px shorter.
+
+**Built — #258.** What the build decided, and what it measured:
+
+- **Cards are chosen in JS, folds in CSS.** Below 768 px `useShell()` renders
+  card rows in place of the table on Kits, Orders, Inventory and Retailers —
+  different things, so the hook; a row keeps the desktop's visible
+  "Edit {name}" control at 44 px rather than becoming a tap target itself. From
+  768 px a table folds by **container queries** on its own box (`@container`),
+  as Home lays out. Access tokens is the one list that swaps table for cards in
+  CSS, by its box and not the shell: the Settings pane is two columns beside
+  the rail, so its box is under the table's width on every iPad in portrait.
+- **The fold lines come from ordinary rows, not the demo's.** The issue's
+  figures (953 px for Orders) were measured on the screenshot spec's data,
+  where no order is both shipped and received; one that is says
+  "27/08/2026 · 9 d" where the demo says a date, and with that and a
+  seventeen-character order number the Orders table needs **1040 px** whole,
+  **935 px** with the order number under the retailer's name, and **625 px**
+  with Shipped and Received under the status chip and Tracking in the expanded
+  lines. The lines sit a little over what was measured: Orders 66rem (1056 px)
+  and 60rem (960 px), Kits 48rem (Grade and Scale to the name's second line;
+  needs 732), Retailers 46rem (Notes to a truncated line under the name; needs
+  707), Access tokens 36rem (cards below; a populated row needs 553). Beside the
+  rail that gives an 11-inch iPad Pro in landscape the whole Orders table, a
+  1180 px iPad and a mini the first fold, and 1024–1080 px and every portrait
+  the second. A line is a guess about rows nobody has typed yet — so what a line
+  cannot know gives way instead (below), and past that the box still scrolls, as
+  it always did.
+- **A fold moves what a column said; it never drops it, and never says it
+  twice.** A received order shows its delivery date with the days it took *and*
+  its ship date under the chip — both columns moved. A null moves as nothing:
+  no separator after a kit's grade when no number or series follows, no empty
+  line under a pending order's chip.
+- **The folds answer the box at every width, the desktop's included** (the
+  owner's call, 18/09/2026) — the one place this milestone changes the layout
+  from 1280 px up. With those ordinary rows `main`'s Orders table was 60 px
+  wider than its box at 1280 px (the box is the viewport less 306 px beside the
+  sidebar), so it scrolled inside the box with the edit control off its edge,
+  until about 1345 px: the defect the milestone exists to remove, surviving in
+  the one range it had promised to leave alone, and invisible on the demo data
+  every width had been measured on. So from 1280 to 1361 px the order number
+  rides under the retailer's name, and from 1362 px — a 1366 px laptop, a
+  13-inch iPad in landscape — the table is whole; that is why the first line is
+  66rem and not a rounder number above it. Kits, Retailers and Access tokens
+  never fold beside the sidebar: their boxes are well over their lines from
+  1280 px. The build first gated the folds below 1280 px and had its spec *pin*
+  the desktop's overflow so that the exception could not outlive its cause; the
+  pin went with the gate.
+- **What a line cannot know gives way instead** (Codex #266, finding 2). The
+  lines were measured with the default formatting and ordinary references, and
+  neither is fixed. The date style and the formatting locale are instance
+  settings (§6.1), and `full` writes the Received cell "Thursday, 27 August 2026
+  · 9 d": held to one line, as #120 had it, the Orders table was 121 px wider
+  than its box at 1280 px and the edit control off its edge at every width. A
+  USPS tracking number is twenty-two digits where Japan Post's is thirteen, and
+  at 1366 px, where nothing folds, it alone put the table 49 px past its box. So
+  a cell's rigidity is decided **by its value**. A date the locale writes in
+  digits — ten characters at most — stays on one line with what follows it; one
+  written in words may wrap (`dateInDigits` — a length standing in for a
+  shape: ten characters is as long as a numeric date gets in the locales it was
+  run in, and the containment tests, not the rule, are what hold the tables).
+  A reference no wider than the measured one — 115 px for a tracking number,
+  82 px between an order number's hyphens, at the table's 14 px — is a plain
+  word; a wider one may break anywhere, down to lines as wide as that budget.
+  **Wider on screen, not longer in characters** (round 2, finding 5: thirteen
+  `W`s are 183 px where thirteen digits are 115): each reference is measured,
+  by the browser, as the widest piece it will not break — an invisible copy
+  laid out at `min-content` in one ruler per table (`ReferenceRuler`,
+  `OrdersPage.tsx`), reached through a portal so it is never inside a fold's
+  `display: none` half, holding the text as a pseudo-element's content so that
+  a test's `getByText` cannot prefer it to the visible text, at the table's own
+  `tabular-nums` because a canvas cannot be told those and measures digits
+  narrower. By the value and not for every row, because `overflow-wrap:
+  anywhere` lowers a column's minimum width and a table squeezes every column
+  that has give: applied to every row it re-laid-out the ordinary ones, the
+  desktop's included — and in Chromium it also *reshapes* the text, kerning
+  stopping at every break opportunity, so a plain 105 px word became 110 and
+  wrapped at the cell's edge with nothing squeezed at all.
+  The same question found a sibling nobody had reported — a revoked token's
+  "revoked {date}" was the one date on the Access tokens table held to a line,
+  and under `full` that table was up to 73 px wider than the 576 px box that
+  first shows it. Home had paid for this once already (Codex #237, P3-2: the mail
+  cards under full dates); the list pages were built without asking it again.
+- **A card says who it is whatever stands beside it** (finding 1). An order's
+  total is as long as the order has currencies, and beside a retailer's name
+  that could shrink and a total that could not, "JPY 2,800 + USD 45.00 + EUR
+  34.00" left the name 0 px — on a card that fitted the screen exactly, so every
+  bounds check passed it. The name keeps 8rem whatever stands beside it — or the
+  whole line, whichever is less: rem follows the browser's font-size preference
+  and the card does not, and at 32 px an unconditional 8rem was 256 px in a
+  94 px column with the name's start 57 px off the left of the screen (round 2,
+  finding 6; the stock stepper's row wraps for the same reason) — and a
+  total that leaves it less takes a line of its own, where it may wrap too. The
+  facts under it wrap where they used to end in an ellipsis: a card is the only
+  place a phone says them, and a date in words is as long as the settings make
+  it. A name longer than the card's whole line still ends in an ellipsis — the
+  artboards' one-line title — but never in less than the line.
+- **A row's controls give way to a physical floor, and the identifying text
+  keeps its share** (round 3, finding 7). Everything on a card is in rem — the
+  stepper's two squares, the pencil, the line-items toggle, the padding — and
+  follows the browser's font-size preference; the card's width is the phone's.
+  At 32 px on a 320 px phone the stepper (two 88 px squares and a count) was
+  46 px past its card; at 40 px the toggle and the pencil, 90 and 110 px, left
+  the retailer's name 38 px and pushed the total out of its column. Two rules,
+  both in px because what they name is physical. A **target's floor is a
+  finger's**: a square is 2.75rem where the row has room and gives way to 44 px
+  and no further where it has not (`min-w-[44px]`, and no `shrink-0` on a
+  control that stands in a card's row — `IconButton` under `touch:`, the toggle
+  at its own 36 px); the 4 px between the stepper's targets and the count's
+  40 px room likewise. And the **identifying column has a share to give way
+  from**: `flex-[1_1_8rem]` rather than `flex-1` — the same room at the default
+  size, since it grows to the line either way — so that where the row is
+  narrower than what stands in it each item yields in proportion to its size
+  and the controls reach their floors first; with a basis of 0 the column got
+  what the controls left. The count is not a target and never gives way: it is
+  read in full, and a count wider than the row less two fingers is the one
+  thing this cannot hold — four digits fit a 320 px phone at 32 px, two at 40.
+  At 16 px every floor is the size, so nothing moves — the pixel comparison
+  says so, not the reasoning. Tested at 32 *and* 40 px: the second point found
+  the pencil and the toggle, which a fix for the stepper alone would not have.
+- **A fold keeps a hidden copy of what it moves**, at every width, because CSS
+  can show and hide but not move. Nothing a person uses sees it — it is
+  `display: none` to a screen reader, to find-in-page and to a copy — but
+  `getByText("MS-91055")` does, and became a strict-mode violation at 1440 px,
+  where nothing folds; the screenshot spec found it. A test that reads a row's
+  text asks for the one on screen (`.filter({ visible: true })`).
+- **`touch:px-0` on a table's pencil cell.** The 44 px target carries its own
+  margin round a 15 px icon, so under `touch:` the cell drops its padding and a
+  touch table needs exactly what a mouse's does — one set of lines for both.
+  It is load-bearing at the narrow end: with the padding the folded Orders
+  table needs 641 px of the 638 a 768 px iPad gives it.
+- **The filter sheet is `Modal` with `sheet`** — the same focus trap, Escape
+  and inert page, risen from the foot of the screen — on Kits and Orders. It
+  edits a draft: status toggles with each status's count from `GET /summary`,
+  series or retailer as a native select, the sort segmented, *Clear*, and a
+  primary button that says what it will show ("Show 5 kits") through the same
+  pure filter the page reads (`lib/listFilters.ts`), with the page's search
+  still applied. Applying writes every parameter in one navigation, each
+  dropped at its default, so the sheet leaves the URL the desktop's selects and
+  a Home link would (§13.4). The control that opens it counts the active
+  filters; a sort is an order, not a filter. No grab handle: nothing drags.
+  Inventory keeps its one category select on the page and Retailers has only a
+  search — a sheet for one select is a detour.
+- **Focus comes back by record, not by name** (`lib/focusKey.ts`). Across the
+  768 px line a `<tr>`'s pencil and a card's are two nodes, and `PageHeader`'s
+  remedy (one tree) is not available to a table. So a control that is drawn per
+  shell carries `data-focus-key="kit:<id>"`, and two things read it. `Modal`,
+  which returns focus to the node that opened it: at close, if the opener is
+  gone, it focuses whatever carries that key now. And `useFocusAcrossShells`,
+  called where the shell is chosen: with no dialog at all, a rotation destroys
+  the *focused* row control, focus falls to `<body>` and the next Tab starts from
+  the top of the page — so after the swap the keyboard goes to the control for
+  the same record. Not the accessible name, though §13.7 keeps names equal
+  across shells, because here names are not unique: two kits from one order line
+  share one, three orders from one shop on one day share "Edit {shop} {date}",
+  and every upgrade's button says "Apply to kit". The inline status filter
+  carries the sheet opener's key, so a sheet closed after a turn to landscape —
+  or the turn alone — hands the keyboard to the filters that replaced it.
+  Someone who clicked away from a row is not taken back to it: the `focusout` of
+  a click-away and of a removed node are identical when dispatched, and what
+  separates them is whether the node is still in the page one microtask later
+  (measured; the comment there has the order of events). The second reader was
+  found by a screenshot: Playwright's full-page capture makes the viewport 1 × 1
+  for a moment, and a focus ring `main` drew was missing from the branch's.
+- **The rule those are instances of: every change of representation accounts for
+  the focused control** (Codex #266, findings 3 and 4 — the class of #265's
+  finding 1). The build had answered it for the instances it thought of: the
+  rows, a dialog's opener, the Status filter. The review found four more selects
+  and the tokens' Revoke; a sweep that focuses *every* control and changes the
+  page under it found the rest — the pager's pages, a retailer's link, Export
+  CSV, the tracking link, and the whole navigation, which #257 draws as three
+  sets of nodes. Three additions. **A stand-in**: a control some shape does not
+  draw names the one that takes its place there (`data-focus-stand-in`, several
+  in order) — the Series, Retailer and Sort selects name the sheet's opener,
+  Export CSV the page's primary action, a page the phone's short pager lacks the
+  current page, the tracking link the control that opens the lines, and what a
+  phone keeps under More names that tab. The way back is one control for several,
+  and deliberately the first of them. **A control that is no longer drawn**: a
+  container query hides a focused control with no shell change and no render at
+  all — an iPad Air turning is the rail both ways — so a `ResizeObserver` on the
+  focused control (on its nearest sized ancestor when it is inline, as a text
+  link is) hands the keyboard to the *drawn* carrier of its key; both copies of
+  a CSS swap carry one key, and the forgetting rule learned that a control a
+  fold has just hidden is connected too and nobody left it. **The navigation**
+  carries keys as the rows do. The guard is the sweep itself
+  (`lists.spec.ts`, "no change of representation leaves the keyboard on
+  `<body>`"): every focusable control, the three ways the page can change under
+  it. It says only *never nowhere*; the named tests beside it say where.
+- **The pager on a phone** offers five pages at most — the ends and the current
+  page with a neighbour either side — at 44 px each, on their own line when
+  they do not fit beside the range: the desktop's window is nine entries from
+  the middle of a long list, wider than the screen.
+- **The guard**: `e2e/lists.spec.ts`, in all three projects, on rows it seeds —
+  the from-empty suite had only ever seen empty lists. It carries each field's
+  null as well as its widest value; its run tag is digits, because the tag is a
+  word of the retailer's name and a segment of the order number, and in base 36
+  the table's width moved 25 px from one run to the next. Beyond the sampled
+  viewports it gives every table's box **every width** from 634 to 1300 px: a
+  fold line a few pixels short is a band a few pixels wide between any two sizes
+  a suite samples. Since Codex #266 it also seeds the *wide* row — an order in
+  three currencies, thirty-two digits of order number, thirty of tracking — runs
+  the phone's tests from 320 px, and has a sibling, `lists.settings.spec.ts`,
+  that asks the fit questions again under every date style (in the `settings`
+  project, after everything else: it flips the singleton every date is written
+  with).

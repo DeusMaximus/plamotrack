@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Pencil, Plus } from "lucide-react";
-import { useMemo, useState } from "react";
+import { Minus, Pencil, Plus } from "lucide-react";
+import { type ReactNode, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
@@ -19,12 +19,16 @@ import { ExportCsvButton } from "../components/ExportCsvButton";
 import { Modal } from "../components/Modal";
 import {
   Button,
+  CardList,
+  CardMeta,
+  CardRow,
   Chip,
   EmptyState,
   ErrorBanner,
   Field,
   IconButton,
   Input,
+  PAGE_ACTION_FOCUS,
   PageHeader,
   Pager,
   Select,
@@ -34,6 +38,7 @@ import { currencyOptions, formatMoney, formatNumber, majorToMinor, minorToMajor,
 import { counted, itemTypeLabel, itemTypePlural } from "../lib/labels";
 import { paginate, useEnumParam, usePageParam, useTextParam, useWriteParams } from "../lib/listState";
 import { usePresentationVersion } from "../lib/presentation";
+import { useShell } from "../lib/shell";
 
 type Tab = "tools" | "consumables" | "upgrades" | "display-items";
 type InventoryItem = Tool | Consumable | Upgrade | DisplayItem;
@@ -487,15 +492,24 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
  * intents, and the server would apply both. Disabling at zero is cosmetic — the
  * service refuses a negative result either way — but it puts the refusal where the
  * user can see it coming instead of in an error banner.
+ *
+ * `large` is the phone's (§13.7): adjusting stock at the bench is what this page
+ * is for there, so the two buttons are full 44 px targets with the count between
+ * them — the count the table shows in its own cell. Same names, same delta.
  */
 function StockStepper({
   item,
   queryKey,
   onError,
+  large = false,
+  low = false,
 }: {
   item: InventoryItem;
   queryKey: Tab;
   onError: (message: string | null) => void;
+  large?: boolean;
+  /** At or under its low-stock threshold: the count says so in colour. */
+  low?: boolean;
 }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -518,12 +532,60 @@ function StockStepper({
     }
   };
 
+  if (large) {
+    // Two squares of 2.75rem — they follow the browser's font size, as every
+    // size here does — and never under 44 px, the finger's: the floor is in px
+    // because the target is a physical thing, not a typographic one, and so
+    // are the 4 px between the targets and the count's room for two digits.
+    // On a 320 px phone under a 32 px font the two at 88 px and the count are
+    // wider than the card's row, so the stepper takes the row's width
+    // (`max-w-full`; the wrapper's `min-w-0` lets it) and the squares give way
+    // to the floor rather than past the card (Codex #266, finding 7). The
+    // count is not a target and never gives way (`shrink-0`): it is read in
+    // full, and a count wider than the row less two fingers is the one thing
+    // this cannot hold — four digits fit a 320 px phone at 32 px, two at 40.
+    const square =
+      "inline-flex aspect-square w-11 min-w-[44px] items-center justify-center rounded-sm border border-border-strong text-text " +
+      "hover:bg-chip focus:outline-none focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:text-faint disabled:opacity-50";
+    return (
+      <span className="inline-flex max-w-full items-center gap-[4px]">
+        <button
+          type="button"
+          className={square}
+          aria-label={t("inventory.removeOne", { name: item.name })}
+          data-focus-key={`stock-remove:${item.id}`}
+          disabled={pending || item.quantity_on_hand === 0}
+          onClick={() => void adjust(-1)}
+        >
+          <Minus size={18} aria-hidden />
+        </button>
+        <span
+          className={`min-w-[40px] shrink-0 text-center text-lg font-semibold tabular-nums ${low ? "text-danger" : "text-text"}`}
+          data-testid="stock-count"
+        >
+          {formatNumber(item.quantity_on_hand)}
+        </span>
+        <button
+          type="button"
+          className={square}
+          aria-label={t("inventory.addOne", { name: item.name })}
+          data-focus-key={`stock-add:${item.id}`}
+          disabled={pending}
+          onClick={() => void adjust(1)}
+        >
+          <Plus size={18} aria-hidden />
+        </button>
+      </span>
+    );
+  }
+
   return (
     <span className="inline-flex items-center gap-1">
       <Button
         variant="secondary"
         className="px-2 py-0.5 leading-none"
         aria-label={t("inventory.removeOne", { name: item.name })}
+        data-focus-key={`stock-remove:${item.id}`}
         disabled={pending || item.quantity_on_hand === 0}
         onClick={() => void adjust(-1)}
       >
@@ -533,6 +595,7 @@ function StockStepper({
         variant="secondary"
         className="px-2 py-0.5 leading-none"
         aria-label={t("inventory.addOne", { name: item.name })}
+        data-focus-key={`stock-add:${item.id}`}
         disabled={pending}
         onClick={() => void adjust(1)}
       >
@@ -540,6 +603,72 @@ function StockStepper({
       </Button>
     </span>
   );
+}
+
+/** A stock row on a phone (§13.7): the name and its edit control; then what it
+ *  is — `facts` — beside the full-size stepper. `children` are any lines under
+ *  the name, `action` a labelled button ahead of the facts (*Apply to kit*). */
+function StockCard({
+  item,
+  tab,
+  onEdit,
+  onError,
+  facts,
+  low = false,
+  action,
+  children,
+}: {
+  item: InventoryItem;
+  tab: Tab;
+  onEdit: () => void;
+  onError: (message: string | null) => void;
+  facts?: ReactNode;
+  low?: boolean;
+  action?: ReactNode;
+  children?: ReactNode;
+}) {
+  const { t } = useTranslation();
+  return (
+    <CardRow
+      title={item.name}
+      action={
+        <IconButton
+          label={t("common.editNamed", { name: item.name })}
+          onClick={onEdit}
+          data-focus-key={`${tab}:${item.id}`}
+        >
+          <Pencil size={16} aria-hidden />
+        </IconButton>
+      }
+      below={
+        // `flex-wrap`, `ms-auto`: the stepper is two 44 px targets and a count
+        // in rem, and under a large browser font size (32 px: twice everything)
+        // it is wider than the card's line beside the facts — so it takes the
+        // next line, still at the end (the class of Codex #266, finding 6).
+        // `min-w-0`: and where that line is narrower than the stepper, the
+        // stepper takes the line's width and gives way inside it (finding 7).
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-3 pe-3">
+          <div className="flex min-w-0 items-center gap-2">
+            {action}
+            <CardMeta>{facts}</CardMeta>
+          </div>
+          <div className="ms-auto min-w-0">
+            <StockStepper item={item} queryKey={tab} onError={onError} large low={low} />
+          </div>
+        </div>
+      }
+    >
+      {children}
+    </CardRow>
+  );
+}
+
+/** A card's facts on one line, the dot between them; absent ones drop out. */
+function Facts({ values }: { values: (string | null | undefined)[] }) {
+  const { t } = useTranslation();
+  const present = values.filter((value): value is string => Boolean(value));
+  if (present.length === 0) return null;
+  return <span className="min-w-0 truncate">{present.join(t("common.dotSeparator"))}</span>;
 }
 
 export function InventoryPage() {
@@ -557,6 +686,9 @@ export function InventoryPage() {
   const [editing, setEditing] = useState<InventoryItem | null>(null);
   const [applying, setApplying] = useState<Upgrade | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Card rows are the phone's (§13.7); the four tabs stay tabs, and the one
+  // filter stays on the page — a sheet for a single select would be a detour.
+  const phone = useShell() === "phone";
 
   // The dialog confirms and reports; this is the deletion itself (§13.4).
   const removeItem = async (item: InventoryItem) => {
@@ -643,7 +775,7 @@ export function InventoryPage() {
         count={loaded === undefined ? undefined : shownCount}
         secondary={<ExportCsvButton table={EXPORT_TABLE[tab]} />}
         actions={
-          <Button icon={Plus} onClick={() => setAddOpen(true)}>
+          <Button icon={Plus} onClick={() => setAddOpen(true)} data-focus-key={PAGE_ACTION_FOCUS}>
             {t("inventory.addButton", { type: itemTypeLabel(TAB_ITEM_TYPE[tab]) })}
           </Button>
         }
@@ -683,7 +815,7 @@ export function InventoryPage() {
       {tab !== "upgrades" && categoryOptions.length > 0 && (
         <Select
           aria-label={t("inventory.filterByCategory")}
-          className="!w-auto"
+          className="!w-auto max-md:!w-full"
           value={categoryFilter}
           onChange={(event) => setCategoryFilter(event.target.value)}
         >
@@ -701,6 +833,38 @@ export function InventoryPage() {
       {tab === "tools" &&
         (tools.isError ? (
           <ErrorBanner message={t("inventory.loadFailed.tools", { message: (tools.error as Error).message })} />
+        ) : pagedTools.total && phone ? (
+          <CardList footer={<Pager paged={pagedTools} onPage={setPage} />}>
+            {pagedTools.rows.map((tool) => (
+              <StockCard
+                key={tool.id}
+                item={tool}
+                tab="tools"
+                onEdit={() => setEditing(tool)}
+                onError={setActionError}
+                facts={
+                  <Facts
+                    values={[
+                      tool.category,
+                      tool.unit_cost_reference_minor === null ||
+                      tool.unit_cost_reference_currency === null
+                        ? null
+                        : formatMoney(
+                            tool.unit_cost_reference_minor,
+                            tool.unit_cost_reference_currency,
+                          ),
+                    ]}
+                  />
+                }
+              >
+                {tool.condition_notes && (
+                  <CardMeta>
+                    <Facts values={[tool.condition_notes]} />
+                  </CardMeta>
+                )}
+              </StockCard>
+            ))}
+          </CardList>
         ) : pagedTools.total ? (
           <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full text-sm">
@@ -740,6 +904,7 @@ export function InventoryPage() {
                         <IconButton
                           label={t("common.editNamed", { name: tool.name })}
                           onClick={() => setEditing(tool)}
+                          data-focus-key={`tools:${tool.id}`}
                         >
                           <Pencil size={15} aria-hidden />
                         </IconButton>
@@ -771,6 +936,39 @@ export function InventoryPage() {
               message: (consumables.error as Error).message,
             })}
           />
+        ) : pagedConsumables.total && phone ? (
+          <CardList footer={<Pager paged={pagedConsumables} onPage={setPage} />}>
+            {pagedConsumables.rows.map((item) => {
+              const low =
+                item.low_stock_threshold !== null &&
+                item.quantity_on_hand <= item.low_stock_threshold;
+              return (
+                <StockCard
+                  key={item.id}
+                  item={item}
+                  tab="consumables"
+                  onEdit={() => setEditing(item)}
+                  onError={setActionError}
+                  low={low}
+                  facts={
+                    <>
+                      <Facts
+                        values={[
+                          item.category,
+                          item.low_stock_threshold === null
+                            ? null
+                            : t("inventory.lowAt", {
+                                threshold: formatNumber(item.low_stock_threshold),
+                              }),
+                        ]}
+                      />
+                      {low && <Chip tone="text-danger">{t("inventory.restock")}</Chip>}
+                    </>
+                  }
+                />
+              );
+            })}
+          </CardList>
         ) : pagedConsumables.total ? (
           <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full text-sm">
@@ -816,6 +1014,7 @@ export function InventoryPage() {
                           <IconButton
                           label={t("common.editNamed", { name: item.name })}
                           onClick={() => setEditing(item)}
+                          data-focus-key={`consumables:${item.id}`}
                         >
                           <Pencil size={15} aria-hidden />
                         </IconButton>
@@ -844,6 +1043,32 @@ export function InventoryPage() {
       {tab === "upgrades" &&
         (upgrades.isError ? (
           <ErrorBanner message={t("inventory.loadFailed.upgrades", { message: (upgrades.error as Error).message })} />
+        ) : pagedUpgrades.total && phone ? (
+          <CardList footer={<Pager paged={pagedUpgrades} onPage={setPage} />}>
+            {pagedUpgrades.rows.map((upgrade) => (
+              <StockCard
+                key={upgrade.id}
+                item={upgrade}
+                tab="upgrades"
+                onEdit={() => setEditing(upgrade)}
+                onError={setActionError}
+                action={
+                  <Button
+                    variant="secondary"
+                    onClick={() => setApplying(upgrade)}
+                    disabled={upgrade.quantity_on_hand === 0}
+                    data-focus-key={`apply:${upgrade.id}`}
+                  >
+                    {t("inventory.applyToKit")}
+                  </Button>
+                }
+              >
+                <CardMeta>
+                  <Facts values={[upgrade.manufacturer]} />
+                </CardMeta>
+              </StockCard>
+            ))}
+          </CardList>
         ) : pagedUpgrades.total ? (
           <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full text-sm">
@@ -872,12 +1097,14 @@ export function InventoryPage() {
                           variant="secondary"
                           onClick={() => setApplying(upgrade)}
                           disabled={upgrade.quantity_on_hand === 0}
+                          data-focus-key={`apply:${upgrade.id}`}
                         >
                           {t("inventory.applyToKit")}
                         </Button>
                         <IconButton
                           label={t("common.editNamed", { name: upgrade.name })}
                           onClick={() => setEditing(upgrade)}
+                          data-focus-key={`upgrades:${upgrade.id}`}
                         >
                           <Pencil size={15} aria-hidden />
                         </IconButton>
@@ -902,6 +1129,25 @@ export function InventoryPage() {
               message: (displayItems.error as Error).message,
             })}
           />
+        ) : pagedDisplayItems.total && phone ? (
+          <CardList footer={<Pager paged={pagedDisplayItems} onPage={setPage} />}>
+            {pagedDisplayItems.rows.map((row) => (
+              <StockCard
+                key={row.id}
+                item={row}
+                tab="display-items"
+                onEdit={() => setEditing(row)}
+                onError={setActionError}
+                facts={<Facts values={[row.category, row.scale]} />}
+              >
+                {(row.manufacturer || row.notes) && (
+                  <CardMeta>
+                    <Facts values={[row.manufacturer, row.notes]} />
+                  </CardMeta>
+                )}
+              </StockCard>
+            ))}
+          </CardList>
         ) : pagedDisplayItems.total ? (
           <div className="overflow-x-auto rounded-md border border-border bg-surface">
             <table className="w-full text-sm">
@@ -935,6 +1181,7 @@ export function InventoryPage() {
                         <IconButton
                           label={t("common.editNamed", { name: row.name })}
                           onClick={() => setEditing(row)}
+                          data-focus-key={`display-items:${row.id}`}
                         >
                           <Pencil size={15} aria-hidden />
                         </IconButton>

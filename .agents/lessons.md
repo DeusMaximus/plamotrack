@@ -1098,3 +1098,267 @@ an exactly tied instant — is what found each seam, which is the argument for
 writing that list *before* the first fix, per member of the value space the setting
 admits, and for reading a "second round in the same place" as a request to name the
 rule rather than to patch the case.
+
+## The demo data understated what the table needs (#258)
+
+#258's fold lines arrived in the issue already measured: Orders needs 953 px, Kits
+732, Retailers 706 — on the screenshot spec's demo collection, the same data the
+audit, the mockups and #257's width table were drawn from. The build folded at those
+lines, swept every box width on that data, found nothing over, and looked done.
+
+The spec that was meant to hold it seeded rows of its own, because CI's database is
+empty, and its first run at 1280 px was red: the *unfolded* table needed 1036 px in a
+976 px box. Nothing exotic was in the seed. The demo has no order that was both
+shipped and received — every received order in it was entered as received — so its
+Received column says a date, where an order that went through the pipeline says
+"27/08/2026 · 9 d". That and a seventeen-character order number are 87 px. Every
+figure in the issue was short by about that much, the lines with them, and with the
+demo's lines an iPad mini in landscape (a 1003 px box) would have shipped with the
+edit control clipped — the defect the milestone exists to remove — under a green
+sweep. The same 87 px means `main`'s desktop has been clipping that control from
+1280 to about 1345 px all along; the audit measured 1280 on the demo and called it
+fine.
+
+A demo collection is drawn to look good in a screenshot: short names, tidy numbers,
+no row in an awkward state. That makes it the wrong data to *size* anything by, and
+the wrong data to declare a width "fine" on. What would have found it on day one is
+the question the value-axis rule already asks, put to a layout: for each column, what
+is the widest ordinary thing a row can say here, and which lifecycle state says it?
+A measurement is a test result, and it inherits the blind spots of the rows it was
+taken on; when a number arrives in an issue, the rows it was measured on are part of
+the number.
+
+Two smaller things the same spec taught on the way. Its run tag was base 36 and sat
+inside the retailer's name and the order number — the two cells that set their
+columns' minimums — so the table's width moved 25 px with the letters the clock
+dealt, and a fold line passed or failed by the minute; digits are tabular in a table
+cell and the same width every run. And nine sampled viewports are nine points: the
+second Orders fold overflowed from 866 to 927 px for an afternoon and no sampled
+width was in the band. The spec now gives the box every width
+(`testing-and-review.md` → "Proving a list fits its box").
+
+## A duplicate key is invisible after the parse (#258)
+
+Adding the strings for a folded Orders row, the branch gave `orders` a `shippedOn`
+("Shipped {{date}}") — and `orders` already had a `shippedOn`, the order form's
+"Shipped on" label, four hundred lines up. `JSON.parse` keeps the last of two keys
+and says nothing. So the catalogue was well-formed, every validator passed, the
+compile-time key check passed (the key exists), the unit suite was green, and the
+order dialog's date field was labelled "Shipped {{date}}". The e2e suite would have
+caught it only where a test finds that field by its label; what did catch it was the
+screenshot spec, which happened to — a docs tool, run for another reason.
+
+Every check the catalogue has runs over the parsed object, and the defect does not
+survive parsing: it exists only in the file's text. `duplicateKeys` in
+`src/i18n/validate.ts` reads the text, with its negative control beside it. The
+general shape: when a format's parser silently resolves an ambiguity — duplicate JSON
+keys, duplicate YAML keys, a later `.env` line, two CSS declarations — a validator
+downstream of the parser cannot see what was resolved. Ask of any "the file is
+validated" claim *which representation* is validated, and whether the mistake you are
+worried about is still there by then.
+
+## One capture in ninety-six was not noise (#258)
+
+The "1280 px and wider did not move" comparison came back the way #265's had: a
+handful of captures differing from `main` by a dozen pixels at a channel delta of
+one — what `main` shows against itself. One did not fit: 218 pixels at a delta of 200,
+a 28 × 28 box on the Orders page, in one of that state's four captures. It was the
+focus ring on the last chevron the capture script had clicked: drawn by `main`,
+missing from the branch. One in four reads as timing, and the run could have been
+called clean.
+
+It was a real defect, reached by an accident of the tool. Playwright's full-page
+capture makes the viewport **1 × 1** for an instant to measure the page. On the branch
+that is the phone shell, so the table became card rows and back; the focused chevron
+was destroyed and focus fell to `<body>`. `main` has no cards, so there the same
+flicker re-dresses the page and nothing is lost. The user-facing version is an iPad
+mini turned with a keyboard attached, or a window dragged across 768 px: the control
+under the keyboard is swapped away and the next Tab starts from the top of the page.
+#258 had already handled the case with a dialog open (the review of #265 had named
+it); the same defect with no dialog had no test and no owner.
+
+Two things to keep. **A difference outside the noise floor is a finding until it is
+explained, whatever its odds** — the recipe says so, and "one in four" is the shape of
+a race, not of an artifact. And the explanation took four attempts, three of them
+reasoned and wrong: that a fold engaging blurred the control (plain resizes across
+every line kept focus); that the size container did (it happened without one); that a
+microtask after the `focusout` would find focus already restored (it runs *before*
+the layout effect, inside React's commit). Each was cheap to test and each test took
+a minute. The order of focus events around a DOM removal is not something to derive —
+`Modal`'s comment had it measured one way for one Chromium, and this session measured
+it the other way for the next. Log it, then write the rule.
+
+
+## The rule was one sentence and it was fixed by instance (#258, PR #266 round 1)
+
+#265's review had named a class — a dialog open across a rotation loses the control
+that opened it — and #258 answered the class as it understood it: rows carry a focus
+key, `Modal` reads it at close, and a second reader was added when a screenshot
+showed the same loss with no dialog. Each addition came from an instance somebody
+met. The Status filter got the sheet opener's key because the rotation test opened
+the sheet from it; the Series, Retailer and Sort selects beside it got nothing, and
+nobody focused them. Access tokens swapped its table for cards in CSS, by its box,
+and the comment on it said why that needed no focus treatment: "Revoke confirms
+through the browser's own dialog, so no `Modal` has a node here to hand focus back
+to" — an argument about the reader that existed, not about the rule.
+
+Codex's round found those five (findings 3 and 4) and said what they were: *every
+representation change must account for the focused control, including selectors and
+CSS-only swaps — extend that inventory rather than adjust the timing again.* The
+inventory, taken literally — focus every control on the page, change the page under
+it each way it can change, ask whether the keyboard is on `<body>` — found **211**
+losses at the reviewed head. Five were the review's. The rest were the pager's pages,
+a retailer's link, Export CSV, the Orders tracking link (hidden by a fold with no
+shell change at all), and the entire navigation: #257 draws it as three sets of nodes,
+it had been merged after a GO, and neither the author nor the reviewer of either PR
+had focused a nav link and turned the tablet.
+
+What to keep. **When a finding names a class, the first act is an enumeration nobody
+chose the members of.** A list written from memory is the instances already thought
+of, which is the list the defect is not on. Here the DOM could be asked; elsewhere it
+is the route registry, the spec registry, a grep — whatever produces members without
+an author. The first version of the probe reported 27 losses, because it tagged the
+controls once and a shell change replaces the nodes, so everything remounted was
+skipped: **count what the enumeration tried, not only what it found**, and a probe
+that finds *less* than the review did is broken, not reassuring. And a comment that
+explains why a rule does not apply here is a claim like any other — the tokens
+comment was checkable in thirty seconds and nobody checked it, including the agent
+that wrote it.
+
+## The widest ordinary row under the default settings (#258, PR #266 round 1)
+
+"The demo data understated what the table needs" is two entries up: the fix was to
+seed ordinary rows and sweep every box width, and the fold lines were set from that.
+The rows were ordinary; the *settings* were the defaults. `date_style` and
+`formatting_locale` are on the Settings page (rule 11), `full` writes the Received
+cell "Thursday, 27 August 2026 · 9 d", and the cell was `nowrap` — so the owner who
+picks the long style gets the Orders table 121 px past its box at 1280 px, the
+defect the milestone exists to remove, at every width. A USPS tracking number (22
+digits against Japan Post's 13) did the same at 1366 px with the defaults.
+
+It was on the PR's own "where I'd push" list — *"the fold lines are one seed under
+one formatting locale… I did not vary any of them"* — which is the uncomfortable
+part. Naming an untested axis in the brief is honest and it is not a test: the
+reviewer spent the round measuring what the author had already identified as
+unmeasured. And Home had paid for exactly this in #237 (P3-2, the mail cards under
+full dates; `settings.spec.ts` still carries the test): the question existed in the
+repo, attached to a different page.
+
+What to keep. **A value space has a settings axis** wherever the rendered width,
+order or text of a field depends on an instance setting — dates, numbers, money,
+language. **If the brief says "I did not vary X", vary X before sending it**, or say
+why it cannot be done; the list is for what is genuinely beyond the author's reach (a
+real device, a screen reader). And the remedy that fits a table is per value, not
+per column: `nowrap` everywhere or `overflow-wrap: anywhere` everywhere both change
+the rows that were fine, because a table squeezes every column that has give. The
+spec written for the fix found a sibling on its first run — a revoked token's date,
+the one `nowrap` date on the Access tokens table — which is the usual sign that the
+axis, not the instance, was what had been missing.
+
+## The count stood in for the width (#258, PR #266 round 2)
+
+Round 1's answer to "the Orders table overflows under long references" was a rule by
+character count: an order or tracking number whose longest unbreakable run was longer
+than the one the fold lines were measured with (eight characters between hyphens,
+thirteen for a tracking number) could break anywhere. Round 2 typed thirteen `W`s.
+They are 183 px where thirteen digits are 115, the rule called them ordinary, and the
+table was 33 px past its box at 1366 px — with the edit control off the edge, the
+milestone's own defect. The count had been chosen because it was easy to read off a
+string; the constraint is in pixels, and the lines had been *measured* in pixels.
+
+Measuring in pixels took four attempts, each a lesson of its own. A hidden copy of
+the text laid out at `min-content` inside the cell counts as scrollable overflow,
+and put the page 80 px past the screen. Moved inside the fold's hidden copy, it has
+no width to measure; a `ResizeObserver` re-measures it when the fold shows it, but
+the every-width sweep sets 667 widths in one synchronous loop and never gives the
+observer a frame. As DOM text, the copy is what `getByText` returns — it prefers the
+deepest match — so every "on screen exactly once" assertion went to 0. And a canvas's
+`measureText` cannot be told the table's `font-variant-numeric: tabular-nums`, so it
+measures digits 10 px narrower than the cell draws them. What holds: a ruler the
+table renders once — out of flow, no size, clipped, at the table's font and figures —
+that each reference reaches through a portal, holding its text as a pseudo-element's
+`content: attr(…)`, which is neither text nor overflow nor inside a fold.
+
+On the way, a fact about Chromium worth keeping: `overflow-wrap: anywhere` changes the
+*shaping* of the text, not only where it may break. Kerning stops at a break
+opportunity and `anywhere` puts one after every character, so "EJ482113905JP" is
+105 px as a plain word and 110 px under the property — and, given a 108 px cell,
+wrapped its last letter with nothing squeezed at all. "Apply the wrap class to every
+reference and let the floor hold the minimum" fails on that alone.
+
+What to keep. **Measure in the unit the constraint is in, and in the place the
+constraint applies** — a table cell's width is decided by the browser, at that cell's
+font, and no proxy (a count, a canvas, a copy elsewhere) agreed with it to the pixel.
+**A hidden copy of text has four ways to leak** — into overflow, into a test's text
+query, into a screen reader, into a fold that hides it — and the way to have none of
+them is to not put text in the DOM. And **a review's second round finds the proxy the
+first round's fix leaned on**; the brief's "where I'd push" said "`Reference` counts
+characters, and the lines were measured in pixels" before the reviewer did, which is
+the pattern the round-1 lesson above already names: an axis the author can name is
+one the author can vary.
+
+## The browser's font size is an axis (#258, PR #266 round 2)
+
+Finding 6: a phone's order card reserved 8rem for the retailer's name so that a total
+in three currencies could not squeeze it out (round 1's fix). The reservation is in
+rem; the card's width is the phone's. With Chromium's default font size at 32 px —
+a preference in every browser's settings, and the accessibility case the milestone's
+"the lines are in rem, so they move with it" had waved at — 8rem is 256 px in a 94 px
+column, and `justify-end` put the start of the name 57 px off the left of the screen.
+The document was still exactly 320 px wide, so every bounds check passed.
+
+`min(8rem, 100%)` fixes it, and the test launches a Chromium of its own with
+`--blink-settings=defaultFontSize=32` (a launch flag, not a page setting) and asserts
+the root font size before anything else. Run across the other cards it found the
+stock stepper — three 44 px targets in rem, 272 px at that size — past a 320 px card
+whatever its row does; it wraps to its own line now, which is enough from 390 px, and
+the 320 px case is declined and recorded. Run across the pages it found the shell:
+the page head's action and the tab bar are past 320 px at that font size, which is
+#257's layout and is filed on its own.
+
+What to keep: **"it is in rem" is not evidence of fit.** Rem scales with a preference
+the layout does not control; every reservation, floor and touch size in rem has a
+font size at which it is wider than the box it sits in, and the phone's 320 px is
+where that happens first. Test one such size, and test it with the identifying text's
+own edges, not the document's.
+
+## The count was not a target (#258, PR #266 round 3)
+
+Round 2 declined the stock stepper at 320 px under a 32 px browser font: "three 44 px
+targets in rem, 272 px, in a row of 204 whatever the row does." Codex reproduced it and
+refused the arithmetic: there are two targets, the middle is a count, and a browser-only
+control with the squares held at 44 px put Add inside the card — and clicking it changed
+the stock. The decline was a miscount, and it was written in the code's own comment, in
+the test's exemption and in the coverage record: three places saying the same wrong
+number with the same confidence, each quoting the last.
+
+The fix was the class, not the instance: a target's preferred size in rem, its floor in
+px (a finger does not scale with the type), and no `shrink-0` on a control that stands
+in a card's row; and the identifying column given a share (`flex-[1_1_8rem]`) to give way
+*from*, so each item yields in proportion and the controls reach their floors first.
+Added to the test as a second point on the axis, 40 px found the pencil and the toggle
+doing to the retailer's name what the stepper had done to its card — instances a fix
+for the stepper alone would have left, and that round 2's containment check had passed
+because containment is not room.
+
+What to keep: **before declining a layout as impossible, count what is rigid and what is
+not, and try the arithmetic in the browser.** A positive control with the floors applied
+by hand takes a minute and is the difference between "cannot fit" and "did not try". And
+a decline is re-derived from the code, not repeated from a comment.
+
+## Equivalent for the seeded values (#258, PR #266 round 3)
+
+Four of round 2's fifteen mutants survived and the PR called them equivalent — the sizer
+as DOM text, the ruler without `tabular-nums`, the ruler unclipped, no re-measure on
+font arrival — each with an argument for why no value could reach the difference. The
+reviewer reached three of them in one round: twenty `1`s (114 px proportional, 182 px
+tabular — under the budget one way, over it the other, and 1091 of 1060 px at 1366);
+two hundred `W`s (a sizer wider than any box, and 3100 px of document from an unclipped
+ruler); and a held font (thirteen `8`s, 112.7 px in the fallback and 118.0 in Inter,
+with the budget between them). The fourth, W6, it could not reach either, and said so.
+
+What to keep: **"equivalent" is a claim about the mutant; "equivalent for the seeded
+values" is a claim about the seed, and the seed is the author's.** A survivor's argument
+usually names the value that would kill it ("a reference would have to be wider than the
+box") — that value is the next seed. The three are in the suite now, and the tuples
+kill.
