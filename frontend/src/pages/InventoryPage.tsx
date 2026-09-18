@@ -533,11 +533,22 @@ function StockStepper({
   };
 
   if (large) {
+    // Two squares of 2.75rem — they follow the browser's font size, as every
+    // size here does — and never under 44 px, the finger's: the floor is in px
+    // because the target is a physical thing, not a typographic one, and so
+    // are the 4 px between the targets and the count's room for two digits.
+    // On a 320 px phone under a 32 px font the two at 88 px and the count are
+    // wider than the card's row, so the stepper takes the row's width
+    // (`max-w-full`; the wrapper's `min-w-0` lets it) and the squares give way
+    // to the floor rather than past the card (Codex #266, finding 7). The
+    // count is not a target and never gives way (`shrink-0`): it is read in
+    // full, and a count wider than the row less two fingers is the one thing
+    // this cannot hold — four digits fit a 320 px phone at 32 px, two at 40.
     const square =
-      "inline-flex h-11 w-11 items-center justify-center rounded-sm border border-border-strong text-text " +
+      "inline-flex aspect-square w-11 min-w-[44px] items-center justify-center rounded-sm border border-border-strong text-text " +
       "hover:bg-chip focus:outline-none focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:text-faint disabled:opacity-50";
     return (
-      <span className="inline-flex shrink-0 items-center gap-1">
+      <span className="inline-flex max-w-full items-center gap-[4px]">
         <button
           type="button"
           className={square}
@@ -549,7 +560,7 @@ function StockStepper({
           <Minus size={18} aria-hidden />
         </button>
         <span
-          className={`min-w-10 text-center text-lg font-semibold tabular-nums ${low ? "text-danger" : "text-text"}`}
+          className={`min-w-[40px] shrink-0 text-center text-lg font-semibold tabular-nums ${low ? "text-danger" : "text-text"}`}
           data-testid="stock-count"
         >
           {formatNumber(item.quantity_on_hand)}
@@ -630,16 +641,18 @@ function StockCard({
         </IconButton>
       }
       below={
-        // `flex-wrap`, `ms-auto`: the stepper is three 44 px targets in rem, and
-        // under a large browser font size (32 px: twice everything) it is wider
-        // than the card's line beside the facts — so it takes the next line,
-        // still at the end (the class of Codex #266, finding 6).
+        // `flex-wrap`, `ms-auto`: the stepper is two 44 px targets and a count
+        // in rem, and under a large browser font size (32 px: twice everything)
+        // it is wider than the card's line beside the facts — so it takes the
+        // next line, still at the end (the class of Codex #266, finding 6).
+        // `min-w-0`: and where that line is narrower than the stepper, the
+        // stepper takes the line's width and gives way inside it (finding 7).
         <div className="flex flex-wrap items-center justify-between gap-2 pb-3 pe-3">
           <div className="flex min-w-0 items-center gap-2">
             {action}
             <CardMeta>{facts}</CardMeta>
           </div>
-          <div className="ms-auto">
+          <div className="ms-auto min-w-0">
             <StockStepper item={item} queryKey={tab} onError={onError} large low={low} />
           </div>
         </div>

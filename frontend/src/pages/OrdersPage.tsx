@@ -844,7 +844,7 @@ function OrderCard({
           aria-expanded={expanded}
           aria-label={toggleLabel}
           data-focus-key={`order-lines:${order.id}`}
-          className="inline-flex h-11 w-9 shrink-0 items-center justify-center rounded-sm text-faint focus:outline-none focus:ring-1 focus:ring-accent"
+          className="inline-flex h-11 w-9 min-w-[36px] items-center justify-center rounded-sm text-faint focus:outline-none focus:ring-1 focus:ring-accent"
           onClick={(event) => {
             event.stopPropagation();
             onToggle();
@@ -856,7 +856,12 @@ function OrderCard({
             <ChevronRight size={16} aria-hidden className="rtl:-scale-x-100" />
           )}
         </button>
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5 py-2.5">
+        {/* `flex-[1_1_8rem]`, as CardRow's column: at 40 px the toggle and the
+            pencil, 90 and 110 px in rem, left this 38 px with `flex-1`; with a
+            share of its own each gives way in proportion, the controls to their
+            floors — 36 px and 44 px, in px, a finger's — and the name keeps its
+            room (Codex #266, finding 7). */}
+        <div className="flex min-w-0 flex-[1_1_8rem] flex-col gap-1.5 py-2.5">
           {/* The retailer is who the order is, and the total is as long as the
               order has currencies — "JPY 2,800 + USD 45.00 + EUR 34.00" beside
               a name that could shrink left it 0 px (Codex #266, finding 1). So
@@ -894,11 +899,18 @@ function OrderCard({
               .join(t("common.dotSeparator"))}
           </div>
         </div>
-        <span onClick={(event) => event.stopPropagation()}>
-          <IconButton label={editLabel} onClick={onEdit} data-focus-key={`order:${order.id}`}>
-            <Pencil size={16} aria-hidden />
-          </IconButton>
-        </span>
+        {/* The row's own flex item, not wrapped: a wrapper's minimum is the
+            pencil's width, and the pencil could not give way through it. */}
+        <IconButton
+          label={editLabel}
+          onClick={(event) => {
+            event.stopPropagation();
+            onEdit();
+          }}
+          data-focus-key={`order:${order.id}`}
+        >
+          <Pencil size={16} aria-hidden />
+        </IconButton>
       </div>
       {expanded && <CardLines order={order} itemName={itemName} />}
     </li>

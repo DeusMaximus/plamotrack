@@ -1321,3 +1321,44 @@ the layout does not control; every reservation, floor and touch size in rem has 
 font size at which it is wider than the box it sits in, and the phone's 320 px is
 where that happens first. Test one such size, and test it with the identifying text's
 own edges, not the document's.
+
+## The count was not a target (#258, PR #266 round 3)
+
+Round 2 declined the stock stepper at 320 px under a 32 px browser font: "three 44 px
+targets in rem, 272 px, in a row of 204 whatever the row does." Codex reproduced it and
+refused the arithmetic: there are two targets, the middle is a count, and a browser-only
+control with the squares held at 44 px put Add inside the card — and clicking it changed
+the stock. The decline was a miscount, and it was written in the code's own comment, in
+the test's exemption and in the coverage record: three places saying the same wrong
+number with the same confidence, each quoting the last.
+
+The fix was the class, not the instance: a target's preferred size in rem, its floor in
+px (a finger does not scale with the type), and no `shrink-0` on a control that stands
+in a card's row; and the identifying column given a share (`flex-[1_1_8rem]`) to give way
+*from*, so each item yields in proportion and the controls reach their floors first.
+Added to the test as a second point on the axis, 40 px found the pencil and the toggle
+doing to the retailer's name what the stepper had done to its card — instances a fix
+for the stepper alone would have left, and that round 2's containment check had passed
+because containment is not room.
+
+What to keep: **before declining a layout as impossible, count what is rigid and what is
+not, and try the arithmetic in the browser.** A positive control with the floors applied
+by hand takes a minute and is the difference between "cannot fit" and "did not try". And
+a decline is re-derived from the code, not repeated from a comment.
+
+## Equivalent for the seeded values (#258, PR #266 round 3)
+
+Four of round 2's fifteen mutants survived and the PR called them equivalent — the sizer
+as DOM text, the ruler without `tabular-nums`, the ruler unclipped, no re-measure on
+font arrival — each with an argument for why no value could reach the difference. The
+reviewer reached three of them in one round: twenty `1`s (114 px proportional, 182 px
+tabular — under the budget one way, over it the other, and 1091 of 1060 px at 1366);
+two hundred `W`s (a sizer wider than any box, and 3100 px of document from an unclipped
+ruler); and a held font (thirteen `8`s, 112.7 px in the fallback and 118.0 in Inter,
+with the budget between them). The fourth, W6, it could not reach either, and said so.
+
+What to keep: **"equivalent" is a claim about the mutant; "equivalent for the seeded
+values" is a claim about the seed, and the seed is the author's.** A survivor's argument
+usually names the value that would kill it ("a reference would have to be wider than the
+box") — that value is the next seed. The three are in the suite now, and the tuples
+kill.

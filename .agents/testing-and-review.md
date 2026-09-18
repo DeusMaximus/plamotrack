@@ -180,6 +180,26 @@ a page-level check calls a clipped edit control fine. What #258 learned doing it
   card's), and that what a card says is not clipped (`scrollWidth` against
   `clientWidth` on the text's own element). Run the phone's tests from 320 px: wrapping
   is decided at the narrow end.
+- **"Equivalent for the seeded values" is a claim about the seed** (round 3). The author
+  called four of round 2's survivors equivalent; the reviewer distinguished three with
+  values the seed did not have — twenty narrow digits (182 px in the table's tabular
+  figures, 114 proportionally: a ruler without the figures leaves them a plain word and
+  the table past its box), a reference wider than the table's box (an unclipped ruler
+  hands it to the document), and a web font held until after the first paint (thirteen
+  digits sit either side of the budget in the fallback font and in Inter). Each is a
+  seed or a control in `lists.spec.ts` now (`NARROW_TRACKING`, `UNBOUNDED_NUMBER`,
+  `CROSSING_TRACKING`; *a reference's rule follows the font that is drawn*, which holds
+  the `.woff2` requests with `page.route` and releases them after the fallback has been
+  measured). When a survivor's argument names the value that would kill it, that value
+  is the next seed, not the closing sentence.
+- **Two points on a preference's axis, because the second decides differently** (round
+  3, finding 7). The stepper past its card at 32 px was the finding, and a fix for the
+  stepper alone passes 32 px. At 40 px the pencil and the toggle, not the stepper, left
+  the name 38 px — the same class, other instances — and only the second point showed
+  it. Test a preference at two values, the second where the first fix's neighbours are
+  at their floors. A floor the tested points never reach leaves its mutant alive (the
+  pencil's, the toggle's and the count's px floors at 40 px: F7e, F7i, F7k): say so in
+  the tuples rather than adding a third point for its own sake.
 
 **Proving the keyboard survives a change of representation** (Codex #266, findings 3–4;
 `lists.spec.ts`, "no change of representation leaves the keyboard on `<body>`"). The

@@ -46,7 +46,12 @@ export function Button({
 /** An icon-only control — a row's edit pencil, a dialog's close — named for
  *  assistive tech and the tooltip by `label`. Faint at rest (the 3:1 UI floor),
  *  the text colour on hover. 28 px for a mouse; the 44 px touch target under
- *  `touch:` (§13.7), the icon the same size inside it. */
+ *  `touch:` (§13.7), the icon the same size inside it. Not `shrink-0`: in a
+ *  row narrower than what stands in it — a phone's card under a browser font
+ *  size that makes this 110 px — it gives way, down to a floor and no further;
+ *  the size is in rem and follows the preference, the floor is in px because a
+ *  finger does not (Codex #266, finding 7). At the default size the floor is
+ *  the size, so nothing moves. */
 export function IconButton({
   label,
   className = "",
@@ -58,7 +63,7 @@ export function IconButton({
       type="button"
       aria-label={label}
       title={label}
-      className={`inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-faint transition-colors hover:bg-chip hover:text-text focus:outline-none focus:ring-1 focus:ring-accent touch:h-11 touch:w-11 ${className}`}
+      className={`inline-flex h-7 w-7 min-w-[28px] items-center justify-center rounded-sm text-faint transition-colors hover:bg-chip hover:text-text focus:outline-none focus:ring-1 focus:ring-accent touch:h-11 touch:w-11 touch:min-w-[44px] ${className}`}
       {...props}
     >
       {children}
@@ -400,8 +405,14 @@ export function CardRow({
 }) {
   return (
     <li className="ps-3.5 pe-0.5">
+      {/* The title's column is `flex-[1_1_8rem]`, not `flex-1`: the same room
+          at the default size — it grows to the line either way — and a share
+          to give way *from* under a browser font size that makes the pencil
+          beside it 110 px: with a basis of 0 the column got what the pencil
+          left, 38 px of a 320 px phone at 40 px; with 8rem each gives way in
+          proportion, the pencil to its 44 px floor (Codex #266, finding 7). */}
       <div className="flex min-h-11 items-center gap-1">
-        <div className="flex min-w-0 flex-1 flex-col gap-1.5 py-2.5">
+        <div className="flex min-w-0 flex-[1_1_8rem] flex-col gap-1.5 py-2.5">
           <div className="truncate text-[15px] font-medium text-text">{title}</div>
           {children}
         </div>

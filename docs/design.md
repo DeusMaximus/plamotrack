@@ -3113,6 +3113,29 @@ and tablet e2e, screenshots, the release (#260).
   place a phone says them, and a date in words is as long as the settings make
   it. A name longer than the card's whole line still ends in an ellipsis — the
   artboards' one-line title — but never in less than the line.
+- **A row's controls give way to a physical floor, and the identifying text
+  keeps its share** (round 3, finding 7). Everything on a card is in rem — the
+  stepper's two squares, the pencil, the line-items toggle, the padding — and
+  follows the browser's font-size preference; the card's width is the phone's.
+  At 32 px on a 320 px phone the stepper (two 88 px squares and a count) was
+  46 px past its card; at 40 px the toggle and the pencil, 90 and 110 px, left
+  the retailer's name 38 px and pushed the total out of its column. Two rules,
+  both in px because what they name is physical. A **target's floor is a
+  finger's**: a square is 2.75rem where the row has room and gives way to 44 px
+  and no further where it has not (`min-w-[44px]`, and no `shrink-0` on a
+  control that stands in a card's row — `IconButton` under `touch:`, the toggle
+  at its own 36 px); the 4 px between the stepper's targets and the count's
+  40 px room likewise. And the **identifying column has a share to give way
+  from**: `flex-[1_1_8rem]` rather than `flex-1` — the same room at the default
+  size, since it grows to the line either way — so that where the row is
+  narrower than what stands in it each item yields in proportion to its size
+  and the controls reach their floors first; with a basis of 0 the column got
+  what the controls left. The count is not a target and never gives way: it is
+  read in full, and a count wider than the row less two fingers is the one
+  thing this cannot hold — four digits fit a 320 px phone at 32 px, two at 40.
+  At 16 px every floor is the size, so nothing moves — the pixel comparison
+  says so, not the reasoning. Tested at 32 *and* 40 px: the second point found
+  the pencil and the toggle, which a fix for the stepper alone would not have.
 - **A fold keeps a hidden copy of what it moves**, at every width, because CSS
   can show and hide but not move. Nothing a person uses sees it — it is
   `display: none` to a screen reader, to find-in-page and to a copy — but

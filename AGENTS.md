@@ -124,7 +124,9 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   Modal (a dialog, or with `sheet` a bottom sheet),
                         #   FilterSheet (the phone's one filter-and-sort control, §13.7),
                         #   ui primitives (PageHeader is the page head in every shell;
-                        #   CardList/CardRow are a list page's rows on a phone),
+                        #   CardList/CardRow are a list page's rows on a phone — a row's
+                        #   controls are in rem with a px floor, a finger's, and the
+                        #   identifying column has a share to give way from, §13.7),
                         #   CatalogItemPicker (§3.9 select-or-create),
                         #   KitFormModal + OrderFormModal — the one edit dialog per record,
                         #   shared by the list pages and Home (#233)
