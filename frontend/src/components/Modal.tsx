@@ -72,38 +72,59 @@ function restoreFocus(opener: HTMLElement | null, keys: readonly string[]): void
  *  the *visual* viewport shrinks and pans over a page that is still full
  *  height, so the bar at the foot of a full-screen sheet sits under the
  *  keyboard for as long as a field is focused (Chrome for Android does the
- *  same unless the viewport meta asks otherwise). The overlay follows the
- *  visual viewport instead — its height and its offset, while the two differ —
- *  so the bar stays above the keyboard and the body, the sheet's one scroller,
- *  keeps the focused field in view. Set through the CSSOM, which the packaged
- *  stack's `style-src 'self'` permits where an inline `style` attribute is
- *  refused. The phone frames only: on a desktop the two viewports differ under
- *  pinch-zoom alone, and the centred panel's overlay scrolls on its own. */
-function useFollowVisualViewport(overlay: RefObject<HTMLDivElement | null>, follow: boolean): void {
+ *  same unless the viewport meta asks otherwise). So the phone's sheet follows
+ *  the visual viewport — its height and its offset, while the two differ — and
+ *  the bar stays above the keyboard. Measured on the iOS Simulator (iPhone 17,
+ *  iOS 27, #259), which found what the first version got wrong:
+ *
+ *  - it is the **panel** that follows, not the overlay: a shrunken overlay
+ *    uncovered the page between the bar and the keyboard, so the overlay keeps
+ *    the screen (and on a phone has the sheet's own ground, not the backdrop);
+ *  - **the focused field is scrolled back into the sheet's scroller** when the
+ *    viewport changes and when focus moves while it is shrunk: iOS scrolls a
+ *    field into view against the viewport as it was *before* the sheet
+ *    shrank, and left the tapped field under the bar.
+ *
+ *  Set through the CSSOM, which the packaged stack's `style-src 'self'`
+ *  permits where an inline `style` attribute is refused. The full-screen frame
+ *  only: the bottom sheet holds no field that raises a keyboard, and on a
+ *  desktop the two viewports differ under pinch-zoom alone. */
+function useFollowVisualViewport(panel: RefObject<HTMLDivElement | null>, follow: boolean): void {
   useEffect(() => {
     const viewport = window.visualViewport;
-    const element = overlay.current;
+    const element = panel.current;
     if (!follow || !viewport || !element) return;
+    let shrunk = false;
+    const reveal = () => {
+      const active = document.activeElement;
+      if (shrunk && active instanceof HTMLElement && active !== element && element.contains(active)) {
+        active.scrollIntoView({ block: "nearest" });
+      }
+    };
     const place = () => {
-      const covered = window.innerHeight - viewport.height;
-      if (covered < 1 && viewport.offsetTop < 1) {
-        element.style.removeProperty("top");
+      shrunk = window.innerHeight - viewport.height >= 1 || viewport.offsetTop >= 1;
+      if (!shrunk) {
+        element.style.removeProperty("margin-top");
         element.style.removeProperty("height");
         return;
       }
-      element.style.setProperty("top", `${viewport.offsetTop}px`);
+      element.style.setProperty("margin-top", `${viewport.offsetTop}px`);
       element.style.setProperty("height", `${viewport.height}px`);
+      requestAnimationFrame(reveal);
     };
+    const onFocusIn = () => requestAnimationFrame(reveal);
     viewport.addEventListener("resize", place);
     viewport.addEventListener("scroll", place);
+    element.addEventListener("focusin", onFocusIn);
     place();
     return () => {
       viewport.removeEventListener("resize", place);
       viewport.removeEventListener("scroll", place);
-      element.style.removeProperty("top");
+      element.removeEventListener("focusin", onFocusIn);
+      element.style.removeProperty("margin-top");
       element.style.removeProperty("height");
     };
-  }, [overlay, follow]);
+  }, [panel, follow]);
 }
 
 /** One of a dialog's actions, described rather than rendered: the frame draws
@@ -190,9 +211,8 @@ export function Modal({
 }) {
   const { t } = useTranslation();
   const dialogRef = useRef<HTMLDivElement>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
   const phone = useShell() === "phone";
-  useFollowVisualViewport(overlayRef, phone);
+  useFollowVisualViewport(dialogRef, phone && !sheet);
 
   useEffect(() => {
     // Captured before focus moves, so closing returns the user to the control
@@ -402,12 +422,14 @@ export function Modal({
       }
     : {
         overlay:
-          "items-start overflow-y-auto p-4 pt-12 max-md:items-stretch max-md:overflow-hidden max-md:p-0",
+          "items-start overflow-y-auto p-4 pt-12 max-md:items-stretch max-md:overflow-hidden max-md:bg-surface max-md:p-0",
         panel: `w-full bg-surface focus:outline-none md:rounded-lg md:border md:border-border-strong md:p-5 ${
           wide ? "md:max-w-3xl" : "md:max-w-md"
         } max-md:flex max-md:min-h-0 max-md:flex-col ${actions ? "" : "max-md:pb-safe"}`,
         head: "md:mb-4 max-md:h-14 max-md:border-b max-md:border-rule max-md:px-4",
-        body: "max-md:min-h-0 max-md:flex-1 max-md:overflow-y-auto max-md:overscroll-y-contain max-md:px-4 max-md:py-4",
+        // `scroll-py`: a field scrolled back into view under a raised keyboard
+        // keeps a line's breath from the head and the bar.
+        body: "max-md:min-h-0 max-md:flex-1 max-md:scroll-py-4 max-md:overflow-y-auto max-md:overscroll-y-contain max-md:px-4 max-md:py-4",
         // The desktop's row is what every form drew at its end: 16 px under the
         // last field, Delete at the start, Cancel and the primary at the end.
         foot: `md:mt-4 md:flex md:items-center md:gap-2 ${PHONE_BAR_CLASS}`,
@@ -416,7 +438,6 @@ export function Modal({
 
   return createPortal(
     <div
-      ref={overlayRef}
       className={`fixed inset-0 z-40 flex justify-center bg-backdrop ${frame.overlay}`}
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) onClose();

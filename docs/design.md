@@ -3315,12 +3315,24 @@ and tablet e2e, screenshots, the release (#260).
   alone; the WebKit runs are local (`.agents/testing-and-review.md`).
 - **The on-screen keyboard.** iOS Safari does not resize the layout viewport for
   it — the visual viewport shrinks and pans — so a bar at the foot of a
-  full-height sheet would sit under the keyboard while a field is focused. In the
-  phone frames the overlay follows the visual viewport (its height and offset,
-  through the CSSOM, which the packaged stack's CSP permits). **Not verified on a
-  device**: Playwright's WebKit has no keyboard, and the iOS Simulator needs a
-  sign-in the agent cannot make; the real-device pass is the owner's. Chrome for
-  Android's `interactive-widget` was left alone.
+  full-height sheet would sit under the keyboard while a field is focused. The
+  phone's sheet follows the visual viewport (its height and offset, through the
+  CSSOM, which the packaged stack's CSP permits). **Measured on the iOS
+  Simulator** (iPhone 17, iOS 27, Safari, 18/09/2026), which no emulation
+  replaces — it found three things. The bar did rise above the keyboard, but
+  the *tapped field was hidden*: iOS scrolls a field into view against the
+  viewport as it was before the sheet shrank, so the focused field is scrolled
+  back into the sheet's scroller when the viewport changes and when focus moves
+  while it is shrunk (with a line of scroll padding). The *page showed through*
+  between the bar and the keyboard: it is the panel that follows now, not the
+  overlay, and on a phone the overlay has the sheet's own ground. And **iOS
+  draws a date input at an intrinsic width and lets it out of its cell** — the
+  order form's date ran 30 px into the currency beside it; below 768 px a date
+  input drops the native appearance, takes the width it is given, and still
+  opens the system picker. Left alone: a sliver of the page behind the
+  keyboard's translucent top edge, which is Safari's. Still the owner's: a real
+  iPhone, an iPad, the standalone window. Chrome for Android's
+  `interactive-widget` was left alone.
 - **The applied-upgrade row wraps, and breaks words only where its box is too
   narrow for one** (Codex #272, finding 1). The kit form's row — an upgrade's
   name, its date, *Withdraw…* — was the one row of any dialog that neither

@@ -243,6 +243,17 @@ takes focus off a just-disabled control *after* the mutation observer has looked
 "Measured in Chromium" is a measurement of Chromium: where a rule is about an engine's
 focus or its timing, measure the other engine. `npx playwright install webkit` once.
 
+**The iOS Simulator is the only place an on-screen keyboard exists** (#259). Playwright's
+WebKit has none, and what iOS does to the viewport when one rises is not in any
+emulation: on #272 one simulator pass found a focused field hidden under the action
+bar, the page showing through a shrunken overlay, and a date input 30 px out of its
+grid cell — after two review rounds and a green WebKit suite. The dev Mac's
+simulators share its localhost, so Safari there opens the Vite dev server; a session
+signed in once by the owner persists in that Safari, and an agent does not type the
+password. Serve the *branch* (the previews serve the working tree), open the page
+with the simulator tool, tap, screenshot, and say in the PR which device and OS it
+was — it is one size, not a device pass.
+
 **Do not use `--repeat-each` to measure flakiness.** It reuses one module load, so
 every repeat shares the fixture name and stacks duplicates. Fresh processes only.
 
