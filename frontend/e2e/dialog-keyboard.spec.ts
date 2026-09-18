@@ -170,8 +170,9 @@ test("order line items expand from the keyboard", async ({ page }) => {
   await page.goto("/orders");
 
   // Scoped to this spec's own order, not `.first()` — on a populated instance
-  // that is whichever row happens to sort first.
-  const row = page.getByRole("row").filter({ hasText: RETAILER });
+  // that is whichever row happens to sort first. A `<tr>` from 768 px and a
+  // card's `<li>` below it (#258); the control's name is the same in both.
+  const row = page.locator("tr, li").filter({ hasText: RETAILER });
   const disclosure = row.getByRole("button", { name: /line items/ });
   await expect(disclosure).toBeVisible();
   await expect(disclosure).toHaveAttribute("aria-expanded", "false");
@@ -294,6 +295,92 @@ test("a keyboard user can select a catalog search result (#104)", async ({ page 
   await api.dispose();
 });
 
+
+test("a date input keeps its own Tab through its parts (#267's trap)", async ({ page, browserName }) => {
+  // The trap hand-drives a Tab whose next stop is something Safari would skip
+  // (#267) — and the control after the order form's "Received on" is the *Add
+  // line* button. Chromium's date input is three parts — day, month, year — and
+  // Tab walks them before it leaves the field; a trap that drove that Tab by
+  // hand would jump from the day straight to the button. So: from that date,
+  // at least two Tabs stay on the input, and the Tab that leaves it lands on
+  // the button, not past it. (The kit form's dates are followed by fields,
+  // where the engine makes the move either way — a mutant that removed the
+  // exemption survived a version of this test written there.) WebKit's date
+  // input has no parts to walk, and is skipped by name.
+  // Codex #272, finding 2: and the stop after the date is the *next control*,
+  // in every engine — WebKit left its date for the first line's type select and
+  // passed *Add line* over, inside the dialog the whole time, which containment
+  // cannot see. So the stop is asserted by name, under WebKit too; only the
+  // count of parts is Chromium's.
+  await page.goto("/orders");
+  await page.locator("tr, li").filter({ hasText: RETAILER }).getByRole("button", { name: /^Edit / }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit order" });
+  await expect(dialog.getByRole("button", { name: "Add line" })).toBeVisible();
+  const received = dialog.getByLabel("Received on");
+  // `focus()`, not a click: a click lands on whichever part is under the
+  // pointer, and the input's centre is the month.
+  await received.focus();
+  await expect(received).toBeFocused();
+  let stayed = 0;
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.press("Tab");
+    if (await received.evaluate((element) => document.activeElement === element)) stayed += 1;
+    else break;
+  }
+  if (browserName === "chromium") expect(stayed, "Tabs that stayed on the date input").toBeGreaterThanOrEqual(2);
+  await expect(dialog.getByRole("button", { name: "Add line" }), "then the button after it").toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
+  // The review's own path: a new order already in hand. The pre-order box is
+  // disabled then, so what follows the arrival date is *Add line*.
+  await page.getByRole("button", { name: "New order" }).click();
+  const fresh = page.getByRole("dialog", { name: "New order" });
+  await expect(fresh.getByRole("button", { name: "Add line" })).toBeVisible();
+  await fresh.getByLabel(/^Already in hand/).check();
+  const arrived = fresh.locator('input[type="date"]').nth(1);
+  await arrived.focus();
+  await expect(arrived).toBeFocused();
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.press("Tab");
+    if (!(await arrived.evaluate((element) => document.activeElement === element))) break;
+  }
+  await expect(fresh.getByRole("button", { name: "Add line" }), "the stop after the arrival date").toBeFocused();
+  await page.keyboard.press("Escape");
+});
+
+test("a burst of Tabs through a date input settles (Codex #272, finding 3)", async ({ page, browserName }) => {
+  // The landing check after a date input (finding 2's fix) removed itself on a
+  // zero-delay timer, and a timer does not confine it to one key's task: under
+  // native keypresses with no delay between them, several checks were pending
+  // at once, each holding a different next stop, and they sent focus back and
+  // forth between two fields — over 150 moves in 12 of 12 trials, and one run
+  // that never came back. The invariant: a pending correction is consumed by
+  // its own departure and governs no later focus change. Forty keypresses can
+  // move focus forty times and be corrected a handful more; not hundreds.
+  test.skip(browserName !== "chromium", "the burst is Chromium's: WebKit did not reproduce it");
+  await page.goto("/orders");
+  await page.getByRole("button", { name: "New order" }).click();
+  const dialog = page.getByRole("dialog", { name: "New order" });
+  await expect(dialog.getByRole("button", { name: "Add line" })).toBeVisible();
+  await page.evaluate(() => {
+    const counter = window as unknown as { __focusMoves: number };
+    counter.__focusMoves = 0;
+    document.addEventListener("focusin", () => {
+      counter.__focusMoves += 1;
+    });
+  });
+  await dialog.getByLabel("Order date").focus();
+  for (let cycle = 0; cycle < 4; cycle++) {
+    for (let i = 0; i < 5; i++) await page.keyboard.press("Tab");
+    for (let i = 0; i < 5; i++) await page.keyboard.press("Shift+Tab");
+  }
+  const moves = await page.evaluate(() => (window as unknown as { __focusMoves: number }).__focusMoves);
+  expect(moves, "focus moves for forty keypresses").toBeLessThan(80);
+  expect(await inDialog(page), `focus ended on ${await focusDescription(page)}`).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});
 
 test("submitting from the keyboard does not drop focus while the request is in flight", async ({
   page,

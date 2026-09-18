@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
@@ -73,6 +73,8 @@ export function KitFormModal({
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // The submit stands outside the <form>, in the dialog's frame (§13.7, #259).
+  const formId = useId();
   const {
     register,
     handleSubmit,
@@ -130,8 +132,37 @@ export function KitFormModal({
     <Modal
       title={kit ? t("kits.editTitle", { name: kit.name }) : t("kits.addTitle")}
       onClose={onClose}
+      actions={{
+        secondary: { label: t("common.cancel"), onClick: onClose },
+        primary: {
+          label: kit ? t("common.save") : t("kits.addSubmit"),
+          form: formId,
+          disabled: isSubmitting || deleting,
+        },
+      }}
+      destructive={
+        kit && onDelete
+          ? {
+              label: t("common.delete"),
+              disabled: isSubmitting || deleting,
+              onClick: async () => {
+                if (!window.confirm(t("kits.confirmDelete", { name: kit.name }))) return;
+                setError(null);
+                setDeleting(true);
+                try {
+                  await onDelete(kit);
+                  onClose();
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
+                } finally {
+                  setDeleting(false);
+                }
+              },
+            }
+          : undefined
+      }
     >
-      <form onSubmit={onSubmit} className="space-y-3">
+      <form id={formId} onSubmit={onSubmit} className="space-y-3">
         <ErrorBanner message={error} />
         <Field label={t("common.name")} required error={errors.name?.message}>
           <Input
@@ -139,7 +170,7 @@ export function KitFormModal({
             placeholder={t("kits.namePlaceholder")}
           />
         </Field>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-3 gap-3 stack-3:grid-cols-1">
           <Field label={t("kits.grade")} required error={errors.grade?.message}>
             <Input
               {...register("grade", { required: t("validation.gradeRequired") })}
@@ -171,7 +202,7 @@ export function KitFormModal({
             ))}
           </datalist>
         </Field>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 stack-2:grid-cols-1">
           <Field label={t("kits.status")}>
             <Select {...register("status")}>
               {KIT_STATUSES.map((status) => (
@@ -187,6 +218,7 @@ export function KitFormModal({
                 type="number"
                 min={1}
                 max={5}
+                inputMode="numeric"
                 {...register("rating", {
                   validate: (value) =>
                     value === "" ||
@@ -197,7 +229,7 @@ export function KitFormModal({
             </Field>
           )}
         </div>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 stack-2:grid-cols-1">
           <Field label={t("kits.buildStarted")}>
             <Input type="date" {...register("build_started")} />
           </Field>
@@ -210,37 +242,6 @@ export function KitFormModal({
           <Textarea {...register("build_notes")} placeholder={t("kits.buildNotesPlaceholder")} />
         </Field>
         {kit && <AppliedUpgradesSection kitId={kit.id} />}
-        <div className="flex items-center gap-2 pt-1">
-          {kit && onDelete && (
-            <Button
-              type="button"
-              variant="danger"
-              className="me-auto"
-              disabled={isSubmitting || deleting}
-              onClick={async () => {
-                if (!window.confirm(t("kits.confirmDelete", { name: kit.name }))) return;
-                setError(null);
-                setDeleting(true);
-                try {
-                  await onDelete(kit);
-                  onClose();
-                } catch (err) {
-                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
-                } finally {
-                  setDeleting(false);
-                }
-              }}
-            >
-              {t("common.delete")}
-            </Button>
-          )}
-          <Button type="button" variant="secondary" className="ms-auto" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button type="submit" disabled={isSubmitting || deleting}>
-            {kit ? t("common.save") : t("kits.addSubmit")}
-          </Button>
-        </div>
       </form>
     </Modal>
   );
@@ -295,8 +296,20 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
       <ErrorBanner message={error} />
       <ul className="space-y-1">
         {applications.map((application) => (
-          <li key={application.id} className="flex items-center justify-between gap-2 text-sm">
-            <span>
+          // The row `main` drew, where it fits: the name wraps by its words and
+          // Withdraw stays at the end. What a phone under a large browser font
+          // needed (Codex #272, finding 1 — the row was 16 px past a 390 px
+          // sheet at 32 px) is asked of the box, in two steps: the name may
+          // shrink, and a word that cannot fit its line breaks (`break-words`,
+          // which touches no word that fits); under `stack-3:` Withdraw takes
+          // the next line and the name the whole of this one. Not `flex-wrap`
+          // everywhere: a long name would send Withdraw to the next line on the
+          // desktop too, where `main` keeps it beside the name.
+          <li
+            key={application.id}
+            className="flex items-center justify-between gap-2 text-sm stack-3:flex-wrap"
+          >
+            <span className="min-w-0 break-words">
               {application.upgrade.name}
               {application.quantity_used > 1 && ` ×${formatNumber(application.quantity_used)}`}
               <span className="text-xs text-muted">
@@ -304,9 +317,16 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
                 {formatDate(application.applied_at)}
               </span>
             </span>
+            {/* The button's own word may break where the box is too narrow for
+                it, and a button whose word can break gives way to its row: *Withdraw…* is 252 px
+                under a 40 px font and a 320 px phone's row is 178 (Codex #272,
+                finding 4 — round 1 removed this as untested, and the page
+                behind the sheet had hidden the case from the test). By the box:
+                `anywhere` reshapes the text it is put on. */}
             <Button
               type="button"
               variant="secondary"
+              className="stack-2:[overflow-wrap:anywhere]"
               onClick={() => {
                 setWithdrawing(application);
                 setError(null);
@@ -317,8 +337,11 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
           </li>
         ))}
       </ul>
+      {/* The question's buttons are sentences; where the box is too narrow for
+          their longest word it may break — by the box, because `anywhere`
+          reshapes the text it is put on. */}
       {withdrawing && (
-        <div className="space-y-2 rounded-sm bg-surface-alt p-2 text-sm">
+        <div className="space-y-2 rounded-sm bg-surface-alt p-2 text-sm stack-2:[overflow-wrap:anywhere]">
           <p>
             {t("kits.withdrawPrompt", {
               name: withdrawing.upgrade.name,

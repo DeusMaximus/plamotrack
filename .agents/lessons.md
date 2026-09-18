@@ -1362,3 +1362,88 @@ values" is a claim about the seed, and the seed is the author's.** A survivor's 
 usually names the value that would kill it ("a reference would have to be wider than the
 box") — that value is the next seed. The three are in the suite now, and the tuples
 kill.
+
+## Safari does not focus a button on click (#259)
+
+`CatalogItemPicker` closes its result list when focus leaves the picker — #104's
+rule, read off `focusout`'s `relatedTarget`, written to stop a blur timer unmounting
+a result under a keyboard user mid-Tab. It assumed what Chromium does: a click on a
+button moves focus to the button, so `relatedTarget` names it and the list stays.
+Safari and Playwright's WebKit do not focus a button on click. The mousedown on a
+result took focus from the search field to nowhere, the rule read "left the picker",
+React unmounted the list, and the click landed on whatever was under the pointer by
+then. No catalog item could be picked by tap or mouse in the engine every iPhone runs
+— since #104, and nothing had run the pointer path under WebKit; the keyboard path
+had a test, and passed.
+
+Found by running the new phone spec under a throwaway WebKit config: at 320 px the
+*Change* chip never appeared, and the recorded-order test's *Record order* left the
+dialog open on a validation error. The remedy is the standard one — `preventDefault`
+on the list's mousedown keeps the input's focus through the press — and Enter and
+Space fire no mousedown.
+
+What to keep: **a rule written on focus events is a rule about one engine until the
+other has run it.** Where a control's behaviour is decided from where focus went, run
+the pointer path *and* the keyboard path under WebKit before calling it done; the
+procedure has the config.
+
+## The engine drops focus later than the mutation (#259)
+
+`Modal`'s `MutationObserver` re-focuses the dialog when the focused submit button is
+disabled mid-request — "disabling the focused element drops focus to `<body>`,
+measured in Chromium." It is measured in Chromium: there the drop is synchronous with
+the attribute, so the observer's microtask finds `activeElement === body` and acts.
+WebKit drops it *later*. The observer looked, found focus still on the button, did
+nothing; the engine then moved focus to `<body>` with no one watching, and the
+keyboard spec's submit test — never run under WebKit — went red the first time it was.
+
+The fix acts on what the mutation *means* rather than on what the engine has done
+about it yet — a focused control that is disabled or hidden now — and adds a
+`focusout`-to-nowhere check a microtask later for any cause. The first version of that
+check took the keyboard to the dialog outright, and Chromium's rotation test went red
+within the same run: on a turn across the 768 px line the phone's Delete twin is
+hidden, its `focusout` fires, and the fallback had the keyboard before
+`useFocusAcrossShells` could hand it to the desktop's twin. It asks the control's focus
+key first now and takes the keyboard only when nothing carries one.
+
+What to keep: **"measured in Chromium" is a measurement of Chromium**, and a comment
+that says so is naming its own limit. Where the rule is about an engine's timing,
+measure the other engine. And a new fallback that moves focus is a second reader of
+the focus rule (§13.7): it yields to the key, or it fights the machinery that exists.
+
+## "Inside" was the wrong question, and "untested" was the finding (#259, PR #272 round 1)
+
+Two P3s from one review, both already written down by the author as something else.
+The brief's own "where I'd push" said of the date exemption: Safari skips *Add line*
+and lands on the first line's type select — "inside because an order always has a
+line". That sentence describes a defect and files it as a proof: a keyboard user was
+passed over a control, and every assertion in the keyboard spec asked only whether
+focus was in the dialog. The checklist has had the rule since #51 — assert the named
+control, not containment — and the author applied it to the twin, the opener and the
+picker, and not to the stop after a date. And the PR's coverage record listed "the
+withdrawal question's buttons at 320 px under a large font" as explicitly untested;
+the row above those buttons was 16 px past a 390 px sheet at 32 px.
+
+What to keep: **when a sentence of yours explains why a skipped control is acceptable,
+that sentence is the test to write** — name the stop and see whether you still believe
+it. And an "explicitly untested" row is a list of the next things to seed, cheapest
+first: an applied upgrade is one API call in a `beforeAll`.
+
+## The fix for the last finding was the next finding, twice (#259, PR #272 round 2)
+
+Round 2's two real findings were both made by round 1's commit. The landing check
+after a date input cleaned itself up with `setTimeout(…, 0)` and a comment saying "for
+the length of this task" — a claim about the event loop that nothing tested; under a
+burst of undelayed Tabs several checks were pending at once, each with its own next
+stop, and they bounced focus between two fields until the page stalled. And
+*Withdraw…*'s word-breaking had been removed as "untested — no tested point needs it
+in English": the point existed (40 px, 320 px), and the test had missed it because the
+page *behind* the sheet, wider than a phone at that font, widened the layout viewport
+the sheet was measured against.
+
+What to keep: **a lifetime is part of the fix — state it as an invariant ("consumed by
+its own departure") and test the input that would violate it, not the one that
+motivated it.** Removing code because no test reaches it is only honest after asking
+whether the *test* can reach the case: assert the screen's width before measuring
+against it, and take what is not under test out of the layout. And when a second round
+lands in one function, write down that a third means restructuring.

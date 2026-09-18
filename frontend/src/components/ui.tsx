@@ -78,9 +78,18 @@ const CONTROL_CLASSES =
   "placeholder:text-muted focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent " +
   "disabled:opacity-60 max-md:text-base touch:min-h-11";
 
+/** iOS Safari draws a date input at an intrinsic width of its own and lets it
+ *  out of its cell: on an iPhone the order form's date ran 30 px into the
+ *  currency beside it (measured on the iOS Simulator, #259 — no emulation shows
+ *  it). Without the native appearance it takes the width it is given, and still
+ *  opens the system picker. Below 768 px only: the desktop's date inputs are
+ *  what they were. */
+const PHONE_DATE_CLASSES = "max-md:min-w-0 max-md:appearance-none";
+
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
   function Input({ className = "", ...props }, ref) {
-    return <input ref={ref} className={`${CONTROL_CLASSES} ${className}`} {...props} />;
+    const date = props.type === "date" ? PHONE_DATE_CLASSES : "";
+    return <input ref={ref} className={`${CONTROL_CLASSES} ${date} ${className}`} {...props} />;
   },
 );
 

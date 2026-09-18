@@ -90,6 +90,17 @@ database, capture by capture, byte for byte and then pixel for pixel:
 - **The demo data is not every state.** It draws no mixed order (so no *pre-order*
   tag), no expanded order row, no hover. Add the states your change touches, in a
   throwaway database, and measure those too.
+- **Read a difference's box before its count, and crop it.** On #259 the order
+  dialogs differed from the line row down at 1280 px and from the panel's very top
+  at 1440 × 900 — one cause: a row 4 px shorter, and at the size where the dialog is
+  taller than the screen the focus call scrolls the overlay to its nearest edge, so a
+  16 px shorter panel lands 16 px elsewhere. A crop with the differing pixels drawn
+  in red (thirty lines of `OffscreenCanvas`) told the two apart from a sub-pixel
+  rounding on one button's edge, which the count alone (146 pixels, delta 239)
+  made look like a moved control. The row's 4 px was an empty label's margin, an
+  accident `main` had; it went back in for parity, because the layout from 768 px
+  up was not the milestone's to change — say which it is, an accident kept or a
+  fix declared, rather than let the comparison decide.
 
 The capture and diff scripts were throwaway (about sixty lines each); the traps
 above are the part worth keeping.
@@ -218,6 +229,30 @@ A sweep derives its subjects from the page, so say by name which controls it mus
 have reached, and how many; and keep the named tests beside it, because "not nowhere"
 says nothing about *where*. A `ResizeObserver` cannot watch an inline element — a text
 link has no size — which is why the hook watches the nearest sized ancestor.
+
+**Run the phone specs under WebKit before calling a dialog, a picker or a focus rule
+done** (#259). Every iPhone and iPad is WebKit and CI installs Chromium alone. A
+throwaway config that spreads `playwright.config.ts` and sets `browserName: "webkit"`
+on every project but `setup` — then `npx playwright test --config <it> --project=phone
+e2e/dialog-keyboard.spec.ts e2e/dialogs.spec.ts`, and `lists.spec.ts` beside them (the
+filter sheet is a `Modal`) — found three defects Chromium never shows: the trap's
+Shift+Tab escape (#267), a picker result no click could pick (Safari does not focus a
+button on click, so the input blurred to nowhere and #104's rule unmounted the list
+before the click landed), and a submit that dropped the keyboard to `<body>` (WebKit
+takes focus off a just-disabled control *after* the mutation observer has looked).
+"Measured in Chromium" is a measurement of Chromium: where a rule is about an engine's
+focus or its timing, measure the other engine. `npx playwright install webkit` once.
+
+**The iOS Simulator is the only place an on-screen keyboard exists** (#259). Playwright's
+WebKit has none, and what iOS does to the viewport when one rises is not in any
+emulation: on #272 one simulator pass found a focused field hidden under the action
+bar, the page showing through a shrunken overlay, and a date input 30 px out of its
+grid cell — after two review rounds and a green WebKit suite. The dev Mac's
+simulators share its localhost, so Safari there opens the Vite dev server; a session
+signed in once by the owner persists in that Safari, and an agent does not type the
+password. Serve the *branch* (the previews serve the working tree), open the page
+with the simulator tool, tap, screenshot, and say in the PR which device and OS it
+was — it is one size, not a device pass.
 
 **Do not use `--repeat-each` to measure flakiness.** It reuses one module load, so
 every repeat shares the fixture name and stacks duplicates. Fresh processes only.

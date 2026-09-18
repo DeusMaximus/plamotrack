@@ -1,11 +1,12 @@
 import type { ReactNode } from "react";
 import { SlidersHorizontal } from "lucide-react";
+import { useId } from "react";
 import { useTranslation } from "react-i18next";
 
 import { formatNumber } from "../lib/format";
 import { countedPhrase } from "../lib/labels";
 import { Modal } from "./Modal";
-import { Button, MICRO_LABEL_CLASS } from "./ui";
+import { MICRO_LABEL_CLASS } from "./ui";
 
 /** Where the keyboard goes when the filter sheet closes (`Modal`'s
  *  `restoreFocus`): the control that opened it — or, if the screen was turned
@@ -63,9 +64,21 @@ export function FilterSheet({
   children: ReactNode;
 }) {
   const { t } = useTranslation();
+  // The two buttons are the sheet's own action bar (#259): *Clear* the secondary,
+  // the primary the submit of this form, which it stands outside of.
+  const formId = useId();
   return (
-    <Modal sheet title={t("list.filterAndSort")} onClose={onClose}>
+    <Modal
+      sheet
+      title={t("list.filterAndSort")}
+      onClose={onClose}
+      actions={{
+        secondary: { label: t("list.clearFilters"), onClick: onClear },
+        primary: { label: applyLabel, form: formId },
+      }}
+    >
       <form
+        id={formId}
         className="space-y-5"
         onSubmit={(event) => {
           event.preventDefault();
@@ -73,14 +86,6 @@ export function FilterSheet({
         }}
       >
         {children}
-        <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2.5 pt-1">
-          <Button type="button" variant="secondary" className="h-12 justify-center text-[15px]" onClick={onClear}>
-            {t("list.clearFilters")}
-          </Button>
-          <Button type="submit" className="h-12 justify-center text-[15px]">
-            {applyLabel}
-          </Button>
-        </div>
       </form>
     </Modal>
   );

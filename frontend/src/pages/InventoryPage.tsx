@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Minus, Pencil, Plus } from "lucide-react";
-import { type ReactNode, useMemo, useState } from "react";
+import { type ReactNode, useId, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
@@ -193,6 +193,8 @@ function ItemForm({
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // The submit stands outside the <form>, in the dialog's frame (§13.7, #259).
+  const formId = useId();
   // The typeahead half of the category vocabulary (#127) — the same device the kit
   // form gives series. The server folds a case-insensitive match onto the stored
   // spelling either way; this is what makes picking the stored spelling easy.
@@ -302,8 +304,37 @@ function ItemForm({
           : t("inventory.addTitle", { type: itemTypeLabel(TAB_ITEM_TYPE[tab]) })
       }
       onClose={onClose}
+      actions={{
+        secondary: { label: t("common.cancel"), onClick: onClose },
+        primary: {
+          label: item ? t("common.save") : t("common.add"),
+          form: formId,
+          disabled: isSubmitting || deleting,
+        },
+      }}
+      destructive={
+        item && onDelete
+          ? {
+              label: t("common.delete"),
+              disabled: isSubmitting || deleting,
+              onClick: async () => {
+                if (!window.confirm(t("common.confirmDelete", { name: item.name }))) return;
+                setError(null);
+                setDeleting(true);
+                try {
+                  await onDelete(item);
+                  onClose();
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
+                } finally {
+                  setDeleting(false);
+                }
+              },
+            }
+          : undefined
+      }
     >
-      <form onSubmit={onSubmit} className="space-y-3">
+      <form id={formId} onSubmit={onSubmit} className="space-y-3">
         <ErrorBanner message={error} />
         <Field label={t("common.name")} required error={errors.name?.message}>
           <Input {...register("name", { required: t("validation.nameRequired") })} />
@@ -329,7 +360,7 @@ function ItemForm({
         {/* Display items take a manufacturer too, but optional — the required one
             above belongs to upgrades, where the column is NOT NULL. */}
         {tab === "display-items" && (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 stack-2:grid-cols-1">
             <Field label={t("inventory.manufacturer")}>
               <Input {...register("manufacturer")} placeholder={t("inventory.manufacturerPlaceholder")} />
             </Field>
@@ -338,13 +369,13 @@ function ItemForm({
             </Field>
           </div>
         )}
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 stack-2:grid-cols-1">
           <Field label={t("inventory.quantityOnHand")}>
-            <Input type="number" min={0} {...register("quantity_on_hand", { min: 0 })} />
+            <Input type="number" min={0} inputMode="numeric" {...register("quantity_on_hand", { min: 0 })} />
           </Field>
           {tab === "consumables" && (
             <Field label={t("inventory.lowStockThreshold")}>
-              <Input type="number" min={0} {...register("low_stock_threshold")} placeholder="—" />
+              <Input type="number" min={0} inputMode="numeric" {...register("low_stock_threshold")} placeholder="—" />
             </Field>
           )}
           {tab === "tools" && (
@@ -356,6 +387,7 @@ function ItemForm({
                   // with cents and a dinar can reach its third decimal place.
                   step={stepFor(watch("unit_cost_reference_currency"))}
                   min={0}
+                  inputMode="decimal"
                   {...register("unit_cost_reference")}
                   placeholder={t("inventory.referenceCostPlaceholder")}
                 />
@@ -382,37 +414,6 @@ function ItemForm({
             <Input {...register("notes")} placeholder={t("inventory.notesPlaceholder")} />
           </Field>
         )}
-        <div className="flex items-center gap-2 pt-1">
-          {item && onDelete && (
-            <Button
-              type="button"
-              variant="danger"
-              className="me-auto"
-              disabled={isSubmitting || deleting}
-              onClick={async () => {
-                if (!window.confirm(t("common.confirmDelete", { name: item.name }))) return;
-                setError(null);
-                setDeleting(true);
-                try {
-                  await onDelete(item);
-                  onClose();
-                } catch (err) {
-                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
-                } finally {
-                  setDeleting(false);
-                }
-              }}
-            >
-              {t("common.delete")}
-            </Button>
-          )}
-          <Button type="button" variant="secondary" className="ms-auto" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button type="submit" disabled={isSubmitting || deleting}>
-            {item ? t("common.save") : t("common.add")}
-          </Button>
-        </div>
       </form>
     </Modal>
   );
@@ -444,7 +445,14 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
   };
 
   return (
-    <Modal title={t("inventory.applyTitle", { name: upgrade.name })} onClose={onClose}>
+    <Modal
+      title={t("inventory.applyTitle", { name: upgrade.name })}
+      onClose={onClose}
+      actions={{
+        secondary: { label: t("common.cancel"), onClick: onClose },
+        primary: { label: t("inventory.apply"), onClick: apply, disabled: submitting },
+      }}
+    >
       <div className="space-y-3">
         <ErrorBanner message={error} />
         <p className="text-sm text-muted">
@@ -464,18 +472,11 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
           <Input
             type="number"
             min={1}
+            inputMode="numeric"
             value={quantity}
             onChange={(event) => setQuantity(Number(event.target.value))}
           />
         </Field>
-        <div className="flex justify-end gap-2 pt-1">
-          <Button variant="secondary" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button onClick={apply} disabled={submitting}>
-            {t("inventory.apply")}
-          </Button>
-        </div>
       </div>
     </Modal>
   );

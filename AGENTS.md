@@ -121,7 +121,12 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   (backend/tests/test_settings.py holds the pair together);
                         #   extraction keeps en-AU strings byte-identical (e2e proves it)
     components/         # Layout (the three shells, §13.7: sidebar, icon rail, phone tab bar),
-                        #   Modal (a dialog, or with `sheet` a bottom sheet),
+                        #   Modal (one dialog, three frames, §13.7: the desktop's panel, the
+                        #   phone's full-screen sheet with the actions in a bar at its foot,
+                        #   and with `sheet` the bottom sheet — a form *describes* its two
+                        #   actions and its Delete, the frame draws them where the shell
+                        #   wants them — and the one focus trap, which hand-drives Tab across
+                        #   what Safari skips, #267; run the dialog specs under WebKit),
                         #   FilterSheet (the phone's one filter-and-sort control, §13.7),
                         #   ui primitives (PageHeader is the page head in every shell;
                         #   CardList/CardRow are a list page's rows on a phone — a row's
@@ -769,7 +774,7 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
      (one exception, the owner's, #258: the Orders table folds to its box there too) —
      before M7 because the phone is the camera (design §13.7). Four PRs straight to
      `main`, each shippable alone: ~~#257 the shells, touch sizes and home-screen
-     install~~ ✅, ~~#258 list pages and table folds~~ ✅, #259 sheet dialogs, #260 Home,
+     install~~ ✅, ~~#258 list pages and table folds~~ ✅, ~~#259 sheet dialogs~~ ✅, #260 Home,
      Settings, sign-in, the full phone e2e and the release
 7. Photo upload + gallery ← decide storage backend default first (§9.2)
 8. Public read-only routes + showcase page ← only after admin/MCP paths are protected
