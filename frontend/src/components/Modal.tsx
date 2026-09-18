@@ -342,13 +342,23 @@ export function Modal({
       // left the order form's arrival date for the first line's type select and
       // passed *Add line* over, inside the dialog the whole time (Codex #272,
       // finding 2). A move between parts fires no `focusin` out here (both ends
-      // retarget to the one input); the move that leaves does, within this
-      // key's own default action — so for the length of this task, focus
-      // arriving anywhere but the logical next stop is sent on to it. Wrapping
-      // from the last control stays the trap's, as it always was.
+      // retarget to the one input); the move that leaves does.
+      //
+      // The invariant (finding 3): **a pending correction is consumed by its
+      // own departure and governs no later focus change.** The first version
+      // removed itself on a zero-delay timer alone, and a timer does not
+      // confine it to one key's task: under a burst of native Tabs several
+      // were pending at once, each holding a different next stop, and they
+      // sent focus back and forth between two fields until the page stalled.
+      // So the listener removes itself *before* it sends focus anywhere, on the
+      // first arrival that is not the field itself; the timer only clears one
+      // whose Tab stayed inside the field. Wrapping from the last control stays
+      // the trap's, as it always was.
       if (!wraps && active.matches(SEGMENTED)) {
         const reconcile = (arrived: FocusEvent) => {
-          if (arrived.target !== active && arrived.target !== next) next.focus();
+          if (arrived.target === active) return;
+          dialog.removeEventListener("focusin", reconcile);
+          if (arrived.target !== next) next.focus();
         };
         dialog.addEventListener("focusin", reconcile);
         setTimeout(() => dialog.removeEventListener("focusin", reconcile), 0);

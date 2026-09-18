@@ -3296,7 +3296,14 @@ and tablet e2e, screenshots, the release (#260).
   inside the dialog the whole time, so every containment check passed. For the
   length of that key's own task, focus arriving anywhere but the logical next
   stop is sent on to it; a move between parts fires nothing out here, so the
-  parts keep their Tab. Two more WebKit-only defects fell out of running the phone
+  parts keep their Tab. **A pending correction is consumed by its own departure
+  and governs no later focus change** (round 2, finding 3): the first version
+  removed itself on a zero-delay timer alone, a timer does not confine it to
+  one key's task, and under a burst of native Tabs several were pending at
+  once, each holding a different next stop — they sent focus back and forth
+  between two fields until the page stalled. The listener removes itself before
+  it sends focus anywhere. Two rounds landed in this function; a third is a
+  reason to restructure the trap, not to patch it. Two more WebKit-only defects fell out of running the phone
   specs under it, both older than this milestone: **Safari does not focus a
   button on click**, so a mousedown on a picker result blurred the search field
   to nowhere and #104's `relatedTarget` rule unmounted the list before the click
@@ -3330,7 +3337,15 @@ and tablet e2e, screenshots, the release (#260).
   next line on the desktop too, and a short-named parity capture could not see
   it. The spec's upgrade carries a 42-character token for that reason — with a
   short name, and then a 29-character one, the remedies covered for each other
-  and their mutants survived.
+  and their mutants survived. *Withdraw…* itself may break its word under
+  `stack-2:` (round 2, finding 4): 252 px under a 40 px font in a 178 px row.
+  Round 1 had removed that as untested, and the test had not seen the case
+  because **the page behind the sheet widens what the sheet is measured
+  against**: at that font the page is wider than a phone (#269, #270), a wide
+  page widens the layout viewport, and the sheet had room the screen does not.
+  The font-size test takes the inert page out of layout while it measures and
+  asserts the screen's width. A selected catalog item's long name pushing
+  *Change* off the sheet is the same family and older than this work: #273.
 - Also: checkbox rows a finger tall with the label the target; the picker's
   result rows a finger tall; `inputmode` numeric on quantities and a rating,
   decimal on money; the touch sizes on the remove control, the retailer's add

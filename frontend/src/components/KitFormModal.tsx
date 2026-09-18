@@ -317,9 +317,16 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
                 {formatDate(application.applied_at)}
               </span>
             </span>
+            {/* The button's own word may break where the box is too narrow for
+                it, and a button whose word can break gives way to its row: *Withdraw…* is 252 px
+                under a 40 px font and a 320 px phone's row is 178 (Codex #272,
+                finding 4 — round 1 removed this as untested, and the page
+                behind the sheet had hidden the case from the test). By the box:
+                `anywhere` reshapes the text it is put on. */}
             <Button
               type="button"
               variant="secondary"
+              className="stack-2:[overflow-wrap:anywhere]"
               onClick={() => {
                 setWithdrawing(application);
                 setError(null);

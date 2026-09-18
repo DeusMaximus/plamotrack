@@ -246,6 +246,26 @@ async function expectUpgradeNameReads(page: Page, label: string, phone: boolean)
   if (phone) expect.soft(read.width, `${label}: the name has a field's room`).toBeGreaterThanOrEqual(Math.min(FIELD_ROOM_REM * read.rem, read.row - 1));
 }
 
+/** Measure the sheet against the *screen*. Under a large browser font the page
+ *  behind it is wider than a phone (#269, #270 — the shell's and the cards',
+ *  filed), and a page wider than the screen widens the layout viewport: a sheet
+ *  measured against that has room the screen does not. It hid a button 3 px
+ *  past a 320 px screen and 43 px past its own card (Codex #272, finding 4).
+ *  The page is inert under the dialog and the dialog a portal beside it, so the
+ *  page is taken out of layout while the sheet is measured, and the screen's
+ *  width is asserted, not assumed. */
+async function isolateSheet(page: Page, width: number, label: string): Promise<void> {
+  await page.evaluate(() => {
+    (document.getElementById("root") as HTMLElement).style.display = "none";
+  });
+  await expect.poll(() => page.evaluate(() => innerWidth), `${label}: the screen the sheet is measured against`).toBe(width);
+}
+async function restorePage(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    (document.getElementById("root") as HTMLElement).style.display = "";
+  });
+}
+
 /** On screen, inside the viewport, and what a tap at its centre lands on. */
 async function expectUnderAFinger(control: Locator, label: string): Promise<void> {
   await expect(control, label).toBeVisible();
@@ -599,6 +619,7 @@ test("a dialog fits a phone under the browser's own font-size preference", async
         const at = `at ${size.width} px, ${font} px font`;
         await openFromList(page, `/kits?q=${q}`, `Edit ${NAMES.kit}`);
         expect(await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), "the root font size").toBe(font);
+        await isolateSheet(page, size.width, `Edit kit ${at}`);
         await expectDialogFits(page, `Edit kit ${at}`, true, false);
         await expectDialogInsideScreen(page, `Edit kit ${at}`);
         // Codex #272, finding 1: the applied upgrade's row — its name, its date
@@ -627,14 +648,17 @@ test("a dialog fits a phone under the browser's own font-size preference", async
           await expectUnderAFinger(button, `${at}: "${name}"`);
           expect.soft((await button.boundingBox())?.height, `${at}: "${name}" is a finger tall`).toBeGreaterThanOrEqual(FINGER);
         }
+        await restorePage(page);
         await page.keyboard.press("Escape");
         await openFromList(page, "/orders", "New order");
         // The form is gated on its queries (a cold cache in a browser of its
         // own): its loading state has no control to measure.
         await expect(dialog(page).getByRole("button", { name: "Add line" })).toBeVisible();
+        await isolateSheet(page, size.width, `New order ${at}`);
         await expectDialogFits(page, `New order ${at}`, true, false);
         await expectDialogInsideScreen(page, `New order ${at}`);
         await expectUnderAFinger(dialog(page).getByRole("button", { name: "Record order", exact: true }), `${at}: "Record order"`);
+        await restorePage(page);
         await page.keyboard.press("Escape");
       }
       await context.close();

@@ -349,6 +349,39 @@ test("a date input keeps its own Tab through its parts (#267's trap)", async ({ 
   await page.keyboard.press("Escape");
 });
 
+test("a burst of Tabs through a date input settles (Codex #272, finding 3)", async ({ page, browserName }) => {
+  // The landing check after a date input (finding 2's fix) removed itself on a
+  // zero-delay timer, and a timer does not confine it to one key's task: under
+  // native keypresses with no delay between them, several checks were pending
+  // at once, each holding a different next stop, and they sent focus back and
+  // forth between two fields — over 150 moves in 12 of 12 trials, and one run
+  // that never came back. The invariant: a pending correction is consumed by
+  // its own departure and governs no later focus change. Forty keypresses can
+  // move focus forty times and be corrected a handful more; not hundreds.
+  test.skip(browserName !== "chromium", "the burst is Chromium's: WebKit did not reproduce it");
+  await page.goto("/orders");
+  await page.getByRole("button", { name: "New order" }).click();
+  const dialog = page.getByRole("dialog", { name: "New order" });
+  await expect(dialog.getByRole("button", { name: "Add line" })).toBeVisible();
+  await page.evaluate(() => {
+    const counter = window as unknown as { __focusMoves: number };
+    counter.__focusMoves = 0;
+    document.addEventListener("focusin", () => {
+      counter.__focusMoves += 1;
+    });
+  });
+  await dialog.getByLabel("Order date").focus();
+  for (let cycle = 0; cycle < 4; cycle++) {
+    for (let i = 0; i < 5; i++) await page.keyboard.press("Tab");
+    for (let i = 0; i < 5; i++) await page.keyboard.press("Shift+Tab");
+  }
+  const moves = await page.evaluate(() => (window as unknown as { __focusMoves: number }).__focusMoves);
+  expect(moves, "focus moves for forty keypresses").toBeLessThan(80);
+  expect(await inDialog(page), `focus ended on ${await focusDescription(page)}`).toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+});
+
 test("submitting from the keyboard does not drop focus while the request is in flight", async ({
   page,
 }) => {

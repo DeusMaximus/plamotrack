@@ -1428,3 +1428,22 @@ What to keep: **when a sentence of yours explains why a skipped control is accep
 that sentence is the test to write** — name the stop and see whether you still believe
 it. And an "explicitly untested" row is a list of the next things to seed, cheapest
 first: an applied upgrade is one API call in a `beforeAll`.
+
+## The fix for the last finding was the next finding, twice (#259, PR #272 round 2)
+
+Round 2's two real findings were both made by round 1's commit. The landing check
+after a date input cleaned itself up with `setTimeout(…, 0)` and a comment saying "for
+the length of this task" — a claim about the event loop that nothing tested; under a
+burst of undelayed Tabs several checks were pending at once, each with its own next
+stop, and they bounced focus between two fields until the page stalled. And
+*Withdraw…*'s word-breaking had been removed as "untested — no tested point needs it
+in English": the point existed (40 px, 320 px), and the test had missed it because the
+page *behind* the sheet, wider than a phone at that font, widened the layout viewport
+the sheet was measured against.
+
+What to keep: **a lifetime is part of the fix — state it as an invariant ("consumed by
+its own departure") and test the input that would violate it, not the one that
+motivated it.** Removing code because no test reaches it is only honest after asking
+whether the *test* can reach the case: assert the screen's width before measuring
+against it, and take what is not under test out of the layout. And when a second round
+lands in one function, write down that a third means restructuring.
