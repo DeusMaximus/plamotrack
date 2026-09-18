@@ -3290,7 +3290,13 @@ and tablet e2e, screenshots, the release (#260).
   is Close, and one Tab out after the last field. The trap now hand-drives a Tab
   whose next stop is anything an engine might skip, and leaves to the engine the
   moves every engine makes alike — which keeps a date input's own Tab through its
-  day, month and year. Two more WebKit-only defects fell out of running the phone
+  day, month and year. Where the engine *lands* when it leaves such a field is
+  still the trap's to check (Codex #272, finding 2): WebKit left the order form's
+  arrival date for the first line's type select and passed *Add line* over —
+  inside the dialog the whole time, so every containment check passed. For the
+  length of that key's own task, focus arriving anywhere but the logical next
+  stop is sent on to it; a move between parts fires nothing out here, so the
+  parts keep their Tab. Two more WebKit-only defects fell out of running the phone
   specs under it, both older than this milestone: **Safari does not focus a
   button on click**, so a mousedown on a picker result blurred the search field
   to nowhere and #104's `relatedTarget` rule unmounted the list before the click
@@ -3308,6 +3314,23 @@ and tablet e2e, screenshots, the release (#260).
   device**: Playwright's WebKit has no keyboard, and the iOS Simulator needs a
   sign-in the agent cannot make; the real-device pass is the owner's. Chrome for
   Android's `interactive-widget` was left alone.
+- **The applied-upgrade row wraps, and breaks words only where its box is too
+  narrow for one** (Codex #272, finding 1). The kit form's row — an upgrade's
+  name, its date, *Withdraw…* — was the one row of any dialog that neither
+  folded nor wrapped: under a 32 px browser font it was 16 px past a 390 px
+  sheet and 86 px past a 320 px one, and the body scrolled sideways. The PR's
+  coverage record had listed that state as untested; the review walked it.
+  The row stays the row `main` drew where it fits: the name may shrink, and a
+  word no line can hold breaks (`break-words`, which touches no word that
+  fits); under `stack-3:` Withdraw takes the next line and the name the whole of
+  this one; and the question's buttons, which are sentences, may break inside a
+  word under `stack-2:` — by the box and not everywhere, because `overflow-wrap:
+  anywhere` reshapes the text it is put on (above). Not `flex-wrap` at every
+  width, the first remedy tried: a long name would have sent Withdraw to the
+  next line on the desktop too, and a short-named parity capture could not see
+  it. The spec's upgrade carries a 42-character token for that reason — with a
+  short name, and then a 29-character one, the remedies covered for each other
+  and their mutants survived.
 - Also: checkbox rows a finger tall with the label the target; the picker's
   result rows a finger tall; `inputmode` numeric on quantities and a rating,
   decimal on money; the touch sizes on the remove control, the retailer's add

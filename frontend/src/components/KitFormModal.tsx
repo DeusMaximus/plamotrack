@@ -296,8 +296,20 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
       <ErrorBanner message={error} />
       <ul className="space-y-1">
         {applications.map((application) => (
-          <li key={application.id} className="flex items-center justify-between gap-2 text-sm">
-            <span>
+          // The row `main` drew, where it fits: the name wraps by its words and
+          // Withdraw stays at the end. What a phone under a large browser font
+          // needed (Codex #272, finding 1 — the row was 16 px past a 390 px
+          // sheet at 32 px) is asked of the box, in two steps: the name may
+          // shrink, and a word that cannot fit its line breaks (`break-words`,
+          // which touches no word that fits); under `stack-3:` Withdraw takes
+          // the next line and the name the whole of this one. Not `flex-wrap`
+          // everywhere: a long name would send Withdraw to the next line on the
+          // desktop too, where `main` keeps it beside the name.
+          <li
+            key={application.id}
+            className="flex items-center justify-between gap-2 text-sm stack-3:flex-wrap"
+          >
+            <span className="min-w-0 break-words">
               {application.upgrade.name}
               {application.quantity_used > 1 && ` ×${formatNumber(application.quantity_used)}`}
               <span className="text-xs text-muted">
@@ -318,8 +330,11 @@ function AppliedUpgradesSection({ kitId }: { kitId: string }) {
           </li>
         ))}
       </ul>
+      {/* The question's buttons are sentences; where the box is too narrow for
+          their longest word it may break — by the box, because `anywhere`
+          reshapes the text it is put on. */}
       {withdrawing && (
-        <div className="space-y-2 rounded-sm bg-surface-alt p-2 text-sm">
+        <div className="space-y-2 rounded-sm bg-surface-alt p-2 text-sm stack-2:[overflow-wrap:anywhere]">
           <p>
             {t("kits.withdrawPrompt", {
               name: withdrawing.upgrade.name,

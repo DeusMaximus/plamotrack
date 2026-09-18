@@ -307,7 +307,11 @@ test("a date input keeps its own Tab through its parts (#267's trap)", async ({ 
   // where the engine makes the move either way — a mutant that removed the
   // exemption survived a version of this test written there.) WebKit's date
   // input has no parts to walk, and is skipped by name.
-  test.skip(browserName !== "chromium", "Chromium's date input is segmented");
+  // Codex #272, finding 2: and the stop after the date is the *next control*,
+  // in every engine — WebKit left its date for the first line's type select and
+  // passed *Add line* over, inside the dialog the whole time, which containment
+  // cannot see. So the stop is asserted by name, under WebKit too; only the
+  // count of parts is Chromium's.
   await page.goto("/orders");
   await page.locator("tr, li").filter({ hasText: RETAILER }).getByRole("button", { name: /^Edit / }).click();
   const dialog = page.getByRole("dialog", { name: "Edit order" });
@@ -323,8 +327,25 @@ test("a date input keeps its own Tab through its parts (#267's trap)", async ({ 
     if (await received.evaluate((element) => document.activeElement === element)) stayed += 1;
     else break;
   }
-  expect(stayed, "Tabs that stayed on the date input").toBeGreaterThanOrEqual(2);
+  if (browserName === "chromium") expect(stayed, "Tabs that stayed on the date input").toBeGreaterThanOrEqual(2);
   await expect(dialog.getByRole("button", { name: "Add line" }), "then the button after it").toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+
+  // The review's own path: a new order already in hand. The pre-order box is
+  // disabled then, so what follows the arrival date is *Add line*.
+  await page.getByRole("button", { name: "New order" }).click();
+  const fresh = page.getByRole("dialog", { name: "New order" });
+  await expect(fresh.getByRole("button", { name: "Add line" })).toBeVisible();
+  await fresh.getByLabel(/^Already in hand/).check();
+  const arrived = fresh.locator('input[type="date"]').nth(1);
+  await arrived.focus();
+  await expect(arrived).toBeFocused();
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.press("Tab");
+    if (!(await arrived.evaluate((element) => document.activeElement === element))) break;
+  }
+  await expect(fresh.getByRole("button", { name: "Add line" }), "the stop after the arrival date").toBeFocused();
   await page.keyboard.press("Escape");
 });
 

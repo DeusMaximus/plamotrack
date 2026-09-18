@@ -73,7 +73,13 @@ const NAMES = {
   kit: `${TAG} Zaku`,
   consumable: `${TAG} Cement`,
   tool: `${TAG} Nippers`,
-  upgrade: `${TAG} Thrusters`,
+  // A long unbroken token, as a product code is: the applied-upgrade row has to
+  // give Withdraw the next line where the two do not share one, and break the
+  // token where no line holds it — 42 characters are wider than a 390 px phone's
+  // row at the default font (a short name let the row's remedies cover for each
+  // other, and a 29-character one fitted every tested line: mutants survived
+  // both, Codex #272 round 1).
+  upgrade: `${TAG} MSN-04-II-NIGHTINGALE-VERNIER-THRUSTER-SET`,
 };
 
 let retailerId: string;
@@ -81,6 +87,7 @@ let kitId: string;
 let consumableId: string;
 let toolId: string;
 let upgradeId: string;
+let applicationId: string;
 
 test.beforeAll(async () => {
   const api = await apiContext();
@@ -94,11 +101,17 @@ test.beforeAll(async () => {
   consumableId = await made("/consumables", { name: NAMES.consumable, category: "glue", quantity_on_hand: 2 });
   toolId = await made("/tools", { name: NAMES.tool, category: "nippers", quantity_on_hand: 1 });
   upgradeId = await made("/upgrades", { name: NAMES.upgrade, manufacturer: "E2E", quantity_on_hand: 3 });
+  // The kit carries an applied upgrade, so its dialog draws the applied-upgrades
+  // row and the withdrawal question — the state Codex #272 found unexamined:
+  // under a 32 px font that row was 16 px past a 390 px sheet (finding 1).
+  applicationId = await made(`/upgrades/${upgradeId}/apply`, { kit_id: kitId, quantity: 2 });
   await api.dispose();
 });
 
 test.afterAll(async () => {
   const api = await apiContext();
+  // First: an upgrade with an application on record refuses deletion (rule 3).
+  await api.delete(`/upgrades/${upgradeId}/applications/${applicationId}?restore_stock=true`);
   await api.delete(`/kits/${kitId}`);
   await api.delete(`/consumables/${consumableId}`);
   await api.delete(`/tools/${toolId}`);
@@ -140,8 +153,20 @@ async function expectDialogFits(page: Page, label: string, phone = true, pageToo
     const fields = controls.filter(isField).map((field) => ({ field, rect: field.getBoundingClientRect() }));
     const outside: string[] = [];
     const squeezed: string[] = [];
+    const uncarded: string[] = [];
     for (const control of controls) {
       const rect = control.getBoundingClientRect();
+      // Inside the screen is not inside its card: a button 15 px past the
+      // bordered box it belongs to is still on a 320 px screen. Every box with
+      // a border or a ground of its own between the control and the dialog.
+      for (let box = control.parentElement; box && box !== element; box = box.parentElement) {
+        if (!/(^|\s)(border|bg-surface-alt)(\s|$)/.test(box.className.toString())) continue;
+        const bounds = box.getBoundingClientRect();
+        if (rect.left < bounds.left - 0.5 || rect.right > bounds.right + 0.5) {
+          uncarded.push(`${say(control)} [${Math.round(rect.left)}–${Math.round(rect.right)}] outside its box [${Math.round(bounds.left)}–${Math.round(bounds.right)}]`);
+          break;
+        }
+      }
       if (rect.left < -0.5 || rect.right > innerWidth + 0.5) {
         outside.push(`${say(control)} [${Math.round(rect.left)}–${Math.round(rect.right)}] of ${innerWidth}`);
       }
@@ -161,6 +186,7 @@ async function expectDialogFits(page: Page, label: string, phone = true, pageToo
       controls: controls.length,
       outside,
       squeezed,
+      uncarded,
       sideways,
       document: [document.documentElement.scrollWidth, document.documentElement.clientWidth],
     };
@@ -168,6 +194,7 @@ async function expectDialogFits(page: Page, label: string, phone = true, pageToo
   expect(report.controls, `${label}: no control in the dialog`).toBeGreaterThan(0);
   expect.soft(report.outside, `${label}: controls past the screen's edge`).toEqual([]);
   expect.soft(report.squeezed, `${label}: fields under the room a field needs`).toEqual([]);
+  expect.soft(report.uncarded, `${label}: controls past the edge of their own box`).toEqual([]);
   expect.soft(report.sideways, `${label}: something in the dialog scrolls sideways`).toEqual([]);
   if (pageToo) expect.soft(report.document[0], `${label}: the document scrolls sideways`).toBeLessThanOrEqual(report.document[1]);
 }
@@ -199,6 +226,24 @@ async function scrollToTop(page: Page): Promise<void> {
     }
     window.scrollTo(0, 0);
   });
+}
+
+/** The applied upgrade's name in its row: never cut — a token wider than its
+ *  line breaks rather than running under Withdraw — and, on a phone, with the
+ *  room a field has, which is what giving Withdraw the next line is for. */
+async function expectUpgradeNameReads(page: Page, label: string, phone: boolean): Promise<void> {
+  const name = dialog(page).locator("li").getByText(NAMES.upgrade).first();
+  await expect.soft(name, `${label}: the applied upgrade's name`).toBeVisible();
+  const read = await name.evaluate((element) => ({
+    cut: element.scrollWidth > element.clientWidth + 1,
+    width: element.getBoundingClientRect().width,
+    row: (element.closest("li") as HTMLElement).clientWidth,
+    rem: parseFloat(getComputedStyle(document.documentElement).fontSize),
+  }));
+  expect.soft(read.cut, `${label}: the name runs past its own box`).toBe(false);
+  // A field's room, or the whole row where the row is less than that — a
+  // 320 px phone under a 40 px font, where the row is all there is.
+  if (phone) expect.soft(read.width, `${label}: the name has a field's room`).toBeGreaterThanOrEqual(Math.min(FIELD_ROOM_REM * read.rem, read.row - 1));
 }
 
 /** On screen, inside the viewport, and what a tap at its centre lands on. */
@@ -317,6 +362,11 @@ test("every dialog fits a phone's screen and is the panel it was on a tablet", a
       await openFromList(page, `/kits?q=${q}`, `Edit ${NAMES.kit}`);
       await expectDialogFits(page, `Edit kit ${at}`, isPhone(size));
       await expectFrame(page, "Save", `Edit kit ${at}`);
+      // The applied upgrade's row, and the question its Withdraw opens.
+      await expectUpgradeNameReads(page, `Edit kit ${at}`, isPhone(size));
+      await dialog(page).getByRole("button", { name: "Withdraw…", exact: true }).click();
+      await expect(dialog(page).getByRole("button", { name: /^Withdraw — / }).first()).toBeVisible();
+      await expectDialogFits(page, `Edit kit ${at}, the withdrawal question open`, isPhone(size));
       await page.keyboard.press("Escape");
     });
 
@@ -551,6 +601,15 @@ test("a dialog fits a phone under the browser's own font-size preference", async
         expect(await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), "the root font size").toBe(font);
         await expectDialogFits(page, `Edit kit ${at}`, true, false);
         await expectDialogInsideScreen(page, `Edit kit ${at}`);
+        // Codex #272, finding 1: the applied upgrade's row — its name, its date
+        // and Withdraw — and the question under it, before and after it opens.
+        const withdraw = dialog(page).getByRole("button", { name: "Withdraw…", exact: true });
+        await expect(withdraw, `${at}: the applied upgrade's row`).toBeVisible();
+        await expectUpgradeNameReads(page, `Edit kit ${at}`, true);
+        await withdraw.click();
+        await expect(dialog(page).getByRole("button", { name: /^Withdraw — / }).first()).toBeVisible();
+        await expectDialogFits(page, `Edit kit ${at}, the withdrawal question open`, true, false);
+        await expectDialogInsideScreen(page, `Edit kit ${at}, the withdrawal question open`);
         // Three across where the body has 20.25rem for them — a 744 px phone
         // at 32 px has 21.25 — and one to a row where it has not: 390 and 320.
         const [grade, scale, body] = await Promise.all([
@@ -562,7 +621,9 @@ test("a dialog fits a phone under the browser's own font-size preference", async
         expect.soft(stacked, `${at}: the three-across row folds by its box (${body} px)`).toBe((body ?? 0) < 20.25 * font);
         if (!stacked) expect.soft(grade!.width, `${at}: a field of the row has its room`).toBeGreaterThanOrEqual(FIELD_ROOM_REM * font);
         for (const name of ["Save", "Cancel"]) {
-          const button = dialog(page).getByRole("button", { name, exact: true });
+          // The bar's: with the withdrawal question open it has a Cancel too,
+          // earlier in the form.
+          const button = dialog(page).getByRole("button", { name, exact: true }).last();
           await expectUnderAFinger(button, `${at}: "${name}"`);
           expect.soft((await button.boundingBox())?.height, `${at}: "${name}" is a finger tall`).toBeGreaterThanOrEqual(FINGER);
         }

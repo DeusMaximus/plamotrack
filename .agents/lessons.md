@@ -1411,3 +1411,20 @@ that says so is naming its own limit. Where the rule is about an engine's timing
 measure the other engine. And a new fallback that moves focus is a second reader of
 the focus rule (§13.7): it yields to the key, or it fights the machinery that exists.
 
+## "Inside" was the wrong question, and "untested" was the finding (#259, PR #272 round 1)
+
+Two P3s from one review, both already written down by the author as something else.
+The brief's own "where I'd push" said of the date exemption: Safari skips *Add line*
+and lands on the first line's type select — "inside because an order always has a
+line". That sentence describes a defect and files it as a proof: a keyboard user was
+passed over a control, and every assertion in the keyboard spec asked only whether
+focus was in the dialog. The checklist has had the rule since #51 — assert the named
+control, not containment — and the author applied it to the twin, the opener and the
+picker, and not to the stop after a date. And the PR's coverage record listed "the
+withdrawal question's buttons at 320 px under a large font" as explicitly untested;
+the row above those buttons was 16 px past a 390 px sheet at 32 px.
+
+What to keep: **when a sentence of yours explains why a skipped control is acceptable,
+that sentence is the test to write** — name the stop and see whether you still believe
+it. And an "explicitly untested" row is a list of the next things to seed, cheapest
+first: an applied upgrade is one API call in a `beforeAll`.

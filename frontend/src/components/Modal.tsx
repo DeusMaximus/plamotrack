@@ -337,11 +337,23 @@ export function Modal({
           : first
         : focusable[backwards ? index - 1 : index + 1];
       // A segmented field keeps its own Tab until its last part, and only the
-      // engine knows which part has focus; it leaves for the next stop it makes
-      // on its own — every dialog here has a field of that kind after each
-      // date, so that stop is inside. Wrapping from the last control stays the
-      // trap's, as it always was.
-      if (!wraps && active.matches(SEGMENTED)) return;
+      // engine knows which part has focus — so the move is the engine's. But
+      // where it lands when it *leaves* the field is the trap's to check: WebKit
+      // left the order form's arrival date for the first line's type select and
+      // passed *Add line* over, inside the dialog the whole time (Codex #272,
+      // finding 2). A move between parts fires no `focusin` out here (both ends
+      // retarget to the one input); the move that leaves does, within this
+      // key's own default action — so for the length of this task, focus
+      // arriving anywhere but the logical next stop is sent on to it. Wrapping
+      // from the last control stays the trap's, as it always was.
+      if (!wraps && active.matches(SEGMENTED)) {
+        const reconcile = (arrived: FocusEvent) => {
+          if (arrived.target !== active && arrived.target !== next) next.focus();
+        };
+        dialog.addEventListener("focusin", reconcile);
+        setTimeout(() => dialog.removeEventListener("focusin", reconcile), 0);
+        return;
+      }
       // Hand-driven where an engine might not stop (#267); the engine's own
       // move where every engine makes the same one.
       if (wraps || !next.matches(ENGINE_TABS_TO)) {
