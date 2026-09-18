@@ -3074,13 +3074,26 @@ and tablet e2e, screenshots, the release (#260).
   at 1366 px, where nothing folds, it alone put the table 49 px past its box. So
   a cell's rigidity is decided **by its value**. A date the locale writes in
   digits — ten characters at most — stays on one line with what follows it; one
-  written in words may wrap (`dateInDigits`). A reference whose longest
-  unbreakable run is no longer than the measured one (eight characters between
-  an order number's hyphens, thirteen for a tracking number) is a plain word; a
-  longer one may break anywhere, down to lines of the measured length. By the
-  value and not for every row, because `overflow-wrap: anywhere` lowers a
-  column's minimum width and a table squeezes every column that has give:
-  applied to every row it re-laid-out the ordinary ones, the desktop's included.
+  written in words may wrap (`dateInDigits` — a length standing in for a
+  shape: ten characters is as long as a numeric date gets in the locales it was
+  run in, and the containment tests, not the rule, are what hold the tables).
+  A reference no wider than the measured one — 115 px for a tracking number,
+  82 px between an order number's hyphens, at the table's 14 px — is a plain
+  word; a wider one may break anywhere, down to lines as wide as that budget.
+  **Wider on screen, not longer in characters** (round 2, finding 5: thirteen
+  `W`s are 183 px where thirteen digits are 115): each reference is measured,
+  by the browser, as the widest piece it will not break — an invisible copy
+  laid out at `min-content` in one ruler per table (`ReferenceRuler`,
+  `OrdersPage.tsx`), reached through a portal so it is never inside a fold's
+  `display: none` half, holding the text as a pseudo-element's content so that
+  a test's `getByText` cannot prefer it to the visible text, at the table's own
+  `tabular-nums` because a canvas cannot be told those and measures digits
+  narrower. By the value and not for every row, because `overflow-wrap:
+  anywhere` lowers a column's minimum width and a table squeezes every column
+  that has give: applied to every row it re-laid-out the ordinary ones, the
+  desktop's included — and in Chromium it also *reshapes* the text, kerning
+  stopping at every break opportunity, so a plain 105 px word became 110 and
+  wrapped at the cell's edge with nothing squeezed at all.
   The same question found a sibling nobody had reported — a revoked token's
   "revoked {date}" was the one date on the Access tokens table held to a line,
   and under `full` that table was up to 73 px wider than the 576 px box that
@@ -3090,7 +3103,11 @@ and tablet e2e, screenshots, the release (#260).
   total is as long as the order has currencies, and beside a retailer's name
   that could shrink and a total that could not, "JPY 2,800 + USD 45.00 + EUR
   34.00" left the name 0 px — on a card that fitted the screen exactly, so every
-  bounds check passed it. The name keeps 8rem whatever stands beside it, and a
+  bounds check passed it. The name keeps 8rem whatever stands beside it — or the
+  whole line, whichever is less: rem follows the browser's font-size preference
+  and the card does not, and at 32 px an unconditional 8rem was 256 px in a
+  94 px column with the name's start 57 px off the left of the screen (round 2,
+  finding 6; the stock stepper's row wraps for the same reason) — and a
   total that leaves it less takes a line of its own, where it may wrap too. The
   facts under it wrap where they used to end in an ellipsis: a card is the only
   place a phone says them, and a date in words is as long as the settings make

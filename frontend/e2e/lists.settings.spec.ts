@@ -141,10 +141,18 @@ for (const [locale, style] of FORMATS) {
     expect(patched.ok(), await patched.text()).toBeTruthy();
     await api.dispose();
     // What the page must be showing for any of this to mean something: the ship
-    // date as this locale and style write it, formatted here and not by the app.
-    const written = (iso: string) =>
-      new Intl.DateTimeFormat(locale, { dateStyle: style as Intl.DateTimeFormatOptions["dateStyle"], timeZone: original.time_zone }).format(new Date(iso));
-    const expected = written(SHIPPED_AT);
+    // date as this locale and style write it, formatted here and not by the app
+    // — by the *browser's* `Intl`, not Node's: their locale data differ (WebKit
+    // puts a space before a Japanese weekday; Codex #266, round 2), and the
+    // question is what the app rendered, not what ICU this test runner has.
+    await page.goto("/");
+    const written = async (iso: string) =>
+      page.evaluate(
+        ([l, s, tz, at]) => new Intl.DateTimeFormat(l, { dateStyle: s as Intl.DateTimeFormatOptions["dateStyle"], timeZone: tz }).format(new Date(at)),
+        [locale, style, original.time_zone, iso] as const,
+      );
+    const expected = await written(SHIPPED_AT);
+    const delivered = await written(RECEIVED_AT);
 
     // Every width a table's box can have, as lists.spec.ts does it.
     await page.setViewportSize({ width: 1270, height: 900 });
@@ -179,9 +187,9 @@ for (const [locale, style] of FORMATS) {
         const card = shown(main(page).locator("li")).filter({ hasText: `LST-${suffix}-0001` });
         const name = card.getByText(RETAILER, { exact: true });
         expect.soft((await name.boundingBox())?.width ?? 0, `${width} px: a card's retailer has room`).toBeGreaterThanOrEqual(128);
-        const delivered = card.getByText(written(RECEIVED_AT)).first();
-        await expect.soft(delivered, `${width} px: the delivery date reads "${written(RECEIVED_AT)}"`).toBeVisible();
-        expect.soft(await isCut(delivered), `${width} px: the delivery date is cut or outside its card`).toBe(false);
+        const said = card.getByText(delivered).first();
+        await expect.soft(said, `${width} px: the delivery date reads "${delivered}"`).toBeVisible();
+        expect.soft(await isCut(said), `${width} px: the delivery date is cut or outside its card`).toBe(false);
       }
     }
   });

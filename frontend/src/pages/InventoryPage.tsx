@@ -630,12 +630,18 @@ function StockCard({
         </IconButton>
       }
       below={
-        <div className="flex items-center justify-between gap-2 pb-3 pe-3">
+        // `flex-wrap`, `ms-auto`: the stepper is three 44 px targets in rem, and
+        // under a large browser font size (32 px: twice everything) it is wider
+        // than the card's line beside the facts — so it takes the next line,
+        // still at the end (the class of Codex #266, finding 6).
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-3 pe-3">
           <div className="flex min-w-0 items-center gap-2">
             {action}
             <CardMeta>{facts}</CardMeta>
           </div>
-          <StockStepper item={item} queryKey={tab} onError={onError} large low={low} />
+          <div className="ms-auto">
+            <StockStepper item={item} queryKey={tab} onError={onError} large low={low} />
+          </div>
         </div>
       }
     >

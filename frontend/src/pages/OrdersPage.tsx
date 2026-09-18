@@ -1,6 +1,16 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Pencil, Plus, Search } from "lucide-react";
-import { Fragment, useMemo, useState } from "react";
+import {
+  Fragment,
+  createContext,
+  useContext,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
 import { api, metaQuery, summaryQuery } from "../api/client";
@@ -348,6 +358,7 @@ export function OrdersPage() {
         // whole, a 1180 px one and a mini the first fold, 1024–1080 px and every
         // portrait the second.
         <div className="@container overflow-x-auto rounded-md border border-border bg-surface">
+          <ReferenceRuler>
           <table className="w-full text-sm">
             <thead>
               <tr className={TABLE_HEAD_ROW_CLASS}>
@@ -501,6 +512,7 @@ export function OrdersPage() {
               ))}
             </tbody>
           </table>
+          </ReferenceRuler>
           <Pager paged={paged} onPage={setPage} />
         </div>
       ) : (
@@ -691,27 +703,91 @@ function Tracking({ order }: { order: Order }) {
   );
 }
 
-/** What the fold lines were measured with (§13.7): an order number that breaks
- *  at its hyphens into runs of eight characters ("LST-12345678-0001"), and a
- *  tracking number of thirteen with nowhere to break (Japan Post's). A longer
- *  run — a USPS or Australia Post number is twenty-two digits and more, a
- *  marketplace's order number nineteen — is one unbreakable word, and held
- *  whole it pushed the row's edit control out of the box at widths where
- *  nothing folds (Codex #266, finding 2). So a reference with a longer run than
- *  the measured one may break anywhere, down to lines as long as the measured
- *  run and no shorter; one without is left exactly as it was, a plain word,
- *  and the table's ordinary rows lay out as they always did. By the value and
- *  not for every row: `overflow-wrap: anywhere` lowers a column's minimum
- *  width, and a table squeezes every column that has give. */
-const REFERENCE = {
-  orderNumber: { run: 8, wrap: "inline-block min-w-[8ch] wrap-anywhere" },
-  tracking: { run: 13, wrap: "inline-block min-w-[13ch] wrap-anywhere" },
+/** What the fold lines were measured with (§13.7), in the width the browser
+ *  draws it: a tracking number of thirteen characters with nowhere to break
+ *  (Japan Post's, 115 px at the table's 14 px — 8.2em), and an order number
+ *  that breaks at its hyphens into pieces no wider than "12345678-" (82 px,
+ *  5.9em). A reference wider than that — a USPS number is twenty-two digits, a
+ *  marketplace's order number nineteen with no hyphen, and thirteen letters are
+ *  wider than thirteen digits (Codex #266, findings 2 and 5) — is one
+ *  unbreakable word, and held whole it pushed the row's edit control out of the
+ *  box at widths where nothing folds. So a reference wider than the budget may
+ *  break anywhere, down to lines as wide as the budget and no narrower; one
+ *  within it is left exactly as it was, a plain word, and the table's ordinary
+ *  rows lay out as they always did.
+ *
+ *  **Measured, not counted** (finding 5: a count of characters stood in for
+ *  this once): the width of the widest piece the browser will not break, from
+ *  a copy the browser lays out at `min-content` in `ReferenceRuler` — one box
+ *  per table, out of flow, no size, clipped, at the table's font and figures,
+ *  with each reference's text as a pseudo-element's content rather than text
+ *  of its own. Every one of those is a lesson. A copy laid out inside the cell
+ *  was scrollable overflow; inside a fold's `display: none` half it had no
+ *  width to measure; as DOM text it was the deepest match for `getByText`,
+ *  which prefers it to the visible text; and a canvas's `measureText` cannot be
+ *  told the table's `tabular-nums`, so its digits are narrower than the cell's.
+ *  In em, so one measurement serves the column's copy and the fold's smaller
+ *  one alike, and the root font size can be anything (finding 6).
+ *
+ *  By the value and not for every row, and for two reasons now: `overflow-wrap:
+ *  anywhere` lowers a column's minimum width and a table squeezes every column
+ *  that has give; and in Chromium it also changes the text's shaping — kerning
+ *  stops at a break opportunity, and there is one after every character — so
+ *  "EJ482113905JP" is 105 px as a plain word and 110 px under `anywhere`, and
+ *  wrapped at the cell's edge with nothing squeezed at all. */
+const REFERENCE_BUDGET = {
+  orderNumber: { em: 6, wrap: "inline-block min-w-[6em] wrap-anywhere" }, // "12345678-" is 5.9em
+  tracking: { em: 8.3, wrap: "inline-block min-w-[8.3em] wrap-anywhere" }, // Japan Post's 13 are 8.2em
 } as const;
 
-function Reference({ text, kind }: { text: string; kind: keyof typeof REFERENCE }) {
-  const { run, wrap } = REFERENCE[kind];
-  const longest = Math.max(...text.split(/[\s-]+/).map((piece) => piece.length));
-  return longest > run ? <span className={wrap}>{text}</span> : <>{text}</>;
+const RulerContext = createContext<HTMLElement | null>(null);
+
+/** Where a table's references are measured: rendered once inside the table's
+ *  box, at the table's font and figures. `Reference` puts its sizer here
+ *  through a portal. A `Reference` with no ruler above it — a card's lines —
+ *  measures nothing and stays a plain word, which there is inside a
+ *  `wrap-anywhere` flex item. */
+function ReferenceRuler({ children }: { children: ReactNode }) {
+  const [ruler, setRuler] = useState<HTMLElement | null>(null);
+  return (
+    <RulerContext.Provider value={ruler}>
+      {children}
+      <div ref={setRuler} aria-hidden className="absolute h-0 w-0 overflow-hidden text-sm tabular-nums" />
+    </RulerContext.Provider>
+  );
+}
+
+function Reference({ text, kind }: { text: string; kind: keyof typeof REFERENCE_BUDGET }) {
+  const ruler = useContext(RulerContext);
+  const sizer = useRef<HTMLSpanElement>(null);
+  const [wide, setWide] = useState(false);
+  useLayoutEffect(() => {
+    const element = sizer.current;
+    if (!element) return;
+    const measure = () => {
+      const em = parseFloat(getComputedStyle(element).fontSize);
+      setWide(element.getBoundingClientRect().width / em > REFERENCE_BUDGET[kind].em);
+    };
+    measure();
+    // And when its size changes — the web font arriving after the first paint.
+    const observer = new ResizeObserver(measure);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [text, kind, ruler]);
+  return (
+    <>
+      <span className={wide ? REFERENCE_BUDGET[kind].wrap : undefined}>{text}</span>
+      {ruler &&
+        createPortal(
+          <span
+            ref={sizer}
+            data-text={text}
+            className="invisible block w-min whitespace-normal before:content-[attr(data-text)]"
+          />,
+          ruler,
+        )}
+    </>
+  );
 }
 
 /** A date the locale writes in digits stays on one line, with what follows it
@@ -786,11 +862,15 @@ function OrderCard({
               a name that could shrink left it 0 px (Codex #266, finding 1). So
               the name keeps 8rem whatever stands beside it, and a total that
               leaves it less goes to a line of its own, where it may wrap too.
-              The lines under it wrap the same way rather than ending in an
-              ellipsis: a card is the only place a phone says these, and a date
-              written in words is as long as the instance's settings make it. */}
+              8rem or the whole line, whichever is less: the rem grows with the
+              browser's font-size preference and the card does not, and at 32 px
+              an unconditional 8rem was 256 px in a 94 px column, the name's
+              start pushed off the left of the screen (finding 6). The lines
+              under it wrap the same way rather than ending in an ellipsis: a
+              card is the only place a phone says these, and a date written in
+              words is as long as the instance's settings make it. */}
           <div className="flex flex-wrap items-baseline justify-end gap-x-2.5 gap-y-0.5 text-[15px] font-semibold">
-            <span className="min-w-32 flex-1 truncate">{retailer}</span>
+            <span className="min-w-[min(8rem,100%)] flex-1 truncate">{retailer}</span>
             <span className="text-end tabular-nums">{orderTotal(order)}</span>
           </div>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-muted">

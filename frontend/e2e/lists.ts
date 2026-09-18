@@ -107,3 +107,21 @@ export function isCut(said: Locator): Promise<boolean> {
     return element.scrollWidth > element.clientWidth + 1 || rect.left < bounds.left - 0.5 || rect.right > bounds.right + 0.5;
   });
 }
+
+/** How many lines the visible text inside `said` takes: the distinct tops of
+ *  its text's boxes, skipping text that is not drawn (a fold's hidden copy, a
+ *  reference's invisible sizer). */
+export function linesOf(said: Locator): Promise<number> {
+  return said.evaluate((element) => {
+    const tops = new Set<number>();
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const parent = node.parentElement;
+      if (!parent || getComputedStyle(parent).visibility === "hidden" || parent.getClientRects().length === 0) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      for (const rect of range.getClientRects()) if (rect.width > 1) tops.add(Math.round(rect.top));
+    }
+    return tops.size;
+  });
+}

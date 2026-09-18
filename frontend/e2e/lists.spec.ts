@@ -42,10 +42,10 @@
  * imported from `src/` — a test that reads its expectations from the code under
  * test moves with it.
  */
-import { expect, request, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
+import { chromium, expect, request, test, type APIRequestContext, type Locator, type Page } from "@playwright/test";
 
-import { API, apiContext } from "./api";
-import { expandEveryOrder, expectFits, isCut, main, shown, sweepBox } from "./lists";
+import { API, APP, STORAGE_STATE, apiContext } from "./api";
+import { expandEveryOrder, expectFits, isCut, linesOf, main, shown, sweepBox } from "./lists";
 
 type Size = { width: number; height: number };
 
@@ -128,12 +128,24 @@ const WIDE_TRACKING = "420902109400111899223197428490";
 const WIDE_TOTAL = ["JPY 2,800", "USD 45.00", "EUR 34.00"];
 // Two currencies is the total that leaves a phone's card *some* room for the
 // retailer and not enough: three takes the whole line whatever the name is given.
-const TWO_CURRENCY_NUMBER = `LST-${suffix}-0003`;
+// Its references are the same *count* of characters as the ordinary ones and
+// wider on screen — letters, not digits (Codex #266, finding 5): a rule that
+// counted let them through.
+const TWO_CURRENCY_NUMBER = `LST-WWWWWWWW-${suffix}`;
+// Sixteen, not thirteen: at its floor's width the tracking number is two lines;
+// at the column header's width, which is all that holds the column without a
+// floor, it is three.
+const WIDE_GLYPH_TRACKING = "WWWWWWWWWWWWWWWW";
 const SHIPPED_TITLE = "Shipped by the retailer";
 const RECEIVED_TITLE = "Delivered · days in transit";
 
 const seeded: { route: string; id: string }[] = [];
 let retailerId = "";
+// A retailer whose name is one short word — "HLJ" is one — so its column has
+// nothing wide of its own and a folded reference under it is squeezed to the
+// reference's floor and no wider. Found by its id, not by the tag: the search
+// would not match it, and the point is that nothing else in the column is wide.
+let shortRetailerId = "";
 
 async function post<T extends { id: string }>(api: APIRequestContext, route: string, data: object): Promise<T> {
   const resp = await api.post(route, { data });
@@ -157,6 +169,7 @@ test.beforeAll(async () => {
   });
   retailerId = retailer.id;
   await post(api, "/retailers", { name: NAMES.bareRetailer });
+  shortRetailerId = (await post(api, "/retailers", { name: `HLJ ${suffix.slice(-3)}` })).id;
 
   // Two kits under one name — an order line of two spawns exactly this — so
   // "the control for the same record" cannot be answered by the name alone.
@@ -274,8 +287,20 @@ test.beforeAll(async () => {
     retailer_id: retailer.id,
     order_date: day(51),
     order_number: TWO_CURRENCY_NUMBER,
+    tracking_number: WIDE_GLYPH_TRACKING,
     currency_code: "JPY",
     items: [wideLine(`Wide ${suffix} D`, 2800, "JPY", 2900), wideLine(`Wide ${suffix} E`, 4500, "USD", 6800)],
+  });
+  await post(api, "/orders", {
+    retailer_id: shortRetailerId,
+    order_date: day(52),
+    order_number: TWO_CURRENCY_NUMBER,
+    tracking_number: WIDE_GLYPH_TRACKING,
+    currency_code: "JPY",
+    shipped_at: iso(50),
+    received: true,
+    received_at: iso(45),
+    items: [kitLine(`Wide ${suffix} F`, "HG", 1100)],
   });
   await api.dispose();
 });
@@ -380,6 +405,31 @@ test("at no box width is a table wider than its box", async ({ page }, testInfo)
     expect.soft(overflowing?.measured, `${path}: every width measured`).toBe(to - from + 1);
     expect.soft(overflowing?.widths, `${path}: box widths at which the list is wider than its box`).toEqual([]);
   }
+
+  // A wide reference breaks within its budget and no narrower: its floor is
+  // what keeps a column from squeezing it to a sliver of a letter a line. Seen
+  // only where nothing else holds the column — the one order from "HLJ": its
+  // number folded under that short name, its tracking number alone under the
+  // column's header — and only with the table at its minimum (the sweep sees
+  // no overflow either way; mutants W4 and W4b in the PR).
+  await page.goto(`/orders?retailer=${shortRetailerId}`);
+  await expect(shown(main(page).getByText(TWO_CURRENCY_NUMBER)).first()).toBeVisible();
+  const boxOf = (width: string) =>
+    page.evaluate((w) => {
+      (document.querySelector("main .overflow-x-auto") as HTMLElement).style.width = w;
+    }, width);
+  // Just over the second fold line — 970 px outside, 968 of content, the border
+  // being 2 px of the arithmetic — the Tracking column is still a column.
+  await boxOf("970px");
+  const tracking = shown(main(page).getByText(WIDE_GLYPH_TRACKING)).first();
+  expect(await tracking.evaluate((el) => el.closest("td")?.getAttribute("colspan") ?? null), "the tracking number is in its column").toBeNull();
+  expect.soft(await linesOf(tracking), "lines a wide-glyph tracking number takes alone in its column at a 970 px box").toBeLessThanOrEqual(2);
+  await boxOf("500px");
+  expect.soft(
+    await linesOf(shown(main(page).getByText(TWO_CURRENCY_NUMBER)).first()),
+    "lines a wide-glyph order number takes under a short retailer's name in a 500 px box",
+  ).toBeLessThanOrEqual(4);
+  await boxOf("");
 });
 
 test("a phone's edit controls and steppers are 44 px", async ({ page }, testInfo) => {
@@ -468,6 +518,22 @@ test("a fold moves what a column said and never drops it", async ({ page }, test
     }
     await expandEveryOrder(page);
     await once(main(page), TRACKING, `Orders ${at}: the tracking number`);
+    // The references at every size, folded or not: an ordinary one breaks only
+    // where it always did (the number at its hyphens, three lines at most; the
+    // tracking number never), and a wide one breaks within its budget and no
+    // narrower — letters as wide as these take two lines of the budget where
+    // the number has room, and a floor that let the column squeeze them to a
+    // sliver would give many more (mutants W3 and W4 in the PR).
+    for (const [text, kind, lines] of [
+      [ORDER_NUMBER, "the order number", 3],
+      [TWO_CURRENCY_NUMBER, "the wide-glyph order number", 4],
+      [TRACKING, "the tracking number", 1],
+      ...(unfolded(box, FOLD.orderDates) ? [[WIDE_GLYPH_TRACKING, "the wide-glyph tracking number", 2] as const] : []),
+    ] as const) {
+      const said = shown(main(page).getByText(text)).first();
+      await expect(said, `Orders ${at}: ${kind}`).toBeVisible();
+      expect.soft(await linesOf(said), `Orders ${at}: lines ${kind} takes`).toBeLessThanOrEqual(lines);
+    }
     await expect.soft(shown(main(page).getByRole("link", { name: TRACKING })), `Orders ${at}: tracking stays a link`).toHaveCount(1);
 
     // --- Retailers: Notes, to a second line under the name.
@@ -512,7 +578,27 @@ test("the desktop folds one thing, and only where its box is short", async ({ pa
       expect.soft(visible.filter(Boolean).map((text) => text.toUpperCase()), `${path} at ${width} px`).toEqual(
         headers.map((text) => text.toUpperCase()),
       );
-      if (path.startsWith("/orders")) await expandEveryOrder(page);
+      if (path.startsWith("/orders")) {
+        await expandEveryOrder(page);
+        // The ordinary references lay out as they always did, at every width —
+        // where the table is squeezed (1280, 1361) as where it has room: the
+        // tracking number on one line, the order number breaking at its hyphens
+        // and nowhere else (three pieces, so three lines at most). A reference
+        // wider than its budget may break anywhere; the budget is what these
+        // were measured at, and one set under them would break these first.
+        for (const [text, kind, lines, wrap] of [
+          [TRACKING, "tracking", 1, "normal"],
+          [ORDER_NUMBER, "order number", 3, "normal"],
+          [WIDE_GLYPH_TRACKING, "wide-glyph tracking", 2, "anywhere"],
+          [TWO_CURRENCY_NUMBER, "wide-glyph order number", 4, "anywhere"],
+        ] as const) {
+          const said = shown(main(page).getByText(text)).first();
+          await expect(said, `${kind} at ${width} px`).toBeVisible();
+          expect.soft(await linesOf(said), `${kind} "${text}" at ${width} px: lines`).toBeLessThanOrEqual(lines);
+          // The rule itself: a plain word, or one that may break anywhere.
+          expect.soft(await said.evaluate((el) => getComputedStyle(el).overflowWrap), `${kind} "${text}" at ${width} px: overflow-wrap`).toBe(wrap);
+        }
+      }
       await expectFits(page, `${path} at ${width} px`);
     }
   }
@@ -1073,6 +1159,99 @@ test("a card says who it is whatever stands beside it", async ({ page }, testInf
       await expect.soft(title, `${path} ${at}: the name`).toBeVisible();
       expect.soft((await title.boundingBox())?.width ?? 0, `${path} ${at}: the name's room`).toBeGreaterThanOrEqual(128);
     }
+  }
+});
+
+test("a card says who it is under the browser's own font-size preference", async ({ browserName }, testInfo) => {
+  test.skip(testInfo.project.name !== "phone", "the cards are the phone shell's");
+  test.skip(browserName !== "chromium", "the preference is Chromium's launch flag");
+  // Codex #266, finding 6: the room a card reserves for its name is in rem,
+  // which follows the browser's default font size; the card does not. At 32 px
+  // an unconditional 8rem was 256 px in a 94 px column, and `justify-end` put
+  // the start of the name 57 px off the left of the screen — on a document that
+  // was still exactly 320 px wide. A browser of its own, because the preference
+  // is a launch setting; the same session, so the same owner. What must hold:
+  // every card's name starts and ends inside its card and inside the screen,
+  // the total is still said in full, and no list is wider than the screen. The
+  // shell around the lists is not this test's — at this size the page head's
+  // action and the tab bar are past 320 px, which is #257's layout and filed
+  // on its own.
+  const browser = await chromium.launch({ args: ["--blink-settings=defaultFontSize=32"] });
+  try {
+    const context = await browser.newContext({ storageState: STORAGE_STATE, hasTouch: true, isMobile: true, baseURL: APP });
+    const page = await context.newPage();
+    for (const size of sizesFor("phone")) {
+      await page.setViewportSize(size);
+      const at = `at ${size.width} px, 32 px font`;
+      await openList(page, `/orders?q=${q}`, NAMES.retailer);
+      // The precondition, said out loud: the preference is in force.
+      expect(await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), "the root font size").toBe(32);
+      for (const number of [WIDE_ORDER_NUMBER, TWO_CURRENCY_NUMBER, ORDER_NUMBER]) {
+        const card = rowOf(page, number);
+        const name = card.getByText(NAMES.retailer, { exact: true });
+        await expect.soft(name, `${at}: the retailer of ${number}`).toBeVisible();
+        const edges = await name.evaluate((element) => {
+          const card = (element.closest("li") as HTMLElement).getBoundingClientRect();
+          const rect = element.getBoundingClientRect();
+          return { left: rect.left, right: rect.right, cardLeft: card.left, cardRight: card.right, width: rect.width };
+        });
+        expect.soft(edges.left, `${at}: the retailer of ${number} starts on screen and in its card`).toBeGreaterThanOrEqual(Math.max(0, edges.cardLeft) - 0.5);
+        expect.soft(edges.right, `${at}: the retailer of ${number} ends in its card`).toBeLessThanOrEqual(edges.cardRight + 0.5);
+        expect.soft(edges.width, `${at}: the retailer of ${number} has room`).toBeGreaterThan(60);
+      }
+      const total = rowOf(page, WIDE_ORDER_NUMBER).getByText(WIDE_TOTAL[2]).first();
+      await expect.soft(total, `${at}: the total's last currency`).toBeVisible();
+      expect.soft(await isCut(total), `${at}: the total is cut or outside its card`).toBe(false);
+      /** The list itself is inside the screen, and its controls inside it. */
+      const listFits = async (label: string) => {
+        const report = await page.evaluate(() => {
+          const list = document.querySelector("main ul") as HTMLElement;
+          const bounds = list.getBoundingClientRect();
+          const escaped = [...list.querySelectorAll<HTMLElement>("button, a[href]")]
+            .filter((control) => control.getClientRects().length > 0)
+            .filter((control) => {
+              const rect = control.getBoundingClientRect();
+              return rect.left < bounds.left - 0.5 || rect.right > bounds.right + 0.5;
+            })
+            .map((control) => {
+              const rect = control.getBoundingClientRect();
+              return `${control.getAttribute("aria-label") ?? control.textContent?.trim() ?? ""} [${Math.round(rect.left)}–${Math.round(rect.right)}] outside [${Math.round(bounds.left)}–${Math.round(bounds.right)}]`;
+            });
+          return { left: bounds.left, right: bounds.right, screen: innerWidth, escaped };
+        });
+        expect.soft(report.left, `${label}: the list starts on screen`).toBeGreaterThanOrEqual(0);
+        expect.soft(report.right, `${label}: the list ends on screen`).toBeLessThanOrEqual(report.screen + 0.5);
+        expect.soft(report.escaped, `${label}: controls outside their list`).toEqual([]);
+      };
+      await listFits(`/orders ${at}`);
+      for (const [path, anchor] of [
+        [`/kits?q=${q}`, NAMES.twin],
+        [`/retailers?q=${q}`, NAMES.retailer],
+        ["/inventory", NAMES.tool],
+      ] as const) {
+        await openList(page, path, anchor);
+        const title = rowOf(page, anchor).first().getByText(anchor, { exact: true }).first();
+        await expect.soft(title, `${path} ${at}: the name`).toBeVisible();
+        expect.soft((await title.boundingBox())?.x ?? -1, `${path} ${at}: the name starts on screen`).toBeGreaterThanOrEqual(0);
+        // Declined, and in the coverage record: the stock stepper is three 44 px
+        // targets in rem, 272 px at this font size, and a 320 px phone's card
+        // gives its row 204 — it takes its own line (from 390 px that is enough)
+        // and here is past the card whatever the row does. The shell's own
+        // overflows at this size are filed with it.
+        if (path === "/inventory" && size.width < 390) continue;
+        await listFits(`${path} ${at}`);
+        if (path === "/inventory") {
+          // …and on its own line, not on the facts': beside it they were
+          // squeezed to an ellipsis.
+          const facts = rowOf(page, anchor).first().getByText(/nippers/).first();
+          await expect.soft(facts, `${path} ${at}: the tool's category`).toBeVisible();
+          expect.soft(await isCut(facts), `${path} ${at}: the tool's category is cut`).toBe(false);
+        }
+      }
+    }
+    await context.close();
+  } finally {
+    await browser.close();
   }
 });
 

@@ -151,8 +151,10 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   the desktop's included; the fold lines are measured, read the
                         #   comments before moving one (§13.7). What a line cannot know
                         #   gives way by its *value*: a date in words wraps, one in digits
-                        #   never does (`dateInDigits`); a long reference breaks, an
-                        #   ordinary one is a plain word. A fold keeps a hidden copy
+                        #   never does (`dateInDigits`); a reference wider than the measured
+                        #   budget breaks — measured by the browser in `ReferenceRuler`,
+                        #   never counted in characters — and an ordinary one is a plain
+                        #   word. A fold keeps a hidden copy
                         #   of what it moves, so a test reading a row's text filters for
                         #   the visible one — MorePage (the phone's fifth tab),
                         #   and settings/ (SettingsPage + sections, including Data

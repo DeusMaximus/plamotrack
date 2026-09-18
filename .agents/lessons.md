@@ -1254,3 +1254,70 @@ the rows that were fine, because a table squeezes every column that has give. Th
 spec written for the fix found a sibling on its first run — a revoked token's date,
 the one `nowrap` date on the Access tokens table — which is the usual sign that the
 axis, not the instance, was what had been missing.
+
+## The count stood in for the width (#258, PR #266 round 2)
+
+Round 1's answer to "the Orders table overflows under long references" was a rule by
+character count: an order or tracking number whose longest unbreakable run was longer
+than the one the fold lines were measured with (eight characters between hyphens,
+thirteen for a tracking number) could break anywhere. Round 2 typed thirteen `W`s.
+They are 183 px where thirteen digits are 115, the rule called them ordinary, and the
+table was 33 px past its box at 1366 px — with the edit control off the edge, the
+milestone's own defect. The count had been chosen because it was easy to read off a
+string; the constraint is in pixels, and the lines had been *measured* in pixels.
+
+Measuring in pixels took four attempts, each a lesson of its own. A hidden copy of
+the text laid out at `min-content` inside the cell counts as scrollable overflow,
+and put the page 80 px past the screen. Moved inside the fold's hidden copy, it has
+no width to measure; a `ResizeObserver` re-measures it when the fold shows it, but
+the every-width sweep sets 667 widths in one synchronous loop and never gives the
+observer a frame. As DOM text, the copy is what `getByText` returns — it prefers the
+deepest match — so every "on screen exactly once" assertion went to 0. And a canvas's
+`measureText` cannot be told the table's `font-variant-numeric: tabular-nums`, so it
+measures digits 10 px narrower than the cell draws them. What holds: a ruler the
+table renders once — out of flow, no size, clipped, at the table's font and figures —
+that each reference reaches through a portal, holding its text as a pseudo-element's
+`content: attr(…)`, which is neither text nor overflow nor inside a fold.
+
+On the way, a fact about Chromium worth keeping: `overflow-wrap: anywhere` changes the
+*shaping* of the text, not only where it may break. Kerning stops at a break
+opportunity and `anywhere` puts one after every character, so "EJ482113905JP" is
+105 px as a plain word and 110 px under the property — and, given a 108 px cell,
+wrapped its last letter with nothing squeezed at all. "Apply the wrap class to every
+reference and let the floor hold the minimum" fails on that alone.
+
+What to keep. **Measure in the unit the constraint is in, and in the place the
+constraint applies** — a table cell's width is decided by the browser, at that cell's
+font, and no proxy (a count, a canvas, a copy elsewhere) agreed with it to the pixel.
+**A hidden copy of text has four ways to leak** — into overflow, into a test's text
+query, into a screen reader, into a fold that hides it — and the way to have none of
+them is to not put text in the DOM. And **a review's second round finds the proxy the
+first round's fix leaned on**; the brief's "where I'd push" said "`Reference` counts
+characters, and the lines were measured in pixels" before the reviewer did, which is
+the pattern the round-1 lesson above already names: an axis the author can name is
+one the author can vary.
+
+## The browser's font size is an axis (#258, PR #266 round 2)
+
+Finding 6: a phone's order card reserved 8rem for the retailer's name so that a total
+in three currencies could not squeeze it out (round 1's fix). The reservation is in
+rem; the card's width is the phone's. With Chromium's default font size at 32 px —
+a preference in every browser's settings, and the accessibility case the milestone's
+"the lines are in rem, so they move with it" had waved at — 8rem is 256 px in a 94 px
+column, and `justify-end` put the start of the name 57 px off the left of the screen.
+The document was still exactly 320 px wide, so every bounds check passed.
+
+`min(8rem, 100%)` fixes it, and the test launches a Chromium of its own with
+`--blink-settings=defaultFontSize=32` (a launch flag, not a page setting) and asserts
+the root font size before anything else. Run across the other cards it found the
+stock stepper — three 44 px targets in rem, 272 px at that size — past a 320 px card
+whatever its row does; it wraps to its own line now, which is enough from 390 px, and
+the 320 px case is declined and recorded. Run across the pages it found the shell:
+the page head's action and the tab bar are past 320 px at that font size, which is
+#257's layout and is filed on its own.
+
+What to keep: **"it is in rem" is not evidence of fit.** Rem scales with a preference
+the layout does not control; every reservation, floor and touch size in rem has a
+font size at which it is wider than the box it sits in, and the phone's 320 px is
+where that happens first. Test one such size, and test it with the identifying text's
+own edges, not the document's.

@@ -149,6 +149,30 @@ a page-level check calls a clipped edit control fine. What #258 learned doing it
   digits is rigid, one in words wraps; a run longer than the measured one may break)
   and the ordinary rows stay where the fold lines were measured — then prove that with
   the pixel comparison, not by reading the CSS.
+- **A count is not a width, and a canvas is not the cell** (round 2, finding 5). The
+  reference rule first said "a run longer than thirteen characters may break"; thirteen
+  `W`s are 183 px where thirteen digits are 115, and the table was 33 px past its box.
+  Measure the thing the constraint is in — pixels, by the browser, at the cell's own
+  font and figures. Four ways of doing that were wrong before one was right: a hidden
+  copy in the cell is scrollable overflow unless clipped; a copy inside a fold's
+  `display: none` half has no width; a copy that is DOM text is what `getByText`
+  returns, because it prefers the deepest match; and `canvas.measureText` cannot be
+  told `font-variant-numeric: tabular-nums`, so its digits are narrower than the
+  table's. The one that holds: a pseudo-element (`content: attr(…)`) in a clipped
+  zero-size ruler the table renders once, reached through a portal.
+- **`overflow-wrap: anywhere` changes the text, not only where it may break.** In
+  Chromium kerning stops at a break opportunity, and `anywhere` puts one after every
+  character: a 105 px word became 110 px and wrapped at its cell's edge with nothing
+  squeezed. So the class goes on a value that is over budget and on nothing else, and
+  "ordinary rows lay out as they did" is proved by the pixel comparison, not by reading
+  the rule.
+- **A browser preference is an axis too** (round 2, finding 6). Sizes in rem follow the
+  browser's default font size; a phone's width does not. At 32 px an 8rem reservation
+  was 256 px in a 94 px column. Launch Chromium with
+  `--blink-settings=defaultFontSize=32` in the test (a launch flag, so a browser of its
+  own — `chromium.launch`, the same `storageState`) and assert the identifying text
+  starts and ends inside its card and the screen; assert the root font size first, or
+  the flag not taking passes the lot.
 - **Bounds passing is not content showing** (finding 1). A card that fits the screen
   exactly can have squeezed its own title to 0 px: beside a `shrink-0` sibling of
   unbounded length (a total in three currencies) a `min-w-0 truncate` name gives up
