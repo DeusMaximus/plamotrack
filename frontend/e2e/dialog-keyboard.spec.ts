@@ -170,8 +170,9 @@ test("order line items expand from the keyboard", async ({ page }) => {
   await page.goto("/orders");
 
   // Scoped to this spec's own order, not `.first()` — on a populated instance
-  // that is whichever row happens to sort first.
-  const row = page.getByRole("row").filter({ hasText: RETAILER });
+  // that is whichever row happens to sort first. A `<tr>` from 768 px and a
+  // card's `<li>` below it (#258); the control's name is the same in both.
+  const row = page.locator("tr, li").filter({ hasText: RETAILER });
   const disclosure = row.getByRole("button", { name: /line items/ });
   await expect(disclosure).toBeVisible();
   await expect(disclosure).toHaveAttribute("aria-expanded", "false");
@@ -294,6 +295,38 @@ test("a keyboard user can select a catalog search result (#104)", async ({ page 
   await api.dispose();
 });
 
+
+test("a date input keeps its own Tab through its parts (#267's trap)", async ({ page, browserName }) => {
+  // The trap hand-drives a Tab whose next stop is something Safari would skip
+  // (#267) — and the control after the order form's "Received on" is the *Add
+  // line* button. Chromium's date input is three parts — day, month, year — and
+  // Tab walks them before it leaves the field; a trap that drove that Tab by
+  // hand would jump from the day straight to the button. So: from that date,
+  // at least two Tabs stay on the input, and the Tab that leaves it lands on
+  // the button, not past it. (The kit form's dates are followed by fields,
+  // where the engine makes the move either way — a mutant that removed the
+  // exemption survived a version of this test written there.) WebKit's date
+  // input has no parts to walk, and is skipped by name.
+  test.skip(browserName !== "chromium", "Chromium's date input is segmented");
+  await page.goto("/orders");
+  await page.locator("tr, li").filter({ hasText: RETAILER }).getByRole("button", { name: /^Edit / }).click();
+  const dialog = page.getByRole("dialog", { name: "Edit order" });
+  await expect(dialog.getByRole("button", { name: "Add line" })).toBeVisible();
+  const received = dialog.getByLabel("Received on");
+  // `focus()`, not a click: a click lands on whichever part is under the
+  // pointer, and the input's centre is the month.
+  await received.focus();
+  await expect(received).toBeFocused();
+  let stayed = 0;
+  for (let i = 0; i < 6; i++) {
+    await page.keyboard.press("Tab");
+    if (await received.evaluate((element) => document.activeElement === element)) stayed += 1;
+    else break;
+  }
+  expect(stayed, "Tabs that stayed on the date input").toBeGreaterThanOrEqual(2);
+  await expect(dialog.getByRole("button", { name: "Add line" }), "then the button after it").toBeFocused();
+  await page.keyboard.press("Escape");
+});
 
 test("submitting from the keyboard does not drop focus while the request is in flight", async ({
   page,

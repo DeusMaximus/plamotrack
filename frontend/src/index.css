@@ -121,6 +121,22 @@
   }
 }
 
+/* A row of fields is a row where its box has room and a column where it has
+ * not (design §13.7, #259): about 100 px a field — 6.25rem, and the row's gaps —
+ * asked of the *box* the row is in, never the viewport, so the same rule folds a
+ * phone's dialog at 320 px and a desktop's under a large browser font. The box
+ * is the nearest `@container`: a dialog's body, an order line's card. */
+@custom-variant stack-3 {
+  @container (width < 20.25rem) {
+    @slot;
+  }
+}
+@custom-variant stack-2 {
+  @container (width < 13.25rem) {
+    @slot;
+  }
+}
+
 /* Safe areas (design §13.7). `viewport-fit=cover` in index.html lets the page
  * paint to the screen's edges, which is what makes these insets non-zero: the
  * home indicator under the phone's tab bar, the notch beside a phone held

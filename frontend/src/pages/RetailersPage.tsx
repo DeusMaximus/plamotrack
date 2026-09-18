@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Pencil, Plus, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
@@ -73,6 +73,8 @@ function RetailerFormModal({
   const queryClient = useQueryClient();
   const [error, setError] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
+  // The submit stands outside the <form>, in the dialog's frame (§13.7, #259).
+  const formId = useId();
   const {
     register,
     handleSubmit,
@@ -112,8 +114,37 @@ function RetailerFormModal({
     <Modal
       title={retailer ? t("retailers.editTitle", { name: retailer.name }) : t("retailers.addTitle")}
       onClose={onClose}
+      actions={{
+        secondary: { label: t("common.cancel"), onClick: onClose },
+        primary: {
+          label: retailer ? t("common.save") : t("common.add"),
+          form: formId,
+          disabled: isSubmitting || deleting,
+        },
+      }}
+      destructive={
+        retailer && onDelete
+          ? {
+              label: t("common.delete"),
+              disabled: isSubmitting || deleting,
+              onClick: async () => {
+                if (!window.confirm(t("common.confirmDelete", { name: retailer.name }))) return;
+                setError(null);
+                setDeleting(true);
+                try {
+                  await onDelete(retailer);
+                  onClose();
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
+                } finally {
+                  setDeleting(false);
+                }
+              },
+            }
+          : undefined
+      }
     >
-      <form onSubmit={onSubmit} className="space-y-3">
+      <form id={formId} onSubmit={onSubmit} className="space-y-3">
         <ErrorBanner message={error} />
         <Field label={t("common.name")} required error={errors.name?.message}>
           <Input {...register("name", { required: t("validation.nameRequired") })} />
@@ -121,12 +152,13 @@ function RetailerFormModal({
         <Field label={t("retailers.url")}>
           <Input {...register("url")} placeholder={t("common.urlPlaceholder")} />
         </Field>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-3 stack-2:grid-cols-1">
           <Field label={t("retailers.overallRating")} error={errors.rating?.message}>
             <Input
               type="number"
               min={1}
               max={5}
+              inputMode="numeric"
               placeholder="—"
               {...register("rating", {
                 validate: (value) =>
@@ -170,37 +202,6 @@ function RetailerFormModal({
         <Field label={t("retailers.notes")}>
           <Textarea {...register("notes")} placeholder={t("retailers.notesPlaceholder")} />
         </Field>
-        <div className="flex items-center gap-2 pt-1">
-          {retailer && onDelete && (
-            <Button
-              type="button"
-              variant="danger"
-              className="me-auto"
-              disabled={isSubmitting || deleting}
-              onClick={async () => {
-                if (!window.confirm(t("common.confirmDelete", { name: retailer.name }))) return;
-                setError(null);
-                setDeleting(true);
-                try {
-                  await onDelete(retailer);
-                  onClose();
-                } catch (err) {
-                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
-                } finally {
-                  setDeleting(false);
-                }
-              }}
-            >
-              {t("common.delete")}
-            </Button>
-          )}
-          <Button type="button" variant="secondary" className="ms-auto" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button type="submit" disabled={isSubmitting || deleting}>
-            {retailer ? t("common.save") : t("common.add")}
-          </Button>
-        </div>
       </form>
     </Modal>
   );

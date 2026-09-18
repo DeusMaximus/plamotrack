@@ -1,0 +1,584 @@
+/**
+ * Dialogs on a phone and a tablet (design §13.7, #259). Below 768 px every
+ * dialog is a full-screen sheet — its head with the title and Close, the form
+ * the one scroller, the two actions in a bar at the foot of the screen — and an
+ * order line is a stacked card; from 768 px a dialog is the centred panel it
+ * was. Runs in three projects (playwright.config.ts): `phone` and `tablet` with
+ * a touch screen, `app` with a mouse. What it holds:
+ *
+ * - at 390 px and at 320 px the New order form, with a kit line and a catalog
+ *   line, has no control past the screen's edge and no field squeezed under the
+ *   room a field needs, and its primary action and its Close are on screen — and
+ *   under a finger, not the tab bar — at every scroll position; the same of the
+ *   kit, inventory, retailer and Apply-to-kit dialogs;
+ * - an order with a kit line and a catalog line is recorded from a 320 × 568 px
+ *   phone, and a kit is edited there, driven through to the API — the primary
+ *   tapped from the top of the form, without a scroll;
+ * - quantity and price carry visible labels on a phone and the desktop's row
+ *   keeps its shape; a quantity raises a numeric keyboard and money a decimal
+ *   one, in every shell;
+ * - a checkbox row and the picker's result rows are a finger tall on a phone;
+ * - Delete is in the form on a phone and in the action row on the desktop, and
+ *   a turn across the line keeps the keyboard on it (`lib/focusKey.ts`);
+ * - a row of fields folds to a column where its box is too narrow for the row:
+ *   at 320 px, and under the browser's own font-size preference at 32 and 40 px,
+ *   where a 390 px phone's dialog is narrower than three fields;
+ * - from 768 px the dialog is a panel narrower than the screen, below its top,
+ *   and the line's quantity and price sit on the type's row, unlabelled.
+ *
+ * WebKit's Tab, which skips buttons (#267), is dialog-keyboard.spec.ts's under
+ * a local WebKit run; CI installs Chromium alone.
+ *
+ * Widths and sizes are literals from the decision record, never imported from
+ * `src/`. Every row this file needs it seeds through the API and deletes.
+ */
+import { chromium, expect, test, type Locator, type Page } from "@playwright/test";
+
+import { APP, STORAGE_STATE, apiContext } from "./api";
+
+type Size = { width: number; height: number };
+
+const SIZES: Record<string, Size[]> = {
+  app: [{ width: 1280, height: 720 }],
+  phone: [
+    { width: 320, height: 568 },
+    { width: 390, height: 844 },
+    { width: 744, height: 1133 },
+  ],
+  tablet: [
+    { width: 820, height: 1180 },
+    { width: 1180, height: 820 },
+  ],
+};
+const sizesFor = (project: string): Size[] => {
+  const sizes = SIZES[project];
+  if (!sizes) throw new Error(`dialogs.spec.ts has no viewports for the "${project}" project`);
+  return sizes;
+};
+const isPhone = (size: Size) => size.width < 768;
+
+/** A finger (§13.7), the room a field needs before its row folds (about 100 px
+ *  at the default font size — 6rem here, a shade under the rule's 6.25, so it
+ *  follows the browser's font-size preference as the rule does; index.css
+ *  `stack-3:`/`stack-2:`), and the phone's bar buttons. */
+const FINGER = 44;
+const FIELD_ROOM_REM = 6;
+const BAR_BUTTON = 48;
+
+const suffix = String(Date.now()).slice(-8);
+const TAG = `E2E Dialogs ${suffix}`;
+const q = encodeURIComponent(TAG);
+const NAMES = {
+  retailer: `${TAG} Shop`,
+  kit: `${TAG} Zaku`,
+  consumable: `${TAG} Cement`,
+  tool: `${TAG} Nippers`,
+  upgrade: `${TAG} Thrusters`,
+};
+
+let retailerId: string;
+let kitId: string;
+let consumableId: string;
+let toolId: string;
+let upgradeId: string;
+
+test.beforeAll(async () => {
+  const api = await apiContext();
+  const made = async (path: string, data: unknown): Promise<string> => {
+    const response = await api.post(path, { data });
+    expect(response.status(), `${path}: ${await response.text()}`).toBe(201);
+    return ((await response.json()) as { id: string }).id;
+  };
+  retailerId = await made("/retailers", { name: NAMES.retailer });
+  kitId = await made("/kits", { name: NAMES.kit, grade: "HG", status: "backlog" });
+  consumableId = await made("/consumables", { name: NAMES.consumable, category: "glue", quantity_on_hand: 2 });
+  toolId = await made("/tools", { name: NAMES.tool, category: "nippers", quantity_on_hand: 1 });
+  upgradeId = await made("/upgrades", { name: NAMES.upgrade, manufacturer: "E2E", quantity_on_hand: 3 });
+  await api.dispose();
+});
+
+test.afterAll(async () => {
+  const api = await apiContext();
+  await api.delete(`/kits/${kitId}`);
+  await api.delete(`/consumables/${consumableId}`);
+  await api.delete(`/tools/${toolId}`);
+  await api.delete(`/upgrades/${upgradeId}`);
+  await api.delete(`/retailers/${retailerId}`);
+  await api.dispose();
+});
+
+const dialog = (page: Page): Locator => page.getByRole("dialog");
+
+/** The sheet's one scroller: the element inside the dialog whose overflow is
+ *  its own. On the desktop the overlay scrolls instead, and this is null. */
+async function scrollerOf(page: Page): Promise<Locator | null> {
+  const found = await dialog(page).evaluate((element) =>
+    [...element.querySelectorAll<HTMLElement>("div")].findIndex(
+      (div) => getComputedStyle(div).overflowY === "auto" && div.scrollHeight > div.clientHeight,
+    ),
+  );
+  return found === -1 ? null : dialog(page).locator("div").nth(found);
+}
+
+/** Every drawn control of the open dialog is inside the screen, no field is
+ *  squeezed under the room a field needs (on a phone — the desktop's line row
+ *  keeps its 80 px quantity), no scroller inside the dialog scrolls sideways
+ *  (the sheet's body is one: `overflow-y: auto` makes its x `auto` too, so
+ *  content wider than the screen would scroll there instead of overflowing
+ *  it), and the document does not either. */
+async function expectDialogFits(page: Page, label: string, phone = true, pageToo = true): Promise<void> {
+  const report = await dialog(page).evaluate((element, roomRem) => {
+    const room = roomRem * parseFloat(getComputedStyle(document.documentElement).fontSize);
+    const drawn = (node: Element) => node.getClientRects().length > 0;
+    const say = (node: Element) =>
+      node.getAttribute("aria-label") ??
+      node.getAttribute("placeholder") ??
+      (node as HTMLElement).innerText?.trim().slice(0, 30) ??
+      node.tagName;
+    const controls = [...element.querySelectorAll<HTMLElement>("input, select, textarea, button, a[href]")].filter(drawn);
+    const isField = (node: Element) => node.matches("input:not([type=checkbox]):not([type=radio]), select, textarea");
+    const fields = controls.filter(isField).map((field) => ({ field, rect: field.getBoundingClientRect() }));
+    const outside: string[] = [];
+    const squeezed: string[] = [];
+    for (const control of controls) {
+      const rect = control.getBoundingClientRect();
+      if (rect.left < -0.5 || rect.right > innerWidth + 0.5) {
+        outside.push(`${say(control)} [${Math.round(rect.left)}–${Math.round(rect.right)}] of ${innerWidth}`);
+      }
+      // Squeezed: under the room a field needs *with another field beside it*
+      // — a field alone on its row has what its box has, which on a 320 px
+      // phone under a 40 px font is less than the room and all there is.
+      const beside = fields.some(
+        ({ field, rect: other }) =>
+          field !== control && Math.abs(other.top - rect.top) < rect.height / 2 && Math.abs(other.left - rect.left) > 1,
+      );
+      if (isField(control) && rect.width < room && beside) squeezed.push(`${say(control)} ${Math.round(rect.width)} px`);
+    }
+    const sideways = [...element.querySelectorAll<HTMLElement>("div")]
+      .filter((node) => drawn(node) && ["auto", "scroll"].includes(getComputedStyle(node).overflowX) && node.scrollWidth > node.clientWidth + 1)
+      .map((node) => `${node.tagName.toLowerCase()}.${node.className.toString().split(" ")[0]} ${node.scrollWidth} in ${node.clientWidth}`);
+    return {
+      controls: controls.length,
+      outside,
+      squeezed,
+      sideways,
+      document: [document.documentElement.scrollWidth, document.documentElement.clientWidth],
+    };
+  }, phone ? FIELD_ROOM_REM : 0);
+  expect(report.controls, `${label}: no control in the dialog`).toBeGreaterThan(0);
+  expect.soft(report.outside, `${label}: controls past the screen's edge`).toEqual([]);
+  expect.soft(report.squeezed, `${label}: fields under the room a field needs`).toEqual([]);
+  expect.soft(report.sideways, `${label}: something in the dialog scrolls sideways`).toEqual([]);
+  if (pageToo) expect.soft(report.document[0], `${label}: the document scrolls sideways`).toBeLessThanOrEqual(report.document[1]);
+}
+
+/** The sheet's own edges are the screen's. Asked where the *page* under it is
+ *  not — at 40 px on a 320 px phone the page head and the tab bar are past the
+ *  screen (#269, the shell's), and the document scrolls sideways for the page's
+ *  sake, not the dialog's. */
+async function expectDialogInsideScreen(page: Page, label: string): Promise<void> {
+  const edges = await dialog(page).evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return { left: rect.left, right: rect.right, width: innerWidth, scrollWidth: element.scrollWidth, clientWidth: element.clientWidth };
+  });
+  expect.soft(edges.left, `${label}: the sheet starts at the screen's edge`).toBe(0);
+  expect.soft(edges.right, `${label}: the sheet ends at the screen's edge`).toBe(edges.width);
+  expect.soft(edges.scrollWidth, `${label}: nothing in the sheet is wider than it`).toBeLessThanOrEqual(edges.clientWidth);
+}
+
+/** Back to the top of whatever scrolls — the overlay, the sheet's body — so
+ *  that "on screen without a scroll" is asked from the top and not from
+ *  wherever the last click left the form (on `main`, a click on a picker
+ *  result near the form's end had scrolled the actions into view, and the
+ *  test passed for the wrong reason). */
+async function scrollToTop(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    for (const element of document.querySelectorAll<HTMLElement>('[role="dialog"], [role="dialog"] *, body')) {
+      element.scrollTop = 0;
+      if (element.parentElement) element.parentElement.scrollTop = 0;
+    }
+    window.scrollTo(0, 0);
+  });
+}
+
+/** On screen, inside the viewport, and what a tap at its centre lands on. */
+async function expectUnderAFinger(control: Locator, label: string): Promise<void> {
+  await expect(control, label).toBeVisible();
+  const hit = await control.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    const top = document.elementFromPoint(box.left + box.width / 2, box.top + box.height / 2);
+    return {
+      hits: top !== null && (element === top || element.contains(top)),
+      top: top ? `${top.tagName.toLowerCase()} "${(top.textContent ?? "").trim().slice(0, 30)}"` : "nothing",
+      inViewport: box.top >= 0 && box.left >= 0 && box.bottom <= innerHeight + 0.5 && box.right <= innerWidth + 0.5,
+      width: box.width,
+      height: box.height,
+    };
+  });
+  expect.soft(hit, `${label}: a tap at its centre lands on ${hit.top}`).toMatchObject({ hits: true, inViewport: true });
+}
+
+/** A phone's dialog: the head at the top of the screen, the bar at its foot, and
+ *  the primary action and Close under a finger at the top, the middle and the
+ *  end of the form's scroll. */
+async function expectSheet(page: Page, primary: string, label: string): Promise<void> {
+  const head = dialog(page).getByRole("heading", { level: 2 });
+  const close = dialog(page).getByRole("button", { name: "Close" });
+  const action = dialog(page).getByRole("button", { name: primary, exact: true });
+  const scroller = await scrollerOf(page);
+  const positions = scroller ? ["top", "middle", "end"] : ["top"];
+  for (const position of positions) {
+    if (scroller) {
+      await scroller.evaluate((element, where) => {
+        const max = element.scrollHeight - element.clientHeight;
+        element.scrollTop = where === "top" ? 0 : where === "middle" ? max / 2 : max;
+      }, position);
+    }
+    const at = `${label}, scrolled to the ${position}`;
+    await expect.soft(head, at).toBeVisible();
+    const headBox = await head.boundingBox();
+    expect.soft(headBox?.y, `${at}: the head is at the top of the screen`).toBeLessThan(FINGER);
+    await expectUnderAFinger(close, `${at}: Close`);
+    await expectUnderAFinger(action, `${at}: "${primary}"`);
+    const actionBox = await action.boundingBox();
+    expect.soft(actionBox?.height, `${at}: "${primary}" is a bar button`).toBeGreaterThanOrEqual(BAR_BUTTON);
+    expect.soft((actionBox?.y ?? 0) + (actionBox?.height ?? 0), `${at}: the bar is at the foot of the screen`).toBeGreaterThan(
+      (await page.evaluate(() => innerHeight)) - 2 * FINGER,
+    );
+  }
+}
+
+/** From 768 px: the panel it was — narrower than the screen, 48 px below its
+ *  top with the overlay the scroller, the actions inside it and nothing inside
+ *  it scrolling on its own. */
+async function expectPanel(page: Page, primary: string, label: string): Promise<void> {
+  const frame = await dialog(page).evaluate((element) => {
+    const overlay = element.parentElement as HTMLElement;
+    overlay.scrollTop = 0;
+    return {
+      overlayScrolls: getComputedStyle(overlay).overflowY === "auto",
+      top: element.getBoundingClientRect().top,
+      width: element.getBoundingClientRect().width,
+      screen: innerWidth,
+    };
+  });
+  expect.soft(frame.width, `${label}: the panel is narrower than the screen`).toBeLessThan(frame.screen - 16);
+  expect.soft(frame.top, `${label}: the panel sits 48 px below the top of the screen`).toBe(48);
+  expect.soft(frame.overlayScrolls, `${label}: the overlay is the scroller`).toBe(true);
+  expect.soft(await scrollerOf(page), `${label}: nothing inside the panel scrolls on its own`).toBeNull();
+  const action = dialog(page).getByRole("button", { name: primary, exact: true });
+  const actionBox = await action.boundingBox();
+  expect.soft(actionBox?.height, `${label}: "${primary}" is a row button`).toBeLessThan(BAR_BUTTON);
+}
+
+async function openFromList(page: Page, path: string, control: string | RegExp): Promise<void> {
+  await page.goto(path);
+  await page.getByRole("button", { name: control }).first().click();
+  await expect(dialog(page)).toBeVisible();
+}
+
+test("every dialog fits a phone's screen and is the panel it was on a tablet", async ({ page }, testInfo) => {
+  test.setTimeout(120_000);
+  for (const size of sizesFor(testInfo.project.name)) {
+    await page.setViewportSize(size);
+    const at = `at ${size.width} px`;
+    const expectFrame = isPhone(size) ? expectSheet : expectPanel;
+
+    await test.step(`New order ${at}`, async () => {
+      await openFromList(page, "/orders", "New order");
+      // A kit line and a catalog line, with the picker's results open, so the
+      // widest line the form draws is the one measured.
+      await dialog(page).getByRole("button", { name: "Add line" }).click();
+      await dialog(page).locator('select:has(option[value="consumable"])').last().selectOption("consumable");
+      const search = dialog(page).getByPlaceholder(/Search consumables/).last();
+      await search.fill(NAMES.consumable);
+      const results = dialog(page).locator("div.absolute button");
+      await expect(results.first()).toBeVisible();
+      await expectDialogFits(page, `New order ${at}, results open`, isPhone(size));
+      if (isPhone(size)) {
+        for (const result of await results.all()) {
+          const box = await result.boundingBox();
+          expect.soft(box?.height, `${at}: a picker row is a finger tall`).toBeGreaterThanOrEqual(FINGER);
+          expect.soft(box?.width, `${at}: a picker row spans the field`).toBeGreaterThan(size.width - 80);
+        }
+        for (const name of [/^Already in hand/, /^Pre-order/]) {
+          const row = dialog(page).locator("label").filter({ hasText: name });
+          expect.soft((await row.boundingBox())?.height, `${at}: the checkbox row "${name}"`).toBeGreaterThanOrEqual(FINGER);
+        }
+      }
+      await results.first().click();
+      await expect(dialog(page).getByRole("button", { name: "Change" })).toBeVisible();
+      await expectDialogFits(page, `New order ${at}, a chosen item`, isPhone(size));
+      await expectFrame(page, "Record order", `New order ${at}`);
+      await page.keyboard.press("Escape");
+    });
+
+    await test.step(`Edit kit ${at}`, async () => {
+      await openFromList(page, `/kits?q=${q}`, `Edit ${NAMES.kit}`);
+      await expectDialogFits(page, `Edit kit ${at}`, isPhone(size));
+      await expectFrame(page, "Save", `Edit kit ${at}`);
+      await page.keyboard.press("Escape");
+    });
+
+    await test.step(`Edit consumable ${at}`, async () => {
+      await page.goto("/inventory?tab=consumables");
+      await page.getByRole("button", { name: `Edit ${NAMES.consumable}` }).click();
+      await expect(dialog(page)).toBeVisible();
+      await expectDialogFits(page, `Edit consumable ${at}`, isPhone(size));
+      await expectFrame(page, "Save", `Edit consumable ${at}`);
+      await page.keyboard.press("Escape");
+    });
+
+    await test.step(`Apply to kit ${at}`, async () => {
+      await page.goto("/inventory?tab=upgrades");
+      await page.getByRole("button", { name: "Apply to kit" }).first().click();
+      await expect(dialog(page)).toBeVisible();
+      await expectDialogFits(page, `Apply to kit ${at}`, isPhone(size));
+      await expectFrame(page, "Apply", `Apply to kit ${at}`);
+      await page.keyboard.press("Escape");
+    });
+
+    await test.step(`Edit retailer ${at}`, async () => {
+      await openFromList(page, `/retailers?q=${q}`, `Edit ${NAMES.retailer}`);
+      await expectDialogFits(page, `Edit retailer ${at}`, isPhone(size));
+      await expectFrame(page, "Save", `Edit retailer ${at}`);
+      await page.keyboard.press("Escape");
+    });
+  }
+});
+
+test("an order line is a stacked card on a phone and the row it was from 768 px", async ({ page }, testInfo) => {
+  for (const size of sizesFor(testInfo.project.name)) {
+    await page.setViewportSize(size);
+    const at = `at ${size.width} px`;
+    await openFromList(page, "/orders", "New order");
+    const line = dialog(page).locator('select:has(option[value="kit"])').first().locator("xpath=ancestor::div[contains(@class, 'rounded-md')][1]");
+    const type = line.locator("select").first();
+    const quantity = line.getByLabel("Quantity");
+    const price = line.getByLabel("Unit price");
+    const grade = line.getByPlaceholder("Grade *");
+    const scale = line.getByPlaceholder("Scale");
+    const number = line.getByPlaceholder("Kit #");
+    const [typeBox, quantityBox, priceBox, gradeBox, scaleBox, numberBox] = await Promise.all(
+      [type, quantity, price, grade, scale, number].map((control) => control.boundingBox()),
+    );
+    // The labels: drawn on a phone, not on the desktop — read by the label
+    // element, since the accessible name is "Quantity" in both.
+    const labelsDrawn = await line.evaluate((element) =>
+      [...element.querySelectorAll("label")].filter((label) => label.getClientRects().length > 0).map((label) => label.textContent?.trim()),
+    );
+    // The keyboards a phone raises (every shell carries the attribute).
+    await expect.soft(quantity, at).toHaveAttribute("inputmode", "numeric");
+    await expect.soft(price, at).toHaveAttribute("inputmode", "decimal");
+    await expect.soft(dialog(page).getByLabel("Shipping cost"), at).toHaveAttribute("inputmode", "decimal");
+    // The head's fields: the retailer's row and the tracking URL's their own on a
+    // phone with the pairs between; three to a row on the desktop, as it was.
+    const rowOf = async (label: string | RegExp) => Math.round((await dialog(page).getByLabel(label).boundingBox())!.y);
+    const rows = {
+      retailer: await rowOf(/^Retailer/),
+      date: await rowOf("Order date"),
+      currency: await rowOf("Currency"),
+      number: await rowOf("Order number"),
+      shipping: await rowOf("Shipping cost"),
+      service: await rowOf("Delivery service"),
+      tracking: await rowOf("Tracking number"),
+      url: await rowOf("Tracking URL"),
+    };
+    const distinct = (...values: number[]) => new Set(values).size === values.length;
+    if (isPhone(size)) {
+      expect.soft(rows.date, `${at}: date and currency share a row`).toBe(rows.currency);
+      expect.soft(rows.number, `${at}: number and shipping cost share a row`).toBe(rows.shipping);
+      expect.soft(rows.service, `${at}: delivery service and tracking number share a row`).toBe(rows.tracking);
+      expect.soft(distinct(rows.retailer, rows.date, rows.number, rows.service, rows.url), `${at}: the retailer and the URL have rows of their own`).toBe(true);
+    } else {
+      expect.soft([rows.date, rows.currency], `${at}: retailer, date and currency share a row`).toEqual([rows.retailer, rows.retailer]);
+      expect.soft([rows.shipping, rows.service], `${at}: number, shipping cost and delivery service share a row`).toEqual([rows.number, rows.number]);
+      expect.soft(rows.url, `${at}: tracking number and URL share a row`).toBe(rows.tracking);
+      expect.soft(distinct(rows.retailer, rows.number, rows.tracking), `${at}: three rows`).toBe(true);
+    }
+    if (isPhone(size)) {
+      expect.soft(labelsDrawn, `${at}: the labels are drawn`).toEqual(["Quantity", "Unit price"]);
+      expect.soft(quantityBox!.y, `${at}: quantity is under the type`).toBeGreaterThan(typeBox!.y + typeBox!.height - 1);
+      expect.soft(Math.abs(quantityBox!.y - priceBox!.y), `${at}: quantity and price share a row`).toBeLessThan(2);
+      expect.soft(gradeBox!.y, `${at}: the kit fields are under the price`).toBeGreaterThan(priceBox!.y + priceBox!.height - 1);
+      // The currency code inside the price field: drawn within the field's box,
+      // on both axes — a code on the line *under* the field shares its
+      // horizontal span (a mutant survived the one-axis check).
+      const code = line.getByText(/^[A-Z]{3}$/).first();
+      const codeBox = await code.boundingBox();
+      expect.soft(codeBox!.x + codeBox!.width, `${at}: the code ends inside the price field`).toBeLessThanOrEqual(priceBox!.x + priceBox!.width);
+      expect.soft(codeBox!.x, `${at}: the code starts inside the price field`).toBeGreaterThanOrEqual(priceBox!.x);
+      expect.soft(codeBox!.y, `${at}: the code is on the price field's line`).toBeGreaterThanOrEqual(priceBox!.y);
+      expect.soft(codeBox!.y + codeBox!.height, `${at}: the code is on the price field's line`).toBeLessThanOrEqual(priceBox!.y + priceBox!.height);
+      // Three across where the card has room for three, a column where not:
+      // a 320 px phone's card is 262 px, under the 324 the row needs.
+      if (size.width >= 390) {
+        expect.soft(Math.abs(gradeBox!.y - scaleBox!.y) + Math.abs(scaleBox!.y - numberBox!.y), `${at}: grade, scale and number three across`).toBeLessThan(2);
+      } else {
+        expect.soft(scaleBox!.y, `${at}: scale under grade`).toBeGreaterThan(gradeBox!.y + gradeBox!.height - 1);
+        expect.soft(numberBox!.y, `${at}: number under scale`).toBeGreaterThan(scaleBox!.y + scaleBox!.height - 1);
+      }
+      // Two lines: the remove control beside the type, a finger's size.
+      await dialog(page).getByRole("button", { name: "Add line" }).click();
+      const remove = dialog(page).getByRole("button", { name: "Remove line" }).first();
+      const removeBox = await remove.boundingBox();
+      expect.soft(removeBox!.width, `${at}: the remove control is a finger wide`).toBeGreaterThanOrEqual(FINGER);
+      expect.soft(removeBox!.height, `${at}: the remove control is a finger tall`).toBeGreaterThanOrEqual(FINGER);
+      const typeAgain = await type.boundingBox();
+      expect.soft(Math.abs(removeBox!.y + removeBox!.height / 2 - (typeAgain!.y + typeAgain!.height / 2)), `${at}: the remove control is on the type's row`).toBeLessThan(4);
+      expect.soft(removeBox!.x + removeBox!.width, `${at}: the remove control is inside the screen`).toBeLessThanOrEqual(size.width + 0.5);
+    } else {
+      expect.soft(labelsDrawn, `${at}: no label is drawn`).toEqual([]);
+      // The desktop's quantity sits 2 px under the row's centre, as it always
+      // has (an empty label's margin, kept for parity — the comment in
+      // `LineEditor` says why); on the row, within that.
+      expect.soft(Math.abs(quantityBox!.y + quantityBox!.height / 2 - (typeBox!.y + typeBox!.height / 2)), `${at}: quantity is on the type's row`).toBeLessThan(3);
+      expect.soft(Math.abs(priceBox!.y + priceBox!.height / 2 - (typeBox!.y + typeBox!.height / 2)), `${at}: price is on the type's row`).toBeLessThan(2);
+      expect.soft(Math.abs(gradeBox!.y - scaleBox!.y) + Math.abs(scaleBox!.y - numberBox!.y), `${at}: grade, scale and number three across`).toBeLessThan(2);
+      expect.soft(quantityBox!.width, `${at}: the desktop's quantity is 80 px`).toBe(80);
+      expect.soft(priceBox!.width, `${at}: the desktop's price is 112 px`).toBe(112);
+    }
+    await page.keyboard.press("Escape");
+  }
+});
+
+test("an order with a kit line and a catalog line is recorded from a phone, and a kit is edited there", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "phone", "the sheet is the phone shell's");
+  page.on("dialog", (native) => native.accept());
+  // The smallest phone there is, and a short one: on `main` the desktop-shaped
+  // form with two lines fits an 844 px screen whole, so "the primary without a
+  // scroll" held there for the wrong reason; at 568 px it cannot, and the
+  // branch's bar is at the foot whatever the height.
+  await page.setViewportSize({ width: 320, height: 568 });
+  const kitName = `${TAG} Recorded`;
+
+  await openFromList(page, "/orders", "New order");
+  await dialog(page).getByRole("combobox", { name: /^Retailer/ }).selectOption(retailerId);
+  await dialog(page).getByLabel("Unit price").first().fill("10");
+  await dialog(page).getByPlaceholder("Kit name *").fill(kitName);
+  await dialog(page).getByPlaceholder("Grade *").fill("HG");
+  await dialog(page).getByRole("button", { name: "Add line" }).click();
+  await dialog(page).locator('select:has(option[value="consumable"])').last().selectOption("consumable");
+  await dialog(page).getByLabel("Quantity").last().fill("3");
+  await dialog(page).getByLabel("Unit price").last().fill("2");
+  await dialog(page).getByPlaceholder(/Search consumables/).fill(NAMES.consumable);
+  const results = dialog(page).locator("div.absolute button");
+  await expect(results.first()).toBeVisible();
+  await results.first().click();
+  // The primary is in the bar, on screen without a scroll: a tap, not a scroll
+  // then a tap — asked from the top of the form, not from where the last click
+  // left it.
+  await scrollToTop(page);
+  const record = dialog(page).getByRole("button", { name: "Record order", exact: true });
+  await expectUnderAFinger(record, "Record order before any scroll");
+  await record.click();
+  await expect(dialog(page)).toBeHidden();
+
+  const api = await apiContext();
+  const orders = (await (await api.get("/orders")).json()) as {
+    id: string;
+    retailer_id: string;
+    items: { item_type: string; quantity: number; catalog_ref_id: string | null; kits: { name: string }[] }[];
+  }[];
+  const stored = orders.find((order) => order.retailer_id === retailerId);
+  expect(stored, "the order reached the API").toBeTruthy();
+  expect(stored!.items.map((item) => [item.item_type, item.quantity, item.catalog_ref_id])).toEqual([
+    ["kit", 1, null],
+    ["consumable", 3, consumableId],
+  ]);
+  expect(stored!.items[0].kits[0].name).toBe(kitName);
+
+  // Edit the kit the order spawned, from the phone's card.
+  await openFromList(page, `/kits?q=${encodeURIComponent(kitName)}`, `Edit ${kitName}`);
+  await dialog(page).getByLabel("Series").fill(`${TAG} Saga`);
+  await scrollToTop(page);
+  const save = dialog(page).getByRole("button", { name: "Save", exact: true });
+  await expectUnderAFinger(save, "Save before any scroll");
+  await save.click();
+  await expect(dialog(page)).toBeHidden();
+  const kits = (await (await api.get(`/kits?q=${encodeURIComponent(kitName)}`)).json()) as { name: string; series: string | null }[];
+  expect(kits.find((kit) => kit.name === kitName)?.series).toBe(`${TAG} Saga`);
+
+  await api.delete(`/orders/${stored!.id}`); // the spawned kit goes with it
+  await api.dispose();
+});
+
+test("Delete is in the form on a phone and in the action row on the desktop, and a turn keeps the keyboard on it", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "phone", "the two sides of the line are the phone project's sizes");
+  // The wide end of the phone shell and the rail beside it: an iPad mini turning.
+  await page.setViewportSize({ width: 744, height: 1133 });
+  await openFromList(page, `/kits?q=${q}`, `Edit ${NAMES.kit}`);
+  const del = dialog(page).getByRole("button", { name: "Delete", exact: true });
+  const bar = dialog(page).getByRole("button", { name: "Save", exact: true });
+  const place = async () => {
+    const [delBox, barBox] = await Promise.all([del.boundingBox(), bar.boundingBox()]);
+    return { deleteAboveBar: delBox!.y + delBox!.height <= barBox!.y, sameRow: Math.abs(delBox!.y - barBox!.y) < 2 };
+  };
+  expect(await place(), "at 744 px: Delete is in the form, above the bar").toMatchObject({ deleteAboveBar: true, sameRow: false });
+  await expect(del, "one Delete is drawn").toHaveCount(1);
+
+  await del.focus();
+  await expect(del).toBeFocused();
+  await page.setViewportSize({ width: 1133, height: 744 });
+  await expect.poll(async () => (await dialog(page).boundingBox())!.width, "the panel").toBeLessThan(600);
+  expect(await place(), "at 1133 px: Delete is on the action row").toMatchObject({ sameRow: true });
+  await expect(del, "the keyboard is on the desktop's Delete").toBeFocused();
+
+  await page.setViewportSize({ width: 744, height: 1133 });
+  await expect.poll(async () => (await place()).deleteAboveBar, "back to the form").toBe(true);
+  await expect(del, "the keyboard is on the phone's Delete").toBeFocused();
+  await page.keyboard.press("Escape");
+});
+
+test("a dialog fits a phone under the browser's own font-size preference", async ({ browserName }, testInfo) => {
+  test.skip(testInfo.project.name !== "phone", "the sheet is the phone shell's");
+  test.skip(browserName !== "chromium", "the preference is Chromium's launch flag");
+  test.setTimeout(120_000);
+  // The axis Codex #266 asked of the cards, asked of the dialogs: every size in
+  // a dialog is in rem and follows the preference; the screen does not. A row
+  // of fields folds by its box (`stack-3:`, `stack-2:`), so at 32 px a 390 px
+  // phone's kit dialog — 358 px of body, 11.2rem — is one field to a row, and
+  // the bar's buttons keep a finger's height inside the screen.
+  for (const font of [32, 40]) {
+    const browser = await chromium.launch({ args: [`--blink-settings=defaultFontSize=${font}`] });
+    try {
+      const context = await browser.newContext({ storageState: STORAGE_STATE, hasTouch: true, isMobile: true, baseURL: APP });
+      const page = await context.newPage();
+      for (const size of sizesFor("phone").filter(isPhone)) {
+        await page.setViewportSize(size);
+        const at = `at ${size.width} px, ${font} px font`;
+        await openFromList(page, `/kits?q=${q}`, `Edit ${NAMES.kit}`);
+        expect(await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), "the root font size").toBe(font);
+        await expectDialogFits(page, `Edit kit ${at}`, true, false);
+        await expectDialogInsideScreen(page, `Edit kit ${at}`);
+        // Three across where the body has 20.25rem for them — a 744 px phone
+        // at 32 px has 21.25 — and one to a row where it has not: 390 and 320.
+        const [grade, scale, body] = await Promise.all([
+          dialog(page).getByLabel("Grade").boundingBox(),
+          dialog(page).getByLabel("Scale").boundingBox(),
+          (await scrollerOf(page))?.evaluate((element) => element.clientWidth - 2 * parseFloat(getComputedStyle(element).paddingLeft)),
+        ]);
+        const stacked = scale!.y > grade!.y + grade!.height - 1;
+        expect.soft(stacked, `${at}: the three-across row folds by its box (${body} px)`).toBe((body ?? 0) < 20.25 * font);
+        if (!stacked) expect.soft(grade!.width, `${at}: a field of the row has its room`).toBeGreaterThanOrEqual(FIELD_ROOM_REM * font);
+        for (const name of ["Save", "Cancel"]) {
+          const button = dialog(page).getByRole("button", { name, exact: true });
+          await expectUnderAFinger(button, `${at}: "${name}"`);
+          expect.soft((await button.boundingBox())?.height, `${at}: "${name}" is a finger tall`).toBeGreaterThanOrEqual(FINGER);
+        }
+        await page.keyboard.press("Escape");
+        await openFromList(page, "/orders", "New order");
+        // The form is gated on its queries (a cold cache in a browser of its
+        // own): its loading state has no control to measure.
+        await expect(dialog(page).getByRole("button", { name: "Add line" })).toBeVisible();
+        await expectDialogFits(page, `New order ${at}`, true, false);
+        await expectDialogInsideScreen(page, `New order ${at}`);
+        await expectUnderAFinger(dialog(page).getByRole("button", { name: "Record order", exact: true }), `${at}: "Record order"`);
+        await page.keyboard.press("Escape");
+      }
+      await context.close();
+    } finally {
+      await browser.close();
+    }
+  }
+});

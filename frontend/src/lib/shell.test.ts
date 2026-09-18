@@ -85,6 +85,20 @@ describe("the stylesheet draws the same lines", () => {
   });
 });
 
+describe("a row of fields folds by its box", () => {
+  // About 100 px a field — 6.25rem — and the row's 0.75rem gaps (#259): three
+  // across needs 20.25rem, two 13.25rem. A container query, so the box asked
+  // is the dialog's body or the order line's card, whatever the viewport.
+  it.each([
+    ["stack-3", 3, 20.25],
+    ["stack-2", 2, 13.25],
+  ] as const)("`%s:` is a container under %i fields' room", (variant, fields, rem) => {
+    expect(rem).toBe(fields * 6.25 + (fields - 1) * 0.75);
+    const block = new RegExp(`@custom-variant ${variant} \\{\\s*@container \\(width < ([\\d.]+)rem\\) \\{\\s*@slot;\\s*\\}\\s*\\}`).exec(stylesheet);
+    expect(block?.[1]).toBe(String(rem));
+  });
+});
+
 describe("viewport height", () => {
   it("is never `vh`: on iOS that is the large viewport, behind Safari's toolbar", () => {
     // `h-dvh` / `min-h-dvh` are the spellings (§13.7). This is the guard that

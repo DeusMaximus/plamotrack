@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type {
   Control,
   FieldErrors,
@@ -35,6 +35,15 @@ import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "./ui";
 /** The order dialog (new or edit), shared by the Orders page and Home (#233).
  *  Ship, Receive and Delete live here too (#120, §13.4): the one control on a
  *  row or a card opens this, and a transition travels with its dates. */
+
+/** A line field's label, drawn on a phone only (§13.7, #259): the desktop's row
+ *  names quantity and price for assistive tech and by placeholder, and a
+ *  placeholder is gone once the field is filled. */
+const LINE_LABEL_CLASS = "mb-1 block text-xs font-medium text-muted md:hidden";
+/** A currency code beside its amount on the desktop; inside the field on a
+ *  phone, where the row is the field's. */
+const CODE_CLASS =
+  "text-sm text-muted max-md:pointer-events-none max-md:absolute max-md:end-2.5 max-md:top-1/2 max-md:-translate-y-1/2";
 
 interface LineValues {
   id?: string;
@@ -305,10 +314,26 @@ function LineEditor({
     lineCurrency,
     referenceCurrency,
   );
+  // The phone's labels (below); one set of ids per line.
+  const ids = useId();
+  const quantityId = `${ids}quantity`;
+  const priceId = `${ids}price`;
+  const convertedId = `${ids}converted`;
 
   return (
-    <div className="space-y-2 rounded-md border border-border bg-surface-alt p-3">
-      <div className="flex items-center gap-2">
+    // Its own `@container`: the three-across row of kit fields folds by *this*
+    // card's width (`stack-3:`, index.css) — the dialog's less the card's own
+    // padding — where the dialog's body answers for every other row.
+    <div className="@container space-y-2 rounded-md border border-border bg-surface-alt p-3">
+      {/* The desktop's row: type, quantity, price, the code, the remove control
+          at the far end. On a phone (§13.7, #259) the same nodes are the card's
+          first two rows — the type with the remove control beside it, then
+          quantity and price under labels that show. One tree, placed by grid
+          cell below 768 px; the wrappers that give the labels their rows are
+          `display: contents` in the desktop's flex row, so it lays out as it
+          did. The remove control is tabbed after the price in both shells, as it
+          always was; a phone draws it a row up. */}
+      <div className="flex items-center gap-2 max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-2 max-md:gap-y-3">
         <Select
           {...register(`items.${index}.item_type`, {
             onChange: () => {
@@ -318,7 +343,7 @@ function LineEditor({
               setValue(`items.${index}.catalog`, null);
             },
           })}
-          className="!w-32"
+          className="!w-32 max-md:col-start-1 max-md:row-start-1 max-md:!w-full"
         >
           {ITEM_TYPES.map((type) => (
             <option key={type} value={type}>
@@ -326,34 +351,58 @@ function LineEditor({
             </option>
           ))}
         </Select>
-        <Field label="" className="!mb-0 w-20">
-          <Input
-            type="number"
-            min={1}
-            aria-label={t("orders.quantity")}
-            {...register(`items.${index}.quantity`, { required: true, min: 1 })}
-          />
-        </Field>
-        <Input
-          type="number"
-          step={stepFor(lineCurrency)}
-          min={0}
-          aria-label={t("orders.unitPrice")}
-          placeholder={t("orders.unitPrice")}
-          className="!w-28"
-          {...register(`items.${index}.unit_price`, { required: t("validation.requiredField") })}
-        />
-        {/* Stated, not editable: the header picker sets it for new lines, and a
-            recorded line keeps what it was bought in. Shown so a mixed-currency
-            order — which REST, MCP and CSV can all create — is legible here. */}
-        <span className="text-sm text-muted">{lineCurrency}</span>
-        <div className="flex-1" />
+        <div className="md:contents max-md:col-span-2 max-md:row-start-2 max-md:grid max-md:grid-cols-2 max-md:gap-2 stack-2:grid-cols-1">
+          {/* On the desktop a block with 4 px above the field, not `contents`:
+              the row it replaces held the quantity in a `Field` whose empty
+              label carried that margin, so the row was 38 px and the field 2 px
+              under the price's centre — kept as it was, pixel for pixel, because
+              the layout from 768 px up is not this milestone's to change (§13.7).
+              Dropping `md:pt-1` and the wrapper's box centres the field and
+              shortens every line by 4 px. */}
+          <div className="max-md:min-w-0 md:w-20 md:pt-1">
+            <label htmlFor={quantityId} className={LINE_LABEL_CLASS}>
+              {t("orders.quantity")}
+            </label>
+            <Input
+              id={quantityId}
+              type="number"
+              min={1}
+              inputMode="numeric"
+              aria-label={t("orders.quantity")}
+              className="!w-20 max-md:!w-full"
+              {...register(`items.${index}.quantity`, { required: true, min: 1 })}
+            />
+          </div>
+          <div className="md:contents max-md:min-w-0">
+            <label htmlFor={priceId} className={LINE_LABEL_CLASS}>
+              {t("orders.unitPrice")}
+            </label>
+            <div className="md:contents max-md:relative">
+              <Input
+                id={priceId}
+                type="number"
+                step={stepFor(lineCurrency)}
+                min={0}
+                inputMode="decimal"
+                aria-label={t("orders.unitPrice")}
+                placeholder={t("orders.unitPrice")}
+                className="!w-28 max-md:!w-full max-md:pe-12"
+                {...register(`items.${index}.unit_price`, { required: t("validation.requiredField") })}
+              />
+              {/* Stated, not editable: the header picker sets it for new lines, and a
+                  recorded line keeps what it was bought in. Shown so a mixed-currency
+                  order — which REST, MCP and CSV can all create — is legible here. */}
+              <span className={CODE_CLASS}>{lineCurrency}</span>
+            </div>
+          </div>
+        </div>
+        <div className="flex-1 max-md:hidden" />
         {canRemove && (
           <button
             type="button"
             onClick={onRemove}
             aria-label={t("orders.removeLine")}
-            className="rounded-sm p-1 text-faint hover:bg-chip hover:text-text"
+            className="rounded-sm p-1 text-faint hover:bg-chip hover:text-text touch:p-[15px] max-md:col-start-2 max-md:row-start-1"
           >
             <X size={14} aria-hidden />
           </button>
@@ -364,13 +413,15 @@ function LineEditor({
         // A third for the name, two thirds for the three short fields. No status
         // select here any more (#120): pre-order is order-wide, set by the toggle
         // on a create — a per-line picker rendered an order-level fact as if each
-        // line could ship on its own.
-        <div className="grid grid-cols-3 gap-2">
+        // line could ship on its own. On a phone the name has a row of its own
+        // and the three share the next, one each where the card is too narrow
+        // for three (§13.7, #259).
+        <div className="grid grid-cols-3 gap-2 max-md:grid-cols-1">
           <Input
             placeholder={t("orders.kitNamePlaceholder")}
             {...register(`items.${index}.kit_name`, { required: t("validation.kitNameRequired") })}
           />
-          <div className="col-span-2 grid grid-cols-3 gap-2">
+          <div className="col-span-2 grid grid-cols-3 gap-2 max-md:col-span-full stack-3:grid-cols-1">
             <Input
               placeholder={t("orders.gradePlaceholder")}
               {...register(`items.${index}.kit_grade`, { required: t("validation.gradeRequired") })}
@@ -384,7 +435,7 @@ function LineEditor({
             <Input placeholder={t("orders.kitNumberPlaceholder")} {...register(`items.${index}.kit_number`)} />
           </div>
           {(lineErrors?.kit_name || lineErrors?.kit_grade) && (
-            <span className="col-span-3 text-xs text-danger">
+            <span className="col-span-full text-xs text-danger">
               {lineErrors?.kit_name?.message ?? lineErrors?.kit_grade?.message}
             </span>
           )}
@@ -424,20 +475,29 @@ function LineEditor({
       )}
 
       {showSnapshot && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-sm text-muted">≈</span>
-          <Input
-            type="number"
-            // The snapshot's own currency, not the order's — §6 lets them differ.
-            step={stepFor(snapshotCode)}
-            min={0}
-            aria-label={t("orders.convertedPrice")}
-            placeholder={t("orders.convertedPrice")}
-            className="!w-28"
-            {...register(`items.${index}.converted_price`)}
-          />
-          <span className="text-sm text-muted">{snapshotCode}</span>
-          <span className="text-xs text-muted">{t("orders.snapshotNote")}</span>
+        // "≈ 12.00 AUD" and its note in one row on the desktop; on a phone a
+        // labelled field, the code inside it, the note beneath.
+        <div className="flex flex-wrap items-center gap-2 max-md:block">
+          <span className="text-sm text-muted max-md:hidden">≈</span>
+          <label htmlFor={convertedId} className={LINE_LABEL_CLASS}>
+            {t("orders.convertedPrice")}
+          </label>
+          <div className="md:contents max-md:relative">
+            <Input
+              id={convertedId}
+              type="number"
+              // The snapshot's own currency, not the order's — §6 lets them differ.
+              step={stepFor(snapshotCode)}
+              min={0}
+              inputMode="decimal"
+              aria-label={t("orders.convertedPrice")}
+              placeholder={t("orders.convertedPrice")}
+              className="!w-28 max-md:!w-full max-md:pe-12"
+              {...register(`items.${index}.converted_price`)}
+            />
+            <span className={CODE_CLASS}>{snapshotCode}</span>
+          </div>
+          <span className="text-xs text-muted max-md:mt-1 max-md:block">{t("orders.snapshotNote")}</span>
         </div>
       )}
     </div>
@@ -591,6 +651,8 @@ function OrderForm({
   // double-click made two shops); the state is what greys the button out.
   const addingRetailer = useRef(false);
   const [retailerPending, setRetailerPending] = useState(false);
+  // The submit stands outside the <form>, in the dialog's frame (§13.7, #259).
+  const formId = useId();
   // One-way latches for the transition dispatch below (#120): if the PATCH lands
   // but a following ship/receive call fails, the resubmit must not replay the
   // call that succeeded — the server 409s the repeat, which would turn a fixable
@@ -786,12 +848,65 @@ function OrderForm({
   });
 
   return (
-    <Modal title={order ? t("orders.editTitle") : t("orders.newTitle")} onClose={onClose} wide>
-      <form onSubmit={onSubmit} className="space-y-4">
+    <Modal
+      title={order ? t("orders.editTitle") : t("orders.newTitle")}
+      onClose={onClose}
+      wide
+      actions={{
+        secondary: { label: t("common.cancel"), onClick: onClose },
+        primary: {
+          label: order ? t("orders.saveChanges") : t("orders.recordOrder"),
+          form: formId,
+          disabled: isSubmitting || deleting,
+        },
+      }}
+      destructive={
+        order && onDelete
+          ? {
+              label: t("common.delete"),
+              disabled: isSubmitting || deleting,
+              onClick: async () => {
+                const label =
+                  retailers?.find((row) => row.id === order.retailer_id)?.name ??
+                  t("orders.thisOrder");
+                if (
+                  !window.confirm(
+                    t("orders.confirmDelete", { date: formatDate(order.order_date), retailer: label }),
+                  )
+                ) {
+                  return;
+                }
+                setError(null);
+                setDeleting(true);
+                try {
+                  await onDelete(order);
+                  onClose();
+                } catch (err) {
+                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
+                } finally {
+                  setDeleting(false);
+                }
+              },
+            }
+          : undefined
+      }
+    >
+      <form id={formId} onSubmit={onSubmit} className="space-y-4">
         <ErrorBanner message={error} />
 
-        <div className="grid grid-cols-3 gap-3">
-          <Field label={t("orders.retailer")} required error={errors.retailer_id?.message}>
+        {/* The head's eight fields in one grid: three to a row on the desktop, as
+            they were — a field two of six columns, a tracking field three — and
+            on a phone (§13.7, #259) the retailer on a row of its own, then the
+            pairs: date and currency, number and shipping cost, delivery service
+            and tracking number; the tracking URL alone. Where the box is too
+            narrow even for a pair (`stack-2:`), one to a row. */}
+        <div className="grid grid-cols-6 gap-x-3 gap-y-4 max-md:grid-cols-2 stack-2:grid-cols-1">
+          <Field
+            label={t("orders.retailer")}
+            required
+            error={errors.retailer_id?.message}
+            className="col-span-2 max-md:col-span-full"
+          >
             {newRetailerName === null ? (
               <div className="flex gap-1">
                 <Select {...register("retailer_id", { required: t("orders.pickRetailer") })}>
@@ -807,6 +922,7 @@ function OrderForm({
                   variant="secondary"
                   aria-label={t("orders.quickAddRetailer")}
                   title={t("orders.quickAddRetailer")}
+                  className="touch:min-w-11 touch:justify-center"
                   onClick={() => setNewRetailerName("")}
                 >
                   <Plus size={14} aria-hidden />
@@ -827,6 +943,7 @@ function OrderForm({
                   type="button"
                   variant="secondary"
                   aria-label={t("common.cancel")}
+                  className="touch:min-w-11 touch:justify-center"
                   onClick={() => setNewRetailerName(null)}
                 >
                   <X size={14} aria-hidden />
@@ -834,10 +951,10 @@ function OrderForm({
               </div>
             )}
           </Field>
-          <Field label={t("orders.orderDate")} required>
+          <Field label={t("orders.orderDate")} required className="col-span-2 max-md:col-span-1">
             <Input type="date" {...register("order_date", { required: true })} />
           </Field>
-          <Field label={t("orders.currency")} required>
+          <Field label={t("orders.currency")} required className="col-span-2 max-md:col-span-1">
             <Input
               list="currencies"
               {...register("currency_code", {
@@ -863,40 +980,36 @@ function OrderForm({
               ))}
             </datalist>
           </Field>
-        </div>
-
-        <div className="grid grid-cols-3 gap-3">
-          <Field label={t("orders.orderNumber")}>
+          <Field label={t("orders.orderNumber")} className="col-span-2 max-md:col-span-1">
             <Input
               {...register("order_number")}
               placeholder={t("orders.orderNumberPlaceholder")}
             />
           </Field>
-          <Field label={t("orders.shippingCost")}>
+          <Field label={t("orders.shippingCost")} className="col-span-2 max-md:col-span-1">
             <Input
               type="number"
               step={stepFor(watch("currency_code"))}
               min={0}
+              inputMode="decimal"
               {...register("shipping_cost")}
             />
           </Field>
-          <Field label={t("orders.deliveryService")}>
+          <Field label={t("orders.deliveryService")} className="col-span-2 max-md:col-span-1">
             <Input {...register("delivery_service")} placeholder={t("orders.deliveryServicePlaceholder")} />
           </Field>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label={t("orders.trackingNumber")}>
+          <Field label={t("orders.trackingNumber")} className="col-span-3 max-md:col-span-1">
             <Input {...register("tracking_number")} />
           </Field>
-          <Field label={t("orders.trackingUrl")}>
+          <Field label={t("orders.trackingUrl")} className="col-span-3 max-md:col-span-full">
             <Input {...register("tracking_url")} placeholder={t("common.urlPlaceholder")} />
           </Field>
         </div>
 
+        {/* A row each on a phone, a finger tall, the label the target (#259). */}
         {!order && (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-            <label className="flex items-center gap-2 text-sm text-text">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 max-md:flex-col max-md:items-stretch max-md:gap-y-0">
+            <label className="flex items-center gap-2 text-sm text-text touch:min-h-11">
               <input
                 type="checkbox"
                 {...register("received", {
@@ -913,7 +1026,7 @@ function OrderForm({
               {t("orders.alreadyInHand")}
             </label>
             {watch("received") && (
-              <label className="flex items-center gap-2 text-sm text-text">
+              <label className="flex items-center gap-2 text-sm text-text touch:min-h-11">
                 {t("orders.receivedOnPrefix")}
                 <Input
                   type="date"
@@ -927,7 +1040,7 @@ function OrderForm({
                 shipment becomes two plamotrack orders, so per-line pre-order
                 status rendered an order-level fact as a line-level choice. */}
             <label
-              className={`flex items-center gap-2 text-sm ${watch("received") ? "text-faint" : "text-text"}`}
+              className={`flex items-center gap-2 text-sm touch:min-h-11 ${watch("received") ? "text-faint" : "text-text"}`}
               title={watch("received") ? t("orders.inHandNotPreOrder") : undefined}
             >
               <input
@@ -945,7 +1058,7 @@ function OrderForm({
             filling it performs the ship/receive transition on save. Which call
             goes out is decided in the submit handler above. */}
         {order && (
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-2 gap-3 stack-2:grid-cols-1">
             <div>
               <Field label={t("orders.shippedOn")}>
                 <Input type="date" max={todayISO()} {...register("shipped_date")} />
@@ -1006,46 +1119,6 @@ function OrderForm({
           ))}
         </div>
 
-        <div className="flex items-center gap-2">
-          {order && onDelete && (
-            <Button
-              type="button"
-              variant="danger"
-              className="me-auto"
-              disabled={isSubmitting || deleting}
-              onClick={async () => {
-                const label =
-                  retailers?.find((row) => row.id === order.retailer_id)?.name ??
-                  t("orders.thisOrder");
-                if (
-                  !window.confirm(
-                    t("orders.confirmDelete", { date: formatDate(order.order_date), retailer: label }),
-                  )
-                ) {
-                  return;
-                }
-                setError(null);
-                setDeleting(true);
-                try {
-                  await onDelete(order);
-                  onClose();
-                } catch (err) {
-                  setError(err instanceof ApiError ? err.message : t("common.deleteFailed"));
-                } finally {
-                  setDeleting(false);
-                }
-              }}
-            >
-              {t("common.delete")}
-            </Button>
-          )}
-          <Button type="button" variant="secondary" className="ms-auto" onClick={onClose}>
-            {t("common.cancel")}
-          </Button>
-          <Button type="submit" disabled={isSubmitting || deleting}>
-            {order ? t("orders.saveChanges") : t("orders.recordOrder")}
-          </Button>
-        </div>
       </form>
     </Modal>
   );

@@ -1362,3 +1362,52 @@ values" is a claim about the seed, and the seed is the author's.** A survivor's 
 usually names the value that would kill it ("a reference would have to be wider than the
 box") — that value is the next seed. The three are in the suite now, and the tuples
 kill.
+
+## Safari does not focus a button on click (#259)
+
+`CatalogItemPicker` closes its result list when focus leaves the picker — #104's
+rule, read off `focusout`'s `relatedTarget`, written to stop a blur timer unmounting
+a result under a keyboard user mid-Tab. It assumed what Chromium does: a click on a
+button moves focus to the button, so `relatedTarget` names it and the list stays.
+Safari and Playwright's WebKit do not focus a button on click. The mousedown on a
+result took focus from the search field to nowhere, the rule read "left the picker",
+React unmounted the list, and the click landed on whatever was under the pointer by
+then. No catalog item could be picked by tap or mouse in the engine every iPhone runs
+— since #104, and nothing had run the pointer path under WebKit; the keyboard path
+had a test, and passed.
+
+Found by running the new phone spec under a throwaway WebKit config: at 320 px the
+*Change* chip never appeared, and the recorded-order test's *Record order* left the
+dialog open on a validation error. The remedy is the standard one — `preventDefault`
+on the list's mousedown keeps the input's focus through the press — and Enter and
+Space fire no mousedown.
+
+What to keep: **a rule written on focus events is a rule about one engine until the
+other has run it.** Where a control's behaviour is decided from where focus went, run
+the pointer path *and* the keyboard path under WebKit before calling it done; the
+procedure has the config.
+
+## The engine drops focus later than the mutation (#259)
+
+`Modal`'s `MutationObserver` re-focuses the dialog when the focused submit button is
+disabled mid-request — "disabling the focused element drops focus to `<body>`,
+measured in Chromium." It is measured in Chromium: there the drop is synchronous with
+the attribute, so the observer's microtask finds `activeElement === body` and acts.
+WebKit drops it *later*. The observer looked, found focus still on the button, did
+nothing; the engine then moved focus to `<body>` with no one watching, and the
+keyboard spec's submit test — never run under WebKit — went red the first time it was.
+
+The fix acts on what the mutation *means* rather than on what the engine has done
+about it yet — a focused control that is disabled or hidden now — and adds a
+`focusout`-to-nowhere check a microtask later for any cause. The first version of that
+check took the keyboard to the dialog outright, and Chromium's rotation test went red
+within the same run: on a turn across the 768 px line the phone's Delete twin is
+hidden, its `focusout` fires, and the fallback had the keyboard before
+`useFocusAcrossShells` could hand it to the desktop's twin. It asks the control's focus
+key first now and takes the keyboard only when nothing carries one.
+
+What to keep: **"measured in Chromium" is a measurement of Chromium**, and a comment
+that says so is naming its own limit. Where the rule is about an engine's timing,
+measure the other engine. And a new fallback that moves focus is a second reader of
+the focus rule (§13.7): it yields to the key, or it fights the machinery that exists.
+

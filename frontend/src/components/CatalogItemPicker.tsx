@@ -100,7 +100,7 @@ export function CatalogItemPicker({
           </span>
           <button
             type="button"
-            className="text-xs text-muted hover:text-text"
+            className="text-xs text-muted hover:text-text touch:min-h-11 touch:px-2"
             onClick={() => onChange(null)}
           >
             {t("catalogPicker.backToSearch")}
@@ -140,7 +140,7 @@ export function CatalogItemPicker({
             commercial set names a maker, a scratch-built piece doesn't, and a
             backdrop panel has no scale. */}
         {itemType === "display" && (
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-2 gap-2 stack-2:grid-cols-1">
             <Input
               value={value.manufacturer}
               onChange={(event) => onChange({ ...value, manufacturer: event.target.value })}
@@ -183,7 +183,17 @@ export function CatalogItemPicker({
         placeholder={t("catalogPicker.searchPlaceholder", { type: itemTypePlural(itemType) })}
       />
       {open && debounced.length > 0 && (
-        <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-sm border border-border bg-surface">
+        <div
+          className="absolute z-10 mt-1 w-full overflow-hidden rounded-sm border border-border bg-surface"
+          // Safari does not focus a button on click: a mousedown on a result took
+          // focus from the input to nowhere, the `onBlur` above read that as focus
+          // leaving the picker and unmounted the list before the click landed —
+          // so no catalog item could be picked by tap or mouse on an iPhone or in
+          // Safari (measured under Playwright's WebKit, #259). Keeping the input's
+          // focus through the press is the standard remedy; the keyboard's Enter
+          // and Space fire no mousedown and are untouched.
+          onMouseDown={(event) => event.preventDefault()}
+        >
           {isFetching && (
             <div className="px-3 py-2 text-xs text-muted">{t("catalogPicker.searching")}</div>
           )}
@@ -191,7 +201,8 @@ export function CatalogItemPicker({
             <button
               key={result.id}
               type="button"
-              className="flex w-full items-center justify-between px-3 py-2 text-start text-sm hover:bg-accent-soft"
+              // A full-width row, a finger tall under `touch:` (§13.7, #259).
+              className="flex w-full items-center justify-between px-3 py-2 text-start text-sm hover:bg-accent-soft touch:min-h-11"
               // onClick, not onMouseDown: a keyboard's Enter/Space activates a
               // button through click and never fires mousedown (#104). The
               // mousedown-first ordering the old handler relied on is covered
@@ -213,7 +224,7 @@ export function CatalogItemPicker({
           ))}
           <button
             type="button"
-            className="flex w-full items-center gap-1.5 border-t border-rule px-3 py-2 text-start text-sm font-medium text-accent hover:bg-accent-soft"
+            className="flex w-full items-center gap-1.5 border-t border-rule px-3 py-2 text-start text-sm font-medium text-accent hover:bg-accent-soft touch:min-h-11"
             onClick={() =>
               onChange({
                 mode: "new",

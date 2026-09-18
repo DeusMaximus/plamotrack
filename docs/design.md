@@ -3221,3 +3221,114 @@ and tablet e2e, screenshots, the release (#260).
   that asks the fit questions again under every date style (in the `settings`
   project, after everything else: it flips the singleton every date is written
   with).
+
+**Built — #259.** What the build decided, and what it measured:
+
+- **Three frames from one tree.** `Modal` draws the desktop's centred panel, the
+  phone's full-screen sheet and the bottom sheet from the same nodes, dressed by
+  `max-md:`, so a turn across the 768 px line keeps the Close that was clicked,
+  the field being typed in and the primary action as the elements they were.
+  Below 768 px the overlay is the screen and the panel a column filling it: the
+  head (the title and Close) and the action bar fixed by the column, the body
+  the one scroller, nothing inside `position: fixed` (the trap's `offsetParent`
+  filter still sees every control). A form *describes* its two actions
+  (`DialogAction`: a label, an `onClick` or the `form` it submits) and the frame
+  draws them — at the end of the panel on the desktop, 16 px under the last
+  field as every form drew them; in the bar on a phone, one share for the
+  secondary and two for the primary at 48 px, above the home indicator — so the
+  submit stands outside the `<form>` element and names it by id. The filter
+  sheet's bar (#258) is this bar now, with a hairline above it.
+- **Delete is drawn twice.** The owner's call keeps it out of the fixed bar —
+  under the fields it destroys on a phone, at the start of the action row on the
+  desktop — and the two places cannot be one node, so both are drawn and CSS
+  hides one per shell (the fold's pattern, above), each carrying
+  `data-focus-key="dialog-delete"`; `focusByKey` reads the whole document now, a
+  dialog being a portal beside `#root`. A turn with the keyboard on Delete lands
+  on the twin: the dialog's own `focusout` fallback asks the key before it takes
+  the keyboard itself — its first version pre-empted the twin, and the rotation
+  test caught it.
+- **The order form.** The head's eight fields are one six-column grid — two
+  columns a field, three for the tracking pair, on the desktop, which is
+  arithmetic-identical to the three grids it replaces — and on a phone the
+  retailer alone, then date and currency, number and shipping cost, delivery
+  service and tracking number, the URL alone. A line is a card: the type with the
+  remove control beside it (44 px under `touch:`), quantity and unit price under
+  labels that show (a placeholder is gone once its field is filled) with the
+  currency code inside the price field, then the kit's name and grade, scale and
+  number three across, or the picker; the §6 snapshot a labelled field with its
+  note beneath. **One tree in the desktop's DOM order**, placed by grid cell: the
+  issue drew the name before the quantity, and either order reads, but the
+  phone's would have needed a second arrangement per shell (every line control
+  keyed, the picker's search remounted mid-word on a turn) or CSS `order`, which
+  puts the Tab order out of step with the eye. So the remove control is tabbed
+  after the price in both shells, as it always was, and drawn a row up on a
+  phone — the one place the eye and the Tab differ. The desktop's row is kept
+  to the pixel, an accident included: the quantity sat in a `Field` whose
+  empty label carried 4 px of margin, so the row was 38 px and the field 2 px
+  under the price's centre; the first build let that go, the comparison
+  against `main` showed every order dialog shifted from the line row down
+  (and, where the dialog is taller than the screen, the whole panel — the
+  focus call scrolls the overlay to the nearest edge, and a shorter panel lands
+  elsewhere), and the margin went back in as a block with `md:pt-1`, one
+  comment and one line to remove if the field is ever centred on purpose.
+- **A row of fields folds by its box, not the viewport.** `stack-3:` and
+  `stack-2:` (index.css) are container queries at 20.25rem and 13.25rem — about
+  100 px a field, 6.25rem, and the row's gaps — asked of the nearest
+  `@container`: the dialog's body, or the line's own card, whose padding is then
+  inside the arithmetic. So a 320 px phone's line has grade, scale and number one
+  to a row where a 390 px phone's has three across (a card of 262 px against
+  332), and under the browser's font-size preference the same rule folds the kit
+  dialog at 390 px and 32 px (a body of 11.2rem) while a 744 px one keeps its row
+  (21.25rem). The phone's pairing itself (`max-md:grid-cols-2`) is a shell
+  decision and yields to the box's — the container rule sorts after it in the
+  stylesheet. What a 320 px phone under a 40 px font cannot give: a field alone
+  on its row is 4.45rem, under the room, and that is all there is — declined,
+  and the spec's room check asks only of a field with another beside it.
+- **The trap holds in WebKit (#267).** Safari's default Tab stops on fields and
+  selects, not on buttons, links, checkboxes or radios, so a trap guarding only
+  the ends of its own list let one Shift+Tab out of a dialog whose first control
+  is Close, and one Tab out after the last field. The trap now hand-drives a Tab
+  whose next stop is anything an engine might skip, and leaves to the engine the
+  moves every engine makes alike — which keeps a date input's own Tab through its
+  day, month and year. Two more WebKit-only defects fell out of running the phone
+  specs under it, both older than this milestone: **Safari does not focus a
+  button on click**, so a mousedown on a picker result blurred the search field
+  to nowhere and #104's `relatedTarget` rule unmounted the list before the click
+  landed — no catalog item could be picked by tap on an iPhone (the list keeps
+  the input's focus through the press now); and **WebKit takes the keyboard off a
+  just-disabled control later than the attribute changes**, after the dialog's
+  observer had looked (it acts on a focused control that is disabled *now*, and
+  a `focusout` to nowhere is checked a microtask later). CI installs Chromium
+  alone; the WebKit runs are local (`.agents/testing-and-review.md`).
+- **The on-screen keyboard.** iOS Safari does not resize the layout viewport for
+  it — the visual viewport shrinks and pans — so a bar at the foot of a
+  full-height sheet would sit under the keyboard while a field is focused. In the
+  phone frames the overlay follows the visual viewport (its height and offset,
+  through the CSSOM, which the packaged stack's CSP permits). **Not verified on a
+  device**: Playwright's WebKit has no keyboard, and the iOS Simulator needs a
+  sign-in the agent cannot make; the real-device pass is the owner's. Chrome for
+  Android's `interactive-widget` was left alone.
+- Also: checkbox rows a finger tall with the label the target; the picker's
+  result rows a finger tall; `inputmode` numeric on quantities and a rating,
+  decimal on money; the touch sizes on the remove control, the retailer's add
+  control and the picker's *back to search*.
+- **Parity from 768 px up**, measured: every page and dialog at 1440 × 900,
+  1280 × 720, 1024 × 768 and 820 × 1180, both themes, against `main` on one
+  seeded database, with `main` against itself as the noise floor (up to 56
+  pixels a capture, a channel delta of 1 or 2). One capture lies outside the
+  noise: the Apply-to-kit dialog's primary button, about 150 pixels along its
+  rounded edge — its row is the frame's shared row now, an auto margin on
+  Cancel where it had `justify-end`, and the button's edge rounds a fraction of
+  a pixel differently; the text inside does not move.
+- **The guard**: `e2e/dialogs.spec.ts` in all three projects — every dialog at
+  320, 390 and 744 px (and 820, 1180, and 1280 with a mouse): no control past
+  the screen, no field under its room beside another, the sheet's own scroller
+  never sideways, the primary and Close under a finger at the top, the middle
+  and the end of the scroll; the line's shape per shell; the head's pairing; an
+  order recorded and a kit edited from the phone, driven to the API; Delete's
+  place and its twin across a turn; the dialogs under 32 and 40 px fonts — and
+  `e2e/dialog-keyboard.spec.ts` runs in the phone and tablet projects too.
+  Against `main`'s `src/` the fit test and the line test are red by name in
+  every project (the head not at the top, no bar, a tap on the primary landing
+  on nothing, no `inputmode`); under WebKit, `main`'s keyboard spec escapes to
+  `<body>` at its ninth Tab.

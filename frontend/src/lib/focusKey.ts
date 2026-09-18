@@ -73,9 +73,10 @@ export function focusKeysOf(element: Element | null): string[] {
  *  fold has just hidden, that control already "has" focus, and asking only
  *  where focus is would call the hidden copy the answer. */
 export function focusByKey(key: string): boolean {
-  const carriers = document.querySelectorAll<HTMLElement>(
-    `#root [${FOCUS_KEY}="${CSS.escape(key)}"]`,
-  );
+  // The document, not `#root`: a dialog is a portal beside the root, and its
+  // Delete is drawn per shell too (#259). While a dialog is open the root is
+  // inert, and an inert carrier takes no focus, so nothing under it answers.
+  const carriers = document.querySelectorAll<HTMLElement>(`[${FOCUS_KEY}="${CSS.escape(key)}"]`);
   for (const carrier of carriers) {
     if (!isDrawn(carrier)) continue;
     carrier.focus();
