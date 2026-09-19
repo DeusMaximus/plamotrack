@@ -101,13 +101,20 @@ export function CatalogItemPicker({
   if (value?.mode === "new") {
     return (
       <div className="space-y-2 rounded-sm border border-dashed border-accent/40 bg-accent-soft p-2">
-        <div className="flex items-center justify-between">
-          <span className="text-xs font-medium text-accent">
+        {/* The way back gives way to nothing: where the label and it no longer
+            share a line — 0.75rem text under a 40 px browser font, in a 200 px
+            card — it takes the next, at the end, whole (Codex #274, finding 3;
+            the same on `main`). By need, which at the default size is never:
+            both are short and fixed, unlike the chosen name above. */}
+        <div className="flex flex-wrap items-center justify-between gap-x-2">
+          <span className="min-w-0 text-xs font-medium text-accent">
             {t("catalogPicker.newItem", { type: itemTypeLabel(itemType) })}
           </span>
           <button
             type="button"
-            className="text-xs text-muted hover:text-text touch:min-h-11 touch:px-2"
+            // Its side padding is the finger's, so it is in px: in rem it was 80 of
+            // the row's 136 px at that font, and "search" broke in two.
+            className="ms-auto max-w-full text-end text-xs text-muted hover:text-text touch:min-h-11 touch:px-[8px]"
             onClick={() => onChange(null)}
           >
             {t("catalogPicker.backToSearch")}
@@ -209,14 +216,19 @@ export function CatalogItemPicker({
               key={result.id}
               type="button"
               // A full-width row, a finger tall under `touch:` (§13.7, #259).
-              className="flex w-full items-center justify-between px-3 py-2 text-start text-sm hover:bg-accent-soft touch:min-h-11"
+              // The name keeps 8rem beside what is on hand, or the row's width,
+              // and breaks where no line holds it; what is on hand takes the
+              // next line, at the end, where the two cannot share one. Neither
+              // squeezes the other to nothing: "0 on hand" held to its line took
+              // all 176 px of the row at a 40 px font and left the name none.
+              className="flex w-full flex-wrap items-center justify-between gap-x-3 px-3 py-2 text-start text-sm hover:bg-accent-soft touch:min-h-11"
               // onClick, not onMouseDown: a keyboard's Enter/Space activates a
               // button through click and never fires mousedown (#104). The
               // mousedown-first ordering the old handler relied on is covered
               // by the container's relatedTarget check above instead.
               onClick={() => onChange({ mode: "existing", id: result.id, name: result.name })}
             >
-              <span>
+              <span className="min-w-0 flex-[1_1_min(8rem,100%)] break-words">
                 {result.name}
                 <span className="ms-2 text-xs text-muted">
                   {[result.category ?? result.manufacturer, result.scale]
@@ -224,7 +236,7 @@ export function CatalogItemPicker({
                     .join(t("common.dotSeparator"))}
                 </span>
               </span>
-              <span className="text-xs text-muted">
+              <span className="ms-auto text-xs text-muted">
                 {t("catalogPicker.onHand", counted({}, result.quantity_on_hand))}
               </span>
             </button>
@@ -244,7 +256,10 @@ export function CatalogItemPicker({
           >
             {/* A stroke icon, not the "＋" glyph (§13: one icon set). */}
             <Plus size={14} aria-hidden className="shrink-0" />
-            {t("catalogPicker.createNew", { type: itemTypeLabel(itemType), query: query.trim() })}
+            {/* The query is free text: one long token breaks inside the row. */}
+            <span className="min-w-0 break-words">
+              {t("catalogPicker.createNew", { type: itemTypeLabel(itemType), query: query.trim() })}
+            </span>
           </button>
         </div>
       )}

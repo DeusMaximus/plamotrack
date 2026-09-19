@@ -1505,6 +1505,38 @@ test("a card says who it is under the browser's own font-size preference", async
           }
         }
       }
+      // Between the samples (Codex #274, finding 4): an arrangement read once
+      // at 320, 390 and 744 px says nothing about one that changes every frame
+      // at 480. A stepper that measured the *drawn* count did exactly that —
+      // stacked, ten digits wrap narrower than the line needs, fit it, and do
+      // not again: 59 changes in 60 frames at 480 px under a 40 px font, Add
+      // 60 px past its card, and this test green at every sampled width. So:
+      // the widths where the ten digits are near the row's, sixty frames each,
+      // the arrangement never changing and Add never past the card.
+      for (const width of font === 32 ? [420, 440, 460, 480] : [460, 480, 500, 540]) {
+        await page.setViewportSize({ width, height: 844 });
+        await openList(page, "/inventory", NAMES.tool);
+        await page.evaluate(() => document.fonts.ready);
+        const stepper = rowOf(page, widestCountName).first().locator("[data-arrangement]");
+        await expect(stepper).toBeVisible();
+        const frames = await stepper.evaluate(async (box) => {
+          const card = (box.closest("li") as HTMLElement).getBoundingClientRect();
+          const add = box.querySelectorAll("button")[1];
+          let last = box.getAttribute("data-arrangement");
+          let changes = 0;
+          let past = 0;
+          for (let frame = 0; frame < 60; frame++) {
+            await new Promise(requestAnimationFrame);
+            const now = box.getAttribute("data-arrangement");
+            if (now !== last) changes++;
+            last = now;
+            past = Math.max(past, add.getBoundingClientRect().right - card.right);
+          }
+          return { changes, past: Math.round(past * 10) / 10 };
+        });
+        expect.soft(frames.changes, `/inventory at ${width} px, ${font} px font: the arrangement changed over 60 frames`).toBe(0);
+        expect.soft(frames.past, `/inventory at ${width} px, ${font} px font: "Add one" past its card, at worst`).toBeLessThanOrEqual(0.5);
+      }
       await context.close();
     } finally {
       await browser.close();

@@ -3466,4 +3466,42 @@ build decided, and what it measured:
   signed in with the password and checked against the API — and the font-size
   tests of `lists.spec.ts` and `dialogs.spec.ts` extended to the facts, the
   ten-digit count, the pager and the unbroken name.
+- **Codex's round 1 on #274 (GO, four P3s), and what they changed:**
+  - *The bar's buttons have 4 px of side padding, in px.* `Button`'s 0.75rem a
+    side was 60 of Cancel's 71 px column under a 40 px font, and once a label
+    may break inside a word "Cancel" was six lines of a letter, the first above
+    the button. A bar button is as wide as its column and its label is centred:
+    its own padding bought nothing. `min-h`, so a long translation grows it.
+  - *A phone's dialog frames are `break-words`*, as the phone shell's `main`
+    is: a dialog is a portal and inherits nothing from it. **Every state of
+    the picker gives way**, not the chosen name alone — the third review the
+    picker came back in: a result's name keeps 8rem beside what is on hand or
+    that takes the next line; the offer to create breaks (the query is free
+    text); *back to search* takes the next line where it cannot share one, its
+    side padding in px. And the order form's checkbox column is
+    `max-md:flex-nowrap`: a column that may wrap is a multi-line flex
+    container, whose lines are as wide as their widest item wants, so
+    "stretch" stretched every row to the longest label's longest word.
+  - *The controls Data management does not render on a phone name a stand-in*
+    — the bar's way back — and **the hand-over no longer depends on commit
+    order** (`lib/focusKey.ts`): each `useShell()` caller re-renders in a
+    commit of its own, in the order the browser reports their media queries,
+    so `Layout`'s "the shell changed" effect could run before the section had
+    removed the focused control — some turns in every few, three callers deep.
+    The effect now looks again on the next frame, by when every caller has
+    committed. Not from the removed control's `focusout`, the first remedy:
+    WebKit does not reliably fire one for a node taken out of the page, and
+    there it lost one run in four.
+  - *The stepper's stability is asserted over sixty frames at the widths
+    between the samples* (420–540 px), where a measurement of the drawn count
+    flips every frame; read once at 320, 390 and 744 px it could pass.
+  - **What the checks ask now:** a label *reads* (its ink inside its control,
+    its lines no more than its words); a thing beside another *has its room*
+    (its one-line width or its row's); every block of a dialog holds what it
+    says (`said past its own box` — a spill of 20 px lands in the sheet's 40 px
+    of padding, where no scroller moves and no control is off the screen).
+  - **Seen by the reviewer and kept:** at the default font on a 320 or 390 px
+    phone a kit card's series and an inventory card's low-stock badge now take
+    a second line where they used to be cut to a few letters (`CardMeta`
+    wraps). A change at the default size, and a better one.
 

@@ -1480,3 +1480,46 @@ What to keep: **a page's controls are decided by its data — a pager, an empty 
 banner, a second currency — and a fit test owes the states that add controls, put
 there on purpose.** The pager's own test seeds eighty-one kits; the font axis went
 there, not into the test that happened to trip over it.
+
+## The effect ran before the thing it answers for (#260, PR #274 round 1)
+
+`useFocusAcrossShells` gives the keyboard back after a shell change from a layout
+effect in `Layout`, on the premise — written in its comment, measured on the list
+pages — that "by the time it runs the pages below have committed their side of the
+swap". Settings → Data management removes its import form below 768 px; with the
+stand-in in place the hand-over worked, and failed one turn in three. Every
+`useShell()` caller subscribes *its own* `matchMedia` lists; the browser reports each
+list's change in turn, with a microtask checkpoint between them; React commits each
+subscriber's re-render at that checkpoint. So `Layout` can commit first, run its effect
+over a control that is still there, and the section removes it a commit later with
+nobody listening. On the list pages the order happens to favour the premise.
+
+What to keep: **"one event" in the browser is not "one commit" in React when the
+subscribers hold separate subscriptions** — a rule that depends on a parent's effect
+seeing its children's DOM is a rule about commit order, and needs the order forced or
+the dependence removed (here: the effect looks again on the next frame, by when every
+subscriber has committed). The first remedy answered the removal from the removed
+control's `focusout` and was green in Chromium twenty-four turns running — **and lost
+one WebKit run in four, because WebKit does not reliably fire that event for a node
+taken out of the page**; the engine-independent remedy was also the smaller one. And
+**a race has no single red, and its rate moves with the machine**: with the fix taken
+out the test was green twice and then red six times running. Repeat the turn (sixteen
+here), run the other engine, and say the measured rate in the test.
+
+## The spill landed in the padding (#260, PR #274 round 1)
+
+With the sheet's `break-words` taken out, the order form's checkbox row was 260 px in a
+240 px form under a 40 px font — and every check passed: no control was off the screen,
+no scroller moved (the 20 px landed inside the sheet's own 40 px of padding), the
+document was 320 px wide. The mutant survived until the fit check asked each block
+whether it holds what it says. It is the third time in this milestone the same sentence
+was the finding — *inside the screen is not inside its card* (#272), *its box* (#274's
+first pass), *its form* (here).
+
+What to keep: a fit check has three questions, and the third is the one that gets left
+out — is it on the screen, is it inside the box it belongs to, **does each box hold its
+own content** (`scrollWidth` against `clientWidth` on every block that does not clip;
+name the deliberate exceptions, like a target's negative margin). And "fits" is not
+"reads": a label can fit by breaking at every letter, a name by being squeezed to
+nothing — ask for the ink inside the control, the lines against the words, and the room.
+

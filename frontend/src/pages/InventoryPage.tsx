@@ -515,8 +515,9 @@ const STEPPER_GAP = 4;
  *  digits' worth, on any phone.
  *
  *  The same two buttons in both arrangements — a grid re-places them, nothing
- *  is remounted — so the keyboard stays on the one that was pressed when its
- *  press is what made the count too wide. */
+ *  is remounted. That does not keep the keyboard on the pressed button: a press
+ *  disables both while the request is out, and the browser drops focus from a
+ *  disabled control whatever the arrangement (#268, older than this). */
 function LargeStepper({
   count,
   low,

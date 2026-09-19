@@ -347,15 +347,50 @@ test("an import begun on a tablet survives a turn through the phone shell", asyn
   const apply = page.getByRole("button", { name: "Apply import" });
   await expect(apply).toBeVisible();
 
+  // The keyboard is on a control the phone does not render: it goes to what
+  // stands in for the whole form there, not to <body> (Codex #274, finding 2).
+  await apply.focus();
   await page.setViewportSize({ width: 744, height: 1133 });
   await expect(page.getByText(PHONE_NOTE)).toBeVisible();
   await expect(apply).toHaveCount(0);
+
+  await expect.poll(() => focused(page), { message: "Apply import had the keyboard" }).toBe("All settings");
 
   await page.setViewportSize({ width: 820, height: 1180 });
   await expect(apply, "the preview is where it was left").toBeVisible();
   await expect(page.getByText(file, { exact: true })).toBeVisible();
   // Never applied: nothing was written, and there is nothing to clean up.
   await page.getByRole("button", { name: "Cancel" }).click();
+
+  // And every other kind of control the phone drops: a template's button, the
+  // import mode, Preview — each from a fresh wide page, and one of them
+  // sixteen times over, because the stand-in alone was right and lost a race:
+  // `Layout`, `SettingsPage` and this section each commit their own side of
+  // the turn, in an order the browser chooses, and some turns the shell's
+  // hand-over ran before the control was gone (`lib/focusKey.ts`, the recheck
+  // on the next frame). A race has no single red, and its rate moves with the
+  // machine: measured with the recheck taken out, this test at eight turns was
+  // red in six runs of eight. Sixteen, then, and under WebKit too — the first
+  // remedy, driven by the removed control's `focusout`, passed in Chromium and
+  // lost one WebKit run in four.
+  const template = ["a template", () => page.getByRole("button", { name: "Full template pack (.zip)" })] as const;
+  for (const [name, control] of [
+    ["a template's sibling", () => page.getByRole("button", { name: "Starter sheet (.csv)" })],
+    ["the import mode", () => page.getByRole("main").getByRole("combobox")],
+    ["Preview changes", () => page.getByRole("button", { name: "Preview changes" })],
+    ...Array.from({ length: 16 }, () => template),
+  ] as const) {
+    await page.setViewportSize({ width: 820, height: 1180 });
+    await page.goto("/settings/data");
+    if (name === "Preview changes") {
+      await page.locator('input[type="file"]').setInputFiles({ name: file, mimeType: "text/csv", buffer: Buffer.from("name\nx\n") });
+    }
+    await control().focus();
+    await expect.poll(() => focused(page), { message: `${name}: focused before the turn` }).not.toBe("<body>");
+    await page.setViewportSize({ width: 744, height: 1133 });
+    await expect(page.getByText(PHONE_NOTE)).toBeVisible();
+    await expect.poll(() => focused(page), { message: `${name}: after the turn` }).toBe("All settings");
+  }
 });
 
 // -------------------------------------------------------------------- Home

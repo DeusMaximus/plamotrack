@@ -149,7 +149,13 @@ export function DataSection() {
       {phone && <p className="text-sm text-muted">{t("data.phoneNote")}</p>}
 
       {!phone && (
-        <>
+        // Every control in here is gone below 768 px, so each names what stands
+        // in for it there (`lib/focusKey.ts`): the bar's way back to the section
+        // list, `SettingsPage`'s `settings-sections` — a tablet turned with the
+        // keyboard on Apply import left it on <body> (Codex #274, finding 2).
+        // A box of its own, not a fragment, to carry the attribute; the same
+        // `space-y-6` inside it as around it, so nothing moves.
+        <div data-focus-stand-in="settings-sections" className="space-y-6">
           <Card title={t("data.templatesTitle")} description={t("data.templatesDescription")}>
             <div className="flex flex-wrap gap-2">
               <Button
@@ -297,7 +303,7 @@ export function DataSection() {
               </div>
             )}
           </Card>
-        </>
+        </div>
       )}
     </div>
   );
