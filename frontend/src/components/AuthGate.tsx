@@ -191,8 +191,12 @@ function Centered({ children }: { children: ReactNode }) {
   return (
     // `dvh`, not `vh`: on iOS 100vh is the large viewport, so a vh-high column
     // centres its card partly under Safari's toolbar (§13.7).
-    <div className="flex min-h-dvh items-center justify-center bg-bg p-6">
-      <div className="w-full max-w-sm">{children}</div>
+    // The phone's 16 px gutter below 768 px, and words that break where their
+    // box ends: under a large browser font the gutter, the card's padding and
+    // the text are all in rem and the screen is not (#260; `Layout`'s `main`
+    // says the same for the app behind this gate).
+    <div className="flex min-h-dvh items-center justify-center bg-bg p-6 max-md:px-4 max-md:break-words">
+      <div className="w-full max-w-sm min-w-0">{children}</div>
     </div>
   );
 }
@@ -204,7 +208,11 @@ function Wordmark() {
   const { t } = useTranslation();
   return (
     <div className="mb-6 flex flex-col items-center text-center">
-      <h1 className="flex items-center gap-2.5 text-2xl font-semibold tracking-tight text-text">
+      {/* 1.5rem, and never wider than the screen it is on: the wordmark is one
+          word that must not break, so under a 40 px browser font on a 320 px
+          phone — where 1.5rem made it 311 px — it is the size that fits. At
+          the default size 9vw is more than 1.5rem on every screen there is. */}
+      <h1 className="flex items-center gap-2.5 text-[min(1.5rem,9vw)] leading-[calc(2/1.5)] font-semibold tracking-tight text-text">
         <BrandMark size={24} />
         <span>plamotrack</span>
       </h1>

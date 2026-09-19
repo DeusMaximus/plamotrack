@@ -227,6 +227,7 @@ export function HomePage() {
             empty={t("home.completedEmpty")}
             viewAll={(total) => countedPhrase("home.viewAllCompleted", total)}
             to="/kits?status=complete&sort=recent"
+            stacked
             meta={(kit) => (
               <>
                 {kit.rating != null ? (
@@ -352,10 +353,23 @@ function BenchCard({ kit, onEdit }: { kit: Kit; onEdit: () => void }) {
 
 /** The Backlog / Recently completed strip: the most recent rows, a pencil on
  *  each, and the *view all* link that lands on Kits filtered and sorted. A row
- *  wraps: the name keeps a floor of 9 rem and the meta (grade and scale, or
+ *  wraps: the name keeps a floor of 9 rem — or the row's width where that is
+ *  less, under a large browser font (#260) — and the meta (grade and scale, or
  *  stars and a date) drops under it when the two cannot share the line —
  *  a full date style beside a two-up strip left the name one letter
- *  (Codex #237 P3-4). */
+ *  (Codex #237 P3-4).
+ *
+ *  `stacked` is Recently completed on a phone (§13.7, the owner's call): always
+ *  two lines there — the name, then the stars and the date — because beside
+ *  them the name is a few letters, and left to the wrap the pencil went down
+ *  with the date. **By the strip's own box, not the shell** (the owner's second
+ *  call, on an iPad mini in the simulator): under 26rem of strip — every phone
+ *  there is, 408 px of strip on the widest — and not at 744 px, where the
+ *  phone shell's one-column strip is 712 px and two lines left most of each
+ *  row empty. 26 and not Tailwind's 28: a 1024 px tablet's two-up strip is
+ *  436 px and keeps the wrap-by-need it had. The same tree: under the line the
+ *  row is a grid, the meta's wrapper is `display: contents`, and the pencil
+ *  takes a column of its own beside both lines. */
 function KitStrip({
   kits,
   total,
@@ -363,6 +377,7 @@ function KitStrip({
   viewAll,
   to,
   meta,
+  stacked = false,
   onEdit,
 }: {
   kits: Kit[] | undefined;
@@ -371,22 +386,36 @@ function KitStrip({
   viewAll: (total: number) => string;
   to: string;
   meta: (kit: Kit) => React.ReactNode;
+  stacked?: boolean;
   onEdit: (kit: Kit) => void;
 }) {
   const { t } = useTranslation();
   if (kits === undefined) return <EmptyState>{t("common.loading")}</EmptyState>;
+  const row = stacked
+    ? "@max-[26rem]:grid @max-[26rem]:grid-cols-[minmax(0,1fr)_auto] @max-[26rem]:gap-y-0 @max-[26rem]:py-2"
+    : "";
   return (
-    <div className="min-w-0 overflow-hidden rounded-md border border-border bg-surface">
+    <div className="@container min-w-0 overflow-hidden rounded-md border border-border bg-surface">
       {kits.length === 0 && <div className="px-3.5 py-6 text-center text-sm text-muted">{empty}</div>}
       {kits.map((kit, index) => (
         <div
           key={kit.id}
-          className={`flex min-h-10 flex-wrap items-center gap-x-3 gap-y-0.5 px-3.5 py-1.5 ${index === 0 ? "" : "border-t border-rule"}`}
+          className={`flex min-h-10 flex-wrap items-center gap-x-3 gap-y-0.5 px-3.5 py-1.5 ${row} ${index === 0 ? "" : "border-t border-rule"}`}
         >
-          <span className="min-w-36 flex-1 truncate text-sm font-medium text-text">{kit.name}</span>
-          <span className="ms-auto flex shrink-0 items-center gap-2.5 whitespace-nowrap text-[12.5px] tabular-nums text-muted">
-            {meta(kit)}
-            <IconButton label={t("common.editNamed", { name: kit.name })} onClick={() => onEdit(kit)}>
+          <span className="min-w-[min(9rem,100%)] flex-1 truncate text-sm font-medium text-text">{kit.name}</span>
+          <span
+            className={`ms-auto flex shrink-0 items-center gap-2.5 whitespace-nowrap text-[12.5px] tabular-nums text-muted ${stacked ? "@max-[26rem]:contents" : ""}`}
+          >
+            <span
+              className={`flex items-center gap-2.5 ${stacked ? "@max-[26rem]:col-start-1 @max-[26rem]:row-start-2 @max-[26rem]:flex-wrap @max-[26rem]:gap-y-0 @max-[26rem]:whitespace-normal" : ""}`}
+            >
+              {meta(kit)}
+            </span>
+            <IconButton
+              label={t("common.editNamed", { name: kit.name })}
+              className={stacked ? "@max-[26rem]:col-start-2 @max-[26rem]:row-span-2 @max-[26rem]:row-start-1" : ""}
+              onClick={() => onEdit(kit)}
+            >
               <Pencil size={15} aria-hidden />
             </IconButton>
           </span>
@@ -395,7 +424,7 @@ function KitStrip({
       {total !== undefined && total > 0 && (
         <Link
           to={to}
-          className={`flex h-9 items-center gap-1.5 px-3.5 text-[13px] font-medium text-accent hover:text-text ${
+          className={`flex h-9 items-center gap-1.5 px-3.5 text-[13px] font-medium text-accent hover:text-text touch:h-11 ${
             kits.length === 0 ? "" : "border-t border-rule"
           }`}
         >
@@ -469,7 +498,7 @@ function MailColumn({
         {total !== undefined && shown !== undefined && total > shown.length && (
           <Link
             to={`/orders?status=${stage}&sort=recent`}
-            className="flex h-9 items-center gap-1.5 px-1 text-[13px] font-medium text-accent hover:text-text"
+            className="flex h-9 items-center gap-1.5 px-1 text-[13px] font-medium text-accent hover:text-text touch:h-11"
           >
             {countedPhrase(MAIL_COPY[stage].viewAll, total)}
             <ArrowRight size={14} aria-hidden className="rtl:-scale-x-100" />
@@ -525,12 +554,12 @@ function OrderCard({
           (a full date style, a long carrier, a narrow column) — never the
           retailer squeezed to nothing or the date past the card (Codex #237
           P3-2). The retailer alone truncates; the date wraps its own words. */}
-      <div className="flex flex-wrap items-baseline justify-between gap-x-2 pe-8 text-[12.5px] tabular-nums text-muted">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-2 pe-8 text-[12.5px] touch:pe-10 tabular-nums text-muted">
         <span className="max-w-full truncate font-semibold text-text">{retailer}</span>
         <span className="min-w-0">{when}</span>
       </div>
       {lines.headline && (
-        <CardLine line={lines.headline} className="pe-7 text-sm font-medium text-text" />
+        <CardLine line={lines.headline} className="pe-7 text-sm font-medium text-text touch:pe-10" />
       )}
       {lines.rest.kind === "one" && (
         <CardLine line={lines.rest.line} and className="text-[12.5px] text-muted" />

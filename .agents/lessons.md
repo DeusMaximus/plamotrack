@@ -1447,3 +1447,116 @@ motivated it.** Removing code because no test reaches it is only honest after as
 whether the *test* can reach the case: assert the screen's width before measuring
 against it, and take what is not under test out of the layout. And when a second round
 lands in one function, write down that a third means restructuring.
+
+## The answer changed what was measured (#260)
+
+The stepper's second arrangement (#271) asks one question — do the count and two
+fingers fit the row? — and the first version answered it from the count *as drawn*,
+with a comment saying the question "cannot oscillate" because the row's width does not
+depend on the answer. The other side of the comparison did: stacked, the count may
+wrap, a wrapped ten-digit count is narrower than the line needed, so it fitted the
+line, was drawn on it at its full width, and did not fit again — every frame, through
+the `ResizeObserver` that was there to keep the answer current. 1,234 never showed it;
+the ten-digit count the font-size test seeded beside it did, as a count "cut" at one
+instant and fine the next.
+
+What to keep: **when a measurement decides a layout, neither side of the comparison
+may be something that layout changes** — measure a copy the decision cannot reach (a
+ruler: hidden, never wrapped, clipped to nothing so it cannot widen the page, and
+*beside* the thing it copies, not inside it, or the count's text reads twice). A claim
+of "cannot oscillate" is a claim about both operands. And the value axis again: the
+most the column can store is a value, and it was the one that found this.
+
+## The state that was not on the page (#260)
+
+`pages.spec.ts` asks every page of the phone shell for its width under a 32 and a
+40 px browser font, and Kits passed for an hour and then failed: the spec's own seed
+had taken the list past one page, and a pager's pages are a finger each *in rem* —
+550 px of a 320 px screen at 40 px. No font-size test had ever had a pager on the
+page, because whether a list has one is a state of the data, not of the code, and the
+from-empty database every suite starts from has none.
+
+What to keep: **a page's controls are decided by its data — a pager, an empty state, a
+banner, a second currency — and a fit test owes the states that add controls, put
+there on purpose.** The pager's own test seeds eighty-one kits; the font axis went
+there, not into the test that happened to trip over it.
+
+## The effect ran before the thing it answers for (#260, PR #274 round 1)
+
+`useFocusAcrossShells` gives the keyboard back after a shell change from a layout
+effect in `Layout`, on the premise — written in its comment, measured on the list
+pages — that "by the time it runs the pages below have committed their side of the
+swap". Settings → Data management removes its import form below 768 px; with the
+stand-in in place the hand-over worked, and failed one turn in three. Every
+`useShell()` caller subscribes *its own* `matchMedia` lists; the browser reports each
+list's change in turn, with a microtask checkpoint between them; React commits each
+subscriber's re-render at that checkpoint. So `Layout` can commit first, run its effect
+over a control that is still there, and the section removes it a commit later with
+nobody listening. On the list pages the order happens to favour the premise.
+
+What to keep: **"one event" in the browser is not "one commit" in React when the
+subscribers hold separate subscriptions** — a rule that depends on a parent's effect
+seeing its children's DOM is a rule about commit order, and needs the order forced or
+the dependence removed (here: the effect looks again on the next frame, by when every
+subscriber has committed). The first remedy answered the removal from the removed
+control's `focusout` and was green in Chromium twenty-four turns running — **and lost
+one WebKit run in four, because WebKit does not reliably fire that event for a node
+taken out of the page**; the engine-independent remedy was also the smaller one. And
+**a race has no single red, and its rate moves with the machine**: with the fix taken
+out the test was green twice and then red six times running. Repeat the turn (sixteen
+here), run the other engine, and say the measured rate in the test.
+
+## The spill landed in the padding (#260, PR #274 round 1)
+
+With the sheet's `break-words` taken out, the order form's checkbox row was 260 px in a
+240 px form under a 40 px font — and every check passed: no control was off the screen,
+no scroller moved (the 20 px landed inside the sheet's own 40 px of padding), the
+document was 320 px wide. The mutant survived until the fit check asked each block
+whether it holds what it says. It is the third time in this milestone the same sentence
+was the finding — *inside the screen is not inside its card* (#272), *its box* (#274's
+first pass), *its form* (here).
+
+What to keep: a fit check has three questions, and the third is the one that gets left
+out — is it on the screen, is it inside the box it belongs to, **does each box hold its
+own content** (`scrollWidth` against `clientWidth` on every block that does not clip;
+name the deliberate exceptions, like a target's negative margin). And "fits" is not
+"reads": a label can fit by breaking at every letter, a name by being squeezed to
+nothing — ask for the ink inside the control, the lines against the words, and the room.
+
+## It was only a race from where the test stood (#260, PR #274 round 2)
+
+Round 1 called the lost hand-over on Settings → Data management a race — one turn in
+three — and answered its flakiness with repetition: sixteen fresh turns. The reviewer
+measured what that was worth: with the fix out, red in six runs of six in Chromium and
+two of six in WebKit. The cause was already written down (each `useShell()` caller
+commits on its own, in the order the browser reports their media queries), and the
+order is not random: it is the order the callers *subscribed* in. Arriving by URL, the
+shell and the section mount in one commit and the order is the engine's to choose.
+Arriving by the app's own link — how a person gets there — the section subscribes
+after `Layout`, the adverse order is certain, and the unfixed code lost the keyboard
+eight times in eight in both engines.
+
+What to keep: **before repeating a flaky reproduction, ask what decides the order and
+whether the test can set it.** Here it was mount order, and the way in that fixes it
+was the ordinary one; the test had been using the unusual one because `goto` is what
+tests do. "One in three" described the test's entrance, not the defect — and would
+have been the number in the release notes.
+
+## A detector is code (#260, PR #274 round 2)
+
+`said past its own box` was written to kill one surviving mutant, and its exemptions
+were shaped by what it tripped over that afternoon: anything that clips, anything
+inline, any block holding a button named Close. The reviewer built three
+counterexamples in a minute — text silently cut by `overflow: hidden`, a block excused
+for holding *a* Close, a line above its own box — and the helper passed all three
+while the PR's record said "every block holds what it says".
+
+What to keep: **a check added to a suite is a claim with a scope, and both need
+writing down and testing** — inject the defect it exists for and watch it go red, then
+inject what it must allow (an ellipsis is a truncation the reader can see; the head's
+Close overhangs by its margin and no more) and watch it stay green. Tie an exemption
+to the one element and the measured amount, never to a selector that happens to match
+it today. And when tightening it produced twenty false reds (a popup taller than its
+wrapper by design), the answer was to narrow the question and say so, not to widen the
+exemption again.
+

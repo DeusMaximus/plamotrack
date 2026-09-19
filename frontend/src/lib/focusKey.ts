@@ -194,9 +194,31 @@ export function useFocusAcrossShells(shell: Shell): void {
   // is back before the frame is painted and the ring never misses one — no test
   // here has seen the difference (a frame-by-frame sample of twenty rotations
   // found none, Codex #266), which is a limit of the measurement and not a proof.
+  //
+  // **And once more on the next frame**, because the premise above — the pages
+  // below have committed their side of the swap — holds only when they commit
+  // together, and they need not. Every `useShell()` caller subscribes media-query
+  // lists of its own; the browser reports each list's change in turn, with a
+  // microtask checkpoint between, and React commits each subscriber's re-render
+  // there. So this component can commit first and run this effect over a control
+  // that is still in the page, and the section that removes it commits after,
+  // with nobody left to answer. Measured on Settings → Data management, three
+  // callers deep: one turn in three left the keyboard on <body> (Codex #274,
+  // finding 2 — first the stand-in was missing, then this was under it). By the
+  // next frame every list has reported and every caller has committed. A frame,
+  // and not the removed control's `focusout`, which was the first remedy:
+  // WebKit does not reliably fire one for a node taken out of the page, and
+  // there that remedy lost the same race one run in four.
   useLayoutEffect(() => {
     if (place.current !== null && document.activeElement === document.body) {
       focusFirst(place.current.keys);
     }
+    const frame = requestAnimationFrame(() => {
+      const at = place.current;
+      if (at !== null && !at.control.isConnected && document.activeElement === document.body) {
+        focusFirst(at.keys);
+      }
+    });
+    return () => cancelAnimationFrame(frame);
   }, [shell]);
 }

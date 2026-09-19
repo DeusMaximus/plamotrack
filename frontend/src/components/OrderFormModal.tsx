@@ -1008,7 +1008,12 @@ function OrderForm({
 
         {/* A row each on a phone, a finger tall, the label the target (#259). */}
         {!order && (
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 max-md:flex-col max-md:items-stretch max-md:gap-y-0">
+          // `max-md:flex-nowrap`: a column that may wrap is a multi-line flex
+          // container, and a line is as wide as its widest item *wants* to be —
+          // so "stretch" stretched every row to the longest label's longest
+          // word, 20 px past the form under a 40 px browser font. One line, and
+          // the rows are the form's width.
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 max-md:flex-col max-md:flex-nowrap max-md:items-stretch max-md:gap-y-0">
             <label className="flex items-center gap-2 text-sm text-text touch:min-h-11">
               <input
                 type="checkbox"
@@ -1021,9 +1026,15 @@ function OrderForm({
                     }
                   },
                 })}
-                className="h-4 w-4"
+                className="h-4 w-4 shrink-0"
               />
-              {t("orders.alreadyInHand")}
+              {/* A span, so the words can give way: as bare text in a flex row
+                  they are a box that cannot be narrower than its longest word,
+                  and under a 40 px browser font that word and the rem-sized
+                  checkbox were 20 px past the form (Codex #274's round: the
+                  check that found it is dialogs.spec.ts's "said past its own
+                  box"). The sheet's `break-words` does the rest. */}
+              <span className="min-w-0">{t("orders.alreadyInHand")}</span>
             </label>
             {watch("received") && (
               <label className="flex items-center gap-2 text-sm text-text touch:min-h-11">
@@ -1047,9 +1058,9 @@ function OrderForm({
                 type="checkbox"
                 disabled={watch("received")}
                 {...register("pre_order")}
-                className="h-4 w-4"
+                className="h-4 w-4 shrink-0"
               />
-              {t("orders.preOrderToggle")}
+              <span className="min-w-0">{t("orders.preOrderToggle")}</span>
             </label>
           </div>
         )}

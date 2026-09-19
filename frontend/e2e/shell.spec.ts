@@ -64,6 +64,7 @@ const PAGES = [
   "/inventory",
   "/retailers",
   "/more",
+  "/settings", // the section list on a phone; General's address from 768 px (#260)
   "/settings/general",
   "/settings/language",
   "/settings/data",
@@ -252,7 +253,8 @@ test("every destination is reachable, and the shell marks where you are", async 
         ["Orders", "/orders"],
         ["Inventory", "/inventory"],
         ["Retailers", "/retailers"],
-        ["Settings", "/settings/general"],
+        // The section list on a phone, General beside it from 768 px (#260).
+        ["Settings", shell === "phone" ? "/settings" : "/settings/general"],
         ["Home", "/"],
       ] as const) {
         await open(page, name);

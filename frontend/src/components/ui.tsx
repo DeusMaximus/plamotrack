@@ -34,7 +34,7 @@ export function Button({
 }) {
   return (
     <button
-      className={`inline-flex items-center gap-1.5 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed touch:min-h-10 ${BUTTON_VARIANTS[variant]} ${className}`}
+      className={`inline-flex max-w-full items-center gap-1.5 rounded-sm px-3 max-md:wrap-anywhere py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed touch:min-h-10 ${BUTTON_VARIANTS[variant]} ${className}`}
       {...props}
     >
       {Icon && <Icon size={15} aria-hidden />}
@@ -215,7 +215,9 @@ export const PAGE_ACTION_FOCUS = "page-action";
  *  scrolls — the title, the count and the one primary action; `secondary`
  *  actions (Export CSV) are not on a phone, where Settings → Data management
  *  has them. `brand` is Home's: the sidebar that carried the wordmark is gone
- *  there, so the bar does, and the h1 stays for assistive tech.
+ *  there, so the bar does, and the h1 stays for assistive tech. `back` is a
+ *  screen's way up on a phone — a Settings section's, to the section list that
+ *  wider shells draw beside it (#260) — and is not drawn from 768 px.
  *
  *  One tree for both shapes, dressed differently: the primary action keeps its
  *  place — second child of the second child — so it is the same DOM node on
@@ -233,6 +235,7 @@ export function PageHeader({
   count,
   subtitle,
   brand = false,
+  back,
   actions,
   secondary,
 }: {
@@ -240,6 +243,7 @@ export function PageHeader({
   count?: number;
   subtitle?: string;
   brand?: boolean;
+  back?: ReactNode;
   actions?: ReactNode;
   secondary?: ReactNode;
 }) {
@@ -249,7 +253,13 @@ export function PageHeader({
       <header
         className={
           phone
-            ? "sticky top-0 z-10 -mx-4 flex h-14 items-center justify-between gap-3 border-b border-rule bg-bg px-4"
+            ? // 56 px, and taller only when it must be: under a large browser font
+              // the action no longer fits beside the title — its text and its
+              // padding are in rem, the screen is not — so it takes the next
+              // line, and a label wider than the screen breaks (#269). What was
+              // past the screen widened the layout viewport, and the tab bar,
+              // which is fixed to it, with it.
+              "sticky top-0 z-10 -mx-4 flex min-h-14 flex-wrap items-center justify-between gap-x-3 gap-y-1 border-b border-rule bg-bg px-4 py-1"
             : "flex items-center justify-between gap-3"
         }
       >
@@ -261,13 +271,14 @@ export function PageHeader({
             <h1 className="sr-only">{title}</h1>
           </div>
         ) : (
-          <div>
+          <div className={phone ? "flex min-w-0 items-center gap-1" : undefined}>
+            {phone && back}
             <PageTitle count={count}>{title}</PageTitle>
             {!phone && subtitle && <p className="mt-0.5 text-sm text-muted">{subtitle}</p>}
           </div>
         )}
         {(secondary || actions) && (
-          <div className="flex gap-2">
+          <div className={phone ? "ms-auto flex max-w-full min-w-0 gap-2" : "flex gap-2"}>
             {!phone && secondary}
             {actions}
           </div>
@@ -308,7 +319,10 @@ export function Pager({
         })}
       </span>
       {paged.pages > 1 && (
-        <nav aria-label={t("list.pagination")} className="flex items-center gap-1">
+        // On a phone the pages wrap: they are a finger each *in rem*, and under
+        // a 40 px browser font five of them are 550 px of a 320 px screen (#260,
+        // found by pages.spec.ts once its own seed gave Kits a second page).
+        <nav aria-label={t("list.pagination")} className="flex items-center gap-1 max-md:flex-wrap max-md:justify-end">
           {pageWindow(paged.page, paged.pages, phone).map((page, index) =>
             page === null ? (
               <span key={`gap-${index}`} aria-hidden className="px-1 text-faint">
@@ -366,7 +380,12 @@ export function Chip({
   return (
     <span
       title={title}
-      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-sm bg-chip px-2 py-0.5 text-xs font-semibold ${tone} ${className}`}
+      // One line, except in the phone shell where the chip is wider than what
+      // holds it — "Would order again: Maybe" at a 32 px browser font is 250 px
+      // in a 200 px card — and there its words wrap inside it, and one word
+      // wider than the card ("Pre-ordered" at 40 px on a 320 px phone: 200 px
+      // in 140) breaks rather than be cut (#270).
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-sm bg-chip px-2 py-0.5 text-xs font-semibold max-md:max-w-full max-md:whitespace-normal max-md:wrap-anywhere ${tone} ${className}`}
     >
       <i aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
       {children}
@@ -432,7 +451,18 @@ export function CardRow({
   );
 }
 
-/** A card's line of facts: chips keep their size, words give way. */
+/** A card's line of facts: chips keep their size, words give way — a word
+ *  that truncates says `CARD_WORDS`, so it shares the chips' line while it has
+ *  4rem there and takes the next when it has not. The line wraps: under a large
+ *  browser font every fact is in rem and the card is not, and a line that
+ *  could not wrap put the scale 93 px past a 320 px screen (#270). At the
+ *  default size the facts fit and nothing moves. */
 export function CardMeta({ children }: { children: ReactNode }) {
-  return <div className="flex min-w-0 items-center gap-2 text-[12.5px] text-muted">{children}</div>;
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-muted">
+      {children}
+    </div>
+  );
 }
+
+export const CARD_WORDS = "min-w-0 flex-[1_1_4rem] truncate";

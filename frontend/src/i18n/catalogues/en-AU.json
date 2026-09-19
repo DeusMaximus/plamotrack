@@ -706,6 +706,7 @@
     "starterSheetButton": "Starter sheet (.csv)",
     "templatePackButton": "Full template pack (.zip)",
     "starterBlurb": "The starter sheet is one row per kit — name, grade, where you bought it — and the app works out the retailers, orders, and order lines from that. The template pack is one blank file per table, for when you want to control everything.",
+    "phoneNote": "Importing and the blank templates need a wider screen — open Data management on a tablet or a computer.",
     "importTitle": "Import",
     "importDescription": "Nothing is written until you've seen exactly what will change.",
     "dropHere": "Drop a .csv or .zip here",
@@ -865,6 +866,7 @@
   "settings": {
     "title": "Settings",
     "subtitle": "Instance-wide configuration — every browser and agent that connects here sees the same values.",
+    "allSections": "All settings",
     "sections": {
       "general": "General",
       "language": "Language & region",
