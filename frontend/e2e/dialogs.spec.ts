@@ -80,6 +80,13 @@ const NAMES = {
   // other, and a 29-character one fitted every tested line: mutants survived
   // both, Codex #272 round 1).
   upgrade: `${TAG} MSN-04-II-NIGHTINGALE-VERNIER-THRUSTER-SET`,
+  // And one with nowhere to break at all — no hyphen, no space after the tag:
+  // a part number run together, the name #273 was reported with, twice over.
+  // 46 characters were wider than a 320 px sheet and no wider than the
+  // desktop's 700 px row, where a row that wrapped at every width therefore
+  // looked exactly like one that did not (the mutant survived); 92 are wider
+  // than both.
+  unbroken: `${TAG} MSN04IINIGHTINGALEVERNIERTHRUSTERSET1234567890MSN04IINIGHTINGALEVERNIERTHRUSTERSET1234567890`,
 };
 
 let retailerId: string;
@@ -87,6 +94,7 @@ let kitId: string;
 let consumableId: string;
 let toolId: string;
 let upgradeId: string;
+let unbrokenId: string;
 let applicationId: string;
 
 test.beforeAll(async () => {
@@ -101,6 +109,7 @@ test.beforeAll(async () => {
   consumableId = await made("/consumables", { name: NAMES.consumable, category: "glue", quantity_on_hand: 2 });
   toolId = await made("/tools", { name: NAMES.tool, category: "nippers", quantity_on_hand: 1 });
   upgradeId = await made("/upgrades", { name: NAMES.upgrade, manufacturer: "E2E", quantity_on_hand: 3 });
+  unbrokenId = await made("/upgrades", { name: NAMES.unbroken, manufacturer: "E2E", quantity_on_hand: 0 });
   // The kit carries an applied upgrade, so its dialog draws the applied-upgrades
   // row and the withdrawal question — the state Codex #272 found unexamined:
   // under a 32 px font that row was 16 px past a 390 px sheet (finding 1).
@@ -116,6 +125,7 @@ test.afterAll(async () => {
   await api.delete(`/consumables/${consumableId}`);
   await api.delete(`/tools/${toolId}`);
   await api.delete(`/upgrades/${upgradeId}`);
+  await api.delete(`/upgrades/${unbrokenId}`);
   await api.delete(`/retailers/${retailerId}`);
   await api.dispose();
 });
@@ -139,8 +149,8 @@ async function scrollerOf(page: Page): Promise<Locator | null> {
  *  (the sheet's body is one: `overflow-y: auto` makes its x `auto` too, so
  *  content wider than the screen would scroll there instead of overflowing
  *  it), and the document does not either. */
-async function expectDialogFits(page: Page, label: string, phone = true, pageToo = true): Promise<void> {
-  const report = await dialog(page).evaluate((element, roomRem) => {
+async function dialogFitReport(page: Page, phone = true) {
+  return dialog(page).evaluate((element, roomRem) => {
     const room = roomRem * parseFloat(getComputedStyle(document.documentElement).fontSize);
     const drawn = (node: Element) => node.getClientRects().length > 0;
     const say = (node: Element) =>
@@ -182,20 +192,70 @@ async function expectDialogFits(page: Page, label: string, phone = true, pageToo
     const sideways = [...element.querySelectorAll<HTMLElement>("div")]
       .filter((node) => drawn(node) && ["auto", "scroll"].includes(getComputedStyle(node).overflowX) && node.scrollWidth > node.clientWidth + 1)
       .map((node) => `${node.tagName.toLowerCase()}.${node.className.toString().split(" ")[0]} ${node.scrollWidth} in ${node.clientWidth}`);
+    // And nothing says more than its own box holds. A word 20 px past its
+    // column lands in the sheet's 40 px of padding: no scroller moves, no
+    // control is off the screen, and the text is over the edge of its form
+    // (the order form's "Already in hand" row and its help text, under a 40 px
+    // font, with the sheet's `break-words` taken out — a mutant that survived
+    // every other check here). What is asked, and of what (Codex #274, finding
+    // 6 — the first version's exemptions were wider than its claim):
+    //   - every drawn block that is not an editable control (those scroll their
+    //     own text, by design) and not an icon;
+    //   - one that does not clip: its content no wider than it;
+    //   - one that clips without saying so — `overflow: hidden` and no ellipsis
+    //     — likewise: that is text silently cut. An ellipsis is a truncation
+    //     the reader can see, and is allowed;
+    //   - vertically too, for a block that does not clip **and holds only
+    //     inline content** — a line of text above or below its own box. Not of
+    //     every block: a popup positioned out of its wrapper (the picker's
+    //     results) and the head's Close are taller than their rows by design,
+    //     and asked of everything this was twenty false reds;
+    //   - **one allowance, measured and placed**: the dialog's own head, whose
+    //     Close is a 44 px target around a 16 px icon under `touch:` with the
+    //     extra taken back as negative margin — at most that margin, and only
+    //     on the row that is the dialog's first child.
+    const head = element.firstElementChild;
+    const closeOverhang = (() => {
+      const close = head?.querySelector<HTMLElement>(':scope > button[aria-label="Close"]');
+      return close ? Math.max(0, -parseFloat(getComputedStyle(close).marginRight)) + 1 : 0;
+    })();
+    const spilled: string[] = [];
+    for (const node of element.querySelectorAll<HTMLElement>("*")) {
+      if (!drawn(node) || node.matches("input, select, textarea, option, svg, svg *")) continue;
+      const style = getComputedStyle(node);
+      if (style.display === "inline") continue; // an inline box has no scroll size; its block answers for it
+      const over = node.scrollWidth - node.clientWidth;
+      const clips = style.overflowX !== "visible";
+      const scrolls = ["auto", "scroll"].includes(style.overflowX);
+      if (scrolls) continue; // a scroller is `sideways`'s, above
+      if (clips && style.textOverflow === "ellipsis") continue;
+      const allowed = node === head ? closeOverhang : 1;
+      const onlyInline = [...node.children].every((child) => getComputedStyle(child).display.startsWith("inline"));
+      const tall = !clips && style.overflowY === "visible" && onlyInline ? node.scrollHeight - node.clientHeight : 0;
+      if (over > allowed || tall > 2) {
+        spilled.push(`${node.tagName.toLowerCase()} "${(node.textContent ?? "").trim().slice(0, 24)}" ${node.scrollWidth}×${node.scrollHeight} in ${node.clientWidth}×${node.clientHeight}${clips ? ", clipped" : ""}`);
+      }
+    }
     return {
       controls: controls.length,
       outside,
       squeezed,
       uncarded,
       sideways,
+      spilled,
       document: [document.documentElement.scrollWidth, document.documentElement.clientWidth],
     };
   }, phone ? FIELD_ROOM_REM : 0);
+}
+
+async function expectDialogFits(page: Page, label: string, phone = true, pageToo = true): Promise<void> {
+  const report = await dialogFitReport(page, phone);
   expect(report.controls, `${label}: no control in the dialog`).toBeGreaterThan(0);
   expect.soft(report.outside, `${label}: controls past the screen's edge`).toEqual([]);
   expect.soft(report.squeezed, `${label}: fields under the room a field needs`).toEqual([]);
   expect.soft(report.uncarded, `${label}: controls past the edge of their own box`).toEqual([]);
   expect.soft(report.sideways, `${label}: something in the dialog scrolls sideways`).toEqual([]);
+  expect.soft(report.spilled, `${label}: said past its own box`).toEqual([]);
   if (pageToo) expect.soft(report.document[0], `${label}: the document scrolls sideways`).toBeLessThanOrEqual(report.document[1]);
 }
 
@@ -281,6 +341,47 @@ async function expectUnderAFinger(control: Locator, label: string): Promise<void
     };
   });
   expect.soft(hit, `${label}: a tap at its centre lands on ${hit.top}`).toMatchObject({ hits: true, inViewport: true });
+}
+
+/** A control's label *reads*: its ink is inside the control's own box, and it
+ *  breaks between its words at most. A clickable box of the right size says
+ *  neither — under a 40 px font "Cancel" was six lines of one letter, the first
+ *  of them above the button (Codex #274, finding 1). `maxLines` for a label
+ *  whose longest word is itself wider than the room (it may break once more). */
+async function expectLabelReads(control: Locator, label: string, maxLines?: number): Promise<void> {
+  await expect(control, label).toBeVisible();
+  const said = await control.evaluate((element) => {
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const ink = [...range.getClientRects()].filter((rect) => rect.width > 0);
+    const box = element.getBoundingClientRect();
+    return {
+      words: (element.textContent ?? "").trim().split(/\s+/).length,
+      lines: new Set(ink.map((rect) => Math.round(rect.top))).size,
+      outside: ink.filter((rect) => rect.top < box.top - 0.5 || rect.bottom > box.bottom + 0.5 || rect.left < box.left - 0.5 || rect.right > box.right + 0.5).length,
+      spill: [element.scrollWidth - element.clientWidth, element.scrollHeight - element.clientHeight],
+    };
+  });
+  expect.soft(said.lines, `${label}: its label's lines, of ${said.words} words`).toBeLessThanOrEqual(maxLines ?? said.words);
+  expect.soft(said.outside, `${label}: pieces of its label outside its box`).toBe(0);
+  expect.soft(Math.max(...said.spill), `${label}: its label spills its box`).toBeLessThanOrEqual(1);
+}
+
+/** Fitting is not reading (pages.spec.ts says the same of a page's action): a
+ *  thing beside another may fit by being squeezed to a letter a line. It has
+ *  the width it would take on one line, or its row's. */
+async function expectItsRoom(thing: Locator, label: string): Promise<void> {
+  const room = await thing.evaluate((element) => {
+    const copy = element.cloneNode(true) as HTMLElement;
+    copy.style.cssText = "position:absolute;visibility:hidden;white-space:nowrap;max-width:none;flex:none;overflow-wrap:normal";
+    element.parentElement!.appendChild(copy);
+    const natural = copy.getBoundingClientRect().width;
+    copy.remove();
+    const row = element.parentElement as HTMLElement;
+    const style = getComputedStyle(row);
+    return { width: element.getBoundingClientRect().width, natural, row: row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) };
+  });
+  expect.soft(room.width, `${label}: its width, of ${Math.round(room.natural)} on one line in a row of ${Math.round(room.row)}`).toBeGreaterThanOrEqual(Math.min(room.natural, room.row) - 1);
 }
 
 /** A phone's dialog: the head at the top of the screen, the bar at its foot, and
@@ -647,6 +748,7 @@ test("a dialog fits a phone under the browser's own font-size preference", async
           const button = dialog(page).getByRole("button", { name, exact: true }).last();
           await expectUnderAFinger(button, `${at}: "${name}"`);
           expect.soft((await button.boundingBox())?.height, `${at}: "${name}" is a finger tall`).toBeGreaterThanOrEqual(FINGER);
+          await expectLabelReads(button, `${at}: "${name}"`);
         }
         await restorePage(page);
         await page.keyboard.press("Escape");
@@ -658,6 +760,79 @@ test("a dialog fits a phone under the browser's own font-size preference", async
         await expectDialogFits(page, `New order ${at}`, true, false);
         await expectDialogInsideScreen(page, `New order ${at}`);
         await expectUnderAFinger(dialog(page).getByRole("button", { name: "Record order", exact: true }), `${at}: "Record order"`);
+        // The bar's labels read (finding 1): the secondary's column is a third
+        // of the bar, and `Button`'s side padding in rem was all of it.
+        for (const name of ["Record order", "Cancel"]) {
+          await expectLabelReads(dialog(page).getByRole("button", { name, exact: true }).last(), `New order ${at}: "${name}"`);
+        }
+        await restorePage(page);
+
+        // The picker's other states (finding 3 — the same on `main`, and the
+        // third review in which the picker came back: the invariant is every
+        // state's, not the chosen name's). Results: a long unbroken name
+        // beside what is on hand. The offer to create: the query is free text.
+        // The new item: the way back, whole and inside its row.
+        await dialog(page).locator('select:has(option[value="upgrade"])').first().selectOption("upgrade");
+        await dialog(page).getByPlaceholder(/Search upgrades/).fill(NAMES.unbroken.slice(0, TAG.length + 8));
+        const result = dialog(page).locator("div.absolute button").filter({ hasText: NAMES.unbroken });
+        await expect(result).toBeVisible();
+        await isolateSheet(page, size.width, `the results ${at}`);
+        const pieces = await result.evaluate((row) => {
+          const bounds = row.getBoundingClientRect();
+          return [...row.querySelectorAll("span")]
+            .filter((span) => span.getBoundingClientRect().right > bounds.right + 0.5 || span.getBoundingClientRect().left < bounds.left - 0.5)
+            .map((span) => (span.textContent ?? "").slice(0, 24));
+        });
+        expect.soft(pieces, `${at}: pieces of a result outside its row`).toEqual([]);
+        await expect.soft(result.getByText(/on hand/), `${at}: what is on hand`).toBeVisible();
+        await expectItsRoom(result.getByText(/on hand/), `${at}: what is on hand`);
+        // The name's room is what it is promised — 8rem, or the row's width —
+        // not its one-line width: ninety-two unbroken characters have none.
+        const named = await result.locator("> span").first().evaluate((element) => {
+          const row = element.parentElement as HTMLElement;
+          const style = getComputedStyle(row);
+          const rem = parseFloat(getComputedStyle(document.documentElement).fontSize);
+          return { width: element.getBoundingClientRect().width, promised: Math.min(8 * rem, row.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)) };
+        });
+        expect.soft(named.width, `${at}: a result's name has its room`).toBeGreaterThanOrEqual(named.promised - 1);
+        await expectDialogInsideScreen(page, `the results ${at}`);
+        await restorePage(page);
+        const token = "SEARCHEDFORAPARTNUMBERRUNTOGETHER1234567890";
+        await dialog(page).getByPlaceholder(/Search upgrades/).fill(token);
+        const create = dialog(page).getByRole("button", { name: /^Create new upgrade/ });
+        await expect(create).toBeVisible();
+        await isolateSheet(page, size.width, `the offer to create ${at}`);
+        await expectLabelReads(create, `${at}: the offer to create`, 99); // a 43-character token: its lines say nothing, its ink does
+        await expectDialogInsideScreen(page, `the offer to create ${at}`);
+        await restorePage(page);
+        await create.click();
+        const back = dialog(page).getByRole("button", { name: /back to search/ });
+        await isolateSheet(page, size.width, `a new item ${at}`);
+        await expectLabelReads(back, `${at}: back to search`);
+        await expectItsRoom(back, `${at}: back to search`);
+        await expectDialogFits(page, `New order, a new upgrade, ${at}`, true, false);
+        await expectDialogInsideScreen(page, `New order, a new upgrade, ${at}`);
+        const row = await back.evaluate((element) => {
+          const bounds = (element.parentElement as HTMLElement).getBoundingClientRect();
+          const rect = element.getBoundingClientRect();
+          return { left: rect.left, right: rect.right, rowLeft: bounds.left, rowRight: bounds.right };
+        });
+        expect.soft(row.left, `${at}: back to search starts in its row`).toBeGreaterThanOrEqual(row.rowLeft - 0.5);
+        expect.soft(row.right, `${at}: back to search ends in its row`).toBeLessThanOrEqual(row.rowRight + 0.5);
+        await restorePage(page);
+        await back.click();
+        await expect(dialog(page).getByPlaceholder(/Search upgrades/)).toBeVisible();
+        await page.keyboard.press("Escape");
+
+        // The filter sheet's bar is the same bar (finding 1: "Clear" was five
+        // lines of a letter).
+        await page.goto(`/kits?q=${q}`);
+        await page.getByRole("button", { name: /^Filter and sort/ }).click();
+        await expect(dialog(page)).toBeVisible();
+        await isolateSheet(page, size.width, `the filter sheet ${at}`);
+        for (const button of await dialog(page).locator("button").filter({ hasText: /^(Clear|Show)/ }).all()) {
+          await expectLabelReads(button, `the filter sheet ${at}: "${(await button.textContent())?.trim()}"`);
+        }
         await restorePage(page);
         await page.keyboard.press("Escape");
       }
@@ -666,4 +841,149 @@ test("a dialog fits a phone under the browser's own font-size preference", async
       await browser.close();
     }
   }
+});
+
+/** New order, its first line an upgrade, the unbroken-named one chosen: the
+ *  picker's selected-item row — the name's chip, and Change beside it. */
+async function chooseUnbroken(page: Page): Promise<{ chip: Locator; change: Locator }> {
+  await openFromList(page, "/orders", "New order");
+  await expect(dialog(page).getByRole("button", { name: "Add line" })).toBeVisible();
+  await dialog(page).locator('select:has(option[value="upgrade"])').first().selectOption("upgrade");
+  await dialog(page).getByPlaceholder(/Search upgrades/).fill(NAMES.unbroken.slice(0, TAG.length + 8));
+  const result = dialog(page).locator("div.absolute button").filter({ hasText: NAMES.unbroken });
+  await expect(result).toBeVisible();
+  await result.click();
+  const change = dialog(page).getByRole("button", { name: "Change", exact: true });
+  await expect(change).toBeVisible();
+  return { chip: dialog(page).getByText(NAMES.unbroken, { exact: true }), change };
+}
+
+/** The chip says the whole name inside its own box, and Change is a control of
+ *  this sheet: inside it, and whole. */
+async function expectChosenReads(page: Page, chip: Locator, change: Locator, label: string): Promise<void> {
+  await expect.soft(chip, `${label}: the chosen name`).toBeVisible();
+  const said = await chip.evaluate((element) => ({
+    scroll: element.scrollWidth,
+    client: element.clientWidth,
+    left: element.getBoundingClientRect().left,
+    right: element.getBoundingClientRect().right,
+    screen: innerWidth,
+  }));
+  expect.soft(said.scroll, `${label}: the name is wider than its chip`).toBeLessThanOrEqual(said.client + 1);
+  // Breaking is not reading: beside Change under a large font the chip could
+  // shrink to a letter a line. It has the room a field has, or the row's.
+  const room = await chip.evaluate((element, rem) => {
+    const row = element.parentElement!.getBoundingClientRect().width;
+    return Math.min(rem * parseFloat(getComputedStyle(document.documentElement).fontSize), row - 1);
+  }, FIELD_ROOM_REM);
+  expect.soft(said.right - said.left, `${label}: the chip's room`).toBeGreaterThanOrEqual(room);
+  expect.soft(said.left, `${label}: the chip starts on screen`).toBeGreaterThanOrEqual(0);
+  expect.soft(said.right, `${label}: the chip ends on screen`).toBeLessThanOrEqual(said.screen + 0.5);
+  const box = (await change.boundingBox())!;
+  expect.soft(box.x, `${label}: Change starts on screen`).toBeGreaterThanOrEqual(0);
+  expect.soft(box.x + box.width, `${label}: Change ends on screen`).toBeLessThanOrEqual(said.screen + 0.5);
+}
+
+test("a chosen catalog item with a long unbroken name keeps Change in the dialog (#273)", async ({ page }, testInfo) => {
+  // Codex #272 round 2, finding 5 — older than that PR: the chip could neither
+  // shrink nor break, so at 320 px a 46-character name put Change at 447–525
+  // and the sheet's body scrolled sideways, the one control that undoes the
+  // choice off-screen. The name gives way now; Change does not.
+  for (const size of sizesFor(testInfo.project.name)) {
+    await test.step(`${size.width} × ${size.height}`, async () => {
+      await page.setViewportSize(size);
+      const { chip, change } = await chooseUnbroken(page);
+      const at = `at ${size.width} px`;
+      await expectChosenReads(page, chip, change, at);
+      await expectDialogFits(page, `New order, the unbroken name chosen, ${at}`, isPhone(size));
+      const [name, button] = await Promise.all([chip.boundingBox(), change.boundingBox()]);
+      if (!isPhone(size)) {
+        // The desktop's row where it fits: Change beside the name, on its
+        // line — a row that wrapped at every width would have sent it under
+        // (#272's lesson, which a short name cannot show).
+        expect.soft(button!.x, `${at}: Change is beside the name`).toBeGreaterThanOrEqual(name!.x + name!.width - 0.5);
+        expect.soft(button!.y, `${at}: Change is on the name's row`).toBeLessThan(name!.y + name!.height);
+      }
+      // And it still undoes the choice.
+      await change.click();
+      await expect(dialog(page).getByPlaceholder(/Search upgrades/)).toBeVisible();
+      await page.keyboard.press("Escape");
+    });
+  }
+});
+
+test("the chosen name and Change fit a phone under the browser's own font-size preference (#273)", async ({ browserName }, testInfo) => {
+  test.skip(testInfo.project.name !== "phone", "the sheet is the phone shell's");
+  test.skip(browserName !== "chromium", "the preference is Chromium's launch flag");
+  test.setTimeout(120_000);
+  for (const font of [32, 40]) {
+    const browser = await chromium.launch({ args: [`--blink-settings=defaultFontSize=${font}`] });
+    try {
+      const context = await browser.newContext({ storageState: STORAGE_STATE, hasTouch: true, isMobile: true, baseURL: APP });
+      const page = await context.newPage();
+      page.on("dialog", (native) => native.accept());
+      for (const size of sizesFor("phone").filter(isPhone)) {
+        await page.setViewportSize(size);
+        const at = `at ${size.width} px, ${font} px font`;
+        const { chip, change } = await chooseUnbroken(page);
+        expect(await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), "the root font size").toBe(font);
+        await isolateSheet(page, size.width, `New order ${at}`);
+        await expectChosenReads(page, chip, change, at);
+        await expectDialogFits(page, `New order, the unbroken name chosen, ${at}`, true, false);
+        await expectDialogInsideScreen(page, `New order, the unbroken name chosen, ${at}`);
+        expect.soft((await change.boundingBox())!.height, `${at}: Change is a finger tall`).toBeGreaterThanOrEqual(40);
+        await restorePage(page);
+        await page.keyboard.press("Escape");
+      }
+      await context.close();
+    } finally {
+      await browser.close();
+    }
+  }
+});
+
+test("the fit check sees what it says it sees (its own negative control)", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "phone", "one project is enough: the check is the same function everywhere");
+  // Codex #274, finding 6: constructed counterexamples passed the first version
+  // of `said past its own box` — text cut by a clipping box, a block excused
+  // for holding *a* button named Close, a line above its own box. A detector is
+  // code, and this is its test: each of these, put into the real New order
+  // sheet, must be reported; the sheet as shipped must report nothing; and the
+  // one allowance is the dialog's own head, by no more than its Close's margin.
+  await page.setViewportSize({ width: 320, height: 844 });
+  await openFromList(page, "/orders", "New order");
+  await expect(dialog(page).getByRole("button", { name: "Add line" })).toBeVisible();
+  expect((await dialogFitReport(page)).spilled, "the sheet as shipped").toEqual([]);
+
+  const inject = (html: string) =>
+    dialog(page).locator("form").first().evaluate((form, markup) => {
+      const holder = document.createElement("div");
+      holder.setAttribute("data-injected", "");
+      holder.innerHTML = markup;
+      form.prepend(holder);
+    }, html);
+  const clear = () => dialog(page).evaluate((element) => element.querySelectorAll("[data-injected]").forEach((node) => node.remove()));
+  const LONG = "INJECTED ".repeat(30);
+  for (const [name, html, sign] of [
+    ["text cut by a clipping box", `<div style="width:60px;overflow:hidden;white-space:nowrap">${LONG}</div>`, "clipped"],
+    ["a block that is not the head, holding a button named Close", `<div style="width:60px;white-space:nowrap"><button type="button" aria-label="Close">x</button>${LONG}</div>`, "INJECTED"],
+    ["a plain block wider than itself", `<div style="width:60px;white-space:nowrap">${LONG}</div>`, "INJECTED"],
+    ["a line above its own box", `<div style="height:16px;line-height:16px"><span style="position:relative;top:-40px;display:inline-block;height:80px">INJECTED tall</span></div>`, "INJECTED"],
+  ] as const) {
+    await inject(html);
+    const spilled = (await dialogFitReport(page)).spilled;
+    expect.soft(spilled.some((entry) => entry.includes(sign)), `${name}: reported (${JSON.stringify(spilled)})`).toBe(true);
+    await clear();
+  }
+  // Allowed, and why: an ellipsis is a truncation the reader can see.
+  await inject(`<div style="width:60px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${LONG}</div>`);
+  expect.soft((await dialogFitReport(page)).spilled, "an ellipsis is allowed").toEqual([]);
+  await clear();
+  // The head's allowance is its Close's margin and no more.
+  await dialog(page).evaluate((element) => {
+    const title = element.firstElementChild!.querySelector("h2") as HTMLElement;
+    title.style.cssText = "overflow:visible;white-space:nowrap;min-width:600px";
+  });
+  expect.soft((await dialogFitReport(page)).spilled.length, "a head wider than its Close's margin allows").toBeGreaterThan(0);
+  await page.keyboard.press("Escape");
 });

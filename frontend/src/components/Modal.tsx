@@ -148,8 +148,19 @@ const BAR_CLASS =
   "grid shrink-0 grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2.5 border-t border-rule bg-surface px-4 pt-3 pb-[calc(0.75rem+env(safe-area-inset-bottom))]";
 const PHONE_BAR_CLASS =
   "max-md:grid max-md:shrink-0 max-md:grid-cols-[minmax(0,1fr)_minmax(0,2fr)] max-md:gap-2.5 max-md:border-t max-md:border-rule max-md:bg-surface max-md:px-4 max-md:pt-3 max-md:pb-[calc(0.75rem+env(safe-area-inset-bottom))]";
-const BAR_BUTTON_CLASS = "h-12 justify-center text-[15px]";
-const PHONE_BAR_BUTTON_CLASS = "max-md:h-12 max-md:justify-center max-md:text-[15px]";
+/** A bar's button is as wide as its column and its label is centred, so its
+ *  own side padding buys nothing — and costs the label its room: `Button`'s
+ *  0.75rem a side is 60 px of Cancel's 71 px column under a 40 px browser font
+ *  on a 320 px phone, and once a label may break inside a word there (#270)
+ *  the six letters of "Cancel" took six lines and left the button (Codex #274,
+ *  finding 1). 4 px a side, in px like the label; a label still wider than its
+ *  column — a long translation — breaks, and the button grows to hold it
+ *  (`min-h`, not `h`; important, because `Button` has a `touch:min-h-10` of
+ *  its own that the stylesheet happens to emit later — dialogs.spec.ts's
+ *  "is a bar button" is what said so). */
+const BAR_BUTTON_CLASS = "min-h-12! justify-center px-[4px] text-center text-[15px]";
+const PHONE_BAR_BUTTON_CLASS =
+  "max-md:min-h-12! max-md:justify-center max-md:px-[4px] max-md:text-center max-md:text-[15px]";
 
 function ActionButton({
   action,
@@ -414,7 +425,10 @@ export function Modal({
   const frame = sheet
     ? {
         overlay: "items-end",
-        panel: `flex max-h-[calc(100dvh-3rem)] w-full max-w-xl flex-col rounded-t-lg border border-b-0 border-border-strong bg-surface focus:outline-none ${actions ? "" : "pb-safe"}`,
+        // `break-words`, here and on the phone's full-screen frame: a dialog is
+        // a portal beside `#root`, so it inherits nothing from the phone shell's
+        // `main`, which says why (Codex #274, finding 3).
+        panel: `flex max-h-[calc(100dvh-3rem)] w-full max-w-xl flex-col rounded-t-lg border border-b-0 border-border-strong bg-surface break-words focus:outline-none ${actions ? "" : "pb-safe"}`,
         head: "mb-3 px-4 pt-3",
         body: "min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 pb-5",
         foot: BAR_CLASS,
@@ -425,7 +439,7 @@ export function Modal({
           "items-start overflow-y-auto p-4 pt-12 max-md:items-stretch max-md:overflow-hidden max-md:bg-surface max-md:p-0",
         panel: `w-full bg-surface focus:outline-none md:rounded-lg md:border md:border-border-strong md:p-5 ${
           wide ? "md:max-w-3xl" : "md:max-w-md"
-        } max-md:flex max-md:min-h-0 max-md:flex-col ${actions ? "" : "max-md:pb-safe"}`,
+        } max-md:flex max-md:min-h-0 max-md:flex-col max-md:break-words ${actions ? "" : "max-md:pb-safe"}`,
         head: "md:mb-4 max-md:h-14 max-md:border-b max-md:border-rule max-md:px-4",
         // `scroll-py`: a field scrolled back into view under a raised keyboard
         // keeps a line's breath from the head and the bar.

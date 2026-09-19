@@ -12,7 +12,7 @@ import { AccessTokensSection } from "./pages/settings/AccessTokensSection";
 import { DataSection } from "./pages/settings/DataSection";
 import { GeneralSection } from "./pages/settings/GeneralSection";
 import { LanguageSection } from "./pages/settings/LanguageSection";
-import { SettingsPage } from "./pages/settings/SettingsPage";
+import { SettingsIndex, SettingsPage } from "./pages/settings/SettingsPage";
 
 export default function App() {
   return (
@@ -29,7 +29,7 @@ export default function App() {
         {/* The phone shell's fifth tab (§13.7); no other shell links to it. */}
         <Route path="/more" element={<MorePage />} />
         <Route path="/settings" element={<SettingsPage />}>
-          <Route index element={<Navigate to="general" replace />} />
+          <Route index element={<SettingsIndex />} />
           <Route path="general" element={<GeneralSection />} />
           <Route path="language" element={<LanguageSection />} />
           <Route path="data" element={<DataSection />} />

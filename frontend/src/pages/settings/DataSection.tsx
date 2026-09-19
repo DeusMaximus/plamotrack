@@ -9,6 +9,7 @@ import { ImportPreview } from "../../components/ImportPreview";
 import { Button, Card, ErrorBanner, Select } from "../../components/ui";
 import { formatFileSize } from "../../lib/format";
 import { counted, importTableLabel } from "../../lib/labels";
+import { useShell } from "../../lib/shell";
 import { SectionHeader } from "./SectionHeader";
 
 /** Keys are `portability/spec.py` table keys, not REST paths — `/export/{key}.csv`.
@@ -29,8 +30,18 @@ const TABLE_EXPORTS = [
   "instance_settings",
 ];
 
+/** On a phone this section is export only (design §13.7, the owner's call):
+ *  the exports are buttons, and an archive on the phone is a fair quick backup;
+ *  nobody prepares a CSV there, the preview is wide diff tables, and
+ *  `replace_all` — the one destructive action in the app — should not sit a
+ *  thumb's width from a mis-tap. So below 768 px the Templates and Import cards
+ *  are *not rendered* — one line says where they live — and the line is the
+ *  shell's, by width, not a touch screen's: an iPad is a fair place to import
+ *  from. The import's state is held here, above the cards, so a tablet turned
+ *  to 744 px and back finds its file and its preview where it left them. */
 export function DataSection() {
   const { t } = useTranslation();
+  const phone = useShell() === "phone";
   const queryClient = useQueryClient();
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -135,153 +146,165 @@ export function DataSection() {
         </div>
       </Card>
 
-      <Card title={t("data.templatesTitle")} description={t("data.templatesDescription")}>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="secondary"
-            onClick={() =>
-              download("/export/starter-sheet.csv", "plamotrack-starter-sheet.csv")
-            }
-          >
-            {t("data.starterSheetButton")}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => download("/export/templates", "plamotrack-templates.zip")}
-          >
-            {t("data.templatePackButton")}
-          </Button>
-        </div>
-        <p className="mt-2 text-xs text-muted">{t("data.starterBlurb")}</p>
-      </Card>
+      {phone && <p className="text-sm text-muted">{t("data.phoneNote")}</p>}
 
-      <Card title={t("data.importTitle")} description={t("data.importDescription")}>
-        <div
-          onDragOver={(event) => {
-            event.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={(event) => {
-            event.preventDefault();
-            setDragging(false);
-            pickFile(event.dataTransfer.files[0] ?? null);
-          }}
-          className={`rounded-md border border-dashed px-4 py-6 text-center ${
-            dragging ? "border-accent bg-accent-soft" : "border-border-strong bg-surface-alt"
-          }`}
-        >
-          <input
-            ref={fileInput}
-            type="file"
-            accept=".csv,.zip"
-            onChange={(event) => pickFile(event.target.files?.[0] ?? null)}
-            className="hidden"
-            id="import-file"
-          />
-          {file ? (
-            <div className="space-y-1">
-              <p className="text-sm font-medium text-text">{file.name}</p>
-              <p className="text-xs text-muted">{formatFileSize(file.size)}</p>
-              <button
-                type="button"
-                onClick={reset}
-                className="text-xs text-accent hover:underline"
+      {!phone && (
+        // Every control in here is gone below 768 px, so each names what stands
+        // in for it there (`lib/focusKey.ts`): the bar's way back to the section
+        // list, `SettingsPage`'s `settings-sections` — a tablet turned with the
+        // keyboard on Apply import left it on <body> (Codex #274, finding 2).
+        // A box of its own, not a fragment, to carry the attribute; the same
+        // `space-y-6` inside it as around it, so nothing moves.
+        <div data-focus-stand-in="settings-sections" className="space-y-6">
+          <Card title={t("data.templatesTitle")} description={t("data.templatesDescription")}>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="secondary"
+                onClick={() =>
+                  download("/export/starter-sheet.csv", "plamotrack-starter-sheet.csv")
+                }
               >
-                {t("data.chooseDifferent")}
-              </button>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              <p className="text-sm text-muted">{t("data.dropHere")}</p>
-              <label
-                htmlFor="import-file"
-                className="cursor-pointer text-xs text-accent hover:underline"
+                {t("data.starterSheetButton")}
+              </Button>
+              <Button
+                variant="secondary"
+                onClick={() => download("/export/templates", "plamotrack-templates.zip")}
               >
-                {t("data.browse")}
-              </label>
+                {t("data.templatePackButton")}
+              </Button>
             </div>
-          )}
-        </div>
+            <p className="mt-2 text-xs text-muted">{t("data.starterBlurb")}</p>
+          </Card>
 
-        <div className="mt-3 flex flex-wrap items-end gap-3">
-          <label className="block">
-            <span className="mb-1 block text-xs font-medium text-muted">
-              {t("data.modeLabel")}
-            </span>
-            <Select
-              value={mode}
-              onChange={(event) => {
-                setMode(event.target.value as ImportMode);
-                setPlan(null);
-                setResult(null);
+          <Card title={t("data.importTitle")} description={t("data.importDescription")}>
+            <div
+              onDragOver={(event) => {
+                event.preventDefault();
+                setDragging(true);
               }}
-              className="w-56"
+              onDragLeave={() => setDragging(false)}
+              onDrop={(event) => {
+                event.preventDefault();
+                setDragging(false);
+                pickFile(event.dataTransfer.files[0] ?? null);
+              }}
+              className={`rounded-md border border-dashed px-4 py-6 text-center ${
+                dragging ? "border-accent bg-accent-soft" : "border-border-strong bg-surface-alt"
+              }`}
             >
-              {IMPORT_MODES.map((option) => (
-                <option key={option} value={option}>
-                  {t(`importMode.${option}.label`)}
-                </option>
-              ))}
-            </Select>
-          </label>
-          <Button onClick={runPreview} disabled={!file || busy !== null}>
-            {busy === "preview" ? t("data.reading") : t("data.previewChanges")}
-          </Button>
-        </div>
-        <p className="mt-1.5 text-xs text-muted">{t(`importMode.${mode}.blurb`)}</p>
+              <input
+                ref={fileInput}
+                type="file"
+                accept=".csv,.zip"
+                onChange={(event) => pickFile(event.target.files?.[0] ?? null)}
+                className="hidden"
+                id="import-file"
+              />
+              {file ? (
+                <div className="space-y-1">
+                  <p className="text-sm font-medium text-text">{file.name}</p>
+                  <p className="text-xs text-muted">{formatFileSize(file.size)}</p>
+                  <button
+                    type="button"
+                    onClick={reset}
+                    className="text-xs text-accent hover:underline"
+                  >
+                    {t("data.chooseDifferent")}
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <p className="text-sm text-muted">{t("data.dropHere")}</p>
+                  <label
+                    htmlFor="import-file"
+                    className="cursor-pointer text-xs text-accent hover:underline"
+                  >
+                    {t("data.browse")}
+                  </label>
+                </div>
+              )}
+            </div>
 
-        {plan && (
-          <div className="mt-4 space-y-3">
-            <ImportPreview plan={plan} />
-
-            {mode === "replace_all" && !blocked && (
-              <label className="block rounded-sm border border-danger/40 bg-danger/10 px-3 py-2">
-                <span className="mb-1 block text-xs font-medium text-danger">
-                  {t("data.replaceConfirm")}
+            <div className="mt-3 flex flex-wrap items-end gap-3">
+              <label className="block">
+                <span className="mb-1 block text-xs font-medium text-muted">
+                  {t("data.modeLabel")}
                 </span>
-                <input
-                  value={confirmText}
-                  onChange={(event) => setConfirmText(event.target.value)}
-                  placeholder="REPLACE"
-                  className="w-40 rounded-sm border border-danger/40 bg-surface px-2.5 py-1.5 text-sm text-text focus:border-danger focus:outline-none"
-                />
+                <Select
+                  value={mode}
+                  onChange={(event) => {
+                    setMode(event.target.value as ImportMode);
+                    setPlan(null);
+                    setResult(null);
+                  }}
+                  className="w-56"
+                >
+                  {IMPORT_MODES.map((option) => (
+                    <option key={option} value={option}>
+                      {t(`importMode.${option}.label`)}
+                    </option>
+                  ))}
+                </Select>
               </label>
+              <Button onClick={runPreview} disabled={!file || busy !== null}>
+                {busy === "preview" ? t("data.reading") : t("data.previewChanges")}
+              </Button>
+            </div>
+            <p className="mt-1.5 text-xs text-muted">{t(`importMode.${mode}.blurb`)}</p>
+
+            {plan && (
+              <div className="mt-4 space-y-3">
+                <ImportPreview plan={plan} />
+
+                {mode === "replace_all" && !blocked && (
+                  <label className="block rounded-sm border border-danger/40 bg-danger/10 px-3 py-2">
+                    <span className="mb-1 block text-xs font-medium text-danger">
+                      {t("data.replaceConfirm")}
+                    </span>
+                    <input
+                      value={confirmText}
+                      onChange={(event) => setConfirmText(event.target.value)}
+                      placeholder="REPLACE"
+                      className="w-40 rounded-sm border border-danger/40 bg-surface px-2.5 py-1.5 text-sm text-text focus:border-danger focus:outline-none"
+                    />
+                  </label>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <Button onClick={runApply} disabled={blocked || needsConfirm || busy !== null}>
+                    {busy === "apply" ? t("data.importing") : t("data.applyImport")}
+                  </Button>
+                  <Button variant="secondary" onClick={reset} disabled={busy !== null}>
+                    {t("common.cancel")}
+                  </Button>
+                </div>
+              </div>
             )}
 
-            <div className="flex items-center gap-2">
-              <Button onClick={runApply} disabled={blocked || needsConfirm || busy !== null}>
-                {busy === "apply" ? t("data.importing") : t("data.applyImport")}
-              </Button>
-              <Button variant="secondary" onClick={reset} disabled={busy !== null}>
-                {t("common.cancel")}
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {result && (
-          <div className="mt-4 rounded-sm border border-status-complete/40 bg-status-complete/10 px-3 py-2 text-sm text-status-complete">
-            <p className="font-medium">{t("data.complete")}</p>
-            <p className="mt-0.5">
-              {t("data.result.created", counted({}, result.created))}
-              {t("common.dotSeparator")}
-              {t("data.result.updated", counted({}, result.updated))}
-              {t("common.dotSeparator")}
-              {t("data.result.skipped", counted({}, result.skipped))}
-              {result.kits_spawned > 0 &&
-                t("common.dotSeparator") +
-                  t("data.result.kitsSpawned", counted({}, result.kits_spawned))}
-              {result.kits_removed > 0 &&
-                t("common.dotSeparator") +
-                  t("data.result.kitsRemoved", counted({}, result.kits_removed))}
-              {result.kits_advanced > 0 &&
-                t("common.dotSeparator") +
-                  t("data.result.kitsAdvanced", counted({}, result.kits_advanced))}
-            </p>
-          </div>
-        )}
-      </Card>
+            {result && (
+              <div className="mt-4 rounded-sm border border-status-complete/40 bg-status-complete/10 px-3 py-2 text-sm text-status-complete">
+                <p className="font-medium">{t("data.complete")}</p>
+                <p className="mt-0.5">
+                  {t("data.result.created", counted({}, result.created))}
+                  {t("common.dotSeparator")}
+                  {t("data.result.updated", counted({}, result.updated))}
+                  {t("common.dotSeparator")}
+                  {t("data.result.skipped", counted({}, result.skipped))}
+                  {result.kits_spawned > 0 &&
+                    t("common.dotSeparator") +
+                      t("data.result.kitsSpawned", counted({}, result.kits_spawned))}
+                  {result.kits_removed > 0 &&
+                    t("common.dotSeparator") +
+                      t("data.result.kitsRemoved", counted({}, result.kits_removed))}
+                  {result.kits_advanced > 0 &&
+                    t("common.dotSeparator") +
+                      t("data.result.kitsAdvanced", counted({}, result.kits_advanced))}
+                </p>
+              </div>
+            )}
+          </Card>
+        </div>
+      )}
     </div>
   );
 }
