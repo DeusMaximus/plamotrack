@@ -111,7 +111,16 @@ export function Layout() {
   return (
     <div className="px-safe flex min-h-dvh">
       {shell === "sidebar" ? <Sidebar /> : shell === "rail" ? <Rail /> : null}
-      <main className={`min-w-0 flex-1 ${shell === "phone" ? "pb-tab-bar px-4" : "px-8 py-7"}`}>
+      {/* `break-words` in the phone shell: under a large browser font the gutter
+          and every card's padding are in rem, the screen is not, and what is
+          left — 158 px inside a card at 40 px on a 320 px phone — is narrower
+          than "formatting" or "Australia/Sydney". A word breaks where its box
+          ends instead of widening the page (and the tab bar, which is fixed to
+          the layout viewport, with it; #269). It changes no box's min-content
+          size, so nothing that fits today moves. */}
+      <main
+        className={`min-w-0 flex-1 ${shell === "phone" ? "pb-tab-bar px-4 break-words" : "px-8 py-7"}`}
+      >
         <Outlet />
       </main>
       {shell === "phone" && <TabBar />}

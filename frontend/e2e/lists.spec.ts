@@ -1287,8 +1287,12 @@ test("a card says who it is under the browser's own font-size preference", async
   // inside the screen with the room the default size gives it, the total is
   // still said in full, no list is wider than the screen, every control is
   // inside its list, and every target is still a finger. The shell around the
-  // lists is not this test's — at this size the page head's action and the
-  // tab bar are past 320 px, which is #257's layout and filed as #269.
+  // lists was not this test's until #260: the page head's action and the tab
+  // bar were past 320 px (#269, pages.spec.ts holds them now), and so were a
+  // card's *facts* — the status chip, the grade, the scale, "Would order
+  // again: Maybe" — which are spans, not controls, on a line that could not
+  // wrap (#270): so every list's document is asked for its width here too, and
+  // every card for anything drawn past its edge.
   /** The stepper inside its card, its two targets no smaller than a finger
    *  (finding 7): the squares follow the font down to 44 px and no further —
    *  at 320 px under these fonts their 88 and 110 px are wider than the row,
@@ -1310,21 +1314,78 @@ test("a card says who it is under the browser's own font-size preference", async
     const count = card.getByTestId("stock-count");
     await expect.soft(count, `${label}: the count`).toBeVisible();
     expect.soft(await isCut(count), `${label}: the count is cut`).toBe(false);
+    const edges = await count.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const card = (element.closest("li") as HTMLElement).getBoundingClientRect();
+      return { left: rect.left, right: rect.right, cardLeft: card.left, cardRight: card.right };
+    });
+    expect.soft(edges.left, `${label}: the count starts in its card`).toBeGreaterThanOrEqual(edges.cardLeft - 0.5);
+    expect.soft(edges.right, `${label}: the count ends in its card`).toBeLessThanOrEqual(edges.cardRight + 0.5);
+  };
+  /** Which of the stepper's two arrangements is drawn (#271): one line, or
+   *  the count above the two squares where one line cannot hold them. */
+  const arrangement = (card: Locator) =>
+    // `evaluateAll`, which does not wait: a stepper that says nothing about its
+    // arrangement is a named red here, not thirty seconds of looking for one.
+    card.locator("[data-arrangement]").evaluateAll((found) => found[0]?.getAttribute("data-arrangement") ?? "unsaid");
+  /** Nothing a card draws is past the card (#270): its facts are spans, which
+   *  no check of controls sees. */
+  const nothingEscapes = async (card: Locator, label: string) => {
+    const escaped = await card.evaluate((li) => {
+      const bounds = li.getBoundingClientRect();
+      // Drawn: not inside a box that clips everything (a ruler is one — a
+      // hidden copy a component measures, zero by zero with its overflow cut).
+      const clipped = (element: HTMLElement) => {
+        for (let box = element.parentElement; box && box !== li; box = box.parentElement) {
+          const style = getComputedStyle(box);
+          if (style.overflowX !== "visible" && box.clientWidth === 0) return true;
+        }
+        return false;
+      };
+      return [...li.querySelectorAll<HTMLElement>("*")]
+        .filter((element) => element.getClientRects().length > 0 && !clipped(element))
+        .filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.right > bounds.right + 0.5 || rect.left < bounds.left - 0.5;
+        })
+        .map((element) => `${element.tagName.toLowerCase()} "${(element.textContent ?? "").trim().slice(0, 24)}" [${Math.round(element.getBoundingClientRect().left)}–${Math.round(element.getBoundingClientRect().right)}] of [${Math.round(bounds.left)}–${Math.round(bounds.right)}]`);
+    });
+    expect.soft(escaped, `${label}: drawn past the card`).toEqual([]);
+    // And nothing says more than its own box holds: a chip whose one word is
+    // wider than the chip is inside the card and out of its own ground. What
+    // truncates does so by design and clips (`overflow: hidden`), so it is
+    // the boxes that do not clip that are asked.
+    const spilled = await card.evaluate((li) =>
+      [...li.querySelectorAll<HTMLElement>("*")]
+        .filter((element) => element.getClientRects().length > 0 && getComputedStyle(element).display !== "inline")
+        .filter((element) => getComputedStyle(element).overflowX === "visible" && element.scrollWidth > element.clientWidth + 1)
+        .filter((element) => ![...element.querySelectorAll<HTMLElement>("*")].some((inner) => getComputedStyle(inner).overflowX !== "visible" && inner.clientWidth === 0))
+        .map((element) => `${element.tagName.toLowerCase()} "${(element.textContent ?? "").trim().slice(0, 24)}" ${element.scrollWidth} in ${element.clientWidth}`),
+    );
+    expect.soft(spilled, `${label}: said past its own box`).toEqual([]);
   };
   const wideCountName = `${TAG} Wide count`;
+  const widestCountName = `${TAG} Widest count`;
+  const wideFactsName = `${TAG} Wide facts`;
   // Two points on the axis: twice the default, and two and a half times it —
   // where the stepper's squares are at their floor and only the count decides.
   for (const font of [32, 40]) {
-    // A four-digit count at 32 px is where the squares' floor binds — the count
-    // and two fingers are the row, to the pixel — and at 40 px it is past the
-    // bound (four digits fit a 320 px phone at 32 px, two at 40: the PR's call
-    // 17), so the tool that carries it is on the page at 32 px only.
-    const api = font === 32 ? await apiContext() : null;
-    let wideCount: string | null = null;
-    if (api) {
-      const made = await api.post("/tools", { data: { name: wideCountName, category: "nippers", quantity_on_hand: 1234 } });
+    // A four-digit count: at 32 px on a 320 px phone it and two fingers are the
+    // row, to the pixel; at 40 px they are past it, and until #271 that was the
+    // bound ("four digits fit at 32 px, two at 40"). Now the count goes above
+    // the squares there — so it is on the page at both sizes, with the most the
+    // column can store beside it, and an ordinary kit with the widest facts
+    // there are (#270: Pre-ordered, MGEX, 1/100, a series).
+    const api = await apiContext();
+    const seeded: string[] = [];
+    for (const [route, data] of [
+      ["/tools", { name: wideCountName, category: "nippers", quantity_on_hand: 1234 }],
+      ["/tools", { name: widestCountName, category: "nippers", quantity_on_hand: 2147483646 }],
+      ["/kits", { name: wideFactsName, grade: "MGEX", scale: "1/100", status: "pre_ordered", series: SERIES }],
+    ] as const) {
+      const made = await api.post(route, { data });
       expect(made.ok(), await made.text()).toBeTruthy();
-      wideCount = ((await made.json()) as { id: string }).id;
+      seeded.push(`${route}/${((await made.json()) as { id: string }).id}`);
     }
     const browser = await chromium.launch({ args: [`--blink-settings=defaultFontSize=${font}`] });
     try {
@@ -1377,10 +1438,14 @@ test("a card says who it is under the browser's own font-size preference", async
               .filter((control) => /^(Edit|Add one|Remove one) /.test(say(control)))
               .filter((control) => control.getBoundingClientRect().width < 44 || control.getBoundingClientRect().height < 44)
               .map((control) => `${say(control)} ${Math.round(control.getBoundingClientRect().width)}×${Math.round(control.getBoundingClientRect().height)}`);
-            return { left: bounds.left, right: bounds.right, screen: innerWidth, escaped, small };
+            return { left: bounds.left, right: bounds.right, screen: innerWidth, document: document.documentElement.scrollWidth, escaped, small };
           });
           expect.soft(report.left, `${label}: the list starts on screen`).toBeGreaterThanOrEqual(0);
           expect.soft(report.right, `${label}: the list ends on screen`).toBeLessThanOrEqual(report.screen + 0.5);
+          // The screen this test set, not a layout viewport something wide has
+          // stretched (#272's lesson), and a document no wider than it (#270).
+          expect.soft(report.screen, `${label}: the layout viewport is the screen`).toBe(size.width);
+          expect.soft(report.document, `${label}: the document's width`).toBeLessThanOrEqual(size.width);
           expect.soft(report.escaped, `${label}: controls outside their list`).toEqual([]);
           expect.soft(report.small, `${label}: targets under a finger`).toEqual([]);
         };
@@ -1397,6 +1462,17 @@ test("a card says who it is under the browser's own font-size preference", async
           expect.soft((await title.boundingBox())?.x ?? -1, `${path} ${at}: the name starts on screen`).toBeGreaterThanOrEqual(0);
           expect.soft((await title.boundingBox())?.width ?? 0, `${path} ${at}: the name's room`).toBeGreaterThanOrEqual(128);
           await listFits(`${path} ${at}`);
+          await nothingEscapes(card, `${path} ${at}, ${anchor}`);
+          if (path.startsWith("/kits")) {
+            const wide = rowOf(page, wideFactsName).first();
+            for (const fact of ["Pre-ordered", "MGEX", "1/100"]) {
+              await expect.soft(wide.getByText(fact, { exact: true }).first(), `${path} ${at}: ${fact}`).toBeVisible();
+            }
+            await nothingEscapes(wide, `${path} ${at}, the widest facts`);
+          }
+          if (path.startsWith("/retailers")) {
+            await expect.soft(card.getByText("Would order again: Maybe"), `${path} ${at}: the widest chip`).toBeVisible();
+          }
           if (path === "/inventory") {
             // The stepper on its own line, not on the facts': beside it they
             // were squeezed to an ellipsis.
@@ -1404,17 +1480,36 @@ test("a card says who it is under the browser's own font-size preference", async
             await expect.soft(facts, `${path} ${at}: the tool's category`).toBeVisible();
             expect.soft(await isCut(facts), `${path} ${at}: the tool's category is cut`).toBe(false);
             await stepperFits(card, `${path} ${at}, a two-digit count`);
-            if (wideCount) await stepperFits(rowOf(page, wideCountName).first(), `${path} ${at}, a four-digit count`);
+            for (const [name, digits] of [
+              [wideCountName, "four"],
+              [widestCountName, "ten"],
+            ] as const) {
+              const wide = rowOf(page, name).first();
+              await stepperFits(wide, `${path} ${at}, a ${digits}-digit count`);
+              await nothingEscapes(wide, `${path} ${at}, a ${digits}-digit count`);
+            }
+            // The second arrangement where one line cannot hold the count and
+            // two fingers — and only there: ten digits never fit a 320 or a
+            // 390 px phone at these fonts and do fit an iPad mini; two digits
+            // fit from 390 px.
+            expect.soft(await arrangement(rowOf(page, widestCountName).first()), `${path} ${at}: ten digits`).toBe(size.width <= 390 ? "stacked" : "line");
+            if (size.width >= 390) expect.soft(await arrangement(card), `${path} ${at}: two digits`).toBe("line");
+            // And the stacked targets still work: one more, read back in full.
+            if (font === 40 && size.width === 320) {
+              const four = rowOf(page, wideCountName).first();
+              expect.soft(await arrangement(four), `${path} ${at}: four digits`).toBe("stacked");
+              await four.getByRole("button", { name: /^Add one / }).click();
+              await expect.soft(four.getByTestId("stock-count"), `${path} ${at}: the count after a tap`).toHaveText("1,235");
+              await stepperFits(four, `${path} ${at}, after a tap`);
+            }
           }
         }
       }
       await context.close();
     } finally {
       await browser.close();
-      if (api && wideCount) {
-        await api.delete(`/tools/${wideCount}`);
-        await api.dispose();
-      }
+      for (const path of seeded) await api.delete(path);
+      await api.dispose();
     }
   }
 });
@@ -1475,6 +1570,39 @@ test("a long list's pager fits a phone", async ({ page }, testInfo) => {
       await page.setViewportSize({ width: 744, height: 1133 });
       await expect(pageButton(2), "the phone's window at page 5 has no page 2").toHaveCount(0);
       await expect.soft(pageButton(expected), `page ${focused} focused, 1133 → 744 px`).toBeFocused({ timeout: 2_000 });
+    }
+    // And under the browser's own font-size preference (#260): a page is a
+    // finger *in rem*, so at 40 px five of them are 550 px — the pages wrap
+    // onto lines of their own rather than widen a 320 px screen. Whether a list
+    // has a pager is a state no other font-size test puts on the page.
+    if (testInfo.project.use.browserName === undefined || testInfo.project.use.browserName === "chromium") {
+      for (const font of [32, 40]) {
+        const browser = await chromium.launch({ args: [`--blink-settings=defaultFontSize=${font}`] });
+        try {
+          const context = await browser.newContext({ storageState: STORAGE_STATE, hasTouch: true, isMobile: true, baseURL: APP });
+          const large = await context.newPage();
+          for (const width of [320, 390]) {
+            await large.setViewportSize({ width, height: 844 });
+            await openList(large, `/kits?q=${encodeURIComponent(pagerTag)}&page=5`, pagerTag);
+            const label = `page 5 of 9 at ${width} px, ${font} px font`;
+            expect(await large.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), "the root font size").toBe(font);
+            const report = await large.getByRole("navigation", { name: "Pages" }).evaluate((nav) => ({
+              pages: [...nav.querySelectorAll("button")].map((button) => Math.round(button.getBoundingClientRect().right)),
+              small: [...nav.querySelectorAll("button")].filter((button) => Math.min(button.getBoundingClientRect().width, button.getBoundingClientRect().height) < 44).length,
+              document: document.documentElement.scrollWidth,
+              screen: innerWidth,
+            }));
+            expect.soft(report.pages.length, `${label}: pages offered`).toBeGreaterThanOrEqual(3);
+            expect.soft(Math.max(...report.pages), `${label}: the last page ends on screen`).toBeLessThanOrEqual(width);
+            expect.soft(report.small, `${label}: pages under a finger`).toBe(0);
+            expect.soft(report.screen, `${label}: the layout viewport is the screen`).toBe(width);
+            expect.soft(report.document, `${label}: the document's width`).toBeLessThanOrEqual(width);
+          }
+          await context.close();
+        } finally {
+          await browser.close();
+        }
+      }
     }
   } finally {
     for (const id of ids) await api.delete(`/kits/${id}`);

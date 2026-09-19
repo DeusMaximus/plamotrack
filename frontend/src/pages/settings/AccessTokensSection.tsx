@@ -106,7 +106,7 @@ function CreateCard({ onMinted }: { onMinted: (minted: AccessTokenMinted) => voi
           </Select>
         </Field>
         <p className="text-xs text-muted">{t("settings.tokens.scopeNote")}</p>
-        <Field label={t("settings.tokens.expiryLabel")} className="max-w-48">
+        <Field label={t("settings.tokens.expiryLabel")} className="max-w-48 max-md:max-w-none">
           <Select {...register("expiry")}>
             <option value="">{t("settings.tokens.expiryNever")}</option>
             {EXPIRY_DAYS.map((days) => (
@@ -294,9 +294,14 @@ function TokenCard({
   return (
     <li
       data-testid="token-card"
-      className={`flex items-start gap-3 px-3.5 py-3 ${inactive ? "text-faint" : ""}`}
+      // The facts keep 10rem beside Revoke and Revoke takes the next line when
+      // they cannot — under a large browser font both are in rem and the card
+      // is not (#260, the family of #269–#271).
+      className={`flex flex-wrap items-start gap-x-3 gap-y-2 px-3.5 py-3 ${inactive ? "text-faint" : ""}`}
     >
-      <div className={`min-w-0 flex-1 space-y-1 text-xs ${inactive ? "" : "text-muted"}`}>
+      <div
+        className={`min-w-0 flex-[1_1_min(10rem,100%)] space-y-1 text-xs ${inactive ? "" : "text-muted"}`}
+      >
         <div className={`text-sm font-medium wrap-anywhere ${inactive ? "" : "text-text"}`}>
           {token.name}
         </div>

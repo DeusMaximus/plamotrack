@@ -80,6 +80,13 @@ const NAMES = {
   // other, and a 29-character one fitted every tested line: mutants survived
   // both, Codex #272 round 1).
   upgrade: `${TAG} MSN-04-II-NIGHTINGALE-VERNIER-THRUSTER-SET`,
+  // And one with nowhere to break at all — no hyphen, no space after the tag:
+  // a part number run together, the name #273 was reported with, twice over.
+  // 46 characters were wider than a 320 px sheet and no wider than the
+  // desktop's 700 px row, where a row that wrapped at every width therefore
+  // looked exactly like one that did not (the mutant survived); 92 are wider
+  // than both.
+  unbroken: `${TAG} MSN04IINIGHTINGALEVERNIERTHRUSTERSET1234567890MSN04IINIGHTINGALEVERNIERTHRUSTERSET1234567890`,
 };
 
 let retailerId: string;
@@ -87,6 +94,7 @@ let kitId: string;
 let consumableId: string;
 let toolId: string;
 let upgradeId: string;
+let unbrokenId: string;
 let applicationId: string;
 
 test.beforeAll(async () => {
@@ -101,6 +109,7 @@ test.beforeAll(async () => {
   consumableId = await made("/consumables", { name: NAMES.consumable, category: "glue", quantity_on_hand: 2 });
   toolId = await made("/tools", { name: NAMES.tool, category: "nippers", quantity_on_hand: 1 });
   upgradeId = await made("/upgrades", { name: NAMES.upgrade, manufacturer: "E2E", quantity_on_hand: 3 });
+  unbrokenId = await made("/upgrades", { name: NAMES.unbroken, manufacturer: "E2E", quantity_on_hand: 0 });
   // The kit carries an applied upgrade, so its dialog draws the applied-upgrades
   // row and the withdrawal question — the state Codex #272 found unexamined:
   // under a 32 px font that row was 16 px past a 390 px sheet (finding 1).
@@ -116,6 +125,7 @@ test.afterAll(async () => {
   await api.delete(`/consumables/${consumableId}`);
   await api.delete(`/tools/${toolId}`);
   await api.delete(`/upgrades/${upgradeId}`);
+  await api.delete(`/upgrades/${unbrokenId}`);
   await api.delete(`/retailers/${retailerId}`);
   await api.dispose();
 });
@@ -658,6 +668,105 @@ test("a dialog fits a phone under the browser's own font-size preference", async
         await expectDialogFits(page, `New order ${at}`, true, false);
         await expectDialogInsideScreen(page, `New order ${at}`);
         await expectUnderAFinger(dialog(page).getByRole("button", { name: "Record order", exact: true }), `${at}: "Record order"`);
+        await restorePage(page);
+        await page.keyboard.press("Escape");
+      }
+      await context.close();
+    } finally {
+      await browser.close();
+    }
+  }
+});
+
+/** New order, its first line an upgrade, the unbroken-named one chosen: the
+ *  picker's selected-item row — the name's chip, and Change beside it. */
+async function chooseUnbroken(page: Page): Promise<{ chip: Locator; change: Locator }> {
+  await openFromList(page, "/orders", "New order");
+  await expect(dialog(page).getByRole("button", { name: "Add line" })).toBeVisible();
+  await dialog(page).locator('select:has(option[value="upgrade"])').first().selectOption("upgrade");
+  await dialog(page).getByPlaceholder(/Search upgrades/).fill(NAMES.unbroken.slice(0, TAG.length + 8));
+  const result = dialog(page).locator("div.absolute button").filter({ hasText: NAMES.unbroken });
+  await expect(result).toBeVisible();
+  await result.click();
+  const change = dialog(page).getByRole("button", { name: "Change", exact: true });
+  await expect(change).toBeVisible();
+  return { chip: dialog(page).getByText(NAMES.unbroken, { exact: true }), change };
+}
+
+/** The chip says the whole name inside its own box, and Change is a control of
+ *  this sheet: inside it, and whole. */
+async function expectChosenReads(page: Page, chip: Locator, change: Locator, label: string): Promise<void> {
+  await expect.soft(chip, `${label}: the chosen name`).toBeVisible();
+  const said = await chip.evaluate((element) => ({
+    scroll: element.scrollWidth,
+    client: element.clientWidth,
+    left: element.getBoundingClientRect().left,
+    right: element.getBoundingClientRect().right,
+    screen: innerWidth,
+  }));
+  expect.soft(said.scroll, `${label}: the name is wider than its chip`).toBeLessThanOrEqual(said.client + 1);
+  // Breaking is not reading: beside Change under a large font the chip could
+  // shrink to a letter a line. It has the room a field has, or the row's.
+  const room = await chip.evaluate((element, rem) => {
+    const row = element.parentElement!.getBoundingClientRect().width;
+    return Math.min(rem * parseFloat(getComputedStyle(document.documentElement).fontSize), row - 1);
+  }, FIELD_ROOM_REM);
+  expect.soft(said.right - said.left, `${label}: the chip's room`).toBeGreaterThanOrEqual(room);
+  expect.soft(said.left, `${label}: the chip starts on screen`).toBeGreaterThanOrEqual(0);
+  expect.soft(said.right, `${label}: the chip ends on screen`).toBeLessThanOrEqual(said.screen + 0.5);
+  const box = (await change.boundingBox())!;
+  expect.soft(box.x, `${label}: Change starts on screen`).toBeGreaterThanOrEqual(0);
+  expect.soft(box.x + box.width, `${label}: Change ends on screen`).toBeLessThanOrEqual(said.screen + 0.5);
+}
+
+test("a chosen catalog item with a long unbroken name keeps Change in the dialog (#273)", async ({ page }, testInfo) => {
+  // Codex #272 round 2, finding 5 — older than that PR: the chip could neither
+  // shrink nor break, so at 320 px a 46-character name put Change at 447–525
+  // and the sheet's body scrolled sideways, the one control that undoes the
+  // choice off-screen. The name gives way now; Change does not.
+  for (const size of sizesFor(testInfo.project.name)) {
+    await test.step(`${size.width} × ${size.height}`, async () => {
+      await page.setViewportSize(size);
+      const { chip, change } = await chooseUnbroken(page);
+      const at = `at ${size.width} px`;
+      await expectChosenReads(page, chip, change, at);
+      await expectDialogFits(page, `New order, the unbroken name chosen, ${at}`, isPhone(size));
+      const [name, button] = await Promise.all([chip.boundingBox(), change.boundingBox()]);
+      if (!isPhone(size)) {
+        // The desktop's row where it fits: Change beside the name, on its
+        // line — a row that wrapped at every width would have sent it under
+        // (#272's lesson, which a short name cannot show).
+        expect.soft(button!.x, `${at}: Change is beside the name`).toBeGreaterThanOrEqual(name!.x + name!.width - 0.5);
+        expect.soft(button!.y, `${at}: Change is on the name's row`).toBeLessThan(name!.y + name!.height);
+      }
+      // And it still undoes the choice.
+      await change.click();
+      await expect(dialog(page).getByPlaceholder(/Search upgrades/)).toBeVisible();
+      await page.keyboard.press("Escape");
+    });
+  }
+});
+
+test("the chosen name and Change fit a phone under the browser's own font-size preference (#273)", async ({ browserName }, testInfo) => {
+  test.skip(testInfo.project.name !== "phone", "the sheet is the phone shell's");
+  test.skip(browserName !== "chromium", "the preference is Chromium's launch flag");
+  test.setTimeout(120_000);
+  for (const font of [32, 40]) {
+    const browser = await chromium.launch({ args: [`--blink-settings=defaultFontSize=${font}`] });
+    try {
+      const context = await browser.newContext({ storageState: STORAGE_STATE, hasTouch: true, isMobile: true, baseURL: APP });
+      const page = await context.newPage();
+      page.on("dialog", (native) => native.accept());
+      for (const size of sizesFor("phone").filter(isPhone)) {
+        await page.setViewportSize(size);
+        const at = `at ${size.width} px, ${font} px font`;
+        const { chip, change } = await chooseUnbroken(page);
+        expect(await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), "the root font size").toBe(font);
+        await isolateSheet(page, size.width, `New order ${at}`);
+        await expectChosenReads(page, chip, change, at);
+        await expectDialogFits(page, `New order, the unbroken name chosen, ${at}`, true, false);
+        await expectDialogInsideScreen(page, `New order, the unbroken name chosen, ${at}`);
+        expect.soft((await change.boundingBox())!.height, `${at}: Change is a finger tall`).toBeGreaterThanOrEqual(40);
         await restorePage(page);
         await page.keyboard.press("Escape");
       }

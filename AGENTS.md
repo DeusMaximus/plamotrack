@@ -128,7 +128,9 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   wants them — and the one focus trap, which hand-drives Tab across
                         #   what Safari skips, #267; run the dialog specs under WebKit),
                         #   FilterSheet (the phone's one filter-and-sort control, §13.7),
-                        #   ui primitives (PageHeader is the page head in every shell;
+                        #   ui primitives (PageHeader is the page head in every shell — on a
+                        #   phone a bar that wraps before it widens the page, with `back`,
+                        #   a screen's way up, a slot the page fills (#260);
                         #   CardList/CardRow are a list page's rows on a phone — a row's
                         #   controls are in rem with a px floor, a finger's, and the
                         #   identifying column has a share to give way from, §13.7),
@@ -165,11 +167,24 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   of what it moves, so a test reading a row's text filters for
                         #   the visible one — MorePage (the phone's fifth tab),
                         #   and settings/ (SettingsPage + sections, including Data
-                        #   management at /settings/data)
+                        #   management at /settings/data). Settings is one `<nav>` in two
+                        #   shapes (#260): a pane beside the section from 768 px, and on a
+                        #   phone the section list is `/settings` itself, a section opens
+                        #   from it and the bar's chevron is the way back — `SettingsIndex`
+                        #   redirects to General only from 768 px. Data management below
+                        #   768 px *renders* its exports and one sentence, nothing else.
+                        #   **In the phone shell everything is in rem but the screen**: a
+                        #   row wraps, a word breaks (`main` is `break-words`; a Button's
+                        #   and a Chip's label `max-md:wrap-anywhere`), and a layout that
+                        #   a measurement decides measures a copy the decision cannot
+                        #   change (the stock stepper's ruler) — pages.spec.ts and the
+                        #   font-size tests hold 32 and 40 px on a 320 px phone
   e2e/                  # Playwright (runs against the dev stack, self-cleaning): the `app`
                         #   project at the desktop size, `phone` (390 × 844) and `tablet`
-                        #   (820 × 1180) with a touch screen — shell.spec.ts and lists.spec.ts
-                        #   run in all three; lists.settings.spec.ts asks the lists' fit
+                        #   (820 × 1180) with a touch screen — shell.spec.ts, lists.spec.ts,
+                        #   dialogs.spec.ts and pages.spec.ts (#260: Settings, Home, the
+                        #   sign-in screens) run in all three, phone.spec.ts — the happy
+                        #   path by thumb — in `phone` alone; lists.settings.spec.ts asks the lists' fit
                         #   questions again under every date style, in the `settings` project
                         #   (it flips the singleton, so it runs after everything else);
                         #   lists.ts is what the two measure with. lists.spec.ts seeds its

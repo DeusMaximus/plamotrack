@@ -30,7 +30,7 @@ last edited, so a large jump either way is worth a look.
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. Also the compile-time check on every static `t("…")` key. |
 | Frontend lint | `npm run lint` | oxlint, then `scripts/check-palette.mjs` — refuses any stock Tailwind palette utility under `src/` (design §13.1: tokens only; `@theme` already emits no CSS for one, so the guard is what makes the regression loud). |
 | Translation coverage | `npm run i18n:report` (in `frontend/`) | Markdown table, presentation only — the catalogue tests are what gate. CI appends it to the job summary. |
-| E2E (~124) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. The `setup` project (`e2e/auth.setup.ts`) signs in as the owner first — an **unclaimed** instance is claimed through the recovery command with `E2E_OWNER_PASSWORD` (default `e2e-owner-password`); a **claimed** one is only signed into, so on a dev database you claimed yourself export `E2E_OWNER_PASSWORD` to its password or the run stops and says so. The session lands in `e2e/.auth/` (gitignored); specs' own API calls go through `e2e/api.ts` (`apiContext()`), which carries the cookie, an `Origin` and the CSRF token. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. Three browser projects since #257: `app` (the desktop default, a mouse — every spec), and `phone` (390 × 844) and `tablet` (820 × 1180), both Chromium with a touch screen (`hasTouch` + `isMobile`, which is what makes `(pointer: coarse)` match), running the specs their `testMatch` lists — `shell.spec.ts` and `lists.spec.ts` (#258; it seeds its own rows), which `app` runs too. The `settings` project runs last, after all three: `settings.spec.ts` and `lists.settings.spec.ts` flip the instance-settings singleton, which every date on every page is written with. `--project=phone` runs one (it pulls in `setup`). A phone or tablet spec sets its size and *then* loads the page: a poll after resizing a live page can be satisfied by the layout it was meant to replace (`lessons.md`). |
+| E2E (~124) | `npm run test:e2e` | Playwright; reuses a running backend on :8000 and Vite on :5173, else starts them. The `setup` project (`e2e/auth.setup.ts`) signs in as the owner first — an **unclaimed** instance is claimed through the recovery command with `E2E_OWNER_PASSWORD` (default `e2e-owner-password`); a **claimed** one is only signed into, so on a dev database you claimed yourself export `E2E_OWNER_PASSWORD` to its password or the run stops and says so. The session lands in `e2e/.auth/` (gitignored); specs' own API calls go through `e2e/api.ts` (`apiContext()`), which carries the cookie, an `Origin` and the CSRF token. Creates uniquely-named data and cleans up via the API. `npx playwright install chromium` once. Three browser projects since #257: `app` (the desktop default, a mouse — every spec), and `phone` (390 × 844) and `tablet` (820 × 1180), both Chromium with a touch screen (`hasTouch` + `isMobile`, which is what makes `(pointer: coarse)` match), running the specs their `testMatch` lists — `shell.spec.ts`, `lists.spec.ts` (#258; it seeds its own rows), `dialogs.spec.ts` and `dialog-keyboard.spec.ts` (#259) and `pages.spec.ts` (#260), which `app` runs too, and `phone.spec.ts`, the happy path by thumb, which is `phone`'s alone (it signs in with the password in a browser of its own, as `auth.spec.ts` does). The `settings` project runs last, after all three: `settings.spec.ts` and `lists.settings.spec.ts` flip the instance-settings singleton, which every date on every page is written with. `--project=phone` runs one (it pulls in `setup`). A phone or tablet spec sets its size and *then* loads the page: a poll after resizing a live page can be satisfied by the layout it was meant to replace (`lessons.md`). |
 | Mutation harness | `uv run python mutation_test.py` | See below. |
 
 **One pytest session at a time.** Two runs against `plamotrack_test` interfere —
@@ -183,7 +183,19 @@ a page-level check calls a clipped edit control fine. What #258 learned doing it
   `--blink-settings=defaultFontSize=32` in the test (a launch flag, so a browser of its
   own — `chromium.launch`, the same `storageState`) and assert the identifying text
   starts and ends inside its card and the screen; assert the root font size first, or
-  the flag not taking passes the lot.
+  the flag not taking passes the lot. Since #260 the claim is **every page of the phone
+  shell, the dialogs and the sign-in screens at 32 and 40 px on a 320 px phone**
+  (`pages.spec.ts`, and the font-size tests of `lists.spec.ts` and `dialogs.spec.ts`),
+  and three things that kept those tests honest: **ask the document for its width and
+  `innerWidth` for the screen's** — one wide element widens the layout viewport, and
+  everything fixed to it (the tab bar) reads as too wide when it is not; **facts are
+  spans** — a check of controls does not see a chip past its card, so ask every drawn
+  element of the card (skipping what a zero-sized clipping box hides: a ruler);
+  and **put the states that add controls on the page on purpose** — a pager, an applied
+  upgrade, a chosen catalog item, the most digits a count can hold. To find what
+  overflows before writing an assertion, list the deepest elements whose right edge is
+  past `clientWidth` and, separately, the blocks whose `scrollWidth` exceeds their
+  `clientWidth` — text ink past its box shows only in the second.
 - **Bounds passing is not content showing** (finding 1). A card that fits the screen
   exactly can have squeezed its own title to 0 px: beside a `shrink-0` sibling of
   unbounded length (a total in three currencies) a `min-w-0 truncate` name gives up

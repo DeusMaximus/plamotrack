@@ -20,6 +20,7 @@ import { KitFormModal } from "../components/KitFormModal";
 import { StatusBadge } from "../components/StatusBadge";
 import {
   Button,
+  CARD_WORDS,
   CardList,
   CardMeta,
   CardRow,
@@ -248,7 +249,7 @@ export function KitsPage() {
                 <StatusBadge status={kit.status} />
                 <GradeChip grade={kit.grade} />
                 {kit.scale && <span className="shrink-0">{kit.scale}</span>}
-                {kit.series && <span className="min-w-0 truncate">{kit.series}</span>}
+                {kit.series && <span className={CARD_WORDS}>{kit.series}</span>}
               </CardMeta>
             </CardRow>
           ))}

@@ -80,11 +80,18 @@ export function CatalogItemPicker({
 
   if (value?.mode === "existing") {
     return (
-      <div className="flex items-center gap-2">
-        <span className="inline-flex items-center gap-1 rounded-sm bg-accent-soft px-2 py-1 text-sm text-accent">
+      // The name gives way, Change does not: a long unbroken name — a part
+      // number run together — breaks inside its chip, where as a box that
+      // could not shrink it pushed Change to 525 px on a 320 px sheet, the one
+      // control that undoes the choice (#273). The row wraps only where its
+      // box is narrow (`stack-3:`): wrapping at every width would send Change
+      // under any long name on the desktop too (the lesson of #272's
+      // applied-upgrade row).
+      <div className="flex items-center gap-2 stack-3:flex-wrap">
+        <span className="min-w-0 rounded-sm bg-accent-soft px-2 py-1 text-sm break-words text-accent">
           {value.name}
         </span>
-        <Button type="button" variant="secondary" onClick={() => onChange(null)}>
+        <Button type="button" variant="secondary" className="shrink-0" onClick={() => onChange(null)}>
           {t("catalogPicker.change")}
         </Button>
       </div>

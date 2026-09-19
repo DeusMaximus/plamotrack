@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Minus, Pencil, Plus } from "lucide-react";
-import { type ReactNode, useId, useMemo, useState } from "react";
+import { type ReactNode, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
@@ -482,6 +482,123 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
   );
 }
 
+type StepperTarget = { label: string; focusKey: string; disabled: boolean; onClick: () => void };
+
+/** The floor of a stepper's target and the gap between its parts, in px: the
+ *  target is a physical thing, a finger's, not a typographic one. */
+const FINGER = 44;
+const STEPPER_GAP = 4;
+
+/** The phone's stepper (§13.7): two 44 px targets with the count between them.
+ *
+ *  Two squares of 2.75rem — they follow the browser's font size, as every size
+ *  here does — and never under 44 px. On a 320 px phone under a 32 px font the
+ *  two at 88 px and the count are wider than the card's row, so the stepper
+ *  takes the row's width (`max-w-full`; the wrapper's `min-w-0` lets it) and
+ *  the squares give way to the floor rather than past the card (Codex #266,
+ *  finding 7). The count is not a target and never gives way: it is read in
+ *  full.
+ *
+ *  And where even the floor is too much — the count in full and two fingers
+ *  are wider than the row: 1,234 at 40 px on a 320 px phone, 12 at 56 px — the
+ *  **second arrangement** (#271): the count on a line of its own above the two
+ *  squares. Which one is *measured*, never counted in digits (the lesson of
+ *  the Orders table's references): the count's drawn width and two fingers
+ *  against the row's, again whenever either changes — a new count, the web
+ *  font arriving, a turned phone. Neither side of the question depends on
+ *  the answer, so it cannot oscillate: the row's width is the card's, and the
+ *  count is measured on a hidden copy that never wraps — the drawn one does,
+ *  stacked, and measured there ten digits were narrower stacked than the line
+ *  needed, fitted the line, and were too wide for it again, every frame (the
+ *  font-size test's ten-digit tool found it). One line wherever it fits, which
+ *  at the default size is every count the column can store but the last few
+ *  digits' worth, on any phone.
+ *
+ *  The same two buttons in both arrangements — a grid re-places them, nothing
+ *  is remounted — so the keyboard stays on the one that was pressed when its
+ *  press is what made the count too wide. */
+function LargeStepper({
+  count,
+  low,
+  remove,
+  add,
+}: {
+  count: string;
+  low: boolean;
+  remove: StepperTarget;
+  add: StepperTarget;
+}) {
+  const box = useRef<HTMLSpanElement>(null);
+  const said = useRef<HTMLSpanElement>(null);
+  const [stacked, setStacked] = useState(false);
+  useLayoutEffect(() => {
+    const line = box.current?.closest<HTMLElement>("[data-stepper-line]");
+    const text = said.current;
+    if (!line || !text) return;
+    const measure = () => {
+      const style = getComputedStyle(line);
+      const room = line.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const needs = Math.max(40, text.getBoundingClientRect().width) + 2 * FINGER + 2 * STEPPER_GAP;
+      setStacked(needs > room + 0.5);
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(line);
+    observer.observe(text);
+    return () => observer.disconnect();
+  }, [count]);
+
+  const square =
+    "inline-flex aspect-square min-w-[44px] items-center justify-center rounded-sm border border-border-strong text-text " +
+    "hover:bg-chip focus:outline-none focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:text-faint disabled:opacity-50 " +
+    (stacked ? "w-full" : "w-11");
+  const target = (at: StepperTarget, Icon: typeof Minus, place: string) => (
+    <button
+      type="button"
+      className={`${square} ${place}`}
+      aria-label={at.label}
+      data-focus-key={at.focusKey}
+      disabled={at.disabled}
+      onClick={at.onClick}
+    >
+      <Icon size={18} aria-hidden />
+    </button>
+  );
+  return (
+    <span
+      ref={box}
+      data-arrangement={stacked ? "stacked" : "line"}
+      className={
+        stacked
+          ? "inline-grid max-w-full grid-cols-[repeat(2,minmax(44px,2.75rem))] items-center justify-end gap-[4px]"
+          : "inline-flex max-w-full items-center gap-[4px]"
+      }
+    >
+      {target(remove, Minus, stacked ? "row-start-2" : "")}
+      <span
+        className={`text-center text-lg font-semibold tabular-nums ${low ? "text-danger" : "text-text"} ${
+          // Stacked, the count has the two squares' width to itself; one that
+          // still cannot hold it — ten digits under a 40 px font — breaks where
+          // its box ends, as every word in the phone shell's `main` does.
+          stacked ? "col-span-2 row-start-1" : "min-w-[40px] shrink-0"
+        }`}
+        data-testid="stock-count"
+      >
+        {count}
+      </span>
+      {/* The ruler: the count on one line at the count's own font, clipped to
+          nothing so it can never widen the page — and beside the count, not in
+          it: the count's text is what a test and a screen reader read. */}
+      <span aria-hidden className="absolute block h-0 w-0 overflow-hidden text-lg font-semibold tabular-nums">
+        <span ref={said} className="inline-block whitespace-nowrap">
+          {count}
+        </span>
+      </span>
+      {target(add, Plus, stacked ? "row-start-2" : "")}
+    </span>
+  );
+}
+
 /** −1 / +1 on a stock row (#55).
  *
  * A signed delta, not a PATCH of `quantity_on_hand`: an absolute write has to read
@@ -534,49 +651,23 @@ function StockStepper({
   };
 
   if (large) {
-    // Two squares of 2.75rem — they follow the browser's font size, as every
-    // size here does — and never under 44 px, the finger's: the floor is in px
-    // because the target is a physical thing, not a typographic one, and so
-    // are the 4 px between the targets and the count's room for two digits.
-    // On a 320 px phone under a 32 px font the two at 88 px and the count are
-    // wider than the card's row, so the stepper takes the row's width
-    // (`max-w-full`; the wrapper's `min-w-0` lets it) and the squares give way
-    // to the floor rather than past the card (Codex #266, finding 7). The
-    // count is not a target and never gives way (`shrink-0`): it is read in
-    // full, and a count wider than the row less two fingers is the one thing
-    // this cannot hold — four digits fit a 320 px phone at 32 px, two at 40.
-    const square =
-      "inline-flex aspect-square w-11 min-w-[44px] items-center justify-center rounded-sm border border-border-strong text-text " +
-      "hover:bg-chip focus:outline-none focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:text-faint disabled:opacity-50";
     return (
-      <span className="inline-flex max-w-full items-center gap-[4px]">
-        <button
-          type="button"
-          className={square}
-          aria-label={t("inventory.removeOne", { name: item.name })}
-          data-focus-key={`stock-remove:${item.id}`}
-          disabled={pending || item.quantity_on_hand === 0}
-          onClick={() => void adjust(-1)}
-        >
-          <Minus size={18} aria-hidden />
-        </button>
-        <span
-          className={`min-w-[40px] shrink-0 text-center text-lg font-semibold tabular-nums ${low ? "text-danger" : "text-text"}`}
-          data-testid="stock-count"
-        >
-          {formatNumber(item.quantity_on_hand)}
-        </span>
-        <button
-          type="button"
-          className={square}
-          aria-label={t("inventory.addOne", { name: item.name })}
-          data-focus-key={`stock-add:${item.id}`}
-          disabled={pending}
-          onClick={() => void adjust(1)}
-        >
-          <Plus size={18} aria-hidden />
-        </button>
-      </span>
+      <LargeStepper
+        count={formatNumber(item.quantity_on_hand)}
+        low={low}
+        remove={{
+          label: t("inventory.removeOne", { name: item.name }),
+          focusKey: `stock-remove:${item.id}`,
+          disabled: pending || item.quantity_on_hand === 0,
+          onClick: () => void adjust(-1),
+        }}
+        add={{
+          label: t("inventory.addOne", { name: item.name }),
+          focusKey: `stock-add:${item.id}`,
+          disabled: pending,
+          onClick: () => void adjust(1),
+        }}
+      />
     );
   }
 
@@ -648,7 +739,7 @@ function StockCard({
         // next line, still at the end (the class of Codex #266, finding 6).
         // `min-w-0`: and where that line is narrower than the stepper, the
         // stepper takes the line's width and gives way inside it (finding 7).
-        <div className="flex flex-wrap items-center justify-between gap-2 pb-3 pe-3">
+        <div data-stepper-line className="flex flex-wrap items-center justify-between gap-2 pb-3 pe-3">
           <div className="flex min-w-0 items-center gap-2">
             {action}
             <CardMeta>{facts}</CardMeta>

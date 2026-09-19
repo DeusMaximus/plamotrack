@@ -79,7 +79,7 @@ function CurrencyCard({ settings }: { settings: InstanceSettings }) {
           label={t("settings.general.currencyLabel")}
           required
           error={errors.reference_currency?.message}
-          className="max-w-40"
+          className="max-w-40 max-md:max-w-none"
         >
           <Input
             list="settings-currencies"

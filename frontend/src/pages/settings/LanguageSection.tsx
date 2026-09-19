@@ -137,7 +137,7 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
       )}
       <form onSubmit={onSubmit} className="space-y-3">
         <ErrorBanner message={error} />
-        <Field label={t("settings.language.interfaceLanguage")} required className="max-w-72">
+        <Field label={t("settings.language.interfaceLanguage")} required className="max-w-72 max-md:max-w-none">
           <Select {...register("interface_language")}>
             {resolved.fallback && (
               <option value={settings.interface_language}>
@@ -151,7 +151,7 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
             ))}
           </Select>
         </Field>
-        <Field label={t("settings.language.formattingLocale")} required className="max-w-72">
+        <Field label={t("settings.language.formattingLocale")} required className="max-w-72 max-md:max-w-none">
           <Input {...register("formatting_locale")} />
           {suggestsLocale && (
             <p className="mt-1 text-xs text-muted">
@@ -171,7 +171,7 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
             </p>
           )}
         </Field>
-        <Field label={t("settings.language.timeZone")} required className="max-w-72">
+        <Field label={t("settings.language.timeZone")} required className="max-w-72 max-md:max-w-none">
           <Input list="settings-time-zones" {...register("time_zone")} />
           <datalist id="settings-time-zones">
             {zoneOptions().map((zone) => (
@@ -181,7 +181,7 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
           <p className="mt-1 text-xs text-muted">{t("settings.language.timeZoneHint")}</p>
         </Field>
         <div className="flex flex-wrap gap-3">
-          <Field label={t("settings.language.dateStyle")} required className="max-w-44">
+          <Field label={t("settings.language.dateStyle")} required className="max-w-44 max-md:max-w-none max-md:flex-[1_1_9rem]">
             <Select {...register("date_style")}>
               {DATE_STYLES.map((style) => (
                 <option key={style} value={style}>
@@ -190,7 +190,7 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
               ))}
             </Select>
           </Field>
-          <Field label={t("settings.language.hourCycle")} required className="max-w-44">
+          <Field label={t("settings.language.hourCycle")} required className="max-w-44 max-md:max-w-none max-md:flex-[1_1_9rem]">
             <Select {...register("hour_cycle")}>
               {HOUR_CYCLES.map((cycle) => (
                 <option key={cycle} value={cycle}>

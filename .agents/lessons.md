@@ -1447,3 +1447,36 @@ motivated it.** Removing code because no test reaches it is only honest after as
 whether the *test* can reach the case: assert the screen's width before measuring
 against it, and take what is not under test out of the layout. And when a second round
 lands in one function, write down that a third means restructuring.
+
+## The answer changed what was measured (#260)
+
+The stepper's second arrangement (#271) asks one question — do the count and two
+fingers fit the row? — and the first version answered it from the count *as drawn*,
+with a comment saying the question "cannot oscillate" because the row's width does not
+depend on the answer. The other side of the comparison did: stacked, the count may
+wrap, a wrapped ten-digit count is narrower than the line needed, so it fitted the
+line, was drawn on it at its full width, and did not fit again — every frame, through
+the `ResizeObserver` that was there to keep the answer current. 1,234 never showed it;
+the ten-digit count the font-size test seeded beside it did, as a count "cut" at one
+instant and fine the next.
+
+What to keep: **when a measurement decides a layout, neither side of the comparison
+may be something that layout changes** — measure a copy the decision cannot reach (a
+ruler: hidden, never wrapped, clipped to nothing so it cannot widen the page, and
+*beside* the thing it copies, not inside it, or the count's text reads twice). A claim
+of "cannot oscillate" is a claim about both operands. And the value axis again: the
+most the column can store is a value, and it was the one that found this.
+
+## The state that was not on the page (#260)
+
+`pages.spec.ts` asks every page of the phone shell for its width under a 32 and a
+40 px browser font, and Kits passed for an hour and then failed: the spec's own seed
+had taken the list past one page, and a pager's pages are a finger each *in rem* —
+550 px of a 320 px screen at 40 px. No font-size test had ever had a pager on the
+page, because whether a list has one is a state of the data, not of the code, and the
+from-empty database every suite starts from has none.
+
+What to keep: **a page's controls are decided by its data — a pager, an empty state, a
+banner, a second currency — and a fit test owes the states that add controls, put
+there on purpose.** The pager's own test seeds eighty-one kits; the font axis went
+there, not into the test that happened to trip over it.

@@ -21,7 +21,7 @@ export function AboutSection() {
         /* The wordmark is a brand identifier, not copy — it stays untranslated. */
         <Card title="plamotrack" description={t("layout.description")}>
           <dl>
-            <div className="flex items-baseline justify-between gap-4">
+            <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
               <dt className="text-sm text-muted">{t("settings.about.version")}</dt>
               <dd className="text-sm">
                 <code className="rounded-sm bg-chip px-1.5 py-0.5 font-mono text-xs text-text">

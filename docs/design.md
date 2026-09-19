@@ -3131,8 +3131,8 @@ and tablet e2e, screenshots, the release (#260).
   narrower than what stands in it each item yields in proportion to its size
   and the controls reach their floors first; with a basis of 0 the column got
   what the controls left. The count is not a target and never gives way: it is
-  read in full, and a count wider than the row less two fingers is the one
-  thing this cannot hold — four digits fit a 320 px phone at 32 px, two at 40.
+  read in full, and where the count and two fingers are wider than the row the
+  count takes a line of its own above them (#271; "Built — #260").
   At 16 px every floor is the size, so nothing moves — the pixel comparison
   says so, not the reasoning. Tested at 32 *and* 40 px: the second point found
   the pencil and the toggle, which a fix for the stepper alone would not have.
@@ -3357,7 +3357,8 @@ and tablet e2e, screenshots, the release (#260).
   page widens the layout viewport, and the sheet had room the screen does not.
   The font-size test takes the inert page out of layout while it measures and
   asserts the screen's width. A selected catalog item's long name pushing
-  *Change* off the sheet is the same family and older than this work: #273.
+  *Change* off the sheet was the same family and older than this work (#273,
+  fixed with #260).
 - Also: checkbox rows a finger tall with the label the target; the picker's
   result rows a finger tall; `inputmode` numeric on quantities and a rating,
   decimal on money; the touch sizes on the remove control, the retailer's add
@@ -3382,3 +3383,87 @@ and tablet e2e, screenshots, the release (#260).
   every project (the head not at the top, no bar, a tap on the primary landing
   on nothing, no `inputmode`); under WebKit, `main`'s keyboard spec escapes to
   `<body>` at its ninth Tab.
+
+**Built — #260 (the pages, and what a large browser font found).** What the
+build decided, and what it measured:
+
+- **Settings is one `<nav>` dressed two ways.** From 768 px it is the pane it
+  was — and from 768, not 640: the page had Tailwind's `sm` for its one
+  breakpoint, so between the two lines a phone shell held a two-pane page.
+  Below 768 px `/settings` *is* the section list — More's rows, a chevron on
+  each — and a section opens from it with the list not drawn; the bar gains a
+  44 px chevron, *All settings*, the way up (`PageHeader`'s `back`, a slot the
+  page fills, so `ui.tsx` still knows nothing of the router). The `h1` stays
+  "Settings" and the section's `h2` stays the section's, in every shell, so the
+  heading order and the names one e2e suite reads do not fork. `/settings`
+  redirects to General only from 768 px (`SettingsIndex`). Because it is one
+  tree, a turn keeps the page and a half-edited form; the keyboard is handed
+  over by `lib/focusKey.ts`'s stand-ins — a section's link names the chevron,
+  the chevron names the open section's link.
+- **Fields fill their card on a phone** (`max-md:max-w-none` on the caps the
+  desktop keeps), and Date style and Hour cycle share a row while each has 9rem.
+- **Data management below 768 px renders its export card and one sentence** —
+  the Templates and Import cards are not in the DOM, which is what "should not
+  sit a thumb's width from a mis-tap" means; hidden would have left them to a
+  keyboard and a screen reader. The import's state is held above the cards, so
+  a tablet turned to 744 px and back finds its file and its preview (tested).
+- **A Recently completed row on a phone is a grid by decree, not a wrap by
+  need**: the name, then the stars and the date, and the pencil in a column of
+  its own beside both — left to the wrap, the pencil went down with the date.
+  The same tree (`display: contents` on the meta's wrapper). **By the strip's
+  own box, under 26rem, not by the shell** — the owner's second call
+  (19/09/2026), made looking at an iPad mini in the simulator: at 744 px the
+  phone shell's strip is 712 px wide and two lines left most of each row empty.
+  Under 26rem is every phone there is (408 px of strip on the widest); 26 and
+  not Tailwind's 28 because a 1024 px tablet's two-up strip is 436 px and keeps
+  what it had. Backlog rows keep the wrap-by-need they had. **The mail is three stacked
+  groups on every phone there is; at the very top of the phone shell — an iPad
+  mini in portrait, 712 px of box — it is two abreast**, because Home lays out
+  by its box (§13.2) and that box has the room; the owner's drawing was a
+  390 px phone. *View all* links are 44 px under `touch:`, and a mail card's
+  words end where its 44 px pencil begins.
+- **The sign-in, setup and OIDC screens already fitted** a 320 px phone and the
+  420 px an iPhone's keyboard leaves of 844 (the page scrolls to its button).
+  What they did not survive was the font preference, below.
+- **The browser's font-size preference, the shell's turn** (#269, #270, #271,
+  #273 — one family: content in rem beside a box that is not). Measured on
+  every page at 32 and 40 px, 320 and 390 px wide:
+  - the phone bar is `min-h-14` and wraps: the action takes the next line
+    where it no longer fits beside the title. **The tab bar was never too
+    wide** — it is fixed to the layout viewport, which the overflowing action
+    had widened; #269 measured the symptom;
+  - `main` in the phone shell is `break-words`, and a `Button`'s label and a
+    `Chip`'s may break *inside a word* there (`max-md:wrap-anywhere`): at 40 px
+    a card's content box on a 320 px phone is 158 px, narrower than
+    "formatting", "Consumables" or "Pre-ordered". In the phone shell only:
+    `anywhere` lowers a box's min-content size and a desktop table squeezes
+    whatever has give (#258's lesson);
+  - a card's facts wrap (`CardMeta`), a word that truncates beside chips says
+    `CARD_WORDS` so it keeps their line while it has 4rem; the token card's
+    facts keep 10rem beside Revoke or Revoke takes the next line; the pager's
+    pages wrap — found only once a test's own seed gave Kits a second page
+    (`lessons.md` → "The state that was not on the page");
+  - **the stepper has a second arrangement** (#271): the count above the two
+    squares where the count and two fingers are wider than the row. Which one
+    is *measured* — the count on a hidden ruler that never wraps, against the
+    row — not counted in digits; the first version measured the drawn count
+    and oscillated on a ten-digit one (`lessons.md` → "The answer changed what
+    was measured"). One line wherever it fits;
+  - the picker's chosen name breaks inside its chip and the row wraps by its
+    box (`stack-3:`), never at every width — #272's lesson — and the chip keeps
+    a field's room, because breaking is not reading;
+  - the wordmark on the sign-in screens is `min(1.5rem, 9vw)`: one word that
+    must not break, at the size that fits.
+  **The bound now:** 40 px on a 320 px phone, every page, the dialogs, the
+  sign-in screens. 48 px on 320 px — three times the default on the smallest
+  phone — still overflows in places (the filter button, Data management's
+  buttons) and is not claimed.
+- **The guard**: `e2e/pages.spec.ts` in all three projects (Settings' two
+  shapes and the turn between them; Data management by named control, and the
+  import across a turn; Home's row, groups and targets; the four auth screens
+  with a mocked session, at the height a keyboard leaves; every page and auth
+  screen under 32 and 40 px), `e2e/phone.spec.ts` — the happy path by thumb,
+  signed in with the password and checked against the API — and the font-size
+  tests of `lists.spec.ts` and `dialogs.spec.ts` extended to the facts, the
+  ten-digit count, the pager and the unbroken name.
+
