@@ -1523,3 +1523,40 @@ name the deliberate exceptions, like a target's negative margin). And "fits" is 
 "reads": a label can fit by breaking at every letter, a name by being squeezed to
 nothing — ask for the ink inside the control, the lines against the words, and the room.
 
+## It was only a race from where the test stood (#260, PR #274 round 2)
+
+Round 1 called the lost hand-over on Settings → Data management a race — one turn in
+three — and answered its flakiness with repetition: sixteen fresh turns. The reviewer
+measured what that was worth: with the fix out, red in six runs of six in Chromium and
+two of six in WebKit. The cause was already written down (each `useShell()` caller
+commits on its own, in the order the browser reports their media queries), and the
+order is not random: it is the order the callers *subscribed* in. Arriving by URL, the
+shell and the section mount in one commit and the order is the engine's to choose.
+Arriving by the app's own link — how a person gets there — the section subscribes
+after `Layout`, the adverse order is certain, and the unfixed code lost the keyboard
+eight times in eight in both engines.
+
+What to keep: **before repeating a flaky reproduction, ask what decides the order and
+whether the test can set it.** Here it was mount order, and the way in that fixes it
+was the ordinary one; the test had been using the unusual one because `goto` is what
+tests do. "One in three" described the test's entrance, not the defect — and would
+have been the number in the release notes.
+
+## A detector is code (#260, PR #274 round 2)
+
+`said past its own box` was written to kill one surviving mutant, and its exemptions
+were shaped by what it tripped over that afternoon: anything that clips, anything
+inline, any block holding a button named Close. The reviewer built three
+counterexamples in a minute — text silently cut by `overflow: hidden`, a block excused
+for holding *a* Close, a line above its own box — and the helper passed all three
+while the PR's record said "every block holds what it says".
+
+What to keep: **a check added to a suite is a claim with a scope, and both need
+writing down and testing** — inject the defect it exists for and watch it go red, then
+inject what it must allow (an ellipsis is a truncation the reader can see; the head's
+Close overhangs by its margin and no more) and watch it stay green. Tie an exemption
+to the one element and the measured amount, never to a selector that happens to match
+it today. And when tightening it produced twenty false reds (a popup taller than its
+wrapper by design), the answer was to narrow the question and say so, not to widen the
+exemption again.
+

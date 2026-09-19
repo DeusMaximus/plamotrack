@@ -362,34 +362,44 @@ test("an import begun on a tablet survives a turn through the phone shell", asyn
   // Never applied: nothing was written, and there is nothing to clean up.
   await page.getByRole("button", { name: "Cancel" }).click();
 
-  // And every other kind of control the phone drops: a template's button, the
-  // import mode, Preview — each from a fresh wide page, and one of them
-  // sixteen times over, because the stand-in alone was right and lost a race:
-  // `Layout`, `SettingsPage` and this section each commit their own side of
-  // the turn, in an order the browser chooses, and some turns the shell's
-  // hand-over ran before the control was gone (`lib/focusKey.ts`, the recheck
-  // on the next frame). A race has no single red, and its rate moves with the
-  // machine: measured with the recheck taken out, this test at eight turns was
-  // red in six runs of eight. Sixteen, then, and under WebKit too — the first
-  // remedy, driven by the removed control's `focusout`, passed in Chromium and
-  // lost one WebKit run in four.
-  const template = ["a template", () => page.getByRole("button", { name: "Full template pack (.zip)" })] as const;
-  for (const [name, control] of [
-    ["a template's sibling", () => page.getByRole("button", { name: "Starter sheet (.csv)" })],
+  // And every other kind of control the phone drops — a template's button, the
+  // import mode, Preview — arriving both ways. **By the app's own link is the
+  // one that matters:** the section then mounts, and subscribes to the shell's
+  // media queries, *after* `Layout` has; the browser reports `Layout`'s change
+  // first; `Layout` commits and runs its hand-over over a control that is still
+  // there; the section removes it a commit later. With the stand-in alone that
+  // lost the keyboard **eight times in eight, in both engines** — not a race at
+  // all for someone who got here by tapping — and with `lib/focusKey.ts`'s
+  // recheck on the next frame, none. Arriving by URL the two mount together
+  // and the order is the browser's: four in eight, Chromium only. (The first
+  // version of this test had only that way in, sixteen times over, and Codex
+  // measured what that is worth: red in six runs of six in Chromium, two of
+  // six in WebKit — #274 round 2.)
+  const controls = [
+    ["a template", () => page.getByRole("button", { name: "Full template pack (.zip)" })],
     ["the import mode", () => page.getByRole("main").getByRole("combobox")],
     ["Preview changes", () => page.getByRole("button", { name: "Preview changes" })],
-    ...Array.from({ length: 16 }, () => template),
-  ] as const) {
-    await page.setViewportSize({ width: 820, height: 1180 });
-    await page.goto("/settings/data");
-    if (name === "Preview changes") {
-      await page.locator('input[type="file"]').setInputFiles({ name: file, mimeType: "text/csv", buffer: Buffer.from("name\nx\n") });
+  ] as const;
+  for (const arrive of ["by the app's link", "by URL"] as const) {
+    for (const [name, control] of controls) {
+      const label = `${name}, arriving ${arrive}`;
+      await page.setViewportSize({ width: 820, height: 1180 });
+      if (arrive === "by URL") {
+        await page.goto("/settings/data");
+      } else {
+        await page.goto("/settings/general");
+        await sectionNav(page).getByRole("link", { name: "Data management" }).click();
+      }
+      await expect(page.getByRole("heading", { level: 2, name: "Data management" })).toBeVisible();
+      if (name === "Preview changes") {
+        await page.locator('input[type="file"]').setInputFiles({ name: file, mimeType: "text/csv", buffer: Buffer.from("name\nx\n") });
+      }
+      await control().focus();
+      await expect.poll(() => focused(page), { message: `${label}: focused before the turn` }).not.toBe("<body>");
+      await page.setViewportSize({ width: 744, height: 1133 });
+      await expect(page.getByText(PHONE_NOTE)).toBeVisible();
+      await expect.poll(() => focused(page), { message: `${label}: after the turn` }).toBe("All settings");
     }
-    await control().focus();
-    await expect.poll(() => focused(page), { message: `${name}: focused before the turn` }).not.toBe("<body>");
-    await page.setViewportSize({ width: 744, height: 1133 });
-    await expect(page.getByText(PHONE_NOTE)).toBeVisible();
-    await expect.poll(() => focused(page), { message: `${name}: after the turn` }).toBe("All settings");
   }
 });
 

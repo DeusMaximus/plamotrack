@@ -216,19 +216,24 @@ export function CatalogItemPicker({
               key={result.id}
               type="button"
               // A full-width row, a finger tall under `touch:` (§13.7, #259).
-              // The name keeps 8rem beside what is on hand, or the row's width,
-              // and breaks where no line holds it; what is on hand takes the
-              // next line, at the end, where the two cannot share one. Neither
-              // squeezes the other to nothing: "0 on hand" held to its line took
-              // all 176 px of the row at a 40 px font and left the name none.
-              className="flex w-full flex-wrap items-center justify-between gap-x-3 px-3 py-2 text-start text-sm hover:bg-accent-soft touch:min-h-11"
+              // In the phone shell the name keeps 8rem beside what is on hand, or
+              // the row's width, and breaks where no line holds it; what is on
+              // hand takes the next line, at the end, where the two cannot share
+              // one. Neither squeezes the other to nothing: "0 on hand" held to
+              // its line took all 176 px of the row at a 40 px font and left the
+              // name none. **`max-md:` and not every width**: with a long name
+              // and a long category the same rules moved a desktop result too —
+              // the stock label from two squeezed lines to one, the name's
+              // column 30 px narrower (Codex #274, finding 5). A better row,
+              // and not this milestone's to change: from 768 px it is `main`'s.
+              className="flex w-full items-center justify-between px-3 py-2 text-start text-sm hover:bg-accent-soft touch:min-h-11 max-md:flex-wrap max-md:gap-x-3"
               // onClick, not onMouseDown: a keyboard's Enter/Space activates a
               // button through click and never fires mousedown (#104). The
               // mousedown-first ordering the old handler relied on is covered
               // by the container's relatedTarget check above instead.
               onClick={() => onChange({ mode: "existing", id: result.id, name: result.name })}
             >
-              <span className="min-w-0 flex-[1_1_min(8rem,100%)] break-words">
+              <span className="max-md:min-w-0 max-md:flex-[1_1_min(8rem,100%)] max-md:break-words">
                 {result.name}
                 <span className="ms-2 text-xs text-muted">
                   {[result.category ?? result.manufacturer, result.scale]
@@ -236,7 +241,7 @@ export function CatalogItemPicker({
                     .join(t("common.dotSeparator"))}
                 </span>
               </span>
-              <span className="ms-auto text-xs text-muted">
+              <span className="text-xs text-muted max-md:ms-auto">
                 {t("catalogPicker.onHand", counted({}, result.quantity_on_hand))}
               </span>
             </button>
@@ -257,7 +262,7 @@ export function CatalogItemPicker({
             {/* A stroke icon, not the "＋" glyph (§13: one icon set). */}
             <Plus size={14} aria-hidden className="shrink-0" />
             {/* The query is free text: one long token breaks inside the row. */}
-            <span className="min-w-0 break-words">
+            <span className="max-md:min-w-0 max-md:break-words">
               {t("catalogPicker.createNew", { type: itemTypeLabel(itemType), query: query.trim() })}
             </span>
           </button>

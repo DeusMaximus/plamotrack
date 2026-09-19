@@ -149,8 +149,8 @@ async function scrollerOf(page: Page): Promise<Locator | null> {
  *  (the sheet's body is one: `overflow-y: auto` makes its x `auto` too, so
  *  content wider than the screen would scroll there instead of overflowing
  *  it), and the document does not either. */
-async function expectDialogFits(page: Page, label: string, phone = true, pageToo = true): Promise<void> {
-  const report = await dialog(page).evaluate((element, roomRem) => {
+async function dialogFitReport(page: Page, phone = true) {
+  return dialog(page).evaluate((element, roomRem) => {
     const room = roomRem * parseFloat(getComputedStyle(document.documentElement).fontSize);
     const drawn = (node: Element) => node.getClientRects().length > 0;
     const say = (node: Element) =>
@@ -197,16 +197,45 @@ async function expectDialogFits(page: Page, label: string, phone = true, pageToo
     // control is off the screen, and the text is over the edge of its form
     // (the order form's "Already in hand" row and its help text, under a 40 px
     // font, with the sheet's `break-words` taken out — a mutant that survived
-    // every other check here). Controls clip or scroll their own text.
-    const spilled = [...element.querySelectorAll<HTMLElement>("*")]
-      .filter((node) => drawn(node) && !node.matches("input, select, textarea, option, svg, svg *"))
-      .filter((node) => getComputedStyle(node).display !== "inline" && getComputedStyle(node).overflowX === "visible")
-      .filter((node) => node.scrollWidth > node.clientWidth + 1)
-      // One deliberate exception, named: under `touch:` the head's Close is a
-      // 44 px target around a 16 px icon with the extra taken back as negative
-      // margin (`Modal`), so the head's row is 10 px "wider" than itself.
-      .filter((node) => node.querySelector(':scope > button[aria-label="Close"]') === null)
-      .map((node) => `${node.tagName.toLowerCase()} "${(node.textContent ?? "").trim().slice(0, 24)}" ${node.scrollWidth} in ${node.clientWidth}`);
+    // every other check here). What is asked, and of what (Codex #274, finding
+    // 6 — the first version's exemptions were wider than its claim):
+    //   - every drawn block that is not an editable control (those scroll their
+    //     own text, by design) and not an icon;
+    //   - one that does not clip: its content no wider than it;
+    //   - one that clips without saying so — `overflow: hidden` and no ellipsis
+    //     — likewise: that is text silently cut. An ellipsis is a truncation
+    //     the reader can see, and is allowed;
+    //   - vertically too, for a block that does not clip **and holds only
+    //     inline content** — a line of text above or below its own box. Not of
+    //     every block: a popup positioned out of its wrapper (the picker's
+    //     results) and the head's Close are taller than their rows by design,
+    //     and asked of everything this was twenty false reds;
+    //   - **one allowance, measured and placed**: the dialog's own head, whose
+    //     Close is a 44 px target around a 16 px icon under `touch:` with the
+    //     extra taken back as negative margin — at most that margin, and only
+    //     on the row that is the dialog's first child.
+    const head = element.firstElementChild;
+    const closeOverhang = (() => {
+      const close = head?.querySelector<HTMLElement>(':scope > button[aria-label="Close"]');
+      return close ? Math.max(0, -parseFloat(getComputedStyle(close).marginRight)) + 1 : 0;
+    })();
+    const spilled: string[] = [];
+    for (const node of element.querySelectorAll<HTMLElement>("*")) {
+      if (!drawn(node) || node.matches("input, select, textarea, option, svg, svg *")) continue;
+      const style = getComputedStyle(node);
+      if (style.display === "inline") continue; // an inline box has no scroll size; its block answers for it
+      const over = node.scrollWidth - node.clientWidth;
+      const clips = style.overflowX !== "visible";
+      const scrolls = ["auto", "scroll"].includes(style.overflowX);
+      if (scrolls) continue; // a scroller is `sideways`'s, above
+      if (clips && style.textOverflow === "ellipsis") continue;
+      const allowed = node === head ? closeOverhang : 1;
+      const onlyInline = [...node.children].every((child) => getComputedStyle(child).display.startsWith("inline"));
+      const tall = !clips && style.overflowY === "visible" && onlyInline ? node.scrollHeight - node.clientHeight : 0;
+      if (over > allowed || tall > 2) {
+        spilled.push(`${node.tagName.toLowerCase()} "${(node.textContent ?? "").trim().slice(0, 24)}" ${node.scrollWidth}×${node.scrollHeight} in ${node.clientWidth}×${node.clientHeight}${clips ? ", clipped" : ""}`);
+      }
+    }
     return {
       controls: controls.length,
       outside,
@@ -217,6 +246,10 @@ async function expectDialogFits(page: Page, label: string, phone = true, pageToo
       document: [document.documentElement.scrollWidth, document.documentElement.clientWidth],
     };
   }, phone ? FIELD_ROOM_REM : 0);
+}
+
+async function expectDialogFits(page: Page, label: string, phone = true, pageToo = true): Promise<void> {
+  const report = await dialogFitReport(page, phone);
   expect(report.controls, `${label}: no control in the dialog`).toBeGreaterThan(0);
   expect.soft(report.outside, `${label}: controls past the screen's edge`).toEqual([]);
   expect.soft(report.squeezed, `${label}: fields under the room a field needs`).toEqual([]);
@@ -907,4 +940,50 @@ test("the chosen name and Change fit a phone under the browser's own font-size p
       await browser.close();
     }
   }
+});
+
+test("the fit check sees what it says it sees (its own negative control)", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "phone", "one project is enough: the check is the same function everywhere");
+  // Codex #274, finding 6: constructed counterexamples passed the first version
+  // of `said past its own box` — text cut by a clipping box, a block excused
+  // for holding *a* button named Close, a line above its own box. A detector is
+  // code, and this is its test: each of these, put into the real New order
+  // sheet, must be reported; the sheet as shipped must report nothing; and the
+  // one allowance is the dialog's own head, by no more than its Close's margin.
+  await page.setViewportSize({ width: 320, height: 844 });
+  await openFromList(page, "/orders", "New order");
+  await expect(dialog(page).getByRole("button", { name: "Add line" })).toBeVisible();
+  expect((await dialogFitReport(page)).spilled, "the sheet as shipped").toEqual([]);
+
+  const inject = (html: string) =>
+    dialog(page).locator("form").first().evaluate((form, markup) => {
+      const holder = document.createElement("div");
+      holder.setAttribute("data-injected", "");
+      holder.innerHTML = markup;
+      form.prepend(holder);
+    }, html);
+  const clear = () => dialog(page).evaluate((element) => element.querySelectorAll("[data-injected]").forEach((node) => node.remove()));
+  const LONG = "INJECTED ".repeat(30);
+  for (const [name, html, sign] of [
+    ["text cut by a clipping box", `<div style="width:60px;overflow:hidden;white-space:nowrap">${LONG}</div>`, "clipped"],
+    ["a block that is not the head, holding a button named Close", `<div style="width:60px;white-space:nowrap"><button type="button" aria-label="Close">x</button>${LONG}</div>`, "INJECTED"],
+    ["a plain block wider than itself", `<div style="width:60px;white-space:nowrap">${LONG}</div>`, "INJECTED"],
+    ["a line above its own box", `<div style="height:16px;line-height:16px"><span style="position:relative;top:-40px;display:inline-block;height:80px">INJECTED tall</span></div>`, "INJECTED"],
+  ] as const) {
+    await inject(html);
+    const spilled = (await dialogFitReport(page)).spilled;
+    expect.soft(spilled.some((entry) => entry.includes(sign)), `${name}: reported (${JSON.stringify(spilled)})`).toBe(true);
+    await clear();
+  }
+  // Allowed, and why: an ellipsis is a truncation the reader can see.
+  await inject(`<div style="width:60px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${LONG}</div>`);
+  expect.soft((await dialogFitReport(page)).spilled, "an ellipsis is allowed").toEqual([]);
+  await clear();
+  // The head's allowance is its Close's margin and no more.
+  await dialog(page).evaluate((element) => {
+    const title = element.firstElementChild!.querySelector("h2") as HTMLElement;
+    title.style.cssText = "overflow:visible;white-space:nowrap;min-width:600px";
+  });
+  expect.soft((await dialogFitReport(page)).spilled.length, "a head wider than its Close's margin allows").toBeGreaterThan(0);
+  await page.keyboard.press("Escape");
 });

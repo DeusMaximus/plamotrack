@@ -3504,4 +3504,18 @@ build decided, and what it measured:
     phone a kit card's series and an inventory card's low-stock badge now take
     a second line where they used to be cut to a few letters (`CardMeta`
     wraps). A change at the default size, and a better one.
+- **Codex's round 2 on #274 (GO, two P3s):** the picker's new result-row rules
+  are the **phone shell's alone** (`max-md:`). At every width they had moved a
+  desktop result with a long name and a long category — the stock label from
+  two squeezed lines to one, the name's column 30 px narrower: a better row,
+  and not this milestone's to change. The dialog fit check's `said past its own
+  box` says exactly what it asks and of what, allows an ellipsis and the
+  dialog's own head by its Close's measured margin and nothing else, and has a
+  negative control of its own. And the turn test arrives at Data management
+  **by the app's own link**: the section then subscribes to the shell after
+  `Layout` has, which makes the adverse commit order certain — the stand-in
+  alone lost the keyboard eight times in eight there, in both engines. It had
+  been measured as a one-in-three race because the test only ever arrived by
+  URL, where the two mount together; for anyone who tapped their way in it was
+  every time.
 
