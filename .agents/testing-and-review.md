@@ -753,7 +753,10 @@ what they say:
    which head, what it opened, what stays explicitly untested. The next reviewer reads
    it before the reply.
 8. **After merge, `Closes #A, closes #B`** — one `closes` per reference; GitHub binds
-   only the first otherwise.
+   only the first otherwise. And the reverse trap: a closing verb beside an issue closes
+   it **whatever the sentence says** — "this does not close #260" closed #260 when #274
+   merged. For an issue that stays open write "Part of #N"; after the merge, check the
+   state of every issue the PR names, the ones meant to stay open included.
 
 `gh pr merge` works from an agent session; attempt it once when asked and hand
 over the command if it is denied rather than routing around via the API.

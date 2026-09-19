@@ -1560,3 +1560,18 @@ it today. And when tightening it produced twenty false reds (a popup taller than
 wrapper by design), the answer was to narrow the question and say so, not to widen the
 exemption again.
 
+## "Does not close #260" closed #260 (#274)
+
+PR #274 was the first of two PRs for #260 and its body opened by saying so: "…so this
+does not close #260." When it merged, GitHub closed #260. A closing keyword is matched
+as a pattern — `close`, `closes`, `closed`, `fix…`, `resolve…` followed by an issue
+reference — anywhere in a PR body or a commit message on the default branch, and the
+words around it are not parsed: "does not close #260", "will later close #260" and
+"closes #260" are the same instruction.
+
+What to keep: **never put a closing verb next to an issue you mean to keep open** —
+write "Part of #260", "#260 stays open", "the second PR finishes #260". And check the
+issues' states after every merge, the ones meant to stay open as well as the ones meant
+to close: this was found in the minute after the merge only because the check listed
+#260 beside the four it expected closed.
+
