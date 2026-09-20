@@ -2564,6 +2564,15 @@ not a claim that only a browser can use them. Ordinary production images retain
 their authentication contract, with no general authentication-off setting. M8
 remains the separate showcase of an owner's real collection.
 
+Sandbox visitors must receive an explicitly restricted sandbox principal, available
+only through the dedicated sandbox deployment. Requests remain subject to the
+existing default-deny route-policy registry; the sandbox must not bypass
+authorisation, grant owner authority, or broaden the production anonymous
+principal's permissions. Implementation must define the permitted routes and
+operations and test both prohibited sandbox actions and unchanged production
+behaviour, including that ordinary deployments cannot resolve a sandbox visitor
+principal.
+
 **Completion is the whole journey.** A person unfamiliar with Docker follows the
 recommended platform guide without coaching or editing Compose/application config,
 claims the instance and adds a kit. The VPS recipe, optional assistant connection,
@@ -3638,4 +3647,3 @@ Reported as a WebKit loss of two to six runs in ten after repeated turns; the tu
 and the engine were the harness's (Playwright's WebKit resolves a viewport change
 before the page hears of it). With the `change` events held (`e2e/shellEvents.ts`) it
 was eight in eight in both engines, and lists.spec.ts and shell.spec.ts hold it there.
-
