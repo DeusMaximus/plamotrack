@@ -794,6 +794,7 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
      `main`, each shippable alone: #257 the shells, touch sizes and home-screen
      install, #258 list pages and table folds, #259 sheet dialogs, #260 Home,
      Settings, sign-in, the full phone e2e, the phone screenshots and the release~~ ✅
+     (v0.5.0-alpha)
 7. Photo upload + gallery ← decide storage backend default first (§9.2)
 8. Public read-only routes + showcase page ← only after admin/MCP paths are protected
 9. Open-source operations: contribution guide, release automation, support matrix,
