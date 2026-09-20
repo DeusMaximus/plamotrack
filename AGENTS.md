@@ -795,10 +795,20 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
      install, #258 list pages and table folds, #259 sheet dialogs, #260 Home,
      Settings, sign-in, the full phone e2e, the phone screenshots and the release~~ ✅
      (v0.5.0-alpha)
+6.7. Easy hosted deployment and public sandbox — **planned**, issues #278–#287
+     ([milestone](https://github.com/DeusMaximus/plamotrack/milestone/18), design
+     §11.1): public versioned images and release assets; one recommended platform
+     template and one portable VPS path; Pocket ID compatibility investigation;
+     guided claiming, assistant connection, updates, backups and recovery. A
+     separate editable public sandbox uses invented data and resets daily, with
+     no MCP, credentials or administrative mutations. Start with #278–#280;
+     provider selection and Pocket ID support remain decisions to verify. Pulls
+     release packaging and the supported deployment guides forward from M9.
 7. Photo upload + gallery ← decide storage backend default first (§9.2)
 8. Public read-only routes + showcase page ← only after admin/MCP paths are protected
-9. Open-source operations: contribution guide, release automation, support matrix,
-   deployment-doc polish
+9. Open-source operations: contribution guide and the broader compatibility/support
+   matrix (release packaging, distribution automation and supported deployment
+   guides moved to M6.7)
 
 The repo goes public at 4.5 as an alpha (§10, revised) rather than waiting for
 milestones 1–6. Consequence for anything written from here on: **the audience is
