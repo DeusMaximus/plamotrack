@@ -2473,7 +2473,8 @@ Unchanged from the original plan:
     17/09/2026 (§13.7); four issues, each shippable alone to `main` (#257–#260):
     the three shells, touch sizes and home-screen install; card rows, the filter
     sheet and the table folds; dialogs as sheets; Home, Settings and the sign-in
-    screens, and the phone shell under a large browser font — built 17–20/09/2026
+    screens, and the phone shell under a large browser font — built 17–20/09/2026,
+    v0.5.0-alpha
 13. 🔨 **M7 — Photos:** local-volume upload + gallery, archive integration, and the
     §9.2 storage decision closed before implementation
 14. 🔨 **M8 — Public showcase:** genuinely separate anonymous read routes and a
@@ -2883,7 +2884,7 @@ milestone M6.5):
    PR #237 → `8bac10a`.
 4. ✅ Settings, About, the e2e suite and the README screenshots in the new look. #234.
 
-### 13.7 Phone and tablet (M6.6) — decided 17/09/2026, built as #257–#260
+### 13.7 Phone and tablet (M6.6) — decided 17/09/2026, built as #257–#260 (v0.5.0-alpha)
 
 §13.5 promised a phone and tablet layout that is "its own UI rather than a squeezed
 desktop". It comes before M7 because the phone is the camera the photos will come
