@@ -1,6 +1,6 @@
 # plamotrack — Design Notes
 
-**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 15/09/2026
+**Status:** Living document · **First written:** 05/08/2026 · **Last revised:** 20/09/2026
 
 ---
 
@@ -2287,9 +2287,13 @@ instance has one door and it binds to `127.0.0.1` — a convenient install is no
 accidentally an internet deployment. `docker compose up -d --build --wait` is the
 supported empty-instance path, and it exits non-zero if anything fails to come up.
 
-Images build from source in-repo. Publishing to a registry belongs with the rest of
-release automation in M9; until then an install needs no registry, no tags, and no
-multi-architecture story — the machine doing the installing builds for itself.
+Images currently build from source in-repo. **M6.7 plans to replace the installation
+build with published, versioned amd64/arm64 images** (#278, §11.1), bringing release
+packaging forward from M9. A source-build override will remain for development and
+review; CI and the deployment harnesses must continue testing the source under
+review. Until that work ships, the documented `--build` installation path above
+remains required. Published images avoid that build path; they do not establish the
+cause of the previously observed LXC failure.
 
 **Migrations are their own container**, gating the API through
 `service_completed_successfully`. Running them from the API's entrypoint would turn a
@@ -2475,12 +2479,20 @@ Unchanged from the original plan:
     sheet and the table folds; dialogs as sheets; Home, Settings and the sign-in
     screens, and the phone shell under a large browser font — built 17–20/09/2026,
     v0.5.0-alpha
-13. 🔨 **M7 — Photos:** local-volume upload + gallery, archive integration, and the
+13. **M6.7 — Easy hosted deployment and public sandbox (planned, 20/09/2026):**
+    public versioned images and release assets, one recommended platform template,
+    one portable VPS path, a Pocket ID compatibility investigation, guided first
+    run and assistant connection, and tested updates/backups/recovery. A separate
+    public sandbox allows real collection editing against invented data reset
+    daily. Issues #278–#287; sequencing and boundaries in §11.1. Release packaging
+    and the supported deployment guides move here from M9, before M7/M8
+14. 🔨 **M7 — Photos:** local-volume upload + gallery, archive integration, and the
     §9.2 storage decision closed before implementation
-14. 🔨 **M8 — Public showcase:** genuinely separate anonymous read routes and a
+15. 🔨 **M8 — Public showcase:** genuinely separate anonymous read routes and a
     shareable frontend, built only after the admin and MCP surfaces are protected
-15. 🔨 **M9 — Open-source operations:** contribution guide, release automation,
-    compatibility/support matrix, and deployment documentation polish
+16. 🔨 **M9 — Open-source operations:** contribution guide and the broader
+    compatibility/support matrix; release packaging, distribution automation and
+    the supported deployment guides move to M6.7
 
 **Between M5 and M5.1 — the hardening passes (complete).** An external review of
 v0.2.3-alpha (11/08/2026) was triaged into a run of small GitHub milestones named
@@ -2498,6 +2510,80 @@ will:** most of the 0.2.7 work merged first, so a separate v0.2.6 release would 
 been fiction, and the two milestones shipped together as the single **v0.2.7-alpha**
 (owner's call, 21/08/2026). M5.1 followed them and is itself complete; the open work
 now starts at M6. This paragraph is history — the live issue list is on GitHub.
+
+### 11.1 M6.7 — Easy hosted deployment and public sandbox (planned, 20/09/2026)
+
+The intended owner is a Gunpla builder who wants an instance reachable from the
+internet and can pay a hosting provider for it. They should be able to follow a
+short guide from a new hosting account to their first kit, then keep the instance
+updated and recover it without having to assemble an operations manual themselves.
+Each private installation remains single-owner, controlled and paid for by that
+owner. The project is not becoming a multi-tenant hosting service.
+
+The [milestone](https://github.com/DeusMaximus/plamotrack/milestone/18) has ten issues:
+
+| Issue | Deliverable | Sequencing |
+|---|---|---|
+| [#278](https://github.com/DeusMaximus/plamotrack/issues/278) | Versioned public images, release files and skill ZIP | Start first; gate the distributed artifacts |
+| [#279](https://github.com/DeusMaximus/plamotrack/issues/279) | Select one supported quick-deploy platform through a working deployment | Investigate alongside packaging |
+| [#280](https://github.com/DeusMaximus/plamotrack/issues/280) | Verify Pocket ID for browser login, assistant OAuth and recovery | Investigate alongside packaging |
+| [#281](https://github.com/DeusMaximus/plamotrack/issues/281) | Recommended platform template | Uses #278 and the #279/#280 decisions |
+| [#282](https://github.com/DeusMaximus/plamotrack/issues/282) | Portable VPS setup and guide | Uses #278 and the #280 decision |
+| [#283](https://github.com/DeusMaximus/plamotrack/issues/283) | Guided claiming and initial regional settings | Validate on both deployment paths |
+| [#284](https://github.com/DeusMaximus/plamotrack/issues/284) | Assistant connection and compatible skill download | Follows the authentication decision |
+| [#285](https://github.com/DeusMaximus/plamotrack/issues/285) | Updates, backups, recovery and existing-install transition | Gate both deployment paths |
+| [#286](https://github.com/DeusMaximus/plamotrack/issues/286) | Editable public sandbox with daily reset | Separate deployment using #278 artifacts |
+| [#287](https://github.com/DeusMaximus/plamotrack/issues/287) | Complete guides, usability pass and release acceptance | Gates the whole milestone |
+
+**Decisions still to measure.** #279 compares at most two initial platform
+candidates through actual setup, ongoing cost, private networking, migrations,
+MCP transport, persistence and recovery. #280 establishes Pocket ID compatibility
+and whether it should be bundled or separately configured; a successful browser
+login alone is not evidence that assistant authorisation and refresh work.
+Neither a platform nor Pocket ID is declared supported before those checks.
+Material implementation prerequisites discovered by either investigation get
+their own issues before the templates depend on them. Existing Google/OIDC
+deployments remain supported.
+
+**The sandbox is for trying the workflows.** Visitors use the real collection
+forms and service behaviour to add/edit kits, receive orders, adjust stock and
+delete eligible records. Ordinary integrity guards still apply. It is a shared,
+disposable collection of invented data, with a visible next reset and a notice
+that other visitors can see/change it. An operator-controlled daily reset restores
+a versioned baseline safely around in-flight writes, with clear behaviour for
+browsers that were already open. Request, record and operation-size limits bound
+public writes, including order quantities and spawned kits.
+
+The sandbox is a dedicated deployment artifact/entry point with separate data and
+explicit collection permissions. No visitor receives owner authority: account,
+password, credential and shared-settings mutations are refused server-side, and
+MCP/OAuth, bulk import/export, uploads and API documentation/schema exposure are
+unavailable. The browser still needs collection REST endpoints, which an HTTP
+client can also call; the boundary is their deliberately restricted authority,
+not a claim that only a browser can use them. Ordinary production images retain
+their authentication contract, with no general authentication-off setting. M8
+remains the separate showcase of an owner's real collection.
+
+Sandbox visitors must receive an explicitly restricted sandbox principal, available
+only through the dedicated sandbox deployment. Requests remain subject to the
+existing default-deny route-policy registry; the sandbox must not bypass
+authorisation, grant owner authority, or broaden the production anonymous
+principal's permissions. Implementation must define the permitted routes and
+operations and test both prohibited sandbox actions and unchanged production
+behaviour, including that ordinary deployments cannot resolve a sandbox visitor
+principal.
+
+**Completion is the whole journey.** A person unfamiliar with Docker follows the
+recommended platform guide without coaching or editing Compose/application config,
+claims the instance and adds a kit. The VPS recipe, optional assistant connection,
+update and restore are verified too. Backups cover the required secrets and, when
+included, identity-provider state; a collection export is not a full-instance
+backup. Docs ship with the work and describe released behaviour only. The final
+gate identifies the exact images, templates, provider configuration and clients
+tested, and coordinates their availability with the public guides. M7 still owns
+the photo-storage and backup contract (#28); host selection considers that future
+need without predeclaring an unused volume. Offline collection synchronisation,
+a database-backend replacement and broad marketplace submissions are outside M6.7.
 
 ---
 
@@ -3561,4 +3647,3 @@ Reported as a WebKit loss of two to six runs in ten after repeated turns; the tu
 and the engine were the harness's (Playwright's WebKit resolves a viewport change
 before the page hears of it). With the `change` events held (`e2e/shellEvents.ts`) it
 was eight in eight in both engines, and lists.spec.ts and shell.spec.ts hold it there.
-
