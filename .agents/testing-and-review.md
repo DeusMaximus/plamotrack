@@ -255,6 +255,20 @@ takes focus off a just-disabled control *after* the mutation observer has looked
 "Measured in Chromium" is a measurement of Chromium: where a rule is about an engine's
 focus or its timing, measure the other engine. `npx playwright install webkit` once.
 
+**Under WebKit, `setViewportSize` resolves before the page has heard of the resize**
+(#275). A step taken "immediately" after a turn there runs with the new viewport and
+the old shell — which is a real state, a few milliseconds long for a person, and the
+only place one class of focus defect shows. So a test says which it means: wait for
+the shell (`expectShell`, a table's presence) before acting on a *settled* page; to
+act *inside* the gap, hold the media-query `change` events with `e2e/shellEvents.ts`
+(`installShellEventHold` before the page loads, `holdShellEvents`, the turn, wait for
+`matchMedia(…).matches`, the step, `releaseShellEvents`) — that is every run, in both
+engines, where the unheld sequence was 6 in 8 in one. And where a fix lives in an
+effect's mount or cleanup, run it once against `npm run build` + `npx vite preview
+--port 5173 --strictPort` (Playwright reuses the server on :5173; the preview proxies
+`/api` as the dev server does): the dev server's StrictMode mounts every effect twice,
+and the rehearsal can take a different path from production's single mount.
+
 **The iOS Simulator is the only place an on-screen keyboard exists** (#259). Playwright's
 WebKit has none, and what iOS does to the viewport when one rises is not in any
 emulation: on #272 one simulator pass found a focused field hidden under the action

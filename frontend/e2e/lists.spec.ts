@@ -51,6 +51,7 @@ import { chromium, expect, request, test, type APIRequestContext, type Locator, 
 
 import { API, APP, STORAGE_STATE, apiContext } from "./api";
 import { expandEveryOrder, expectFits, isCut, linesOf, main, shown, sweepBox } from "./lists";
+import { holdShellEvents, installShellEventHold, releaseShellEvents } from "./shellEvents";
 
 type Size = { width: number; height: number };
 
@@ -927,6 +928,49 @@ test("a dialog closed after a rotation gives focus to the control for the same r
     await expect(page.getByRole("dialog", { name: "Filter and sort" }), `${path}: the sheet survives the turn`).toBeVisible();
     await page.keyboard.press("Escape");
     await expect.soft(page.getByLabel("Filter by status"), `${path}: 744 → 1133 px`).toBeFocused({ timeout: 2_000 });
+  }
+});
+
+test("a dialog opened before the turn's news arrives gives the keyboard back too (#275)", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "tablet", "an iPad mini turning: 744 px one way, 1133 the other");
+  test.setTimeout(90_000);
+  // The test above opens its dialog on a settled page. This one presses Enter
+  // after the viewport has crossed the line and before `change` is delivered
+  // (shellEvents.ts says why that gap exists and who falls into it): the rows
+  // are swapped in the very commit that mounts the dialog, so the opener is
+  // gone before `Modal` can ask who it was. Found under WebKit as a loss "some
+  // runs in ten"; with the events held it is every run, in both engines.
+  await installShellEventHold(page);
+  const portrait = { width: 744, height: 1133 };
+  const landscape = { width: 1133, height: 744 };
+  const cases: { path: string; anchor: string; opener: (page: Page) => Locator }[] = [
+    { path: `/kits?q=${q}`, anchor: NAMES.twin, opener: (p) => main(p).getByRole("button", { name: `Edit ${NAMES.twin}` }).nth(1) },
+    { path: `/orders?q=${q}`, anchor: NAMES.retailer, opener: (p) => main(p).getByRole("button", { name: new RegExp(`^Edit ${NAMES.retailer} `) }).nth(1) },
+    { path: "/inventory?tab=upgrades", anchor: NAMES.upgrade, opener: (p) => rowOf(p, NAMES.upgrade).getByRole("button", { name: "Apply to kit" }) },
+  ];
+  for (const { path, anchor, opener } of cases) {
+    for (const [from, to] of [
+      [portrait, landscape],
+      [landscape, portrait],
+    ]) {
+      const label = `${path}: ${from.width} → ${to.width} px`;
+      await page.setViewportSize(from);
+      await openList(page, path, anchor);
+      await opener(page).focus();
+      await holdShellEvents(page);
+      await page.setViewportSize(to);
+      // The viewport is the new one — `matches` says so — and nobody has been told.
+      await page.waitForFunction((phone) => matchMedia("(min-width: 48rem)").matches !== phone, isPhone(to));
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("dialog"), label).toBeVisible();
+      await releaseShellEvents(page);
+      await expect(shown(main(page).locator("table")), label).toHaveCount(isPhone(to) ? 0 : 1);
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect.soft(opener(page), label).toBeFocused({ timeout: 2_000 });
+    }
   }
 });
 

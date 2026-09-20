@@ -459,7 +459,7 @@ test("every dialog fits a phone's screen and is the panel it was on a tablet", a
       const search = dialog(page).getByPlaceholder(/Search consumables/).last();
       await search.fill(NAMES.consumable);
       const results = dialog(page).locator("div.absolute button");
-      await expect(results.first()).toBeVisible();
+      await expect(results.first()).toHaveText(/on hand/); // a found row, not the offer to create
       await expectDialogFits(page, `New order ${at}, results open`, isPhone(size));
       if (isPhone(size)) {
         for (const result of await results.all()) {
@@ -634,7 +634,7 @@ test("an order with a kit line and a catalog line is recorded from a phone, and 
   await dialog(page).getByLabel("Unit price").last().fill("2");
   await dialog(page).getByPlaceholder(/Search consumables/).fill(NAMES.consumable);
   const results = dialog(page).locator("div.absolute button");
-  await expect(results.first()).toBeVisible();
+  await expect(results.first()).toHaveText(/on hand/); // a found row, not the offer to create
   await results.first().click();
   // The primary is in the bar, on screen without a scroll: a tap, not a scroll
   // then a tap — asked from the top of the form, not from where the last click

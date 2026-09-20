@@ -3519,3 +3519,22 @@ build decided, and what it measured:
   URL, where the two mount together; for anyone who tapped their way in it was
   every time.
 
+**Built — #275 (a dialog opened inside a turn).** The focus rule had two readers and
+one of them asked too late. `Modal` takes its opener from `document.activeElement`
+in an effect, after the commit that mounted it; a viewport across a shell's line
+changes what `matchMedia` says at once and delivers `change` later in the frame, and
+`useSyncExternalStore` re-reads its snapshot whenever its caller renders — so a key
+pressed in that gap renders the list *and* the dialog in the new shell in one commit,
+the opener's row is swapped away in it, and the opener `Modal` finds is `<body>`,
+with no key to give the keyboard back to. `Layout`, which answers for swapped rows,
+has not rendered and hears of the turn only after the dialog has the keyboard. So the
+place `useFocusAcrossShells` remembers is the module's, not the hook's, and a dialog
+that opens onto `<body>` takes the keys of the control whose going nobody has answered
+for yet (`unansweredKeys`); closing gives the keyboard to whatever carries them, as
+it already did for an opener that went while the dialog was open. `<body>` with no
+remembered place — a pointer in Safari, which focuses no button — is as it was.
+Reported as a WebKit loss of two to six runs in ten after repeated turns; the turns
+and the engine were the harness's (Playwright's WebKit resolves a viewport change
+before the page hears of it). With the `change` events held (`e2e/shellEvents.ts`) it
+was eight in eight in both engines, and lists.spec.ts and shell.spec.ts hold it there.
+

@@ -1575,3 +1575,54 @@ issues' states after every merge, the ones meant to stay open as well as the one
 to close: this was found in the minute after the merge only because the check listed
 #260 beside the four it expected closed.
 
+## Two in ten was ten in ten, seen through the test tool's clock (#275)
+
+Filed from a review as: under WebKit, after the viewport has crossed the 768 px line
+*a few times*, a dialog opened *immediately* and closed with Escape leaves the keyboard
+on `<body>` — 2 runs in 10 on one head, 6 in 10 on the next, never in isolation. Every
+word of that was a true measurement and three of them pointed the wrong way. The turns
+before did nothing: one turn lost it as often as three. The head did nothing: the rate
+moved with the machine. And it was not WebKit's defect: Playwright's WebKit resolves
+`setViewportSize` *before the page has heard of the resize*, so "immediately" pressed
+Enter after the viewport had changed and before `change` was delivered — a gap a
+browser has in every frame and Chromium's driver never lands in. In that gap
+`useSyncExternalStore` hands the new shell to whatever renders (it re-reads its
+snapshot on every render) and nothing to whoever is waiting for the event: the page
+and the dialog rendered in the new shell in one commit, the opener's row was swapped
+away in it, `Modal` asked `document.activeElement` who had opened it and was told
+`<body>`, and `Layout` — which answers for swapped rows — heard of the turn after the
+dialog had the keyboard. Waiting for the table before pressing Enter: 8 of 8 kept.
+Holding the `change` events (`e2e/shellEvents.ts`): 8 of 8 lost, **in both engines**.
+
+What to keep: **a rate is a description of the harness until the mechanism says
+otherwise** — before repeating a sequence to see it again, log the order of the events
+in one losing run and ask which step the test believes has happened and has not. A
+"sequence-sensitive" loss whose rate does not change with the sequence is not
+sequence-sensitive. When the mechanism is an ordering, build the ordering (hold the
+event, release it) rather than hoping for it; the test is then red every run before
+the fix, in the engine CI has. And a second trap on the way out: the dev server runs
+React's StrictMode, whose mount–unmount–mount of every effect gave the fixed `Modal` a
+*different path* from production's (the rehearsal unmount handed the keyboard to the
+new row, so the real mount found an ordinary opener). Green there proved one of the
+two; the fix and its mutant were run against `vite build` + `vite preview` as well.
+**Where a fix lives in an effect's mount or cleanup, the dev server is not the
+production path — run it once against the built bundle.**
+
+## The wait was for a button, and the offer to create is a button (#275's PR)
+
+`dialog-keyboard.spec.ts`'s *a keyboard user can select a catalog search result* went
+red once in Chromium and once in WebKit, on different lines, in full runs only — and
+never in forty runs of the file alone. It waited for "the first button in the result
+list" before pressing Tab, with the comment "debounced — wait for real rows". The
+picker's offer to create is a button in that list too, and it is drawn while the search
+is still out: on a slow answer Tab landed on the offer, the rows then arrived above it
+(red: the first row is not focused), or Enter opened the new-item form (red: no chosen
+chip). A 1.5 s delay on the search route makes the old wait fail every run and the new
+one — `toHaveText(/on hand/)`, a *found* row — pass. Four waits of that shape in two
+specs; all four changed.
+
+What to keep: **a wait is an assertion about state, so write the state** — "a result
+row", not "something in the box where rows go". And an intermittent red that isolation
+cannot reproduce is asking what is slower in the long run, not whether it is real:
+slow the suspected dependency on purpose and the race stops being one.
+

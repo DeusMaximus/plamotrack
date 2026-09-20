@@ -146,7 +146,8 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   shell (or folded away, or swapped by a container query) carries
                         #   `data-focus-key="kit:<id>"`, one some shape does not draw at all
                         #   names what stands in for it (`data-focus-stand-in`), and `Modal`
-                        #   (at close) and `useFocusAcrossShells` (a shell change; a control
+                        #   (at close — and at open, when the commit that mounted it
+                        #   took its opener, #275) and `useFocusAcrossShells` (a shell change; a control
                         #   that stopped being drawn) give the keyboard to whatever carries
                         #   the key now. A new control of either kind owes itself one, and
                         #   lists.spec.ts's sweep — every control, every way the page
@@ -187,7 +188,9 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   path by thumb — in `phone` alone; lists.settings.spec.ts asks the lists' fit
                         #   questions again under every date style, in the `settings` project
                         #   (it flips the singleton, so it runs after everything else);
-                        #   lists.ts is what the two measure with. lists.spec.ts seeds its
+                        #   lists.ts is what the two measure with; shellEvents.ts holds a turn's
+                        #   media-query events so a test can act between the viewport changing
+                        #   and the page hearing of it (#275). lists.spec.ts seeds its
                         #   own rows — the ordinary widest and the wide — since an empty
                         #   list has no table to measure
 docs/design.md          # product intent + architectural decision record (§n targets)
