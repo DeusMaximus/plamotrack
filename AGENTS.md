@@ -146,7 +146,8 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   shell (or folded away, or swapped by a container query) carries
                         #   `data-focus-key="kit:<id>"`, one some shape does not draw at all
                         #   names what stands in for it (`data-focus-stand-in`), and `Modal`
-                        #   (at close) and `useFocusAcrossShells` (a shell change; a control
+                        #   (at close — and at open, when the commit that mounted it
+                        #   took its opener, #275) and `useFocusAcrossShells` (a shell change; a control
                         #   that stopped being drawn) give the keyboard to whatever carries
                         #   the key now. A new control of either kind owes itself one, and
                         #   lists.spec.ts's sweep — every control, every way the page
@@ -187,7 +188,9 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   path by thumb — in `phone` alone; lists.settings.spec.ts asks the lists' fit
                         #   questions again under every date style, in the `settings` project
                         #   (it flips the singleton, so it runs after everything else);
-                        #   lists.ts is what the two measure with. lists.spec.ts seeds its
+                        #   lists.ts is what the two measure with; shellEvents.ts holds a turn's
+                        #   media-query events so a test can act between the viewport changing
+                        #   and the page hearing of it (#275). lists.spec.ts seeds its
                         #   own rows — the ordinary widest and the wide — since an empty
                         #   list has no table to measure
 docs/design.md          # product intent + architectural decision record (§n targets)
@@ -784,13 +787,13 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
      built as #231–#234 on the integration branch `m6.5-workbench`; before M7/M8
      so the gallery and showcase are built in the new look once (#122 rode here)~~ ✅
      (lands on `main` as v0.4.0-alpha)
-6.6. Phone and tablet UI: three shells by viewport width alone — a bottom tab bar
+6.6. ~~Phone and tablet UI: three shells by viewport width alone — a bottom tab bar
      below 768 px, a 64 px icon rail to 1279 px, the desktop untouched from 1280
      (one exception, the owner's, #258: the Orders table folds to its box there too) —
      before M7 because the phone is the camera (design §13.7). Four PRs straight to
-     `main`, each shippable alone: ~~#257 the shells, touch sizes and home-screen
-     install~~ ✅, ~~#258 list pages and table folds~~ ✅, ~~#259 sheet dialogs~~ ✅, #260 Home,
-     Settings, sign-in, the full phone e2e and the release
+     `main`, each shippable alone: #257 the shells, touch sizes and home-screen
+     install, #258 list pages and table folds, #259 sheet dialogs, #260 Home,
+     Settings, sign-in, the full phone e2e, the phone screenshots and the release~~ ✅
 7. Photo upload + gallery ← decide storage backend default first (§9.2)
 8. Public read-only routes + showcase page ← only after admin/MCP paths are protected
 9. Open-source operations: contribution guide, release automation, support matrix,

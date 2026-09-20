@@ -31,10 +31,11 @@
  *  their box — so a key is carried by at most one control *that is drawn*, and
  *  that is the one that gets the keyboard.
  *
- *  Two readers: `Modal`, when the control that opened it is gone at close; and
+ *  Two readers: `Modal`, when the control that opened it is gone at close — or
+ *  was gone already when it opened (`unansweredKeys`); and
  *  `useFocusAcrossShells`, when the focused control itself was swapped away. */
 
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect } from "react";
 
 import type { Shell } from "./shell";
 
@@ -90,6 +91,51 @@ export function focusFirst(keys: readonly string[]): boolean {
   return keys.some(focusByKey);
 }
 
+/** The keyed control the keyboard was last on. The module's and not a ref of
+ *  the hook's, because the hook is not its only reader (`unansweredKeys`).
+ *
+ *  **One owner:** `useFocusAcrossShells`, called once, where the shell is chosen
+ *  (`Layout`), is the only writer, and the store outlives it — signed out, the
+ *  listeners are gone and the last place stays. That is safe only because every
+ *  reader asks what the place *is now* (below) and because the first `focusin`
+ *  after `Layout` mounts again replaces it; no path in the app was found that
+ *  reaches a reader in between (Codex #276 looked too). A second caller of the
+ *  hook would be a second writer of one store: decide who owns it, and when it
+ *  ends, before adding one — clearing it in each caller's cleanup is not that. */
+let place: { control: Element; keys: string[] } | null = null;
+
+/** The keys of the control the keyboard was on, when that control has stopped
+ *  being there and nobody has answered for it yet — for a dialog opening onto
+ *  exactly that (#275). `Modal` takes its opener from `document.activeElement`
+ *  in an effect, after the commit that mounted it; a commit can mount a dialog
+ *  *and* swap the rows its opener was one of, and then the opener it finds is
+ *  `<body>`, with no key to give the keyboard back to at close. That commit
+ *  exists: a viewport across a shell's line changes what `matchMedia` says at
+ *  once and delivers `change` later in the frame, `useSyncExternalStore`
+ *  re-reads its snapshot whenever its caller renders, so a key pressed in the
+ *  gap renders the page — and the dialog — in the new shell while `Layout`,
+ *  which has not rendered, still holds the old one and its effect below has not
+ *  run. When it does run, the dialog has the keyboard and there is nothing left
+ *  to answer. A few milliseconds for a person; most runs for Playwright's
+ *  WebKit, whose `setViewportSize` resolves before the page hears of the
+ *  resize (measured: 6 turns in 8; with the events held, 8 in 8 in both
+ *  engines — `e2e/shellEvents.ts`).
+ *
+ *  **An unanswered loss, not the last keyed `focusin`:** nothing, while the
+ *  remembered control is in the page and drawn. "Still remembered" does not
+ *  mean "gone" — a control hidden and shown again, or taken out and put back,
+ *  was never *left*, so the forgetting rule below kept it, and no event marks
+ *  its return; a dialog opened onto `<body>` after that (a pointer in Safari,
+ *  which focuses no button) was handed at close to a control that had not
+ *  opened it (Codex #276, finding 1 — this check was in the first draft and
+ *  came out as "nothing can make it differ"; three things could). Drawn, which
+ *  a node out of the page is not either — and not merely connected: a fold's
+ *  hidden copy is connected, and its visible twin is exactly who should answer. */
+export function unansweredKeys(): string[] {
+  if (place === null || isDrawn(place.control)) return [];
+  return place.keys;
+}
+
 /** Keep the keyboard's place when the page changes shape under it. Turning an
  *  iPad mini (744 px one way, 1133 the other) or dragging a window across 768 px
  *  swaps a list's table for cards; if the focused control was one of the rows',
@@ -133,13 +179,11 @@ export function focusFirst(keys: readonly string[]): boolean {
  *  keeps a key nothing carries, which finds nothing; an engine that fires
  *  nothing on removal never reaches the question. */
 export function useFocusAcrossShells(shell: Shell): void {
-  const place = useRef<{ control: Element; keys: string[] } | null>(null);
-
   useEffect(() => {
     let delivering = false;
     let deferred = 0;
     const hidden = new ResizeObserver(() => {
-      const at = place.current;
+      const at = place;
       if (at === null || !at.control.isConnected || isDrawn(at.control)) return;
       const active = document.activeElement;
       if (active !== document.body && active !== at.control) return;
@@ -150,10 +194,10 @@ export function useFocusAcrossShells(shell: Shell): void {
         delivering = false;
       }
     });
-    const remember = (next: typeof place.current) => {
+    const remember = (next: typeof place) => {
       hidden.disconnect();
       cancelAnimationFrame(deferred);
-      place.current = next;
+      place = next;
       if (next === null) return;
       const watch = () => hidden.observe(sizedBoxOf(next.control));
       // Focus the observer moved lands here from inside its own delivery, and an
@@ -210,11 +254,11 @@ export function useFocusAcrossShells(shell: Shell): void {
   // WebKit does not reliably fire one for a node taken out of the page, and
   // there that remedy lost the same race one run in four.
   useLayoutEffect(() => {
-    if (place.current !== null && document.activeElement === document.body) {
-      focusFirst(place.current.keys);
+    if (place !== null && document.activeElement === document.body) {
+      focusFirst(place.keys);
     }
     const frame = requestAnimationFrame(() => {
-      const at = place.current;
+      const at = place;
       if (at !== null && !at.control.isConnected && document.activeElement === document.body) {
         focusFirst(at.keys);
       }

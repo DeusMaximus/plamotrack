@@ -51,6 +51,7 @@ import { chromium, expect, request, test, type APIRequestContext, type Locator, 
 
 import { API, APP, STORAGE_STATE, apiContext } from "./api";
 import { expandEveryOrder, expectFits, isCut, linesOf, main, shown, sweepBox } from "./lists";
+import { holdShellEvents, installShellEventHold, releaseShellEvents } from "./shellEvents";
 
 type Size = { width: number; height: number };
 
@@ -928,6 +929,116 @@ test("a dialog closed after a rotation gives focus to the control for the same r
     await page.keyboard.press("Escape");
     await expect.soft(page.getByLabel("Filter by status"), `${path}: 744 → 1133 px`).toBeFocused({ timeout: 2_000 });
   }
+});
+
+test("a dialog opened before the turn's news arrives gives the keyboard back too (#275)", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "tablet", "an iPad mini turning: 744 px one way, 1133 the other");
+  test.setTimeout(90_000);
+  // The test above opens its dialog on a settled page. This one presses Enter
+  // after the viewport has crossed the line and before `change` is delivered
+  // (shellEvents.ts says why that gap exists and who falls into it): the rows
+  // are swapped in the very commit that mounts the dialog, so the opener is
+  // gone before `Modal` can ask who it was. Found under WebKit as a loss "some
+  // runs in ten"; with the events held it is every run, in both engines.
+  await installShellEventHold(page);
+  const portrait = { width: 744, height: 1133 };
+  const landscape = { width: 1133, height: 744 };
+  const cases: { path: string; anchor: string; opener: (page: Page) => Locator }[] = [
+    { path: `/kits?q=${q}`, anchor: NAMES.twin, opener: (p) => main(p).getByRole("button", { name: `Edit ${NAMES.twin}` }).nth(1) },
+    { path: `/orders?q=${q}`, anchor: NAMES.retailer, opener: (p) => main(p).getByRole("button", { name: new RegExp(`^Edit ${NAMES.retailer} `) }).nth(1) },
+    { path: "/inventory?tab=upgrades", anchor: NAMES.upgrade, opener: (p) => rowOf(p, NAMES.upgrade).getByRole("button", { name: "Apply to kit" }) },
+  ];
+  for (const { path, anchor, opener } of cases) {
+    for (const [from, to] of [
+      [portrait, landscape],
+      [landscape, portrait],
+    ]) {
+      const label = `${path}: ${from.width} → ${to.width} px`;
+      await page.setViewportSize(from);
+      await openList(page, path, anchor);
+      await opener(page).focus();
+      await holdShellEvents(page);
+      await page.setViewportSize(to);
+      // The viewport is the new one — `matches` says so — and nobody has been told.
+      await page.waitForFunction((phone) => matchMedia("(min-width: 48rem)").matches !== phone, isPhone(to));
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("dialog"), label).toBeVisible();
+      await releaseShellEvents(page);
+      await expect(shown(main(page).locator("table")), label).toHaveCount(isPhone(to) ? 0 : 1);
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect.soft(opener(page), label).toBeFocused({ timeout: 2_000 });
+    }
+  }
+});
+
+test("a dialog opened onto <body> does not inherit a control that is back where it was (Codex #276, finding 1)", async ({
+  page,
+}) => {
+  // The other half of #275's rule. A remembered place is an *unanswered loss*
+  // only while its control is gone or not drawn: hide the focused pencil and
+  // show it again and the keyboard is on <body>, the place is still remembered
+  // (nobody left it — it went), and the pencil is back. A dialog then opened
+  // without focusing its opener — a pointer in Safari, which focuses no button;
+  // `click()` from script here, which focuses none in any engine — must not
+  // hand the keyboard to that pencil at close: it did not open the dialog.
+  await openList(page, `/kits?q=${q}`, NAMES.twin);
+  const pencil = main(page).getByRole("button", { name: `Edit ${NAMES.twin}` }).filter({ visible: true }).first();
+  for (const [how, hide, show] of [
+    ["hidden", (el: HTMLElement) => void (el.hidden = true), (el: HTMLElement) => void (el.hidden = false)],
+    ["display: none", (el: HTMLElement) => void (el.style.display = "none"), (el: HTMLElement) => void (el.style.display = "")],
+  ] as const) {
+    await pencil.focus();
+    // By handle: the locator asks for a *visible* pencil and would wait for one.
+    const node = (await pencil.elementHandle())!;
+    await node.evaluate(hide);
+    await page.waitForTimeout(100);
+    await node.evaluate(show);
+    await page.waitForTimeout(100);
+    await expect(pencil, how).toBeVisible();
+    expect(await page.evaluate(() => document.activeElement === document.body), `${how}: the keyboard fell to <body>`).toBe(true);
+    await page.getByRole("button", { name: "Add kit", exact: true }).evaluate((add: HTMLElement) => add.click());
+    await expect(page.getByRole("dialog", { name: "Add kit" })).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await page.waitForTimeout(100);
+    await expect.soft(pencil, `${how}: the pencil did not open Add kit`).not.toBeFocused();
+    expect.soft(await page.evaluate(() => document.activeElement === document.body), `${how}: nothing to return to`).toBe(true);
+  }
+});
+
+test("a dialog opened onto <body> still answers for a control that is in the page and not drawn (Codex #276, finding 1)", async ({
+  page,
+}) => {
+  // Why the check above asks *drawn* and not *connected*: a fold's hidden copy
+  // is still in the page, and its visible twin is who should answer. The pencil
+  // is hidden with nothing yet carrying its key, so nobody can answer and the
+  // keyboard falls to <body>; then a control with that key appears (rows that
+  // arrive after the fold), and a dialog is opened without focusing its opener.
+  // Closing it owes the keyboard to the twin. No page has both a folding twin
+  // and a dialog's opener today — Access tokens has the twins and no dialog —
+  // so the twin is the test's own.
+  await openList(page, `/kits?q=${q}`, NAMES.twin);
+  const pencil = main(page).getByRole("button", { name: `Edit ${NAMES.twin}` }).filter({ visible: true }).first();
+  await pencil.focus();
+  const node = (await pencil.elementHandle())!;
+  await node.evaluate((el: HTMLElement) => void (el.style.display = "none"));
+  await page.waitForTimeout(100);
+  expect(await page.evaluate(() => document.activeElement === document.body), "the keyboard fell to <body>").toBe(true);
+  await node.evaluate((el: HTMLElement) => {
+    const twin = document.createElement("button");
+    twin.type = "button";
+    twin.textContent = "the drawn twin";
+    twin.setAttribute("data-focus-key", el.getAttribute("data-focus-key")!);
+    el.after(twin);
+  });
+  await page.getByRole("button", { name: "Add kit", exact: true }).evaluate((add: HTMLElement) => add.click());
+  await expect(page.getByRole("dialog", { name: "Add kit" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "the drawn twin" })).toBeFocused({ timeout: 2_000 });
 });
 
 test("the keyboard keeps its place on a row when the rows change shape under it", async ({ page }, testInfo) => {

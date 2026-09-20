@@ -221,7 +221,7 @@ test("the order dialog holds focus through dynamic rows and the catalog picker",
   // instead and never reaches the control this test exists for — measured: the
   // recapture mutant survived the whole suite until this wait was added.
   const results = dialog.locator("div.absolute button");
-  await expect(results.first()).toBeVisible();
+  await expect(results.first()).toHaveText(/on hand/); // a found row, not the offer to create (below)
 
   // Tab off the input. The results follow it in DOM order, so focus lands on
   // the first one — and since #104 the list stays open under it: the picker
@@ -267,7 +267,12 @@ test("a keyboard user can select a catalog search result (#104)", async ({ page 
   const search = dialog.getByPlaceholder(/Search consumables/);
   await search.fill(CONSUMABLE);
   const results = dialog.locator("div.absolute button");
-  await expect(results.first()).toBeVisible(); // debounced — wait for real rows
+  // Debounced — wait for real rows, and say *rows*: the offer to create is a
+  // button in this list too, drawn while the search is still out. Waiting for
+  // "a button" let a slow answer put Tab on the offer, and the test then failed
+  // on whichever line noticed first — once in each engine, in full runs only,
+  // never in forty runs of this file alone (#275's PR).
+  await expect(results.first()).toHaveText(/on hand/);
 
   await search.press("Tab");
   await expect(results.first()).toBeFocused();
@@ -473,7 +478,7 @@ test("a dialog mutating around you does not take your focus", async ({ page }) =
   for (const char of CONSUMABLE.slice(0, 18)) {
     await page.keyboard.type(char);
   }
-  await expect(results.first()).toBeVisible();
+  await expect(results.first()).toHaveText(/on hand/); // found rows have rendered, not only the offer to create
   await expect(search).toBeFocused();
   await expect(search).toHaveValue(CONSUMABLE.slice(0, 18));
 

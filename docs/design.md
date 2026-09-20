@@ -2466,13 +2466,14 @@ Unchanged from the original plan:
     Settings surface isn't styled twice, and before M7/M8 so the gallery and the
     showcase are built in the new look once. Board interaction gaps deferred from
     the #120 consolidation (#122) land here: Home replaces the board (§13.2)
-12. 🔨 **M6.6 — Phone and tablet UI:** the interface's own layout below 1280 px —
+12. ✅ **M6.6 — Phone and tablet UI:** the interface's own layout below 1280 px —
     a bottom tab bar on a phone, an icon rail on a tablet and in a narrow window,
     the desktop untouched (but for the Orders table folding to its box, §13.7) —
     before M7 because the phone is the camera the photos will come from. Decided
-    17/09/2026 (§13.7); four PRs, each shippable alone to
-    `main` (#257–#260), the first two — the three shells, touch sizes and
-    home-screen install; card rows, the filter sheet and the table folds — built
+    17/09/2026 (§13.7); four issues, each shippable alone to `main` (#257–#260):
+    the three shells, touch sizes and home-screen install; card rows, the filter
+    sheet and the table folds; dialogs as sheets; Home, Settings and the sign-in
+    screens, and the phone shell under a large browser font — built 17–20/09/2026
 13. 🔨 **M7 — Photos:** local-volume upload + gallery, archive integration, and the
     §9.2 storage decision closed before implementation
 14. 🔨 **M8 — Public showcase:** genuinely separate anonymous read routes and a
@@ -2882,7 +2883,7 @@ milestone M6.5):
    PR #237 → `8bac10a`.
 4. ✅ Settings, About, the e2e suite and the README screenshots in the new look. #234.
 
-### 13.7 Phone and tablet (M6.6) — decided 17/09/2026, building as #257–#260
+### 13.7 Phone and tablet (M6.6) — decided 17/09/2026, built as #257–#260
 
 §13.5 promised a phone and tablet layout that is "its own UI rather than a squeezed
 desktop". It comes before M7 because the phone is the camera the photos will come
@@ -3518,4 +3519,45 @@ build decided, and what it measured:
   been measured as a one-in-three race because the test only ever arrived by
   URL, where the two mount together; for anyone who tapped their way in it was
   every time.
+
+**Built — #260 (the pictures and the pages that describe it).** `e2e/screenshots.spec.ts`
+captures the phone's and the tablet's shells beside the desktop's, from the same
+seeded demo collection and in both themes: eleven `phone-*` captures at 390 × 844,
+three device pixels to one, and two `tablet-*` at 820 × 1180, two to one — contexts
+with the `phone` and `tablet` projects' own viewport and touch screen
+(`DEVICES` in `e2e/screenshots.ts`), so a capture is what those projects test.
+A phone capture is the screen as held — the viewport, the tab bar at its foot —
+never the page's whole length. The README carries one, Home; the docs site the
+set, on a page of its own (*Phone & Tablet*: the three layouts by width, the
+tab bar and More, the filter sheet, sheets, Settings as a list, what a phone
+leaves out and why, adding it to the home screen). The desktop captures were not
+re-shot: nothing from 1280 px up moved in this milestone but the one declared
+exception, which 1440 px does not show.
+
+**Built — #275 (a dialog opened inside a turn).** The focus rule had two readers and
+one of them asked too late. `Modal` takes its opener from `document.activeElement`
+in an effect, after the commit that mounted it; a viewport across a shell's line
+changes what `matchMedia` says at once and delivers `change` later in the frame, and
+`useSyncExternalStore` re-reads its snapshot whenever its caller renders — so a key
+pressed in that gap renders the list *and* the dialog in the new shell in one commit,
+the opener's row is swapped away in it, and the opener `Modal` finds is `<body>`,
+with no key to give the keyboard back to. `Layout`, which answers for swapped rows,
+has not rendered and hears of the turn only after the dialog has the keyboard. So the
+place `useFocusAcrossShells` remembers is the module's, not the hook's, and a dialog
+that opens onto `<body>` takes the keys of the control whose going nobody has answered
+for yet (`unansweredKeys`); closing gives the keyboard to whatever carries them, as
+it already did for an opener that went while the dialog was open. `<body>` with no
+remembered place — a pointer in Safari, which focuses no button — is as it was.
+**An unanswered loss, not the last keyed `focusin`** (Codex #276, finding 1): the
+keys are given only while the remembered control is not drawn. A control hidden and
+shown again, or taken out and put back, was never *left*, so it stays remembered,
+and no event marks its return — a dialog then opened by a pointer in Safari was
+handed, at close, to a control that had not opened it. That check was in the first
+draft and came out as untestable; the reviewer made three things that test it. The
+store has one owner — the hook, called once in `Layout` — and outlives it; a second
+caller is a second writer, and owes the store an owner and an end first.
+Reported as a WebKit loss of two to six runs in ten after repeated turns; the turns
+and the engine were the harness's (Playwright's WebKit resolves a viewport change
+before the page hears of it). With the `change` events held (`e2e/shellEvents.ts`) it
+was eight in eight in both engines, and lists.spec.ts and shell.spec.ts hold it there.
 

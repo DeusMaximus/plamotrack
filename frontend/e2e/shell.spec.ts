@@ -20,6 +20,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { OWNER_PASSWORD, apiContext } from "./api";
+import { holdShellEvents, installShellEventHold, releaseShellEvents } from "./shellEvents";
 
 type Size = { width: number; height: number };
 type Shell = "phone" | "rail" | "sidebar";
@@ -192,7 +193,11 @@ test("a dialog closed after a rotation gives focus back to the control that open
   // keyboard lands afterwards. `Modal` returns focus to the node that opened
   // it, so that node has to be the same one on both sides of the line — every
   // page's primary action lives in `PageHeader`, which used to render it in
-  // two different subtrees. Both directions, every page that has one.
+  // two different subtrees. Both directions, every page that has one — and
+  // each both ways round in time: the dialog opened on a settled page and then
+  // turned, and opened *in* the turn, after the viewport has crossed the line
+  // and before anything has been told (#275; shellEvents.ts).
+  await installShellEventHold(page);
   for (const [path, action] of [
     ["/retailers", "Add retailer"],
     ["/kits", "Add kit"],
@@ -219,6 +224,21 @@ test("a dialog closed after a rotation gives focus back to the control that open
       // a short wait, because focus returns in the same commit that closes
       // the dialog — eight five-second waits would outlast the test.
       await expect.soft(opener, `${path}: ${from.width} → ${to.width} px`).toBeFocused({ timeout: 2_000 });
+
+      // The same, opened in the turn.
+      await page.setViewportSize(from);
+      await expectShell(page, shellFor(from.width));
+      await opener.focus();
+      await holdShellEvents(page);
+      await page.setViewportSize(to);
+      await page.waitForFunction((rail) => matchMedia("(min-width: 48rem)").matches === rail, to.width >= 768);
+      await page.keyboard.press("Enter");
+      await expect(page.getByRole("dialog")).toBeVisible();
+      await releaseShellEvents(page);
+      await expectShell(page, shellFor(to.width));
+      await page.keyboard.press("Escape");
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect.soft(opener, `${path}: ${from.width} → ${to.width} px, opened in the turn`).toBeFocused({ timeout: 2_000 });
     }
   }
 });

@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
-import { focusFirst, focusKeysOf } from "../lib/focusKey";
+import { focusFirst, focusKeysOf, unansweredKeys } from "../lib/focusKey";
 import { useShell } from "../lib/shell";
 import { Button } from "./ui";
 
@@ -228,8 +228,17 @@ export function Modal({
   useEffect(() => {
     // Captured before focus moves, so closing returns the user to the control
     // they opened this from rather than to the top of the document.
-    const opener = document.activeElement as HTMLElement | null;
-    const openerKeys = focusKeysOf(opener);
+    //
+    // `<body>` is not an opener, it is where focus falls when one is lost: a
+    // pointer in Safari, which focuses no button (nothing to return to, as
+    // ever), or — #275 — the commit that mounted this dialog also swapped the
+    // rows its opener was one of. For the second the opener's keys are still
+    // known (`unansweredKeys` says how that commit comes about), and closing
+    // gives the keyboard to whatever carries them, as it does for an opener
+    // that went while the dialog was open.
+    const active = document.activeElement as HTMLElement | null;
+    const opener = active === document.body ? null : active;
+    const openerKeys = opener === null ? unansweredKeys() : focusKeysOf(opener);
     const appRoot = document.getElementById("root");
 
     openDialogs += 1;
