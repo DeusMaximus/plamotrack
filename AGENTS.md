@@ -787,13 +787,13 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
      built as #231–#234 on the integration branch `m6.5-workbench`; before M7/M8
      so the gallery and showcase are built in the new look once (#122 rode here)~~ ✅
      (lands on `main` as v0.4.0-alpha)
-6.6. Phone and tablet UI: three shells by viewport width alone — a bottom tab bar
+6.6. ~~Phone and tablet UI: three shells by viewport width alone — a bottom tab bar
      below 768 px, a 64 px icon rail to 1279 px, the desktop untouched from 1280
      (one exception, the owner's, #258: the Orders table folds to its box there too) —
      before M7 because the phone is the camera (design §13.7). Four PRs straight to
-     `main`, each shippable alone: ~~#257 the shells, touch sizes and home-screen
-     install~~ ✅, ~~#258 list pages and table folds~~ ✅, ~~#259 sheet dialogs~~ ✅, #260 Home,
-     Settings, sign-in, the full phone e2e and the release
+     `main`, each shippable alone: #257 the shells, touch sizes and home-screen
+     install, #258 list pages and table folds, #259 sheet dialogs, #260 Home,
+     Settings, sign-in, the full phone e2e, the phone screenshots and the release~~ ✅
 7. Photo upload + gallery ← decide storage backend default first (§9.2)
 8. Public read-only routes + showcase page ← only after admin/MCP paths are protected
 9. Open-source operations: contribution guide, release automation, support matrix,

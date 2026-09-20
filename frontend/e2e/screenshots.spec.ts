@@ -10,11 +10,12 @@
  *   # create plamotrack_demo + alembic upgrade head as for the e2e from-empty
  *   # recipe in .agents/testing-and-review.md, then EITHER
  *   ( cd frontend && DATABASE_URL="$DSN" SCREENSHOTS=1 npx playwright test e2e/screenshots.spec.ts )
- *   # — the README's seven files into docs/screenshots/ — OR, for the docs site,
+ *   # — the README's eight files into docs/screenshots/ — OR, for the docs site,
  *   ( cd frontend && DATABASE_URL="$DSN" SCREENSHOTS=1 SCREENSHOTS_OUT=../../plamotrack-docs/images/screenshots \
  *       npx playwright test e2e/screenshots.spec.ts )
  *   # — the full set there: every page and dialog, `name.png` dark and
- *   # `name-light.png` light, plus the unclaimed "Set up plamotrack" screen
+ *   # `name-light.png` light, the phone's and the tablet's shells (`phone-*`,
+ *   # `tablet-*`, design §13.7), plus the unclaimed "Set up plamotrack" screen
  *   # that auth.setup.ts captures on its way through (screenshots.ts says
  *   # which set is which).
  *
@@ -29,7 +30,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { STORAGE_STATE, apiContext } from "./api";
-import { SCREENSHOTS, THEMES, anonymousContext, save, type Theme } from "./screenshots";
+import { DEVICES, SCREENSHOTS, THEMES, anonymousContext, save, type Theme } from "./screenshots";
 
 const DAY = 24 * 60 * 60 * 1000;
 const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * DAY).toISOString();
@@ -346,8 +347,121 @@ test("seed the demo collection and capture the screenshots", async ({ page, brow
     await expect(anonymousPage.getByRole("button", { name: "Sign in" })).toBeVisible();
     await save(anonymousPage, "sign-in", theme);
     await anonymous.close();
+
+    // The phone's and the tablet's shells (§13.7): a context each, with the
+    // `phone` and `tablet` projects' viewport and touch screen.
+    for (const [device, capture] of [
+      ["phone", capturePhone],
+      ["tablet", captureTablet],
+    ] as const) {
+      const shell = await browser.newContext({
+        storageState: STORAGE_STATE,
+        colorScheme: theme,
+        ...DEVICES[device],
+      });
+      await capture(await shell.newPage(), theme);
+      await shell.close();
+    }
+    const phoneDoor = await anonymousContext(browser, theme, 844, DEVICES.phone);
+    const phoneDoorPage = await phoneDoor.newPage();
+    await phoneDoorPage.goto("/");
+    await expect(phoneDoorPage.getByRole("button", { name: "Sign in" })).toBeVisible();
+    await save(phoneDoorPage, "phone-sign-in", theme);
+    await phoneDoor.close();
   }
 });
+
+/** The phone shell (below 768 px, §13.7), at 390 × 844: what the tab bar, the
+ *  card rows, the sheets and Settings' section list look like. Each capture is
+ *  the screen as held — the viewport, the tab bar at its foot — not the page's
+ *  whole length. */
+async function capturePhone(p: Page, theme: Theme): Promise<void> {
+  const tabs = p.getByRole("navigation", { name: "Main" });
+  await p.goto("/");
+  await expect(p.locator("html")).toHaveAttribute("data-theme", theme);
+
+  // Home: one column, the bench first. The README's one phone capture.
+  await expect(p.getByRole("heading", { level: 3, name: "HG Sinanju Stein (Narrative Ver.)" })).toBeVisible();
+  await expect(tabs.getByRole("link")).toHaveText(["Home", "Kits", "Orders", "Inventory", "More"]);
+  await save(p, "phone-home", theme);
+
+  // Further down the same page: the mail as three stacked groups.
+  const mail = p.getByRole("heading", { level: 2, name: "In the mail" });
+  await mail.evaluate((heading) => heading.scrollIntoView({ block: "start" }));
+  await expect(p.getByText("HG Unicorn Gundam (Perfectibility)")).toBeVisible();
+  await save(p, "phone-home-mail", theme);
+
+  // Kits as card rows, the backlog chosen through the URL as the desktop's is.
+  await p.goto("/kits?status=backlog");
+  await expect(p.getByRole("button", { name: "Filter and sort, 1 filter active" })).toBeVisible();
+  await expect(p.getByText("HG Gouf Custom").filter({ visible: true })).toBeVisible();
+  await save(p, "phone-kits", theme);
+
+  // The one filter-and-sort sheet, reopened on that state.
+  await p.getByRole("button", { name: /^Filter and sort/ }).click();
+  const filters = p.getByRole("dialog", { name: "Filter and sort" });
+  await expect(filters.getByRole("button", { name: /^Backlog/ })).toHaveAttribute("aria-pressed", "true");
+  await save(p, "phone-filter", theme);
+
+  // New order as a full-screen sheet: the line a card, the actions in the bar
+  // at the foot. Filled for the picture, never recorded.
+  await p.goto("/orders");
+  await p.getByRole("button", { name: "New order" }).click();
+  const order = p.getByRole("dialog", { name: "New order" });
+  await order.locator('select[name="retailer_id"]').selectOption({ label: "Mecha Supply Co" });
+  await order.getByLabel("Currency").fill("JPY");
+  await order.getByLabel("Order number").fill("MS-91201");
+  await order.getByPlaceholder("Kit name *").fill("HG Zaku II");
+  await order.getByPlaceholder("Grade *").fill("HG");
+  await order.getByLabel("Quantity").first().fill("2");
+  await order.getByLabel("Unit price").first().fill("1100");
+  await order.getByRole("heading", { name: "New order" }).click(); // drop the focus ring
+  // The line's card under its heading, down to the bar.
+  await order.getByRole("button", { name: "Add line" }).evaluate((add) => add.scrollIntoView({ block: "start" }));
+  await save(p, "phone-order-form", theme);
+
+  // Orders as cards, behind the abandoned sheet's navigation.
+  await p.goto("/orders");
+  await expect(p.getByText("MS-91055").filter({ visible: true })).toBeVisible();
+  await save(p, "phone-orders", theme);
+
+  // Inventory: a card a row, the stepper a finger wide.
+  await p.goto("/inventory");
+  await p.getByRole("button", { name: "Consumables" }).click();
+  await expect(p.getByText("Mr. Color Thinner 400").filter({ visible: true })).toBeVisible();
+  await save(p, "phone-inventory", theme);
+
+  // More: the fifth tab — Retailers, Settings, the theme, signing out.
+  await tabs.getByRole("link", { name: "More" }).click();
+  await expect(p.getByRole("button", { name: "Sign out" })).toBeVisible();
+  await save(p, "phone-more", theme);
+
+  // Settings is its section list; a section opens from it.
+  await p.goto("/settings");
+  await expect(p.getByRole("link", { name: /Data management/ })).toBeVisible();
+  await save(p, "phone-settings", theme);
+
+  // Data management on a phone: the exports, and where importing lives.
+  await p.goto("/settings/data");
+  await expect(p.getByRole("button", { name: "Download full archive (.zip)" })).toBeVisible();
+  await expect(p.getByText(/Importing and the blank templates need a wider screen/)).toBeVisible();
+  await save(p, "phone-data", theme);
+}
+
+/** The icon rail (768–1279 px, §13.7), at an iPad's portrait 820 × 1180: Home
+ *  by its box, and a table folded to the width it has. */
+async function captureTablet(p: Page, theme: Theme): Promise<void> {
+  await p.goto("/");
+  await expect(p.locator("html")).toHaveAttribute("data-theme", theme);
+  await expect(p.getByRole("heading", { level: 3, name: "HG Sinanju Stein (Narrative Ver.)" })).toBeVisible();
+  await save(p, "tablet-home", theme);
+
+  await p.goto("/orders");
+  await expect(p.getByText("MS-91055").filter({ visible: true })).toBeVisible();
+  await p.getByRole("row").filter({ hasText: "MS-91055" }).first().click();
+  await expect(p.getByText("Mr. Color Thinner 400").filter({ visible: true })).toBeVisible();
+  await save(p, "tablet-orders", theme);
+}
 
 /** Every signed-in capture, in one theme. Each starts with its own navigation,
  *  which is also what discards the dialog the previous one left open. */

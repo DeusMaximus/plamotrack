@@ -63,6 +63,25 @@ setting; this is the one thing that belongs to the device asking.
 
 ![Home in the light theme](docs/screenshots/home-light.png)
 
+### The same thing in your pocket
+
+The hobby shop is where you most need to know whether you already own a Gouf Custom,
+and the hobby shop is not where your desk is. Below 768 px the sidebar becomes a tab
+bar under your thumb — Home, Kits, Orders, Inventory, More — the tables become cards,
+every dialog becomes a full-screen sheet with its buttons at the foot of the screen,
+and the list pages share one *Filter and sort* sheet. A tablet, or a narrow window,
+gets an icon rail and tables that fold their columns to the width they have instead of
+scrolling sideways. From 1280 px it is the desktop it always was.
+
+<img src="docs/screenshots/phone-home.png" width="320" alt="Home on a phone — the bench first, then the backlog, with the tab bar at the foot of the screen">
+
+Add it to your home screen from the browser's share menu and it opens in its own
+window with its own icon. It is still a web page talking to your server: there is no
+offline mode, and nothing is stored on the phone. The one thing a phone deliberately
+can't do is import a spreadsheet — Data management offers the exports there and says
+where importing lives, because *Replace everything* does not belong a thumb's width from
+a mis-tap.
+
 ### Orders that know what they turned into
 
 Order a Zaku ×2 and plamotrack creates **two kit rows**, because you own two physical
@@ -169,7 +188,7 @@ Being honest up front beats you finding out at 11pm:
 | **Authentication, OAuth-compatible remote MCP, a tested TLS deployment** | ✅ Milestone 6 — owner login (password or OpenID Connect), personal access tokens, MCP OAuth for Claude web / ChatGPT web / MCP Inspector, and the reference Caddy deployment plus the other tested ways to expose an instance ([docs.gunp.la/deployment](https://docs.gunp.la/deployment/overview)) |
 | **MCP `2026-07-28` compatibility** | ✅ Milestone 6.1 — both protocol generations from the one `/mcp/` endpoint, negotiated per request; Claude.ai, ChatGPT, Gemini Spark, Mistral, MCP Inspector, Claude Code and the `mcp-remote` bridge verified against a v0.4.1 candidate, linked before the upgrade and still linked after it and after a restore |
 | **UI redesign** | ✅ Milestone 6.5 — one house look on semantic tokens with a per-browser light/dark/system switch, Home in place of the board, filter/sort/page in the list pages' URLs, one edit dialog per record (`docs/design.md` §13) |
-| **Phone and tablet layout** | 🔨 Milestone 6.6, in progress — built so far: a bottom tab bar on a phone, an icon rail on a tablet or in a narrow window (the desktop layout is unchanged from 1280 px, with one exception: up to 1361 px the Orders table now tucks the order number under the retailer's name, where an ordinary row used to push the edit control off the table's edge), touch-sized controls, Add to Home Screen (an icon and a standalone window; no offline mode), and the list pages: card rows on a phone with one *Filter and sort* sheet, and on a tablet tables that fold their columns to the width they have instead of scrolling sideways; the dialogs: on a phone every dialog is a full-screen sheet with its actions in a bar at the foot of the screen, and an order's lines stack; and Home, Settings and the sign-in screens: on a phone Settings opens as a list of its sections, and Data management there offers the exports only — importing needs a screen from 768 px wide. Every page holds up under a browser font size of up to two and a half times the default on a 320 px phone. Still to come: the phone screenshots and documentation, and the release (`docs/design.md` §13.7) |
+| **Phone and tablet layout** | ✅ Milestone 6.6 — three layouts by the width of the window: a bottom tab bar on a phone, an icon rail on a tablet or in a narrow window, the desktop unchanged from 1280 px (one exception: up to 1361 px the Orders table now tucks the order number under the retailer's name, where an ordinary row used to push the edit control off the table's edge). Touch-sized controls; Add to Home Screen (an icon and a standalone window; no offline mode); card rows on a phone with one *Filter and sort* sheet, and on a tablet tables that fold their columns to the width they have instead of scrolling sideways; every dialog a full-screen sheet on a phone, with its actions in a bar at the foot of the screen; Settings as a list of its sections there, and Data management offering the exports only — importing needs a screen from 768 px wide. Every page holds up under a browser font size of up to two and a half times the default on a 320 px phone (`docs/design.md` §13.7; [using it on a phone](https://docs.gunp.la/using/phone-and-tablet)) |
 | **Photo gallery per kit** | 🔨 Milestone 7 |
 | **Public read-only showcase page** | 🔨 Milestone 8 — after the admin and MCP paths are protected |
 

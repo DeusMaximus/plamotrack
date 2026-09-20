@@ -3,9 +3,10 @@
  * whether it is wanted at all.
  *
  * Two output sets, one switch. With `SCREENSHOTS_OUT` unset the run writes only
- * the README's seven files into `docs/screenshots/` (the set README.md links);
+ * the README's eight files into `docs/screenshots/` (the set README.md links);
  * with it set — the docs site's `images/screenshots/`, say — the run writes the
- * full set there, every page and dialog in both themes, and `docs/screenshots/`
+ * full set there, every page and dialog in both themes, the phone's and the
+ * tablet's included (`phone-*.png`, `tablet-*.png`), and `docs/screenshots/`
  * is untouched. The README set is the one place the two lists are told apart.
  */
 import fs from "node:fs";
@@ -24,6 +25,7 @@ const README_SET = new Set([
   "retailers.png",
   "sign-in.png",
   "data.png",
+  "phone-home.png",
 ]);
 const OVERRIDE = process.env.SCREENSHOTS_OUT ? path.resolve(process.env.SCREENSHOTS_OUT) : null;
 
@@ -55,8 +57,23 @@ export async function save(target: Page | Locator, name: string, theme: Theme): 
   await target.screenshot({ path: path.join(dir, file) });
 }
 
+/** The sizes the phone and tablet shells are captured at (design §13.7): the
+ *  `phone` and `tablet` projects' own viewports and touch screen — `hasTouch`
+ *  with `isMobile` is what makes `(pointer: coarse)` match — at the pixel
+ *  densities those devices have, so a capture is as sharp as the screen it is
+ *  of. */
+export const DEVICES = {
+  phone: { viewport: { width: 390, height: 844 }, deviceScaleFactor: 3, hasTouch: true, isMobile: true },
+  tablet: { viewport: { width: 820, height: 1180 }, deviceScaleFactor: 2, hasTouch: true, isMobile: true },
+} as const;
+
 /** A context with no session, in `theme`: what a visitor sees before signing in. */
-export async function anonymousContext(browser: Browser, theme: Theme, height: number) {
+export async function anonymousContext(
+  browser: Browser,
+  theme: Theme,
+  height: number,
+  device?: (typeof DEVICES)[keyof typeof DEVICES],
+) {
   // Inside a test, `browser.newContext()` starts from the project's `use`
   // options — the owner's storageState included — so the empty state is said
   // explicitly. A context with no stored theme preference follows its device.
@@ -65,6 +82,7 @@ export async function anonymousContext(browser: Browser, theme: Theme, height: n
     colorScheme: theme,
     deviceScaleFactor: 2,
     viewport: { width: 1440, height },
+    ...device,
   });
 }
 
