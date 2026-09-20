@@ -478,7 +478,7 @@ test("a dialog mutating around you does not take your focus", async ({ page }) =
   for (const char of CONSUMABLE.slice(0, 18)) {
     await page.keyboard.type(char);
   }
-  await expect(results.first()).toBeVisible();
+  await expect(results.first()).toHaveText(/on hand/); // found rows have rendered, not only the offer to create
   await expect(search).toBeFocused();
   await expect(search).toHaveValue(CONSUMABLE.slice(0, 18));
 

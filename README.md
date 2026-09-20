@@ -68,19 +68,21 @@ setting; this is the one thing that belongs to the device asking.
 The hobby shop is where you most need to know whether you already own a Gouf Custom,
 and the hobby shop is not where your desk is. Below 768 px the sidebar becomes a tab
 bar under your thumb — Home, Kits, Orders, Inventory, More — the tables become cards,
-every dialog becomes a full-screen sheet with its buttons at the foot of the screen,
-and the list pages share one *Filter and sort* sheet. A tablet, or a narrow window,
-gets an icon rail and tables that fold their columns to the width they have instead of
-scrolling sideways. From 1280 px it is the desktop it always was.
+every form opens as a full-screen sheet with its buttons at the foot of the screen,
+and Kits and Orders fold their filters and sort order into one *Filter and sort*
+sheet. A tablet, or a narrow window, gets an icon rail and tables that fold their
+columns to the width they have instead of scrolling sideways. From 1280 px it is the
+desktop it always was.
 
 <img src="docs/screenshots/phone-home.png" width="320" alt="Home on a phone — the bench first, then the backlog, with the tab bar at the foot of the screen">
 
-Add it to your home screen from the browser's share menu and it opens in its own
-window with its own icon. It is still a web page talking to your server: there is no
-offline mode, and nothing is stored on the phone. The one thing a phone deliberately
-can't do is import a spreadsheet — Data management offers the exports there and says
-where importing lives, because *Replace everything* does not belong a thumb's width from
-a mis-tap.
+Add it to your home screen — Safari's share menu, or *Install* in Chrome's menu on
+Android — and it opens in its own window with its own icon, still signed in. It is
+still a web page talking to your server: there is no offline mode, and your collection
+is never stored on the phone — only your sign-in and your choice of theme are. What a
+phone deliberately leaves out is importing and the blank templates: Data management
+offers the exports there and says where the rest lives, because *Replace everything*
+does not belong a thumb's width from a mis-tap.
 
 ### Orders that know what they turned into
 

@@ -3548,6 +3548,14 @@ that opens onto `<body>` takes the keys of the control whose going nobody has an
 for yet (`unansweredKeys`); closing gives the keyboard to whatever carries them, as
 it already did for an opener that went while the dialog was open. `<body>` with no
 remembered place — a pointer in Safari, which focuses no button — is as it was.
+**An unanswered loss, not the last keyed `focusin`** (Codex #276, finding 1): the
+keys are given only while the remembered control is not drawn. A control hidden and
+shown again, or taken out and put back, was never *left*, so it stays remembered,
+and no event marks its return — a dialog then opened by a pointer in Safari was
+handed, at close, to a control that had not opened it. That check was in the first
+draft and came out as untestable; the reviewer made three things that test it. The
+store has one owner — the hook, called once in `Layout` — and outlives it; a second
+caller is a second writer, and owes the store an owner and an end first.
 Reported as a WebKit loss of two to six runs in ten after repeated turns; the turns
 and the engine were the harness's (Playwright's WebKit resolves a viewport change
 before the page hears of it). With the `change` events held (`e2e/shellEvents.ts`) it

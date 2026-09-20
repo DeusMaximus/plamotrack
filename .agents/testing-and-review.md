@@ -263,7 +263,8 @@ the shell (`expectShell`, a table's presence) before acting on a *settled* page;
 act *inside* the gap, hold the media-query `change` events with `e2e/shellEvents.ts`
 (`installShellEventHold` before the page loads, `holdShellEvents`, the turn, wait for
 `matchMedia(…).matches`, the step, `releaseShellEvents`) — that is every run, in both
-engines, where the unheld sequence was 6 in 8 in one. And where a fix lives in an
+engines, where the unheld sequence was 6 in 8 in one and, by context options, anything
+from never to 9 in 12 in the other. And where a fix lives in an
 effect's mount or cleanup, run it once against `npm run build` + `npx vite preview
 --port 5173 --strictPort` (Playwright reuses the server on :5173; the preview proxies
 `/api` as the dev server does): the dev server's StrictMode mounts every effect twice,

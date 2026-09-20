@@ -1585,7 +1585,9 @@ before did nothing: one turn lost it as often as three. The head did nothing: th
 moved with the machine. And it was not WebKit's defect: Playwright's WebKit resolves
 `setViewportSize` *before the page has heard of the resize*, so "immediately" pressed
 Enter after the viewport had changed and before `change` was delivered — a gap a
-browser has in every frame and Chromium's driver never lands in. In that gap
+browser has in every frame and Chromium's driver, in this suite's `isMobile` contexts, did
+not land in (the reviewer's Chromium context without `isMobile` did, 6 and 9 runs in 12 —
+the rate is the harness's, not an engine's guarantee). In that gap
 `useSyncExternalStore` hands the new shell to whatever renders (it re-reads its
 snapshot on every render) and nothing to whoever is waiting for the event: the page
 and the dialog rendered in the new shell in one commit, the opener's row was swapped
@@ -1625,4 +1627,26 @@ What to keep: **a wait is an assertion about state, so write the state** — "a 
 row", not "something in the box where rows go". And an intermittent red that isolation
 cannot reproduce is asking what is slower in the long run, not whether it is real:
 slow the suspected dependency on purpose and the race stops being one.
+
+## "Nothing can make it differ" was a claim about my imagination (#275, PR #276 round 1)
+
+`unansweredKeys()` first had a check — give the remembered keys only if the control is
+really gone — and I took it out before the PR: I could not make the branch differ, and
+an untested branch is a rule here, so out it went, with the reasoning written down as a
+deliberate call ("someone who leaves a control that is still there is forgotten a
+microtask later"). The reviewer made it differ three ways in an afternoon: hide the
+focused control and show it again, `display: none` and back, take the node out and put
+it back. None of them is *leaving*, so the forgetting rule kept the place; none fires
+anything on the way back. A dialog then opened by pointer in Safari returned the
+keyboard to a control that had not opened it.
+
+What to keep: **"untestable, so remove it" is only honest after trying to break the
+version without it.** The rule against untested code cuts both ways — the absence of a
+check is a claim too ("this state cannot occur"), and it got a paragraph of argument
+where it needed ten minutes of adversarial states: every way a node can stop and start
+being there without anyone choosing to leave it. And when the check went back, the
+mutants said its first form was half redundant (`isConnected &&` in front of a test a
+disconnected node already fails) and that *drawn* versus *connected* needed a test of
+its own, which the product could not supply (no page has both a folding twin and a
+dialog) — so the test brings its own twin and says so.
 

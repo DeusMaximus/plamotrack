@@ -7,8 +7,10 @@
  *  snapshot on every render — so a key pressed in that gap opens a dialog in the
  *  same commit that swaps the rows under it. A person's window for that is a
  *  few milliseconds; Playwright's WebKit, whose `setViewportSize` resolves
- *  before the page has heard of the resize, hits it most runs and Chromium
- *  never. Holding the events makes it every run, in both.
+ *  before the page has heard of the resize, hits it most runs; this suite's
+ *  Chromium contexts did not, and a reviewer's without `isMobile` did (Codex
+ *  #276) — a rate belongs to the harness. Holding the events makes it every
+ *  run, in both.
  *
  *  `installShellEventHold` before the page loads; `hold` before the turn,
  *  `release` when the test has done what it wanted inside the gap. `matches`

@@ -92,8 +92,16 @@ export function focusFirst(keys: readonly string[]): boolean {
 }
 
 /** The keyed control the keyboard was last on. The module's and not a ref of
- *  the hook's, because the hook is not its only reader (`unansweredKeys`); the
- *  hook is called once, where the shell is chosen, so there is one writer. */
+ *  the hook's, because the hook is not its only reader (`unansweredKeys`).
+ *
+ *  **One owner:** `useFocusAcrossShells`, called once, where the shell is chosen
+ *  (`Layout`), is the only writer, and the store outlives it — signed out, the
+ *  listeners are gone and the last place stays. That is safe only because every
+ *  reader asks what the place *is now* (below) and because the first `focusin`
+ *  after `Layout` mounts again replaces it; no path in the app was found that
+ *  reaches a reader in between (Codex #276 looked too). A second caller of the
+ *  hook would be a second writer of one store: decide who owns it, and when it
+ *  ends, before adding one — clearing it in each caller's cleanup is not that. */
 let place: { control: Element; keys: string[] } | null = null;
 
 /** The keys of the control the keyboard was on, when that control has stopped
@@ -113,11 +121,19 @@ let place: { control: Element; keys: string[] } | null = null;
  *  resize (measured: 6 turns in 8; with the events held, 8 in 8 in both
  *  engines — `e2e/shellEvents.ts`).
  *
- *  For a caller that has found the keyboard on `<body>`: a place that is still
- *  remembered then is one whose control went — someone who *left* a control
- *  that is still there was forgotten a microtask after they did (below). */
+ *  **An unanswered loss, not the last keyed `focusin`:** nothing, while the
+ *  remembered control is in the page and drawn. "Still remembered" does not
+ *  mean "gone" — a control hidden and shown again, or taken out and put back,
+ *  was never *left*, so the forgetting rule below kept it, and no event marks
+ *  its return; a dialog opened onto `<body>` after that (a pointer in Safari,
+ *  which focuses no button) was handed at close to a control that had not
+ *  opened it (Codex #276, finding 1 — this check was in the first draft and
+ *  came out as "nothing can make it differ"; three things could). Drawn, which
+ *  a node out of the page is not either — and not merely connected: a fold's
+ *  hidden copy is connected, and its visible twin is exactly who should answer. */
 export function unansweredKeys(): string[] {
-  return place?.keys ?? [];
+  if (place === null || isDrawn(place.control)) return [];
+  return place.keys;
 }
 
 /** Keep the keyboard's place when the page changes shape under it. Turning an
