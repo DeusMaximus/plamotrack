@@ -17,6 +17,12 @@ RUN npm run build
 
 FROM nginx:1.27-alpine AS runtime
 
+ARG SOURCE_REVISION=working-tree
+ARG RELEASE_VERSION=unreleased
+LABEL org.opencontainers.image.source="https://github.com/DeusMaximus/plamotrack" \
+      org.opencontainers.image.revision=$SOURCE_REVISION \
+      org.opencontainers.image.version=$RELEASE_VERSION
+
 # The ingress config is a template the image renders at start (nginx/), with
 # the Host allowlist assembled from the same .env keys the API reads. Only
 # PLAMOTRACK_* names are substituted, so nginx's own $variables survive.

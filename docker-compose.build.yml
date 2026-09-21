@@ -1,0 +1,20 @@
+# Explicit source build for development, CI and review. No registry release can
+# satisfy these services, even when PLAMOTRACK_*_IMAGE is set in the environment.
+# Keep --build on up: api and migrate must run the newly built shared image.
+x-api-build: &api-build
+  image: plamotrack-api:${PLAMOTRACK_SOURCE_TAG:-local}
+  pull_policy: build
+  build:
+    context: ./backend
+    args:
+      SOURCE_REVISION: ${PLAMOTRACK_SOURCE_REVISION:-working-tree}
+services:
+  api: *api-build
+  migrate: *api-build
+  web:
+    image: plamotrack-web:${PLAMOTRACK_SOURCE_TAG:-local}
+    pull_policy: build
+    build:
+      context: ./frontend
+      args:
+        SOURCE_REVISION: ${PLAMOTRACK_SOURCE_REVISION:-working-tree}

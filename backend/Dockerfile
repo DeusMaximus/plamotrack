@@ -22,6 +22,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 FROM python:3.12-slim-bookworm AS runtime
 
+ARG SOURCE_REVISION=working-tree
+ARG RELEASE_VERSION=unreleased
+LABEL org.opencontainers.image.source="https://github.com/DeusMaximus/plamotrack" \
+      org.opencontainers.image.revision=$SOURCE_REVISION \
+      org.opencontainers.image.version=$RELEASE_VERSION
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PATH="/app/.venv/bin:$PATH"

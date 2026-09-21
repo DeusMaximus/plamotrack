@@ -1,6 +1,14 @@
 name: CI
 
 on:
+  workflow_call:
+    inputs:
+      release_bundle:
+        type: boolean
+        default: false
+      runners:
+        type: string
+        default: '["ubuntu-latest"]'
   pull_request:
   push:
     branches: [main]
@@ -106,8 +114,16 @@ jobs:
         run: npm run build
 
   integration:
-    name: Integration
-    runs-on: ubuntu-latest
+    name: ${{ inputs.release_bundle && format('Integration ({0})', matrix.runner) || 'Integration' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: ${{ fromJSON(inputs.runners || '["ubuntu-latest"]') }}
+    runs-on: ${{ matrix.runner }}
+    env:
+      COMPOSE_FILE: docker-compose.yml:docker-compose.build.yml
+      PLAMOTRACK_SOURCE_REVISION: ${{ github.sha }}
+      PLAMOTRACK_SOURCE_TAG: ci-${{ github.run_id }}-${{ github.run_attempt }}
     timeout-minutes: 25
 
     steps:
@@ -210,7 +226,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.runner }}
           path: |
             frontend/playwright-report/
             frontend/test-results/
@@ -230,8 +246,54 @@ jobs:
       - name: Discard the e2e database
         run: docker compose down -v
 
-      - name: Build and start the packaged stack
+      - name: Download the candidate release bundle
+        if: inputs.release_bundle
+        uses: actions/download-artifact@484a0b528fb4d7bd804637ccb632e47a0e638317
+        with:
+          name: release-bundle
+          path: .dev/release-bundle
+
+      - name: Select the pull-only candidate stack
+        if: inputs.release_bundle
+        run: |
+          python backend/release_artifacts.py verify .dev/release-bundle
+          python - <<'PYCODE'
+          import json
+          import os
+          from pathlib import Path
+          bundle = Path('.dev/release-bundle').resolve()
+          manifest = json.loads((bundle / 'release.json').read_text())
+          assert manifest['revision'] == os.environ['GITHUB_SHA']
+          with open(os.environ['GITHUB_ENV'], 'a') as env:
+              env.write(f"COMPOSE_FILE={bundle / 'docker-compose.yml'}\n")
+              env.write(f"RELEASE_VERSION={manifest['version']}\n")
+          PYCODE
+          # These are the downloaded files an operator gets. No source build
+          # contexts or registry login are available to this Compose project.
+          cp .dev/release-bundle/.env.example .dev/release-bundle/.env
+          sed -i 's/^POSTGRES_USER=.*/POSTGRES_USER=plamotrack_ci/' .dev/release-bundle/.env
+          sed -i 's/^POSTGRES_DB=.*/POSTGRES_DB=plamotrack_ci/' .dev/release-bundle/.env
+          echo 'ALLOWED_HOSTS=ci.plamotrack.test' >> .dev/release-bundle/.env
+
+      - name: Build and start the PR source stack
+        if: ${{ !inputs.release_bundle }}
         run: docker compose up -d --build --wait
+
+      - name: Pull and start the candidate artifacts without registry credentials
+        if: inputs.release_bundle
+        run: |
+          mkdir "$RUNNER_TEMP/anonymous-docker"
+          # Keep the Docker CLI plugins, but none of the runner's credentials.
+          printf '{"cliPluginsExtraDirs":["/usr/libexec/docker/cli-plugins","/usr/lib/docker/cli-plugins"]}\n' > "$RUNNER_TEMP/anonymous-docker/config.json"
+          DOCKER_CONFIG="$RUNNER_TEMP/anonymous-docker" docker compose up -d --no-build --pull always --wait
+
+      - name: Verify the running source and migration image identity
+        run: |
+          if [ -n "${RELEASE_VERSION:-}" ]; then
+            python backend/release_artifacts.py running "$GITHUB_SHA" --version "$RELEASE_VERSION"
+          else
+            python backend/release_artifacts.py running "$GITHUB_SHA"
+          fi
 
       - name: Smoke-test the ingress
         run: |
@@ -339,6 +401,7 @@ jobs:
           import httpx
           from fastmcp import Client
           from mcp.shared.exceptions import MCPError
+          from app import __version__
 
           URL = "http://127.0.0.1:8080/mcp/"
           ACCEPT = {"Accept": "application/json, text/event-stream"}
@@ -381,6 +444,11 @@ jobs:
 
 
           async def check() -> None:
+              meta = httpx.get("http://127.0.0.1:8080/api/meta", headers={
+                  "Authorization": "Bearer " + os.environ["PLAMOTRACK_PAT"]
+              })
+              meta.raise_for_status()
+              assert meta.json()["version"] == __version__, meta.text
               # Auto negotiates the modern era, mode="legacy" the handshake era;
               # the same 4.0.3 client lists the tools through nginx either way,
               # so the server serves both eras from the one endpoint (#244).
@@ -388,9 +456,11 @@ jobs:
                   tools = await client.list_tools()
                   assert any(tool.name == "list_kits" for tool in tools)
                   assert client.protocol_version == "2026-07-28", client.protocol_version
+                  assert client.server_info.version == __version__, client.server_info
               async with Client(
                   URL, auth=os.environ["PLAMOTRACK_PAT"], mode="legacy"
               ) as legacy:
+                  assert legacy.server_info.version == __version__, legacy.server_info
                   legacy_tools = await legacy.list_tools()
                   assert any(tool.name == "list_kits" for tool in legacy_tools)
                   assert legacy.protocol_version in {

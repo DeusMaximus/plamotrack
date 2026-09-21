@@ -644,6 +644,11 @@ no secrets to forks, stale runs cancelled.
   retry count, not the artifacts.
 - **A job stuck `in_progress` with every step green:** `gh run rerun <run> --job
   <id>`. Not a project problem.
+- **Source Integration explicitly selects `docker-compose.build.yml`**, unique local
+  tags and `pull_policy: build`, and checks the running revision and API/migration
+  image identity. The candidate workflow calls the same CI with the downloaded,
+  pull-only release bundle on native amd64 and arm64. Anonymous pulls, fresh
+  migrations, `/meta` and both MCP-era version checks are required there.
 - **Integration copies `.env.example` to `.env`** — the documented fresh-install
   path, no secrets — and appends `ALLOWED_HOSTS=ci.plamotrack.test` so the matrix
   has a listed name to prove. Locally the matrix runs the same way against a
@@ -780,6 +785,13 @@ over the command if it is denied rather than routing around via the API.
 
 ## The release gate
 
+For published images (#278), follow [releases.md](releases.md): build one candidate,
+gate its digest-pinned release bundle on both architectures, and promote without
+rebuilding. The source-build packaged check below remains for PRs; a source build
+is not evidence that the distributed artifacts passed. The tag and draft release
+steps are separate, explicit owner-approved operations. Do not run the old
+`gh release create` command below when promotion has already created the draft.
+
 Run before every tag. It has failed twice on the same invariant (#65, #69 →
 v0.2.4.1, v0.2.4.2), so it is not a formality either.
 
@@ -796,7 +808,7 @@ v0.2.4.1, v0.2.4.2), so it is not a formality either.
    one can be right while the other is stale (#243).
 4. **Packaged stack, from the tagged commit:**
    ```bash
-   docker compose up -d --wait --build     # --build is load-bearing; see AGENTS.md
+   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --wait --build     # --build is load-bearing; see AGENTS.md
    docker compose logs migrate             # Exited (0)
    curl -s http://127.0.0.1:8080/api/meta  # right version
    ```
@@ -824,7 +836,7 @@ v0.2.4.1, v0.2.4.2), so it is not a formality either.
    with the cloudflare DNS module and `deploy/caddy/Caddyfile`, the Keycloak
    fixture, a DNS token the operator writes on the host); then from `backend/`:
    ```bash
-   GATE_IDP_PASSWORD=owner-password uv run python deployment_gate.py \
+   GATE_IDP_PASSWORD=owner-password uv run python deployment_gate.py --source-build \
      --base https://NAME --ssh root@HOST --idp https://idp.NAME --phase all \
      [--tunnel-base https://TUNNEL --tunnel-proxy CONNECTOR-IP --host-ip HOST-LAN-IP]
    ```
