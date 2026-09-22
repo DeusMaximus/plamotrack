@@ -216,8 +216,12 @@ only a successful candidate and an existing tag at that exact commit; it copies
 image manifests and attaches the tested bundle to a draft release. No rebuild,
 `latest` tag, or automatic publication. The maintainer runbook and update policy
 are in `.agents/releases.md`. Registry writes, tags and release publication still
-require the owner's explicit instruction. Until a release with these assets is
-published, install from source using the override below.
+require the owner's explicit instruction. v0.5.1-alpha is the first release to go
+through the pipeline; until it is published, no release carries these assets. A
+source checkout always uses the build override below: `.env.example` selects it
+through `COMPOSE_FILE`, and an `.env` from v0.5.0-alpha or earlier needs those two
+lines added before its next `up`, or Compose pulls the never-published `:unreleased`
+image and stops with `denied`.
 
 ## Dev environment & commands
 
