@@ -20,7 +20,10 @@ IMAGE_PREFIX = "ghcr.io/deusmaximus/plamotrack-"
 VERSION = re.compile(r"v(\d+\.\d+\.\d+)(?:-alpha(?:\.\d+)?)?")
 SHA = re.compile(r"[0-9a-f]{40}")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
-PAYLOADS = {"docker-compose.yml", ".env.example", "plamotrack-gunpla.zip"}
+# GitHub renames a release asset whose name starts or ends with a period (v0.5.1-alpha's
+# ".env.example" was uploaded to its draft as "default.env.example", and SHA256SUMS then
+# named a file the download did not contain), so the template ships as "env.example".
+PAYLOADS = {"docker-compose.yml", "env.example", "plamotrack-gunpla.zip"}
 
 
 def run(*args: str) -> str:
@@ -76,7 +79,7 @@ def bundle(
     (out / "docker-compose.yml").write_text(
         f"# plamotrack {version}; source {revision}\n" + compose
     )
-    (out / ".env.example").write_bytes((root / "release.env.example").read_bytes())
+    (out / "env.example").write_bytes((root / "release.env.example").read_bytes())
     # Only tracked skill files: no .DS_Store, local archives or editor leftovers.
     files = run("git", "-C", str(root), "ls-files", "skills/plamotrack-gunpla").splitlines()
     if "skills/plamotrack-gunpla/SKILL.md" not in files:

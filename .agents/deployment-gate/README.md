@@ -66,6 +66,31 @@ VISITOR=$(curl -s https://cloudflare.com/cdn-cgi/trace | sed -n 's/^ip=//p')
 ```
 (or add those four to `--phase all`).
 
+### Against a release's files
+
+A release is gated on what it ships (`.agents/releases.md` step 5), not on a source
+tree: the downloaded `release-bundle` artifact, plus this directory and
+`deploy/caddy/` from the candidate commit, which the host script and the precheck
+read. No `backend/`, no `docker-compose.build.yml`, and `.env` comes from the
+release's own `env.example`:
+
+```bash
+gh run download RUN_ID -n release-bundle -D .dev/release-bundle
+(cd .dev/release-bundle && shasum -a 256 -c SHA256SUMS)
+mkdir -p .dev/gate-stage && git archive CANDIDATE_SHA .agents/deployment-gate deploy/caddy \
+  | tar xf - -C .dev/gate-stage && cp -p .dev/release-bundle/* .dev/gate-stage/
+ssh root@HOST 'cd /opt/plamotrack && docker compose -f docker-compose.yml down -v; rm -rf /opt/plamotrack; mkdir /opt/plamotrack'
+(cd .dev/gate-stage && COPYFILE_DISABLE=1 tar czf - .) | ssh root@HOST 'tar xzf - -C /opt/plamotrack'
+ssh root@HOST 'PLAMOTRACK_TEST_NAME=NAME PLAMOTRACK_TUNNEL_NAME=TUNNEL-NAME \
+      sh /opt/plamotrack/.agents/deployment-gate/host-prepare.sh'
+ssh root@HOST 'cd /opt/plamotrack && docker compose -f docker-compose.yml up -d --no-build --wait'
+cd backend && GATE_IDP_PASSWORD=owner-password uv run python deployment_gate.py \
+      --base https://NAME --ssh root@HOST --idp https://idp.NAME --phase all …
+```
+
+`down -v` destroys the host's previous collection; the gate host holds only test
+data. The pull needs no registry login, which is part of what this run shows.
+
 ## Files
 
 - `Caddyfile.test` — the reference site block with `PLAMOTRACK_TEST_NAME` to fill in,

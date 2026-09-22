@@ -2,6 +2,8 @@
 
 import json
 import os
+import re
+import shutil
 import subprocess
 import tomllib
 import zipfile
@@ -49,9 +51,27 @@ def test_bundle_is_reproducible_and_skill_has_parent(packaged, tmp_path):
         )
 
 
+def test_every_release_file_keeps_its_name_as_a_github_asset(packaged):
+    # GitHub renames an uploaded asset whose name starts or ends with a period or
+    # holds other characters: v0.5.1-alpha's ".env.example" reached its draft as
+    # "default.env.example", and SHA256SUMS named a file the download lacked.
+    # The rule is GitHub's, stated here — not read back from release_artifacts.
+    kept = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*[A-Za-z0-9]")
+    names = sorted(file.name for file in packaged.iterdir())
+    assert names == [
+        "SHA256SUMS",
+        "docker-compose.yml",
+        "env.example",
+        "plamotrack-gunpla.zip",
+        "release.json",
+    ]
+    assert [name for name in names if not kept.fullmatch(name)] == []
+    assert (packaged / "env.example").read_bytes() == (ROOT / "release.env.example").read_bytes()
+
+
 @pytest.mark.parametrize(
     "name",
-    ["docker-compose.yml", ".env.example", "plamotrack-gunpla.zip", "release.json", "SHA256SUMS"],
+    ["docker-compose.yml", "env.example", "plamotrack-gunpla.zip", "release.json", "SHA256SUMS"],
 )
 def test_changed_asset_is_refused(packaged, name):
     with (packaged / name).open("ab") as file:
@@ -253,6 +273,10 @@ def test_deployment_gate_selects_source_explicitly(monkeypatch, source):
         "retry-api",
         "retry-web",
         "retry-both",
+        "download-renamed",
+        "download-missing",
+        "download-altered",
+        "download-other",
     ],
 )
 def test_promotion_preflights_every_image_before_copying(monkeypatch, packaged, tmp_path, block):
@@ -262,6 +286,7 @@ def test_promotion_preflights_every_image_before_copying(monkeypatch, packaged, 
     import promote_release as promote
 
     writes = []
+    downloads = []
     monkeypatch.setattr(sys, "argv", ["promote_release.py", "123", str(packaged)])
     monkeypatch.setenv("RUNNER_TEMP", str(tmp_path))
     monkeypatch.setattr(promote, "api", lambda path: candidate())
@@ -276,6 +301,31 @@ def test_promotion_preflights_every_image_before_copying(monkeypatch, packaged, 
 
     def invoke(args, **kwargs):
         if args[:3] == ["git", "fetch", "origin"]:
+            return SimpleNamespace(returncode=0)
+        if args[:3] == ["gh", "release", "download"]:
+            # What GitHub serves back for the draft: the uploads, as renamed,
+            # dropped or altered by the upload in the failure cases.
+            assert args[3] == VERSION and "--dir" in args
+            target = Path(args[args.index("--dir") + 1])
+            target.mkdir(parents=True)
+            if block == "download-other":
+                # A complete, self-consistent bundle — just not the gated one.
+                release.bundle(
+                    target, VERSION, REVISION, {**IMAGES, "web": IMAGES["web"][:-64] + "8" * 64}
+                )
+                downloads.append(target)
+                return SimpleNamespace(returncode=0)
+            for file in packaged.iterdir():
+                name = file.name
+                if block == "download-renamed" and name == "env.example":
+                    name = "default.env.example"
+                if block == "download-missing" and name == "plamotrack-gunpla.zip":
+                    continue
+                shutil.copyfile(file, target / name)
+            if block == "download-altered":
+                with (target / "docker-compose.yml").open("ab") as file:
+                    file.write(b" ")
+            downloads.append(target)
             return SimpleNamespace(returncode=0)
         if args[:4] == ["docker", "buildx", "imagetools", "inspect"]:
             component = "web" if "plamotrack-web:" in args[4] else "api"
@@ -320,10 +370,17 @@ def test_promotion_preflights_every_image_before_copying(monkeypatch, packaged, 
             promote.main()
         count = 1 if block.endswith("api") else 2
         assert writes == copies[:count], "digest drift must stop copying and release creation"
+    elif block and block.startswith("download-"):
+        expected = "differs from the gated" if block == "download-other" else "do not verify"
+        with pytest.raises(ValueError, match=expected):
+            promote.main()
+        assert len(writes) == 3 and writes[2][:3] == ["gh", "release", "create"]
+        assert len(downloads) == 1, "the draft must be read back after it is created"
     elif block and not block.startswith("retry-"):
         with pytest.raises(ValueError):
             promote.main()
         assert writes == [], "a failed preflight must not copy even the first image"
+        assert downloads == []
     else:
         promote.main()
         assert len(writes) == 3
@@ -333,6 +390,7 @@ def test_promotion_preflights_every_image_before_copying(monkeypatch, packaged, 
         assert "--verify-tag" in writes[2]
         for name in release.PAYLOADS | {"release.json", "SHA256SUMS"}:
             assert str(packaged / name) in writes[2]
+        assert len(downloads) == 1, "the draft must be read back and verified"
 
 
 @pytest.mark.parametrize(

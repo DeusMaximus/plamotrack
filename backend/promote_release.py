@@ -142,6 +142,22 @@ def main() -> None:
         ],
         check=True,
     )
+    # Verify what a user downloads, not what was uploaded: GitHub renamed v0.5.1-alpha's
+    # ".env.example" on upload, and every check before this one read the workflow copy.
+    downloaded = Path(os.environ["RUNNER_TEMP"]) / "release-download"
+    subprocess.run(
+        ["gh", "release", "download", version, "--repo", REPOSITORY, "--dir", str(downloaded)],
+        check=True,
+    )
+    try:
+        verified = verify(downloaded)
+    except ValueError as error:
+        raise ValueError(
+            f"the draft's downloads do not verify ({error}); it is unpublished — "
+            "inspect and delete it, fix the bundle and gate a new version"
+        ) from error
+    if verified != manifest:
+        raise ValueError("the draft's release.json differs from the gated bundle's")
 
 
 if __name__ == "__main__":

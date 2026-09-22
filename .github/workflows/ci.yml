@@ -270,7 +270,7 @@ jobs:
           PYCODE
           # These are the downloaded files an operator gets. No source build
           # contexts or registry login are available to this Compose project.
-          cp .dev/release-bundle/.env.example .dev/release-bundle/.env
+          cp .dev/release-bundle/env.example .dev/release-bundle/.env
           sed -i 's/^POSTGRES_USER=.*/POSTGRES_USER=plamotrack_ci/' .dev/release-bundle/.env
           sed -i 's/^POSTGRES_DB=.*/POSTGRES_DB=plamotrack_ci/' .dev/release-bundle/.env
           echo 'ALLOWED_HOSTS=ci.plamotrack.test' >> .dev/release-bundle/.env

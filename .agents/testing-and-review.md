@@ -649,7 +649,8 @@ no secrets to forks, stale runs cancelled.
   image identity. The candidate workflow calls the same CI with the downloaded,
   pull-only release bundle on native amd64 and arm64. Anonymous pulls, fresh
   migrations, `/meta` and both MCP-era version checks are required there.
-- **Integration copies `.env.example` to `.env`** — the documented fresh-install
+- **Integration copies `.env.example` to `.env`** (a release bundle's `env.example`
+  in a candidate run) — the documented fresh-install
   path, no secrets — and appends `ALLOWED_HOSTS=ci.plamotrack.test` so the matrix
   has a listed name to prove. Locally the matrix runs the same way against a
   packaged stack: `uv run python ingress_matrix.py http://127.0.0.1:8080

@@ -2294,7 +2294,10 @@ bundle with the PostgreSQL digest pinned too. Native runners exercise those same
 artifacts through CI, including fresh migrations and the packaged ingress/MCP
 matrix, with no registry credentials. Promotion copies the tested manifests to
 explicit version tags and attaches the unchanged bundle and skill ZIP to a draft
-release; it never rebuilds. Version tags/assets are immutable by policy, no moving
+release, then downloads the draft and verifies what a user gets — GitHub renames an
+asset whose name starts with a period, which is how v0.5.1-alpha's `.env.example`
+failed its own checksums and why the template ships as `env.example`; it never
+rebuilds. Version tags/assets are immutable by policy, no moving
 channel ships, and supported installation guidance selects an explicit version.
 
 Source development/review uses `docker-compose.build.yml`: local image names and

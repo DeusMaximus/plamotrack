@@ -3,9 +3,10 @@
 # and Compose from Docker's repository, Caddy from its repository plus the
 # cloudflare DNS module, the reference Caddyfile with the test fixture beside
 # it, the stack's .env, and Keycloak. Run as root on a fresh Debian 13 host
-# whose working tree is already at $PLAMOTRACK_DIR (the driver rsyncs it; the
-# branch under test is not necessarily pushed). Idempotent: re-running
-# refreshes what changed and leaves the rest.
+# whose $PLAMOTRACK_DIR already holds what is under test: a working tree (the
+# branch is not necessarily pushed), or a release's downloaded files plus this
+# directory and deploy/caddy from the same commit (.agents/releases.md step 5).
+# Idempotent: re-running refreshes what changed and leaves the rest.
 #
 #   PLAMOTRACK_TEST_NAME=testhost.example \
 #   PLAMOTRACK_TUNNEL_NAME=tunnel.example \
@@ -26,7 +27,10 @@ step() { printf '\n== %s\n' "$*"; }
 step "host"
 . /etc/os-release
 echo "$PRETTY_NAME; virt=$(systemd-detect-virt 2>/dev/null || echo unknown)"
-test -d "$PLAMOTRACK_DIR/backend" || { echo "no working tree at $PLAMOTRACK_DIR" >&2; exit 1; }
+{ test -f "$PLAMOTRACK_DIR/docker-compose.yml" && test -d "$PLAMOTRACK_DIR/deploy/caddy"; } || {
+    echo "no working tree or release files (with .agents/deployment-gate and deploy/caddy) at $PLAMOTRACK_DIR" >&2
+    exit 1
+}
 test -s /etc/caddy/cloudflare.env 2>/dev/null || {
     echo "write CLOUDFLARE_API_TOKEN=... to /etc/caddy/cloudflare.env (mode 0600) first" >&2
     mkdir -p /etc/caddy
@@ -91,7 +95,9 @@ systemctl restart caddy
 step "the stack's .env"
 cd "$PLAMOTRACK_DIR"
 if [ ! -f .env ]; then
-    cp .env.example .env
+    # A checkout's template, or a release's (shipped as env.example: GitHub renames
+    # a release asset whose name starts with a period).
+    if [ -f env.example ]; then cp env.example .env; else cp .env.example .env; fi
     sed -i "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$(openssl rand -hex 16)/" .env
     echo "wrote .env with a generated POSTGRES_PASSWORD (WEB_BIND stays 127.0.0.1; no public name yet)"
 else
@@ -105,4 +111,8 @@ sed -e "s/PLAMOTRACK_TEST_NAME/$PLAMOTRACK_TEST_NAME/g" \
 ( cd "$GATE/keycloak" && PLAMOTRACK_TEST_NAME="$PLAMOTRACK_TEST_NAME" docker compose up -d --wait )
 
 step "done"
-echo "next: docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait in $PLAMOTRACK_DIR, then the driver's phases"
+if [ -f "$PLAMOTRACK_DIR/docker-compose.build.yml" ]; then
+    echo "next: docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait in $PLAMOTRACK_DIR, then the driver's phases with --source-build"
+else
+    echo "next: docker compose -f docker-compose.yml up -d --no-build --wait in $PLAMOTRACK_DIR, then the driver's phases without --source-build"
+fi

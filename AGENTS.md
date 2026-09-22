@@ -213,15 +213,19 @@ HANDOFF.md              # session hand-off log — the five most recent entries 
 `release-candidate.yml` builds both architectures once, then runs CI against their
 recorded digests on native amd64 and arm64 runners. `release-promote.yml` accepts
 only a successful candidate and an existing tag at that exact commit; it copies
-image manifests and attaches the tested bundle to a draft release. No rebuild,
-`latest` tag, or automatic publication. The maintainer runbook and update policy
-are in `.agents/releases.md`. Registry writes, tags and release publication still
-require the owner's explicit instruction. v0.5.1-alpha is the first release to go
-through the pipeline; until it is published, no release carries these assets. A
-source checkout always uses the build override below: `.env.example` selects it
-through `COMPOSE_FILE`, and an `.env` from v0.5.0-alpha or earlier needs those two
-lines added before its next `up`, or Compose pulls the never-published `:unreleased`
-image and stops with `denied`.
+image manifests, attaches the tested bundle to a draft release, then downloads the
+draft and verifies what a user would get. No rebuild, `latest` tag, or automatic
+publication. The maintainer runbook and update policy are in `.agents/releases.md`.
+Registry writes, tags and release publication still require the owner's explicit
+instruction. Release asset names must survive GitHub's upload, which renames a
+leading or trailing period — the template ships as `env.example` for that reason.
+v0.5.1-alpha was tagged and promoted but never published (its `.env.example` reached
+the draft as `default.env.example`); v0.5.2-alpha is the first release meant to
+carry these assets, and until it is published none does. A source checkout always
+uses the build override below: `.env.example` selects it through `COMPOSE_FILE`, and
+an `.env` from v0.5.0-alpha or earlier needs those two lines added before its next
+`up`, or Compose pulls the never-published `:unreleased` image and stops with
+`denied`.
 
 ## Dev environment & commands
 
