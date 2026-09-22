@@ -60,6 +60,58 @@ def test_changed_asset_is_refused(packaged, name):
         release.verify(packaged)
 
 
+@pytest.mark.parametrize(
+    "services",
+    [("api",), ("migrate",), ("web",), ("db",), ("api", "migrate")],
+)
+@pytest.mark.parametrize("interpolated", [False, True])
+def test_compose_images_must_match_manifest_even_with_valid_checksums(
+    packaged, monkeypatch, services, interpolated
+):
+    monkeypatch.setenv("POSTGRES_PASSWORD", "test-only")
+    compose = (packaged / "docker-compose.yml").read_text()
+    for service in services:
+        expected = IMAGES["api" if service == "migrate" else service]
+        replacement = (
+            "${REVIEW_IMAGE}" if interpolated else expected.split("@")[0] + "@sha256:" + "9" * 64
+        )
+        if interpolated:
+            # Even an environment that resolves to the right digest must not
+            # turn a supposedly literal release pin into an operator override.
+            monkeypatch.setenv("REVIEW_IMAGE", expected)
+        anchor = f"  {service}:\n    image: {expected}"
+        assert compose.count(anchor) == 1
+        compose = compose.replace(anchor, f"  {service}:\n    image: {replacement}")
+    (packaged / "docker-compose.yml").write_text(compose)
+    manifest = json.loads((packaged / "release.json").read_text())
+    manifest["assets"]["docker-compose.yml"] = release.checksum(packaged / "docker-compose.yml")
+    (packaged / "release.json").write_text(json.dumps(manifest) + "\n")
+    (packaged / "SHA256SUMS").write_text(
+        "".join(
+            f"{release.checksum(packaged / name)}  {name}\n"
+            for name in sorted(release.PAYLOADS | {"release.json"})
+        )
+    )
+    with pytest.raises(ValueError, match="Compose image does not match manifest"):
+        release.verify(packaged)
+
+
+def test_bundle_image_verification_ignores_callers_compose_environment(
+    packaged, monkeypatch, tmp_path
+):
+    unrelated = tmp_path / "unrelated"
+    unrelated.mkdir()
+    (unrelated / "compose.yml").write_text("services: {}\n")
+    monkeypatch.chdir(unrelated)
+    monkeypatch.setenv("COMPOSE_FILE", str(unrelated / "compose.yml"))
+    monkeypatch.setenv("COMPOSE_PROJECT_NAME", "unrelated-project")
+    monkeypatch.setenv("DOCKER_HOST", "tcp://127.0.0.1:1")
+    monkeypatch.setenv("PLAMOTRACK_API_IMAGE", "wrong:latest")
+    monkeypatch.delenv("POSTGRES_PASSWORD", raising=False)
+    assert not (packaged / ".env").exists()
+    assert release.verify(packaged)["images"] == IMAGES
+
+
 @pytest.mark.parametrize("bad", ["latest", "v0.0.0-alpha", "v1.2.3;echo bad", "v1.2.3-beta"])
 def test_invalid_or_mismatched_version_is_refused(bad):
     with pytest.raises(ValueError):
@@ -248,7 +300,7 @@ def test_promotion_preflights_every_image_before_copying(monkeypatch, packaged, 
         return IMAGES[component].split("@")[1]
 
     monkeypatch.setattr(promote, "run", read)
-    monkeypatch.setattr(promote.subprocess, "run", invoke)
+    monkeypatch.setattr(promote, "subprocess", SimpleNamespace(run=invoke))
     monkeypatch.setattr(promote, "digest", inspect)
     copies = [
         [

@@ -70,6 +70,11 @@ The ZIP filename stays install-friendly; the explicit release URL supplies its
 version. The Compose file embeds literal digests, so local image variables cannot
 silently substitute a different build. The `.env` file remains operator-owned.
 
+Bundle verification checks each Compose service against the manifest, including
+API and migrate separately. It requires the Docker Compose CLI (no running daemon)
+to parse the explicit bundle file without interpolation or resolving `.env` files;
+image variables are refused even when the caller's environment matches the digest.
+
 Published version tags and assets are immutable by project policy. Fixes, rebuilt
 base images and dependency updates get a new version and another candidate gate.
 No `latest`, `alpha`, minor-version or other moving channel is published. Never

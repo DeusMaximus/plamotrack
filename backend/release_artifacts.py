@@ -1,7 +1,8 @@
 """Build and verify the release bundle without rebuilding its container images.
 
-Only the standard library is needed, including on the promotion runner. The
-manifest binds the source commit, version, image digests and downloadable files.
+Python uses only the standard library. Bundle verification also uses the Docker
+Compose CLI to parse service images; it does not need a running Docker daemon.
+The manifest binds the source commit, version, image digests and downloadable files.
 """
 
 import argparse
@@ -127,6 +128,28 @@ def verify(out: Path) -> dict:
     )
     if (out / "SHA256SUMS").read_text() != sums:
         raise ValueError("SHA256SUMS mismatch")
+    # Check each service, not just whether a digest occurs somewhere in the
+    # file: API and migrate deliberately repeat the API digest. Explicit file
+    # and project selection ignore the caller's source checkout. Release images
+    # must be literal pins; do not interpolate them or require an operator .env.
+    config = json.loads(
+        run(
+            "docker",
+            "compose",
+            "-p",
+            "plamotrack-release-verify",
+            "-f",
+            str((out / "docker-compose.yml").resolve()),
+            "config",
+            "--no-interpolate",
+            "--no-env-resolution",
+            "--format",
+            "json",
+        )
+    )
+    for service, component in (("db", "db"), ("migrate", "api"), ("api", "api"), ("web", "web")):
+        if config["services"].get(service, {}).get("image") != manifest["images"][component]:
+            raise ValueError(f"{service} Compose image does not match manifest")
     return manifest
 
 
