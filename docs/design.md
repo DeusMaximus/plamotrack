@@ -2284,16 +2284,27 @@ services:
 
 Only `web` is published; the API and database stay on the Compose network, so an
 instance has one door and it binds to `127.0.0.1` — a convenient install is not
-accidentally an internet deployment. `docker compose up -d --build --wait` is the
-supported empty-instance path, and it exits non-zero if anything fails to come up.
+accidentally an internet deployment. `docker compose up -d --no-build --wait` is the
+release-bundle empty-instance path, and it exits non-zero if anything fails to come up.
 
-Images currently build from source in-repo. **M6.7 plans to replace the installation
-build with published, versioned amd64/arm64 images** (#278, §11.1), bringing release
-packaging forward from M9. A source-build override will remain for development and
-review; CI and the deployment harnesses must continue testing the source under
-review. Until that work ships, the documented `--build` installation path above
-remains required. Published images avoid that build path; they do not establish the
-cause of the previously observed LXC failure.
+**Release packaging (#278)** separates the build from promotion. The candidate
+workflow builds API and web once for linux/amd64 and linux/arm64, records their
+multi-platform digests and the source commit, and generates a pull-only Compose
+bundle with the PostgreSQL digest pinned too. Native runners exercise those same
+artifacts through CI, including fresh migrations and the packaged ingress/MCP
+matrix, with no registry credentials. Promotion copies the tested manifests to
+explicit version tags and attaches the unchanged bundle and skill ZIP to a draft
+release; it never rebuilds. Version tags/assets are immutable by policy, no moving
+channel ships, and supported installation guidance selects an explicit version.
+
+Source development/review uses `docker-compose.build.yml`: local image names and
+`pull_policy: build` cannot silently substitute a registry release. Source-mode
+CI and the deployment harness opt in explicitly. The repository's pull-only base
+has an unpublished placeholder until given image references; the downloadable
+Compose file contains literal digests. Until the first packaged release is
+published, source installation requires the build override and `--build`.
+Published images avoid the historical LXC build path; its failure's cause remains
+unestablished. The release runbook is `.agents/releases.md`.
 
 **Migrations are their own container**, gating the API through
 `service_completed_successfully`. Running them from the API's entrypoint would turn a

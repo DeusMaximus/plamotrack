@@ -1,15 +1,6 @@
-# The full local stack (design notes §8). `docker compose up -d --build --wait`
-# builds it, migrates the database, and leaves an instance on
-# http://127.0.0.1:8080.
-#
-# `--build` is not optional. `api` and `migrate` share an `image:` tag below so
-# they build once and run the same bits — which also means a plain `up` will reuse
-# a stale local image after the source changes, and has run migrations it predated.
-# A fresh LXC on the official Docker packages also failed a first `up` outright,
-# saying it could not find the images in any registry, and the flag fixed that too;
-# why that host refuses to build when a one-service probe on it builds fine is not
-# understood. See AGENTS.md before theorising — several explanations have been
-# written down and retracted.
+# Pull-only stack. Release bundles replace the three image references below
+# with the digests tested for that release. In a source checkout, explicitly add
+# docker-compose.build.yml; the unpublished placeholder cannot install by accident.
 #
 # Only `web` is published. The API and the database stay on the compose network,
 # so an instance has exactly one door, bound to loopback by default. The browser
@@ -22,7 +13,7 @@
 # only Postgres on loopback while the API and frontend run from source.
 services:
   db:
-    image: postgres:16
+    image: ${PLAMOTRACK_DB_IMAGE:-postgres:16}
     restart: unless-stopped
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-plamotrack}
@@ -51,8 +42,7 @@ services:
   # Doing it in the API's entrypoint instead would turn a failed migration into
   # a crash-looping API rather than a stopped deploy with a readable error.
   migrate:
-    build: ./backend
-    image: plamotrack-api:local
+    image: ${PLAMOTRACK_API_IMAGE:-ghcr.io/deusmaximus/plamotrack-api:unreleased}
     command: ["alembic", "upgrade", "head"]
     restart: "no"
     env_file: .env
@@ -66,8 +56,7 @@ services:
         condition: service_healthy
 
   api:
-    build: ./backend
-    image: plamotrack-api:local
+    image: ${PLAMOTRACK_API_IMAGE:-ghcr.io/deusmaximus/plamotrack-api:unreleased}
     restart: unless-stopped
     env_file: .env
     environment:
@@ -96,8 +85,7 @@ services:
       start_period: 15s
 
   web:
-    build: ./frontend
-    image: plamotrack-web:local
+    image: ${PLAMOTRACK_WEB_IMAGE:-ghcr.io/deusmaximus/plamotrack-web:unreleased}
     restart: unless-stopped
     environment:
       # The ingress builds its Host allowlist from these (frontend/nginx/), the

@@ -109,6 +109,7 @@ class GateError(Exception):
 class Host:
     ssh: str
     remote_dir: str
+    source_build: bool = False
 
     def run(
         self,
@@ -145,7 +146,10 @@ class Host:
         return result.stdout
 
     def compose(self, arguments: str, **kwargs) -> str:
-        return self.run(f"docker compose {arguments}", **kwargs)
+        files = "-f docker-compose.yml"
+        if self.source_build:
+            files += " -f docker-compose.build.yml"
+        return self.run(f"docker compose {files} {arguments}", **kwargs)
 
     def env_set(self, **values: str | None) -> None:
         """Edit `.env` the way the docs say to: one `KEY=value` line per setting,
@@ -166,7 +170,7 @@ class Host:
             self.run(command, input_text=value, label=f"editing .env ({key})")
 
     def up(self) -> None:
-        self.compose("up -d --wait")
+        self.compose("up -d --wait --build" if self.source_build else "up -d --wait --no-build")
 
     def setup_token(self) -> str:
         """The one-time setup token the API printed at start, read the way the
@@ -228,7 +232,7 @@ class Host:
             'exec -T db sh -c \'exec pg_restore -U "$POSTGRES_USER" -d "$POSTGRES_DB"'
             f" --clean --if-exists' < {shlex.quote(remote_dump)}"
         )
-        self.compose("up -d --build --wait")
+        self.up()
 
     def recovery(self, subcommand: str, *, input_text: str | None = None) -> str:
         return self.compose(
@@ -1295,6 +1299,11 @@ def main(argv: list[str]) -> int:
     parser.add_argument("--base", required=True, help="https://NAME — the instance through Caddy")
     parser.add_argument("--ssh", required=True, help="user@host for the host-side steps")
     parser.add_argument("--remote-dir", default="/opt/plamotrack")
+    parser.add_argument(
+        "--source-build",
+        action="store_true",
+        help="test a checkout using docker-compose.build.yml; omit for a release bundle",
+    )
     parser.add_argument("--idp", default=None, help="https://idp.NAME — the gate's Keycloak")
     parser.add_argument("--idp-user", default="owner")
     parser.add_argument(
@@ -1329,7 +1338,7 @@ def main(argv: list[str]) -> int:
         matrix.TLS_CONTEXT = ssl.create_default_context(cafile=args.ca_cert)
     ctx = Context(
         base=base,
-        host=Host(args.ssh, args.remote_dir),
+        host=Host(args.ssh, args.remote_dir, args.source_build),
         results=Results(),
         state_dir=state_dir,
         idp=args.idp.rstrip("/") if args.idp else None,

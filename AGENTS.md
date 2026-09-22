@@ -88,8 +88,9 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
 ## Layout
 
 ```
-docker-compose.yml      # the full stack: web (nginx) + api + migrate + db.
-                        #   `up -d --build --wait` installs without publishing Postgres
+docker-compose.yml      # the pull-only stack: web (nginx) + api + migrate + db.
+                        #   release bundles pin tested digests; Postgres remains unpublished
+docker-compose.build.yml # explicit local source build; CI/review use this, never release images
 docker-compose.dev.yml  # explicit dev overlay: publishes Postgres on loopback only
 .env                    # the only config file (gitignored); .env.example is the template
                         #   compose + API both read it; app/config.py assembles the DSN
@@ -207,6 +208,17 @@ HANDOFF.md              # session hand-off log — the five most recent entries 
   review-brief.md       #   fill-in template for briefing a reviewer; the PR-body shape it assumes
 ```
 
+## Release artifacts (#278)
+
+`release-candidate.yml` builds both architectures once, then runs CI against their
+recorded digests on native amd64 and arm64 runners. `release-promote.yml` accepts
+only a successful candidate and an existing tag at that exact commit; it copies
+image manifests and attaches the tested bundle to a draft release. No rebuild,
+`latest` tag, or automatic publication. The maintainer runbook and update policy
+are in `.agents/releases.md`. Registry writes, tags and release publication still
+require the owner's explicit instruction. Until a release with these assets is
+published, install from source using the override below.
+
 ## Dev environment & commands
 
 Postgres comes from Docker (OrbStack on the primary dev Mac, auto-starts). For
@@ -221,12 +233,12 @@ To exercise the packaged stack instead (before touching Dockerfiles, `frontend/n
 or anything about startup ordering):
 
 ```bash
-docker compose up -d --build --wait   # http://127.0.0.1:8080 — see below re --build
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait   # http://127.0.0.1:8080 — see below re --build
 docker compose logs migrate   # migrations; Exited (0) is success
 docker compose down           # add -v ONLY to destroy the database
 ```
 
-**`--build` is not optional, including on a first run.** `api` and `migrate` share
+**Source builds require `docker-compose.build.yml` and `--build`, including on a first run.** `api` and `migrate` share
 an `image:` tag so they build once and run identical bits, which also means a plain
 `up` reuses a **stale** local image after you change the code — that is how a
 container once ran migrations it predated. Separately, a fresh LXC on the official

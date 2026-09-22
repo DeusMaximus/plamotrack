@@ -1,0 +1,44 @@
+name: Promote release candidate
+
+# Separate, explicit operation after the candidate gate and release-tag approval.
+# Select the existing release tag in the dispatch UI. Creates a draft, not a release announcement.
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_run:
+        description: 'Successful Release candidate workflow run ID'
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-promotion
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      packages: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      CANDIDATE_RUN: ${{ inputs.candidate_run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      - uses: docker/login-action@783ae9cac559640a24c9212dfa6cd9e998252f9a
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Download, verify and promote the successful candidate
+        run: |
+          case "$CANDIDATE_RUN" in ''|*[!0-9]*) echo 'Expected a numeric run ID'; exit 1;; esac
+          gh run download "$CANDIDATE_RUN" --repo DeusMaximus/plamotrack \
+            --name release-bundle --dir "$RUNNER_TEMP/release-bundle"
+          python3 backend/promote_release.py "$CANDIDATE_RUN" "$RUNNER_TEMP/release-bundle"

@@ -39,8 +39,8 @@ COPYFILE_DISABLE=1 tar czf - --exclude .git --exclude node_modules --exclude .ve
   | ssh root@HOST 'mkdir -p /opt/plamotrack && tar xzf - -C /opt/plamotrack'
 ssh root@HOST 'PLAMOTRACK_TEST_NAME=NAME PLAMOTRACK_TUNNEL_NAME=TUNNEL-NAME \
       sh /opt/plamotrack/.agents/deployment-gate/host-prepare.sh'
-ssh root@HOST 'cd /opt/plamotrack && docker compose up -d --build --wait'   # --build: AGENTS.md
-cd backend && GATE_IDP_PASSWORD=owner-password uv run python deployment_gate.py \
+ssh root@HOST 'cd /opt/plamotrack && docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait'   # --build: AGENTS.md
+cd backend && GATE_IDP_PASSWORD=owner-password uv run python deployment_gate.py --source-build \
       --base https://NAME --ssh root@HOST --idp https://idp.NAME \
       --phase all --results-out ../.agents/deployment-gate/results-$(date +%F).md
 ```

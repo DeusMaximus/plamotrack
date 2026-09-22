@@ -105,4 +105,4 @@ sed -e "s/PLAMOTRACK_TEST_NAME/$PLAMOTRACK_TEST_NAME/g" \
 ( cd "$GATE/keycloak" && PLAMOTRACK_TEST_NAME="$PLAMOTRACK_TEST_NAME" docker compose up -d --wait )
 
 step "done"
-echo "next: docker compose up -d --build --wait in $PLAMOTRACK_DIR, then the driver's phases"
+echo "next: docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait in $PLAMOTRACK_DIR, then the driver's phases"
