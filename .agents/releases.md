@@ -1,6 +1,6 @@
 # Release artifacts (#278)
 
-This is the maintainer procedure. The first release using it is still pending;
+This is the maintainer procedure. v0.5.1-alpha is the first release through it;
 GitHub publication and native CI cannot be certified by a local build.
 
 ## Candidate, then promotion

@@ -203,16 +203,15 @@ Being honest up front beats you finding out at 11pm:
 > [docs.gunp.la/installation](https://docs.gunp.la/installation) and
 > [docs.gunp.la/first-run](https://docs.gunp.la/first-run).
 
-Release packaging now has a candidate/promotion workflow (#278). Once a version's
+From v0.5.1-alpha, each version's
 [release page](https://github.com/DeusMaximus/plamotrack/releases) includes
-`docker-compose.yml`, `.env.example`, `release.json` and `SHA256SUMS`, you can
+`docker-compose.yml`, `.env.example`, `release.json` and `SHA256SUMS`, and you can
 install those files in an empty directory with Docker alone. Choose that explicit
 version, verify `sha256sum -c SHA256SUMS` after downloading all its assets, copy
 `.env.example` to `.env`, set the database password, then run
 `docker compose up -d --no-build --wait`. The Compose file pins the tested image
 digests for both Linux architectures. No registry login or Git checkout is needed.
 There is no moving `latest` channel; choose another release deliberately to update.
-The first such release has not been published yet.
 
 For a **source installation**, you'll need: [Docker](https://docs.docker.com/get-started/get-docker/) with Compose,
 [Git](https://git-scm.com/downloads), and a few minutes. Nothing else — the images build
