@@ -10,7 +10,8 @@ The host is a fresh Linux box prepared by `.agents/deployment-gate/host-prepare.
 Docker and Compose, Caddy with the cloudflare DNS module and the reference
 Caddyfile (`deploy/caddy/Caddyfile`) in front of the bundled stack on
 `127.0.0.1:8080`, a Keycloak (the #190 spike's) behind the same Caddy as the
-identity provider, and this working tree at `--remote-dir`. Every host-side step
+identity provider, and at `--remote-dir` either this working tree (`--source-build`)
+or a release's downloaded files (the default). Every host-side step
 runs over `ssh` as the operator would type it — the `.env` edits, `docker compose
 up -d`, the documented backup and restore commands verbatim — and every check is
 made from outside, through the TLS front. Phases, in the order `all` runs them:

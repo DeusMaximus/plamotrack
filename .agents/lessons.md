@@ -1650,3 +1650,22 @@ disconnected node already fails) and that *drawn* versus *connected* needed a te
 its own, which the product could not supply (no page has both a folding twin and a
 dialog) — so the test brings its own twin and says so.
 
+
+## The asset GitHub renamed (#278, v0.5.1-alpha)
+
+The first release through the pipeline passed everything it had: bundle verification
+at build, both native Integration jobs pulling anonymously, the full deployment gate
+on the release files. It was tagged and promoted. Then the draft's own assets were
+downloaded, the way the README tells a user to, and `sha256sum -c SHA256SUMS` failed:
+`.env.example: FAILED open or read`. GitHub renames an uploaded asset whose name
+starts or ends with a period; `.env.example` had become `default.env.example`. Every
+check before that one had read the workflow artifact, which keeps the name — a copy
+of the release that took a different route to the checker than to the user. The tag
+and the version image tags already existed, and neither moves, so the fix shipped as
+v0.5.2-alpha and v0.5.1-alpha was never published.
+
+What to keep: **gate what the user receives, by the route they receive it.** Where
+the last hop is someone else's upload — a release page, a registry — read the result
+back after it and run the check the user will run; the promotion now downloads its
+own draft and verifies it. And the hop has rules of its own: the names that cross it
+now have one, stated in a test rather than read back from the code that makes them.
