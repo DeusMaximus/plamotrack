@@ -23,6 +23,15 @@ GitHub publication and native CI cannot be certified by a local build.
    an empty volume, check running image identities and run the existing
    authenticated ingress/MCP/log checks. PostgreSQL is pinned to one multi-platform
    digest, too. A successful pull alone never passes the gate.
+   **First candidate watchpoints (not yet verified in Actions):** confirm that
+   the absolute bundle `COMPOSE_FILE` written to `GITHUB_ENV` overrides the
+   job-level source-build value in later steps. The pull/start and running-image
+   steps must use the downloaded bundle, not the checkout's build override.
+   Also confirm that both native runners find the Compose/buildx plugins through
+   the anonymous Docker config's `/usr/libexec/docker/cli-plugins` or
+   `/usr/lib/docker/cli-plugins` search paths; the arm64 runner is untested.
+   Ordinary source PR CI and local environment substitution do not verify these
+   candidate-only runner behaviors.
 5. Download the `release-bundle` artifact for the existing deployment/client gate.
    Run `deployment_gate.py` **without** `--source-build` against a directory with
    those release files and its own `.env`. It will not build. A source checkout
@@ -44,6 +53,11 @@ The workflow artifact expires after 30 days; promote while it is retained or gat
 a new candidate. Promotion may resume a partial image-tag copy only when every
 existing version tag still equals its candidate digest. An existing draft/release
 is never overwritten; inspect a partial draft manually before proceeding.
+
+For a manual `release_artifacts.py running` check, use the same working directory,
+`COMPOSE_FILE`, project selection and (for source builds) `PLAMOTRACK_SOURCE_TAG`
+as the stack's startup command. Identity refusals include the resolved Compose
+project and API/migrate/web image references to make a selection mismatch visible.
 
 ## Files and version policy
 

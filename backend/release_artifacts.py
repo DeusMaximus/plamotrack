@@ -133,6 +133,18 @@ def verify(out: Path) -> dict:
 def verify_running(revision: str, version: str | None = None) -> None:
     """Check stopped migrate too; it must have run precisely the API's image."""
     config = json.loads(run("docker", "compose", "config", "--format", "json"))
+
+    def refusal(message: str) -> ValueError:
+        images = ", ".join(
+            f"{service}={config['services'][service]['image']}"
+            for service in ("api", "migrate", "web")
+        )
+        return ValueError(
+            f"{message}. Resolved Compose project {config['name']!r}: {images}. "
+            "Run from the same directory and with the same COMPOSE_FILE, "
+            "COMPOSE_PROJECT_NAME and PLAMOTRACK_SOURCE_TAG used to start the stack."
+        )
+
     ids = {}
     for service in ("api", "migrate", "web"):
         container = run("docker", "compose", "ps", "-aq", service)
@@ -141,19 +153,19 @@ def verify_running(revision: str, version: str | None = None) -> None:
             run("docker", "image", "inspect", config["services"][service]["image"])
         )
         if details["Image"] != image["Id"]:
-            raise ValueError(f"{service} is not running the configured image")
+            raise refusal(f"{service} is not running the configured image")
         labels = details["Config"]["Labels"]
         if labels.get("org.opencontainers.image.revision") != revision:
-            raise ValueError(f"{service} did not come from the reviewed source revision")
+            raise refusal(f"{service} did not come from the reviewed source revision")
         if version and labels.get("org.opencontainers.image.version") != version:
-            raise ValueError(f"{service} version label mismatch")
+            raise refusal(f"{service} version label mismatch")
         if service == "migrate" and (
             details["State"]["Status"] != "exited" or details["State"]["ExitCode"] != 0
         ):
-            raise ValueError("migrations did not complete successfully")
+            raise refusal("migrations did not complete successfully")
         ids[service] = details["Image"]
     if ids["api"] != ids["migrate"]:
-        raise ValueError("API and migrations ran different images")
+        raise refusal("API and migrations ran different images")
     print("running API, web and completed migrations match the configured artifacts and source")
 
 

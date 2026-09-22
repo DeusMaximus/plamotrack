@@ -186,7 +186,22 @@ def test_deployment_gate_selects_source_explicitly(monkeypatch, source):
 
 
 @pytest.mark.parametrize(
-    "block", [None, "tag", "head", "existing-release", "web-conflict", "registry-error"]
+    "block",
+    [
+        None,
+        "tag",
+        "head",
+        "existing-release",
+        "web-conflict",
+        "registry-error",
+        "candidate-drift-api",
+        "candidate-drift-web",
+        "copy-drift-api",
+        "copy-drift-web",
+        "retry-api",
+        "retry-web",
+        "retry-both",
+    ],
 )
 def test_promotion_preflights_every_image_before_copying(monkeypatch, packaged, tmp_path, block):
     import sys
@@ -211,6 +226,11 @@ def test_promotion_preflights_every_image_before_copying(monkeypatch, packaged, 
         if args[:3] == ["git", "fetch", "origin"]:
             return SimpleNamespace(returncode=0)
         if args[:4] == ["docker", "buildx", "imagetools", "inspect"]:
+            component = "web" if "plamotrack-web:" in args[4] else "api"
+            if block in (f"retry-{component}", "retry-both"):
+                return SimpleNamespace(
+                    returncode=0, stdout=json.dumps(IMAGES[component].split("@")[1])
+                )
             if block == "web-conflict" and "plamotrack-web:" in args[4]:
                 return SimpleNamespace(returncode=0, stdout=json.dumps("sha256:" + "9" * 64))
             if block == "registry-error":
@@ -221,31 +241,121 @@ def test_promotion_preflights_every_image_before_copying(monkeypatch, packaged, 
 
     def inspect(reference):
         component = "web" if "plamotrack-web" in reference else "api"
+        if block == f"candidate-drift-{component}" and "@" in reference:
+            return "sha256:" + "9" * 64
+        if block == f"copy-drift-{component}" and "@" not in reference:
+            return "sha256:" + "9" * 64
         return IMAGES[component].split("@")[1]
 
     monkeypatch.setattr(promote, "run", read)
     monkeypatch.setattr(promote.subprocess, "run", invoke)
     monkeypatch.setattr(promote, "digest", inspect)
-    if block:
+    copies = [
+        [
+            "docker",
+            "buildx",
+            "imagetools",
+            "create",
+            "--prefer-index=false",
+            "--tag",
+            release.IMAGE_PREFIX + component + ":" + VERSION,
+            IMAGES[component],
+        ]
+        for component in ("api", "web")
+    ]
+    if block and block.startswith("copy-drift-"):
+        with pytest.raises(ValueError, match="promotion changed the tested image index"):
+            promote.main()
+        count = 1 if block.endswith("api") else 2
+        assert writes == copies[:count], "digest drift must stop copying and release creation"
+    elif block and not block.startswith("retry-"):
         with pytest.raises(ValueError):
             promote.main()
         assert writes == [], "a failed preflight must not copy even the first image"
     else:
         promote.main()
         assert len(writes) == 3
-        for command, component in zip(writes[:2], ("api", "web"), strict=True):
-            assert command == [
-                "docker",
-                "buildx",
-                "imagetools",
-                "create",
-                "--prefer-index=false",
-                "--tag",
-                release.IMAGE_PREFIX + component + ":" + VERSION,
-                IMAGES[component],
-            ]
+        assert writes[:2] == copies
         assert writes[2][:4] == ["gh", "release", "create", VERSION]
         assert "--draft" in writes[2] and "--prerelease" in writes[2]
         assert "--verify-tag" in writes[2]
         for name in release.PAYLOADS | {"release.json", "SHA256SUMS"}:
             assert str(packaged / name) in writes[2]
+
+
+@pytest.mark.parametrize(
+    ("failure", "message"),
+    [
+        (None, None),
+        ("image-api", "api is not running the configured image"),
+        ("image-migrate", "migrate is not running the configured image"),
+        ("image-web", "web is not running the configured image"),
+        ("revision", "api did not come from the reviewed source revision"),
+        ("version", "api version label mismatch"),
+        ("migrate-running", "migrations did not complete successfully"),
+        ("migrate-failed", "migrations did not complete successfully"),
+        ("different-migrate", "API and migrations ran different images"),
+    ],
+)
+def test_running_identity_explains_resolved_compose_context(monkeypatch, capsys, failure, message):
+    refs = {
+        "api": "plamotrack-api:custom",
+        "migrate": "plamotrack-api:custom",
+        "web": "plamotrack-web:custom",
+    }
+    if failure == "different-migrate":
+        refs["migrate"] = "plamotrack-api:other"
+
+    def read(*args):
+        if args == ("docker", "compose", "config", "--format", "json"):
+            return json.dumps(
+                {
+                    "name": "review-project",
+                    "services": {
+                        service: {"image": ref, "environment": {"SECRET": "never-print-this"}}
+                        for service, ref in refs.items()
+                    },
+                }
+            )
+        if args[:4] == ("docker", "compose", "ps", "-aq"):
+            return "container-" + args[4]
+        if args[:3] == ("docker", "image", "inspect"):
+            return json.dumps([{"Id": "id-" + args[3]}])
+        assert args[:2] == ("docker", "inspect")
+        service = args[2].removeprefix("container-")
+        return json.dumps(
+            [
+                {
+                    "Image": "stale" if failure == f"image-{service}" else "id-" + refs[service],
+                    "Config": {
+                        "Labels": {
+                            "org.opencontainers.image.revision": (
+                                "wrong" if failure == "revision" else REVISION
+                            ),
+                            "org.opencontainers.image.version": (
+                                "wrong" if failure == "version" else VERSION
+                            ),
+                        },
+                    },
+                    "State": {
+                        "Status": "running" if failure == "migrate-running" else "exited",
+                        "ExitCode": 1 if failure == "migrate-failed" else 0,
+                    },
+                }
+            ]
+        )
+
+    monkeypatch.setattr(release, "run", read)
+    if failure:
+        with pytest.raises(ValueError, match=message) as error:
+            release.verify_running(REVISION, VERSION)
+        diagnostic = str(error.value)
+        assert "review-project" in diagnostic
+        for service, ref in refs.items():
+            assert f"{service}={ref}" in diagnostic
+        for setting in ("COMPOSE_FILE", "COMPOSE_PROJECT_NAME", "PLAMOTRACK_SOURCE_TAG"):
+            assert setting in diagnostic
+        assert "never-print-this" not in diagnostic + capsys.readouterr().out
+    else:
+        release.verify_running(REVISION, VERSION)
+        assert "match the configured artifacts and source" in capsys.readouterr().out
