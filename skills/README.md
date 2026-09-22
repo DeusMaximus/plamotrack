@@ -25,8 +25,8 @@ Like everything else in this repository, the skills are MIT licensed.
    contains the `plamotrack-gunpla` parent folder and is versioned by that release;
    its checksum is recorded in `release.json` and `SHA256SUMS`.
 
-   Releases before v0.5.1-alpha have no asset; build it from the matching
-   checkout: `cd skills && zip -r plamotrack-gunpla.zip plamotrack-gunpla`.
+   For a release without the asset (every release before v0.5.1-alpha), build it
+   from the matching checkout: `cd skills && zip -r plamotrack-gunpla.zip plamotrack-gunpla`.
 
 2. In Claude Desktop, open **Settings → Capabilities**, make sure **Skills** is
    enabled, then choose **Upload skill** and select the zip.

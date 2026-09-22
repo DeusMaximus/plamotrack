@@ -203,10 +203,11 @@ Being honest up front beats you finding out at 11pm:
 > [docs.gunp.la/installation](https://docs.gunp.la/installation) and
 > [docs.gunp.la/first-run](https://docs.gunp.la/first-run).
 
-From v0.5.1-alpha, each version's
-[release page](https://github.com/DeusMaximus/plamotrack/releases) includes
-`docker-compose.yml`, `.env.example`, `release.json` and `SHA256SUMS`, and you can
-install those files in an empty directory with Docker alone. Choose that explicit
+Releases from v0.5.1-alpha carry `docker-compose.yml`, `.env.example`,
+`release.json` and `SHA256SUMS` on their
+[release page](https://github.com/DeusMaximus/plamotrack/releases), and with those
+files you can install in an empty directory with Docker alone. If no release there
+has them yet, use the source installation below. Otherwise choose an explicit
 version, verify `sha256sum -c SHA256SUMS` after downloading all its assets, copy
 `.env.example` to `.env`, set the database password, then run
 `docker compose up -d --no-build --wait`. The Compose file pins the tested image
