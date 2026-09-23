@@ -41,6 +41,27 @@ Template:
 
 ---
 
+## 2026-09-23 — Claude Code (Opus 5.5) — #294 MERGED as `ee458f4` (PR #295): the MCP proxy's upstream authorization request is its own — no client `resource`, the scope pinned to `openid`; Pocket ID links with no workaround
+
+- **Done:**
+  - [PR #295](https://github.com/DeusMaximus/plamotrack/pull/295) squash-merged as **`ee458f4`**, pinned to the reviewed head `886c0a0` (the merge tree equals the head's); #294 closed. `forward_resource=False`, and `UPSTREAM_SCOPE` ("openid") set through `extra_authorize_params` — a sibling the value sweep found: a client that omits `scope` asked the provider for nothing, not even `openid`. Rule 13 (AGENTS.md) and the design's family-8 row say the upstream request is the proxy's.
+  - Test `test_nothing_the_client_sends_reaches_the_provider_but_its_scope`, 12 cases (DCR/CIMD × `resource` absent / `…/mcp/` / `…/mcp` × `scope` sent / omitted): 10 red / 2 green on unfixed `main`. Harness cases `moa-116` and `moa-117`, each killed apart. Neighbouring suites 665 passed, 1 xfail that predates the branch; CI 5/5.
+  - Live, before merging: Pocket ID v2.16.0 with **both API registrations removed**, through the tunnel — link, refresh, transparent refresh, the race, the browser login; Keycloak 26.6 through the reference Caddy — login, link, refresh, and the upstream request carried exactly the nine expected parameters.
+- **Decisions:** the review call (the owner agreed) — Greptile and CodeRabbit only, no GLM or Codex round: the change only removes what goes upstream, and its worst failure is a loud false refusal at link time, which the release gate's OIDC and MCP legs would catch. Greptile 5/5, no findings; CodeRabbit no actionable comments, its docstring-coverage warning declined (the PR body's Review section says why).
+- **State:**
+  - **Unreleased:** v0.5.2 still forwards `resource`, so a Pocket ID install needs the API-registration workaround (#280 findings §2a) until the next release.
+  - **testhost is in the spike's state, not the gate's.** `/opt/plamotrack-280` (Compose project `plamotrack-280`) runs **the #294 build** — `plamotrack-api:294-spike` through `override-294.yml` (bring it up with `-f docker-compose.yml -f override-294.yml`); web and db are the v0.5.2 release — behind the tunnel (`WEB_BIND` on the LAN address, `TRUSTED_PROXIES` the connector), in OIDC mode against Pocket ID (project `plamotrack-spike-280-idp`, the gate's `idp.` name on loopback 8081, provider access-token lifetime 1 min, **no APIs registered now**). The gate's stack (`/opt/plamotrack`, v0.5.2, back on its release images) and Keycloak are **stopped**, volumes kept. `probe.py teardown --base https://NAME --ssh root@HOST` removes the spike and starts both.
+  - **Keycloak's container mounts `realm.json` from `/opt/plamotrack/.agents/deployment-gate/keycloak/`** — the path it was created at, before the rehearsal moved the checkout to `/opt/plamotrack-source`; an identical copy sits there. **Don't recreate it:** the realm pins no user ids, so a new container changes `sub` and the gate's collection then needs `recovery rebind-oidc`.
+  - The owner's Claude.ai "Testing" connector points at the tunnel name; remove it when the spike is done. Spike secrets are in `~/.plamotrack-gate/spike-280/`; logs in `.dev/280/` (gitignored).
+  - The merged branch `fix/294-upstream-resource` is still on origin.
+  - The LXC is a v0.5.2 release install since 2026-09-23 (moved from its Git checkout by the docs' path, no friction). #278 is open for the owner's skill-zip check.
+- **Next:**
+  1. Owner, optional: reconnect the Claude.ai connector for a real-client link on the #294 build with no API registration — the remaining condition of #280's recommendation (findings §8).
+  2. Owner: the #280 decision (an optional supported provider).
+  3. #279: the two edge probes (a header-echo image on Railway's trial and a Render free service — the edge's source addresses, `X-Forwarded-For`, the resolver, the health-check `Host`), then #281's platform-neutral packaging, then one proof deployment.
+  4. `probe.py teardown` when the spike is done.
+  - Carried: posting the rehearsal on #285 (offered). Untested: the release-to-release update, and the Windows commands in Git Bash.
+
 ## 2026-09-23 — Claude Code (Opus 5.5) — #280 Pocket ID: the browser login works as shipped, MCP needs the forwarded `resource` dropped (#294 filed); real passkeys and Claude.ai pass through the tunnel; #279 recorded on paper
 
 - **Decisions (the owner's, 2026-09-23):** #279 is **paper only for now** — no platform accounts; the proof deployment comes back after #280. #280 ran on testhost; file #294, post the findings, commit the spikes.
@@ -143,10 +164,3 @@ Template:
   5. Close #278 and record the observed watchpoints in the runbook.
 
   #280 (Pocket ID) can run in parallel. #279 needs the published images.
-
-## 2026-09-22 — Codex (GPT-6) — PR #290: CodeRabbit's manifest/Compose binding fixed
-
-- **Done:** owner approved fixing [CodeRabbit's review](https://github.com/DeusMaximus/plamotrack/pull/290#pullrequestreview-5274240328) at `04cc8bb`. Reproduced that changing any service image and recomputing checksums passed bundle verification. `verify` now parses the explicit bundle with Docker Compose and compares db, migrate, api and web individually to the manifest. Interpolation and env-file resolution are disabled: releases require literal digest pins and verification needs no operator `.env`. Explicit file/project arguments isolate caller Compose settings. Existing checksum/file/reference checks remain intact. The runbook and module docstring state the Compose CLI requirement; no running daemon is needed.
-- **Validation:** 10 new mismatch cases failed at `04cc8bb`; the unrelated-caller positive control passed. Cases cover each service separately, API+migrate together, and an image variable whose caller value matches the manifest. Focused suite **75 passed** (60 packaging + 15 existing controls), including verification pointed at an unreachable Docker daemon. Three single-site mutants killed: disabled binding (10 failures), global substring comparison (4 failures), interpolation enabled (5 failures); byte-for-byte restoration. Ruff, frontend build, actionlint and diff checks passed. Evidence: `.dev/278/coderabbit/` (gitignored). No application/container deployment was needed.
-- **Review/state:** GLM **5.3** (owner-corrected; not Flash) gave GO+3P3 at `6bed308`; those follow-ups were pushed as `04cc8bb`. CodeRabbit subsequently performed a real review at `04cc8bb`; the older skipped-review state is historical. Its one low-priority finding is addressed here. No additional independent round requested for these small follow-ups. Frontend and Integration passed at `04cc8bb`; Backend was still running at last check. Inspect current-head CI before merge; older checks/review are not a new-head verdict.
-- **Next:** commit/push the authorized fix and update PR #290's coverage/response; merge only when requested. #278 remains open without a closing-issue link. First candidate publication still needs explicit approval, public/anonymous GHCR pulls, both native hosted gates (including the documented Compose environment/plugin watchpoints), downloaded-artifact deployment/client evidence and actual promotion. No registry publication, release, tag, merge or deployment performed. #285 retains existing-install upgrade acceptance. Original development DB remains running; no temporary stack was started.
