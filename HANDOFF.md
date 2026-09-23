@@ -41,6 +41,35 @@ Template:
 
 ---
 
+## 2026-09-23 — Claude Code (Opus 5.5) — the docs move to the release install: PR #293 (README + runbook) and plamotrack-docs#7 (all install/update pages) open; the Git → release move rehearsed on testhost, 0 failed
+
+- **Decisions (the owner's, 2026-09-23):**
+  - The docs lead with the published release files now, without waiting for M6.7 to finish.
+  - The README's install section shows **only** the release method. The README is the public page for now. The contributor section "Developing on it" stays.
+  - The repo's `docker-compose.yml` stays the source/pull-only template. Pinning the current release in it was declined for three reasons: a commit can't carry its own digests; `main`'s compose file must describe `main`'s code; and it would reopen #290's source-substitution class.
+- **Done:**
+  - [PR #293](https://github.com/DeusMaximus/plamotrack/pull/293): the README install moves to the release files, run verbatim on macOS. `.agents/releases.md` step 5 gains "update from the previous release's files" (its first real run is v0.5.2 → the next release), and step 7 bumps the version named in the README and docs commands.
+  - [plamotrack-docs#7](https://github.com/DeusMaximus/plamotrack-docs/pull/7), retitled, now covers every page:
+    - Installation: the release files, with Git Bash kept only as Windows' terminal.
+    - Updating: release to release, plus "If you installed with Git" with the tested same-folder move and a collapsed block for Git updates.
+    - Backups (`--no-build`), Troubleshooting, Configuration (the `COMPOSE_*` keys are Git-only), VPS + Caddy (the drop-in inline), Agent Skills (the zip comes from the release), and the v0.5.2 changelog.
+    - `mint broken-links` is clean.
+  - **Rehearsal** (`.dev/0.5.2/rehearsal/`, gitignored; `procedure.md` holds the table, `rehearse.py` the driver-based script):
+    - Start: a `git clone` at v0.4.1 in OIDC mode, claimed, with data, a PAT and an OAuth MCP client linked.
+    - (a) A new folder plus `COMPOSE_PROJECT_NAME`, and (b) the checkout renamed aside with a fresh folder of the same name. Both ran forward, rolled back and ran forward again, with **0 failed checks**: session, PAT, data, the same volume (CreatedAt), audit rows, MCP refresh and initialize, no re-registration.
+    - The set-aside checkout is its own project (`plamotrack-source`).
+    - The gate's matrices trip the limiters on purpose, so linking an MCP client right after them needs a ~2 min wait.
+- **State:**
+  - testhost is a **release install** at `/opt/plamotrack` (v0.5.2, project `plamotrack`), with the 0.4.1 checkout at `/opt/plamotrack-source`.
+  - #278 is still open for the owner's skill-zip install check.
+  - The LXC is unchanged (0.4.1, source).
+- **Next:**
+  1. Owner: review and merge #293 and docs#7. Merging #7 publishes docs.gunp.la.
+  2. The owner's LXC move, per Updating → "If you installed with Git". A read-only look first is offered, pending the owner's OK to SSH.
+  3. Post the rehearsal on #285 as evidence (offered, not yet agreed).
+  4. #279 and #280.
+  - Untested: the release-to-release update (no predecessor yet), and the Windows commands in Git Bash (NEMESIS).
+
 ## 2026-09-23 — Claude Code (Opus 5.5) — **v0.5.2-alpha PUBLISHED**, the first release with its own install files; v0.5.1-alpha tagged and promoted but never published (GitHub renamed an asset); #292 fixed the pipeline; #278 open for one check; plamotrack-docs#7 awaits the owner's merge
 
 - **Done — the chain, each gated step on the owner's word:**
@@ -106,10 +135,3 @@ Template:
 - **Validation:** both digest mutants survived the old six-case matrix; the expanded matrix kills each (2 failed / 11 passed), and rejects a mutant refusing same-digest retries (3 failed / 10 passed). The diagnostic regression was 8 failed / 1 passed before the helper change; removing the new context kills the same eight cases. Each mutation restored byte-for-byte. Focused suite: **64 passed** (49 packaging + 15 existing controls). Real Docker/Compose smoke with isolated surrogate containers: matching identities pass; a deliberately mismatched configured API image names the project and all three images. No application or migration execution is claimed for that diagnostic smoke. Containers/network removed. Ruff, frontend production build, actionlint and diff checks passed. Evidence: `.dev/278/p3/` (gitignored).
 - **State:** branch `codex/278-release-packaging`, PR #290 against `main`. Backend, Frontend and Integration CI passed at the reviewed `6bed308`; follow-up CI must be checked at the new pushed SHA. CodeRabbit's success is a skipped review, not an approval. The prior implementation/reviewer architecture and packaged-stack evidence remains historical; these edits change only tests, refusal text and maintainer documentation. The original development DB remains running.
 - **Next:** update the PR coverage record and attributed response, verify the follow-up branch push and its CI; merge only when requested. #278 remains open, without a closing-issue link. The first real candidate still needs authorized GHCR publication, public/anonymous pulls, both native hosted gates, downloaded-artifact deployment/client evidence and actual promotion. No candidate run, tag, release, merge or deployment was performed. #285 retains existing-install upgrade acceptance.
-
-## 2026-09-22 — Codex (GPT-6) — #278 committed and pushed; PR #290 open for review
-
-- **Done:** the owner approved the implementation, requested commit/push, then the PR. Committed the 23 implementation/doc files as `c8743ab` and pushed `codex/278-release-packaging`; verified remote SHA and clean tree. Opened [PR #290](https://github.com/DeusMaximus/plamotrack/pull/290) against `main`, labelled enhancement and assigned to M6.7. Its attributed body contains the coverage record, measured controls and publication limitations; it says “Part of #278” so the issue remains open. This entry is the PR bookkeeping commit.
-- **State:** release packaging is implemented, not published. Candidate build and promotion are manual, and publishing a release itself triggers no build. No version bump, registry images, tag, release, production deployment or docs-site change. #278 still needs public GHCR visibility/anonymous pulls, both native candidate jobs, artifact deployment/client evidence and a real promotion. #285 retains existing-install upgrade acceptance. The original development DB remains running; temporary stacks/volumes are gone.
-- **Validation:** runtime/configuration evidence is for the tree committed as `c8743ab`: 48 focused tests, ARM64 native and AMD64 emulated builds/startup, 190 ingress rows per architecture, current modern/legacy MCP and REST versions plus credential-log scans. Ruff and the frontend production build were rerun before committing. actionlint/diff checks passed. Correction to the prior entry's wording: the four mutation configurations include three single-site promotion mutants and one pull-policy mutant changing both API-anchor and web declarations together; all were detected, but that is not independent mutation coverage of both policy declarations. The PR body makes this limit explicit. No unfixed-main red/green count or full local backend/e2e result is claimed.
-- **Next:** await exact-head PR CI and independent review; no reviewer commissioned by this task. The review envelope follows `.agents/review-brief.md` and is saved in `.dev/278/review-brief.md`. No merge or candidate publication is authorized. After review and merge, follow `.agents/releases.md`, obtaining explicit authorization for registry publication, tagging and release publication. Inspect the live PR for its latest checks; this entry makes no CI-success claim. Evidence remains in `.dev/278/` (gitignored).
