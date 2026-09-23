@@ -54,12 +54,31 @@ a credential in a log all the same.
 
 ## The owner's legs
 
-Not automated, and not claimed by `findings.md` until run:
+Real devices and a real MCP client (findings §7). A cloud client needs plamotrack
+reachable from the internet, so `probe.py tunnel` first moves the spike's plamotrack
+behind a Cloudflare Tunnel the way the gate's tunnel phase does — `--base` becomes the
+tunnel's name, and `--idp` keeps Pocket ID on its own:
 
-- A passkey on a phone and on a computer — the platform authenticators, and the
-  cross-device (QR) sign-in — against a Pocket ID the phone can reach.
-- A real MCP client (Claude web or desktop) linked through Pocket ID, which needs
-  plamotrack reachable from the client: the gate's tunnel phase for a cloud client.
+```bash
+VISITOR=$(curl -s https://cloudflare.com/cdn-cgi/trace | sed -n 's/^ip=//p')
+uv run --with 'playwright==1.62.*' python ../.agents/spikes/280/probe.py tunnel \
+    --base https://TUNNEL-NAME --ssh root@HOST --idp https://idp.NAME \
+    --host-ip <host LAN IP> --tunnel-proxy <connector IP> --tunnel-visitor "$VISITOR"
+uv run --with 'playwright==1.62.*' python ../.agents/spikes/280/probe.py api-resource add \
+    --base https://TUNNEL-NAME --ssh root@HOST --idp https://idp.NAME
+```
+
+Then a login code for the Pocket ID user the instance is bound to (the documented
+recovery command, run on the host), a real passkey added from it, and the sign-ins and
+the MCP client driven by hand:
+
+```bash
+ssh root@HOST 'cd /opt/plamotrack-280/pocket-id && docker compose exec pocket-id /app/pocket-id one-time-access-token owner'
+```
+
+The evidence is read back afterwards from plamotrack's `audit_event` rows, nginx's
+access log and Pocket ID's (devices by user agent, upstream refreshes by the token
+route), never from the clients.
 
 Tear-down: `probe.py teardown`, then `rm -rf ~/.plamotrack-gate/spike-280` when the
 evidence is no longer wanted.

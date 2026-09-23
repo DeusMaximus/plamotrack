@@ -3,7 +3,7 @@
 The draft of the #280 report. Run 2026-09-23 with `probe.py` (README.md), end to end
 from a clean start by `sequence.sh`, exit 0; the refresh legs re-run once more with
 exact upstream counting (§3). Browser legs used a CDP virtual authenticator, not a
-real device; the owner's legs (§7) are not claimed here.
+real device; the owner's real-device and Claude.ai legs are §7.
 
 ## What ran
 
@@ -157,17 +157,43 @@ runs and is not re-measured here.
 | Owner's sign-in | a passkey; nothing depends on a third party | a Google account |
 | Losing access | a login code from a Pocket ID admin or the host's shell keeps the identity | Google's own recovery; `rebind-oidc` otherwise |
 
-## 7. Not run — the owner's legs
+## 7. The owner's legs — real devices and Claude.ai, through a Cloudflare Tunnel
 
-- Real passkeys on a phone and a computer, and the cross-device (QR) sign-in.
-- A real MCP client (Claude web or desktop) linked through Pocket ID.
-- Pocket ID on a hosting platform (#279), and the UI-created client (§5).
+Run 2026-09-23 by the owner, the evidence read back from plamotrack's audit rows,
+nginx's access log and Pocket ID's. The spike's plamotrack moved behind the gate's
+Cloudflare Tunnel with the gate's tunnel settings (`probe.py tunnel`: `WEB_BIND` on
+the host's LAN address, `PUBLIC_BASE_URL` the tunnel's name, `TRUSTED_PROXIES` the
+connector — nginx saw the connector before it was trusted and exactly the
+workstation's public address after). Pocket ID stayed on its own name behind Caddy,
+**resolvable only inside the owner's network**; the client gained the tunnel's two
+callbacks, and the tunnel's `/mcp` was registered as a second Pocket ID API (§2a is
+per URI).
+
+| Leg | Evidence |
+|---|---|
+| A real passkey, desktop | Chrome on macOS; saved to **Proton Pass** (Pocket ID records AAGUID `50726f74-6f6e-5061-7373-50726f746f6e`, "Proton Pass Passkey", backup-eligible and backed up, transports `internal` + `hybrid`) |
+| The same passkey, phone | Chrome on Android, the passkey synced by Proton Pass: Pocket ID's `webauthn/login` start → finish, then plamotrack's `auth.login_succeeded` |
+| Claude.ai as a custom connector | a CIMD client (no `/mcp/register` request): discovery → `/mcp/authorize` → consent → Pocket ID (the desktop passkey) → callback → `/mcp/token` → `auth.mcp_grant_issued`; tool calls `POST /mcp` 200 |
+| Claude.ai after the provider's token expired | a call 6½ minutes after the link, Pocket ID's lifetime still 1 minute: the proxy's refresh at Pocket ID's token endpoint (200) in the same second, the call 200, no diagnostics in the api log; Claude.ai itself never refreshed (its token from the proxy lasts an hour) |
+| Browser write through the tunnel | `POST /api/kits` 201 with the owner's session; the same request with a foreign `Origin` 403 `ingress.origin_not_allowed` |
+
+**The provider only has to be reachable by the owner's browser.** Claude.ai's
+servers talk to plamotrack alone — discovery, the token endpoint, `/mcp` — and the
+proxy reaches Pocket ID's token endpoint from the api container. So a cloud MCP
+client linked through an identity provider the internet cannot reach. On a hosted
+platform the owner's browser is on the internet too, so in practice the provider is
+public there; the finding matters for #282's private-network and VPS cases.
+
+Not run: a platform authenticator (iCloud Keychain, Google Password Manager); the
+cross-device QR sign-in (the phone signed in directly with the synced passkey); a
+device off the owner's network; the client created in Pocket ID's UI (§5); Pocket
+ID on a hosting platform (#279).
 
 ## 8. Recommendation (draft — the owner's decision)
 
 Document Pocket ID as an **optional supported provider** once two things are true:
 the `resource` change (§2, #294) has landed with its own tests, so the recipe needs no API
-registration; and the owner's legs (§7) have passed on real devices. Whether the
+registration; and a real-device run like §7 has passed without §2a's workaround. Whether the
 hosting templates *bundle* it is #279/#281's call, because it is a second public
 service with its own name, volume and backup item — on Render roughly a third more
 cost, on Railway about a dollar. Until then, the configuration-only route (§2a) is

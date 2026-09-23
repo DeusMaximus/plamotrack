@@ -34,6 +34,8 @@ Steps, in order (README.md has the host layout):
     backup-restore Pocket ID export, `down -v`, import; then login and refresh
     wrong-key      the restored data under another ENCRYPTION_KEY, then the right one
     lost-passkey   the owner's passkey deleted; a login code and a new one; login
+    tunnel         plamotrack behind a Cloudflare Tunnel (--base is the tunnel's name;
+                   --idp, --host-ip, --tunnel-proxy, --tunnel-visitor)
     teardown       remove the spike's stacks; start the gate's stack and Keycloak
 
 Secrets (the Pocket ID keys, the client secret, the passkeys' private keys, the
@@ -779,6 +781,67 @@ def step_lost_passkey(ctx: gate.Context) -> None:
     step_login(ctx)
 
 
+def step_tunnel(ctx: gate.Context) -> None:
+    """The spike's plamotrack behind a Cloudflare Tunnel whose connector runs on
+    another host, the gate's tunnel phase applied to it: `--base` is the tunnel's
+    name; Pocket ID keeps its own. The client gains the tunnel's two callbacks; then
+    WEB_BIND on the LAN address and PUBLIC_BASE_URL on the tunnel, and
+    TRUSTED_PROXIES set only once nginx has been seen to receive the connector's
+    address — after which it must resolve this workstation's, exactly."""
+    if not (ctx.host_ip and ctx.tunnel_proxy and ctx.tunnel_visitor):
+        raise gate.GateError("tunnel needs --host-ip, --tunnel-proxy and --tunnel-visitor")
+    host = ctx.host
+    with idp_api(ctx) as api:
+        current = api.get(f"/oidc/clients/{CLIENT_ID}").json()
+        callbacks = list(current["callbackURLs"])
+        for callback in (f"{ctx.base}/api/auth/oidc/callback", f"{ctx.base}/mcp/auth/callback"):
+            if callback not in callbacks:
+                callbacks.append(callback)
+        body = {
+            k: current.get(k)
+            for k in (
+                "name",
+                "description",
+                "logoutCallbackURLs",
+                "isPublic",
+                "pkceEnabled",
+                "requiresReauthentication",
+                "requiresPushedAuthorizationRequests",
+                "skipConsent",
+                "isGroupRestricted",
+                "accessTokenDurationMinutes",
+                "refreshTokenDurationMinutes",
+            )
+        }
+        body = {k: v for k, v in body.items() if v is not None}
+        answer = api.put(f"/oidc/clients/{CLIENT_ID}", json={**body, "callbackURLs": callbacks})
+        if answer.status_code != 200:
+            raise gate.GateError(
+                f"client update answered {answer.status_code}: {answer.text[:300]}"
+            )
+    ctx.results.record("pocket-id client callbacks", f"{len(callbacks)}: + the tunnel's two")
+
+    host.env_set(
+        WEB_BIND=ctx.host_ip, PUBLIC_BASE_URL=ctx.base, ALLOWED_HOSTS=None, TRUSTED_PROXIES=None
+    )
+    host.up()
+    gate.expect(ctx, "tunnel: reachable", gate.get(ctx, "/api/healthz"), 200)
+    before = host.web_last_address()
+    if before != ctx.tunnel_proxy:
+        raise gate.GateError(
+            f"nginx saw {before}, not the connector {ctx.tunnel_proxy}; TRUSTED_PROXIES not set"
+        )
+    host.env_set(TRUSTED_PROXIES=ctx.tunnel_proxy)
+    host.up()
+    gate.get(ctx, "/api/healthz")
+    after = host.web_last_address()
+    ctx.results.record(
+        f"tunnel: TRUSTED_PROXIES={ctx.tunnel_proxy}",
+        f"nginx $remote_addr before: {before}; after: {after}; expected {ctx.tunnel_visitor}",
+        after == ctx.tunnel_visitor,
+    )
+
+
 def step_teardown(ctx: gate.Context) -> None:
     """The spike's two stacks, their volumes, its directory and the export
     archive removed; the gate's stack and Keycloak started again, as they were."""
@@ -806,6 +869,7 @@ STEPS = {
     "backup-restore": step_backup_restore,
     "wrong-key": step_wrong_key,
     "lost-passkey": step_lost_passkey,
+    "tunnel": step_tunnel,
     "teardown": step_teardown,
 }
 
@@ -816,6 +880,10 @@ def main(argv: list[str]) -> int:
     parser.add_argument("user", nargs="?", default="owner")
     parser.add_argument("--base", required=True, help="https://NAME, the gate host's name")
     parser.add_argument("--ssh", required=True, help="root@HOST")
+    parser.add_argument("--idp", help="Pocket ID's origin (default: https://idp.<base's host>)")
+    parser.add_argument("--host-ip", help="tunnel: the host's LAN address, for WEB_BIND")
+    parser.add_argument("--tunnel-proxy", help="tunnel: the connector's address")
+    parser.add_argument("--tunnel-visitor", help="tunnel: this workstation's public address")
     parser.add_argument(
         "--state-dir", default=str(pathlib.Path.home() / ".plamotrack-gate" / "spike-280")
     )
@@ -828,15 +896,15 @@ def main(argv: list[str]) -> int:
         host=gate.Host(ssh=args.ssh, remote_dir=SPIKE_DIR),
         results=gate.Results(),
         state_dir=state_dir,
-        idp=f"https://idp.{urlsplit(base).hostname}",
+        idp=(args.idp or f"https://idp.{urlsplit(base).hostname}").rstrip("/"),
         idp_user=args.user if args.step in ("enrol", "stranger") else "owner",
         idp_password=None,
         hold=0,
         ca_cert=None,
-        host_ip=None,
-        tunnel_base=None,
-        tunnel_proxy=None,
-        tunnel_visitor=None,
+        host_ip=args.host_ip,
+        tunnel_base=base,
+        tunnel_proxy=args.tunnel_proxy,
+        tunnel_visitor=args.tunnel_visitor,
     )
     if args.step == "stranger" and args.user == "owner":
         ctx.idp_user = "stranger"
