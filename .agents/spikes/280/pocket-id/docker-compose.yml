@@ -1,0 +1,35 @@
+# Pocket ID for the #280 spike, pinned by digest: v2.16.0 (2026-09-20), the same
+# index on Docker Hub and GHCR, image revision bb05e69 = the tag. It takes the
+# deployment gate's `idp.` name and loopback port 8081 in Keycloak's place, so the
+# gate's Caddyfile fronts it unchanged — stop the Keycloak fixture first.
+#
+# The two secrets come from ./.env beside this file (mode 0600, never committed),
+# written by `probe.py prepare` from the workstation's state directory:
+# ENCRYPTION_KEY encrypts the signing keys Pocket ID keeps in its database, so a
+# restore needs the same one; STATIC_API_KEY is what the probe drives the admin API
+# with. The healthcheck is the image's own, run every 5 s instead of every 90 s so
+# `up --wait` returns when it is ready.
+name: plamotrack-spike-280-idp
+services:
+  pocket-id:
+    image: ghcr.io/pocket-id/pocket-id:v2.16.0@sha256:9366436f3fd21619ed7e5709fa0acac88130f73414ec8ee1caf768fc487111ea
+    container_name: plamotrack-spike-pocket-id
+    restart: unless-stopped
+    environment:
+      APP_URL: https://idp.${PLAMOTRACK_TEST_NAME:?set PLAMOTRACK_TEST_NAME}
+      TRUST_PROXY: "true"
+      ENCRYPTION_KEY: ${POCKET_ID_ENCRYPTION_KEY:?set POCKET_ID_ENCRYPTION_KEY}
+      STATIC_API_KEY: ${POCKET_ID_STATIC_API_KEY:?set POCKET_ID_STATIC_API_KEY}
+      ANALYTICS_DISABLED: "true"
+    ports:
+      - "127.0.0.1:8081:1411"
+    volumes:
+      - data:/app/data
+    healthcheck:
+      test: ["CMD", "/app/pocket-id", "healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+volumes:
+  data:
