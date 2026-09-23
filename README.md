@@ -203,27 +203,25 @@ Being honest up front beats you finding out at 11pm:
 > [docs.gunp.la/installation](https://docs.gunp.la/installation) and
 > [docs.gunp.la/first-run](https://docs.gunp.la/first-run).
 
-Releases from v0.5.2-alpha carry `docker-compose.yml`, `env.example`,
-`plamotrack-gunpla.zip`, `release.json` and `SHA256SUMS` on their
-[release page](https://github.com/DeusMaximus/plamotrack/releases), and with those
-files you can install in an empty directory with Docker alone. If no release there
-has them yet, use the source installation below. Otherwise choose an explicit
-version, verify `sha256sum -c SHA256SUMS` after downloading all its assets, copy
-`env.example` to `.env`, set the database password, then run
-`docker compose up -d --no-build --wait`. The Compose file pins the tested image
-digests for both Linux architectures. No registry login or Git checkout is needed.
-There is no moving `latest` channel; choose another release deliberately to update.
-
-For a **source installation**, you'll need: [Docker](https://docs.docker.com/get-started/get-docker/) with Compose,
-[Git](https://git-scm.com/downloads), and a few minutes. Nothing else — the images build
-from this repo.
+You need [Docker](https://docs.docker.com/get-started/get-docker/) with Compose, and
+nothing else: no Git, no build, no registry login. Each
+[release](https://github.com/DeusMaximus/plamotrack/releases) carries the files to run
+it, with the tested images pinned by digest for both `linux/amd64` and `linux/arm64`.
 
 ```bash
-git clone https://github.com/DeusMaximus/plamotrack.git && cd plamotrack
-cp .env.example .env
+mkdir plamotrack && cd plamotrack
+for f in docker-compose.yml env.example plamotrack-gunpla.zip release.json SHA256SUMS; do curl -fsSLO "https://github.com/DeusMaximus/plamotrack/releases/download/v0.5.2-alpha/$f"; done
+sha256sum -c SHA256SUMS          # on macOS: shasum -a 256 -c SHA256SUMS
+cp env.example .env
 # open .env, replace change-me with a real password
-docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build --wait
+docker compose up -d --no-build --wait
 ```
+
+That's v0.5.2-alpha, the newest release when this was written; the
+[releases page](https://github.com/DeusMaximus/plamotrack/releases) has anything newer.
+There is no `latest` tag: updating means choosing the next version on purpose, in the
+same folder ([Updating](https://docs.gunp.la/configuration/upgrading)). Keep the folder
+and its name — Compose names your database after it.
 
 Open **http://localhost:8080**. The first visit asks for the setup token from the API
 log and a password (the alpha note above); every visit after it is this sign-in, and
@@ -232,7 +230,7 @@ to pour an existing spreadsheet in, or just add an order.
 
 ![The sign-in screen](docs/screenshots/sign-in.png)
 
-The first run builds two images and takes a few minutes; after that it's
+The first start downloads the images and takes a minute or two; after that it's
 seconds. `.env` is the whole configuration: Compose reads it to start the database
 and the API reads it to connect, so there's nothing to keep in sync.
 
@@ -266,7 +264,7 @@ reference are on the docs site too:
 
 ### Something went wrong
 
-- **`POSTGRES_PASSWORD` error from compose** — you skipped `cp .env.example .env`.
+- **`POSTGRES_PASSWORD` error from compose** — you skipped `cp env.example .env`.
 - **Port 8080 already in use** — set `WEB_PORT` in `.env` to something free.
 - **`up --wait` failed** — `docker compose ps` shows which service is unhealthy.
   If it's `migrate`, `docker compose logs migrate` has the reason, and the API
@@ -437,8 +435,9 @@ The tools above are generic on purpose — nothing in plamotrack knows what a gr
 bucket or a P-Bandai suffix is. That knowledge ships separately as **agent skills**:
 packaged convention files your agent loads alongside the MCP connection, so records
 come out consistent instead of spelled three ways. The first one covers Gunpla —
-kit naming, Bandai kit numbers, Gundam Markers, decals, the lot. See
-[`skills/`](skills/) for what's available and how to install one.
+kit naming, Bandai kit numbers, Gundam Markers, decals, the lot. It is
+`plamotrack-gunpla.zip`, already in the folder you installed from; see
+[`skills/`](skills/) for how to install it and what else is available.
 
 ---
 
