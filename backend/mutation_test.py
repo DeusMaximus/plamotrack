@@ -4134,6 +4134,24 @@ CASES = [
         "        return data\n",
         "unusable_record_beside_the_signer and remote and token and list and named",
     ),
+    # --- #294: the upstream authorization request is the proxy's, not the client's --------
+    # --- — neither its RFC 8707 resource nor its scope (or its omission) reaches the
+    # --- provider. Two places, each killed apart: the resource cases with a scope sent,
+    # --- and the scope-omitted cases with no resource. ------------------------------------
+    (
+        "moa-116. the client's resource forwarded to the provider again",
+        MCP_OAUTH,
+        "            forward_resource=False,\n",
+        "            forward_resource=True,\n",
+        "nothing_the_client_sends and openid and not None",
+    ),
+    (
+        "moa-117. the upstream scope left to the client's request again",
+        MCP_OAUTH,
+        '            extra_authorize_params={**UPSTREAM_AUTHORIZE_PARAMS, "scope": UPSTREAM_SCOPE},\n',
+        "            extra_authorize_params=dict(UPSTREAM_AUTHORIZE_PARAMS),\n",
+        "nothing_the_client_sends and None-None",
+    ),
     # --- #193 (M6-8): audit events, request budgets and log hygiene — the aud- set --
     # Folded from PR #208's record after the merge (`bd40687`). aud-1…17 were hand-run
     # on the branch and recorded as descriptions; their exact anchors were

@@ -522,8 +522,12 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
     **MCP OAuth landed with M6-7 (#192):** in OIDC mode the `/mcp` mount is built with
     `PlamotrackOAuthProxy` (`app/auth/mcp_oauth.py`) — FastMCP's `OAuthProxy` in front
     of the **same provider and client** as the browser login, every plamotrack rule on a
-    documented extension point: the upstream identity must be the bound owner, checked
-    **at issuance** (`exchange_authorization_code` — a stranger gets `invalid_grant`, an
+    documented extension point: **the upstream authorization request is the proxy's,
+    not the client's** — configuration, the proxy's transaction and PKCE, `openid` and
+    the Google pair, and nothing of the client's request: its RFC 8707 `resource` names
+    this server, and a provider that implements RFC 8707 refuses it (#294); the
+    upstream identity must be the bound owner, checked **at issuance**
+    (`exchange_authorization_code` — a stranger gets `invalid_grant`, an
     `auth.mcp_identity_refused` row and nothing minted — the id_token through the same
     `validate_id_token_claims`, with `nonce=None`) and carried as **grant state** — in
     every token the proxy issues, compared with the owner row on every request, and on

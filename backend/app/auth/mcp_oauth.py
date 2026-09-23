@@ -398,6 +398,12 @@ ADVERTISED_SCOPES: tuple[str, ...] = ("openid",)
 #: RFC 6749 §3.1) and reads `prompt=consent` as "ask again", which a rare
 #: MCP-link is the right moment for.
 UPSTREAM_AUTHORIZE_PARAMS: dict[str, str] = {"access_type": "offline", "prompt": "consent"}
+#: The scope asked of the provider whatever the client's request said: issuance
+#: binds the owner by the id_token, so it is `openid`. FastMCP forwards the
+#: client's scopes, and a client that omits `scope` — which OAuth allows — would
+#: otherwise ask the provider for nothing (#294). Set through
+#: `extra_authorize_params`, which FastMCP applies after the client's.
+UPSTREAM_SCOPE = " ".join(ADVERTISED_SCOPES)
 #: Lifetime of the access token the proxy issues to a client — pinned rather
 #: than inherited from the provider's (Keycloak's default is 300 s, which some
 #: clients cannot refresh gracefully). The upstream token is re-read on every
@@ -1812,7 +1818,14 @@ class PlamotrackOAuthProxy(OAuthProxy):
             client_storage=storage,
             jwt_signing_key=settings.mcp_oauth_signing_key_bytes,
             require_authorization_consent=True,
-            extra_authorize_params=dict(UPSTREAM_AUTHORIZE_PARAMS),
+            # The upstream request is the proxy's, not the client's (#294): of
+            # the client's request nothing reaches the provider. Its `resource`
+            # names this server, whose authorization server is this proxy — the
+            # provider issues tokens to plamotrack's own client, and one that
+            # implements RFC 8707 refuses a resource it does not know (Pocket ID
+            # answered `invalid_request`; Google and Keycloak ignore it).
+            forward_resource=False,
+            extra_authorize_params={**UPSTREAM_AUTHORIZE_PARAMS, "scope": UPSTREAM_SCOPE},
             fastmcp_access_token_expiry_seconds=ACCESS_TOKEN_LIFETIME,
             token_expiry_threshold_seconds=REFRESH_THRESHOLD,
             enable_cimd=True,
