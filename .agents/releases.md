@@ -41,6 +41,20 @@ publication and native CI cannot be certified by a local build.
    files" in `.agents/deployment-gate/README.md`). It will not build. A source checkout
    gate uses `--source-build` and is evidence about source, not about release
    digests. Record the observed deployment/client results in the release notes.
+   **Then the update from the previous release's files** — the docs' Updating page
+   is written from it. On the gate host, before resetting it for the candidate:
+   install the previous release's files, claim the instance, give it data, a
+   personal access token and a linked MCP client; then, in the same folder, replace
+   the five files with the candidate's, keep `.env`, `sha256sum -c SHA256SUMS`, and
+   `docker compose up -d --no-build --wait`. Check the version, the session, the
+   token, the data, that `<folder>_db-data` is the same volume (its CreatedAt), and
+   an MCP refresh plus initialize. v0.5.2-alpha had no predecessor with release
+   files, so the first run of this step is v0.5.2-alpha → the next release. The
+   move from a source checkout was rehearsed for v0.4.1 → v0.5.2 (two variants:
+   a new folder with `COMPOSE_PROJECT_NAME`, and the checkout renamed aside with
+   a fresh folder of the old name); re-run it when a release adds a migration or
+   changes the Compose project identity, the volume mapping, or the environment
+   configuration an existing `.env` must carry.
 6. On the owner's approval, create/push the annotated release tag at exactly the
    candidate commit. Do not move it later. Dispatch **Promote release candidate**
    **on that tag**, supplying the successful run ID. It verifies the workflow,
@@ -51,7 +65,9 @@ publication and native CI cannot be certified by a local build.
    the draft stays unpublished: inspect it, delete it, fix the bundle, and gate a
    new version — the tag and version image tags already exist and are not moved.
 7. Add the reviewed change/data/migration notes and observed deployment/client
-   gate results to that draft. Publishing the draft is a separate owner-approved
+   gate results to that draft. The install commands name the version: update
+   `README.md`'s and the docs site's (Installation, Updating) to the new one, and
+   search both for the previous version string. Publishing the draft is a separate owner-approved
    action. Alpha releases retain the prerelease flag.
 
 **Dispatch a new candidate instead of rerunning jobs.** Promotion requires attempt
