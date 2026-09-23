@@ -55,13 +55,14 @@ Template:
   - **Keycloak's container mounts `realm.json` from `/opt/plamotrack/.agents/deployment-gate/keycloak/`**, the path it was created at before the rehearsal moved the checkout to `/opt/plamotrack-source`. Once stopped it would not start (Docker had made an empty directory there); an identical copy of the file now sits at that path, and the same container restarted with the owner's `sub` intact (the gate owner's sign-in was verified). **Don't recreate it:** the realm pins no user ids, so a new container changes `sub` and the gate's collection then needs `recovery rebind-oidc`.
   - Spike secrets are in `~/.plamotrack-gate/spike-280/` (the first run's in `spike-280.first-run/`); run logs and screenshots in `.dev/280/` (gitignored).
   - The owner's Claude.ai "Testing" connector points at the tunnel name; remove it when the spike is done.
-  - #278 is still open for the owner's skill-zip check. The LXC is unchanged (0.4.1, source).
+  - #278 is still open for the owner's skill-zip check.
+  - **The LXC is on v0.5.2 as a release install** (corrected after this entry was first written): the owner moved it on 2026-09-23 by the docs' Updating → "If you installed with Git" — the checkout moved aside, `.env` copied back, the release files fetched with `curl` — and the collection (about 100 kits) came through; the owner reports the instructions were straightforward and the old `.env` needed no edits. The first real-world run of the Git → release path; evidence for #285. Its load, for #279's sizing: about 330 MiB RAM for the whole LXC and ~1.5 % of 2 cores at idle, ~11 % CPU briefly during the upgrade.
 - **Next:**
   1. #294: the fix with a test run against the unfixed code first, then the spike **without** the API registration, and the gate's OIDC phase against Keycloak.
   2. Owner: the #280 recommendation (findings §8 — an optional supported provider once #294 lands and a real-device run passes without the workaround).
   3. `probe.py teardown` when the owner is done with the spike.
   4. The #279 proof deployment when the owner opens platform accounts.
-  - Carried from the previous entry: the owner's LXC move (docs Updating → "If you installed with Git"; a read-only look offered, pending the owner's OK to SSH); posting the rehearsal on #285 (offered). Untested: the release-to-release update, and the Windows commands in Git Bash.
+  - Carried from the previous entry: posting the rehearsal on #285 (offered) — now with the LXC's real move beside it. Untested: the release-to-release update, and the Windows commands in Git Bash.
 
 ## 2026-09-23 — Claude Code (Opus 5.5) — the docs move to the release install: PR #293 (README + runbook) and plamotrack-docs#7 (all install/update pages) open; the Git → release move rehearsed on testhost, 0 failed
 
