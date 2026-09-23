@@ -64,7 +64,7 @@ Template:
   - #278 is still open for the owner's skill-zip install check.
   - The LXC is unchanged (0.4.1, source).
 - **Next:**
-  1. Owner: review and merge #293 and docs#7. Merging #7 publishes docs.gunp.la.
+  1. ~~Owner: review and merge #293 and docs#7.~~ **Both merged 2026-09-23** after one Greptile round each (5 findings, all fixed): #293 as `157075f`, plamotrack-docs#7 as `4f54466`. docs.gunp.la serves the release install (checked live).
   2. The owner's LXC move, per Updating → "If you installed with Git". A read-only look first is offered, pending the owner's OK to SSH.
   3. Post the rehearsal on #285 as evidence (offered, not yet agreed).
   4. #279 and #280.
