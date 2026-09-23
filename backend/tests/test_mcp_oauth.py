@@ -586,6 +586,79 @@ async def test_the_upstream_authorization_request_is_built_from_configuration_no
             assert params[key] == value
 
 
+#: Every parameter the provider's authorization endpoint may receive — a literal,
+#: not a reading of the proxy. Configuration (`response_type`, `client_id`,
+#: `redirect_uri`), the proxy's own transaction (`state`, its PKCE pair), the
+#: Google parameters, and the scope. Nothing else the client sends is the
+#: provider's business: its `resource` names this server, whose authorization
+#: server is the proxy, and a provider that implements RFC 8707 refuses a
+#: resource it does not know (Pocket ID answered `invalid_request`, #294).
+_UPSTREAM_PARAMETERS = {
+    "response_type",
+    "client_id",
+    "redirect_uri",
+    "state",
+    "scope",
+    "code_challenge",
+    "code_challenge_method",
+    "access_type",
+    "prompt",
+}
+
+
+@pytest.mark.parametrize("scope", ["openid", None])
+@pytest.mark.parametrize("resource", [None, RESOURCE_URL, ISSUER_URL])
+@pytest.mark.parametrize("kind", ["dcr", "cimd"])
+async def test_nothing_the_client_sends_reaches_the_provider_but_its_scope(
+    cimd_client, kind, resource, scope
+):
+    """#294: the upstream authorization request is exactly `_UPSTREAM_PARAMETERS`,
+    each value the proxy's — for both client kinds, a resource with and without
+    its trailing slash (both name this server, so the proxy admits them) or none,
+    and a scope sent or omitted. The client's own `state`, PKCE and redirect stay
+    downstream, and parameters the proxy does not recognise — here the two Google
+    ones, spelt the other way — are discarded, not forwarded over the proxy's."""
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_, client):
+        if kind == "dcr":
+            client_id, redirect_uri = (await register(client)).json()["client_id"], NATIVE_CB
+        else:
+            client_id, redirect_uri = CIMD_ID, CIMD_CB
+        _, challenge = _pkce()
+        request = {
+            "client_id": client_id,
+            "response_type": "code",
+            "redirect_uri": redirect_uri,
+            "code_challenge": challenge,
+            "code_challenge_method": "S256",
+            "state": "client-state",
+            "prompt": "none",
+            "access_type": "online",
+        }
+        if resource is not None:
+            request["resource"] = resource
+        if scope is not None:
+            request["scope"] = scope
+        started = await client.get("/mcp/authorize", params=request)
+        assert started.status_code == 302, started.text
+        approved = await consent(client, started.headers["location"])
+        upstream = approved.headers["location"]
+        assert upstream.startswith(f"{ISSUER}/authorize?"), upstream
+        params = parse_qs(urlsplit(upstream).query)
+        assert set(params) == _UPSTREAM_PARAMETERS, sorted(params)
+        assert all(len(values) == 1 for values in params.values()), params
+        sent = {key: values[0] for key, values in params.items()}
+        assert sent["response_type"] == "code"
+        assert sent["client_id"] == CLIENT_ID
+        assert sent["redirect_uri"] == CALLBACK
+        assert sent["state"] == _query(started.headers["location"])["txn_id"]
+        assert sent["code_challenge"] != challenge
+        assert sent["code_challenge_method"] == "S256"
+        assert sent["scope"] == "openid"
+        assert (sent["access_type"], sent["prompt"]) == ("offline", "consent")
+
+
 async def test_the_owner_can_deny_at_the_consent_page():
     fake = FakeIdp()
     await _bind_owner()
