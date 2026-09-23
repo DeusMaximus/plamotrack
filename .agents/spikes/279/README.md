@@ -14,8 +14,30 @@ a staff forum post or third-party evidence rather than documentation, it says so
 
 Four services from the release's `docker-compose.yml`: `web` (nginx, the only
 public ingress), `api` (FastAPI, one uvicorn worker, MCP streamable HTTP on
-`/mcp`), `migrate` (one-shot Alembic), `db` (Postgres 17 with a volume). Optionally
+`/mcp`), `migrate` (one-shot Alembic), `db` (Postgres 16 with a volume). Optionally
 an identity provider (#280): Pocket ID is one small service with SQLite on a volume.
+
+## Measured load — the owner's instance, 2026-09-23
+
+A single-host release install of v0.5.2 in normal use, holding 116 kits, 80 orders,
+73 inventory items and 27 retailers (the owner's `docker stats` and Postgres
+queries, and the host's own graphs over a day):
+
+| | |
+|---|---|
+| RAM | web (nginx) 3.7 MiB, api 119 MiB, db 30 MiB — **~152 MiB for the stack**; ~330 MiB for the whole host with its OS and Docker; never above 512 MiB over the day |
+| CPU | ~1.5 % of 2 cores at idle for the whole host (health checks, Postgres housekeeping); ~11 % briefly during the upgrade (image pulls, migrations, starts) |
+| Database | `pg_database_size` **9.3 MB**; the data directory **64 MB** (write-ahead log and catalogs included) |
+| Traffic | ~375 kB sent by nginx in the few hours after the upgrade's restart |
+
+What it settles: **load decides neither platform.** At Railway's list prices
+(RAM ≈ $10/GB-month, CPU ≈ $20/vCPU-month, volume $0.15/GB-month, egress
+$0.05/GB) this is roughly $2–3.50 of usage, under the Hobby plan's included $5, with
+room for a small identity provider; Railway's Postgres image may idle higher than
+this one, which is an estimate to check on the trial. On Render every service's
+smallest tier is many times what it uses, so its price is set by how many services
+there are, not by load. What remains open is backups and restore, the MCP request
+limits, and photo storage (#28), which will outgrow a 64 MB database quickly.
 
 ## Side by side
 
@@ -57,6 +79,11 @@ proof deployment would have to work around them, and #281 would own the fix:
    configured from documentation.
 5. **The one-shot `migrate` service** maps to a pre-deploy command on both; whether
    Render's can reach the private database is unstated.
+6. **Service count is Render's price.** nginx uses 3.7 MiB of a $7 instance; an image
+   serving the SPA and the API from one service (nginx and uvicorn together, or the
+   API serving the built frontend) would take Render from ≈ $20 to ≈ $13 a month. It
+   costs Railway nothing either way, and it changes the ingress §8 and rule 12 are
+   written around, so it is #281's decision, not a default.
 
 ## Open questions only a deployment answers
 
