@@ -52,7 +52,9 @@ publication and native CI cannot be certified by a local build.
    files, so the first run of this step is v0.5.2-alpha → the next release. The
    move from a source checkout was rehearsed for v0.4.1 → v0.5.2 (two variants:
    a new folder with `COMPOSE_PROJECT_NAME`, and the checkout renamed aside with
-   a fresh folder of the old name); re-run it when a release adds a migration.
+   a fresh folder of the old name); re-run it when a release adds a migration or
+   changes the Compose project identity, the volume mapping, or the environment
+   configuration an existing `.env` must carry.
 6. On the owner's approval, create/push the annotated release tag at exactly the
    candidate commit. Do not move it later. Dispatch **Promote release candidate**
    **on that tag**, supplying the successful run ID. It verifies the workflow,

@@ -221,7 +221,7 @@ That's v0.5.2-alpha, the newest release when this was written; the
 [releases page](https://github.com/DeusMaximus/plamotrack/releases) has anything newer.
 There is no `latest` tag: updating means choosing the next version on purpose, in the
 same folder ([Updating](https://docs.gunp.la/configuration/upgrading)). Keep the folder
-and its name — Compose names your database after it.
+and its name: Compose uses the folder's name to name the volume that holds your database.
 
 Open **http://localhost:8080**. The first visit asks for the setup token from the API
 log and a password (the alpha note above); every visit after it is this sign-in, and
