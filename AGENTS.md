@@ -237,6 +237,14 @@ stack has no hot reload, and both want port 5432:
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db --wait
 ```
 
+**Claude Code on the web** has no Docker daemon. `.claude/hooks/session-start.sh`
+(registered in `.claude/settings.json`, a no-op outside the cloud) starts the image's
+own Postgres 16 with the credentials `Settings()` defaults to, exports CI's
+`TEST_DATABASE_URL`, migrates the dev database, and installs both sides as CI does —
+`uv sync --frozen`, and `npm ci` whenever `package-lock.json` changed (never `npm
+install`: Node 22's npm strips the lockfile's `libc` fields). Backend and Frontend CI
+jobs reproduce there; the packaged stack, `ingress_matrix.py` and Playwright e2e do not.
+
 To exercise the packaged stack instead (before touching Dockerfiles, `frontend/nginx/`,
 or anything about startup ordering):
 
