@@ -59,7 +59,6 @@ if command -v pg_ctlcluster >/dev/null && [ -d "/etc/postgresql/${PG_VERSION}/${
     log "creating database ${DB_NAME}"
     psql_admin -c "CREATE DATABASE ${DB_NAME} OWNER ${DB_USER}"
   fi
-  PG_SUMMARY="Postgres ${PG_VERSION} on 127.0.0.1:5432 (${DB_USER}/${DB_PASSWORD}); dev DB '${DB_NAME}' at alembic head; tests use '${DB_NAME}_test' via TEST_DATABASE_URL."
   HAVE_PG=true
 else
   log "no Postgres ${PG_VERSION}/${PG_CLUSTER} cluster in this image; skipping database setup"
@@ -74,12 +73,19 @@ log "syncing backend dependencies"
 (cd "$REPO/backend" && uv sync --frozen --python 3.12 >&2)
 
 # The dev database at head, so `uv run uvicorn app.main:app` works straight away.
-# The test suite migrates its own database (down + up) on every run.
+# The test suite migrates its own database (down + up) on every run. A failure
+# is reported, not fatal: a branch with a broken migration is exactly when the
+# session needs the rest of the environment.
 if [ "$HAVE_PG" = true ]; then
   log "migrating the dev database"
-  (cd "$REPO/backend" \
+  dev_db_state="at alembic head"
+  if ! (cd "$REPO/backend" \
     && DATABASE_URL="postgresql+asyncpg://${DB_USER}:${DB_PASSWORD}@127.0.0.1:5432/${DB_NAME}" \
-       uv run --frozen alembic upgrade head >&2)
+       uv run --frozen alembic upgrade head >&2); then
+    log "alembic upgrade head failed on the dev database; continuing"
+    dev_db_state="NOT at head: 'alembic upgrade head' FAILED at session start"
+  fi
+  PG_SUMMARY="Postgres ${PG_VERSION} on 127.0.0.1:5432 (${DB_USER}/${DB_PASSWORD}); dev DB '${DB_NAME}' ${dev_db_state}; tests use '${DB_NAME}_test' via TEST_DATABASE_URL."
 fi
 
 # --- Frontend (npm) ------------------------------------------------------------
