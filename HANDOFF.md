@@ -41,6 +41,53 @@ Template:
 
 ---
 
+## 2026-09-24 — Claude Code (Opus 5.5) — #296 MERGED as `8f4985c`: a SessionStart hook sets up Claude Code cloud sessions (native Postgres 16, `uv sync`, `npm ci`); an IPv6 `POSTGRES_HOST` DSN defect found, not filed
+
+- **Done:**
+  - [PR #296](https://github.com/DeusMaximus/plamotrack/pull/296) squash-merged as **`8f4985c`**, pinned to the reviewed head `d70d9ac`. `.claude/hooks/session-start.sh`, registered in `.claude/settings.json`, is a no-op unless `CLAUDE_CODE_REMOTE=true`. In a cloud session it:
+    - starts the image's own Postgres 16 and creates the role and database `Settings()` defaults to;
+    - exports CI's `TEST_DATABASE_URL`;
+    - runs `uv sync --frozen --python 3.12`;
+    - migrates the dev database only when `Settings()` names that local one, judged on the parsed URL (host resolving to 127.0.0.1; port, database and credentials equal);
+    - runs `npm ci` only when `package.json` or `package-lock.json` changed, or `npm ls --depth=0` finds `node_modules` incomplete.
+  - Database trouble is reported in the hook's stdout summary, never fatal; a failed `uv sync` or `npm ci` fails the hook. AGENTS.md → *Dev environment & commands* has the paragraph.
+  - Validated by hand: 9 paths and 13 migration-target values through the whole hook, with negative controls against the earlier heads. The harness ran it on this session's resumes. CI 3/3 green at `d70d9ac`.
+- **Decisions:**
+  - `npm ci`, never `npm install`: Node 22's npm (10.9.7) strips the lockfile's `libc` fields (78 deletions), which would dirty `package-lock.json` every session.
+  - The hook never migrates a database it did not provision: an override is reported and left alone.
+  - **Review call** (owner agreed): Greptile and CodeRabbit only, no GLM or Codex. It is dev tooling with no app code, and its worst failure is a session starting without dependencies, which the summary says.
+    - Greptile ran three rounds: 4/5, 4/5, then 5/5 at the merged head. Every finding was fixed or answered in-thread.
+    - Declined with the owner: a CI smoke test for the hook (CI's runner is not the cloud image; Greptile withdrew it) and CodeRabbit's docstring-coverage warning.
+- **State:**
+  - **Cloud image, 2026-09-24:**
+    - Ubuntu 24.04; a Postgres 16 cluster present but stopped; Node 22.22.2; uv 0.8.17; `python3` 3.11, with 3.12 at `/usr/bin`.
+    - Docker 29.3.1 and Compose v5.1.1 installed with the daemon stopped. A hand-started `dockerd` runs, but its first Docker Hub pull was refused with 429.
+    - No IPv6: `::1` is refused.
+    - The preinstalled Chromium is build 1194 against `@playwright/test ^1.62`; whether they agree is unchecked.
+  - **Untested until the first new cloud session from `main`:** whether the snapshot is cached after the hook, and whether `CLAUDE_ENV_FILE`'s export reaches later commands. The hook's summary at the top of that session is the evidence.
+  - **Unfiled defect:** `_assemble_database_url` in `app/config.py` does not bracket an IPv6 `POSTGRES_HOST`. `POSTGRES_HOST=::1` yields `…@::1:5432/…`, which `make_url` rejects (`ValueError … ':1:5432'`), so the API, alembic and `conftest.py` fail. It was offered as a task card, not filed as an issue.
+  - **CodeRabbit** reviewed #296's first push. On later pushes its summary said the repo no longer gets automatic reviews ("fewer than 10 stars"); a review needs its *Trigger review* checkbox.
+  - The merged branches `claude/plamotrack-cloud-setup-jgjfo0` and `fix/294-upstream-resource` are still on origin.
+  - **Carried from the 2026-09-23 #294 entry, not touched this session:**
+    - **Unreleased:** v0.5.2 still forwards `resource`, so a Pocket ID install needs the API-registration workaround (#280 findings §2a) until the next release.
+    - **testhost is in the spike's state, not the gate's.**
+      - `/opt/plamotrack-280` (Compose project `plamotrack-280`) runs the #294 build: `plamotrack-api:294-spike` through `override-294.yml`, brought up with `-f docker-compose.yml -f override-294.yml`.
+      - It sits behind the tunnel in OIDC mode against Pocket ID (project `plamotrack-spike-280-idp`, no APIs registered).
+      - The gate's stack (`/opt/plamotrack`, v0.5.2) and Keycloak are stopped, volumes kept. `probe.py teardown --base https://NAME --ssh root@HOST` removes the spike and starts both.
+    - **Don't recreate Keycloak's container.** It mounts `realm.json` from `/opt/plamotrack/.agents/deployment-gate/keycloak/`, where an identical copy sits. A new container changes `sub`, and the gate's collection then needs `recovery rebind-oidc`.
+    - The owner's Claude.ai "Testing" connector points at the tunnel name; remove it when the spike is done. Spike secrets are in `~/.plamotrack-gate/spike-280/`; logs in `.dev/280/` (gitignored).
+    - The LXC is a v0.5.2 release install. #278 is open for the owner's skill-zip check.
+- **Next:**
+  1. Read the first new cloud session's hook summary; fix the hook where it disagrees with this entry.
+  2. Owner: file the IPv6 `POSTGRES_HOST` DSN defect, or start its task card.
+  3. Carried:
+     - Owner, optional: a real-client Claude.ai link on the #294 build (#280 findings §8).
+     - Owner: the #280 decision, on an optional supported provider.
+     - #279's two edge probes, then #281's packaging, then one proof deployment.
+     - `probe.py teardown` when the spike is done.
+     - Posting the rehearsal on #285 (offered).
+     - Untested: the release-to-release update, and the Windows commands in Git Bash.
+
 ## 2026-09-23 — Claude Code (Opus 5.5) — #294 MERGED as `ee458f4` (PR #295): the MCP proxy's upstream authorization request is its own — no client `resource`, the scope pinned to `openid`; Pocket ID links with no workaround
 
 - **Done:**
@@ -143,24 +190,3 @@ Template:
   2. Then #279 (platform: needs published images, now available) and #280 (Pocket ID, can start any time).
   3. Then #285, with the volume-name trap above.
   - Row counts in the gate matrix vary by one or two between runs (local 179–181, OIDC 182–183); **0 failing** is the criterion.
-
-## 2026-09-23 — Claude Code (Opus 5.5) — PR #290 merged as `07859b5`; release PR #291 (v0.5.1-alpha) and plamotrack-docs#7 (upgrade fix) open; the oldest entry rotated
-
-- **Done:** recorded that [PR #290](https://github.com/DeusMaximus/plamotrack/pull/290) (#278 release packaging) merged into `main` on 2026-09-22 as merge commit **`07859b5`**; main CI passed at that commit. #278 stays open (no closing link): acceptance is the first real release through the pipeline, and no candidate has been dispatched yet (`gh run list --workflow release-candidate.yml` is empty).
-- **Found:** #290 made `docker-compose.yml` pull-only: `ghcr.io/deusmaximus/plamotrack-{api,web}:unreleased`, which is never published (GHCR: `denied`). The new `.env.example` sets `COMPOSE_PATH_SEPARATOR=:` and `COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml`, so a **fresh** source install works. An `.env` copied at v0.5.0-alpha or earlier lacks both lines. After `git pull`, `docker compose up -d --build --wait` then fails with `Error response from daemon: error from registry: denied`. This was reproduced in a scratch project: nothing was created (no container, network or volume). The docs site's Updating page prescribed exactly that sequence. **The LXC (0.4.1) is in this class:** add the two lines before its next source upgrade.
-- **Decisions:** the owner chose **v0.5.1-alpha** for the first release through the pipeline (2026-09-23). No application code changed since v0.5.0-alpha (`backend/app` and `frontend/src` are untouched), so the release tests only the pipeline.
-- **State:**
-  - [plamotrack-docs#7](https://github.com/DeusMaximus/plamotrack-docs/pull/7), branch `fix/upgrade-compose-file` at `0f77e84`: the Updating steps gain "check `.env` for `COMPOSE_FILE`", Troubleshooting gains the `denied` entry, and the Configuration reference gains a Docker Compose table. `mint broken-links` is clean. The 0.5.1 changelog entry is separate; it lands at publication with the gate results.
-  - [PR #291](https://github.com/DeusMaximus/plamotrack/pull/291), branch `release/0.5.1` at `d2da19f`, milestone M6.7:
-    - The version is 0.5.1 in `app/__init__.py`, `pyproject.toml` and `uv.lock`, done with `uv lock` as the gate requires. uv 0.9.30 also restores `secretstorage`'s two win32 dependency markers, which the 0.5.0 bump dropped; `secretstorage` is Linux-only, so nothing resolves differently.
-    - README, AGENTS.md, `skills/README.md` and `.agents/releases.md` name v0.5.1-alpha as the first release with assets.
-    - The PR body carries the gate checklist.
-    - Checks: `validate_version('v0.5.1-alpha')` passes and v0.5.0-alpha is refused; version tests (8), `test_release_artifacts` (60) and portability + MCP + packaging (307) pass; `uv lock --locked` and ruff are clean. Exact-head CI was pending at this entry.
-- **Next:**
-  1. Check exact-head CI on #291 and merge it (owner's call). Merge docs#7 when the owner says.
-  2. With the owner's explicit OK, dispatch **Release candidate** on #291's merge commit with `v0.5.1-alpha`. The owner then makes both GHCR packages public. Watch the two first-run watchpoints in `.agents/releases.md` step 4.
-  3. Run the deployment gate on testhost against the downloaded bundle, without `--source-build`.
-  4. Tag (owner OK), promote, fill the draft notes and the docs changelog, then publish (owner OK).
-  5. Close #278 and record the observed watchpoints in the runbook.
-
-  #280 (Pocket ID) can run in parallel. #279 needs the published images.
