@@ -91,22 +91,50 @@ log "syncing backend dependencies"
 # The test suite migrates its own database (down + up) on every run.
 #
 # Only the local database is ever migrated, and only when Settings() — what the
-# dev server reads — resolves to it. A .env, POSTGRES_* or DATABASE_URL override
-# is reported and left alone: this hook runs at every session start, and must
-# not run migrations against a database it did not provision.
+# dev server reads — names it. A .env, POSTGRES_* or DATABASE_URL override is
+# reported and left alone: this hook runs at every session start, and must not
+# run migrations against a database it did not provision.
+#
+# "Names it" is judged on the parsed URL, not its spelling: the host must
+# resolve to 127.0.0.1, where the cluster listens (so `localhost` counts; `::1`
+# does not, the image has no IPv6, and nor does the rest of 127/8), and port,
+# database and credentials must match.
 #
 # A failed migration is reported, not fatal: a branch with a broken migration is
 # exactly when the session needs the rest of the environment.
 if [ "$HAVE_PG" = true ]; then
-  configured_url="$(cd "$REPO/backend" \
-    && uv run --frozen python -c 'from app.config import Settings; print(Settings().database_url)' \
-       2>/dev/null)" || configured_url=""
-  if [ -z "$configured_url" ]; then
-    log "backend Settings() failed to load; not migrating"
-    dev_db_state="not migrated: backend Settings() failed to load (check .env)"
-  elif [ "$configured_url" != "$LOCAL_DATABASE_URL" ]; then
-    log "Settings() resolves to another database; not migrating"
-    dev_db_state="not migrated, and not what the dev server uses: Settings() resolves to another database (a .env, POSTGRES_* or DATABASE_URL override), which this hook leaves alone"
+  dev_db_target="$(cd "$REPO/backend" && uv run --frozen python - "$LOCAL_DATABASE_URL" 2>/dev/null <<'PY'
+import socket
+import sys
+
+from sqlalchemy.engine import make_url
+
+from app.config import Settings
+
+
+def reaches_cluster(host):
+    try:
+        return any(info[4][0] == "127.0.0.1" for info in socket.getaddrinfo(host, None))
+    except OSError:
+        return False
+
+
+local, target = make_url(sys.argv[1]), make_url(Settings().database_url)
+same = (
+    target.host is not None
+    and reaches_cluster(target.host)
+    and (target.port or 5432, target.database, target.username, target.password)
+    == (local.port, local.database, local.username, local.password)
+)
+print("local" if same else "other")
+PY
+  )" || dev_db_target=""
+  if [ -z "$dev_db_target" ]; then
+    log "backend Settings() failed to load or gave an unparseable database URL; not migrating"
+    dev_db_state="not migrated: backend Settings() failed to load or gave an unparseable database URL (check .env)"
+  elif [ "$dev_db_target" != "local" ]; then
+    log "Settings() names another database or credentials; not migrating"
+    dev_db_state="not migrated, and not what the dev server uses: Settings() names another database or other credentials (a .env, POSTGRES_* or DATABASE_URL override), which this hook leaves alone"
   else
     log "migrating the dev database"
     dev_db_state="at alembic head"
