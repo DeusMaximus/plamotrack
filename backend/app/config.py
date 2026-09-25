@@ -69,6 +69,8 @@ class Settings(BaseSettings):
     # `input_value=` echoed the whole input (secrets from .env included) for a
     # model validator, and the value itself for a field one. Every message below
     # names its setting and quotes what it may; nothing is lost (#301, rule 14).
+    # It covers str() and repr() only: a Settings ValidationError's `.errors()`
+    # still carries `input`, so never log one without `include_input=False`.
     model_config = SettingsConfigDict(
         env_file=_ENV_FILES, extra="ignore", hide_input_in_errors=True
     )

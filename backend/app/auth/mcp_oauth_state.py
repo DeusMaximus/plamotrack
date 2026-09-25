@@ -153,7 +153,10 @@ def asyncpg_dsn(database_url: str) -> str:
 
     asyncpg percent-decodes the host, which SQLAlchemy does not: a zone id's `%`
     is written `%25` here, RFC 6874's spelling, or `fe80::1%12` would reach the
-    resolver as `fe80::1` and a control character (#299)."""
+    resolver as `fe80::1` and a control character (#299). Every `%` is encoded,
+    an explicit DATABASE_URL's included, so the store reads exactly the host the
+    engine reads. An RFC 6874 `%25` in an explicit URL is a zone beginning `25` to
+    both, and is never decoded first: that would break a real zone `%25`."""
     url = make_url(database_url).set(drivername="postgresql")
     if url.host and "%" in url.host:
         url = url.set(host=url.host.replace("%", "%25"))

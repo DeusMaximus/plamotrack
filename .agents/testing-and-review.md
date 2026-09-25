@@ -470,6 +470,16 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
+- **A mutant must not move the database the session points at.** conftest exports
+  `DATABASE_URL` for the test database, and `alembic/env.py` and the engine read it
+  through `Settings`. A mutant that changes what `Settings.database_url` resolves
+  to, such as #302's first dsn-5 (`if True:`, which ignored an explicit URL),
+  sends the session's `downgrade base`, the tests and the truncating teardown to
+  the `POSTGRES_*` database: the dev collection. On the primary dev Mac a migration
+  guard fired and alembic rolled back, by luck. In the cloud it wiped the hook's
+  scratch dev database and reported a kill. Anchor such a mutant so it still
+  honours `DATABASE_URL` in the harness session, or run it with `POSTGRES_DB`
+  pointing at a scratch database.
 - **On `main` after the #193 `aud-` fold-in: 570 cases over 51 target files** — counted the way the
   harness itself counts, `len(CASES)` and the distinct paths those cases mutate
   (migrations, the one test file and the two `frontend/` files included; the

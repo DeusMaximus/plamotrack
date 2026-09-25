@@ -50,6 +50,12 @@ HOSTS = [
     # A numeric zone (an interface index): two hex digits after the `%`, which a
     # percent-decoder turns into one control character if the zone reaches it raw.
     ("fe80::1%12", "fe80::1%12"),
+    # A zone that begins `25` (interface 25). The engine reads it raw, so no reader may
+    # take its `%25` for RFC 6874's escaped `%` (GLM's round-1 remedy for finding 2).
+    ("fe80::1%25", "fe80::1%25"),
+    ("[fe80::1%eth0]", "fe80::1%eth0"),
+    ("::ffff:127.0.0.1", "::ffff:127.0.0.1"),
+    ("2001:DB8::1", "2001:DB8::1"),
 ]
 
 #: (user, password): the plain pair, and one that must be percent-encoded — `@`, `/`
@@ -98,13 +104,11 @@ def test_engine_hands_asyncpg_the_bare_host(setting, host):
     assert kwargs["port"] == PORT
 
 
-@pytest.mark.parametrize(("user", "password"), CREDENTIALS)
-@pytest.mark.parametrize(("setting", "host"), HOSTS)
-def test_state_store_dsn_round_trips_through_asyncpg(setting, host, user, password):
-    # The MCP OAuth state store gives asyncpg a DSN string; this is the parser
-    # `asyncpg.create_pool` runs on it.
-    addrs, params = _parse_connect_dsn_and_args(
-        dsn=asyncpg_dsn(_settings(setting, user, password).database_url),
+def _asyncpg_reads(dsn: str):
+    """The (addresses, params) asyncpg makes of a DSN string: the parser
+    `asyncpg.create_pool` runs on the MCP OAuth state store's DSN."""
+    return _parse_connect_dsn_and_args(
+        dsn=dsn,
         host=None,
         port=None,
         user=None,
@@ -120,6 +124,12 @@ def test_state_store_dsn_round_trips_through_asyncpg(setting, host, user, passwo
         krbsrvname=None,
         gsslib=None,
     )
+
+
+@pytest.mark.parametrize(("user", "password"), CREDENTIALS)
+@pytest.mark.parametrize(("setting", "host"), HOSTS)
+def test_state_store_dsn_round_trips_through_asyncpg(setting, host, user, password):
+    addrs, params = _asyncpg_reads(asyncpg_dsn(_settings(setting, user, password).database_url))
 
     assert addrs == [(host, PORT)]
     assert params.user == user
@@ -151,6 +161,29 @@ def test_an_explicit_database_url_is_left_alone():
     settings = Settings(_env_file=None, database_url=explicit, postgres_host="db:5433")
 
     assert settings.database_url == explicit
+
+
+#: An explicit DATABASE_URL, used as written. The engine reads its bracketed host
+#: verbatim, so the state store must read that same host whatever the spelling —
+#: RFC 6874's `%25` included, which the engine takes as a zone beginning `25`. On
+#: `main` the two disagreed there: the state store decoded what the engine did not.
+EXPLICIT_URLS = [
+    "postgresql+asyncpg://u:p@[fe80::1%eth0]:5433/d",
+    "postgresql+asyncpg://u:p@[fe80::1%25eth0]:5433/d",
+    "postgresql+asyncpg://u:p@[fe80::1%12]:5433/d",
+    "postgresql+asyncpg://u:p@[2001:db8::7]:5433/d",
+    "postgresql+asyncpg://u:p@db.example:5433/d",
+]
+
+
+@pytest.mark.parametrize("url", EXPLICIT_URLS)
+def test_state_store_reads_the_host_the_engine_reads(url):
+    settings = Settings(_env_file=None, database_url=url)
+    _, engine = asyncpg_dialect().create_connect_args(make_url(settings.database_url))
+    addrs, _ = _asyncpg_reads(asyncpg_dsn(settings.database_url))
+
+    assert settings.database_url == url
+    assert addrs == [(engine["host"], engine["port"])]
 
 
 #: env.py run for real, in a fresh interpreter (it reads `get_settings()`, which

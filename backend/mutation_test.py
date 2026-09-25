@@ -6217,11 +6217,15 @@ CASES += [
         '    return host.replace("%", "%25")\n',
         "engine_hands_asyncpg_the_bare_host",
     ),
+    # dsn-5 reassembles only when the host has a colon. Its first form, `if True:`,
+    # made every Settings ignore DATABASE_URL, so the harness session's alembic and
+    # truncating teardown ran against the POSTGRES_* (dev) database (GLM, PR #302
+    # round 1, finding 1). A mutant here must leave an explicit DATABASE_URL alone.
     (
         "dsn-5. POSTGRES_HOST is judged when DATABASE_URL is set explicitly",
         CFG,
         "        if not self.database_url:\n",
-        "        if True:\n",
+        '        if not self.database_url or ":" in self.postgres_host:\n',
         "explicit_database_url_is_left_alone",
     ),
     (
@@ -6251,6 +6255,13 @@ CASES += [
         '        env_file=_ENV_FILES, extra="ignore", hide_input_in_errors=True\n',
         '        env_file=_ENV_FILES, extra="ignore"\n',
         "refusal_names_its_setting_and_echoes_no_secret",
+    ),
+    (
+        "dsn-10. the state store's DSN decodes a `%25` first (reads zone 25 as RFC 6874)",
+        MCP_OAUTH_STATE,
+        '        url = url.set(host=url.host.replace("%", "%25"))\n',
+        '        url = url.set(host=url.host.replace("%25", "%").replace("%", "%25"))\n',
+        "state_store_dsn_round_trips_through_asyncpg or state_store_reads_the_host",
     ),
 ]
 
