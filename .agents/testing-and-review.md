@@ -77,18 +77,32 @@ Create and migrate `plamotrack_e2e` with `psql` against that server as above, th
 Chromium suite, about nine minutes (#298: 184 passed, 59 skipped). There is no WebKit
 in the image, so the dialog specs' WebKit leg is not covered there.
 
-**Docker in a cloud session** (#302, 25/09/2026): `dockerd` started as a background
-task comes up in seconds, with the agent proxy already in its environment.
-- **Pulls:**
-  - Docker Hub answers 429 to most of them (`postgres:16` got through once).
-    `mirror.gcr.io/library/<image>` serves the official images, and
-    `mirror.gcr.io/docker/dockerfile:1` the build frontend.
-  - `ghcr.io` resolves manifests, but its blob host
-    `pkg-containers.githubusercontent.com` is refused (403) by the egress policy.
-    `backend/Dockerfile` copies `uv` from `ghcr.io/astral-sh/uv`, so **the API
-    image cannot be built** there, and `ingress_matrix.py` cannot run.
+**Docker in a cloud session** (#302, 25/09/2026). Point it at Google's Docker Hub
+mirror, then start it as a background task; it answers `docker info` within seconds,
+with the agent proxy already in its environment:
+
+```bash
+mkdir -p /etc/docker && echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' > /etc/docker/daemon.json
+dockerd > "$SCRATCH/dockerd.log" 2>&1     # run in the background; $SCRATCH: the session's scratchpad
+```
+
+- **Docker Hub's 429 is not the environment.** Hub limits anonymous pulls to 100 an
+  hour per address, and cloud sessions share their outbound address, so the
+  allowance is often spent by someone else. With the mirror set, Hub names (`docker
+  pull`, Compose, a Dockerfile's `FROM` and `# syntax=`) resolve through
+  `mirror.gcr.io` unchanged; the daemon's debug log showed manifests and layers from
+  there, none from `registry-1.docker.io`. The mirror caches popular images; Docker
+  goes to Hub itself for anything it lacks.
+- **ghcr.io's 403 is the environment's network policy,** as the defaults set it:
+  manifests resolve, but the blob host `pkg-containers.githubusercontent.com` is
+  refused. `backend/Dockerfile` copies `uv` from `ghcr.io/astral-sh/uv`, so **the API
+  image cannot be built**, and `ingress_matrix.py` cannot run. The project's own
+  published images (`ghcr.io/deusmaximus/…`) cannot be pulled either. Allowing that
+  host under the environment's Network access is what unblocks it. That setting is
+  per environment, so it helps only the sessions of whoever changed it; the repo
+  does not work around it.
 - **What does run:** Compose, container networking and port publishing. So does a
-  service with its image swapped for the mirrored Python base, running
+  service with its image swapped for the Python base, running
   `pip install uv && uv sync --frozen --no-dev` from the mounted source. The
   container needs `/root/.ccr/ca-bundle.crt` mounted, with `PIP_CERT` and
   `SSL_CERT_FILE` pointed at it: TLS to PyPI is re-terminated inside containers

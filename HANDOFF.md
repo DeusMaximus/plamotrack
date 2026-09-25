@@ -79,6 +79,7 @@ Template:
     - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
 - **Next:**
   1. PR #302: review (the owner picks the reviewer), CI, merge.
+     - **The owner will allow `pkg-containers.githubusercontent.com`** in the cloud environment's Network access (said 25/09/2026, not done yet). Once it is allowed, rebuild the real API image in a session: set the mirror, start `dockerd`, then `docker compose -f docker-compose.yml -f docker-compose.build.yml build`. Then redo the `migrate` check with it, `main` against the branch. The recipe is in `.agents/testing-and-review.md` → Docker in a cloud session.
   2. At the next release: work through `.agents/next-release.md` (release step 7).
   3. Cloud-feasible candidates, carried: #124, #125, #268, #238; the importer bugs #110, #116, #134 and #137.
   4. Carried: #279's edge probes, then #281's packaging; the #280 decision; `probe.py teardown`; posting the rehearsal on #285; the release-to-release update and the Git Bash commands, untested.
