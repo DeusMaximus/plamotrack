@@ -64,7 +64,12 @@ Template:
 - **State:**
   - **PR #302 is open and unreviewed.** CI had not reported when this entry was written. No reviewer has been requested; that is the owner's call (`.agents/testing-and-review.md` → Which reviewer).
   - **This entry rides on the PR branch, not `main`**: the session could push only to its branch. Once the PR merges it lands on `main` as usual. If `main` gets another hand-off entry first, `HANDOFF.md` conflicts; keep both entries and rotate once.
-  - **Not testable here:** a live IPv6 connection (the cloud container has no IPv6 stack; `EAFNOSUPPORT`), and the packaged `migrate` container (no Docker). The online migration under a punctuated password was proven by hand against a scratch role, since dropped.
+  - **Proven in Compose, not with the shipped image:** Docker runs in the cloud session once `dockerd` is started (`.agents/testing-and-review.md` → Docker in a cloud session). The `migrate` service ran with its image swapped for the Python base plus the locked dependencies, the source mounted, and a punctuated `POSTGRES_PASSWORD` in `.env`.
+    - `main` failed with #300's interpolation error, and its log printed the URL and password.
+    - The branch migrated to head.
+    - With an OIDC misconfiguration, `main`'s log printed the signing key's tail (#301); the branch's printed none.
+    - The API image itself can't be built there: the `uv` blob on `ghcr.io` is refused by the egress policy.
+  - **Not testable here:** a live IPv6 connection. The container's kernel has no IPv6 stack (`EAFNOSUPPORT`), so Docker's networks have none either. The online migration was also proven by hand against a scratch role, since dropped.
   - **Unreleased on `main`:** #294, #289, #247, plus this PR once merged; see `.agents/next-release.md`.
   - **Carried from the 2026-09-25 #247 entry:**
     - testhost is in the #280 spike's state (`/opt/plamotrack-280` behind the tunnel against Pocket ID; the gate's stack and Keycloak stopped; `probe.py teardown --base https://NAME --ssh root@HOST` restores them).

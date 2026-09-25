@@ -59,7 +59,8 @@ psqlc postgres "DROP DATABASE plamotrack_e2e;"
 Every count must be zero afterwards — a spec that leaves rows behind is a spec that
 will collide with the next one.
 
-**In a Claude Code cloud session** (no Docker; the SessionStart hook's Postgres on
+**In a Claude Code cloud session** (Docker installed, its daemon stopped, see below; the
+SessionStart hook's Postgres on
 127.0.0.1:5432, user and password `plamotrack`): the image's Chromium is build 1194 and
 `@playwright/test` expects another, so point Playwright at it with a scratch config
 beside the real one, deleted after the run, and never `playwright install`:
@@ -75,6 +76,24 @@ Create and migrate `plamotrack_e2e` with `psql` against that server as above, th
 `settings.spec.ts` pulls in `app`, `phone` and `tablet` as its dependencies — the whole
 Chromium suite, about nine minutes (#298: 184 passed, 59 skipped). There is no WebKit
 in the image, so the dialog specs' WebKit leg is not covered there.
+
+**Docker in a cloud session** (#302, 25/09/2026): `dockerd` started as a background
+task comes up in seconds, with the agent proxy already in its environment.
+- **Pulls:**
+  - Docker Hub answers 429 to most of them (`postgres:16` got through once).
+    `mirror.gcr.io/library/<image>` serves the official images, and
+    `mirror.gcr.io/docker/dockerfile:1` the build frontend.
+  - `ghcr.io` resolves manifests, but its blob host
+    `pkg-containers.githubusercontent.com` is refused (403) by the egress policy.
+    `backend/Dockerfile` copies `uv` from `ghcr.io/astral-sh/uv`, so **the API
+    image cannot be built** there, and `ingress_matrix.py` cannot run.
+- **What does run:** Compose, container networking and port publishing. So does a
+  service with its image swapped for the mirrored Python base, running
+  `pip install uv && uv sync --frozen --no-dev` from the mounted source. The
+  container needs `/root/.ccr/ca-bundle.crt` mounted, with `PIP_CERT` and
+  `SSL_CERT_FILE` pointed at it: TLS to PyPI is re-terminated inside containers
+  too. #302 ran the `migrate` service that way, `main` against the branch.
+- There is no IPv6 in the container's kernel, so none in Docker's networks either.
 
 **Proving a layout did not move** (M6.6: every PR of #257–#260 owes "1280 px and
 wider unchanged"; first done on #265). Compare the branch with `main` over *one*
