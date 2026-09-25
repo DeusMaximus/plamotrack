@@ -281,9 +281,18 @@ async def list_retailers(session: AsyncSession) -> list[Retailer]:
     return list((await session.scalars(select(Retailer).order_by(Retailer.name))).all())
 
 
+def _parses_as_id(value: str) -> bool:
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
 async def get_or_create_retailer(session: AsyncSession, name: str) -> Retailer:
     """Case-insensitive match by name; used by the MCP create_order tool so agents
-    don't fragment the retailer list.
+    don't fragment the retailer list. Only for a shop given by *name* — one given by
+    `retailer_id` goes straight to `create_order`, which refuses an unknown id.
 
     Deliberately does NOT commit: it participates in the caller's transaction so
     a failed order creation rolls the new retailer back too — no partial data.
@@ -296,6 +305,21 @@ async def get_or_create_retailer(session: AsyncSession, name: str) -> Retailer:
     outside it."""
     await acquire_write_gate(session)
     wanted = clean_name(name)
+    # An id is never a name (#289). This is the one place a name *becomes* a row, and
+    # MCP's create_order once offered no other way to name a shop: an agent holding a
+    # retailer's id from list_retailers passed it here and got a new shop named after
+    # the id, the order attached to it — no error, nothing to tell it from a success.
+    # The test is exactly what `retailer_id` accepts, so the two fields' value spaces
+    # are disjoint. Refused even where a stored retailer already carries the string
+    # as its name — a row this defect minted — since reusing it would attach every
+    # later order made the same way to the junk row, not the shop the id belongs to.
+    if _parses_as_id(wanted):
+        raise InvalidInputError(
+            f"retailer '{wanted}' is an id, not a shop's name — pass an existing "
+            "retailer's id as retailer_id, or name the shop",
+            code=error_codes.NAME_IS_ID,
+            params={"name": wanted},
+        )
     # Equality after case-folding, not ILIKE: a pattern match reads `%` and `_` in
     # the *agent's* input as wildcards, so a shop named "%" attached its order to
     # whichever retailer sorted first, and read `\` as its escape, so a shop with a

@@ -51,6 +51,9 @@ IMPORT_PLAN_STALE = "import.plan_stale"
 FIELD_NOT_NULLABLE = "field.not_nullable"
 FIELD_BLANK = "field.blank"
 NAME_BLANK = "name.blank"
+#: A value offered as a name that parses as an id — where a name is resolved or
+#: created (MCP `create_order`'s `retailer`), an id is never a name (#289).
+NAME_IS_ID = "name.is_id"
 VALUE_OUT_OF_RANGE = "value.out_of_range"
 #: A list endpoint's `sort` outside its vocabulary, or `limit` below 1 (§13.4, #232).
 LIST_SORT_UNKNOWN = "list.sort_unknown"
