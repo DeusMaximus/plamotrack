@@ -24,9 +24,9 @@ last edited, so a large jump either way is worth a look.
 
 | What | Command | Notes |
 | --- | --- | --- |
-| Backend (~1750) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
+| Backend (~2880) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
 | Lint + format | `uv run ruff check --fix . && uv run ruff format .` | Before every commit. CI checks both. |
-| Frontend unit (~628) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
+| Frontend unit (~648) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. Also the compile-time check on every static `t("…")` key. |
 | Frontend lint | `npm run lint` | oxlint, then `scripts/check-palette.mjs` — refuses any stock Tailwind palette utility under `src/` (design §13.1: tokens only; `@theme` already emits no CSS for one, so the guard is what makes the regression loud). |
 | Translation coverage | `npm run i18n:report` (in `frontend/`) | Markdown table, presentation only — the catalogue tests are what gate. CI appends it to the job summary. |
@@ -58,6 +58,23 @@ psqlc postgres "DROP DATABASE plamotrack_e2e;"
 
 Every count must be zero afterwards — a spec that leaves rows behind is a spec that
 will collide with the next one.
+
+**In a Claude Code cloud session** (no Docker; the SessionStart hook's Postgres on
+127.0.0.1:5432, user and password `plamotrack`): the image's Chromium is build 1194 and
+`@playwright/test` expects another, so point Playwright at it with a scratch config
+beside the real one, deleted after the run, and never `playwright install`:
+
+```ts
+// frontend/.pw-cloud.config.ts — scratch, untracked
+import base from "./playwright.config";
+export default { ...base, use: { ...base.use, launchOptions: { executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome" } } };
+```
+
+Create and migrate `plamotrack_e2e` with `psql` against that server as above, then
+`DATABASE_URL=… npx playwright test -c .pw-cloud.config.ts <specs> --workers=1`. Naming
+`settings.spec.ts` pulls in `app`, `phone` and `tablet` as its dependencies — the whole
+Chromium suite, about nine minutes (#298: 184 passed, 59 skipped). There is no WebKit
+in the image, so the dialog specs' WebKit leg is not covered there.
 
 **Proving a layout did not move** (M6.6: every PR of #257–#260 owes "1280 px and
 wider unchanged"; first done on #265). Compare the branch with `main` over *one*
@@ -391,7 +408,11 @@ cd backend && uv run python mutation_test.py          # every case — ~27 min a
 uv run python mutation_test.py -k rcpt-                # cases whose label contains "rcpt-"
 ```
 
-- **Refuses a dirty tree**, so an interrupted run is obvious in `git status`.
+- **Refuses a dirty tree**, so an interrupted run is obvious in `git status`. To run
+  it over uncommitted work, apply the diff in a worktree and commit it there, detached.
+  A worktree that borrows the main checkout's `.venv` through a symlink needs
+  `UV_NO_SYNC=1`: without it the harness's `uv run` re-synced the shared venv, and the
+  next `uv run` in the main checkout uninstalled and reinstalled a package (#289).
 - **A burst of failures that vanish on re-probe is a concurrent pytest session,
   not a finding.** A parallel session running the suite against `plamotrack_test`
   mid-harness reads as SICK/ERROR/GREEN for exactly the window it overlaps, and

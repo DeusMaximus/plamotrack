@@ -41,6 +41,50 @@ Template:
 
 ---
 
+## 2026-09-25 — Claude Code (Opus 5.5) — #247 MERGED as `6000d96` (PR #298): kit lists sort by the date they print (`started`, `completed`, `newest`); list pages drop an unknown filter or sort from the URL
+
+- **Done:**
+  - [PR #298](https://github.com/DeusMaximus/plamotrack/pull/298) squash-merged as **`6000d96`**, pinned to the reviewed head `09f2260`; #247 closed.
+    - `GET /kits` and MCP `list_kits` gain `started` and `completed` (the build's own date, newest first, undated kits last, `NULLS LAST` spelled out, ties by creation then id) and `newest` (created, newest first). `created`, `recent` and `name` are unchanged; `created` is still the API default.
+    - Home: the bench sorts by `started`; Recently completed by `completed`, its *view all* `/kits?status=complete&sort=completed`. The Backlog strip keeps `recent` (newest arrivals); its *view all* is `/kits?status=backlog`, the page's default.
+    - `completedOn` is the build date or null; an undated build prints "—" on Home and in the Kits page's Completed column.
+    - Kits page menu: Newest added (the default), Oldest added, Recently started, Recently completed, Name A–Z. `recent` is not offered.
+    - `useEnumParam` now drops a filter or sort value outside a page's vocabulary from the URL (replace, no history entry), on every list page. This came from Greptile's P2 in round 1: old `/kits?sort=recent` links, and old Orders links with `status=shipped`.
+    - Docs: design §7, §13.2, §13.4, README.
+  - Tests:
+    - One shared fixture, `frontend/src/lib/__fixtures__/kit-sort-cases.json`, read by `backend/tests/test_kit_sorts.py` (16 cases) and `src/lib/home.test.ts` (18).
+    - Negative control on unfixed `main`: backend 12 red / 4 green, frontend 7 red / 36 green.
+    - The `247-` mutation set: 7/7 killed.
+    - E2E: the full Chromium suite, 184 passed. `list-urls.spec.ts` covers the URL clean-up, and its new assertions fail without the fix.
+  - `.agents/testing-and-review.md`: the cloud e2e recipe, a note on running the mutation harness in a worktree, and the suite counts.
+- **Decisions (the owner's, 2026-09-25):**
+  - New sorts beside `recent`, not a status-aware `recent`.
+  - `recent` comes off the Kits page and nowhere else; the page defaults to `newest`.
+  - The Backlog *view all* opens the page's default order.
+  - **No fallback for a missing build date:** undated builds print none and sort last. The issue had proposed falling back to the status clock.
+  - **Review call:** Greptile only, with Codex in its own cloud session available. Greptile went 4/5 then 5/5. The owner triggered CodeRabbit once: two Minor doc findings, both taken; its docstring warning declined.
+- **State:**
+  - **On the live instance once released:** completed kits imported without a completion date show "—" and sort last until dated. So do kits created directly as `complete`, because a create never stamps a build date.
+  - **Unreleased on `main`:** #294 (Pocket ID `resource`), #289 (`create_order` `retailer_id`), #247.
+  - **Cloud image:** Playwright drives the preinstalled Chromium through the recipe; no WebKit.
+  - **Unchecked:** the docs site (plamotrack-docs) may still describe the Kits page's "Newest first" or Home's old order.
+  - **Unfiled defect, carried:** `_assemble_database_url` in `app/config.py` does not bracket an IPv6 `POSTGRES_HOST`. Compose pins `POSTGRES_HOST: db`, so only a source run with an IPv6 literal hits it.
+  - **Carried from the 2026-09-23 #294 entry:**
+    - **testhost is in the spike's state, not the gate's.** `/opt/plamotrack-280` runs the #294 build behind the tunnel against Pocket ID. The gate's stack and Keycloak are stopped. `probe.py teardown --base https://NAME --ssh root@HOST` restores them.
+    - **Don't recreate Keycloak's container:** its `sub` would change.
+    - The Claude.ai "Testing" connector points at the tunnel name.
+    - The LXC is a v0.5.2 release install. #278 is open for the owner's skill-zip check.
+  - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
+- **Next:**
+  1. Check docs.gunp.la for the Kits sort options and Home's ordering (plamotrack-docs).
+  2. The IPv6 `POSTGRES_HOST` defect: file it and fix it (small; can be done in a cloud session).
+  3. Cloud-feasible candidates:
+     - #124 (possibly already covered by the description; owner's call);
+     - #125 (bigger than it looks: order edits, the importer, the dialog);
+     - #268 and #238 (Chromium e2e now runs in the cloud);
+     - the importer bugs #110, #116, #134 and #137.
+  4. Carried: #279's edge probes then #281's packaging; the #280 decision; `probe.py teardown`; posting the rehearsal on #285; the release-to-release update and Git Bash commands, untested.
+
 ## 2026-09-25 — Claude Code (Opus 5.5) — #289 MERGED as `e72a7cc` (PR #297): MCP `create_order` names its shop by `retailer_id` or by name, and an id is never a name; the first cloud session from `main` checks the hook
 
 - **Done:**
@@ -172,32 +216,3 @@ Template:
   3. `probe.py teardown` when the owner is done with the spike.
   4. The #279 proof deployment when the owner opens platform accounts.
   - Carried from the previous entry: posting the rehearsal on #285 (offered) — now with the LXC's real move beside it. Untested: the release-to-release update, and the Windows commands in Git Bash.
-
-## 2026-09-23 — Claude Code (Opus 5.5) — the docs move to the release install: PR #293 (README + runbook) and plamotrack-docs#7 (all install/update pages) open; the Git → release move rehearsed on testhost, 0 failed
-
-- **Decisions (the owner's, 2026-09-23):**
-  - The docs lead with the published release files now, without waiting for M6.7 to finish.
-  - The README's install section shows **only** the release method. The README is the public page for now. The contributor section "Developing on it" stays.
-  - The repo's `docker-compose.yml` stays the source/pull-only template. Pinning the current release in it was declined for three reasons: a commit can't carry its own digests; `main`'s compose file must describe `main`'s code; and it would reopen #290's source-substitution class.
-- **Done:**
-  - [PR #293](https://github.com/DeusMaximus/plamotrack/pull/293): the README install moves to the release files, run verbatim on macOS. `.agents/releases.md` step 5 gains "update from the previous release's files" (its first real run is v0.5.2 → the next release), and step 7 bumps the version named in the README and docs commands.
-  - [plamotrack-docs#7](https://github.com/DeusMaximus/plamotrack-docs/pull/7), retitled, now covers every page:
-    - Installation: the release files, with Git Bash kept only as Windows' terminal.
-    - Updating: release to release, plus "If you installed with Git" with the tested same-folder move and a collapsed block for Git updates.
-    - Backups (`--no-build`), Troubleshooting, Configuration (the `COMPOSE_*` keys are Git-only), VPS + Caddy (the drop-in inline), Agent Skills (the zip comes from the release), and the v0.5.2 changelog.
-    - `mint broken-links` is clean.
-  - **Rehearsal** (`.dev/0.5.2/rehearsal/`, gitignored; `procedure.md` holds the table, `rehearse.py` the driver-based script):
-    - Start: a `git clone` at v0.4.1 in OIDC mode, claimed, with data, a PAT and an OAuth MCP client linked.
-    - (a) A new folder plus `COMPOSE_PROJECT_NAME`, and (b) the checkout renamed aside with a fresh folder of the same name. Both ran forward, rolled back and ran forward again, with **0 failed checks**: session, PAT, data, the same volume (CreatedAt), audit rows, MCP refresh and initialize, no re-registration.
-    - The set-aside checkout is its own project (`plamotrack-source`).
-    - The gate's matrices trip the limiters on purpose, so linking an MCP client right after them needs a ~2 min wait.
-- **State:**
-  - testhost is a **release install** at `/opt/plamotrack` (v0.5.2, project `plamotrack`), with the 0.4.1 checkout at `/opt/plamotrack-source`.
-  - #278 is still open for the owner's skill-zip install check.
-  - The LXC is unchanged (0.4.1, source).
-- **Next:**
-  1. ~~Owner: review and merge #293 and docs#7.~~ **Both merged 2026-09-23** after one Greptile round each (5 findings, all fixed): #293 as `157075f`, plamotrack-docs#7 as `4f54466`. docs.gunp.la serves the release install (checked live).
-  2. The owner's LXC move, per Updating → "If you installed with Git". A read-only look first is offered, pending the owner's OK to SSH.
-  3. Post the rehearsal on #285 as evidence (offered, not yet agreed).
-  4. #279 and #280.
-  - Untested: the release-to-release update (no predecessor yet), and the Windows commands in Git Bash (NEMESIS).
