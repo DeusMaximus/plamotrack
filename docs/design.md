@@ -2094,7 +2094,7 @@ is `/mcp/` on the API port (streamable HTTP).
   orders per stage; the same function as REST's `GET /summary`, so the counts an
   agent reads are the counts Home shows. Rows come from the list tools, and every
   order row carries its `stage`
-- `list_kits(status?, grade?, series?, sort?, limit?)` — `sort` is `created` (oldest first), `recent` (the status clock, newest first) or `name`; `limit` the first N of that order (§13.4)
+- `list_kits(status?, grade?, series?, sort?, limit?)` — `sort` is `created` (oldest first), `newest` (most recently added first), `recent` (the status clock, newest first), `started` or `completed` (the build's own date, newest first, undated kits last — #247) or `name`; `limit` the first N of that order (§13.4)
 - `list_kit_series()` — the series spellings in use, most frequent first; the
   select-or-create device for a free-text column (#96) — agents check it before
   writing a spelling nobody uses
