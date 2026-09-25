@@ -150,8 +150,9 @@ MATRIX = ROOT / "ingress_matrix.py"
 # body budgets and their reader, the client records' bounds.
 BUDGET = ROOT / "app/auth/budget.py"
 BODY = ROOT / "app/auth/body.py"
-# #299/#300: the dsn- set — the database URL assembled from POSTGRES_* and its
-# way into alembic, whose env.py joins the clean-tree check the way VERS did.
+# #299/#300/#301: the dsn- set — the database URL assembled from POSTGRES_*, its
+# way into alembic (whose env.py joins the clean-tree check the way VERS did), and
+# what a settings refusal prints.
 ALEMBIC_ENV = ROOT / "alembic/env.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
@@ -6168,9 +6169,10 @@ CASES += [
     ),
 ]
 
-# --- #299/#300: the database URL from POSTGRES_* — an IPv6 host bracketed, a zone id
-# raw for SQLAlchemy and `%25` for asyncpg's decoder, and every `%` doubled on its
-# way into alembic's ConfigParser. One case per place the fix lands. ------------------
+# --- #299/#300/#301: the database URL from POSTGRES_* — an IPv6 host bracketed, a
+# zone id raw for SQLAlchemy and `%25` for asyncpg's decoder, every `%` doubled on its
+# way into alembic's ConfigParser — and a settings refusal that echoes no secret.
+# One case per place the fix lands. ----------------------------------------------------
 CASES += [
     (
         "dsn-1. a bracketed POSTGRES_HOST is not unwrapped",
@@ -6242,6 +6244,13 @@ CASES += [
         '    if url.host and "%" in url.host:\n',
         "    if False:\n",
         "state_store_dsn_round_trips_through_asyncpg",
+    ),
+    (
+        "dsn-9. a settings refusal echoes its input, secrets included (the #301 defect)",
+        CFG,
+        '        env_file=_ENV_FILES, extra="ignore", hide_input_in_errors=True\n',
+        '        env_file=_ENV_FILES, extra="ignore"\n',
+        "refusal_names_its_setting_and_echoes_no_secret",
     ),
 ]
 
@@ -6328,8 +6337,9 @@ TEST_FILES = [
     "tests/test_mcp_order_retailer.py",
     # The #247 set: every 247- kill lives here.
     "tests/test_kit_sorts.py",
-    # The #299/#300 dsn- set: every dsn- kill lives here.
+    # The #299/#300/#301 dsn- set: every dsn- kill lives in these two.
     "tests/test_database_url.py",
+    "tests/test_settings_errors.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.

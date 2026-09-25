@@ -43,11 +43,11 @@ def _database_host(value: str) -> str:
     if ":" in host:
         try:
             IPv6Address(host)
-        except ValueError:
+        except ValueError as exc:
             raise ValueError(
                 "POSTGRES_HOST is a host name or an IP address, without a port — the "
                 f"port is POSTGRES_PORT (got {value!r})"
-            ) from None
+            ) from exc
     return host
 
 
@@ -65,7 +65,13 @@ _ENV_FILES = (_REPO_ROOT / ".env", _BACKEND_DIR / ".env")
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=_ENV_FILES, extra="ignore")
+    # hide_input_in_errors: a refusal's text is the container log, and pydantic's
+    # `input_value=` echoed the whole input (secrets from .env included) for a
+    # model validator, and the value itself for a field one. Every message below
+    # names its setting and quotes what it may; nothing is lost (#301, rule 14).
+    model_config = SettingsConfigDict(
+        env_file=_ENV_FILES, extra="ignore", hide_input_in_errors=True
+    )
 
     # Shared with the docker-compose db service (§8).
     postgres_user: str = "plamotrack"
