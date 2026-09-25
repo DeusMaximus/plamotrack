@@ -11,8 +11,9 @@ import type { ItemType, Kit, Order, OrderItem, OrderStage } from "../api/types";
 export const MAIL_STAGES = ["pre_ordered", "ordered", "in_transit"] as const satisfies readonly OrderStage[];
 export type MailStage = (typeof MAIL_STAGES)[number];
 
-/** Rows in the Backlog and Recently completed strips — the six most recent by
- *  the status clock (§13.2); the heading carries the true count. */
+/** Rows in the Backlog and Recently completed strips — the six newest arrivals
+ *  (the status clock) and the six latest completions (§13.2, #247); the heading
+ *  carries the true count. */
 export const STRIP_LIMIT = 6;
 
 /** Cards per mail column before "view all" takes over — the artboard's three. */
@@ -38,10 +39,15 @@ export function buildDay(startedAt: string, now: Date): number {
   return Math.max(0, elapsed) + 1;
 }
 
-/** The date a Recently completed row shows: the build's own completion date
- *  when it has one (#94), else the moment it entered `complete`. */
-export function completedOn(kit: Kit): string {
-  return kit.build_completed_at ?? kit.status_updated_at;
+/** The date a completed build shows — on Home's Recently completed strip and the
+ *  Kits page's Completed column alike: the build's own completion date (#94), or
+ *  none. Nothing stands in for a missing one (#247, owner's call): the moment it
+ *  entered `complete` is an import's instant or a move's, not when it was
+ *  finished, and the server's `sort=completed` reads this same date — undated
+ *  builds last — so the order and the printed date cannot disagree
+ *  (`__fixtures__/kit-sort-cases.json` holds the two layers together). */
+export function completedOn(kit: Kit): string | null {
+  return kit.build_completed_at;
 }
 
 export type LineSummary = {

@@ -80,11 +80,23 @@ test.beforeAll(async () => {
   };
   kitIds.push((await post("/kits", { name: NAMES.bench, grade: "MG", scale: "1/100", status: "building" })).id);
   kitIds.push((await post("/kits", { name: NAMES.backlog, grade: "HG", scale: "1/144", status: "backlog" })).id);
-  // The rating's two states: stars, and the dash a kit nobody rated shows.
-  const rated = await post("/kits", { name: NAMES.rated, grade: "PG", scale: "1/60", status: "complete" });
+  // The rating's two states: stars, and the dash a kit nobody rated shows. Each
+  // carries a completion date: a create never stamps one, and an undated build
+  // prints no date and sorts after every dated one (#247), where the row's date
+  // could not be measured and the strip of six might not hold it.
+  const finished = new Date().toISOString();
+  const rated = await post("/kits", {
+    name: NAMES.rated,
+    grade: "PG",
+    scale: "1/60",
+    status: "complete",
+    build_completed_at: finished,
+  });
   kitIds.push(rated.id);
   expect((await api.patch(`/kits/${rated.id}`, { data: { rating: 5 } })).ok()).toBeTruthy();
-  kitIds.push((await post("/kits", { name: NAMES.unrated, grade: "SD", status: "complete" })).id);
+  kitIds.push(
+    (await post("/kits", { name: NAMES.unrated, grade: "SD", status: "complete", build_completed_at: finished })).id,
+  );
 
   retailerId = (await post("/retailers", { name: SHOP })).id;
   const line = (name: string, status?: string) => ({

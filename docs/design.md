@@ -2094,7 +2094,7 @@ is `/mcp/` on the API port (streamable HTTP).
   orders per stage; the same function as REST's `GET /summary`, so the counts an
   agent reads are the counts Home shows. Rows come from the list tools, and every
   order row carries its `stage`
-- `list_kits(status?, grade?, series?, sort?, limit?)` — `sort` is `created` (oldest first), `recent` (the status clock, newest first) or `name`; `limit` the first N of that order (§13.4)
+- `list_kits(status?, grade?, series?, sort?, limit?)` — `sort` is `created` (oldest first), `newest` (most recently added first), `recent` (the status clock, newest first), `started` or `completed` (the build's own date, newest first, undated kits last — #247) or `name`; `limit` the first N of that order (§13.4)
 - `list_kit_series()` — the series spellings in use, most frequent first; the
   select-or-create device for a free-text column (#96) — agents check it before
   writing a spelling nobody uses
@@ -2886,12 +2886,23 @@ scrolls past usefulness, and every card is drag-only (#122). **Home** is the sta
 page instead — status at a glance, the bench first:
 
 - **On the bench** — the kits in `building`, as wide cards: name, grade, scale, kit
-  number, started date, days since, the latest note, an edit control.
-- **Backlog** and **Recently completed** — the six most recent kits each, the true
-  count in the heading, and a *view all* link to Kits filtered to that status and
-  sorted newest first. "Recent" is when the kit entered the status
-  (`status_updated_at`): creation for a kit that started in the backlog, receipt
-  for one an order delivered.
+  number, started date, days since, the latest note, an edit control. Latest start
+  first (`sort=started`); a kit with no start date after every one that has one.
+- **Backlog** and **Recently completed** — six kits each, the true count in the
+  heading, and a *view all* link to Kits filtered to that status. The Backlog is
+  the newest arrivals — when the kit entered the status (`status_updated_at`,
+  `sort=recent`): creation for a kit that started in the backlog, receipt for one an
+  order delivered — and prints no date; its link opens the Kits page's own order.
+  Recently completed is the latest completion dates (`sort=completed`), the date
+  each row prints, and its link keeps that sort.
+
+  Each list is ordered by the date its cards print (#247). Both strips were first
+  built on the status clock, so a build finished in July and recorded in September
+  headed Recently completed above one finished yesterday, while the row printed the
+  July date. A build with no date of its own (an import never guesses one) prints
+  none and sorts after every dated one, rather than borrowing the moment it was
+  moved or imported (owner's call, 2026-09-25). The two layers hold that rule
+  through one fixture, `frontend/src/lib/__fixtures__/kit-sort-cases.json`.
 - **In the mail** — three columns of *order* cards (Pre-ordered, Ordered, In
   transit): retailer, the date of the order's last status change (placed,
   shipped), its first kit line, "and n more", tracking once shipped; capped and
@@ -2944,7 +2955,7 @@ Access tokens table the list pages' (#234).
 ### 13.4 List pages
 
 Kits, Orders, Inventory and Retailers keep their tables and gain what Home links
-to: **filter and sort in the URL** (`?status=building&sort=recent`), so a *view all*
+to: **filter and sort in the URL** (`?status=complete&sort=completed`), so a *view all*
 link is a page state and a bookmark. Each row carries one edit control; Delete moves
 inside the edit dialog, next to the fields it destroys. Orders keeps its expandable
 lines, kit lines showing their kit status and catalog lines noting that stock applies
@@ -2969,6 +2980,17 @@ are named rather than left to a library: a midnight that happens twice is its fi
 occurrence, and a midnight a transition skipped is read with the offset that held
 before it. The filters and the search narrow the loaded list in the browser; the page
 holds the whole list, and a personal collection is a few hundred rows.
+
+With #247 (2026-09-25) the kit sorts are `created` (oldest first, the API's
+default), `newest` (its reverse), `recent`, `started` and `completed` (the build's own
+dates, newest first, undated kits last) and `name` — on REST and the MCP tool alike.
+The **Kits page offers every one but `recent`** and opens on `newest` (owner's
+calls): a page sort should follow a date the table shows, and `recent` follows the
+last status change, a different event for every status, shown nowhere. An old
+`?sort=recent` link lands on the default, and the address bar drops the value —
+every list page does that for a filter or sort outside its vocabulary. `recent` stays
+on the API — what an agent asking "what moved lately" wants — and behind Home's
+Backlog strip.
 
 ### 13.5 Not in M6.5
 

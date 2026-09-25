@@ -526,10 +526,11 @@ export interface InstanceSettingsUpdate {
  *  the setup and login screens render in, and (owner only) the CSRF token that
  *  travels back in `X-CSRF-Token` on every unsafe request. No version, no
  *  collection data. Mirrors backend/app/schemas/auth.py. */
-/** `GET /kits?sort=` (§13.4, #232) — mirrors `services/kits.py::KIT_SORTS`:
- *  `created` oldest first (the API default), `recent` by the status clock
- *  newest first, `name` alphabetical. */
-export const KIT_SORTS = ["created", "recent", "name"] as const;
+/** `GET /kits?sort=` (§13.4, #232, #247) — mirrors `services/kits.py::KIT_SORTS`:
+ *  `created` oldest first (the API default) and `newest` the reverse, `recent` by
+ *  the status clock newest first, `started` / `completed` by the build's own date
+ *  newest first with undated kits last, `name` alphabetical. */
+export const KIT_SORTS = ["created", "newest", "recent", "started", "completed", "name"] as const;
 export type KitSort = (typeof KIT_SORTS)[number];
 
 /** `GET /orders?sort=` — mirrors `services/orders.py::ORDER_SORTS`: `placed`

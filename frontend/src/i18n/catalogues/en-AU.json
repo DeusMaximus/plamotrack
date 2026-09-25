@@ -628,8 +628,10 @@
     "headerCompleted": "Completed",
     "completedTitle": "Build completed · elapsed days",
     "confirmDelete": "Delete \"{{name}}\"? This cannot be undone.",
-    "sortRecent": "Newest first",
-    "sortCreated": "Oldest first",
+    "sortNewest": "Newest added",
+    "sortCreated": "Oldest added",
+    "sortStarted": "Recently started",
+    "sortCompleted": "Recently completed",
     "sortName": "Name A–Z",
     "showCount_one": "Show {{countDisplay}} kit",
     "showCount_other": "Show {{countDisplay}} kits"

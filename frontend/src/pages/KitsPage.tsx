@@ -5,7 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { api, summaryQuery } from "../api/client";
 import type { Kit, KitStatus } from "../api/types";
-import { KIT_SORTS, KIT_STATUSES, type KitSort } from "../api/types";
+import { KIT_STATUSES, type KitSort } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
 import {
   FILTERS_FOCUS,
@@ -37,6 +37,7 @@ import {
   TABLE_HEAD_ROW_CLASS,
 } from "../components/ui";
 import { formatDate } from "../lib/format";
+import { completedOn } from "../lib/home";
 import { invalidateKitViews } from "../lib/invalidate";
 import { countedPhrase, dateWithElapsed, ratingTooltip, statusLabel } from "../lib/labels";
 import { filterKits } from "../lib/listFilters";
@@ -56,12 +57,12 @@ import { STATUS_TONES } from "../lib/tones";
  *  beside it (deliberately elapsed, not time-at-the-bench — a shelved build reads
  *  long, and that is the documented shape of the two-column decision on #94). */
 function completedCell(kit: Kit): string {
-  if (!kit.build_completed_at) return "—";
-  const date = formatDate(kit.build_completed_at);
+  const completedAt = completedOn(kit);
+  if (!completedAt) return "—";
+  const date = formatDate(completedAt);
   if (!kit.build_started_at) return date;
   const days = Math.round(
-    (new Date(kit.build_completed_at).getTime() - new Date(kit.build_started_at).getTime()) /
-      86_400_000,
+    (new Date(completedAt).getTime() - new Date(kit.build_started_at).getTime()) / 86_400_000,
   );
   return dateWithElapsed(date, days);
 }
@@ -69,18 +70,26 @@ function completedCell(kit: Kit): string {
 /** Rows per page on the list pages (§13.4). */
 const PAGE_SIZE = 10;
 
-/** The sorts in the order the page offers them — the default first — which is
- *  not `KIT_SORTS`' wire order. Keyed by the type, so a new sort stops compiling
- *  until it has a label. */
-const SORT_LABEL = {
-  recent: "kits.sortRecent",
-  created: "kits.sortCreated",
-  name: "kits.sortName",
-} as const satisfies Record<KitSort, string>;
-const SORT_ORDER = Object.keys(SORT_LABEL) as KitSort[];
+/** The sorts the page offers: every wire sort but `recent`, whose order follows a
+ *  date no column shows — when each kit last changed status, a different event
+ *  per status (#247, owner's call; Home's Backlog strip and the MCP tool keep it).
+ *  An old `?sort=recent` link lands on the default. */
+type KitPageSort = Exclude<KitSort, "recent">;
 
-type KitListState = { status: KitStatus | ""; series: string; sort: KitSort };
-const NO_FILTERS: KitListState = { status: "", series: "", sort: "recent" };
+/** In the order the page offers them — the default first — which is not
+ *  `KIT_SORTS`' wire order. Keyed by the type, so a new sort stops compiling
+ *  until it has a label or is excluded above. */
+const SORT_LABEL = {
+  newest: "kits.sortNewest",
+  created: "kits.sortCreated",
+  started: "kits.sortStarted",
+  completed: "kits.sortCompleted",
+  name: "kits.sortName",
+} as const satisfies Record<KitPageSort, string>;
+const SORT_ORDER = Object.keys(SORT_LABEL) as KitPageSort[];
+
+type KitListState = { status: KitStatus | ""; series: string; sort: KitPageSort };
+const NO_FILTERS: KitListState = { status: "", series: "", sort: "newest" };
 
 export function KitsPage() {
   // Re-render when the instance's presentation settings arrive or change —
@@ -90,7 +99,7 @@ export function KitsPage() {
   const queryClient = useQueryClient();
   // The list's state is the URL (§13.4, #232): a "view all" link from Home
   // and a bookmark land on a filtered, sorted page. The sort is the server's
-  // — one definition of "recent" for the page, Home and the MCP tool — the
+  // — one definition of each order for the page, Home and the MCP tool — the
   // filters and the search narrow the loaded list here.
   const [statusFilter, setStatusFilter] = useEnumParam<KitStatus | "">(
     "status",
@@ -99,7 +108,7 @@ export function KitsPage() {
   );
   const [seriesFilter, setSeriesFilter] = useTextParam("series");
   const [search, setSearch] = useSearchParam("q");
-  const [sort, setSort] = useEnumParam<KitSort>("sort", KIT_SORTS, "recent");
+  const [sort, setSort] = useEnumParam<KitPageSort>("sort", SORT_ORDER, NO_FILTERS.sort);
   const [page, setPage] = usePageParam();
   const writeParams = useWriteParams();
   const [modal, setModal] = useState<{ mode: "add" } | { mode: "edit"; kit: Kit } | null>(null);
@@ -207,7 +216,7 @@ export function KitsPage() {
             <Select
               aria-label={t("list.sortLabel")}
               value={sort}
-              onChange={(event) => setSort(event.target.value as KitSort)}
+              onChange={(event) => setSort(event.target.value as KitPageSort)}
               className="!w-auto"
               data-focus-stand-in={FILTERS_FOCUS}
             >

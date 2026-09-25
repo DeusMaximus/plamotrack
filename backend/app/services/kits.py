@@ -94,15 +94,18 @@ async def create_kit(session: AsyncSession, data: KitCreate) -> Kit:
     return kit
 
 
-#: How a kit list is ordered (§13.4, #232). `created` is the order the list
-#: always had (oldest first); `recent` is the pipeline clock — the moment the
-#: kit entered its current status, `status_updated_at` — newest first, which is
-#: what Home's "view all" links and an agent asking "what moved lately" want;
-#: `name` is alphabetical. One vocabulary for REST and MCP: the router types the
-#: query parameter with it and the tool passes its string here, so both refuse
-#: the same spellings.
-KitSort = Literal["created", "recent", "name"]
-KIT_SORTS: tuple[KitSort, ...] = ("created", "recent", "name")
+#: How a kit list is ordered (§13.4, #232, #247). `created` is the order the list
+#: always had (oldest first) and `newest` the same clock reversed — the Kits page's
+#: default; `recent` is the pipeline clock — the moment the kit entered its current
+#: status, `status_updated_at` — newest first, which is what Home's Backlog strip
+#: (newest arrivals) and an agent asking "what moved lately" want; `started` and
+#: `completed` are the build's own dates, newest first, which is what the bench and
+#: Recently completed show (#247: sorted by the status clock, they printed one date
+#: and ordered by another); `name` is alphabetical. One vocabulary for REST and MCP:
+#: the router types the query parameter with it and the tool passes its string
+#: here, so both refuse the same spellings.
+KitSort = Literal["created", "newest", "recent", "started", "completed", "name"]
+KIT_SORTS: tuple[KitSort, ...] = ("created", "newest", "recent", "started", "completed", "name")
 
 
 def _kit_order(sort: KitSort):
@@ -110,6 +113,16 @@ def _kit_order(sort: KitSort):
         # Ties (kits received by one order share the instant) break by creation,
         # then id, so the order is stable across reads.
         return (Kit.status_updated_at.desc(), Kit.created_at.desc(), Kit.id)
+    if sort in ("started", "completed"):
+        # The date the row shows, and nothing standing in for it: a kit without
+        # one (an import never guesses it) sorts after every kit that has one,
+        # rather than by an instant the page does not show (owner's call, #247).
+        # NULLS LAST is spelled out — Postgres puts nulls *first* in a descending
+        # sort. Ties (a backfill to the same midnight) break as `recent`'s do.
+        date = Kit.build_started_at if sort == "started" else Kit.build_completed_at
+        return (date.desc().nulls_last(), Kit.created_at.desc(), Kit.id)
+    if sort == "newest":
+        return (Kit.created_at.desc(), Kit.id)
     if sort == "name":
         return (func.lower(Kit.name), Kit.id)
     return (Kit.created_at, Kit.id)

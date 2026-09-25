@@ -42,8 +42,9 @@ screenshots. This README is the short version.
 Six statuses — pre-ordered, ordered, in transit, backlog, building, complete — and a
 Home page that reads them the way a Sunday afternoon does. **On the bench** is what
 you're building, each kit with its start date, a day counter and your latest note.
-**Backlog** and **Recently completed** show the six most recent of each with the true
-count beside the heading, and a *view all* link into the full list, already filtered.
+**Backlog** shows the six newest arrivals and **Recently completed** the six latest
+finished builds, by the date each card prints, with the true count beside the heading
+and a *view all* link into the full list, already filtered.
 **In the mail** is the money still in flight — pre-ordered, ordered, in transit — as
 order cards with the retailer, the carrier and the tracking number once it ships.
 
@@ -396,7 +397,7 @@ Personal access tokens keep working in that mode too.
 |---|---|
 | `get_meta` | App version and the instance's reference currency — what an omitted `currency_code` means |
 | `get_summary` | The collection at a glance — kits per status, orders per stage (pre-ordered, ordered, in transit, received); the numbers Home shows |
-| `list_kits` | Filter by status, grade or series; `sort=recent` for the kits that last moved, `limit` for the first N |
+| `list_kits` | Filter by status, grade or series; `sort=completed` or `started` by the build's own dates, `recent` for the kits that last moved, `newest` for the latest added, `limit` for the first N |
 | `list_kit_series` | Series names already in use — check before writing a new spelling |
 | `get_kit` | One kit, in full |
 | `create_kit` | Add a kit that *wasn't* bought — a gift, a trade, a carry-over from before tracking; purchases go through `create_order` |

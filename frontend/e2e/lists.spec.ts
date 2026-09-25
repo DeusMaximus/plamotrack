@@ -799,7 +799,7 @@ test("the filter sheet, a link and the desktop's selects produce the same list",
   await expect(sheet.getByRole("button", { name: "Name A–Z" })).toHaveAttribute("aria-pressed", "true");
   await sheet.getByRole("button", { name: "Clear", exact: true }).click();
   await expect(sheet.getByRole("button", { name: "Show 7 kits" })).toBeVisible();
-  await expect(sheet.getByRole("button", { name: "Newest first" })).toHaveAttribute("aria-pressed", "true");
+  await expect(sheet.getByRole("button", { name: "Newest added" })).toHaveAttribute("aria-pressed", "true");
   await page.keyboard.press("Escape");
 
   // The same URL, pasted; and on the desktop, where the selects read it.
@@ -814,10 +814,10 @@ test("the filter sheet, a link and the desktop's selects produce the same list",
   await expect(page.getByLabel("Sort")).toHaveValue("name");
   await expect(rowOf(page, TAG)).toHaveCount(2);
 
-  // Home's *view all* link is `?status=backlog&sort=recent` (§13.4); the sheet
+  // Home's Backlog *view all* link is `?status=backlog` (§13.4, #247); the sheet
   // writes the status alone, the sort being the default. One list.
   await page.setViewportSize(phone);
-  await openList(page, `/kits?status=backlog&sort=recent&q=${q}`, NAMES.twin);
+  await openList(page, `/kits?status=backlog&q=${q}`, NAMES.twin);
   const fromLink = await names();
   await openList(page, `/kits?q=${q}`, NAMES.twin);
   await opener.click();

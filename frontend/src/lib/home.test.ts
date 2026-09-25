@@ -1,7 +1,8 @@
 /** Home's pure rules (#233): the mail columns, the card's line summary, the
  *  day counter. Value axis on the lines: none, one, two, three; kit and
  *  catalog; a catalog name loaded or not; pre-ordered lines on a pre-order, a
- *  mixed order and an ordered one. */
+ *  mixed order and an ordered one. And the dates a build prints, shared with
+ *  the server's sorts (#247). */
 import { describe, expect, it } from "vitest";
 
 import type { Kit, Order, OrderItem, OrderStage } from "../api/types";
@@ -15,6 +16,7 @@ import {
   summarizeLine,
   trackingOf,
 } from "./home";
+import sortCases from "./__fixtures__/kit-sort-cases.json";
 
 function kit(name: string, status: Kit["status"] = "ordered"): Kit {
   return {
@@ -119,14 +121,58 @@ describe("buildDay", () => {
   });
 });
 
-describe("completedOn", () => {
-  it("prefers the build's own completion date, else the status clock", () => {
-    const done = { ...kit("X", "complete"), status_updated_at: "2026-09-01T00:00:00Z" };
-    expect(completedOn(done)).toBe("2026-09-01T00:00:00Z");
-    expect(completedOn({ ...done, build_completed_at: "2026-08-15T00:00:00Z" })).toBe(
-      "2026-08-15T00:00:00Z",
-    );
+/** #247 — the date a build shows and the order the server lists it in are one
+ *  rule, held by `__fixtures__/kit-sort-cases.json`, which
+ *  backend/tests/test_kit_sorts.py seeds and asks the API about. Here: every
+ *  case's printed date, and that every promised order is sorted by it. */
+describe("kit dates, shared with the server (#247)", () => {
+  const fixtureKit = (c: (typeof sortCases.kits)[number]): Kit => ({
+    ...kit(c.name, c.status as Kit["status"]),
+    created_at: c.created_at,
+    status_updated_at: c.status_updated_at,
+    build_started_at: c.build_started_at,
+    build_completed_at: c.build_completed_at,
   });
+  const byName = new Map(sortCases.kits.map((c) => [c.name, fixtureKit(c)]));
+
+  it("reads a real fixture", () => {
+    // An emptied fixture must fail, not parametrize into nothing.
+    expect(sortCases.kits).toHaveLength(11);
+    expect(sortCases.orders.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it.each(sortCases.kits.map((c) => [c.name, c] as const))(
+    "%s prints its own completion date, or none",
+    (_name, c) => {
+      expect(completedOn(fixtureKit(c))).toBe(c.completed_on);
+    },
+  );
+
+  /** What each page prints for the `by` field: the date the list is promised
+   *  to be sorted by. The start date is printed as stored (the bench, the
+   *  Started column); the completion date through `completedOn`. */
+  const printed: Record<string, (k: Kit) => string | null> = {
+    completed_on: completedOn,
+    started_on: (k) => k.build_started_at,
+    created_at: (k) => k.created_at,
+    status_updated_at: (k) => k.status_updated_at,
+  };
+
+  it.each(sortCases.orders.map((o) => [JSON.stringify(o.params), o] as const))(
+    "%s is sorted by the date the page prints — newest first, undated last",
+    (_params, o) => {
+      const dateOf = printed[o.by];
+      expect(dateOf, `no printed date for ${o.by}`).toBeDefined();
+      const rows = o.names.map((n) => byName.get(n)!);
+      for (let i = 1; i < rows.length; i++) {
+        const [prev, next] = [dateOf(rows[i - 1]), dateOf(rows[i])];
+        const where = `${o.names[i - 1]} before ${o.names[i]}`;
+        if (next === null) continue; // undated: after every dated row, any order among them
+        expect(prev, `${where}: a dated row after an undated one`).not.toBeNull();
+        expect(Date.parse(prev!), where).toBeGreaterThanOrEqual(Date.parse(next));
+      }
+    },
+  );
 });
 
 describe("mailCardLines", () => {

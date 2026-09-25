@@ -1686,11 +1686,11 @@ class _Planner:
         case 5).
 
         `update_kit` stamps `status_updated_at` on every status change, because the
-        `recent` sort (Home's strips, `GET /kits?sort=recent`) is read off it. The importer assigns
-        `status` directly, so a merge that moved a kit from `ordered` to `building`
-        left the timestamp reading whenever it last moved for real — the page
-        silently lied about it, and the further back the original move was, the
-        further from the truth.
+        `recent` sort (Home's Backlog strip, `GET /kits?sort=recent`) is read off
+        it. The importer assigns `status` directly, so a merge that moved a kit
+        from `ordered` to `building` left the timestamp reading whenever it last
+        moved for real — the page silently lied about it, and the further back the
+        original move was, the further from the truth.
 
         Deferred rather than filled in here: the value is `datetime.now(UTC)`, and
         `_plan_fingerprint` hashes every value in `row.present`. A clock reading in

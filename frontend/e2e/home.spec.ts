@@ -54,8 +54,28 @@ test.beforeAll(async () => {
     (await post("/kits", { name: name("Bench B"), grade: "RG", status: "building" })).id,
     (await post("/kits", { name: name("Backlog"), grade: "HG", status: "backlog" })).id,
   );
-  const done = await post("/kits", { name: name("Done"), grade: "SD", status: "complete" });
+  // A create never stamps a build date, and an undated build sorts after every
+  // dated one (#247) — so Done carries today's, and heads this run's completions.
+  const done = await post("/kits", {
+    name: name("Done"),
+    grade: "SD",
+    status: "complete",
+    build_completed_at: new Date().toISOString(),
+  });
   kitIds.push(done.id);
+  // Created after Done, finished a year before it: by the status clock it would
+  // precede Done, by its completion date it follows (#247). No "Done" in its name,
+  // so the strip's row filter above cannot pick it.
+  kitIds.push(
+    (
+      await post("/kits", {
+        name: name("Built last year"),
+        grade: "HG",
+        status: "complete",
+        build_completed_at: "2025-09-01T00:00:00+10:00",
+      })
+    ).id,
+  );
   const rated = await api.patch(`/kits/${done.id}`, { data: { rating: 4 } });
   expect(rated.ok()).toBeTruthy();
 
@@ -158,6 +178,11 @@ test("the three sections render from the collection, with the server's counts", 
   const cardB = bench.getByRole("article").filter({ hasText: name("Bench B") });
   await expect(cardB.getByText("No start date")).toBeVisible();
   await expect(cardB.getByText("No notes yet")).toBeVisible();
+  // By start date, the undated card last (#247) — B moved to building after A,
+  // so the status clock put it first.
+  const benchNames = await bench.getByRole("heading", { level: 3 }).allInnerTexts();
+  expect(benchNames.indexOf(name("Bench A"))).toBeGreaterThanOrEqual(0);
+  expect(benchNames.indexOf(name("Bench A"))).toBeLessThan(benchNames.indexOf(name("Bench B")));
 
   // The strips: the newest backlog kit heads its strip; the completed one shows
   // its rating. The heading counts are the summary's — read off the API, not
@@ -167,7 +192,7 @@ test("the three sections render from the collection, with the server's counts", 
   await api.dispose();
   expect(summary.kits.building).toBe(before.kits.building + 2);
   expect(summary.kits.backlog).toBe(before.kits.backlog + 2);
-  expect(summary.kits.complete).toBe(before.kits.complete + 1);
+  expect(summary.kits.complete).toBe(before.kits.complete + 2);
   await expect(page.getByTestId("home-count-building")).toHaveText(String(summary.kits.building));
   await expect(page.getByTestId("home-count-backlog")).toHaveText(String(summary.kits.backlog));
   await expect(page.getByTestId("home-count-complete")).toHaveText(String(summary.kits.complete));
@@ -176,6 +201,12 @@ test("the three sections render from the collection, with the server's counts", 
   const completed = page.getByRole("region", { name: "Recently completed" });
   const doneRow = completed.locator("div").filter({ hasText: name("Done") }).last();
   await expect(doneRow.getByRole("img", { name: "4/5" })).toBeVisible();
+  // By completion date (#247): the build finished a year ago, recorded after
+  // Done, never precedes it — by the status clock it headed the strip. It may
+  // be off the strip altogether on a populated database, which is also right.
+  const stripText = await completed.innerText();
+  const lastYearAt = stripText.indexOf(name("Built last year"));
+  if (lastYearAt >= 0) expect(lastYearAt).toBeGreaterThan(stripText.indexOf(name("Done")));
 
   // The mail: one card per column from this run, the mixed order's pre-ordered
   // line tagged, the shipped one with its carrier and tracking number.
@@ -353,13 +384,14 @@ test("no width lets the page scroll sideways, and every mail card keeps its reta
 test("a view-all link lands on the list page filtered and sorted", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("link", { name: /^View all \d+ in the backlog$/ }).click();
-  await expect(page).toHaveURL(/\/kits\?status=backlog&sort=recent$/);
+  // The Kits page's default order, not the strip's arrival order (#247).
+  await expect(page).toHaveURL(/\/kits\?status=backlog$/);
   await expect(page.getByLabel("Filter by status")).toHaveValue("backlog");
-  await expect(page.getByLabel("Sort")).toHaveValue("recent");
+  await expect(page.getByLabel("Sort")).toHaveValue("newest");
   // The index route is not "current" everywhere (NavLink `end`).
   await expect(page.getByRole("link", { name: "Home" })).not.toHaveAttribute("aria-current", "page");
   await expect(page.getByRole("link", { name: "Kits" })).toHaveAttribute("aria-current", "page");
-  // Newest first, asserted on this run's own two kits: the newer precedes the
+  // Newest added, asserted on this run's own two kits: the newer precedes the
   // older whatever else the database holds (Codex #237, call 9).
   const rows = page.getByRole("row");
   await expect(rows.filter({ hasText: name("Backlog older") })).toHaveCount(1);
@@ -368,6 +400,24 @@ test("a view-all link lands on the list page filtered and sorted", async ({ page
   const older = names.findIndex((text) => text.includes(name("Backlog older")));
   expect(newer).toBeGreaterThan(0);
   expect(newer).toBeLessThan(older);
+
+  // Recently completed lands on the list sorted by the date the strip prints
+  // (#247): Done, finished today, before a build finished last year that was
+  // recorded after it — the status clock put that one first.
+  await page.goto("/");
+  await page.getByRole("link", { name: /^View all \d+ completed$/ }).click();
+  await expect(page).toHaveURL(/\/kits\?status=complete&sort=completed$/);
+  await expect(page.getByLabel("Sort")).toHaveValue("completed");
+  // Narrowed to this run's rows by the search: a year-old build sits pages down
+  // on a populated database, and the search keeps the sort.
+  await page.getByLabel("Search").fill(PREFIX);
+  await expect(page).toHaveURL(/[?&]sort=completed(&|$)/);
+  await expect(rows.filter({ hasText: name("Built last year") })).toHaveCount(1);
+  const completedNames = await rows.allInnerTexts();
+  const today = completedNames.findIndex((text) => text.includes(name("Done")));
+  const lastYear = completedNames.findIndex((text) => text.includes(name("Built last year")));
+  expect(today).toBeGreaterThan(0);
+  expect(today).toBeLessThan(lastYear);
 });
 
 test("the card's edit control opens the shared dialog, and a status change moves the kit", async ({
@@ -387,7 +437,7 @@ test("the card's edit control opens the shared dialog, and a status change moves
     page.getByRole("region", { name: "Recently completed" }).getByText(name("Bench B")),
   ).toBeVisible();
   await expect(page.getByTestId("home-count-building")).toHaveText(String(before.kits.building + 1));
-  await expect(page.getByTestId("home-count-complete")).toHaveText(String(before.kits.complete + 2));
+  await expect(page.getByTestId("home-count-complete")).toHaveText(String(before.kits.complete + 3));
 });
 
 test("an order card opens the order dialog, where the ship transition lives", async ({ page }) => {
