@@ -41,6 +41,43 @@ Template:
 
 ---
 
+## 2026-09-25 — Claude Code (Opus 5.5) — #299, #300, #301 filed and fixed in PR #302 (open): an IPv6 `POSTGRES_HOST`, a `%` in the URL alembic reads, and secrets echoed by a settings refusal
+
+- **Done:**
+  - Filed three bugs, each reproduced on `main` at `23e4b0e`:
+    - [#299](https://github.com/DeusMaximus/plamotrack/issues/299): the IPv6 `POSTGRES_HOST` carried from the last entry;
+    - [#300](https://github.com/DeusMaximus/plamotrack/issues/300): alembic's ConfigParser refuses any `%`, so a punctuated `POSTGRES_PASSWORD` stops the **published** `migrate` service;
+    - [#301](https://github.com/DeusMaximus/plamotrack/issues/301): a `Settings` refusal printed `input_value=`, which held the head and tail of `.env`'s secrets, into the container log.
+  - [PR #302](https://github.com/DeusMaximus/plamotrack/pull/302) on `claude/relaxed-albattani-vvepwn` closes all three:
+    - `config.py` renders the URL with `URL.create`, unwraps `[::1]`, and refuses a colon outside an IPv6 literal (only when assembling). It also sets `hide_input_in_errors=True`.
+    - `alembic/env.py` doubles `%`.
+    - `asyncpg_dsn` writes a host's `%` as `%25`.
+  - Tests:
+    - `tests/test_database_url.py` (51): 29 red / 22 green on unfixed `main`.
+    - `tests/test_settings_errors.py` (4): 4 red.
+    - The `dsn-` mutation set: 9/9 killed, and both files are in `TEST_FILES`.
+    - Backend: 2930 passed, 1 xfailed (predates the branch).
+  - `.agents/next-release.md` has the entry.
+- **Decisions (the owner's, 2026-09-25):**
+  - **A zone id is raw in the SQLAlchemy URL, `%25` only for asyncpg's parser**, not RFC 6874 everywhere as the task first said. SQLAlchemy never decodes a host, and the resolver refuses `fe80::1%25lo`.
+  - **#300 and #301 ride in the same PR** as separate issues: same class, and each is needed for #299's fix to be complete and not leak.
+- **State:**
+  - **PR #302 is open and unreviewed.** CI had not reported when this entry was written. No reviewer has been requested; that is the owner's call (`.agents/testing-and-review.md` → Which reviewer).
+  - **This entry rides on the PR branch, not `main`**: the session could push only to its branch. Once the PR merges it lands on `main` as usual. If `main` gets another hand-off entry first, `HANDOFF.md` conflicts; keep both entries and rotate once.
+  - **Not testable here:** a live IPv6 connection (the cloud container has no IPv6 stack; `EAFNOSUPPORT`), and the packaged `migrate` container (no Docker). The online migration under a punctuated password was proven by hand against a scratch role, since dropped.
+  - **Unreleased on `main`:** #294, #289, #247, plus this PR once merged; see `.agents/next-release.md`.
+  - **Carried from the 2026-09-25 #247 entry:**
+    - testhost is in the #280 spike's state (`/opt/plamotrack-280` behind the tunnel against Pocket ID; the gate's stack and Keycloak stopped; `probe.py teardown --base https://NAME --ssh root@HOST` restores them).
+    - Don't recreate Keycloak's container.
+    - The Claude.ai "Testing" connector points at the tunnel name.
+    - #278 is open for the owner's skill-zip check.
+    - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
+- **Next:**
+  1. PR #302: review (the owner picks the reviewer), CI, merge.
+  2. At the next release: work through `.agents/next-release.md` (release step 7).
+  3. Cloud-feasible candidates, carried: #124, #125, #268, #238; the importer bugs #110, #116, #134 and #137.
+  4. Carried: #279's edge probes, then #281's packaging; the #280 decision; `probe.py teardown`; posting the rehearsal on #285; the release-to-release update and the Git Bash commands, untested.
+
 ## 2026-09-25 — Claude Code (Opus 5.5) — #247 MERGED as `6000d96` (PR #298): kit lists sort by the date they print (`started`, `completed`, `newest`); list pages drop an unknown filter or sort from the URL
 
 - **Done:**
@@ -194,26 +231,3 @@ Template:
   3. #279: the two edge probes (a header-echo image on Railway's trial and a Render free service — the edge's source addresses, `X-Forwarded-For`, the resolver, the health-check `Host`), then #281's platform-neutral packaging, then one proof deployment.
   4. `probe.py teardown` when the spike is done.
   - Carried: posting the rehearsal on #285 (offered). Untested: the release-to-release update, and the Windows commands in Git Bash.
-
-## 2026-09-23 — Claude Code (Opus 5.5) — #280 Pocket ID: the browser login works as shipped, MCP needs the forwarded `resource` dropped (#294 filed); real passkeys and Claude.ai pass through the tunnel; #279 recorded on paper
-
-- **Decisions (the owner's, 2026-09-23):** #279 is **paper only for now** — no platform accounts; the proof deployment comes back after #280. #280 ran on testhost; file #294, post the findings, commit the spikes.
-- **Done:**
-  - `.agents/spikes/279/README.md`: Railway vs Render from their documentation (prices are dated estimates, not measured), the five things #281's packaging needs on any platform (nginx's Docker resolver, the literal upstream and port, Railway's health-check `Host` against default-deny, undocumented edge ranges for `TRUSTED_PROXIES`, `migrate` as a pre-deploy command), and the questions only a deployment answers.
-  - `.agents/spikes/280/`: `probe.py` (reuses `deployment_gate.py`; signs in with a CDP virtual passkey), `sequence.sh` (end to end from a clean start, exit 0), Pocket ID v2.16.0 pinned by digest, `findings.md`. Commits `9a544b4`, `38d29bd`; [report](https://github.com/DeusMaximus/plamotrack/issues/280#issuecomment-5788088730) and [follow-up](https://github.com/DeusMaximus/plamotrack/issues/280#issuecomment-5789076954) on #280.
-  - Against the unmodified v0.5.2 release: claim, later login, a stranger refused. The **MCP link is refused at Pocket ID's `/authorize`** (`invalid_request`) because the proxy forwards the client's RFC 8707 `resource` (FastMCP `forward_resource=True`). With `<base>/mcp` registered as a Pocket ID API (the workaround): link, refresh, transparent refresh, the concurrent-refresh race (exactly one upstream call — Pocket ID ends the whole grant on reuse, measured), restarts, revocation (local only: no upstream revocation endpoint), export → `down -v` → import, a wrong `ENCRYPTION_KEY` (Pocket ID won't start), lost-passkey recovery (same `sub`, no rebind).
-  - The owner's legs, through the gate's tunnel name: a Proton Pass passkey from Chrome on macOS and on Android; Claude.ai as a custom connector (a CIMD client), including a call past Pocket ID's one-minute token (transparent refresh); a browser write. **The provider only has to be reachable by the owner's browser** — Claude.ai's servers never talk to it.
-  - Filed [#294](https://github.com/DeusMaximus/plamotrack/issues/294) (bug, M6.7): `forward_resource=False`, a fake-provider test, the sweep.
-- **State:**
-  - **testhost is in the spike's state, not the gate's.** `/opt/plamotrack-280` (Compose project `plamotrack-280`, OIDC mode against Pocket ID) is behind the tunnel: `WEB_BIND` on the LAN address, `TRUSTED_PROXIES` the connector. Pocket ID (project `plamotrack-spike-280-idp`) holds the gate's `idp.` name on loopback 8081, access-token lifetime 1 min, two APIs registered. The gate's stack (`/opt/plamotrack`, v0.5.2) and Keycloak are **stopped**, volumes kept. `probe.py teardown --base https://NAME --ssh root@HOST` removes the spike and starts both again.
-  - **Keycloak's container mounts `realm.json` from `/opt/plamotrack/.agents/deployment-gate/keycloak/`**, the path it was created at before the rehearsal moved the checkout to `/opt/plamotrack-source`. Once stopped it would not start (Docker had made an empty directory there); an identical copy of the file now sits at that path, and the same container restarted with the owner's `sub` intact (the gate owner's sign-in was verified). **Don't recreate it:** the realm pins no user ids, so a new container changes `sub` and the gate's collection then needs `recovery rebind-oidc`.
-  - Spike secrets are in `~/.plamotrack-gate/spike-280/` (the first run's in `spike-280.first-run/`); run logs and screenshots in `.dev/280/` (gitignored).
-  - The owner's Claude.ai "Testing" connector points at the tunnel name; remove it when the spike is done.
-  - #278 is still open for the owner's skill-zip check.
-  - **The LXC is on v0.5.2 as a release install** (corrected after this entry was first written): the owner moved it on 2026-09-23 by the docs' Updating → "If you installed with Git" — the checkout moved aside, `.env` copied back, the release files fetched with `curl` — and the collection (about 100 kits) came through; the owner reports the instructions were straightforward and the old `.env` needed no edits. The first real-world run of the Git → release path; evidence for #285. Its load, for #279's sizing: about 330 MiB RAM for the whole LXC and ~1.5 % of 2 cores at idle, ~11 % CPU briefly during the upgrade.
-- **Next:**
-  1. #294: the fix with a test run against the unfixed code first, then the spike **without** the API registration, and the gate's OIDC phase against Keycloak.
-  2. Owner: the #280 recommendation (findings §8 — an optional supported provider once #294 lands and a real-device run passes without the workaround).
-  3. `probe.py teardown` when the owner is done with the spike.
-  4. The #279 proof deployment when the owner opens platform accounts.
-  - Carried from the previous entry: posting the rehearsal on #285 (offered) — now with the LXC's real move beside it. Untested: the release-to-release update, and the Windows commands in Git Bash.

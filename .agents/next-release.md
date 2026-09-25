@@ -33,7 +33,7 @@ Shape:
 
 ---
 
-## #300, #301, #299 — a database password with punctuation no longer stops `migrate`; a settings error no longer prints secrets (PR pending)
+## #300, #301, #299 — a database password with punctuation no longer stops `migrate`; a settings error no longer prints secrets (PR #302)
 - **Release note:** A `POSTGRES_PASSWORD` with punctuation in it (`@ / + = # %`, a
   space: what a password generator produces) no longer stops the `migrate` service
   with `invalid interpolation syntax` before the API starts. Neither does a
