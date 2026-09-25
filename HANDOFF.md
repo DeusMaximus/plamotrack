@@ -50,7 +50,7 @@ Template:
     - `completedOn` is the build date or null; an undated build prints "—" on Home and in the Kits page's Completed column.
     - Kits page menu: Newest added (the default), Oldest added, Recently started, Recently completed, Name A–Z. `recent` is not offered.
     - `useEnumParam` now drops a filter or sort value outside a page's vocabulary from the URL (replace, no history entry), on every list page. This came from Greptile's P2 in round 1: old `/kits?sort=recent` links, and old Orders links with `status=shipped`.
-    - Docs: design §7, §13.2, §13.4, README.
+    - Docs: design §7, §13.2, §13.4. Its README lines were reverted to the release's wording afterwards (below).
   - Tests:
     - One shared fixture, `frontend/src/lib/__fixtures__/kit-sort-cases.json`, read by `backend/tests/test_kit_sorts.py` (16 cases) and `src/lib/home.test.ts` (18).
     - Negative control on unfixed `main`: backend 12 red / 4 green, frontend 7 red / 36 green.
@@ -67,7 +67,12 @@ Template:
   - **On the live instance once released:** completed kits imported without a completion date show "—" and sort last until dated. So do kits created directly as `complete`, because a create never stamps a build date.
   - **Unreleased on `main`:** #294 (Pocket ID `resource`), #289 (`create_order` `retailer_id`), #247.
   - **Cloud image:** Playwright drives the preinstalled Chromium through the recipe; no WebKit.
-  - **Unchecked:** the docs site (plamotrack-docs) may still describe the Kits page's "Newest first" or Home's old order.
+  - **New rule (the owner's, 2026-09-25; `AGENTS.md` → Release artifacts, `.agents/releases.md` step 7):** the docs site and the README's user-facing parts describe the **published release**, never `main`. The README lines #289 and #247 had changed went back to the v0.5.2-alpha wording on `main` the same day.
+  - **Owed at the next release** (docs site and README together, landing with the publication):
+    - #247: Home's bench and Recently completed order by build date; an undated build shows "—" and sorts last; the Kits page's sort menu (Newest added default, no "Newest first"/`recent`); an unknown filter or sort leaves the URL. README: the Home paragraph and the `list_kits` row.
+    - #289: `create_order` takes `retailer_id`, and an id given as `retailer` is refused. README: the `create_order` row.
+    - #294: a Pocket ID install no longer needs the API-registration workaround (#280 findings §2a). This only matters if the docs cover Pocket ID by then, which is #280's open decision.
+    - The wording the README had carried is in `6000d96` and `e72a7cc` (`git show <sha> -- README.md`).
   - **Unfiled defect, carried:** `_assemble_database_url` in `app/config.py` does not bracket an IPv6 `POSTGRES_HOST`. Compose pins `POSTGRES_HOST: db`, so only a source run with an IPv6 literal hits it.
   - **Carried from the 2026-09-23 #294 entry:**
     - **testhost is in the spike's state, not the gate's.** `/opt/plamotrack-280` runs the #294 build behind the tunnel against Pocket ID. The gate's stack and Keycloak are stopped. `probe.py teardown --base https://NAME --ssh root@HOST` restores them.
@@ -76,7 +81,7 @@ Template:
     - The LXC is a v0.5.2 release install. #278 is open for the owner's skill-zip check.
   - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
 - **Next:**
-  1. Check docs.gunp.la for the Kits sort options and Home's ordering (plamotrack-docs).
+  1. At the next release: the owed docs above, per the new rule. Nothing to change on docs.gunp.la before then.
   2. The IPv6 `POSTGRES_HOST` defect: file it and fix it (small; can be done in a cloud session).
   3. Cloud-feasible candidates:
      - #124 (possibly already covered by the description; owner's call);

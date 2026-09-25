@@ -67,7 +67,12 @@ publication and native CI cannot be certified by a local build.
 7. Add the reviewed change/data/migration notes and observed deployment/client
    gate results to that draft. The install commands name the version: update
    `README.md`'s and the docs site's (Installation, Updating) to the new one, and
-   search both for the previous version string. Publishing the draft is a separate owner-approved
+   search both for the previous version string. Then bring the docs site and the
+   README's user-facing parts up to this release: they describe the published
+   release, never `main` (AGENTS.md → Release artifacts), so every user-visible
+   change merged since the previous tag has waited for this step. The list is in
+   those PRs' bodies and the newest hand-off entry; land the docs with the
+   publication, not before it. Publishing the draft is a separate owner-approved
    action. Alpha releases retain the prerelease flag.
 
 **Dispatch a new candidate instead of rerunning jobs.** Promotion requires attempt

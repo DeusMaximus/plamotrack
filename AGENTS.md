@@ -227,6 +227,18 @@ an `.env` from v0.5.0-alpha or earlier needs those two lines added before its ne
 `up`, or Compose pulls the never-published `:unreleased` image and stops with
 `denied`.
 
+**User-facing docs describe the published release, never `main`** (owner's rule,
+2026-09-25). The docs site (`DeusMaximus/plamotrack-docs` → https://docs.gunp.la) and
+the README's user-facing parts — what plamotrack is and does, installing, the MCP tool
+table — say what the currently published images do, because a reader installs the
+release and reads those first. A PR that changes user-visible behaviour leaves both
+alone and says in its body what they will owe; the release that ships the change
+brings them up to date (`.agents/releases.md`, step 7), and the newest hand-off entry
+carries the list until then. Contributor material follows `main`: the README's
+*Developing on it*, `docs/design.md`, `AGENTS.md`, `.agents/`, docstrings and tool
+descriptions — an MCP tool's description ships with its code, so it describes that
+code.
+
 ## Dev environment & commands
 
 Postgres comes from Docker (OrbStack on the primary dev Mac, auto-starts). For
