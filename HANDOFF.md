@@ -41,33 +41,37 @@ Template:
 
 ---
 
-## 2026-09-25 — Claude Code (Opus 5.5) — #299, #300, #301 filed and fixed in PR #302 (open): an IPv6 `POSTGRES_HOST`, a `%` in the URL alembic reads, and secrets echoed by a settings refusal
+## 2026-09-25 — Claude Code (Opus 5.5) — #299, #300, #301 MERGED as `b7f8a47` (PR #302): an IPv6 `POSTGRES_HOST`, a `%` in the URL alembic reads, and secrets echoed by a settings refusal
 
 - **Done:**
   - Filed three bugs, each reproduced on `main` at `23e4b0e`:
     - [#299](https://github.com/DeusMaximus/plamotrack/issues/299): the IPv6 `POSTGRES_HOST` carried from the last entry;
     - [#300](https://github.com/DeusMaximus/plamotrack/issues/300): alembic's ConfigParser refuses any `%`, so a punctuated `POSTGRES_PASSWORD` stops the **published** `migrate` service;
     - [#301](https://github.com/DeusMaximus/plamotrack/issues/301): a `Settings` refusal printed `input_value=`, which held the head and tail of `.env`'s secrets, into the container log.
-  - [PR #302](https://github.com/DeusMaximus/plamotrack/pull/302) on `claude/relaxed-albattani-vvepwn` closes all three:
+  - [PR #302](https://github.com/DeusMaximus/plamotrack/pull/302) squash-merged as **`b7f8a47`**, pinned to the reviewed head `c927060`. #299, #300 and #301 are closed.
     - `config.py` renders the URL with `URL.create`, unwraps `[::1]`, and refuses a colon outside an IPv6 literal (only when assembling). It also sets `hide_input_in_errors=True`.
     - `alembic/env.py` doubles `%`.
     - `asyncpg_dsn` writes a host's `%` as `%25`.
   - Tests:
-    - `tests/test_database_url.py` (51): 29 red / 22 green on unfixed `main`.
+    - `tests/test_database_url.py` (76): 46 red / 30 green on unfixed `main`.
     - `tests/test_settings_errors.py` (4): 4 red.
-    - The `dsn-` mutation set: 9/9 killed, and both files are in `TEST_FILES`.
-    - Backend: 2930 passed, 1 xfailed (predates the branch).
+    - The `dsn-` mutation set: 10/10 killed, and both files are in `TEST_FILES`.
+    - Backend: 2955 passed, 1 xfailed (predates the branch).
+    - A one-off credential fuzz, 28,128 pairs through all four readers, found 0 regressions. The script is in the PR body.
   - `.agents/next-release.md` has the entry.
 - **Decisions (the owner's, 2026-09-25):**
   - **A zone id is raw in the SQLAlchemy URL, `%25` only for asyncpg's parser**, not RFC 6874 everywhere as the task first said. SQLAlchemy never decodes a host, and the resolver refuses `fe80::1%25lo`.
   - **#300 and #301 ride in the same PR** as separate issues: same class, and each is needed for #299's fix to be complete and not leak.
+  - **Session bookkeeping commits straight to `main`**, a cloud session included: hand-off entries, their rotation, the merge record. This is the owner's standing go-ahead (2026-09-25), matching `AGENTS.md` → Git conventions.
 - **State:**
-  - **PR #302 is open and cleared for merge by review: GLM 5.3's round 2 at `b3aa1e9` is GO.** Greptile scored it 5/5 with no findings. Round 1 at `dd6f3df` was **NO-GO**, with a P2 and three P3s, answered on the thread. Round 2's one finding (5, a P3 record clause) is taken in the PR body. The merge itself is the owner's.
+  - **Reviews:**
+    - Greptile scored it 5/5 with no findings.
+    - GLM 5.3's round 1 at `dd6f3df` was **NO-GO**, with a P2 and three P3s, answered on the thread.
+    - Round 2 at `b3aa1e9` was **GO**. Its one finding (5, a P3 record clause) was taken in the PR body.
     - P2 fixed: the harness's first dsn-5 sent the mutant session to the dev database. Re-anchored, then made judge-only at `b3aa1e9`, because the re-anchor still redirected under an IPv6 `.env` host. Proven with a canary row; the rule is in testing-and-review, the case in lessons.md.
     - P3 finding 2: the finding was right, the remedy was declined with a counterexample. The state store reads the engine's host; decoding `%25` first breaks a real zone `%25`.
     - P3s 3 and 4: a tripwire comment in `config.py`, and record corrections.
-    - The subscription to #302 and a fallback check-in are live in the session that wrote this.
-  - **This entry rides on the PR branch, not `main`**: the session could push only to its branch. Once the PR merges it lands on `main` as usual. `main` got the #280 entry below first, so `main` was merged into the branch: both entries kept, and the #294 entry rotated out.
+  - **This entry reached `main` with the squash; the merge record was committed on `main` directly.** `main` got the #280 entry below first, so `main` was merged into the branch: both entries kept, and the #294 entry rotated out.
   - **Proven in Compose, not with the shipped image:** Docker runs in the cloud session once `dockerd` is started (`.agents/testing-and-review.md` → Docker in a cloud session). The `migrate` service ran with its image swapped for the Python base plus the locked dependencies, the source mounted, and a punctuated `POSTGRES_PASSWORD` in `.env`.
     - `main` failed with #300's interpolation error, and its log printed the URL and password.
     - The branch migrated to head.
@@ -77,7 +81,7 @@ Template:
     - Postgres on `[::1]`: the engine and the state store's pool both connected.
     - The packaged stack built as written: `migrate` ran online with a punctuated password, and the OIDC refusal printed no secret.
     - Still open: a pool to a zone-id host, which needs Linux.
-  - **Unreleased on `main`:** #294, #289, #247, plus this PR once merged; see `.agents/next-release.md`. It also owes the Pocket ID docs page.
+  - **Unreleased on `main`:** #294, #289, #247, and #302 (#299, #300, #301); see `.agents/next-release.md`. It also owes the Pocket ID docs page. #300 is the most exposed: v0.5.2-alpha's `migrate` stops for a `POSTGRES_PASSWORD` holding anything but letters, digits and `- _ . ~` until the next release.
   - **Carried from the 2026-09-25 #280 entry:**
     - #280 is decided and closed: Pocket ID is an optional supported provider, documented from the release that ships #294.
     - testhost is back in the gate's state: `probe.py teardown` ran, and the gate's stack (v0.5.2) and the same Keycloak container are up.
@@ -86,8 +90,7 @@ Template:
     - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
     - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
 - **Next:**
-  1. PR #302: merge (the owner's call; earlier PRs were squash-merged). After it, check that #299, #300 and #301 closed, and record the merge on `main`.
-     - The real-image check no longer waits on the cloud environment for #302: GLM round 2 ran it on the owner's Mac. Allowing `pkg-containers.githubusercontent.com` in the environment's Network access (the owner said they would, 25/09/2026) is still what lets a cloud session build the API image; the recipe is in `.agents/testing-and-review.md` → Docker in a cloud session.
+  1. Owner: allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access (said 25/09/2026). That is what lets a cloud session build the API image; the recipe is in `.agents/testing-and-review.md` → Docker in a cloud session.
   2. At the next release: work through `.agents/next-release.md` (release step 7), the Pocket ID page included.
   3. Carried from the #280 entry: #279's two edge probes, then #281's packaging, which includes whether to bundle Pocket ID; #282's VPS path can build on the Pocket ID recipe (findings §4–§5, §8).
   4. Carried:
