@@ -409,7 +409,7 @@ Personal access tokens keep working in that mode too.
 | `update_catalog_tool` / `_consumable` / `_upgrade` / `_display` | Edit a catalog row — one tool per catalog, each taking that table's own fields |
 | `list_retailers` | Every shop on record, report card included |
 | `create_retailer` / `update_retailer` | Add a shop; rate it, note the crushed box, fill in the report card |
-| `create_order` | Full order with lines; kits fan out, retailers are matched by name or created |
+| `create_order` | Full order with lines; kits fan out; the shop by its id from `list_retailers`, or by name — matched, or created if new |
 | `list_orders` | Optionally pending-only — how an agent finds the order a shipping email belongs to; `sort=recent` by the last status change, `limit` for the first N |
 | `get_order` | One order in full — the read an edit starts from |
 | `update_order` | Correct an order: header fields and/or the line set; refuses to silently drop lines you didn't restate |

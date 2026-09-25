@@ -263,7 +263,8 @@
     },
     "name": {
       "blank": "The name can't be blank.",
-      "duplicate": "Something named '{{name}}' already exists — names match case-insensitively, so reuse it or pick a different name."
+      "duplicate": "Something named '{{name}}' already exists — names match case-insensitively, so reuse it or pick a different name.",
+      "is_id": "'{{name}}' is an ID, not a name — choose the record by its ID instead."
     },
     "order": {
       "already_received": "This order is already marked received.",

@@ -487,9 +487,10 @@ async def update_retailer(retailer_id: str, changes: RetailerUpdate) -> dict:
 
 @mcp.tool
 async def create_order(
-    retailer: str,
     order_date: str,
     items: list[OrderItemCreate],
+    retailer: str | None = None,
+    retailer_id: str | None = None,
     currency_code: str | None = None,
     order_number: str | None = None,
     shipping_cost_minor: NonNegativeInt4 | None = None,
@@ -500,8 +501,11 @@ async def create_order(
     received_at: str | None = None,
     shipped_at: str | None = None,
 ) -> dict:
-    """Record a purchase. The retailer is matched by name case-insensitively and
-    created if new; order_date is ISO format (YYYY-MM-DD). Item lines follow the
+    """Record a purchase. Name the shop with exactly one of `retailer_id` — the id
+    of a shop already on record, from list_retailers; use it whenever you have the
+    id — or `retailer`, the shop's name, matched case-insensitively and created if
+    new. An id is never a name: an id passed as `retailer` is refused, not made
+    into a shop. order_date is ISO format (YYYY-MM-DD). Item lines follow the
     order's dispatch semantics: a `kit` line needs `kit` details (name, grade,
     optional kit_number; status defaults to `ordered`, use `pre_ordered` for
     pre-orders) and spawns one collection row per quantity. A tool, consumable,
@@ -537,10 +541,21 @@ async def create_order(
             "received_at asserts the order arrived — pass received=true with it, or omit the date"
         )
     parsed_shipped_at = _parse_instant(shipped_at, "shipped_at") if shipped_at is not None else None
+    # One field or the other, never both (#289): a pair that disagreed would leave
+    # the tool choosing which the caller meant.
+    if (retailer is None) == (retailer_id is None):
+        raise ToolError(
+            "name the shop with exactly one of retailer_id (an id from list_retailers) "
+            "or retailer (its name — matched case-insensitively, created if new)"
+        )
+    parsed_retailer_id = (
+        _parse_uuid(retailer_id, "retailer_id") if retailer_id is not None else None
+    )
     async with _tool_session() as session:
-        retailer_row = await orders_service.get_or_create_retailer(session, retailer)
+        if retailer is not None:
+            parsed_retailer_id = (await orders_service.get_or_create_retailer(session, retailer)).id
         data = OrderCreate(
-            retailer_id=retailer_row.id,
+            retailer_id=parsed_retailer_id,
             order_date=parsed_date,
             order_number=order_number,
             delivery_service=delivery_service,

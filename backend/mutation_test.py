@@ -6052,6 +6052,61 @@ CASES += [
     ),
 ]
 
+# --- #289: MCP create_order names its shop by id or by name, and an id is never a
+# name — the service's refusal, the spellings it covers, the tool's one-of rule. -------
+CASES += [
+    (
+        "289-1. the select-or-create stops refusing an id as a name",
+        ORD,
+        "    if _parses_as_id(wanted):\n",
+        "    if False:\n",
+        "an_id_given_as_the_retailer_name_is_refused",
+    ),
+    (
+        "289-2. the refusal reads the untrimmed input, not the name as stored",
+        ORD,
+        "    if _parses_as_id(wanted):\n",
+        "    if _parses_as_id(name):\n",
+        "an_id_given_as_the_retailer_name_is_refused",
+    ),
+    (
+        "289-3. only the canonical spelling of an id counts as one",
+        ORD,
+        "        uuid.UUID(value)\n",
+        "        if str(uuid.UUID(value)) != value:\n            return False\n",
+        "an_id_given_as_the_retailer_name_is_refused",
+    ),
+    (
+        "289-4. the tool takes both fields at once",
+        MCP,
+        "    if (retailer is None) == (retailer_id is None):\n",
+        "    if retailer is None and retailer_id is None:\n",
+        "exactly_one_of_retailer_and_retailer_id",
+    ),
+    (
+        "289-5. the tool takes neither field",
+        MCP,
+        "    if (retailer is None) == (retailer_id is None):\n",
+        "    if retailer is not None and retailer_id is not None:\n",
+        "exactly_one_of_retailer_and_retailer_id",
+    ),
+    (
+        "289-6. a malformed retailer_id escapes the tool's own refusal",
+        MCP,
+        '        _parse_uuid(retailer_id, "retailer_id") if retailer_id is not None else None\n',
+        "        uuid.UUID(retailer_id) if retailer_id is not None else None\n",
+        "malformed_retailer_id_is_refused",
+    ),
+    (
+        "289-7. the description stops saying an id as a name is refused",
+        MCP,
+        "    new. An id is never a name: an id passed as `retailer` is refused, not made\n"
+        "    into a shop.",
+        "    new.",
+        "schema_offers_both_fields_and_requires_neither",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
@@ -6131,6 +6186,8 @@ TEST_FILES = [
     "tests/test_audit_privacy.py",
     "tests/test_access_logging.py",
     "tests/test_deployment_hygiene.py",
+    # The #289 set: every 289- kill lives here.
+    "tests/test_mcp_order_retailer.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.

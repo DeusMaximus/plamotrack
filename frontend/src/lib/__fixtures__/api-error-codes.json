@@ -520,6 +520,11 @@
         "existing_id"
       ]
     },
+    "name.is_id": {
+      "params": [
+        "name"
+      ]
+    },
     "order.already_received": {
       "params": []
     },

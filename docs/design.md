@@ -2140,10 +2140,20 @@ is `/mcp/` on the API port (streamable HTTP).
   of them that every new column would have to be added to twice. `update_catalog_display`
   says in its description that display items carry no kit link, so an agent doesn't go
   looking for one or improvise a structured note (§3.5a)
-- `create_order(retailer, date, items[], order_number?, tracking?, received?,
-  received_at?, shipped_at?)` — the items array drives the same fan-out/increment
-  dispatch as the REST endpoint; retailer matched by name case-insensitively,
-  created if new; `received_at` backdates an arrival logged after the fact (§3.9);
+- `create_order(retailer | retailer_id, date, items[], order_number?, tracking?,
+  received?, received_at?, shipped_at?)` — the items array drives the same
+  fan-out/increment dispatch as the REST endpoint; the shop is named by exactly one
+  of `retailer_id` (strict: an unknown id is not found, and nothing is created) or
+  `retailer`, a name matched case-insensitively and created if new. A `retailer`
+  that parses as an id is refused (`name.is_id`), even where a stored shop carries
+  that string as its name: the tool once had no id field, and an agent holding an
+  id from `list_retailers` got a shop named after it (#289) — the two fields' value
+  spaces are disjoint, so an id can never become a name. The importer's
+  `retailer_name` keeps its select-or-create without that refusal: its preview
+  lists the shop it would create before anything is written, which is the signal
+  the tool lacked, and an archive from an instance that already holds such a row
+  must still import.
+  `received_at` backdates an arrival logged after the fact (§3.9);
   `shipped_at` (#95) needs no flag and lands spawned kits in_transit
 - `list_orders(pending_only?, sort?, limit?)` — find the order a shipping or arrival email belongs to; `sort` is `placed` (newest order date first) or `recent` (the last status change: received, else shipped, else placed, a placement date read as its midnight in the instance's time zone); `limit` the first N
 - `get_order(id)` — one order in full, line ids and spawned kits included; the read an
