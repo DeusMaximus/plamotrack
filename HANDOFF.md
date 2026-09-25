@@ -62,8 +62,8 @@ Template:
   - **A zone id is raw in the SQLAlchemy URL, `%25` only for asyncpg's parser**, not RFC 6874 everywhere as the task first said. SQLAlchemy never decodes a host, and the resolver refuses `fe80::1%25lo`.
   - **#300 and #301 ride in the same PR** as separate issues: same class, and each is needed for #299's fix to be complete and not leak.
 - **State:**
-  - **PR #302 is open, after one review round.** Greptile scored it 5/5 with no findings. GLM 5.3's round 1 at `dd6f3df` was **NO-GO**, with a P2 and three P3s, answered on the thread. That NO-GO still stands until a round 2 says otherwise; don't merge before then (`.agents/testing-and-review.md` → Responding to a review, item 6).
-    - P2 fixed: the harness's first dsn-5 sent the mutant session to the dev database. Re-anchored and proven with a canary row; the rule is in testing-and-review, the case in lessons.md.
+  - **PR #302 is open and cleared for merge by review: GLM 5.3's round 2 at `b3aa1e9` is GO.** Greptile scored it 5/5 with no findings. Round 1 at `dd6f3df` was **NO-GO**, with a P2 and three P3s, answered on the thread. Round 2's one finding (5, a P3 record clause) is taken in the PR body. The merge itself is the owner's.
+    - P2 fixed: the harness's first dsn-5 sent the mutant session to the dev database. Re-anchored, then made judge-only at `b3aa1e9`, because the re-anchor still redirected under an IPv6 `.env` host. Proven with a canary row; the rule is in testing-and-review, the case in lessons.md.
     - P3 finding 2: the finding was right, the remedy was declined with a counterexample. The state store reads the engine's host; decoding `%25` first breaks a real zone `%25`.
     - P3s 3 and 4: a tripwire comment in `config.py`, and record corrections.
     - The subscription to #302 and a fallback check-in are live in the session that wrote this.
@@ -73,7 +73,10 @@ Template:
     - The branch migrated to head.
     - With an OIDC misconfiguration, `main`'s log printed the signing key's tail (#301); the branch's printed none.
     - The API image itself can't be built there: the `uv` blob on `ghcr.io` is refused by the egress policy.
-  - **Not testable here:** a live IPv6 connection. The container's kernel has no IPv6 stack (`EAFNOSUPPORT`), so Docker's networks have none either. The online migration was also proven by hand against a scratch role, since dropped.
+  - **Not testable in the cloud session:** a live IPv6 connection (the container's kernel has no IPv6 stack), and the shipped image (the ghcr blob host is refused). GLM round 2 closed both on the owner's Mac.
+    - Postgres on `[::1]`: the engine and the state store's pool both connected.
+    - The packaged stack built as written: `migrate` ran online with a punctuated password, and the OIDC refusal printed no secret.
+    - Still open: a pool to a zone-id host, which needs Linux.
   - **Unreleased on `main`:** #294, #289, #247, plus this PR once merged; see `.agents/next-release.md`. It also owes the Pocket ID docs page.
   - **Carried from the 2026-09-25 #280 entry:**
     - #280 is decided and closed: Pocket ID is an optional supported provider, documented from the release that ships #294.
@@ -83,8 +86,8 @@ Template:
     - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
     - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
 - **Next:**
-  1. PR #302: GLM round 2 on the answered head, then CI, then merge.
-     - **The owner will allow `pkg-containers.githubusercontent.com`** in the cloud environment's Network access (said 25/09/2026, not done yet). Once it is allowed, rebuild the real API image in a session: set the mirror, start `dockerd`, then `docker compose -f docker-compose.yml -f docker-compose.build.yml build`. Then redo the `migrate` check with it, `main` against the branch. The recipe is in `.agents/testing-and-review.md` → Docker in a cloud session.
+  1. PR #302: merge (the owner's call; earlier PRs were squash-merged). After it, check that #299, #300 and #301 closed, and record the merge on `main`.
+     - The real-image check no longer waits on the cloud environment for #302: GLM round 2 ran it on the owner's Mac. Allowing `pkg-containers.githubusercontent.com` in the environment's Network access (the owner said they would, 25/09/2026) is still what lets a cloud session build the API image; the recipe is in `.agents/testing-and-review.md` → Docker in a cloud session.
   2. At the next release: work through `.agents/next-release.md` (release step 7), the Pocket ID page included.
   3. Carried from the #280 entry: #279's two edge probes, then #281's packaging, which includes whether to bundle Pocket ID; #282's VPS path can build on the Pocket ID recipe (findings §4–§5, §8).
   4. Carried:
