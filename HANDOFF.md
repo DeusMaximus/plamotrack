@@ -41,6 +41,47 @@ Template:
 
 ---
 
+## 2026-09-25 — Claude Code (Opus 5.5) — #289 MERGED as `e72a7cc` (PR #297): MCP `create_order` names its shop by `retailer_id` or by name, and an id is never a name; the first cloud session from `main` checks the hook
+
+- **Done:**
+  - [PR #297](https://github.com/DeusMaximus/plamotrack/pull/297) squash-merged as **`e72a7cc`**, pinned to the reviewed head `5bbf46b`; #289 closed.
+    - `create_order` takes `retailer_id` beside `retailer`, exactly one per call. The id goes straight to the order service, so an unknown id is `retailer.not_found` and nothing is written.
+    - `get_or_create_retailer` refuses a name that parses as an id (any spelling `uuid.UUID()` takes, after the trim), even where a stored row already carries that string as its name. New code `name.is_id`, plus its fixture and en-AU catalogue entries.
+    - Docs: the tool description, design §7 and the README's MCP table.
+  - Tests: `tests/test_mcp_order_retailer.py`, 23 cases, 20 red / 3 green on unfixed `main`. The `289-` mutation set killed 7/7, and the file joins `TEST_FILES`. Backend 2859 passed, 1 xfailed (predates the branch); frontend vitest 631; CI 3/3 green.
+- **Decisions (the owner's, 2026-09-25):**
+  - **No delete tools on MCP.** Deleting anything is the user's call. `update_order`'s existing `changes.retailer_id` repoints an order; the UI renames or deletes.
+  - The CSV importer's `retailer_name` keeps its select-or-create without the refusal: its preview lists the stub before anything is written, and an old archive must still import. No sibling filed.
+  - **Review call:** Greptile and CodeRabbit only. Greptile gave 5/5 with no findings; CodeRabbit had no actionable comments. Its docstring-coverage warning was declined, as on #295 and #296. The owner's note: CodeRabbit allows about one included review per hour, while Greptile can be re-run for follow-up rounds.
+  - The owner cleaned up the junk retailers #289 had minted on the live instance.
+- **State:**
+  - **The cloud hook, first session from `main`:** its summary matched the #296 entry. `TEST_DATABASE_URL` reached later shells, so the `CLAUDE_ENV_FILE` export works. Whether the snapshot is cached after the hook is still unobserved.
+  - **Playwright in the cloud image:** `@playwright/test` 1.62.1 expects Chromium build 1234. It drives the preinstalled build 1194 (Chrome 141) when given `executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'`. WebKit is not installed. The e2e suite itself has not been tried here.
+  - `.agents/testing-and-review.md`'s suite counts are behind: backend ~1750 there, 2859 measured; frontend ~628, 631.
+  - **Unfiled defect, carried:** `_assemble_database_url` in `app/config.py` does not bracket an IPv6 `POSTGRES_HOST`. `::1` yields a DSN `make_url` rejects.
+  - **Unreleased on `main`:**
+    - #294: v0.5.2 still forwards `resource`, so a Pocket ID install needs the API-registration workaround (#280 findings §2a) until the next release.
+    - #289: v0.5.2's `create_order` still has no `retailer_id`.
+  - **Carried from the 2026-09-23 #294 entry:**
+    - **testhost is in the spike's state, not the gate's.** `/opt/plamotrack-280` runs the #294 build (`-f docker-compose.yml -f override-294.yml`) behind the tunnel in OIDC mode against Pocket ID. The gate's stack (`/opt/plamotrack`, v0.5.2) and Keycloak are stopped, volumes kept. `probe.py teardown --base https://NAME --ssh root@HOST` removes the spike and starts both.
+    - **Don't recreate Keycloak's container.** It mounts `realm.json` from `/opt/plamotrack/.agents/deployment-gate/keycloak/`. A new container changes `sub`, and the gate's collection then needs `recovery rebind-oidc`.
+    - The owner's Claude.ai "Testing" connector points at the tunnel name; remove it when the spike is done. Spike secrets are in `~/.plamotrack-gate/spike-280/`.
+    - The LXC is a v0.5.2 release install. #278 is open for the owner's skill-zip check.
+  - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
+- **Next:**
+  1. Owner: file the IPv6 `POSTGRES_HOST` defect, or start it; it's small and cloud-feasible.
+  2. **Cloud-feasible candidates** from this session's survey:
+     - #247: needs the owner's pick first; the issue recommends new `completed` and `started` sort values.
+     - #124 and #125: `create_order`'s undocumented constraints; no `series` on its kit.
+     - #268 and #238: frontend; the Chromium-only e2e above is unproven.
+     - The importer bugs #110, #116, #134 and #137.
+  3. Carried:
+     - #279's two edge probes, then #281's packaging, then one proof deployment.
+     - The #280 decision (owner).
+     - `probe.py teardown` when the spike is done.
+     - Posting the rehearsal on #285 (offered).
+     - Untested: the release-to-release update, and the Windows commands in Git Bash.
+
 ## 2026-09-24 — Claude Code (Opus 5.5) — #296 MERGED as `8f4985c`: a SessionStart hook sets up Claude Code cloud sessions (native Postgres 16, `uv sync`, `npm ci`); an IPv6 `POSTGRES_HOST` DSN defect found, not filed
 
 - **Done:**
@@ -160,33 +201,3 @@ Template:
   3. Post the rehearsal on #285 as evidence (offered, not yet agreed).
   4. #279 and #280.
   - Untested: the release-to-release update (no predecessor yet), and the Windows commands in Git Bash (NEMESIS).
-
-## 2026-09-23 — Claude Code (Opus 5.5) — **v0.5.2-alpha PUBLISHED**, the first release with its own install files; v0.5.1-alpha tagged and promoted but never published (GitHub renamed an asset); #292 fixed the pipeline; #278 open for one check; plamotrack-docs#7 awaits the owner's merge
-
-- **Done — the chain, each gated step on the owner's word:**
-  - **v0.5.1-alpha:** #291 was squash-merged as `e62bb02`. Candidate [35789572692](https://github.com/DeusMaximus/plamotrack/actions/runs/35789572692) passed on native amd64 and arm64, and both first-run watchpoints were observed working (now recorded in `.agents/releases.md`). The owner made both GHCR packages public; this is irreversible and one-time. The deployment gate on testhost against the release files had 0 failing checks. Tag `v0.5.1-alpha` was pushed and promotion 35794488988 succeeded. **Then the draft carried `default.env.example`:** GitHub renames an uploaded asset whose name starts with a period, so the draft's own `sha256sum -c` failed. **Not published.** The owner chose to fix the pipeline and ship 0.5.2. At the owner's request the v0.5.1 draft was deleted; its tag and its GHCR `v0.5.1-alpha` image tags stay, unmoved and unsupported.
-  - **The fix, [#292](https://github.com/DeusMaximus/plamotrack/pull/292), squash-merged as `4586081`:**
-    - The template ships as `env.example`.
-    - `promote_release.py` downloads its own draft and runs `verify()` on it, then compares it to the gated manifest.
-    - `host-prepare.sh` accepts a release directory (it required `backend/`), and the gate README has an "Against a release's files" recipe.
-    - It also carried the 0.5.2 bump and a lesson in `.agents/lessons.md`: "The asset GitHub renamed".
-    - Tests: 65 passed; the new tests fail 9 times on unfixed `main`; 5 single-site mutants were all caught. Greptile rated it 5/5 with no findings.
-  - **v0.5.2-alpha:** candidate [35797496522](https://github.com/DeusMaximus/plamotrack/actions/runs/35797496522) passed on both native runners, then the gate on testhost with the **unmodified** `host-prepare.sh` (0 failing; matrix 180/183/87 ok rows). Tag `v0.5.2-alpha` → `4586081`. Promotion 35800649160 succeeded, including its read-back. By hand: `sha256sum -c` and `verify` pass on the draft's downloads, which are byte-identical to the gated bundle, and both image tags resolve anonymously to the tested digests. **Published 2026-09-23 as a prerelease.**
-  - **Earlier today:** docs [plamotrack-docs#7](https://github.com/DeusMaximus/plamotrack-docs/pull/7) fixes the source-upgrade `denied` trap (an `.env` from v0.5.0 or earlier lacks `COMPOSE_FILE`) and now also carries the v0.5.2 changelog entry. `mint broken-links` is clean.
-- **Decisions (the owner's):**
-  - The version was 0.5.1, then 0.5.2 after the rename.
-  - The real-client MCP run was skipped: `/mcp` hasn't changed since 0.4.1.
-  - Delete the 0.5.1 draft.
-  - The release notes redact **all** network addresses and the gate host's name, not only the public address; 0.5.0's notes had published the internal ones.
-- **State:**
-  - **#278 is OPEN.** Every acceptance line is shown except "the skill can be installed". The zip downloads and holds its parent folder, but uploading it to Claude Desktop hasn't been tried; the owner is to try it, then close #278. #285 owns the existing-install transition. **Trap for #285:** the Compose project, and so the DB volume, is named after the directory, so the release files in a new directory start an **empty** collection.
-  - plamotrack-docs#7 is open, awaiting the owner's merge (merging publishes the docs site).
-  - testhost holds the v0.5.2 bundle in the gate's end state (mode R, OIDC fixture, Keycloak up). Earlier `.env` copies are in `/root`.
-  - Evidence is in `.dev/0.5.1/` and `.dev/0.5.2/` (gitignored): candidate logs, gate results and run logs, notes, downloads.
-  - Merged branches `release/0.5.1` and `fix/278-release-asset-names` are still on origin (no deletion asked). The tree is clean on `main`.
-- **The LXC (still 0.4.1, a source install):** before its next update, add the two `COMPOSE_FILE` lines to `.env`, or `up` stops with `denied`, changing nothing. To go back to 0.5.0, remove them again (0.5.0 has no `docker-compose.build.yml`). Stay on source until #285.
-- **Next:**
-  1. Owner: merge plamotrack-docs#7, then try the skill zip and close #278.
-  2. Then #279 (platform: needs published images, now available) and #280 (Pocket ID, can start any time).
-  3. Then #285, with the volume-name trap above.
-  - Row counts in the gate matrix vary by one or two between runs (local 179–181, OIDC 182–183); **0 failing** is the criterion.
