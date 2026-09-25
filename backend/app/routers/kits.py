@@ -22,9 +22,11 @@ async def list_kits(
     sort: kits_service.KitSort = "created",
     limit: PositiveInt4 | None = None,
 ):
-    """`sort=recent` is the pipeline clock (`status_updated_at`, newest first);
-    `limit` the first N of that order — what Home's strips and "view all" links
-    read (§13.4). The same options on the `list_kits` MCP tool."""
+    """`sort`: `created` oldest first (the default) and `newest` the reverse;
+    `recent` the pipeline clock (`status_updated_at`, newest first); `started`
+    and `completed` the build's own dates, newest first, kits without one last;
+    `name`. `limit` the first N of that order — what Home's strips read (§13.4,
+    #247). The same options on the `list_kits` MCP tool."""
     return await kits_service.list_kits(
         session, status=status, grade=grade, series=series, sort=sort, limit=limit
     )

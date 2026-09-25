@@ -38,10 +38,12 @@ import { usePresentationVersion } from "../lib/presentation";
 
 /** The start page (design §13.2, #233): status at a glance, the bench first.
  *  Every count in a heading is the server's (`GET /summary`) — the total the
- *  list page behind the *view all* link shows — and every strip is a
- *  `sort=recent` list with a `limit`, so "recent" means one thing for this
- *  page, the list pages and an agent. Every card carries one visible edit
- *  control opening the same dialog the list pages use; there is no drag. */
+ *  list page behind the *view all* link shows — and every list is sorted by the
+ *  server, by the date its cards print (#247): the bench by the build's start,
+ *  Recently completed by its completion, the Backlog by arrival (the status
+ *  clock, `recent` — it prints no date), the mail by each order's last status
+ *  change. Every card carries one visible edit control opening the same dialog
+ *  the list pages use; there is no drag. */
 
 /** Per-column copy, keyed by the wire stage (the catalogue keeps flat leaves). */
 const MAIL_COPY = {
@@ -63,16 +65,16 @@ export function HomePage() {
 
   const summary = useQuery(summaryQuery);
   const bench = useQuery({
-    queryKey: ["kits", { status: "building", sort: "recent" }],
-    queryFn: () => api.listKits({ status: "building", sort: "recent" }),
+    queryKey: ["kits", { status: "building", sort: "started" }],
+    queryFn: () => api.listKits({ status: "building", sort: "started" }),
   });
   const backlog = useQuery({
     queryKey: ["kits", { status: "backlog", sort: "recent", limit: STRIP_LIMIT }],
     queryFn: () => api.listKits({ status: "backlog", sort: "recent", limit: STRIP_LIMIT }),
   });
   const completed = useQuery({
-    queryKey: ["kits", { status: "complete", sort: "recent", limit: STRIP_LIMIT }],
-    queryFn: () => api.listKits({ status: "complete", sort: "recent", limit: STRIP_LIMIT }),
+    queryKey: ["kits", { status: "complete", sort: "completed", limit: STRIP_LIMIT }],
+    queryFn: () => api.listKits({ status: "complete", sort: "completed", limit: STRIP_LIMIT }),
   });
   // Every pending order, by the last status change: a personal collection has a
   // handful in the mail, the stage is derived per row, and the cap is per column.
@@ -204,7 +206,11 @@ export function HomePage() {
             total={counts?.kits.backlog}
             empty={t("home.backlogEmpty")}
             viewAll={(total) => countedPhrase("home.viewAllBacklog", total)}
-            to="/kits?status=backlog&sort=recent"
+            // The Kits page's own order (newest added), not the strip's arrival
+            // order: the page offers no sort by a date it does not show (#247,
+            // owner's call). The two differ only for a kit that arrived long
+            // after it was ordered.
+            to="/kits?status=backlog"
             meta={(kit) => (
               <>
                 <GradeChip grade={kit.grade} />
@@ -226,20 +232,29 @@ export function HomePage() {
             total={counts?.kits.complete}
             empty={t("home.completedEmpty")}
             viewAll={(total) => countedPhrase("home.viewAllCompleted", total)}
-            to="/kits?status=complete&sort=recent"
+            to="/kits?status=complete&sort=completed"
             stacked
-            meta={(kit) => (
-              <>
-                {kit.rating != null ? (
-                  <RatingStars rating={kit.rating} title={ratingTooltip(kit.rating)} />
-                ) : (
-                  <span aria-hidden className="text-faint">
-                    —
-                  </span>
-                )}
-                <span>{formatDate(completedOn(kit))}</span>
-              </>
-            )}
+            meta={(kit) => {
+              const completedAt = completedOn(kit);
+              return (
+                <>
+                  {kit.rating != null ? (
+                    <RatingStars rating={kit.rating} title={ratingTooltip(kit.rating)} />
+                  ) : (
+                    <span aria-hidden className="text-faint">
+                      —
+                    </span>
+                  )}
+                  {completedAt ? (
+                    <span>{formatDate(completedAt)}</span>
+                  ) : (
+                    <span aria-hidden className="text-faint">
+                      —
+                    </span>
+                  )}
+                </>
+              );
+            }}
             onEdit={(kit) => setDialog({ kind: "kit", kit })}
           />
         </section>

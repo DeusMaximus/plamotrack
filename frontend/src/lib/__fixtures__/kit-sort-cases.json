@@ -1,0 +1,160 @@
+{
+  "note": "Cross-layer kit dates (#247). Read by backend/tests/test_kit_sorts.py, which seeds `kits` as rows and asserts every list in `orders` is what GET /kits answers for its params, AND by frontend/src/lib/home.test.ts, which asserts the date each surface prints for a kit (`completed_on`, `started_on`) and that each `orders` list is sorted by the date the page shows. #247 was the two layers disagreeing: Home printed the completion date and the server sorted by the status clock. A kit without a build date shows none and sorts after every kit that has one (owner's call). Add a case here rather than to either suite. `why` is for the reader; nothing asserts on it.",
+  "kits": [
+    {
+      "name": "Imported Complete",
+      "status": "complete",
+      "created_at": "2026-01-01T00:00:00Z",
+      "status_updated_at": "2026-08-01T00:00:00Z",
+      "build_started_at": null,
+      "build_completed_at": null,
+      "completed_on": null,
+      "started_on": null,
+      "why": "an import never guesses a completion date: no date shown, sorted after every dated build, not at the import's instant"
+    },
+    {
+      "name": "Backfilled",
+      "status": "complete",
+      "created_at": "2026-01-02T00:00:00Z",
+      "status_updated_at": "2026-09-10T00:00:00Z",
+      "build_started_at": "2026-06-15T00:00:00Z",
+      "build_completed_at": "2026-07-10T00:00:00Z",
+      "completed_on": "2026-07-10T00:00:00Z",
+      "started_on": "2026-06-15T00:00:00Z",
+      "why": "finished in July, recorded in September: the status clock is the newest of the complete kits, the completion date the oldest — the owner's report"
+    },
+    {
+      "name": "Future Corrected",
+      "status": "complete",
+      "created_at": "2026-01-03T00:00:00Z",
+      "status_updated_at": "2026-09-05T00:00:00Z",
+      "build_started_at": "2026-08-25T00:00:00Z",
+      "build_completed_at": "2026-09-20T00:00:00Z",
+      "completed_on": "2026-09-20T00:00:00Z",
+      "started_on": "2026-08-25T00:00:00Z",
+      "why": "a completion date later than the status clock (a correction after the move)"
+    },
+    {
+      "name": "Same Instant",
+      "status": "complete",
+      "created_at": "2026-01-04T00:00:00Z",
+      "status_updated_at": "2026-09-01T00:00:00Z",
+      "build_started_at": null,
+      "build_completed_at": "2026-09-01T00:00:00Z",
+      "completed_on": "2026-09-01T00:00:00Z",
+      "started_on": null,
+      "why": "the common case: moved to complete when it was finished, so the two clocks agree"
+    },
+    {
+      "name": "Tie A",
+      "status": "complete",
+      "created_at": "2026-01-05T00:00:00Z",
+      "status_updated_at": "2026-08-21T00:00:00Z",
+      "build_started_at": "2026-07-01T00:00:00Z",
+      "build_completed_at": "2026-08-20T00:00:00Z",
+      "completed_on": "2026-08-20T00:00:00Z",
+      "started_on": "2026-07-01T00:00:00Z",
+      "why": "backfilled to the same midnight as Tie B, on both dates: the tie breaks by creation, newest first"
+    },
+    {
+      "name": "Tie B",
+      "status": "complete",
+      "created_at": "2026-01-06T00:00:00Z",
+      "status_updated_at": "2026-08-22T00:00:00Z",
+      "build_started_at": "2026-07-01T00:00:00Z",
+      "build_completed_at": "2026-08-20T00:00:00Z",
+      "completed_on": "2026-08-20T00:00:00Z",
+      "started_on": "2026-07-01T00:00:00Z"
+    },
+    {
+      "name": "Reopened",
+      "status": "building",
+      "created_at": "2026-01-07T00:00:00Z",
+      "status_updated_at": "2026-09-16T00:00:00Z",
+      "build_started_at": "2026-06-01T00:00:00Z",
+      "build_completed_at": "2026-09-15T00:00:00Z",
+      "completed_on": "2026-09-15T00:00:00Z",
+      "started_on": "2026-06-01T00:00:00Z",
+      "why": "completed, then back on the bench: moves never clear a build date, so it keeps one while not complete — sorted by it wherever it is listed"
+    },
+    {
+      "name": "Bench Dated",
+      "status": "building",
+      "created_at": "2026-01-08T00:00:00Z",
+      "status_updated_at": "2026-09-03T00:00:00Z",
+      "build_started_at": "2026-09-02T00:00:00Z",
+      "build_completed_at": null,
+      "completed_on": null,
+      "started_on": "2026-09-02T00:00:00Z"
+    },
+    {
+      "name": "Bench Backdated",
+      "status": "building",
+      "created_at": "2026-01-09T00:00:00Z",
+      "status_updated_at": "2026-09-22T00:00:00Z",
+      "build_started_at": "2026-05-01T00:00:00Z",
+      "build_completed_at": null,
+      "completed_on": null,
+      "started_on": "2026-05-01T00:00:00Z",
+      "why": "moved to building last, started first: the bench's #247 twin"
+    },
+    {
+      "name": "Bench Undated",
+      "status": "building",
+      "created_at": "2026-01-10T00:00:00Z",
+      "status_updated_at": "2026-09-21T00:00:00Z",
+      "build_started_at": null,
+      "build_completed_at": null,
+      "completed_on": null,
+      "started_on": null,
+      "why": "the bench card says 'No start date', so it sorts after the dated builds"
+    },
+    {
+      "name": "Backlog Arrival",
+      "status": "backlog",
+      "created_at": "2026-01-11T00:00:00Z",
+      "status_updated_at": "2026-09-23T00:00:00Z",
+      "build_started_at": null,
+      "build_completed_at": null,
+      "completed_on": null,
+      "started_on": null,
+      "why": "no build dates, the newest status clock and the newest creation: last in both build-date sorts, first in `newest` and `recent`"
+    }
+  ],
+  "orders": [
+    {
+      "params": { "sort": "completed" },
+      "by": "completed_on",
+      "names": ["Future Corrected", "Reopened", "Same Instant", "Tie B", "Tie A", "Backfilled", "Backlog Arrival", "Bench Undated", "Bench Backdated", "Bench Dated", "Imported Complete"]
+    },
+    {
+      "params": { "sort": "completed", "status": "complete" },
+      "by": "completed_on",
+      "why": "Home's Recently completed strip and its view-all link",
+      "names": ["Future Corrected", "Same Instant", "Tie B", "Tie A", "Backfilled", "Imported Complete"]
+    },
+    {
+      "params": { "sort": "started" },
+      "by": "started_on",
+      "names": ["Bench Dated", "Future Corrected", "Tie B", "Tie A", "Backfilled", "Reopened", "Bench Backdated", "Backlog Arrival", "Bench Undated", "Same Instant", "Imported Complete"]
+    },
+    {
+      "params": { "sort": "started", "status": "building" },
+      "by": "started_on",
+      "why": "Home's bench",
+      "names": ["Bench Dated", "Reopened", "Bench Backdated", "Bench Undated"]
+    },
+    {
+      "params": { "sort": "newest" },
+      "by": "created_at",
+      "why": "the Kits page's default",
+      "names": ["Backlog Arrival", "Bench Undated", "Bench Backdated", "Bench Dated", "Reopened", "Tie B", "Tie A", "Same Instant", "Future Corrected", "Backfilled", "Imported Complete"]
+    },
+    {
+      "params": { "sort": "recent", "status": "complete" },
+      "by": "status_updated_at",
+      "why": "unchanged: the status clock, which Home's Backlog strip still reads — and, over the complete kits, the order Recently completed had before #247",
+      "names": ["Backfilled", "Future Corrected", "Same Instant", "Tie B", "Tie A", "Imported Complete"]
+    }
+  ]
+}

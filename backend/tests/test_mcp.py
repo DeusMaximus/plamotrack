@@ -491,7 +491,7 @@ async def test_list_sort_and_limit_match_rest(client, retailer):
         # Both lists, because each service holds its own check — an unknown
         # sort must be refused, never quietly read as the default order.
         with pytest.raises(ToolError, match="sort must be one of"):
-            await mcp_client.call_tool("list_kits", {"sort": "newest"})
+            await mcp_client.call_tool("list_kits", {"sort": "oldest"})
         with pytest.raises(ToolError, match="sort must be one of"):
             await mcp_client.call_tool("list_orders", {"sort": "newest"})
         # `limit` is a PositiveInt4 on the tool (test_int4_bounds), so a zero is

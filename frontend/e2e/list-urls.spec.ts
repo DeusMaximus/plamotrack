@@ -37,9 +37,9 @@ const ours = (page: import("@playwright/test").Page) =>
 test("a link lands filtered and sorted; the controls and the pager write the URL back", async ({
   page,
 }) => {
-  await page.goto(`/kits?status=building&sort=recent&q=${encodeURIComponent(PREFIX)}`);
+  await page.goto(`/kits?status=building&sort=started&q=${encodeURIComponent(PREFIX)}`);
   await expect(page.getByLabel("Filter by status")).toHaveValue("building");
-  await expect(page.getByLabel("Sort")).toHaveValue("recent");
+  await expect(page.getByLabel("Sort")).toHaveValue("started");
   await expect(page.getByLabel("Search")).toHaveValue(PREFIX);
   await expect(page.getByRole("heading", { level: 1 })).toHaveText(/Kits\s*11/);
   await expect(ours(page)).toHaveCount(10);
@@ -61,8 +61,25 @@ test("a link lands filtered and sorted; the controls and the pager write the URL
   // The default sort leaves the URL clean; a chosen one is in it.
   await page.getByLabel("Sort").selectOption("name");
   await expect(page).toHaveURL(/[?&]sort=name(&|$)/);
-  await page.getByLabel("Sort").selectOption("recent");
+  await page.getByLabel("Sort").selectOption("newest");
   await expect(page).not.toHaveURL(/[?&]sort=/);
+});
+
+test("the Kits page offers no sort by the status clock; an old link lands on the default", async ({
+  page,
+}) => {
+  // #247 (owner's call): `recent` orders by a date no column shows, so the page
+  // does not offer it — the API and Home's Backlog strip keep it.
+  await page.goto(`/kits?sort=recent&q=${encodeURIComponent(PREFIX)}`);
+  await expect(page.getByLabel("Sort")).toHaveValue("newest");
+  await expect(page.getByLabel("Sort").locator("option")).toHaveText([
+    "Newest added",
+    "Oldest added",
+    "Recently started",
+    "Recently completed",
+    "Name A–Z",
+  ]);
+  await expect(ours(page).first()).toContainText(name(14)); // newest added first
 });
 
 test("a page past the end clamps onto the last page", async ({ page }) => {

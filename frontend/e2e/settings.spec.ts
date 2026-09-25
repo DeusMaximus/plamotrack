@@ -264,7 +264,9 @@ test("Home's mail cards keep the retailer readable under full dates at every wid
   };
   // Two completed kits, rated, with a full-date completion (round 2, P3-4):
   // their names must keep usable space on the completed strip when it goes
-  // two-up beside a full date.
+  // two-up beside a full date. The strip is the six latest completions (#247),
+  // so the date is a far-future one to head it on a populated database — a
+  // Wednesday in September, the longest weekday and month, as 17/09/2025 was.
   const done: string[] = [];
   for (const kitName of [`e2e-237-done-A-${suffix}`, `e2e-237-done-B-${suffix}`]) {
     const kit = (await (
@@ -273,8 +275,8 @@ test("Home's mail cards keep the retailer readable under full dates at every wid
           name: kitName,
           grade: "MG",
           status: "complete",
-          build_started_at: "2025-09-16T00:00:00Z",
-          build_completed_at: "2025-09-17T00:00:00Z",
+          build_started_at: "2098-09-16T00:00:00Z",
+          build_completed_at: "2098-09-17T00:00:00Z",
         },
       })
     ).json()) as { id: string };

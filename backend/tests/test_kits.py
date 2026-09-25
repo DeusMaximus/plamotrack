@@ -151,7 +151,7 @@ async def test_list_kits_limit_is_the_first_n_of_the_sort(client):
 @pytest.mark.parametrize(
     "params",
     [
-        {"sort": "newest"},
+        {"sort": "oldest"},  # `newest` joined the vocabulary with #247
         {"sort": ""},
         {"sort": "RECENT"},
         {"limit": "0"},

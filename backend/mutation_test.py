@@ -6052,6 +6052,64 @@ CASES += [
     ),
 ]
 
+# --- #247: a kit list sorted by a build date is sorted by the date the row prints —
+# the sort's own date, undated last, the tie-break, and `newest`'s direction. -----------
+CASES += [
+    (
+        "247-1. undated builds sort first (Postgres's descending default)",
+        KITS,
+        "        return (date.desc().nulls_last(), Kit.created_at.desc(), Kit.id)\n",
+        "        return (date.desc(), Kit.created_at.desc(), Kit.id)\n",
+        "rest_lists_kits_in_the_promised_order and completed",
+    ),
+    (
+        "247-2. builds backfilled to one midnight tie oldest first",
+        KITS,
+        "        return (date.desc().nulls_last(), Kit.created_at.desc(), Kit.id)\n",
+        "        return (date.desc().nulls_last(), Kit.created_at, Kit.id)\n",
+        "rest_lists_kits_in_the_promised_order and completed",
+    ),
+    (
+        "247-3. `completed` reads the status clock (the defect)",
+        KITS,
+        '        date = Kit.build_started_at if sort == "started" else Kit.build_completed_at\n',
+        '        date = Kit.build_started_at if sort == "started" else Kit.status_updated_at\n',
+        "rest_lists_kits_in_the_promised_order and completed",
+    ),
+    (
+        "247-4. an undated build borrows the status clock (the rule the owner declined)",
+        KITS,
+        '        date = Kit.build_started_at if sort == "started" else Kit.build_completed_at\n',
+        "        date = (\n"
+        "            Kit.build_started_at\n"
+        '            if sort == "started"\n'
+        "            else func.coalesce(Kit.build_completed_at, Kit.status_updated_at)\n"
+        "        )\n",
+        "rest_lists_kits_in_the_promised_order and completed-complete",
+    ),
+    (
+        "247-5. `started` and `completed` read each other's date",
+        KITS,
+        '        date = Kit.build_started_at if sort == "started" else Kit.build_completed_at\n',
+        '        date = Kit.build_started_at if sort == "completed" else Kit.build_completed_at\n',
+        "rest_lists_kits_in_the_promised_order and started",
+    ),
+    (
+        "247-6. `newest` is oldest first",
+        KITS,
+        "        return (Kit.created_at.desc(), Kit.id)\n",
+        "        return (Kit.created_at, Kit.id)\n",
+        "rest_lists_kits_in_the_promised_order and newest",
+    ),
+    (
+        "247-7. the service refuses `completed`",
+        KITS,
+        'KIT_SORTS: tuple[KitSort, ...] = ("created", "newest", "recent", "started", "completed", "name")\n',
+        'KIT_SORTS: tuple[KitSort, ...] = ("created", "newest", "recent", "started", "name")\n',
+        "mcp_lists_kits_in_the_same_order and completed",
+    ),
+]
+
 # --- #289: MCP create_order names its shop by id or by name, and an id is never a
 # name — the service's refusal, the spellings it covers, the tool's one-of rule. -------
 CASES += [
@@ -6188,6 +6246,8 @@ TEST_FILES = [
     "tests/test_deployment_hygiene.py",
     # The #289 set: every 289- kill lives here.
     "tests/test_mcp_order_retailer.py",
+    # The #247 set: every 247- kill lives here.
+    "tests/test_kit_sorts.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.

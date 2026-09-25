@@ -234,10 +234,13 @@ async def list_kits(
     (pre_ordered, ordered, in_transit, backlog, building, complete — backlog
     means in hand but not started), grade (HG, RG, MG, PG, SD, ...) and/or
     series (exact name, case-insensitively — get the spellings in use from
-    list_kit_series). sort: "created" (oldest first, the default), "recent"
-    (the kits that most recently changed status first — what moved lately) or
-    "name". limit: only the first N in that order, e.g. sort="recent", limit=5
-    for the five kits that last moved."""
+    list_kit_series). sort: "created" (oldest first, the default), "newest"
+    (most recently added first), "recent" (the kits that most recently changed
+    status first — what moved lately), "started" or "completed" (by the build's
+    start or completion date, newest first; kits without that date come last —
+    status="complete", sort="completed" is what was finished lately) or "name".
+    limit: only the first N in that order, e.g. sort="recent", limit=5 for the
+    five kits that last moved."""
     parsed_status = _parse_status(status) if status else None
     async with _tool_session() as session:
         kits = await kits_service.list_kits(
