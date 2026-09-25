@@ -2981,14 +2981,16 @@ occurrence, and a midnight a transition skipped is read with the offset that hel
 before it. The filters and the search narrow the loaded list in the browser; the page
 holds the whole list, and a personal collection is a few hundred rows.
 
-#247 (2026-09-25) widened the kit sorts to `created` (oldest first, the API's
+With #247 (2026-09-25) the kit sorts are `created` (oldest first, the API's
 default), `newest` (its reverse), `recent`, `started` and `completed` (the build's own
 dates, newest first, undated kits last) and `name` — on REST and the MCP tool alike.
 The **Kits page offers every one but `recent`** and opens on `newest` (owner's
 calls): a page sort should follow a date the table shows, and `recent` follows the
 last status change, a different event for every status, shown nowhere. An old
-`?sort=recent` link lands on the default. `recent` stays on the API — what an agent
-asking "what moved lately" wants — and behind Home's Backlog strip.
+`?sort=recent` link lands on the default, and the address bar drops the value —
+every list page does that for a filter or sort outside its vocabulary. `recent` stays
+on the API — what an agent asking "what moved lately" wants — and behind Home's
+Backlog strip.
 
 ### 13.5 Not in M6.5
 

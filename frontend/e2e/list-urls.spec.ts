@@ -70,8 +70,13 @@ test("the Kits page offers no sort by the status clock; an old link lands on the
 }) => {
   // #247 (owner's call): `recent` orders by a date no column shows, so the page
   // does not offer it — the API and Home's Backlog strip keep it.
+  await page.goto("/");
   await page.goto(`/kits?sort=recent&q=${encodeURIComponent(PREFIX)}`);
   await expect(page.getByLabel("Sort")).toHaveValue("newest");
+  // And the address bar says so (Greptile P2 on #298): the stranger is dropped in
+  // place — the search stays, and Back leads where the link came from, not to it.
+  await expect(page).not.toHaveURL(/[?&]sort=/);
+  await expect(page).toHaveURL(/[?&]q=/);
   await expect(page.getByLabel("Sort").locator("option")).toHaveText([
     "Newest added",
     "Oldest added",
@@ -80,6 +85,14 @@ test("the Kits page offers no sort by the status clock; an old link lands on the
     "Name A–Z",
   ]);
   await expect(ours(page).first()).toContainText(name(14)); // newest added first
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+
+  // Two strangers in one URL: both go, and what the page accepts stays.
+  await page.goto(`/kits?status=bogus&sort=recent&q=${encodeURIComponent(PREFIX)}`);
+  await expect(page.getByLabel("Filter by status")).toHaveValue("");
+  await expect(page).not.toHaveURL(/[?&](status|sort)=/);
+  await expect(page).toHaveURL(/[?&]q=/);
 });
 
 test("a page past the end clamps onto the last page", async ({ page }) => {
@@ -135,4 +148,10 @@ test("the orders page reads its sort and status from the URL too", async ({ page
   await page.goto("/orders?sort=recent&status=received");
   await expect(page.getByLabel("Sort")).toHaveValue("recent");
   await expect(page.getByLabel("Filter by status")).toHaveValue("received");
+  await expect(page).toHaveURL(/[?&]sort=recent(&|$)/); // a value the page accepts stays
+
+  // One hook for every list page: a value outside its vocabulary leaves the URL.
+  await page.goto("/orders?sort=newest&status=shipped");
+  await expect(page.getByLabel("Sort")).toHaveValue("placed");
+  await expect(page).not.toHaveURL(/[?&](status|sort)=/);
 });

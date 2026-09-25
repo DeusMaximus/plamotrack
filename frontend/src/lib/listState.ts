@@ -4,7 +4,9 @@
  *  and total — anything the URL might hold (missing, empty, garbage, a page
  *  past the end) reads as the default rather than as an error — and the hooks
  *  wrap them in `useSearchParams`, dropping a parameter again when it returns
- *  to its default so a clean URL stays clean. Changing a filter, the sort or
+ *  to its default so a clean URL stays clean, and dropping a filter or sort
+ *  value outside its vocabulary so the URL never names a state the page is
+ *  not showing (#247). Changing a filter, the sort or
  *  the search resets the page: the page was a position in a list that no
  *  longer exists. */
 
@@ -131,7 +133,19 @@ function useParamWriter(key: string, fallback: string, replace: boolean): Setter
   );
 }
 
-/** A parameter with a closed vocabulary — a status, a sort. */
+/** A parameter with a closed vocabulary — a status, a sort.
+ *
+ *  A value outside the vocabulary reads as the default (`readEnum`), and the
+ *  address bar is made to say so: the parameter is dropped, in place, with no
+ *  history entry. Left there, the URL named one state while the page showed
+ *  another, and a bookmark or a shared link carried the mismatch on — which an
+ *  old `/kits?sort=recent` link does since the Kits page stopped offering that
+ *  sort (#247, Greptile P2). The effect re-runs on every change of the query,
+ *  not only of this value — a guard, not a measured need: two strangers in one
+ *  URL are two writes in one commit, which `useWriteParams` warns may not
+ *  compose, and a re-run catches one a sibling write put back. With the query
+ *  left out of the dependencies, list-urls.spec.ts's two-stranger case still
+ *  passed (2026-09-25), so no overwrite has been reproduced. */
 export function useEnumParam<T extends string>(
   key: string,
   allowed: readonly T[],
@@ -139,7 +153,13 @@ export function useEnumParam<T extends string>(
 ): [T, Setter<T>] {
   const [params] = useSearchParams();
   const write = useParamWriter(key, fallback, false);
-  return [readEnum(params.get(key), allowed, fallback), write as Setter<T>];
+  const writeParams = useWriteParams();
+  const raw = params.get(key);
+  const stranger = raw !== null && !(allowed as readonly string[]).includes(raw);
+  useEffect(() => {
+    if (stranger) writeParams({ [key]: null }, { replace: true });
+  }, [stranger, key, params, writeParams]);
+  return [readEnum(raw, allowed, fallback), write as Setter<T>];
 }
 
 /** A free-text parameter — a search, a series, a retailer id, a category. */
