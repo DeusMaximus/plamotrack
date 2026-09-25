@@ -2550,7 +2550,7 @@ The [milestone](https://github.com/DeusMaximus/plamotrack/milestone/18) has ten 
 |---|---|---|
 | [#278](https://github.com/DeusMaximus/plamotrack/issues/278) | Versioned public images, release files and skill ZIP | Start first; gate the distributed artifacts |
 | [#279](https://github.com/DeusMaximus/plamotrack/issues/279) | Select one supported quick-deploy platform through a working deployment | Investigate alongside packaging |
-| [#280](https://github.com/DeusMaximus/plamotrack/issues/280) | Verify Pocket ID for browser login, assistant OAuth and recovery | Investigate alongside packaging |
+| [#280](https://github.com/DeusMaximus/plamotrack/issues/280) | Verify Pocket ID for browser login, assistant OAuth and recovery | Decided 25/09/2026: an optional supported provider |
 | [#281](https://github.com/DeusMaximus/plamotrack/issues/281) | Recommended platform template | Uses #278 and the #279/#280 decisions |
 | [#282](https://github.com/DeusMaximus/plamotrack/issues/282) | Portable VPS setup and guide | Uses #278 and the #280 decision |
 | [#283](https://github.com/DeusMaximus/plamotrack/issues/283) | Guided claiming and initial regional settings | Validate on both deployment paths |
@@ -2561,10 +2561,16 @@ The [milestone](https://github.com/DeusMaximus/plamotrack/milestone/18) has ten 
 
 **Decisions still to measure.** #279 compares at most two initial platform
 candidates through actual setup, ongoing cost, private networking, migrations,
-MCP transport, persistence and recovery. #280 establishes Pocket ID compatibility
-and whether it should be bundled or separately configured; a successful browser
-login alone is not evidence that assistant authorisation and refresh work.
-Neither a platform nor Pocket ID is declared supported before those checks.
+MCP transport, persistence and recovery; no platform is declared supported before
+that check. **#280 is decided (25/09/2026):** Pocket ID is an optional supported
+provider. Browser login, assistant authorisation, refresh, restarts, backup and
+lost-passkey recovery were measured against Pocket ID v2.16.0, with real passkeys
+and Claude.ai for the owner's legs; the report is on the issue. The browser login
+worked as shipped, but the assistant link did not until #294 stopped the MCP proxy
+forwarding the client's `resource` — the case this section anticipated, a
+successful login that says nothing about assistant authorisation. It is documented
+from the release that ships #294; whether a template bundles it or leaves it
+separately configured is #281's call.
 Material implementation prerequisites discovered by either investigation get
 their own issues before the templates depend on them. Existing Google/OIDC
 deployments remain supported.
