@@ -68,11 +68,7 @@ Template:
   - **Unreleased on `main`:** #294 (Pocket ID `resource`), #289 (`create_order` `retailer_id`), #247.
   - **Cloud image:** Playwright drives the preinstalled Chromium through the recipe; no WebKit.
   - **New rule (the owner's, 2026-09-25; `AGENTS.md` → Release artifacts, `.agents/releases.md` step 7):** the docs site and the README's user-facing parts describe the **published release**, never `main`. The README lines #289 and #247 had changed went back to the v0.5.2-alpha wording on `main` the same day.
-  - **Owed at the next release** (docs site and README together, landing with the publication):
-    - #247: Home's bench and Recently completed order by build date; an undated build shows "—" and sorts last; the Kits page's sort menu (Newest added default, no "Newest first"/`recent`); an unknown filter or sort leaves the URL. README: the Home paragraph and the `list_kits` row.
-    - #289: `create_order` takes `retailer_id`, and an id given as `retailer` is refused. README: the `create_order` row.
-    - #294: a Pocket ID install no longer needs the API-registration workaround (#280 findings §2a). This only matters if the docs cover Pocket ID by then, which is #280's open decision.
-    - The wording the README had carried is in `6000d96` and `e72a7cc` (`git show <sha> -- README.md`).
+  - **Owed at the next release:** see `.agents/next-release.md` (the owner's call, 2026-09-25). It has entries for #247, #289 and #294; each user-visible PR adds its own, and after publication the entries that release shipped are removed.
   - **Unfiled defect, carried:** `_assemble_database_url` in `app/config.py` does not bracket an IPv6 `POSTGRES_HOST`. Compose pins `POSTGRES_HOST: db`, so only a source run with an IPv6 literal hits it.
   - **Carried from the 2026-09-23 #294 entry:**
     - **testhost is in the spike's state, not the gate's.** `/opt/plamotrack-280` runs the #294 build behind the tunnel against Pocket ID. The gate's stack and Keycloak are stopped. `probe.py teardown --base https://NAME --ssh root@HOST` restores them.
@@ -81,7 +77,7 @@ Template:
     - The LXC is a v0.5.2 release install. #278 is open for the owner's skill-zip check.
   - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
 - **Next:**
-  1. At the next release: the owed docs above, per the new rule. Nothing to change on docs.gunp.la before then.
+  1. At the next release: work through `.agents/next-release.md` (release step 7). Nothing changes on docs.gunp.la before then.
   2. The IPv6 `POSTGRES_HOST` defect: file it and fix it (small; can be done in a cloud session).
   3. Cloud-feasible candidates:
      - #124 (possibly already covered by the description; owner's call);

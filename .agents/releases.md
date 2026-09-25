@@ -70,9 +70,13 @@ publication and native CI cannot be certified by a local build.
    search both for the previous version string. Then bring the docs site and the
    README's user-facing parts up to this release: they describe the published
    release, never `main` (AGENTS.md → Release artifacts), so every user-visible
-   change merged since the previous tag has waited for this step. The list is in
-   those PRs' bodies and the newest hand-off entry; land the docs with the
-   publication, not before it. Publishing the draft is a separate owner-approved
+   change merged since the previous tag has waited for this step. The list is
+   `.agents/next-release.md`: write the release notes and the docs site's changelog
+   from its **Release note** lines, make the README and docs-site changes its other
+   lines name, and land the docs with the publication, not before it. Check it
+   against `git log <previous-tag>..<tag>` for a user-visible change with no entry.
+   Once the release is published, a docs commit on `main` removes the entries it
+   shipped (changes in the tagged commit) and keeps any merged after the tag. Publishing the draft is a separate owner-approved
    action. Alpha releases retain the prerelease flag.
 
 **Dispatch a new candidate instead of rerunning jobs.** Promotion requires attempt

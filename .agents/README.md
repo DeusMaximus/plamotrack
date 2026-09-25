@@ -17,6 +17,12 @@ humans working alongside them) need *between* sessions, kept out of the always-l
   #241 holds the M6.1 FastMCP 4 compatibility spike's report, the one that filed
   #241–#244): evidence a later leg re-runs, never code the app imports. The issue
   comment is the record; the directory is what lets a different model reproduce it.
+- `releases.md` — the maintainer's release runbook and update policy: candidate,
+  gate, tag, promotion, publication.
+- `next-release.md` — what the next release owes the user-facing docs, which describe
+  the published release, never `main`: one entry per user-visible change, written in
+  the change's own PR, worked through by the release and trimmed once it is published
+  (`releases.md` step 7).
 - `review-brief.md` — the fill-in template for briefing an external reviewer
   (Cursor / Codex / Claude), the PR-body shape it points at, and the checklist
   that produces the per-PR "where I'd push" section. Edited in place.

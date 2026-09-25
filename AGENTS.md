@@ -206,6 +206,9 @@ HANDOFF.md              # session hand-off log — the five most recent entries 
   lessons.md            #   case histories behind the rules — append-only, stable headings
   testing-and-review.md #   procedure: suites, harness, CI, release gate, reviewer routing
   review-brief.md       #   fill-in template for briefing a reviewer; the PR-body shape it assumes
+  releases.md           #   the maintainer's release runbook and update policy
+  next-release.md       #   what the next release owes: release notes, README and docs-site
+                        #   changes held back from `main` — each user-visible PR adds its entry
 ```
 
 ## Release artifacts (#278)
@@ -232,9 +235,11 @@ an `.env` from v0.5.0-alpha or earlier needs those two lines added before its ne
 the README's user-facing parts — what plamotrack is and does, installing, the MCP tool
 table — say what the currently published images do, because a reader installs the
 release and reads those first. A PR that changes user-visible behaviour leaves both
-alone and says in its body what they will owe; the release that ships the change
-brings them up to date (`.agents/releases.md`, step 7), and the newest hand-off entry
-carries the list until then. Contributor material follows `main`: the README's
+alone and adds its entry to **`.agents/next-release.md`** — the release note and what
+the README and the docs site will owe — in the same PR; the release that ships the
+change works through that file, then removes the entries it shipped once published
+(`.agents/releases.md`, step 7).
+Contributor material follows `main`: the README's
 *Developing on it*, `docs/design.md`, `AGENTS.md`, `.agents/`, docstrings and tool
 descriptions — an MCP tool's description ships with its code, so it describes that
 code.

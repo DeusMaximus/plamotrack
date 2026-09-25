@@ -236,7 +236,9 @@ these about the branch; each answer that is "I reasoned, I did not prove" is a b
   normalisations are supposed to agree, say in which direction you believe any
   disagreement falls, and ask for the counter-example.
 - **What would a client notice changed** — a status code, a stored value, a message —
-  that the release notes will have to say?
+  that the release notes will have to say? It belongs in this PR's
+  `.agents/next-release.md` entry; ask the reviewer to check the entry against the
+  diff.
 - **Which test is least deterministic** (a race, a timing pin, a repeat count) and
   what is the evidence it is enough?
 - **What did you decide rather than derive** — and would you mind being overruled?
