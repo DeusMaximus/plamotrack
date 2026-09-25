@@ -150,6 +150,9 @@ MATRIX = ROOT / "ingress_matrix.py"
 # body budgets and their reader, the client records' bounds.
 BUDGET = ROOT / "app/auth/budget.py"
 BODY = ROOT / "app/auth/body.py"
+# #299/#300: the dsn- set — the database URL assembled from POSTGRES_* and its
+# way into alembic, whose env.py joins the clean-tree check the way VERS did.
+ALEMBIC_ENV = ROOT / "alembic/env.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -6165,6 +6168,83 @@ CASES += [
     ),
 ]
 
+# --- #299/#300: the database URL from POSTGRES_* — an IPv6 host bracketed, a zone id
+# raw for SQLAlchemy and `%25` for asyncpg's decoder, and every `%` doubled on its
+# way into alembic's ConfigParser. One case per place the fix lands. ------------------
+CASES += [
+    (
+        "dsn-1. a bracketed POSTGRES_HOST is not unwrapped",
+        CFG,
+        '    host = value[1:-1] if value.startswith("[") and value.endswith("]") else value\n',
+        "    host = value\n",
+        "round_trips_through_sqlalchemy",
+    ),
+    (
+        "dsn-2. a colon outside an IPv6 literal is let through",
+        CFG,
+        '    if ":" in host:\n        try:\n            IPv6Address(host)\n',
+        "    if False:\n        try:\n            IPv6Address(host)\n",
+        "colon_outside_an_ipv6_literal",
+    ),
+    (
+        "dsn-3. the host is written into the URL unbracketed (the #299 defect)",
+        CFG,
+        "            self.database_url = URL.create(\n"
+        '                "postgresql+asyncpg",\n'
+        "                username=self.postgres_user,\n"
+        "                password=self.postgres_password,\n"
+        "                host=_database_host(self.postgres_host),\n"
+        "                port=self.postgres_port,\n"
+        "                database=self.postgres_db,\n"
+        "            ).render_as_string(hide_password=False)\n",
+        "            from urllib.parse import quote\n"
+        "\n"
+        "            user = quote(self.postgres_user, safe='')\n"
+        "            password = quote(self.postgres_password, safe='')\n"
+        "            host = _database_host(self.postgres_host)\n"
+        "            self.database_url = (\n"
+        '                f"postgresql+asyncpg://{user}:{password}"\n'
+        '                f"@{host}:{self.postgres_port}/{self.postgres_db}"\n'
+        "            )\n",
+        "round_trips_through_sqlalchemy",
+    ),
+    (
+        "dsn-4. the zone id is RFC 6874-encoded for SQLAlchemy, which never decodes it",
+        CFG,
+        "    return host\n",
+        '    return host.replace("%", "%25")\n',
+        "engine_hands_asyncpg_the_bare_host",
+    ),
+    (
+        "dsn-5. POSTGRES_HOST is judged when DATABASE_URL is set explicitly",
+        CFG,
+        "        if not self.database_url:\n",
+        "        if True:\n",
+        "explicit_database_url_is_left_alone",
+    ),
+    (
+        "dsn-6. alembic is handed the URL's `%` unescaped (the #300 defect)",
+        ALEMBIC_ENV,
+        'config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))\n',
+        'config.set_main_option("sqlalchemy.url", get_settings().database_url)\n',
+        "alembic_reads_the_url_it_was_given",
+    ),
+    (
+        "dsn-7. alembic's escape is doubled: accepted, and read back altered",
+        ALEMBIC_ENV,
+        'config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))\n',
+        'config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%%%"))\n',
+        "alembic_reads_the_url_it_was_given",
+    ),
+    (
+        "dsn-8. the state store's DSN carries the zone id raw to asyncpg's decoder",
+        MCP_OAUTH_STATE,
+        '    if url.host and "%" in url.host:\n',
+        "    if False:\n",
+        "state_store_dsn_round_trips_through_asyncpg",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
@@ -6248,6 +6328,8 @@ TEST_FILES = [
     "tests/test_mcp_order_retailer.py",
     # The #247 set: every 247- kill lives here.
     "tests/test_kit_sorts.py",
+    # The #299/#300 dsn- set: every dsn- kill lives here.
+    "tests/test_database_url.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.

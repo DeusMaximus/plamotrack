@@ -1,11 +1,12 @@
 import re
 from functools import lru_cache
-from ipaddress import ip_network
+from ipaddress import IPv6Address, ip_network
 from pathlib import Path
-from urllib.parse import quote, urlsplit
+from urllib.parse import urlsplit
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 from app.hostnames import is_loopback_host, validate_host_pattern
 from app.models.enums import AuthMode
@@ -26,6 +27,28 @@ _CURRENCY_RE = re.compile(r"[A-Z]{3}")
 def split_csv(value: str) -> list[str]:
     """A comma-separated setting as its non-empty, stripped entries."""
     return [entry.strip() for entry in value.split(",") if entry.strip()]
+
+
+def _database_host(value: str) -> str:
+    """POSTGRES_HOST as the bare host `URL.create` takes (#299).
+
+    The renderer brackets an IPv6 literal itself, so one written the URL way,
+    `[::1]`, is unwrapped first or it would come out `[[::1]]`. A zone id
+    (`fe80::1%eth0`) stays raw: SQLAlchemy never percent-decodes a host, and its
+    asyncpg dialect hands the text to the resolver as it stands, so RFC 6874's
+    `%25` would parse and then fail to resolve. A colon anywhere else is refused:
+    the port is POSTGRES_PORT, and `db:5433` would otherwise be bracketed as an
+    address and fail at the resolver, far from the setting that caused it."""
+    host = value[1:-1] if value.startswith("[") and value.endswith("]") else value
+    if ":" in host:
+        try:
+            IPv6Address(host)
+        except ValueError:
+            raise ValueError(
+                "POSTGRES_HOST is a host name or an IP address, without a port — the "
+                f"port is POSTGRES_PORT (got {value!r})"
+            ) from None
+    return host
 
 
 # Anchored on this file, not the working directory: `uv run uvicorn` from
@@ -343,14 +366,17 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _assemble_database_url(self) -> "Settings":
         if not self.database_url:
-            # quote() the credentials — a password containing @ or / would
-            # otherwise produce a DSN that parses into the wrong host.
-            user = quote(self.postgres_user, safe="")
-            password = quote(self.postgres_password, safe="")
-            self.database_url = (
-                f"postgresql+asyncpg://{user}:{password}"
-                f"@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
-            )
+            # SQLAlchemy renders what its own `make_url` parses: the credentials
+            # quoted (a password containing @ or / would otherwise parse into the
+            # wrong host) and an IPv6 host bracketed (#299).
+            self.database_url = URL.create(
+                "postgresql+asyncpg",
+                username=self.postgres_user,
+                password=self.postgres_password,
+                host=_database_host(self.postgres_host),
+                port=self.postgres_port,
+                database=self.postgres_db,
+            ).render_as_string(hide_password=False)
         return self
 
 

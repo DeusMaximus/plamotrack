@@ -149,8 +149,15 @@ def storage_key(signing_key: bytes) -> bytes:
 
 
 def asyncpg_dsn(database_url: str) -> str:
-    """The SQLAlchemy URL (`postgresql+asyncpg://…`) as the DSN asyncpg takes."""
-    return make_url(database_url).set(drivername="postgresql").render_as_string(hide_password=False)
+    """The SQLAlchemy URL (`postgresql+asyncpg://…`) as the DSN asyncpg takes.
+
+    asyncpg percent-decodes the host, which SQLAlchemy does not: a zone id's `%`
+    is written `%25` here, RFC 6874's spelling, or `fe80::1%12` would reach the
+    resolver as `fe80::1` and a control character (#299)."""
+    url = make_url(database_url).set(drivername="postgresql")
+    if url.host and "%" in url.host:
+        url = url.set(host=url.host.replace("%", "%25"))
+    return url.render_as_string(hide_password=False)
 
 
 def build_state_store(settings: Settings) -> tuple[OAuthStateStore, FernetEncryptionWrapper]:
