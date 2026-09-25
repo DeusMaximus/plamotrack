@@ -6217,15 +6217,17 @@ CASES += [
         '    return host.replace("%", "%25")\n',
         "engine_hands_asyncpg_the_bare_host",
     ),
-    # dsn-5 reassembles only when the host has a colon. Its first form, `if True:`,
-    # made every Settings ignore DATABASE_URL, so the harness session's alembic and
+    # dsn-5 judges the host and never reassembles. Its first form, `if True:`, made
+    # every Settings ignore DATABASE_URL, so the harness session's alembic and
     # truncating teardown ran against the POSTGRES_* (dev) database (GLM, PR #302
-    # round 1, finding 1). A mutant here must leave an explicit DATABASE_URL alone.
+    # round 1, finding 1). Round 1's re-anchor, reassembling when the host has a
+    # colon, still did that for a developer whose .env says POSTGRES_HOST=::1. A
+    # mutant here must leave an explicit DATABASE_URL alone for every valid host.
     (
         "dsn-5. POSTGRES_HOST is judged when DATABASE_URL is set explicitly",
         CFG,
         "        if not self.database_url:\n",
-        '        if not self.database_url or ":" in self.postgres_host:\n',
+        "        if not self.database_url or _database_host(self.postgres_host) is None:\n",
         "explicit_database_url_is_left_alone",
     ),
     (
