@@ -87,8 +87,16 @@ Shape:
   `resource` to the provider, and always asks it for `openid`. A provider that
   enforces RFC 8707, Pocket ID among them, now links an assistant with no extra setup.
   Before, it refused with `invalid_request` unless the instance's `/mcp` was
-  registered with it as an API. The browser login is unchanged.
+  registered with it as an API. The browser login is unchanged. If you linked an
+  assistant through Pocket ID with that registration, delete it after upgrading; the
+  assistant then asks you to reconnect once — Claude.ai did so even for a connector
+  that had been removed and added again.
 - **README:** nothing.
-- **Docs site:** only if the docs cover Pocket ID by then (#280's open decision). Then
-  drop the API-registration step (#280 findings §2a). The OIDC page's provider notes,
-  if any mention `resource`.
+- **Docs site:** a **Pocket ID page** — an optional supported provider from this
+  release (#280, decided 2026-09-25). The recipe is in `.agents/spikes/280/findings.md`:
+  §5 (its own hostname with HTTPS, a persistent volume, `ENCRYPTION_KEY` kept with the
+  backups; one client carrying both callbacks, and a UI-created client is
+  group-restricted by default; a login code in its access log), §4 (the backup set and
+  lost-passkey recovery by a login code, no rebind), §3 (revocation is local only),
+  and §8. No API-registration step; the reconnect line above for anyone who used it.
+  Also the OIDC page's provider notes, if any mention `resource`.

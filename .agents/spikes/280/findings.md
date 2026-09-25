@@ -1,9 +1,11 @@
 # #280 findings — Pocket ID for the owner login and MCP OAuth
 
-The draft of the #280 report. Run 2026-09-23 with `probe.py` (README.md), end to end
-from a clean start by `sequence.sh`, exit 0; the refresh legs re-run once more with
-exact upstream counting (§3). Browser legs used a CDP virtual authenticator, not a
-real device; the owner's real-device and Claude.ai legs are §7.
+The #280 report; the owner's decision is §8. Run 2026-09-23 with `probe.py`
+(README.md), end to end from a clean start by `sequence.sh`, exit 0; the refresh legs
+re-run once more with exact upstream counting (§3). Browser legs used a CDP virtual
+authenticator, not a real device; the owner's real-device and Claude.ai legs are §7,
+and its last subsection is the Claude.ai link on the #294 build without the
+workaround (2026-09-25).
 
 ## What ran
 
@@ -189,12 +191,45 @@ cross-device QR sign-in (the phone signed in directly with the synced passkey); 
 device off the owner's network; the client created in Pocket ID's UI (§5); Pocket
 ID on a hosting platform (#279).
 
-## 8. Recommendation (draft — the owner's decision)
+### Without the workaround, on the #294 build (2026-09-25)
 
-Document Pocket ID as an **optional supported provider** once two things are true:
-the `resource` change (§2, #294) has landed with its own tests, so the recipe needs no API
-registration; and a real-device run like §7 has passed without §2a's workaround. Whether the
-hosting templates *bundle* it is #279/#281's call, because it is a second public
-service with its own name, volume and backup item — on Render roughly a third more
-cost, on Railway about a dollar. Until then, the configuration-only route (§2a) is
-the one verified way to use it, and it should not be advertised as supported.
+The same tunnel, Pocket ID client and callbacks, with plamotrack's api the #294
+branch's image (`plamotrack-api:294-spike`; web and db the v0.5.2 release) and **no
+API registered in Pocket ID** (`GET /api/apis` → 0). The owner removed the Claude.ai
+connector from the earlier run and added it again; the evidence is read back as
+before.
+
+| Leg | Evidence |
+|---|---|
+| The old link | Claude.ai still presented the refresh token from the earlier link, made under §2a, although the connector had been removed. The proxy's upstream refresh was refused by Pocket ID (`400 invalid_request`, fosite's `ExactAudienceMatchingStrategy`: the grant's audience names an API no longer registered), `/mcp/token` answered 401, and Claude.ai asked the owner to reconnect |
+| The reconnect | discovery → `/mcp/authorize` → consent → Pocket ID `/authorize` with `response_type`, `client_id`, `redirect_uri`, `state`, `scope=openid`, `code_challenge`, `code_challenge_method`, `access_type`, `prompt` — **no `resource`** — accepted (302) → the Proton Pass passkey (`webauthn/login` start → finish) → callback → upstream token 200 → `/mcp/token` 200 → `auth.mcp_grant_issued` (a CIMD client: no `/mcp/register`) |
+| Tool calls | `POST /mcp` 200, six requests |
+| Past the provider's 1-minute token | the next request, a minute after the link: the proxy's refresh at Pocket ID's token endpoint (200) in the same second, the call 200 |
+
+**A link made under §2a needs one reconnect once the API registration is removed.**
+Pocket ID will not refresh a grant whose audience names an API it no longer has, so
+the grant ends at the proxy and the client authorizes again; Claude.ai prompts for
+it, and the reconnect is the ordinary link. Not measured: the #294 build with the
+registration left in place — nothing in the request names it any more, so it should
+be inert, but the measured path is remove it and reconnect once.
+
+## 8. Decision (the owner's, 2026-09-25)
+
+Pocket ID is an **optional supported provider**. The owner's reason: it makes
+setting up OAuth for an assistant much easier. Both conditions the draft
+recommendation set held: the `resource` change (§2) landed as #294 (`ee458f4`) with
+its own tests, and a real passkey and a real client linked without §2a (§7, last
+subsection).
+
+- **Documented from the release that ships #294.** The docs describe the published
+  release, and v0.5.2 still forwards `resource`; the page is owed in
+  `.agents/next-release.md`. It carries §5's operator notes, §4's backup set
+  (`ENCRYPTION_KEY` with it) and lost-passkey route, revocation being local only
+  (§3), and the one reconnect above for anyone who used §2a.
+- **Not bundled by this decision.** Whether the hosting templates include it is
+  #281's call with #279's platform, because it is a second public service with its
+  own name, volume and backup item — on Render roughly a third more cost, on Railway
+  about a dollar. #282's VPS path can document it beside the reference Caddy; §7's
+  reachability finding (the provider need not be public) applies there.
+- **§2a is not advertised.** Anyone already running v0.5.2 that way keeps working
+  until they upgrade.

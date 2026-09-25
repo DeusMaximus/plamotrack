@@ -857,7 +857,9 @@ checklist are in `.agents/testing-and-review.md`. The rules they produced:
      guided claiming, assistant connection, updates, backups and recovery. A
      separate editable public sandbox uses invented data and resets daily, with
      no MCP, credentials or administrative mutations. Start with #278–#280;
-     provider selection and Pocket ID support remain decisions to verify. Pulls
+     the hosting platform remains a decision to verify. Pocket ID is decided
+     (#280, 2026-09-25): an optional supported provider, documented from the
+     release that ships #294; whether a template bundles it is #281's call. Pulls
      release packaging and the supported deployment guides forward from M9.
 7. Photo upload + gallery ← decide storage backend default first (§9.2)
 8. Public read-only routes + showcase page ← only after admin/MCP paths are protected
