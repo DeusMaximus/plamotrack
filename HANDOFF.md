@@ -62,7 +62,11 @@ Template:
   - **A zone id is raw in the SQLAlchemy URL, `%25` only for asyncpg's parser**, not RFC 6874 everywhere as the task first said. SQLAlchemy never decodes a host, and the resolver refuses `fe80::1%25lo`.
   - **#300 and #301 ride in the same PR** as separate issues: same class, and each is needed for #299's fix to be complete and not leak.
 - **State:**
-  - **PR #302 is open and unreviewed.** CI had not reported when this entry was written. No reviewer has been requested; that is the owner's call (`.agents/testing-and-review.md` → Which reviewer).
+  - **PR #302 is open, after one review round.** Greptile scored it 5/5 with no findings. GLM 5.3's round 1 at `dd6f3df` was **NO-GO**, with a P2 and three P3s, answered on the thread. That NO-GO still stands until a round 2 says otherwise; don't merge before then (`.agents/testing-and-review.md` → Responding to a review, item 6).
+    - P2 fixed: the harness's first dsn-5 sent the mutant session to the dev database. Re-anchored and proven with a canary row; the rule is in testing-and-review, the case in lessons.md.
+    - P3 finding 2: the finding was right, the remedy was declined with a counterexample. The state store reads the engine's host; decoding `%25` first breaks a real zone `%25`.
+    - P3s 3 and 4: a tripwire comment in `config.py`, and record corrections.
+    - The subscription to #302 and a fallback check-in are live in the session that wrote this.
   - **This entry rides on the PR branch, not `main`**: the session could push only to its branch. Once the PR merges it lands on `main` as usual. `main` got the #280 entry below first, so `main` was merged into the branch: both entries kept, and the #294 entry rotated out.
   - **Proven in Compose, not with the shipped image:** Docker runs in the cloud session once `dockerd` is started (`.agents/testing-and-review.md` → Docker in a cloud session). The `migrate` service ran with its image swapped for the Python base plus the locked dependencies, the source mounted, and a punctuated `POSTGRES_PASSWORD` in `.env`.
     - `main` failed with #300's interpolation error, and its log printed the URL and password.
@@ -79,7 +83,7 @@ Template:
     - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
     - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
 - **Next:**
-  1. PR #302: review (the owner picks the reviewer), CI, merge.
+  1. PR #302: GLM round 2 on the answered head, then CI, then merge.
      - **The owner will allow `pkg-containers.githubusercontent.com`** in the cloud environment's Network access (said 25/09/2026, not done yet). Once it is allowed, rebuild the real API image in a session: set the mirror, start `dockerd`, then `docker compose -f docker-compose.yml -f docker-compose.build.yml build`. Then redo the `migrate` check with it, `main` against the branch. The recipe is in `.agents/testing-and-review.md` → Docker in a cloud session.
   2. At the next release: work through `.agents/next-release.md` (release step 7), the Pocket ID page included.
   3. Carried from the #280 entry: #279's two edge probes, then #281's packaging, which includes whether to bundle Pocket ID; #282's VPS path can build on the Pocket ID recipe (findings §4–§5, §8).

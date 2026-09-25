@@ -1669,3 +1669,23 @@ the last hop is someone else's upload — a release page, a registry — read th
 back after it and run the check the user will run; the promotion now downloads its
 own draft and verifies it. And the hop has rules of its own: the names that cross it
 now have one, stated in a test rather than read back from the code that makes them.
+
+
+## The kill was real, and the database was the dev one (#302, PR #302 round 1)
+
+dsn-5 mutated `if not self.database_url:` to `if True:`, to prove a test that checks
+an explicit `DATABASE_URL` is left alone. The kill was genuine, and the harness
+reported it. What it did not report: that mutant made every `Settings` ignore the
+`DATABASE_URL` conftest exports, so the whole mutant session ran against the
+`POSTGRES_*` database. That is the session's `alembic downgrade base`, its tests
+and its truncating teardown. In the cloud session that was a throwaway database,
+and nothing showed. On the owner's dev Mac it was the dev collection. A migration
+guard happened to fire, and alembic rolled the downgrade back. The reviewer found
+it by running the harness where the harness normally runs.
+
+What to keep: **a mutant runs inside the harness, so it can change the harness.**
+The anchor is judged for what it does to the code under test, but a mutant in
+configuration also changes where the session's own reads and writes go. Ask what
+the mutant does to the test session itself, not only to the test. And ask where a
+green or red result would look different: a kill measured on a scratch machine says
+nothing about the machine the procedure is written for.
