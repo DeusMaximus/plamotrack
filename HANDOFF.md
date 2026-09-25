@@ -41,6 +41,60 @@ Template:
 
 ---
 
+## 2026-09-25 — Claude Code (Opus 5.5) — #299, #300, #301 filed and fixed in PR #302 (open): an IPv6 `POSTGRES_HOST`, a `%` in the URL alembic reads, and secrets echoed by a settings refusal
+
+- **Done:**
+  - Filed three bugs, each reproduced on `main` at `23e4b0e`:
+    - [#299](https://github.com/DeusMaximus/plamotrack/issues/299): the IPv6 `POSTGRES_HOST` carried from the last entry;
+    - [#300](https://github.com/DeusMaximus/plamotrack/issues/300): alembic's ConfigParser refuses any `%`, so a punctuated `POSTGRES_PASSWORD` stops the **published** `migrate` service;
+    - [#301](https://github.com/DeusMaximus/plamotrack/issues/301): a `Settings` refusal printed `input_value=`, which held the head and tail of `.env`'s secrets, into the container log.
+  - [PR #302](https://github.com/DeusMaximus/plamotrack/pull/302) on `claude/relaxed-albattani-vvepwn` closes all three:
+    - `config.py` renders the URL with `URL.create`, unwraps `[::1]`, and refuses a colon outside an IPv6 literal (only when assembling). It also sets `hide_input_in_errors=True`.
+    - `alembic/env.py` doubles `%`.
+    - `asyncpg_dsn` writes a host's `%` as `%25`.
+  - Tests:
+    - `tests/test_database_url.py` (51): 29 red / 22 green on unfixed `main`.
+    - `tests/test_settings_errors.py` (4): 4 red.
+    - The `dsn-` mutation set: 9/9 killed, and both files are in `TEST_FILES`.
+    - Backend: 2930 passed, 1 xfailed (predates the branch).
+  - `.agents/next-release.md` has the entry.
+- **Decisions (the owner's, 2026-09-25):**
+  - **A zone id is raw in the SQLAlchemy URL, `%25` only for asyncpg's parser**, not RFC 6874 everywhere as the task first said. SQLAlchemy never decodes a host, and the resolver refuses `fe80::1%25lo`.
+  - **#300 and #301 ride in the same PR** as separate issues: same class, and each is needed for #299's fix to be complete and not leak.
+- **State:**
+  - **PR #302 is open and cleared for merge by review: GLM 5.3's round 2 at `b3aa1e9` is GO.** Greptile scored it 5/5 with no findings. Round 1 at `dd6f3df` was **NO-GO**, with a P2 and three P3s, answered on the thread. Round 2's one finding (5, a P3 record clause) is taken in the PR body. The merge itself is the owner's.
+    - P2 fixed: the harness's first dsn-5 sent the mutant session to the dev database. Re-anchored, then made judge-only at `b3aa1e9`, because the re-anchor still redirected under an IPv6 `.env` host. Proven with a canary row; the rule is in testing-and-review, the case in lessons.md.
+    - P3 finding 2: the finding was right, the remedy was declined with a counterexample. The state store reads the engine's host; decoding `%25` first breaks a real zone `%25`.
+    - P3s 3 and 4: a tripwire comment in `config.py`, and record corrections.
+    - The subscription to #302 and a fallback check-in are live in the session that wrote this.
+  - **This entry rides on the PR branch, not `main`**: the session could push only to its branch. Once the PR merges it lands on `main` as usual. `main` got the #280 entry below first, so `main` was merged into the branch: both entries kept, and the #294 entry rotated out.
+  - **Proven in Compose, not with the shipped image:** Docker runs in the cloud session once `dockerd` is started (`.agents/testing-and-review.md` → Docker in a cloud session). The `migrate` service ran with its image swapped for the Python base plus the locked dependencies, the source mounted, and a punctuated `POSTGRES_PASSWORD` in `.env`.
+    - `main` failed with #300's interpolation error, and its log printed the URL and password.
+    - The branch migrated to head.
+    - With an OIDC misconfiguration, `main`'s log printed the signing key's tail (#301); the branch's printed none.
+    - The API image itself can't be built there: the `uv` blob on `ghcr.io` is refused by the egress policy.
+  - **Not testable in the cloud session:** a live IPv6 connection (the container's kernel has no IPv6 stack), and the shipped image (the ghcr blob host is refused). GLM round 2 closed both on the owner's Mac.
+    - Postgres on `[::1]`: the engine and the state store's pool both connected.
+    - The packaged stack built as written: `migrate` ran online with a punctuated password, and the OIDC refusal printed no secret.
+    - Still open: a pool to a zone-id host, which needs Linux.
+  - **Unreleased on `main`:** #294, #289, #247, plus this PR once merged; see `.agents/next-release.md`. It also owes the Pocket ID docs page.
+  - **Carried from the 2026-09-25 #280 entry:**
+    - #280 is decided and closed: Pocket ID is an optional supported provider, documented from the release that ships #294.
+    - testhost is back in the gate's state: `probe.py teardown` ran, and the gate's stack (v0.5.2) and the same Keycloak container are up.
+    - **Owner:** delete the Claude.ai "Testing" connector; the spike it pointed at is gone.
+    - Don't recreate Keycloak's container on testhost: a new one changes `sub`, and the gate's collection then needs `recovery rebind-oidc`.
+    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
+    - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
+- **Next:**
+  1. PR #302: merge (the owner's call; earlier PRs were squash-merged). After it, check that #299, #300 and #301 closed, and record the merge on `main`.
+     - The real-image check no longer waits on the cloud environment for #302: GLM round 2 ran it on the owner's Mac. Allowing `pkg-containers.githubusercontent.com` in the environment's Network access (the owner said they would, 25/09/2026) is still what lets a cloud session build the API image; the recipe is in `.agents/testing-and-review.md` → Docker in a cloud session.
+  2. At the next release: work through `.agents/next-release.md` (release step 7), the Pocket ID page included.
+  3. Carried from the #280 entry: #279's two edge probes, then #281's packaging, which includes whether to bundle Pocket ID; #282's VPS path can build on the Pocket ID recipe (findings §4–§5, §8).
+  4. Carried:
+     - Cloud-feasible candidates: #124, #125, #268, #238; the importer bugs #110, #116, #134 and #137.
+     - Posting the rehearsal on #285.
+     - Untested: the release-to-release update and the Git Bash commands.
+
 ## 2026-09-25 — Claude Code (Opus 5.5) — #280 DECIDED and closed: Pocket ID is an optional supported provider; Claude.ai linked on the #294 build with no API registration; testhost back in the gate's state
 
 - **Done:**
@@ -211,24 +265,3 @@ Template:
      - `probe.py teardown` when the spike is done.
      - Posting the rehearsal on #285 (offered).
      - Untested: the release-to-release update, and the Windows commands in Git Bash.
-
-## 2026-09-23 — Claude Code (Opus 5.5) — #294 MERGED as `ee458f4` (PR #295): the MCP proxy's upstream authorization request is its own — no client `resource`, the scope pinned to `openid`; Pocket ID links with no workaround
-
-- **Done:**
-  - [PR #295](https://github.com/DeusMaximus/plamotrack/pull/295) squash-merged as **`ee458f4`**, pinned to the reviewed head `886c0a0` (the merge tree equals the head's); #294 closed. `forward_resource=False`, and `UPSTREAM_SCOPE` ("openid") set through `extra_authorize_params` — a sibling the value sweep found: a client that omits `scope` asked the provider for nothing, not even `openid`. Rule 13 (AGENTS.md) and the design's family-8 row say the upstream request is the proxy's.
-  - Test `test_nothing_the_client_sends_reaches_the_provider_but_its_scope`, 12 cases (DCR/CIMD × `resource` absent / `…/mcp/` / `…/mcp` × `scope` sent / omitted): 10 red / 2 green on unfixed `main`. Harness cases `moa-116` and `moa-117`, each killed apart. Neighbouring suites 665 passed, 1 xfail that predates the branch; CI 5/5.
-  - Live, before merging: Pocket ID v2.16.0 with **both API registrations removed**, through the tunnel — link, refresh, transparent refresh, the race, the browser login; Keycloak 26.6 through the reference Caddy — login, link, refresh, and the upstream request carried exactly the nine expected parameters.
-- **Decisions:** the review call (the owner agreed) — Greptile and CodeRabbit only, no GLM or Codex round: the change only removes what goes upstream, and its worst failure is a loud false refusal at link time, which the release gate's OIDC and MCP legs would catch. Greptile 5/5, no findings; CodeRabbit no actionable comments, its docstring-coverage warning declined (the PR body's Review section says why).
-- **State:**
-  - **Unreleased:** v0.5.2 still forwards `resource`, so a Pocket ID install needs the API-registration workaround (#280 findings §2a) until the next release.
-  - **testhost is in the spike's state, not the gate's.** `/opt/plamotrack-280` (Compose project `plamotrack-280`) runs **the #294 build** — `plamotrack-api:294-spike` through `override-294.yml` (bring it up with `-f docker-compose.yml -f override-294.yml`); web and db are the v0.5.2 release — behind the tunnel (`WEB_BIND` on the LAN address, `TRUSTED_PROXIES` the connector), in OIDC mode against Pocket ID (project `plamotrack-spike-280-idp`, the gate's `idp.` name on loopback 8081, provider access-token lifetime 1 min, **no APIs registered now**). The gate's stack (`/opt/plamotrack`, v0.5.2, back on its release images) and Keycloak are **stopped**, volumes kept. `probe.py teardown --base https://NAME --ssh root@HOST` removes the spike and starts both.
-  - **Keycloak's container mounts `realm.json` from `/opt/plamotrack/.agents/deployment-gate/keycloak/`** — the path it was created at, before the rehearsal moved the checkout to `/opt/plamotrack-source`; an identical copy sits there. **Don't recreate it:** the realm pins no user ids, so a new container changes `sub` and the gate's collection then needs `recovery rebind-oidc`.
-  - The owner's Claude.ai "Testing" connector points at the tunnel name; remove it when the spike is done. Spike secrets are in `~/.plamotrack-gate/spike-280/`; logs in `.dev/280/` (gitignored).
-  - The merged branch `fix/294-upstream-resource` is still on origin.
-  - The LXC is a v0.5.2 release install since 2026-09-23 (moved from its Git checkout by the docs' path, no friction). #278 is open for the owner's skill-zip check.
-- **Next:**
-  1. Owner, optional: reconnect the Claude.ai connector for a real-client link on the #294 build with no API registration — the remaining condition of #280's recommendation (findings §8).
-  2. Owner: the #280 decision (an optional supported provider).
-  3. #279: the two edge probes (a header-echo image on Railway's trial and a Render free service — the edge's source addresses, `X-Forwarded-For`, the resolver, the health-check `Host`), then #281's platform-neutral packaging, then one proof deployment.
-  4. `probe.py teardown` when the spike is done.
-  - Carried: posting the rehearsal on #285 (offered). Untested: the release-to-release update, and the Windows commands in Git Bash.

@@ -33,6 +33,27 @@ Shape:
 
 ---
 
+## #300, #301, #299 — a database password with punctuation no longer stops `migrate`; a settings error no longer prints secrets (PR #302)
+- **Release note:** A `POSTGRES_PASSWORD` with punctuation in it (`@ / + = # %`, a
+  space: what a password generator produces) no longer stops the `migrate` service
+  with `invalid interpolation syntax` before the API starts. Neither does a
+  `DATABASE_URL` whose password is percent-encoded. Nothing in `.env` needs changing.
+  A settings error at startup (an OIDC setting missing, a malformed
+  `MCP_OAUTH_SIGNING_KEY`) no longer prints fragments of `.env`'s secrets into the
+  `api` and `migrate` logs. It still names the setting to fix. If a log from such
+  an error was shared, rotate what it showed: the database password's first
+  characters, the end of `MCP_OAUTH_SIGNING_KEY` or `OIDC_CLIENT_SECRET`. For
+  source runs, `POSTGRES_HOST` now takes an IPv6 address (`::1`, `[::1]`,
+  `fe80::1%eth0`), and a host with a port in it (`db:5433`) is refused at start,
+  naming the setting; the port is `POSTGRES_PORT`. The bundled stack pins the host
+  to `db`, so that part changes nothing there.
+- **README:** nothing. Its troubleshooting list already sends a failed `migrate` to
+  `docker compose logs migrate`.
+- **Docs site:** the configuration reference's `POSTGRES_PASSWORD` entry: drop any
+  advice to keep the password to letters and digits, if there is any. Its
+  `POSTGRES_HOST` entry, if it has one: an IPv6 address is written bare or bracketed.
+  Not checked from this repo.
+
 ## #247 — Home and the Kits page sort by the dates they show (PR #298, `6000d96`)
 - **Release note:** Home's On the bench now lists kits by build start date, and
   Recently completed by completion date — the dates the cards show — instead of by

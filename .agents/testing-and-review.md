@@ -59,7 +59,8 @@ psqlc postgres "DROP DATABASE plamotrack_e2e;"
 Every count must be zero afterwards — a spec that leaves rows behind is a spec that
 will collide with the next one.
 
-**In a Claude Code cloud session** (no Docker; the SessionStart hook's Postgres on
+**In a Claude Code cloud session** (Docker installed, its daemon stopped, see below; the
+SessionStart hook's Postgres on
 127.0.0.1:5432, user and password `plamotrack`): the image's Chromium is build 1194 and
 `@playwright/test` expects another, so point Playwright at it with a scratch config
 beside the real one, deleted after the run, and never `playwright install`:
@@ -75,6 +76,38 @@ Create and migrate `plamotrack_e2e` with `psql` against that server as above, th
 `settings.spec.ts` pulls in `app`, `phone` and `tablet` as its dependencies — the whole
 Chromium suite, about nine minutes (#298: 184 passed, 59 skipped). There is no WebKit
 in the image, so the dialog specs' WebKit leg is not covered there.
+
+**Docker in a cloud session** (#302, 25/09/2026). Point it at Google's Docker Hub
+mirror, then start it as a background task; it answers `docker info` within seconds,
+with the agent proxy already in its environment:
+
+```bash
+mkdir -p /etc/docker && echo '{"registry-mirrors": ["https://mirror.gcr.io"]}' > /etc/docker/daemon.json
+dockerd > "$SCRATCH/dockerd.log" 2>&1     # run in the background; $SCRATCH: the session's scratchpad
+```
+
+- **Docker Hub's 429 is not the environment.** Hub limits anonymous pulls to 100 an
+  hour per address, and cloud sessions share their outbound address, so the
+  allowance is often spent by someone else. With the mirror set, Hub names (`docker
+  pull`, Compose, a Dockerfile's `FROM` and `# syntax=`) resolve through
+  `mirror.gcr.io` unchanged; the daemon's debug log showed manifests and layers from
+  there, none from `registry-1.docker.io`. The mirror caches popular images; Docker
+  goes to Hub itself for anything it lacks.
+- **ghcr.io's 403 is the environment's network policy,** as the defaults set it:
+  manifests resolve, but the blob host `pkg-containers.githubusercontent.com` is
+  refused. `backend/Dockerfile` copies `uv` from `ghcr.io/astral-sh/uv`, so **the API
+  image cannot be built**, and `ingress_matrix.py` cannot run. The project's own
+  published images (`ghcr.io/deusmaximus/…`) cannot be pulled either. Allowing that
+  host under the environment's Network access is what unblocks it. That setting is
+  per environment, so it helps only the sessions of whoever changed it; the repo
+  does not work around it.
+- **What does run:** Compose, container networking and port publishing. So does a
+  service with its image swapped for the Python base, running
+  `pip install uv && uv sync --frozen --no-dev` from the mounted source. The
+  container needs `/root/.ccr/ca-bundle.crt` mounted, with `PIP_CERT` and
+  `SSL_CERT_FILE` pointed at it: TLS to PyPI is re-terminated inside containers
+  too. #302 ran the `migrate` service that way, `main` against the branch.
+- There is no IPv6 in the container's kernel, so none in Docker's networks either.
 
 **Proving a layout did not move** (M6.6: every PR of #257–#260 owes "1280 px and
 wider unchanged"; first done on #265). Compare the branch with `main` over *one*
@@ -437,6 +470,16 @@ uv run python mutation_test.py -k rcpt-                # cases whose label conta
   reads green and proves nothing.
 - **Take a mutant that can never be killed *out*.** A permanent survivor trains
   people to ignore the report.
+- **A mutant must not move the database the session points at.** conftest exports
+  `DATABASE_URL` for the test database, and `alembic/env.py` and the engine read it
+  through `Settings`. A mutant that changes what `Settings.database_url` resolves
+  to, such as #302's first dsn-5 (`if True:`, which ignored an explicit URL),
+  sends the session's `downgrade base`, the tests and the truncating teardown to
+  the `POSTGRES_*` database: the dev collection. On the primary dev Mac a migration
+  guard fired and alembic rolled back, by luck. In the cloud it wiped the hook's
+  scratch dev database and reported a kill. Anchor such a mutant so it still
+  honours `DATABASE_URL` in the harness session, or run it with `POSTGRES_DB`
+  pointing at a scratch database.
 - **On `main` after the #193 `aud-` fold-in: 570 cases over 51 target files** — counted the way the
   harness itself counts, `len(CASES)` and the distinct paths those cases mutate
   (migrations, the one test file and the two `frontend/` files included; the
@@ -708,7 +751,7 @@ the release gate instead. State the call and the reason in the hand-off entry.
 
 | Reviewer | Fits | Notes |
 | --- | --- | --- |
-| **GLM 5.3 Flash (Zhipu AI, via T3 Code on OpenRouter)** | **The default** for feature and fix rounds, any size | 1M context — holds a 2,000-insertion PR, its body and the process docs at once. Three rounds on 2026-08-28 (#171 GO+3P3, #173 GO+1P3, #174 GO+4P3): re-measures claims rather than reading them (its negative-control breakdowns have been exact), sweeps systematically (an AST prose-diff caught an author overclaim), probes empirically (injected a mutant to test an audit's pin), and discloses scope honestly. ~20 min and ~$0.07 a round (11.1M tokens ≈ $0.22 across all three, 96 % cache hit, OpenRouter billing). **Calibration: its findings have been reliable; its *remedies* are not pre-verified — measure a suggested fix like any claim** (#174 P3-1's suggested remedy failed measurement; the finding itself was right and subtle). It has not yet caught a hidden P2 on a branch that wasn't already exhaustively self-verified — widen its lane when it does. Replaced Cursor / Grok 4.6 (retired 2026-08-28, owner's call: the 256K context ceiling made large PRs a truncation risk; GLM holds them whole). |
+| **GLM 5.3 Flash (Zhipu AI, via T3 Code on OpenRouter)** | **The default** for feature and fix rounds, any size | 1M context — holds a 2,000-insertion PR, its body and the process docs at once. Three rounds on 2026-08-28 (#171 GO+3P3, #173 GO+1P3, #174 GO+4P3): re-measures claims rather than reading them (its negative-control breakdowns have been exact), sweeps systematically (an AST prose-diff caught an author overclaim), probes empirically (injected a mutant to test an audit's pin), and discloses scope honestly. ~20 min and ~$0.07 a round (11.1M tokens ≈ $0.22 across all three, 96 % cache hit, OpenRouter billing). **Calibration: its findings have been reliable; its *remedies* are not pre-verified — measure a suggested fix like any claim** (#174 P3-1's suggested remedy failed measurement; the finding itself was right and subtle). It has not yet caught a hidden P2 on a branch that wasn't already exhaustively self-verified — widen its lane when it does. **#302 round 1 (2026-09-25):** it caught one. The branch had been exhaustively self-verified: a negative control, 9/9 mutants and a 28,128-case fuzz. It still found a P2: a mutant that sent the harness session's alembic and truncation to the dev database, invisible in the cloud where the author ran it. Its remedy for a P3 failed measurement again: it broke a real zone `%25`. Widening its lane is the owner's call. Replaced Cursor / Grok 4.6 (retired 2026-08-28, owner's call: the 256K context ceiling made large PRs a truncation risk; GLM holds them whole). |
 | **Cursor (Grok 4.6, SpaceXAI)** | **Not on the roster** — available until 2026-09-15, then gone | Retired 2026-08-28 for the 256K ceiling; the subscription runs out on the 15th. It reviewed #219 on 2026-09-07 because the owner picked it instead of GLM in T3 Chat by mistake, and the round was a good one for the record: it wrote the feature contract before reading the author's plan, found the P3 in the gap between its list and the coverage record — a collection the branch itself classified as a grant's, purged unread — named the remedy's wrong half (the record's top level vs `idp_tokens`), re-measured the control and all 16 mutants exactly, re-sampled the race kill 3/3, and listed what it left unexamined. Until the 15th a fix round it can hold whole is fine; after, it is history. |
 | **Codex (GPT-6 since 2026-09-05; GPT 5.6 Sol before; from #212 round 11, 2026-09-06, ChatGPT's Daybreak Blue — GPT 5.6 Sol-based — after GPT-6 Astra's refusals)** | The highest-stakes shared mechanisms; second opinions | Its first GPT-6 round (#212 round 2) reproduced two grant-lifecycle defects round 1 had not, each with an independent control, and corrected the author's mutant count. Has absorbed #86 (4,442 insertions) across four rounds, and its NO-GO rounds have caught hidden P2s (#159's isalpha currency, #169's parser-stage envelope). Reserve it for anything touching the write gate, money/stock semantics, migrations, and the M6 security work — and as a second opinion when a GO on an unpolished branch feels too easy. Subscription upped 2026-08-28; routine rounds need no meter check. **#236 (M6.5, 2026-09-10), four rounds:** two hidden P2s in the order clock (round 1 the SQL session's zone, round 2 Postgres's zone files against the settings' `zoneinfo` — 598 names executed), the tie P3 in round 3 (PEP 495), each with a ready reproduction and both halves of the remedy; re-measured 32 mutants and corrected the author's table twice; the visual leg (contrast composed in the browser, captures against the artboards) worked — it is the reviewer for the M6.5 PRs (owner's call). |
 | **Codex through the Claude Code plugin** (OpenAI's `codex` plugin, tried on #265, 2026-09-17) | **Source-and-unit legs only; second opinions mid-session** — not a review round for anything with a browser or Docker leg | Three routes. `/codex:review` and `/codex:adversarial-review` are typed by the owner (the plugin marks them user-invoked only), take no brief, and the plain one **ran no tests**: it read the diff, type-checked and reported nothing. The **task route** (`codex:codex-rescue`) is the agent's to launch and can carry the whole brief (`--prompt-file`), but runs in a hardcoded `workspace-write` sandbox with **no approval prompts**, and **Chromium will not start inside it** (`MachPortRendezvousServer … Permission denied`) — so on #265 it delivered the compiled-CSS parity check, the decoded icons, nine unit mutants and a correction to the author's negative-control count (10 green, not 11, from arithmetic alone), and a NO-GO that meant only "browser gate incomplete". The owner then resumed the same Codex session in the Codex app, where the browser leg ran and the round ended GO with two real P3s. Untested: a backend-only PR (pytest and Postgres over TCP should work in the sandbox). The plugin's shared runtime keeps the thread locked ("open in another app") until the Claude session ends; release it with the broker half of the plugin's own SessionEnd hook before `codex resume <id>`. **Channel rule (owner, 2026-09-17): a plugin round returns its result in-session and never posts on GitHub; a round started the old way talks through PR comments** — the unattended plugin run had put an environmental NO-GO on the public thread under the owner's account. |

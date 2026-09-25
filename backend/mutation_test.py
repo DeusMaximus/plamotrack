@@ -150,6 +150,10 @@ MATRIX = ROOT / "ingress_matrix.py"
 # body budgets and their reader, the client records' bounds.
 BUDGET = ROOT / "app/auth/budget.py"
 BODY = ROOT / "app/auth/body.py"
+# #299/#300/#301: the dsn- set — the database URL assembled from POSTGRES_*, its
+# way into alembic (whose env.py joins the clean-tree check the way VERS did), and
+# what a settings refusal prints.
+ALEMBIC_ENV = ROOT / "alembic/env.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -6165,6 +6169,104 @@ CASES += [
     ),
 ]
 
+# --- #299/#300/#301: the database URL from POSTGRES_* — an IPv6 host bracketed, a
+# zone id raw for SQLAlchemy and `%25` for asyncpg's decoder, every `%` doubled on its
+# way into alembic's ConfigParser — and a settings refusal that echoes no secret.
+# One case per place the fix lands. ----------------------------------------------------
+CASES += [
+    (
+        "dsn-1. a bracketed POSTGRES_HOST is not unwrapped",
+        CFG,
+        '    host = value[1:-1] if value.startswith("[") and value.endswith("]") else value\n',
+        "    host = value\n",
+        "round_trips_through_sqlalchemy",
+    ),
+    (
+        "dsn-2. a colon outside an IPv6 literal is let through",
+        CFG,
+        '    if ":" in host:\n        try:\n            IPv6Address(host)\n',
+        "    if False:\n        try:\n            IPv6Address(host)\n",
+        "colon_outside_an_ipv6_literal",
+    ),
+    (
+        "dsn-3. the host is written into the URL unbracketed (the #299 defect)",
+        CFG,
+        "            self.database_url = URL.create(\n"
+        '                "postgresql+asyncpg",\n'
+        "                username=self.postgres_user,\n"
+        "                password=self.postgres_password,\n"
+        "                host=_database_host(self.postgres_host),\n"
+        "                port=self.postgres_port,\n"
+        "                database=self.postgres_db,\n"
+        "            ).render_as_string(hide_password=False)\n",
+        "            from urllib.parse import quote\n"
+        "\n"
+        "            user = quote(self.postgres_user, safe='')\n"
+        "            password = quote(self.postgres_password, safe='')\n"
+        "            host = _database_host(self.postgres_host)\n"
+        "            self.database_url = (\n"
+        '                f"postgresql+asyncpg://{user}:{password}"\n'
+        '                f"@{host}:{self.postgres_port}/{self.postgres_db}"\n'
+        "            )\n",
+        "round_trips_through_sqlalchemy",
+    ),
+    (
+        "dsn-4. the zone id is RFC 6874-encoded for SQLAlchemy, which never decodes it",
+        CFG,
+        "    return host\n",
+        '    return host.replace("%", "%25")\n',
+        "engine_hands_asyncpg_the_bare_host",
+    ),
+    # dsn-5 judges the host and never reassembles. Its first form, `if True:`, made
+    # every Settings ignore DATABASE_URL, so the harness session's alembic and
+    # truncating teardown ran against the POSTGRES_* (dev) database (GLM, PR #302
+    # round 1, finding 1). Round 1's re-anchor, reassembling when the host has a
+    # colon, still did that for a developer whose .env says POSTGRES_HOST=::1. A
+    # mutant here must leave an explicit DATABASE_URL alone for every valid host.
+    (
+        "dsn-5. POSTGRES_HOST is judged when DATABASE_URL is set explicitly",
+        CFG,
+        "        if not self.database_url:\n",
+        "        if not self.database_url or _database_host(self.postgres_host) is None:\n",
+        "explicit_database_url_is_left_alone",
+    ),
+    (
+        "dsn-6. alembic is handed the URL's `%` unescaped (the #300 defect)",
+        ALEMBIC_ENV,
+        'config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))\n',
+        'config.set_main_option("sqlalchemy.url", get_settings().database_url)\n',
+        "alembic_reads_the_url_it_was_given",
+    ),
+    (
+        "dsn-7. alembic's escape is doubled: accepted, and read back altered",
+        ALEMBIC_ENV,
+        'config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))\n',
+        'config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%%%"))\n',
+        "alembic_reads_the_url_it_was_given",
+    ),
+    (
+        "dsn-8. the state store's DSN carries the zone id raw to asyncpg's decoder",
+        MCP_OAUTH_STATE,
+        '    if url.host and "%" in url.host:\n',
+        "    if False:\n",
+        "state_store_dsn_round_trips_through_asyncpg",
+    ),
+    (
+        "dsn-9. a settings refusal echoes its input, secrets included (the #301 defect)",
+        CFG,
+        '        env_file=_ENV_FILES, extra="ignore", hide_input_in_errors=True\n',
+        '        env_file=_ENV_FILES, extra="ignore"\n',
+        "refusal_names_its_setting_and_echoes_no_secret",
+    ),
+    (
+        "dsn-10. the state store's DSN decodes a `%25` first (reads zone 25 as RFC 6874)",
+        MCP_OAUTH_STATE,
+        '        url = url.set(host=url.host.replace("%", "%25"))\n',
+        '        url = url.set(host=url.host.replace("%25", "%").replace("%", "%25"))\n',
+        "state_store_dsn_round_trips_through_asyncpg or state_store_reads_the_host",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
@@ -6248,6 +6350,9 @@ TEST_FILES = [
     "tests/test_mcp_order_retailer.py",
     # The #247 set: every 247- kill lives here.
     "tests/test_kit_sorts.py",
+    # The #299/#300/#301 dsn- set: every dsn- kill lives in these two.
+    "tests/test_database_url.py",
+    "tests/test_settings_errors.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
