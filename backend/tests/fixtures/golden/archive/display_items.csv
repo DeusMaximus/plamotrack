@@ -1,0 +1,4 @@
+id,name,category,scale,manufacturer,quantity_on_hand,notes
+6ca6980d-603d-5874-a386-de00239360c8,Action Base 2,stand,1/144,Bandai,3,"=SUM(A1:A3) is text here, not a formula"
+dd910a42-69c2-5b7c-8be6-b96f8a471409,Diorama base — desert,base,,,0,
+4411f3b0-7527-5f3b-803d-f8adc897f381,Scratch-built hangar wall,scenery,,,1,

@@ -1,0 +1,53 @@
+{
+  "format": "plamotrack-archive",
+  "export_version": 1,
+  "schema_version": "d5e9362140ea",
+  "app_version": "0.5.2",
+  "exported_at": "2026-10-01T06:29:03.984376+00:00",
+  "tables": {
+    "instance_settings": {
+      "file": "instance_settings.csv",
+      "rows": 1
+    },
+    "retailers": {
+      "file": "retailers.csv",
+      "rows": 4
+    },
+    "tools": {
+      "file": "tools.csv",
+      "rows": 3
+    },
+    "consumables": {
+      "file": "consumables.csv",
+      "rows": 2
+    },
+    "upgrades": {
+      "file": "upgrades.csv",
+      "rows": 2
+    },
+    "display_items": {
+      "file": "display_items.csv",
+      "rows": 3
+    },
+    "orders": {
+      "file": "orders.csv",
+      "rows": 4
+    },
+    "order_items": {
+      "file": "order_items.csv",
+      "rows": 8
+    },
+    "kits": {
+      "file": "kits.csv",
+      "rows": 6
+    },
+    "upgrade_applications": {
+      "file": "upgrade_applications.csv",
+      "rows": 3
+    },
+    "kit_photos": {
+      "file": "kit_photos.csv",
+      "rows": 0
+    }
+  }
+}

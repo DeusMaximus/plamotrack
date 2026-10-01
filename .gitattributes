@@ -10,3 +10,9 @@
 # line below only makes the one tracked binary type unambiguous.
 * text=auto eol=lf
 *.png binary
+
+# The golden archive (#303) is an export, byte for byte: its CSVs end every record
+# in CRLF, and the rule above would rewrite them to LF on `git add`. `-text` keeps
+# git's hands off the bytes and still diffs them as text.
+# backend/tests/test_golden_archive.py asserts the effective attribute.
+backend/tests/fixtures/golden/archive/** -text

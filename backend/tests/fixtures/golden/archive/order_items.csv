@@ -1,0 +1,9 @@
+id,order_id,item_type,catalog_ref_id,catalog_name,quantity,unit_price_minor,unit_price,currency_code,converted_price_minor,converted_currency_code,kit_name,kit_grade,kit_scale,kit_number,kit_status
+1b48ba1b-27d9-5df6-8403-0f9ba11a5c6e,31779ee0-40b3-5d9c-91e8-7626871d874d,kit,,,2,2450,2450,JPY,2499,AUD,RX-79[G] Gundam Ground Type,HG,1/144,HGUC 210,complete
+2fc081c3-320f-5587-a935-d5ef8844efb9,31779ee0-40b3-5d9c-91e8-7626871d874d,upgrade,c6c33275-9aa2-5531-93e0-f06375070f0e,Waterslide decal 08th MS Team,2,1100,1100,JPY,,,,,,,
+30fa79c8-8410-5783-a9ed-e0173743446f,0f0098cb-067b-5cf9-8c94-4082c364a71f,kit,,,1,18375,18.375,KWD,9112,AUD,Gundam Barbatos Lupus Rex,MG,1/100,,in_transit
+65a1baa1-c352-5367-8b32-60ad4ab5fd61,31779ee0-40b3-5d9c-91e8-7626871d874d,consumable,a08e7d42-4041-5b80-b54a-4616be8ff7bb,Gundam Marker GM01 Black,3,330,330,JPY,337,AUD,,,,,
+a20f6768-3251-5ce1-a7bd-7c617ab9c071,f26f1260-9be9-5901-9605-736d5bf16b98,kit,,,1,4995,49.95,AUD,,,Zaku II,HG,1/144,,backlog
+a3838397-609c-5409-bd76-3716debbc5d4,0f0098cb-067b-5cf9-8c94-4082c364a71f,display,dd910a42-69c2-5b7c-8be6-b96f8a471409,Diorama base — desert,1,4500,4.500,KWD,,,,,,,
+d587a304-3e86-5b5c-a2e4-b810fd2d3b20,31779ee0-40b3-5d9c-91e8-7626871d874d,tool,fb3e92a6-4fc7-520c-aeae-3ce7b469e1bb,Godhand Ultimate Nippers,1,5280,5280,JPY,,,,,,,
+ddee72dd-9455-5084-bbc5-575c02b0b4f0,7934ec83-e99d-57bf-b4a1-81152eeb3727,kit,,,1,8800,8800,JPY,,,νガンダム Ver.Ka,MG,1/100,5065231,pre_ordered

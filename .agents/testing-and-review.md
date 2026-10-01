@@ -24,7 +24,7 @@ last edited, so a large jump either way is worth a look.
 
 | What | Command | Notes |
 | --- | --- | --- |
-| Backend (~2880) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
+| Backend (~3005) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
 | Lint + format | `uv run ruff check --fix . && uv run ruff format .` | Before every commit. CI checks both. |
 | Frontend unit (~648) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. Also the compile-time check on every static `t("…")` key. |
@@ -421,6 +421,40 @@ races are in scope. What has held up:
 - **The suite runs on `NullPool`.** Anything about a connection characteristic
   leaking back into a pool (isolation level, `READ ONLY`) needs its own
   `pool_size=1` engine, as `test_the_snapshot_does_not_follow_the_connection_back_into_the_pool` does.
+
+---
+
+## The golden archive
+
+`backend/tests/fixtures/golden/archive/` is an export, member for member, of the
+collection `tests/fixtures/golden/seed.py` builds through REST.
+`tests/test_golden_archive.py` pins it (design §12.1, #303). Headers, member names and
+manifest keys are literals in the test, never read from `spec.py`.
+
+```bash
+GOLDEN_REGENERATE=1 uv run pytest tests/test_golden_archive.py -k reproduces   # rewrite it
+uv run pytest tests/test_golden_archive.py                                      # then check it
+```
+
+- **A fixture diff is a contract change.** The PR says why, and whether
+  `EXPORT_VERSION` moves. Other programs read this format, and the archive is the only
+  bridge a standalone client has to an instance. The one exception is `README.txt`,
+  which is prose: regenerate it freely.
+- **Regenerating is deterministic.** Ids are `uuid5` of a counter per table, assigned
+  in a `before_insert` listener. Don't swap the column default: every table shares one
+  default object through the mixin, and SQLAlchemy stopped calling a swapped default
+  once an import in the same process had inserted explicit ids. The clocks a request
+  cannot state are pinned with `UPDATE` afterwards. A row added later in a table moves
+  only that table's later ids.
+- **The fixture is committed with `-text`** (`.gitattributes`). Otherwise the
+  repository-wide `eol=lf` rule rewrites its CRLF on `git add`, and on any machine the
+  committed bytes would no longer be an export. A test asks git for the effective
+  attribute.
+- **Add a case to the seed, not to the CSVs.** A hand-edited fixture can hold a state
+  no writer can reach. `test_the_fixture_exercises_what_the_format_has_to_carry` lists
+  the edge cases the fixture promises. Names in the name-sorted tables must sort alike
+  in code-point and case-folded order, so the fixture does not depend on the database's
+  collation.
 
 ---
 
