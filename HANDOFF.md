@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-10-01 — Claude Code (Opus 5.5) — #303 in review as PR #308: a golden archive pins the CSV contract; #303–#307 triaged
+## 2026-10-01 — Claude Code (Opus 5.5) — #303 MERGED as `e5ad6cc` (PR #308): a golden archive pins the CSV contract; #303–#307 triaged
 
 - **Done:**
   - **Triage of #303–#307**, the plamotrack-ios follow-ups, in this order:
@@ -51,14 +51,14 @@ Template:
     - #307, the scenario fixtures, which reuse #303's seed;
     - #304, import on a phone, which needs the owner's UI decisions first.
     - Nothing was posted on the issues.
-  - **[PR #308](https://github.com/DeusMaximus/plamotrack/pull/308)** on `feat/303-golden-archive`, at **`eed2f6e`**: `f130461`, plus `main` merged in.
+  - **[PR #308](https://github.com/DeusMaximus/plamotrack/pull/308)** squash-merged as **`e5ad6cc`**, pinned to the reviewed head `c20fad2`; #303 is closed.
     - The fixture: `backend/tests/fixtures/golden/archive/`, members committed as files. It is an export of an invented collection that `tests/fixtures/golden/seed.py` builds through REST.
     - The tests: `tests/test_golden_archive.py`, 49 of them, with literal headers, member order and manifest keys, plus the byte, cell and amount rules and three round trips.
     - Regenerate with `GOLDEN_REGENERATE=1 uv run pytest tests/test_golden_archive.py -k reproduces`.
     - **Found and fixed:**
       - `.gitattributes`' `eol=lf` would have rewritten the fixture's CRLF on `git add`; the fixture folder is now `-text`.
       - `upgrade_applications` exported with no tiebreak; it now sorts by `(applied_at, id)`.
-    - The `303-` mutants: 9/9 killed. 303-7 survived the first run (the manifest's formatting was never compared), and the comparison was fixed.
+    - The `303-` mutants: 10/10 killed. 303-7 survived the first run (the manifest's formatting was never compared), and the comparison was fixed. 303-10 came from review.
     - Full backend suite at `f130461`: 2924 passed, 1 xfailed.
     - Docs: design §12.1 (the contract) and `.agents/testing-and-review.md` → "The golden archive".
     - Merging `main` (#302) conflicted in `mutation_test.py`. Both case sets are kept, 678 labels, every anchor matches once; the three affected suites pass (129).
@@ -67,7 +67,13 @@ Template:
   - **Greptile** reviews #308.
   - Also in the PR body: the manifest's `schema_version`, `app_version` and `exported_at` are excluded from the pin, and `README.txt` is regenerable prose, not contract.
 - **State:**
-  - **#308 is open and bound to this session. Greptile and CI were pending when this entry was written.** It needs no `.agents/next-release.md` entry, because nothing a user sees changes.
+  - **Review:** Greptile round 1 at `f130461` scored 4/5 with three P2s, all taken in `c20fad2`:
+    - the export's `schema_version`, `app_version` and `exported_at` are now checked before they are excluded from the byte comparison (new mutant 303-10);
+    - the second import is now applied, not only previewed;
+    - the harness's refusal message names `.gitattributes`.
+    - Round 2 at `c20fad2` scored 5/5 with no findings. CI passed: Backend, Frontend, Integration.
+  - #303 needs no `.agents/next-release.md` entry, because nothing a user sees changes.
+  - The merged branch `feat/303-golden-archive` is left on origin, as the others are.
   - **Carried from the #302 entry:**
     - **Unreleased on `main`:** #294, #289, #247, and #302 (#299, #300, #301); see `.agents/next-release.md`. The next release also owes the Pocket ID docs page. #300 is the most exposed: v0.5.2-alpha's `migrate` stops for a `POSTGRES_PASSWORD` holding anything but letters, digits and `- _ . ~`.
     - **Owner:**
@@ -77,7 +83,7 @@ Template:
     - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
     - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
 - **Next:**
-  1. #308: answer Greptile, wait for CI, then merge on the owner's word and close #303.
+  1. plamotrack-ios can copy `backend/tests/fixtures/golden/archive/` from `main` now.
   2. #306 in `plamotrack-docs`: confirm against `v0.5.2-alpha` that a restore into an empty instance keeps ids, then fix the sentence.
   3. #305:
      - reproduce first (`rating=7`, `quantity_on_hand=-2`, preview then apply);
