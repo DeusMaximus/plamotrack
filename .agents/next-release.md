@@ -33,7 +33,7 @@ Shape:
 
 ---
 
-## #305 — an import with an out-of-range value is refused in the preview, not at apply (PR TBD)
+## #305 — an import with an out-of-range value is refused in the preview, not at apply (PR #310)
 - **Release note:** An import holding a rating outside 1–5, or a negative stock level,
   price, cost, shipping cost, low-stock threshold or quantity used, is now refused in
   the preview with the row and column named, the same values the app's own forms
