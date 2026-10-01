@@ -154,6 +154,8 @@
       "blocked_other": "The preview found {{countDisplay}} problems that block this import.",
       "catalog_ref_unresolved": "$t(importField.catalog_ref_id): a {{itemType}} line has to point at a row in {{table}}.csv — give it a $t(importField.catalog_ref_id), or name the item in $t(importField.catalog_name) and one will be created at 0 on hand.",
       "category_folded": "Category '{{stated}}' will be stored as '{{stored}}', matching the spelling already in use.",
+      "cell_above_maximum": "{{field}} is {{value}} — it can't be more than {{maximum}}.",
+      "cell_below_minimum": "{{field}} is {{value}} — it can't be less than {{minimum}}.",
       "cell_invalid": "{{field}} couldn't be read.",
       "cell_required": "{{field}} is required.",
       "column_unknown": "Column '{{column}}' isn't a {{table}} column and was ignored.",

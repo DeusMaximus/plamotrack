@@ -156,6 +156,8 @@ BODY = ROOT / "app/auth/body.py"
 ALEMBIC_ENV = ROOT / "alembic/env.py"
 #: #303: the rule that keeps git from rewriting the golden archive's CRLF.
 GITATTR = ROOT.parent / ".gitattributes"
+#: #305: the request schemas' integer types, `Rating` among them.
+SCHNUM = ROOT / "app/schemas/numeric.py"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -6343,6 +6345,73 @@ CASES += [
     ),
 ]
 
+# --- #305: the importer holds a value to its column's domain. ----------------------
+CASES += [
+    (
+        "305-1. the minimum itself is refused",
+        IMP,
+        "            if column.minimum is not None and value < column.minimum:\n",
+        "            if column.minimum is not None and value <= column.minimum:\n",
+        "the_bound_itself_imports",
+    ),
+    (
+        "305-2. one below the minimum gets through",
+        IMP,
+        "            if column.minimum is not None and value < column.minimum:\n",
+        "            if column.minimum is not None and value < column.minimum - 1:\n",
+        "outside_its_range",
+    ),
+    (
+        "305-3. the maximum itself is refused",
+        IMP,
+        "            elif column.maximum is not None and value > column.maximum:\n",
+        "            elif column.maximum is not None and value >= column.maximum:\n",
+        "the_bound_itself_imports",
+    ),
+    (
+        "305-4. the planner never asks",
+        IMP,
+        "                self._check_ranges(spec, row)\n",
+        "",
+        "outside_its_range",
+    ),
+    (
+        "305-5. a scaled amount is named as the minor-unit column",
+        IMP,
+        "                row.scaled_from[column.mirrors] = column.name\n",
+        "",
+        "outside_its_range",
+    ),
+    (
+        "305-6. a scaled amount is shown in minor units",
+        IMP,
+        "            shown = render(row.values.get(stated, value))\n",
+        "            shown = render(value)\n",
+        "outside_its_range",
+    ),
+    (
+        "305-7. a kit's rating loses its maximum",
+        SPEC,
+        '            help="1-5, set on completion.",\n            minimum=RATING_MIN,\n            maximum=RATING_MAX,\n',
+        '            help="1-5, set on completion.",\n            minimum=RATING_MIN,\n',
+        "every_range_check_is_declared",
+    ),
+    (
+        "305-8. low_stock_threshold, which no CHECK holds, loses its floor",
+        SPEC,
+        'col("low_stock_threshold", parse_int, minimum=0),',
+        'col("low_stock_threshold", parse_int),',
+        "every_declared_bound_is_the_request_schemas",
+    ),
+    (
+        "305-9. the request schema's rating drifts from the importer's",
+        SCHNUM,
+        "Rating = Annotated[int, Field(ge=RATING_MIN, le=RATING_MAX), _NotBool]",
+        "Rating = Annotated[int, Field(ge=RATING_MIN, le=10), _NotBool]",
+        "every_declared_bound_is_the_request_schemas",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
@@ -6431,6 +6500,8 @@ TEST_FILES = [
     "tests/test_settings_errors.py",
     # The #303 set: every 303- kill lives here.
     "tests/test_golden_archive.py",
+    # The #305 set: every 305- kill lives here.
+    "tests/test_import_ranges.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.

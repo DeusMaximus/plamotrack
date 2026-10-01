@@ -725,6 +725,10 @@ class _Row:
     #: the two are different instructions once there is a stored link to lose
     #: (`_refuse_unresolved_overwrite`).
     unresolved: dict[str, tuple[str, uuid.UUID]] = field(default_factory=dict)
+    #: Minor-unit columns `_apply_money_alternates` filled from a major-unit cell —
+    #: `minor column -> the ALT_MONEY column the sheet actually wrote`. A refusal
+    #: about the stored amount names the cell the human typed (#305).
+    scaled_from: dict[str, str] = field(default_factory=dict)
 
     def refuse(self, diagnostic: Diagnostic) -> None:
         """Mark this row ERROR, carrying `diagnostic`. Appends rather than
@@ -1765,6 +1769,7 @@ class _Planner:
                 self._check_line_quantity(spec, row)
                 self._resolve_all_refs(spec, row, replace_all)
                 self._apply_money_alternates(spec, row)
+                self._check_ranges(spec, row)
                 _clear_orphan_money_currency(spec, row)
                 # Before matching: a row that duplicates a file id must not reach
                 # `_classify` and leave a `remap` entry behind it.
@@ -1921,6 +1926,47 @@ class _Planner:
                 row.unresolved[column.name] = dangling
                 row.messages.append(_dangling_optional_diagnostic(column.name, target, missing))
 
+    def _check_ranges(self, spec: TableSpec, row: _Row) -> None:
+        """Each value against its column's declared domain (`ColumnSpec.minimum` /
+        `maximum`): a rating of 1–5, stock that never goes below 0, a price that is
+        not negative.
+
+        REST and MCP hold these through the request schemas and the database through
+        CHECK constraints, but the importer builds models directly and met neither
+        until flush — so `rating=7` or `quantity_on_hand=-2` previewed as a clean
+        import and then failed the apply with an `IntegrityError`, a 500 naming no
+        row (#305). Asked after `_apply_money_alternates`, so a major-unit amount is
+        judged as the minor-unit value it becomes, and the refusal names the cell the
+        sheet wrote.
+
+        A line's `quantity` is not here: `_check_line_quantity` already answers for
+        it with the live writers' own codes.
+        """
+        for column in spec.columns:
+            if column.minimum is None and column.maximum is None:
+                continue
+            value = row.values.get(column.name)
+            if not isinstance(value, int):
+                continue  # absent, blank, or already reported as unreadable
+            stated = row.scaled_from.get(column.name, column.name)
+            shown = render(row.values.get(stated, value))
+            if column.minimum is not None and value < column.minimum:
+                row.refuse(
+                    Diagnostic(
+                        code=error_codes.IMPORT_CELL_BELOW_MINIMUM,
+                        params={"field": stated, "value": shown, "minimum": column.minimum},
+                        detail=f"{stated} is {shown} — it can't be less than {column.minimum}",
+                    )
+                )
+            elif column.maximum is not None and value > column.maximum:
+                row.refuse(
+                    Diagnostic(
+                        code=error_codes.IMPORT_CELL_ABOVE_MAXIMUM,
+                        params={"field": stated, "value": shown, "maximum": column.maximum},
+                        detail=f"{stated} is {shown} — it can't be more than {column.maximum}",
+                    )
+                )
+
     def _apply_money_alternates(self, spec: TableSpec, row: _Row) -> None:
         """Major units fill in only where the canonical minor-unit column is absent
         or blank — §6 keeps integer minor units authoritative.
@@ -1969,6 +2015,7 @@ class _Planner:
                 minor = require_int4(major_to_minor(major, code), f"{column.name}: '{major}'")
                 row.values[column.mirrors] = minor
                 row.present.add(column.mirrors)
+                row.scaled_from[column.mirrors] = column.name
             except (ArithmeticError, ValueError) as exc:
                 row.refuse(
                     Diagnostic(

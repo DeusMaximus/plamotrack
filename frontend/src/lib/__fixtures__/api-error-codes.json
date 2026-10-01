@@ -136,6 +136,20 @@
         "stored"
       ]
     },
+    "import.cell_above_maximum": {
+      "params": [
+        "field",
+        "maximum",
+        "value"
+      ]
+    },
+    "import.cell_below_minimum": {
+      "params": [
+        "field",
+        "minimum",
+        "value"
+      ]
+    },
     "import.cell_invalid": {
       "params": [
         "field"

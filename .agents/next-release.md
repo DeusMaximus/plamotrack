@@ -33,6 +33,18 @@ Shape:
 
 ---
 
+## #305 — an import with an out-of-range value is refused in the preview, not at apply (PR TBD)
+- **Release note:** An import holding a rating outside 1–5, or a negative stock level,
+  price, cost, shipping cost, low-stock threshold or quantity used, is now refused in
+  the preview with the row and column named, the same values the app's own forms
+  refuse. Before, most of these passed the preview and then failed the import with a
+  server error, and a negative shipping cost or low-stock threshold was stored.
+- **README:** nothing.
+- **Docs site:** the import page's rules for whole-number columns: ratings are 1–5,
+  and quantities, prices, costs and thresholds can't be negative (a quantity used,
+  like a line's quantity, starts at 1). `docs/import-export.md` → "How numbers are
+  read" owes the same line.
+
 ## #300, #301, #299 — a database password with punctuation no longer stops `migrate`; a settings error no longer prints secrets (PR #302, `b7f8a47`)
 - **Release note:** A `POSTGRES_PASSWORD` with punctuation in it (`@ / + = # %`, a
   space: what a password generator produces) no longer stops the `migrate` service

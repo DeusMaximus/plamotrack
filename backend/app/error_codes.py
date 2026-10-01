@@ -117,6 +117,8 @@ IMPORT_SCHEMA_DRIFT = "import.schema_drift"
 # row parsing and identity
 IMPORT_COLUMN_UNKNOWN = "import.column_unknown"
 IMPORT_CELL_REQUIRED = "import.cell_required"
+IMPORT_CELL_BELOW_MINIMUM = "import.cell_below_minimum"
+IMPORT_CELL_ABOVE_MAXIMUM = "import.cell_above_maximum"
 IMPORT_MATCH_AMBIGUOUS = "import.match_ambiguous"
 IMPORT_ORDER_MATCH_AMBIGUOUS = "import.order_match_ambiguous"
 IMPORT_ID_DUPLICATED = "import.id_duplicated"

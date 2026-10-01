@@ -2827,6 +2827,18 @@ every order because shipping carries no stock semantics; clearing it is refused
 predicate under the same change-not-cell reading; and the spawn descriptor carries
 the post-write ship instant, hash-bound beside the receipt.
 
+**A value's domain is the third writer's too** (#305, 01/10/2026). REST and MCP hold
+ratings to 1–5 and stock, prices and thresholds to zero or more through the request
+schemas, and the database holds most of them with CHECK constraints. The importer
+held them to int4 alone, so a `rating` of 7 or a `quantity_on_hand` of -2 previewed
+clean and failed the apply at flush with a 500 naming no row. Two columns that have
+no CHECK at all, `shipping_cost_minor` and `low_stock_threshold`, went further: a
+negative value imported, which no other writer could store. Each bounded column now
+declares its range in `spec.py` (`minimum` / `maximum`), the planner refuses a value
+outside it as a row error after money scaling (named as the cell the sheet wrote),
+and `tests/test_import_ranges.py` holds the declarations to both the CHECKs and the
+request schemas. The rating's numbers live once, in `services/numeric.py`.
+
 A blank cell in an *included* column means null; a column omitted from the file entirely
 is left alone. That's needed for archive fidelity, but it makes partial sheets dangerous
 — so the starter sheet emits only the columns it actually knows about. Otherwise
