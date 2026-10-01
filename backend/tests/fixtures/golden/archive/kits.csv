@@ -1,0 +1,8 @@
+id,name,grade,scale,kit_number,series,status,status_updated_at,build_started_at,build_completed_at,rating,build_notes,order_item_id,created_at,updated_at
+936bf6b1-9c44-5995-81d3-5f4164d62933,Zaku II,HG,1/144,,,backlog,2026-02-01T05:00:00+00:00,,,,,a20f6768-3251-5ce1-a7bd-7c617ab9c071,2026-02-01T05:00:00+00:00,2026-02-01T05:00:00+00:00
+03fe5c2b-8c5f-5eea-a25b-acc81a93f794,RX-79[G] Gundam Ground Type,HG,1/144,HGUC 210,機動戦士ガンダム 第08MS小隊,complete,2026-04-11T08:45:30.000125+00:00,2026-03-21T10:00:00+00:00,2026-04-11T08:45:30.000125+00:00,4,"Panel lined, ""weathered"" lightly.
+Topcoat: flat, two passes.",1b48ba1b-27d9-5df6-8403-0f9ba11a5c6e,2026-03-14T11:00:00+00:00,2026-04-11T08:45:30.000125+00:00
+e0f9577d-ccac-5f5c-8a7f-639a414c5e04,RX-79[G] Gundam Ground Type,HG,1/144,HGUC 210,,building,2026-04-20T00:00:00+00:00,2026-04-20T00:00:00+00:00,,,,1b48ba1b-27d9-5df6-8403-0f9ba11a5c6e,2026-03-14T11:00:00+00:00,2026-04-20T00:00:00+00:00
+22177ee8-0372-5219-b23c-3d6d45737275,Gundam Barbatos Lupus Rex,MG,1/100,,,in_transit,2026-05-05T09:30:00+00:00,,,,,30fa79c8-8410-5783-a9ed-e0173743446f,2026-05-02T03:15:00+00:00,2026-05-05T09:30:00+00:00
+d916d3be-81c4-5b46-9cfa-b4220a975b52,νガンダム Ver.Ka,MG,1/100,5065231,,pre_ordered,2026-06-30T12:00:00+00:00,,,,,ddee72dd-9455-5084-bbc5-575c02b0b4f0,2026-06-30T12:00:00+00:00,2026-06-30T12:00:00+00:00
+8ba5fd97-5836-5fd9-9594-802bdeb0f9f7,SD Gundam EX-Standard Strike Freedom,SD,,,Gundam SEED Destiny,backlog,2026-07-04T00:00:00+00:00,,,,"Birthday present, 2025",,2026-07-04T00:00:00+00:00,2026-07-04T00:00:00+00:00

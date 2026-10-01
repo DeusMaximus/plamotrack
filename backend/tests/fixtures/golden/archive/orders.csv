@@ -1,0 +1,5 @@
+id,retailer_id,retailer_name,order_date,order_number,delivery_service,tracking_number,tracking_url,shipping_cost_minor,shipping_cost,currency_code,shipped_at,received_at
+f26f1260-9be9-5901-9605-736d5bf16b98,625fad29-fef7-5ac1-935a-efb14233649d,Corner Hobbies,2026-02-01,,,,,,,AUD,,2026-02-01T05:00:00+00:00
+31779ee0-40b3-5d9c-91e8-7626871d874d,d72ec131-cfa8-58ae-badd-b4b7a5088511,Hobby Link Japan,2026-03-14,HLJ-88213,EMS,EM123456789JP,https://trackings.post.japanpost.jp/?q=EM123456789JP&lang=en,2300,2300,JPY,2026-03-16T01:02:03+00:00,2026-03-20T04:05:06.250000+00:00
+0f0098cb-067b-5cf9-8c94-4082c364a71f,e8190a99-1bb4-5db7-b287-62b25862f0ed,Souq Hobby Kuwait,2026-05-02,SQ/2026/0042,Aramex,,,1250,1.250,KWD,2026-05-05T09:30:00+00:00,
+7934ec83-e99d-57bf-b4a1-81152eeb3727,99a7f03c-9434-5812-a7b5-908413e65e91,あみあみ,2026-06-30,,,,,,,JPY,,

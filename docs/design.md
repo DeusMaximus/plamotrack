@@ -2648,6 +2648,29 @@ not a lock: row-level writes and an export never delay each other in either dire
 only a `replace_all` import's `TRUNCATE` queues behind an in-flight export, and the
 reverse. *(Added 16/08/2026; rule 7.2 in `AGENTS.md`.)*
 
+**The bytes are a contract, pinned by a golden archive** (#303, 01/10/2026). Other
+programs read and write this format: a standalone client whose only bridge to an
+instance is the archive, and every older release's exports. So the exact byte layout
+is fixed, not just the agreement between export, import and the templates (§12.2), which
+holds through any change made to all three at once. The rules: UTF-8 without a
+byte-order mark, every record ended by CRLF, `QUOTE_MINIMAL`, an empty cell for null,
+lowercase uuids, snake_case enum values, dates as `YYYY-MM-DD`, timestamps as UTC
+`isoformat()` (microseconds only when non-zero, offset `+00:00`), and major-unit
+amounts to the currency's exponent. Members are written in a fixed order: the manifest,
+`README.txt`, then the tables in registry order. `backend/tests/fixtures/golden/`
+holds an export made from a seeded collection, and `tests/test_golden_archive.py`
+writes the headers out literally and requires the export to reproduce the fixture
+byte for byte. The manifest's `schema_version`, `app_version` and `exported_at` are
+excluded, because every migration moves the first, every release the second, and the
+clock the third. **Changing the fixture is a contract change:** the PR says why, and
+whether `EXPORT_VERSION` moves.
+
+**Row order is stable, not meaningful.** The importer never reads it. Tables sort by
+`name` or by date with `id` as the tiebreak; `upgrade_applications` had no tiebreak
+until #303. Name order follows the database's collation, which another implementation
+cannot reproduce, so a reader must not depend on it. The fixture uses only names that
+every collation sorts alike.
+
 ### 12.2 The spec registry
 
 `services/portability/spec.py` declares each table once — columns, parsers, roles

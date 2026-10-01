@@ -150,6 +150,8 @@ MATRIX = ROOT / "ingress_matrix.py"
 # body budgets and their reader, the client records' bounds.
 BUDGET = ROOT / "app/auth/budget.py"
 BODY = ROOT / "app/auth/body.py"
+#: #303: the rule that keeps git from rewriting the golden archive's CRLF.
+GITATTR = ROOT.parent / ".gitattributes"
 
 # (label, file, old, new, pytest -k expression that MUST go red)
 CASES = [
@@ -6165,6 +6167,73 @@ CASES += [
     ),
 ]
 
+# --- #303: the archive's CSV contract, pinned by the golden fixture. -----------------
+CASES += [
+    (
+        "303-1. a header changes its spelling",
+        SPEC,
+        '            "retailer_name",\n            parse_text,\n            get=lambda o: None,  # filled by the exporter',
+        '            "retailer",\n            parse_text,\n            get=lambda o: None,  # filled by the exporter',
+        "the_header_is_pinned",
+    ),
+    (
+        "303-2. every table is written with a byte-order mark",
+        EXP,
+        "            archive.writestr(spec.filename, _write_csv(spec.header, table_rows[spec.key]))\n",
+        '            archive.writestr(spec.filename, "\\ufeff" + _write_csv(spec.header, table_rows[spec.key]))\n',
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-3. records end in LF instead of CRLF",
+        EXP,
+        'extrasaction="ignore", lineterminator="\\r\\n")',
+        'extrasaction="ignore", lineterminator="\\n")',
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-4. every cell is quoted",
+        EXP,
+        'extrasaction="ignore", lineterminator="\\r\\n")',
+        'extrasaction="ignore", lineterminator="\\r\\n", quoting=csv.QUOTE_ALL)',
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-5. timestamps always carry microseconds",
+        SPEC,
+        "        return value.astimezone(UTC).isoformat()\n",
+        '        return value.astimezone(UTC).isoformat(timespec="microseconds")\n',
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-6. the README is written before the manifest",
+        EXP,
+        '        archive.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))\n        archive.writestr("README.txt", _README)\n',
+        '        archive.writestr("README.txt", _README)\n        archive.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))\n',
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-7. the manifest is formatted differently",
+        EXP,
+        "        archive.writestr(MANIFEST_NAME, json.dumps(manifest, indent=2))\n",
+        "        archive.writestr(MANIFEST_NAME, json.dumps(manifest, indent=4))\n",
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-8. applications at one instant lose their tiebreak",
+        EXP,
+        "                        UpgradeApplication.applied_at, UpgradeApplication.id\n",
+        "                        UpgradeApplication.applied_at\n",
+        "reproduces_the_fixture",
+    ),
+    (
+        "303-9. git is allowed to normalise the fixture's line endings",
+        GITATTR,
+        "backend/tests/fixtures/golden/archive/** -text\n",
+        "",
+        "git_leaves_the_fixture_bytes_alone",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
@@ -6248,6 +6317,8 @@ TEST_FILES = [
     "tests/test_mcp_order_retailer.py",
     # The #247 set: every 247- kill lives here.
     "tests/test_kit_sorts.py",
+    # The #303 set: every 303- kill lives here.
+    "tests/test_golden_archive.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.
@@ -6290,6 +6361,7 @@ def tree_is_clean() -> bool:
         # file under frontend/ — same reason.
         # str(TEMPLATE), "Dockerfile", "ingress_matrix.py": the aud- set mutates
         # the nginx template, the image's CMD and the matrix's private output.
+        # str(GITATTR): 303-9 mutates the repository's .gitattributes.
         [
             "git",
             "status",
@@ -6302,6 +6374,7 @@ def tree_is_clean() -> bool:
             str(TEMPLATE),
             "Dockerfile",
             "ingress_matrix.py",
+            str(GITATTR),
         ],
         cwd=ROOT,
         capture_output=True,
