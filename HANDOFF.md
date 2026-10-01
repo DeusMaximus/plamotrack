@@ -41,6 +41,55 @@ Template:
 
 ---
 
+## 2026-10-01 — Claude Code (Opus 5.5) — #303 in review as PR #308: a golden archive pins the CSV contract; #303–#307 triaged
+
+- **Done:**
+  - **Triage of #303–#307**, the plamotrack-ios follow-ups, in this order:
+    - #303, the golden fixture (in review, below);
+    - #306, the docs-site ids sentence: a docs-repo PR, and v0.5.2 already preserves ids, so it does not wait for a release;
+    - #305, the import range checks;
+    - #307, the scenario fixtures, which reuse #303's seed;
+    - #304, import on a phone, which needs the owner's UI decisions first.
+    - Nothing was posted on the issues.
+  - **[PR #308](https://github.com/DeusMaximus/plamotrack/pull/308)** on `feat/303-golden-archive`, at **`eed2f6e`**: `f130461`, plus `main` merged in.
+    - The fixture: `backend/tests/fixtures/golden/archive/`, members committed as files. It is an export of an invented collection that `tests/fixtures/golden/seed.py` builds through REST.
+    - The tests: `tests/test_golden_archive.py`, 49 of them, with literal headers, member order and manifest keys, plus the byte, cell and amount rules and three round trips.
+    - Regenerate with `GOLDEN_REGENERATE=1 uv run pytest tests/test_golden_archive.py -k reproduces`.
+    - **Found and fixed:**
+      - `.gitattributes`' `eol=lf` would have rewritten the fixture's CRLF on `git add`; the fixture folder is now `-text`.
+      - `upgrade_applications` exported with no tiebreak; it now sorts by `(applied_at, id)`.
+    - The `303-` mutants: 9/9 killed. 303-7 survived the first run (the manifest's formatting was never compared), and the comparison was fixed.
+    - Full backend suite at `f130461`: 2924 passed, 1 xfailed.
+    - Docs: design §12.1 (the contract) and `.agents/testing-and-review.md` → "The golden archive".
+    - Merging `main` (#302) conflicted in `mutation_test.py`. Both case sets are kept, 678 labels, every anchor matches once; the three affected suites pass (129).
+- **Decisions (the owner's, 2026-10-01):**
+  - **Row order is stable, not meaningful.** The importer never reads it. Name order follows the database's collation, so the fixture uses names every collation sorts alike, and a test holds that. `COLLATE "C"` was declined.
+  - **Greptile** reviews #308.
+  - Also in the PR body: the manifest's `schema_version`, `app_version` and `exported_at` are excluded from the pin, and `README.txt` is regenerable prose, not contract.
+- **State:**
+  - **#308 is open and bound to this session. Greptile and CI were pending when this entry was written.** It needs no `.agents/next-release.md` entry, because nothing a user sees changes.
+  - **Carried from the #302 entry:**
+    - **Unreleased on `main`:** #294, #289, #247, and #302 (#299, #300, #301); see `.agents/next-release.md`. The next release also owes the Pocket ID docs page. #300 is the most exposed: v0.5.2-alpha's `migrate` stops for a `POSTGRES_PASSWORD` holding anything but letters, digits and `- _ . ~`.
+    - **Owner:**
+      - allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access;
+      - delete the Claude.ai "Testing" connector.
+    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
+    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
+    - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
+- **Next:**
+  1. #308: answer Greptile, wait for CI, then merge on the owner's word and close #303.
+  2. #306 in `plamotrack-docs`: confirm against `v0.5.2-alpha` that a restore into an empty instance keeps ids, then fix the sentence.
+  3. #305:
+     - reproduce first (`rating=7`, `quantity_on_hand=-2`, preview then apply);
+     - list the range CHECKs from the models' metadata, not from the issue's list: `low_stock_threshold` has no CHECK, while `quantity > 0`, `quantity_used > 0` and `unit_cost_reference_minor >= 0` are missing from the issue;
+     - a test that fails on any range CHECK on a portable table that the preview doesn't diagnose.
+  4. #307: design the scenario fixture format, reusing #303's seed; then #304, starting with the owner's decisions and mockups.
+  5. Carried:
+     - #279's edge probes, then #281's packaging; #282's VPS path;
+     - at the next release, work through `.agents/next-release.md`;
+     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
+     - posting the rehearsal on #285.
+
 ## 2026-09-25 — Claude Code (Opus 5.5) — #299, #300, #301 MERGED as `b7f8a47` (PR #302): an IPv6 `POSTGRES_HOST`, a `%` in the URL alembic reads, and secrets echoed by a settings refusal
 
 - **Done:**
@@ -218,53 +267,6 @@ Template:
   3. Carried:
      - #279's two edge probes, then #281's packaging, then one proof deployment.
      - The #280 decision (owner).
-     - `probe.py teardown` when the spike is done.
-     - Posting the rehearsal on #285 (offered).
-     - Untested: the release-to-release update, and the Windows commands in Git Bash.
-
-## 2026-09-24 — Claude Code (Opus 5.5) — #296 MERGED as `8f4985c`: a SessionStart hook sets up Claude Code cloud sessions (native Postgres 16, `uv sync`, `npm ci`); an IPv6 `POSTGRES_HOST` DSN defect found, not filed
-
-- **Done:**
-  - [PR #296](https://github.com/DeusMaximus/plamotrack/pull/296) squash-merged as **`8f4985c`**, pinned to the reviewed head `d70d9ac`. `.claude/hooks/session-start.sh`, registered in `.claude/settings.json`, is a no-op unless `CLAUDE_CODE_REMOTE=true`. In a cloud session it:
-    - starts the image's own Postgres 16 and creates the role and database `Settings()` defaults to;
-    - exports CI's `TEST_DATABASE_URL`;
-    - runs `uv sync --frozen --python 3.12`;
-    - migrates the dev database only when `Settings()` names that local one, judged on the parsed URL (host resolving to 127.0.0.1; port, database and credentials equal);
-    - runs `npm ci` only when `package.json` or `package-lock.json` changed, or `npm ls --depth=0` finds `node_modules` incomplete.
-  - Database trouble is reported in the hook's stdout summary, never fatal; a failed `uv sync` or `npm ci` fails the hook. AGENTS.md → *Dev environment & commands* has the paragraph.
-  - Validated by hand: 9 paths and 13 migration-target values through the whole hook, with negative controls against the earlier heads. The harness ran it on this session's resumes. CI 3/3 green at `d70d9ac`.
-- **Decisions:**
-  - `npm ci`, never `npm install`: Node 22's npm (10.9.7) strips the lockfile's `libc` fields (78 deletions), which would dirty `package-lock.json` every session.
-  - The hook never migrates a database it did not provision: an override is reported and left alone.
-  - **Review call** (owner agreed): Greptile and CodeRabbit only, no GLM or Codex. It is dev tooling with no app code, and its worst failure is a session starting without dependencies, which the summary says.
-    - Greptile ran three rounds: 4/5, 4/5, then 5/5 at the merged head. Every finding was fixed or answered in-thread.
-    - Declined with the owner: a CI smoke test for the hook (CI's runner is not the cloud image; Greptile withdrew it) and CodeRabbit's docstring-coverage warning.
-- **State:**
-  - **Cloud image, 2026-09-24:**
-    - Ubuntu 24.04; a Postgres 16 cluster present but stopped; Node 22.22.2; uv 0.8.17; `python3` 3.11, with 3.12 at `/usr/bin`.
-    - Docker 29.3.1 and Compose v5.1.1 installed with the daemon stopped. A hand-started `dockerd` runs, but its first Docker Hub pull was refused with 429.
-    - No IPv6: `::1` is refused.
-    - The preinstalled Chromium is build 1194 against `@playwright/test ^1.62`; whether they agree is unchecked.
-  - **Untested until the first new cloud session from `main`:** whether the snapshot is cached after the hook, and whether `CLAUDE_ENV_FILE`'s export reaches later commands. The hook's summary at the top of that session is the evidence.
-  - **Unfiled defect:** `_assemble_database_url` in `app/config.py` does not bracket an IPv6 `POSTGRES_HOST`. `POSTGRES_HOST=::1` yields `…@::1:5432/…`, which `make_url` rejects (`ValueError … ':1:5432'`), so the API, alembic and `conftest.py` fail. It was offered as a task card, not filed as an issue.
-  - **CodeRabbit** reviewed #296's first push. On later pushes its summary said the repo no longer gets automatic reviews ("fewer than 10 stars"); a review needs its *Trigger review* checkbox.
-  - The merged branches `claude/plamotrack-cloud-setup-jgjfo0` and `fix/294-upstream-resource` are still on origin.
-  - **Carried from the 2026-09-23 #294 entry, not touched this session:**
-    - **Unreleased:** v0.5.2 still forwards `resource`, so a Pocket ID install needs the API-registration workaround (#280 findings §2a) until the next release.
-    - **testhost is in the spike's state, not the gate's.**
-      - `/opt/plamotrack-280` (Compose project `plamotrack-280`) runs the #294 build: `plamotrack-api:294-spike` through `override-294.yml`, brought up with `-f docker-compose.yml -f override-294.yml`.
-      - It sits behind the tunnel in OIDC mode against Pocket ID (project `plamotrack-spike-280-idp`, no APIs registered).
-      - The gate's stack (`/opt/plamotrack`, v0.5.2) and Keycloak are stopped, volumes kept. `probe.py teardown --base https://NAME --ssh root@HOST` removes the spike and starts both.
-    - **Don't recreate Keycloak's container.** It mounts `realm.json` from `/opt/plamotrack/.agents/deployment-gate/keycloak/`, where an identical copy sits. A new container changes `sub`, and the gate's collection then needs `recovery rebind-oidc`.
-    - The owner's Claude.ai "Testing" connector points at the tunnel name; remove it when the spike is done. Spike secrets are in `~/.plamotrack-gate/spike-280/`; logs in `.dev/280/` (gitignored).
-    - The LXC is a v0.5.2 release install. #278 is open for the owner's skill-zip check.
-- **Next:**
-  1. Read the first new cloud session's hook summary; fix the hook where it disagrees with this entry.
-  2. Owner: file the IPv6 `POSTGRES_HOST` DSN defect, or start its task card.
-  3. Carried:
-     - Owner, optional: a real-client Claude.ai link on the #294 build (#280 findings §8).
-     - Owner: the #280 decision, on an optional supported provider.
-     - #279's two edge probes, then #281's packaging, then one proof deployment.
      - `probe.py teardown` when the spike is done.
      - Posting the rehearsal on #285 (offered).
      - Untested: the release-to-release update, and the Windows commands in Git Bash.
