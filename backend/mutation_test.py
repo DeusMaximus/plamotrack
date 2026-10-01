@@ -6334,6 +6334,13 @@ CASES += [
         "",
         "git_leaves_the_fixture_bytes_alone",
     ),
+    (
+        "303-10. the manifest's exported_at loses its zone (excluded from the bytes, not from checking)",
+        EXP,
+        '        "exported_at": datetime.now(UTC).isoformat(),\n',
+        '        "exported_at": datetime.now().isoformat(),\n',
+        "reproduces_the_fixture",
+    ),
 ]
 
 TEST_FILES = [
@@ -6495,7 +6502,8 @@ def main() -> int:
 
     if not tree_is_clean():
         print("app/, tests/, alembic/, the shared error-codes fixture, the nginx generator")
-        print("or template, the Dockerfile or the ingress matrix has uncommitted changes —")
+        print("or template, the Dockerfile, the ingress matrix or the repository's")
+        print(".gitattributes has uncommitted changes —")
         print("commit or stash first, so that a")
         print("restore that doesn't happen is")
         print("visible rather than mixed in with your edits.")

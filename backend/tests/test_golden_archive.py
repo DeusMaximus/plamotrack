@@ -33,7 +33,10 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from alembic.config import Config
+from alembic.script import ScriptDirectory
 
+from app import __version__ as app_version
 from app.services.portability import exporting, spec
 from tests.fixtures.golden.seed import seed
 from tests.test_portability import apply, preview
@@ -223,6 +226,8 @@ DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 # `datetime.isoformat()` in UTC: seconds always, microseconds only when non-zero
 # (six digits when present), and the offset spelled `+00:00`, never `Z`.
 TIMESTAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{6})?\+00:00")
+REVISION = re.compile(r"[0-9a-f]{12}")
+VERSION = re.compile(r"\d+\.\d+\.\d+")
 SNAKE = re.compile(r"[a-z][a-z0-9]*(_[a-z0-9]+)*")
 
 
@@ -251,12 +256,26 @@ def rows(table: str) -> list[dict[str, str]]:
     return list(csv.DictReader(io.StringIO(content, newline="")))
 
 
+def assert_volatile_values_are_well_formed(manifest: dict) -> None:
+    """The shapes of the values the byte comparison leaves out: an Alembic revision,
+    a release version, and the export's instant as UTC `isoformat()`."""
+    assert REVISION.fullmatch(manifest["schema_version"]), manifest["schema_version"]
+    assert VERSION.fullmatch(manifest["app_version"]), manifest["app_version"]
+    assert TIMESTAMP.fullmatch(manifest["exported_at"]), manifest["exported_at"]
+
+
 def golden_manifest_as_of(produced: bytes) -> bytes:
     """The golden manifest with `produced`'s volatile values written into its text.
     Swapped as text, never re-serialised, so comparing the result with `produced`
     compares every byte of the formatting around them."""
     content = (GOLDEN / "manifest.json").read_text()
     ours, theirs = json.loads(content), json.loads(produced)
+    # Excluded from the comparison, not from checking: what the export wrote has to
+    # be well-formed and true of this instance before it is swapped in.
+    assert_volatile_values_are_well_formed(theirs)
+    assert theirs["app_version"] == app_version
+    head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+    assert theirs["schema_version"] == head
     for key in VOLATILE_MANIFEST_KEYS:
         stated = f'"{key}": {json.dumps(ours[key])}'
         assert content.count(stated) == 1, key
@@ -304,9 +323,7 @@ def test_the_manifest_is_pinned():
     assert tuple(manifest["tables"]) == tuple(HEADERS)
     for table, entry in manifest["tables"].items():
         assert entry == {"file": f"{table}.csv", "rows": len(rows(table))}
-    assert isinstance(manifest["schema_version"], str)
-    assert isinstance(manifest["app_version"], str)
-    assert datetime.fromisoformat(manifest["exported_at"]).utcoffset() is not None
+    assert_volatile_values_are_well_formed(manifest)
 
 
 @pytest.mark.parametrize("table", HEADERS)
@@ -461,7 +478,7 @@ async def test_the_export_reproduces_the_fixture(client):
 
 async def test_the_fixture_restores_into_an_empty_instance_losslessly(client):
     """Imported into an empty instance, the fixture plans clean and exports back
-    unchanged; imported again, it changes nothing."""
+    unchanged; imported again, it plans and applies as no change at all."""
     archive = golden_zip()
     plan = await preview(client, archive)
     assert plan["blocking_errors"] == []
@@ -479,6 +496,11 @@ async def test_the_fixture_restores_into_an_empty_instance_losslessly(client):
     again = await preview(client, archive)
     for table in again["tables"]:
         assert {row["action"] for row in table["rows"]} <= {"unchanged"}, table["table"]
+    resp = await apply(client, archive)
+    assert resp.status_code == 200, resp.text
+    result = resp.json()
+    assert (result["created"], result["updated"], result["kits_spawned"]) == (0, 0, 0)
+    assert_matches_golden(unzip((await client.get("/export/archive")).content))
 
 
 async def test_the_fixture_restores_through_replace_all(client):
