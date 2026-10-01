@@ -24,8 +24,11 @@ What is pinned here:
   named as the cell the sheet wrote; the starter sheet.
 """
 
+import csv
+import io
 import re
 import uuid
+import zipfile
 
 import pytest
 from sqlalchemy import CheckConstraint
@@ -74,6 +77,17 @@ _RANGE = (
     (re.compile(r"(\w+) BETWEEN (-?\d+) AND (-?\d+)"), lambda m: (int(m[2]), int(m[3]))),
 )
 
+#: CHECK forms that are not a numeric range, each answered elsewhere: an enum's
+#: value list (the enum parsers), a null-together pair (`_clear_orphan_money_currency`
+#: and the money-pair handling), a singleton's key. Anything matching neither these
+#: nor `_RANGE` fails the walk, so a new range written another way (`price <= 100`)
+#: cannot pass it unread.
+_NOT_A_RANGE = (
+    re.compile(r"\w+\.\w+ IN \(.*\)"),
+    re.compile(r"\(\w+ IS NULL\) = \(\w+ IS NULL\)"),
+    re.compile(r"id = \d+"),
+)
+
 
 def _range_checks() -> dict[tuple[str, str], tuple[int, int | None]]:
     """Every range CHECK on a portable table, read off the database metadata."""
@@ -90,6 +104,11 @@ def _range_checks() -> dict[tuple[str, str], tuple[int, int | None]]:
                 if match := pattern.fullmatch(text):
                     found[(portable[table.name], match[1])] = bounds(match)
                     break
+            else:
+                assert any(p.fullmatch(text) for p in _NOT_A_RANGE), (
+                    f"{table.name}.{constraint.name}: a CHECK this audit can't read — "
+                    f"teach `_RANGE` its bound, or `_NOT_A_RANGE` why it isn't one: {text}"
+                )
     return found
 
 
@@ -117,6 +136,20 @@ def test_every_range_check_is_declared_on_its_column():
             assert _declared(*key) == (None, None), key
             continue
         assert _declared(*key) == bounds, key
+
+
+def test_a_check_the_walk_cannot_read_fails_it():
+    """The walk is total: a range written in a form `_RANGE` doesn't know is a
+    failure, never a constraint quietly left uncompared."""
+    table = Base.metadata.tables["tools"]
+    probe = CheckConstraint("quantity_on_hand <= 100", name="probe_ceiling")
+    table.append_constraint(probe)
+    try:
+        with pytest.raises(AssertionError, match="a CHECK this audit can't read"):
+            _range_checks()
+    finally:
+        table.constraints.discard(probe)
+    assert probe not in table.constraints
 
 
 def test_every_declared_bound_is_the_request_schemas():
@@ -270,6 +303,10 @@ OUT_OF_RANGE = [
         {"currency_code": "JPY", "shipping_cost": "-2"},
         (BELOW, {"field": "shipping_cost", "value": "-2", "minimum": 0}),
     ),
+    # The cell is quoted as the sheet wrote it, in its own spelling rather than the
+    # parsed value; `test_a_retired_header_is_quoted_as_written` covers the header.
+    ("kits", {"rating": "+7"}, (ABOVE, {"field": "rating", "value": "+7", "maximum": 5})),
+    ("retailers", {"rating": " 6 "}, (ABOVE, {"field": "rating", "value": "6", "maximum": 5})),
 ]
 
 #: The bounds themselves, and a value inside them, import cleanly.
@@ -334,6 +371,26 @@ async def test_the_bound_itself_imports(http_client, case):
     assert plan["blocking_errors"] == []
     resp = await apply(http_client, archive)
     assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.parametrize("mode", ["merge", "replace_all"])
+async def test_a_retired_header_is_quoted_as_written(http_client, mode):
+    """A pre-0.2 export names the conversion snapshot `converted_price_aud_minor`.
+    The refusal names that header — the one the file has — not the current name.
+    Written by hand: `make_archive` writes the current header and drops the alias."""
+    tables = _tables("order_items", {})
+    line = dict(tables.pop("order_items")[0])
+    archive = make_archive(tables)
+    header = [*line, "converted_price_aud_minor"]
+    out = io.StringIO()
+    writer = csv.DictWriter(out, fieldnames=header)
+    writer.writeheader()
+    writer.writerow(line | {"converted_price_aud_minor": "-1"})
+    buffer = io.BytesIO(archive)
+    with zipfile.ZipFile(buffer, "a") as zipped:
+        zipped.writestr("order_items.csv", out.getvalue())
+    expected = (BELOW, {"field": "converted_price_aud_minor", "value": "-1", "minimum": 0})
+    await _assert_refused(http_client, buffer.getvalue(), "order_items", expected, mode)
 
 
 # --- the update state: a stored row the sheet would overwrite --------------------------

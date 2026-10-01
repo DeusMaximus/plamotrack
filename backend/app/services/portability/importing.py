@@ -729,6 +729,11 @@ class _Row:
     #: `minor column -> the ALT_MONEY column the sheet actually wrote`. A refusal
     #: about the stored amount names the cell the human typed (#305).
     scaled_from: dict[str, str] = field(default_factory=dict)
+    #: Each column's cell as the sheet wrote it — `column -> (header, text)` — under
+    #: the header actually used, a retired alias included. What a refusal quotes, so
+    #: the operator is pointed at their own cell rather than the parsed value (`+7`
+    #: read as 7) or a header the file doesn't contain.
+    written: dict[str, tuple[str, str]] = field(default_factory=dict)
 
     def refuse(self, diagnostic: Diagnostic) -> None:
         """Mark this row ERROR, carrying `diagnostic`. Appends rather than
@@ -933,6 +938,14 @@ class _Planner:
     # -- parsing ---------------------------------------------------------------
 
     def _parse_row(self, spec: TableSpec, raw: dict[str, str]) -> _Row:
+        # Before canonicalising, which forgets them: the header each cell arrived
+        # under, for a refusal that has to name what the sheet says.
+        written = {
+            column.name: (key, cell.strip())
+            for key, cell in raw.items()
+            if (column := spec.column(key)) is not None
+            and (column.name == key or column.name not in raw)
+        }
         # Retired header names become current ones before anything looks at the
         # row, so the rest of this method only ever sees the spec's own vocabulary.
         raw = spec.canonicalise(raw)
@@ -1005,6 +1018,7 @@ class _Planner:
             present=present,
             filled=filled,
             lone_grouped=lone_grouped,
+            written=written,
         )
         row.label = spec.label(values)
         row.errors = errors
@@ -1936,8 +1950,8 @@ class _Planner:
         until flush — so `rating=7` or `quantity_on_hand=-2` previewed as a clean
         import and then failed the apply with an `IntegrityError`, a 500 naming no
         row (#305). Asked after `_apply_money_alternates`, so a major-unit amount is
-        judged as the minor-unit value it becomes, and the refusal names the cell the
-        sheet wrote.
+        judged as the minor-unit value it becomes, and the refusal quotes the cell the
+        sheet wrote: its header (a retired alias included) and its text as typed.
 
         A line's `quantity` is not here: `_check_line_quantity` already answers for
         it with the live writers' own codes.
@@ -1949,7 +1963,7 @@ class _Planner:
             if not isinstance(value, int):
                 continue  # absent, blank, or already reported as unreadable
             stated = row.scaled_from.get(column.name, column.name)
-            shown = render(row.values.get(stated, value))
+            stated, shown = row.written.get(stated, (stated, render(value)))
             if column.minimum is not None and value < column.minimum:
                 row.refuse(
                     Diagnostic(

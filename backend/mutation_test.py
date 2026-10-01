@@ -6383,9 +6383,9 @@ CASES += [
         "outside_its_range",
     ),
     (
-        "305-6. a scaled amount is shown in minor units",
+        "305-6. the refusal quotes the parsed value, not the cell as written",
         IMP,
-        "            shown = render(row.values.get(stated, value))\n",
+        "            stated, shown = row.written.get(stated, (stated, render(value)))\n",
         "            shown = render(value)\n",
         "outside_its_range",
     ),
@@ -6409,6 +6409,13 @@ CASES += [
         "Rating = Annotated[int, Field(ge=RATING_MIN, le=RATING_MAX), _NotBool]",
         "Rating = Annotated[int, Field(ge=RATING_MIN, le=10), _NotBool]",
         "every_declared_bound_is_the_request_schemas",
+    ),
+    (
+        "305-10. a retired header is quoted as the current name",
+        IMP,
+        "            column.name: (key, cell.strip())\n",
+        "            column.name: (column.name, cell.strip())\n",
+        "retired_header_is_quoted_as_written",
     ),
 ]
 
