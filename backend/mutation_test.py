@@ -6498,6 +6498,13 @@ CASES += [
         "    now = datetime.now(UTC)\n    order.received_at = now\n",
         "receipt-in-the-past-stamps-its-own-instant",
     ),
+    (
+        "scn-12. a spawned kit forgets its order line",
+        ORD,
+        "            order_item_id=item.id,\n",
+        "            order_item_id=None,\n",
+        "spawned-kits-arrive-with-their-order",
+    ),
 ]
 
 TEST_FILES = [

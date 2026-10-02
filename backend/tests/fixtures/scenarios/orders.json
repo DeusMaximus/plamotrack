@@ -49,9 +49,65 @@
             { "order_id": "@orders:new", "item_type": "consumable", "quantity": 3, "catalog_ref_id": "@consumables:marker" }
           ],
           "kits": [
-            { "name": "RX-79[G] Gundam Ground Type", "grade": "HG", "scale": "1/144", "scale": "1/144", "status": "ordered" },
-            { "name": "RX-79[G] Gundam Ground Type", "grade": "HG", "scale": "1/144", "scale": "1/144", "status": "ordered" }
+            { "name": "RX-79[G] Gundam Ground Type", "grade": "HG", "scale": "1/144", "status": "ordered" },
+            { "name": "RX-79[G] Gundam Ground Type", "grade": "HG", "scale": "1/144", "status": "ordered" }
           ]
+        }
+      }
+    },
+    {
+      "id": "spawned-kits-arrive-with-their-order",
+      "why": "rule 2: a spawned kit carries its order line, which is how the receipt finds it; a kit without that link would stay ordered",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
+        "consumables": [
+          { "id": "@consumables:marker", "name": "Gundam Marker GM01", "category": "marker", "quantity_on_hand": 1 }
+        ]
+      },
+      "steps": [
+        {
+          "op": "create_order",
+          "args": {
+            "retailer_id": "@retailers:hlj",
+            "order_date": "2026-03-14",
+            "currency_code": "JPY",
+            "items": [
+              {
+                "item_type": "kit",
+                "quantity": 2,
+                "unit_price_minor": 2450,
+                "currency_code": "JPY",
+                "kit": { "name": "RX-79[G] Gundam Ground Type", "grade": "HG" }
+              },
+              {
+                "item_type": "consumable",
+                "quantity": 3,
+                "unit_price_minor": 330,
+                "currency_code": "JPY",
+                "catalog_ref_id": "@consumables:marker"
+              }
+            ]
+          },
+          "as": "@orders:new"
+        },
+        {
+          "op": "receive_order",
+          "args": { "order_id": "@orders:new" },
+          "result": { "received_at": "@now" }
+        }
+      ],
+      "then": {
+        "tables": {
+          "orders": [{ "id": "@orders:new", "received_at": "@now" }],
+          "order_items": [
+            { "order_id": "@orders:new", "item_type": "kit", "quantity": 2 },
+            { "order_id": "@orders:new", "item_type": "consumable", "quantity": 3 }
+          ],
+          "kits": [
+            { "name": "RX-79[G] Gundam Ground Type", "status": "backlog", "status_updated_at": "@now" },
+            { "name": "RX-79[G] Gundam Ground Type", "status": "backlog", "status_updated_at": "@now" }
+          ],
+          "consumables": [{ "id": "@consumables:marker", "quantity_on_hand": 4 }]
         }
       }
     },

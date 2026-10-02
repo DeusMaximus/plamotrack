@@ -332,11 +332,14 @@ class Window:
         self.end = datetime.now(UTC) + CLOCK_SLACK
 
     def holds(self, actual: str) -> bool:
+        """Inside the run so far: a step's `result` is read while the window is
+        still open, and the run's end is then the present."""
         try:
             instant = datetime.fromisoformat(actual)
         except ValueError:
             return False
-        return self.start <= instant <= self.end
+        end = self.end or datetime.now(UTC) + CLOCK_SLACK
+        return self.start <= instant <= end
 
 
 def matches(expected: Any, actual: str, handles: Handles, window: Window) -> bool:
@@ -439,6 +442,20 @@ def test_there_are_scenarios():
 @pytest.mark.parametrize("name", sorted(FILES))
 def test_every_file_follows_the_schema(name):
     jsonschema.validate(FILES[name], SCHEMA)
+
+
+def test_no_file_repeats_a_key():
+    """JSON keeps the last of two equal keys and says nothing, so a repeated key in
+    an expected row is an expectation nobody can see."""
+
+    def refuse_repeats(pairs):
+        keys = [key for key, _ in pairs]
+        repeated = sorted({key for key in keys if keys.count(key) > 1})
+        assert not repeated, repeated
+        return dict(pairs)
+
+    for path in sorted(FIXTURES.glob("*.json")):
+        json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=refuse_repeats)
 
 
 def test_scenario_ids_are_unique():
