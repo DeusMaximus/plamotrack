@@ -447,6 +447,11 @@ uv run pytest tests/test_golden_archive.py                                      
   once an import in the same process had inserted explicit ids. The clocks a request
   cannot state are pinned with `UPDATE` afterwards. A row added later in a table moves
   only that table's later ids.
+- **A migration doesn't call for a regeneration.** The manifest's `schema_version` is
+  volatile, so after the next migration the restore preview warns `import.schema_drift`,
+  naming the fixture's revision and the head. The restore test expects exactly that
+  warning, and no other. #309's migration was the first to trigger it, and the test
+  failed until it allowed for it.
 - **The fixture is committed with `-text`** (`.gitattributes`). Otherwise the
   repository-wide `eol=lf` rule rewrites its CRLF on `git add`, and on any machine the
   committed bytes would no longer be an export. A test asks git for the effective
