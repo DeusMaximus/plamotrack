@@ -6505,6 +6505,27 @@ CASES += [
         "            order_item_id=None,\n",
         "spawned-kits-arrive-with-their-order",
     ),
+    (
+        "scn-13. a status change leaves the status clock where it was",
+        KITS,
+        "        kit.status_updated_at = datetime.now(UTC)\n",
+        "",
+        "starting-a-build-stamps-its-start",
+    ),
+    (
+        "scn-14. a receipt advances kits without moving their clock",
+        ORD,
+        "                    kit.status = KitStatus.BACKLOG\n                    kit.status_updated_at = now\n",
+        "                    kit.status = KitStatus.BACKLOG\n",
+        "receive-applies-stock-once",
+    ),
+    (
+        "scn-15. shipping advances kits without moving their clock",
+        ORD,
+        "                    kit.status = KitStatus.IN_TRANSIT\n                    kit.status_updated_at = now\n",
+        "                    kit.status = KitStatus.IN_TRANSIT\n",
+        "ship-advances-kits-once",
+    ),
 ]
 
 TEST_FILES = [

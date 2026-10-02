@@ -57,7 +57,7 @@
     },
     {
       "id": "spawned-kits-arrive-with-their-order",
-      "why": "rule 2: a spawned kit carries its order line, which is how the receipt finds it; a kit without that link would stay ordered",
+      "why": "rule 2: a spawned kit carries its order line, which is how the receipt finds it; a kit without that link would stay in transit. Entered already shipped, so the kits start with a past clock the receipt has to move",
       "given": {
         "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
         "consumables": [
@@ -71,6 +71,7 @@
             "retailer_id": "@retailers:hlj",
             "order_date": "2026-03-14",
             "currency_code": "JPY",
+            "shipped_at": "2026-03-16T01:02:03+00:00",
             "items": [
               {
                 "item_type": "kit",
@@ -98,7 +99,7 @@
       ],
       "then": {
         "tables": {
-          "orders": [{ "id": "@orders:new", "received_at": "@now" }],
+          "orders": [{ "id": "@orders:new", "shipped_at": "2026-03-16T01:02:03+00:00", "received_at": "@now" }],
           "order_items": [
             { "order_id": "@orders:new", "item_type": "kit", "quantity": 2 },
             { "order_id": "@orders:new", "item_type": "consumable", "quantity": 3 }
@@ -127,8 +128,8 @@
           { "id": "@order_items:marker", "order_id": "@orders:hlj", "item_type": "consumable", "catalog_ref_id": "@consumables:marker", "quantity": 3, "unit_price_minor": 330, "currency_code": "JPY" }
         ],
         "kits": [
-          { "id": "@kits:a", "name": "RX-79[G] Gundam Ground Type", "grade": "HG", "scale": "1/144", "status": "ordered", "order_item_id": "@order_items:kit" },
-          { "id": "@kits:b", "name": "RX-79[G] Gundam Ground Type", "grade": "HG", "scale": "1/144", "status": "ordered", "order_item_id": "@order_items:kit" }
+          { "id": "@kits:a", "name": "RX-79[G] Gundam Ground Type", "grade": "HG", "scale": "1/144", "status": "ordered", "status_updated_at": "2026-03-01T00:00:00+00:00", "order_item_id": "@order_items:kit" },
+          { "id": "@kits:b", "name": "RX-79[G] Gundam Ground Type", "grade": "HG", "scale": "1/144", "status": "ordered", "status_updated_at": "2026-03-01T00:00:00+00:00", "order_item_id": "@order_items:kit" }
         ]
       },
       "steps": [
@@ -162,7 +163,7 @@
           { "id": "@order_items:kit", "order_id": "@orders:hlj", "item_type": "kit", "quantity": 1, "unit_price_minor": 2450, "currency_code": "JPY" }
         ],
         "kits": [
-          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "pre_ordered", "order_item_id": "@order_items:kit" }
+          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "pre_ordered", "status_updated_at": "2026-03-01T00:00:00+00:00", "order_item_id": "@order_items:kit" }
         ]
       },
       "steps": [
@@ -187,7 +188,7 @@
           { "id": "@order_items:kit", "order_id": "@orders:hlj", "item_type": "kit", "quantity": 1, "unit_price_minor": 2450, "currency_code": "JPY" }
         ],
         "kits": [
-          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "ordered", "order_item_id": "@order_items:kit" }
+          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "ordered", "status_updated_at": "2026-03-01T00:00:00+00:00", "order_item_id": "@order_items:kit" }
         ]
       },
       "steps": [
@@ -285,7 +286,7 @@
           { "id": "@order_items:kit", "order_id": "@orders:hlj", "item_type": "kit", "quantity": 1, "unit_price_minor": 2450, "currency_code": "JPY" }
         ],
         "kits": [
-          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "order_item_id": "@order_items:kit" }
+          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "status_updated_at": "2026-03-01T00:00:00+00:00", "order_item_id": "@order_items:kit" }
         ]
       },
       "steps": [
@@ -309,8 +310,8 @@
           { "id": "@order_items:kit", "order_id": "@orders:hlj", "item_type": "kit", "quantity": 2, "unit_price_minor": 2450, "currency_code": "JPY" }
         ],
         "kits": [
-          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "building", "build_started_at": "2026-03-21T00:00:00+00:00", "order_item_id": "@order_items:kit" },
-          { "id": "@kits:b", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "order_item_id": "@order_items:kit" }
+          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "building", "status_updated_at": "2026-03-21T00:00:00+00:00", "build_started_at": "2026-03-21T00:00:00+00:00", "order_item_id": "@order_items:kit" },
+          { "id": "@kits:b", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "status_updated_at": "2026-03-01T00:00:00+00:00", "order_item_id": "@order_items:kit" }
         ]
       },
       "steps": [
@@ -340,7 +341,7 @@
           { "id": "@order_items:marker", "order_id": "@orders:hlj", "item_type": "consumable", "catalog_ref_id": "@consumables:marker", "quantity": 3, "unit_price_minor": 330, "currency_code": "JPY" }
         ],
         "kits": [
-          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "order_item_id": "@order_items:kit" }
+          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "status_updated_at": "2026-03-01T00:00:00+00:00", "order_item_id": "@order_items:kit" }
         ]
       },
       "steps": [{ "op": "delete_order", "args": { "order_id": "@orders:hlj" } }],

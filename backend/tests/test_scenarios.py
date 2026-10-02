@@ -495,6 +495,62 @@ def test_handles_name_a_portable_table():
             assert handle.split(":")[0][1:] in tables, (scenario["id"], handle)
 
 
+#: Columns that take the current time when a row is inserted without them. A
+#: seeded row that omits one is stamped a moment before the run's window opens,
+#: and `@now` cannot tell that seed from a stamp the operation made (Codex, PR #311
+#: round 2): removing `update_kit`'s status clock passed both build-date
+#: scenarios. `test_the_now_defaulted_list_is_the_schema_s` holds this to the models.
+NOW_DEFAULTED = {
+    ("kits", "status_updated_at"),
+    ("kits", "created_at"),
+    ("kits", "updated_at"),
+    ("upgrade_applications", "applied_at"),
+    ("kit_photos", "created_at"),
+}
+#: Read by the operations themselves, not only asserted: every build-date stamp
+#: copies the kit's status clock. So a seeded row states these always.
+ALWAYS_STATED = {("kits", "status_updated_at"), ("upgrade_applications", "applied_at")}
+
+
+def test_the_now_defaulted_list_is_the_schema_s():
+    """Among the columns the archive carries: the rest a scenario can neither seed
+    nor assert."""
+    found = set()
+    for table_spec in spec.TABLE_SPECS:
+        portable = {c.name for c in table_spec.columns if c.persisted}
+        for column in table_spec.model.__table__.columns:
+            if column.name not in portable:
+                continue
+            server = column.server_default is not None and "now()" in str(
+                getattr(column.server_default, "arg", "")
+            )
+            python = column.default is not None and column.default.is_callable
+            if (server or python) and column.name != "id":
+                found.add((table_spec.key, column.name))
+    assert found == NOW_DEFAULTED
+
+
+def test_a_seeded_clock_is_stated_not_defaulted():
+    """Every seeded row states the now-defaulted columns an operation reads, and any
+    other one a scenario asserts as `@now`; a stated instant is in the past."""
+    for scenario in SCENARIOS:
+        asserted = set()
+        if scenario["then"] != "unchanged":
+            for table, rows in scenario["then"]["tables"].items():
+                for row in rows:
+                    asserted |= {(table, name) for name, value in row.items() if value == NOW}
+        for table, rows in scenario["given"].items():
+            for row in rows:
+                for key in NOW_DEFAULTED & (ALWAYS_STATED | asserted):
+                    if key[0] != table:
+                        continue
+                    assert key[1] in row, (scenario["id"], table, row.get("id"), key[1])
+                    if row[key[1]] is not None:
+                        assert datetime.fromisoformat(row[key[1]]) < datetime.now(UTC) - timedelta(
+                            days=1
+                        ), (scenario["id"], key)
+
+
 def test_dates_in_given_are_canonical():
     """`given` is the archive's vocabulary: an instant carries its offset."""
     for scenario in SCENARIOS:

@@ -10,7 +10,7 @@
         "upgrades": [
           { "id": "@upgrades:thrusters", "name": "Metal thruster set", "manufacturer": "Madworks", "quantity_on_hand": 1 }
         ],
-        "kits": [{ "id": "@kits:zaku", "name": "Zaku II", "grade": "MG", "scale": "1/100", "status": "building" }],
+        "kits": [{ "id": "@kits:zaku", "name": "Zaku II", "grade": "MG", "scale": "1/100", "status": "building", "status_updated_at": "2026-03-01T00:00:00+00:00" }],
         "upgrade_applications": [
           {
             "id": "@upgrade_applications:fitted",
@@ -42,7 +42,7 @@
         "upgrades": [
           { "id": "@upgrades:decal", "name": "Waterslide decal", "manufacturer": "Delpi", "quantity_on_hand": 1 }
         ],
-        "kits": [{ "id": "@kits:zaku", "name": "Zaku II", "grade": "MG", "scale": "1/100", "status": "complete" }],
+        "kits": [{ "id": "@kits:zaku", "name": "Zaku II", "grade": "MG", "scale": "1/100", "status": "complete", "status_updated_at": "2026-03-01T00:00:00+00:00" }],
         "upgrade_applications": [
           {
             "id": "@upgrade_applications:fitted",

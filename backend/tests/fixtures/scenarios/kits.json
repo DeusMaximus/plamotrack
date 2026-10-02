@@ -6,7 +6,7 @@
     {
       "id": "starting-a-build-stamps-its-start",
       "why": "an empty start date takes the moment of the change",
-      "given": { "kits": [{ "id": "@kits:zaku", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog" }] },
+      "given": { "kits": [{ "id": "@kits:zaku", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "status_updated_at": "2026-03-01T00:00:00+00:00" }] },
       "steps": [{ "op": "update_kit", "args": { "kit_id": "@kits:zaku", "status": "building" } }],
       "then": {
         "tables": {
@@ -25,7 +25,7 @@
     {
       "id": "a-start-date-stated-with-the-change-wins",
       "why": "a backfill: the request says when the build began",
-      "given": { "kits": [{ "id": "@kits:gouf", "name": "Gouf", "grade": "HG", "scale": "1/144", "status": "backlog" }] },
+      "given": { "kits": [{ "id": "@kits:gouf", "name": "Gouf", "grade": "HG", "scale": "1/144", "status": "backlog", "status_updated_at": "2026-03-01T00:00:00+00:00" }] },
       "steps": [
         {
           "op": "update_kit",
@@ -43,7 +43,7 @@
     {
       "id": "an-empty-date-stated-with-the-change-stays-empty",
       "why": "null in the request is an answer, not an absence: the build has no recorded start",
-      "given": { "kits": [{ "id": "@kits:dom", "name": "Dom", "grade": "HG", "scale": "1/144", "status": "backlog" }] },
+      "given": { "kits": [{ "id": "@kits:dom", "name": "Dom", "grade": "HG", "scale": "1/144", "status": "backlog", "status_updated_at": "2026-03-01T00:00:00+00:00" }] },
       "steps": [
         { "op": "update_kit", "args": { "kit_id": "@kits:dom", "status": "building", "build_started_at": null } }
       ],
@@ -59,6 +59,7 @@
             "name": "Zaku II",
             "grade": "HG", "scale": "1/144",
             "status": "building",
+            "status_updated_at": "2026-03-21T10:00:00+00:00",
             "build_started_at": "2026-03-21T10:00:00+00:00"
           }
         ]
