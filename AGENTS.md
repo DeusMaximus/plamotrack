@@ -183,7 +183,9 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   phone the section list is `/settings` itself, a section opens
                         #   from it and the bar's chevron is the way back — `SettingsIndex`
                         #   redirects to General only from 768 px. Data management below
-                        #   768 px *renders* its exports and one sentence, nothing else.
+                        #   768 px imports too (#304): Merge and Add only, never
+                        #   Replace everything; Apply in a bar held above the tab bar;
+                        #   the starter sheet without the template pack.
                         #   **In the phone shell everything is in rem but the screen**: a
                         #   row wraps, a word breaks (`main` is `break-words`; a Button's
                         #   and a Chip's label `max-md:wrap-anywhere`), and a layout that

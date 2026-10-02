@@ -441,10 +441,10 @@ async function capturePhone(p: Page, theme: Theme): Promise<void> {
   await expect(p.getByRole("link", { name: /Data management/ })).toBeVisible();
   await save(p, "phone-settings", theme);
 
-  // Data management on a phone: the exports, and where importing lives.
+  // Data management on a phone: the exports, and the import under them (#304).
   await p.goto("/settings/data");
   await expect(p.getByRole("button", { name: "Download full archive (.zip)" })).toBeVisible();
-  await expect(p.getByText(/Importing and the blank templates need a wider screen/)).toBeVisible();
+  await expect(p.getByRole("button", { name: "Choose a file" })).toBeVisible();
   await save(p, "phone-data", theme);
 }
 

@@ -67,21 +67,36 @@ function RowDetail({ row }: { row: PlannedRow }) {
   const { t } = useTranslation();
   return (
     <tr className={row.action === "error" ? "bg-danger/5" : undefined}>
-      <td className="px-3 py-1.5 text-end align-top text-xs text-muted tabular-nums">
+      {/* A column from 768 px; on a phone the number joins the line under the
+          label, which leaves the label the card's width (#304). */}
+      <td className="px-3 py-1.5 text-end align-top text-xs text-muted tabular-nums max-md:hidden">
         {row.row_number ? formatNumber(row.row_number) : "—"}
       </td>
-      <td className="px-3 py-1.5 align-top">
+      {/* As narrow as its badge on a phone: the table hands the width the
+          number column gave up to every column, and the label lost a third of
+          the row to empty space beside the badge (seen in the simulator). */}
+      <td className="px-3 py-1.5 align-top max-md:w-px max-md:pe-0">
         <span
           className={`${PILL_CLASS} ${ACTION_TONES[row.action]}`}
         >
           {importActionLabel(row.action)}
         </span>
       </td>
-      <td className="px-3 py-1.5 align-top">
+      {/* `wrap-anywhere` on a phone: a table sizes its columns from their
+          content's narrowest, which `break-words` leaves at a label's longest
+          word — 30 px past a 320 px screen under a 32 px browser font. */}
+      <td className="px-3 py-1.5 align-top max-md:wrap-anywhere">
         <div className="text-text">{row.label}</div>
-        {row.matched_by && (
+        {(row.matched_by || row.row_number) && (
           <div className="text-[11px] text-muted">
-            {t("importPreview.matchedOn", { field: matchedByLabel(row.matched_by) })}
+            {row.row_number ? (
+              <span className="md:hidden">
+                {t("importPreview.rowNumber", { row: formatNumber(row.row_number) })}
+                {row.matched_by && t("common.dotSeparator")}
+              </span>
+            ) : null}
+            {row.matched_by &&
+              t("importPreview.matchedOn", { field: matchedByLabel(row.matched_by) })}
           </div>
         )}
         {row.errors.map((diagnostic, index) => (
@@ -126,7 +141,7 @@ function TableSection({ table }: { table: TablePlan }) {
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center gap-2 px-3 py-2 text-start hover:bg-chip"
+        className="flex w-full items-center gap-2 px-3 py-2 text-start hover:bg-chip touch:min-h-11"
         aria-expanded={open}
       >
         <span className="flex w-3 items-center text-faint">
@@ -136,13 +151,16 @@ function TableSection({ table }: { table: TablePlan }) {
             <ChevronRight size={14} aria-hidden className="rtl:-scale-x-100" />
           )}
         </span>
-        <span className="text-sm font-medium">{importTableLabel(table.table)}</span>
+        <span className="min-w-0 text-sm font-medium">{importTableLabel(table.table)}</span>
         <span className="ms-auto">
           <CountPills counts={table.counts} />
         </span>
       </button>
       {open && (
-        <div className="max-h-80 overflow-y-auto border-t border-rule">
+        // A box that scrolls on its own from 768 px; on a phone the page is the
+        // one thing that scrolls — a scroller inside a scroller under a thumb
+        // takes the page's swipe whenever it starts on a row (#304).
+        <div className="border-t border-rule md:max-h-80 md:overflow-y-auto">
           <table className="w-full text-sm">
             <tbody className="divide-y divide-rule">
               {rows.map((row) => (
