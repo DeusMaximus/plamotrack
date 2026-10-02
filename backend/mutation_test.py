@@ -6419,6 +6419,87 @@ CASES += [
     ),
 ]
 
+# --- #307: behaviour scenarios — each rule broken once, its scenario goes red. -----
+CASES += [
+    (
+        "scn-1. an order can be received twice",
+        ORD,
+        '    if order.received_at is not None:\n        raise ConflictError(\n            "order is already marked received",\n',
+        '    if False:\n        raise ConflictError(\n            "order is already marked received",\n',
+        "receive-applies-stock-once",
+    ),
+    (
+        "scn-2. an order can be shipped twice",
+        ORD,
+        '    if order.shipped_at is not None:\n        raise ConflictError(\n            "order is already marked shipped",\n',
+        '    if False:\n        raise ConflictError(\n            "order is already marked shipped",\n',
+        "ship-advances-kits-once",
+    ),
+    (
+        "scn-3. a kit on the bench no longer counts as progressed",
+        ORD,
+        "        kit.status in PROGRESSED_STATUSES\n",
+        "        False\n",
+        "kit-has-progressed-is-refused",
+    ),
+    (
+        "scn-4. stock may not reach zero",
+        CAT,
+        '        if new_quantity < 0:\n            raise ConflictError(\n                f"cannot adjust',
+        '        if new_quantity <= 0:\n            raise ConflictError(\n                f"cannot adjust',
+        "down-to-zero-is-allowed",
+    ),
+    (
+        "scn-5. an application may not spend the last of the stock",
+        UPG,
+        "    if upgrade.quantity_on_hand < quantity:\n",
+        "    if upgrade.quantity_on_hand <= quantity:\n",
+        "applying-an-upgrade-spends-its-stock",
+    ),
+    (
+        "scn-6. restore_stock reads backwards",
+        UPG,
+        "    if restore_stock:\n        upgrade.quantity_on_hand = guard_stock_ceiling(\n",
+        "    if not restore_stock:\n        upgrade.quantity_on_hand = guard_stock_ceiling(\n",
+        "withdrawing",
+    ),
+    (
+        "scn-7. names are compared exactly, case and all",
+        NAMES,
+        "    return select(model).where(func.lower(func.btrim(model.name, WHITESPACE)) == func.lower(name))\n",
+        "    return select(model).where(model.name == name)\n",
+        "named-like-another",
+    ),
+    (
+        "scn-8. a stated null is overwritten by the stamp",
+        KITS,
+        "    if field is None or field in supplied:\n",
+        "    if field is None:\n",
+        "stated-with-the-change-stays-empty",
+    ),
+    (
+        "scn-9. restating a kit's status counts as a change",
+        KITS,
+        '    if "status" in fields and fields["status"] != kit.status:\n',
+        '    if "status" in fields:\n',
+        "is-not-a-change-stamps-nothing",
+    ),
+    (
+        "scn-10. a receipt adds each catalog line twice",
+        ORD,
+        "        elif item.catalog_ref_id is not None:\n            await _adjust_ref(session, item.item_type, item.catalog_ref_id, item.quantity)\n\n    await session.flush()\n    result = await get_order(session, order.id)\n",
+        "        elif item.catalog_ref_id is not None:\n            await _adjust_ref(session, item.item_type, item.catalog_ref_id, item.quantity * 2)\n\n    await session.flush()\n    result = await get_order(session, order.id)\n",
+        "receive-applies-stock-once",
+    ),
+    (
+        "scn-11. a backdated receipt is stamped now",
+        ORD,
+        "    now = received_at or datetime.now(UTC)\n    order.received_at = now\n",
+        "    now = datetime.now(UTC)\n    order.received_at = now\n",
+        "receipt-in-the-past-stamps-its-own-instant",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
@@ -6509,6 +6590,8 @@ TEST_FILES = [
     "tests/test_golden_archive.py",
     # The #305 set: every 305- kill lives here.
     "tests/test_import_ranges.py",
+    # The #307 scn- set: every scn- kill is a scenario run here.
+    "tests/test_scenarios.py",
 ]
 
 #: pytest's exit status when collection found tests but `-k` deselected them all.

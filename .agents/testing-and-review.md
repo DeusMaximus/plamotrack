@@ -11,7 +11,8 @@ needed on every turn — that is why it is not in `AGENTS.md`.
 
 Contents: [Running the suites](#running-the-suites) ·
 [Writing a regression test](#writing-a-regression-test) ·
-[Concurrency tests](#concurrency-tests) · [Mutation testing](#mutation-testing) ·
+[Concurrency tests](#concurrency-tests) · [The golden archive](#the-golden-archive) ·
+[Behaviour scenarios](#behaviour-scenarios) · [Mutation testing](#mutation-testing) ·
 [CI](#ci) · [External review](#external-review) ·
 [The release gate](#the-release-gate)
 
@@ -24,7 +25,7 @@ last edited, so a large jump either way is worth a look.
 
 | What | Command | Notes |
 | --- | --- | --- |
-| Backend (~3060) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
+| Backend (~3110) | `uv run pytest` | Auto-creates `plamotrack_test`, runs `alembic downgrade` + `upgrade` at session start, truncates between tests. Needs the dev `db` container up. |
 | Lint + format | `uv run ruff check --fix . && uv run ruff format .` | Before every commit. CI checks both. |
 | Frontend unit (~648) | `npm test` (in `frontend/`) | vitest over `src/**/*.test.ts` only — the include glob is narrowed on purpose. Includes the i18n catalogue checks (`src/i18n/catalogue.test.ts`). |
 | Frontend build | `npm run build` | `tsc -b` then Vite. Before every commit. Also the compile-time check on every static `t("…")` key. |
@@ -455,6 +456,62 @@ uv run pytest tests/test_golden_archive.py                                      
   the edge cases the fixture promises. Names in the name-sorted tables must sort alike
   in code-point and case-folded order, so the fixture does not depend on the database's
   collation.
+
+---
+
+## Behaviour scenarios
+
+`backend/tests/fixtures/scenarios/*.json` pins **behaviour** the way the golden archive pins
+shape (#307). Each scenario is a starting collection, one or more operations, and the
+collection they must leave behind or the refusal they must get. `tests/test_scenarios.py`
+runs every one against the service layer, and plamotrack-ios runs the same files against its
+Swift domain layer. So a business rule the two implement differently fails on at least one
+side. `scenario.schema.json` beside the files is the format; both runners validate every
+file against it first.
+
+```bash
+uv run pytest tests/test_scenarios.py                       # every scenario, plus the meta-tests
+uv run pytest tests/test_scenarios.py -k receive-applies    # one, by its id
+```
+
+A file is `{format, version, note, scenarios}`, one file per rule area. A scenario is
+`{id, why, given, steps, then}`:
+
+- **Handles, not uuids.** Every id is `@<table>:<name>` (`@orders:hlj`), mapped to one uuid
+  per scenario, in rows, foreign keys, op arguments, expected rows and refusal params.
+- **`given`** is the archive's vocabulary (#303) as typed JSON: its table and column names,
+  integers for minor units and counts, `null`, snake_case enums, UTC ISO 8601 instants. It is
+  **stored columns only** (no readable mirrors, no `kit_*`), and it is **inserted directly,
+  not imported**, so an importer defect cannot turn every scenario red.
+  - **`given` must be a state a writer can reach**, and nothing but review enforces that.
+    For example, every writer derives a kit's `scale` from its grade, so a seeded kit states
+    its scale. One that didn't failed the `replace_all` scenario, because the restore derived
+    a scale the seed never had.
+- **`steps`** each name an `op` (the vocabulary is the schema's enum, one per service
+  function) and its `args`, spelled as the REST request bodies spell them. A step expects
+  `"ok"` (the default) or `{"refused": {kind, code, params}}`.
+  - `kind` is `not_found` / `conflict` / `invalid_input`.
+  - `params` is compared on exactly the keys `api-error-codes.json` declares for the code. A
+    raise may send more, but a second implementation owes only the declaration, and a
+    meta-test holds every scenario to it.
+  - `as` binds a created record's id to a new handle. `result` is a subset match on what the
+    op returns, such as an import's counts or `adjust_stock`'s `quantity_on_hand`.
+- **`then`** compares each listed table whole: the row count, then each expected row,
+  matched by `id` or by its listed fields, on the listed fields only. **Every table it doesn't
+  list must be exactly as `given` left it**, so an unintended side effect fails even when
+  nobody thought to list its table. `"unchanged"` is the whole of a refusal's end state.
+- **`"@now"`** matches an instant inside the scenario's run, give or take 5 s, because the
+  database's clock is not this process's. The services read `datetime.now(UTC)` inline and
+  the database stamps some columns itself, so there is nothing to freeze. A scenario that
+  needs an exact instant states it in `args` (`received_at`, `build_started_at`).
+- **`import_archive`** takes `"archive": "export"` (this instance's own export, taken at
+  that step) or `{"tables": ...}` (a hand-written sheet, CSV cells as strings, readable
+  mirrors allowed). The runner previews, then applies with the plan's hash.
+
+Changing a scenario's expectation is changing a rule plamotrack-ios copies: the PR says
+why. Add a scenario rather than a one-off test when the rule is one the app reimplements.
+The `scn-` mutation set breaks one rule at a time in the services and requires its scenario
+to go red. A new rule area owes a case there.
 
 ---
 

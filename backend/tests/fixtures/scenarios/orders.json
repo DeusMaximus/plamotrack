@@ -1,0 +1,301 @@
+{
+  "format": "plamotrack-scenarios",
+  "version": 1,
+  "note": "Order entry, ship, receive, edit and delete (§3.9, AGENTS.md rules 2 and 2.1). Read by backend/tests/test_scenarios.py, which runs each scenario against the service layer, AND by plamotrack-ios's domain tests, which run the same file against its Swift domain layer. Add a case here rather than to either suite. The format is .agents/testing-and-review.md → 'Behaviour scenarios'. `why` is for the reader; nothing asserts on it.",
+  "scenarios": [
+    {
+      "id": "kit-line-spawns-one-kit-per-unit-and-stock-waits-for-receipt",
+      "why": "rule 2: a kit line of quantity 2 is two kits; a catalog line moves no stock until the order is received",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
+        "consumables": [
+          { "id": "@consumables:marker", "name": "Gundam Marker GM01", "category": "marker", "quantity_on_hand": 1 }
+        ]
+      },
+      "steps": [
+        {
+          "op": "create_order",
+          "args": {
+            "retailer_id": "@retailers:hlj",
+            "order_date": "2026-03-14",
+            "currency_code": "JPY",
+            "items": [
+              {
+                "item_type": "kit",
+                "quantity": 2,
+                "unit_price_minor": 2450,
+                "currency_code": "JPY",
+                "kit": { "name": "RX-79[G] Gundam Ground Type", "grade": "HG" }
+              },
+              {
+                "item_type": "consumable",
+                "quantity": 3,
+                "unit_price_minor": 330,
+                "currency_code": "JPY",
+                "catalog_ref_id": "@consumables:marker"
+              }
+            ]
+          },
+          "as": "@orders:new"
+        }
+      ],
+      "then": {
+        "tables": {
+          "orders": [
+            { "id": "@orders:new", "retailer_id": "@retailers:hlj", "shipped_at": null, "received_at": null }
+          ],
+          "order_items": [
+            { "order_id": "@orders:new", "item_type": "kit", "quantity": 2 },
+            { "order_id": "@orders:new", "item_type": "consumable", "quantity": 3, "catalog_ref_id": "@consumables:marker" }
+          ],
+          "kits": [
+            { "name": "RX-79[G] Gundam Ground Type", "grade": "HG", "scale": "1/144", "scale": "1/144", "status": "ordered" },
+            { "name": "RX-79[G] Gundam Ground Type", "grade": "HG", "scale": "1/144", "scale": "1/144", "status": "ordered" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "receive-applies-stock-once-and-refuses-a-second-receipt",
+      "why": "rule 2.1: received_at set means the stock was applied; a second receipt would add it again",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
+        "consumables": [
+          { "id": "@consumables:marker", "name": "Gundam Marker GM01", "category": "marker", "quantity_on_hand": 2 }
+        ],
+        "orders": [
+          { "id": "@orders:hlj", "retailer_id": "@retailers:hlj", "order_date": "2026-03-14", "currency_code": "JPY" }
+        ],
+        "order_items": [
+          { "id": "@order_items:kit", "order_id": "@orders:hlj", "item_type": "kit", "quantity": 2, "unit_price_minor": 2450, "currency_code": "JPY" },
+          { "id": "@order_items:marker", "order_id": "@orders:hlj", "item_type": "consumable", "catalog_ref_id": "@consumables:marker", "quantity": 3, "unit_price_minor": 330, "currency_code": "JPY" }
+        ],
+        "kits": [
+          { "id": "@kits:a", "name": "RX-79[G] Gundam Ground Type", "grade": "HG", "scale": "1/144", "status": "ordered", "order_item_id": "@order_items:kit" },
+          { "id": "@kits:b", "name": "RX-79[G] Gundam Ground Type", "grade": "HG", "scale": "1/144", "status": "ordered", "order_item_id": "@order_items:kit" }
+        ]
+      },
+      "steps": [
+        { "op": "receive_order", "args": { "order_id": "@orders:hlj" } },
+        {
+          "op": "receive_order",
+          "args": { "order_id": "@orders:hlj" },
+          "expect": { "refused": { "kind": "conflict", "code": "order.already_received", "params": {} } }
+        }
+      ],
+      "then": {
+        "tables": {
+          "orders": [{ "id": "@orders:hlj", "received_at": "@now" }],
+          "consumables": [{ "id": "@consumables:marker", "quantity_on_hand": 5 }],
+          "kits": [
+            { "id": "@kits:a", "status": "backlog", "status_updated_at": "@now" },
+            { "id": "@kits:b", "status": "backlog", "status_updated_at": "@now" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a-receipt-in-the-past-stamps-its-own-instant",
+      "why": "#93: a backdated receipt is recorded as given, and the kits it advances carry the same instant",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
+        "orders": [
+          { "id": "@orders:hlj", "retailer_id": "@retailers:hlj", "order_date": "2026-03-14", "currency_code": "JPY" }
+        ],
+        "order_items": [
+          { "id": "@order_items:kit", "order_id": "@orders:hlj", "item_type": "kit", "quantity": 1, "unit_price_minor": 2450, "currency_code": "JPY" }
+        ],
+        "kits": [
+          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "pre_ordered", "order_item_id": "@order_items:kit" }
+        ]
+      },
+      "steps": [
+        { "op": "receive_order", "args": { "order_id": "@orders:hlj", "received_at": "2026-03-20T04:05:06+00:00" } }
+      ],
+      "then": {
+        "tables": {
+          "orders": [{ "id": "@orders:hlj", "received_at": "2026-03-20T04:05:06+00:00" }],
+          "kits": [{ "id": "@kits:a", "status": "backlog", "status_updated_at": "2026-03-20T04:05:06+00:00" }]
+        }
+      }
+    },
+    {
+      "id": "ship-advances-kits-once-and-refuses-a-second-shipment",
+      "why": "#95: shipping moves ordered kits in transit and moves no stock; an order ships once",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
+        "orders": [
+          { "id": "@orders:hlj", "retailer_id": "@retailers:hlj", "order_date": "2026-03-14", "currency_code": "JPY" }
+        ],
+        "order_items": [
+          { "id": "@order_items:kit", "order_id": "@orders:hlj", "item_type": "kit", "quantity": 1, "unit_price_minor": 2450, "currency_code": "JPY" }
+        ],
+        "kits": [
+          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "ordered", "order_item_id": "@order_items:kit" }
+        ]
+      },
+      "steps": [
+        { "op": "mark_order_shipped", "args": { "order_id": "@orders:hlj" } },
+        {
+          "op": "mark_order_shipped",
+          "args": { "order_id": "@orders:hlj" },
+          "expect": { "refused": { "kind": "conflict", "code": "order.already_shipped", "params": {} } }
+        }
+      ],
+      "then": {
+        "tables": {
+          "orders": [{ "id": "@orders:hlj", "shipped_at": "@now", "received_at": null }],
+          "kits": [{ "id": "@kits:a", "status": "in_transit", "status_updated_at": "@now" }]
+        }
+      }
+    },
+    {
+      "id": "editing-a-received-line-below-what-was-used-is-refused",
+      "why": "rule 2: an edit re-runs the dispatch diff; lowering a received line by 2 when only 1 is left would leave stock at -1",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
+        "consumables": [
+          { "id": "@consumables:marker", "name": "Gundam Marker GM01", "category": "marker", "quantity_on_hand": 1 }
+        ],
+        "orders": [
+          { "id": "@orders:hlj", "retailer_id": "@retailers:hlj", "order_date": "2026-03-14", "currency_code": "JPY", "received_at": "2026-03-20T00:00:00+00:00" }
+        ],
+        "order_items": [
+          { "id": "@order_items:marker", "order_id": "@orders:hlj", "item_type": "consumable", "catalog_ref_id": "@consumables:marker", "quantity": 3, "unit_price_minor": 330, "currency_code": "JPY" }
+        ]
+      },
+      "steps": [
+        {
+          "op": "update_order",
+          "args": {
+            "order_id": "@orders:hlj",
+            "items": [
+              { "id": "@order_items:marker", "item_type": "consumable", "catalog_ref_id": "@consumables:marker", "quantity": 1, "unit_price_minor": 330, "currency_code": "JPY" }
+            ]
+          },
+          "expect": {
+            "refused": {
+              "kind": "conflict",
+              "code": "stock.insufficient",
+              "params": { "name": "Gundam Marker GM01", "on_hand": 1, "requested": 2 }
+            }
+          }
+        }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "editing-a-received-line-within-what-is-left-moves-stock-by-the-difference",
+      "why": "rule 2: the edit applies the difference, not the new quantity",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
+        "consumables": [
+          { "id": "@consumables:marker", "name": "Gundam Marker GM01", "category": "marker", "quantity_on_hand": 3 }
+        ],
+        "orders": [
+          { "id": "@orders:hlj", "retailer_id": "@retailers:hlj", "order_date": "2026-03-14", "currency_code": "JPY", "received_at": "2026-03-20T00:00:00+00:00" }
+        ],
+        "order_items": [
+          { "id": "@order_items:marker", "order_id": "@orders:hlj", "item_type": "consumable", "catalog_ref_id": "@consumables:marker", "quantity": 3, "unit_price_minor": 330, "currency_code": "JPY" }
+        ]
+      },
+      "steps": [
+        {
+          "op": "update_order",
+          "args": {
+            "order_id": "@orders:hlj",
+            "items": [
+              { "id": "@order_items:marker", "item_type": "consumable", "catalog_ref_id": "@consumables:marker", "quantity": 1, "unit_price_minor": 330, "currency_code": "JPY" }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "tables": {
+          "order_items": [{ "id": "@order_items:marker", "quantity": 1 }],
+          "consumables": [{ "id": "@consumables:marker", "quantity_on_hand": 1 }]
+        }
+      }
+    },
+    {
+      "id": "a-received-order-cannot-be-unreceived",
+      "why": "rule 2.1: clearing received_at would re-arm the stock increment; it is refused, never represented",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
+        "orders": [
+          { "id": "@orders:hlj", "retailer_id": "@retailers:hlj", "order_date": "2026-03-14", "currency_code": "JPY", "received_at": "2026-03-20T00:00:00+00:00" }
+        ],
+        "order_items": [
+          { "id": "@order_items:kit", "order_id": "@orders:hlj", "item_type": "kit", "quantity": 1, "unit_price_minor": 2450, "currency_code": "JPY" }
+        ],
+        "kits": [
+          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "order_item_id": "@order_items:kit" }
+        ]
+      },
+      "steps": [
+        {
+          "op": "update_order",
+          "args": { "order_id": "@orders:hlj", "received_at": null },
+          "expect": { "refused": { "kind": "invalid_input", "code": "order.unreceive_unsupported", "params": {} } }
+        }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "deleting-an-order-whose-kit-has-progressed-is-refused",
+      "why": "rule 2: delete undoes the entry, and a kit on the bench can't be undone",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
+        "orders": [
+          { "id": "@orders:hlj", "retailer_id": "@retailers:hlj", "order_date": "2026-03-14", "currency_code": "JPY", "received_at": "2026-03-20T00:00:00+00:00" }
+        ],
+        "order_items": [
+          { "id": "@order_items:kit", "order_id": "@orders:hlj", "item_type": "kit", "quantity": 2, "unit_price_minor": 2450, "currency_code": "JPY" }
+        ],
+        "kits": [
+          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "building", "build_started_at": "2026-03-21T00:00:00+00:00", "order_item_id": "@order_items:kit" },
+          { "id": "@kits:b", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "order_item_id": "@order_items:kit" }
+        ]
+      },
+      "steps": [
+        {
+          "op": "delete_order",
+          "args": { "order_id": "@orders:hlj" },
+          "expect": {
+            "refused": { "kind": "conflict", "code": "order_line.kits_protected", "params": { "requested": 2, "deletable": 1 } }
+          }
+        }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "deleting-an-order-undoes-its-kits-and-its-stock",
+      "why": "rule 2: delete = undo the entry; the received line's stock comes back off",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }],
+        "consumables": [
+          { "id": "@consumables:marker", "name": "Gundam Marker GM01", "category": "marker", "quantity_on_hand": 4 }
+        ],
+        "orders": [
+          { "id": "@orders:hlj", "retailer_id": "@retailers:hlj", "order_date": "2026-03-14", "currency_code": "JPY", "received_at": "2026-03-20T00:00:00+00:00" }
+        ],
+        "order_items": [
+          { "id": "@order_items:kit", "order_id": "@orders:hlj", "item_type": "kit", "quantity": 1, "unit_price_minor": 2450, "currency_code": "JPY" },
+          { "id": "@order_items:marker", "order_id": "@orders:hlj", "item_type": "consumable", "catalog_ref_id": "@consumables:marker", "quantity": 3, "unit_price_minor": 330, "currency_code": "JPY" }
+        ],
+        "kits": [
+          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "order_item_id": "@order_items:kit" }
+        ]
+      },
+      "steps": [{ "op": "delete_order", "args": { "order_id": "@orders:hlj" } }],
+      "then": {
+        "tables": {
+          "orders": [],
+          "order_items": [],
+          "kits": [],
+          "consumables": [{ "id": "@consumables:marker", "quantity_on_hand": 1 }]
+        }
+      }
+    }
+  ]
+}

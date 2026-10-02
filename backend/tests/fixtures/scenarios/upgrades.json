@@ -1,0 +1,66 @@
+{
+  "format": "plamotrack-scenarios",
+  "version": 1,
+  "note": "Withdrawing an upgrade application (§3.6, #61). The caller says whether the parts go back on the shelf; there is no default. Read by backend/tests/test_scenarios.py AND by plamotrack-ios's domain tests. Add a case here rather than to either suite. The format is .agents/testing-and-review.md → 'Behaviour scenarios'. `why` is for the reader; nothing asserts on it.",
+  "scenarios": [
+    {
+      "id": "withdrawing-with-restore-puts-the-parts-back",
+      "why": "the parts came off unused: all of quantity_used returns to stock",
+      "given": {
+        "upgrades": [
+          { "id": "@upgrades:thrusters", "name": "Metal thruster set", "manufacturer": "Madworks", "quantity_on_hand": 1 }
+        ],
+        "kits": [{ "id": "@kits:zaku", "name": "Zaku II", "grade": "MG", "scale": "1/100", "status": "building" }],
+        "upgrade_applications": [
+          {
+            "id": "@upgrade_applications:fitted",
+            "upgrade_id": "@upgrades:thrusters",
+            "kit_id": "@kits:zaku",
+            "quantity_used": 2,
+            "applied_at": "2026-04-05T06:00:00+00:00"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "op": "withdraw_upgrade_application",
+          "args": { "application_id": "@upgrade_applications:fitted", "restore_stock": true },
+          "result": { "stock_restored": true, "quantity_on_hand": 3 }
+        }
+      ],
+      "then": {
+        "tables": {
+          "upgrades": [{ "id": "@upgrades:thrusters", "quantity_on_hand": 3 }],
+          "upgrade_applications": []
+        }
+      }
+    },
+    {
+      "id": "withdrawing-without-restore-leaves-stock-alone",
+      "why": "the parts were ruined or kept on the kit: the record goes, the stock doesn't move",
+      "given": {
+        "upgrades": [
+          { "id": "@upgrades:decal", "name": "Waterslide decal", "manufacturer": "Delpi", "quantity_on_hand": 1 }
+        ],
+        "kits": [{ "id": "@kits:zaku", "name": "Zaku II", "grade": "MG", "scale": "1/100", "status": "complete" }],
+        "upgrade_applications": [
+          {
+            "id": "@upgrade_applications:fitted",
+            "upgrade_id": "@upgrades:decal",
+            "kit_id": "@kits:zaku",
+            "quantity_used": 1,
+            "applied_at": "2026-04-05T06:00:00+00:00"
+          }
+        ]
+      },
+      "steps": [
+        {
+          "op": "withdraw_upgrade_application",
+          "args": { "application_id": "@upgrade_applications:fitted", "restore_stock": false },
+          "result": { "stock_restored": false, "quantity_on_hand": 1 }
+        }
+      ],
+      "then": { "tables": { "upgrade_applications": [] } }
+    }
+  ]
+}
