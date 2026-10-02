@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-10-02 — Claude Code (Opus 5.5) — #305 MERGED as `8ba9c6e` (PR #310): the importer holds a value to its column's range; #306 fixed on the docs site; #309 filed
+## 2026-10-02 — Claude Code (Opus 5.5) — #305 MERGED as `8ba9c6e` (PR #310) and #307 as `f8d7f0d` (PR #311); #306 fixed on the docs site; #309 filed
 
 - **Done:**
   - **#306** closed by [plamotrack-docs#8](https://github.com/DeusMaximus/plamotrack-docs/pull/8), merged as `bb30824`.
@@ -63,6 +63,15 @@ Template:
     - The `305-` mutants: 10/10 killed. Full suite at `f28eb28`: 3060 passed, 1 xfailed.
     - Greptile: 4/5 with two P2s (the source cell; the audit skipping unknown CHECK forms), both taken in `96a8ff0`; round 2 5/5. CI green.
     - `.agents/next-release.md` has the entry; it owes the docs site and `docs/import-export.md` a line on ranges.
+  - **[PR #311](https://github.com/DeusMaximus/plamotrack/pull/311)** squash-merged as **`f8d7f0d`** from head `9e9fc8c`; #307 is closed.
+    - Behaviour scenarios shared with plamotrack-ios: `backend/tests/fixtures/scenarios/` (`scenario.schema.json` and 6 files, 31 scenarios); the runner is `tests/test_scenarios.py`. The format is in `.agents/testing-and-review.md` → "Behaviour scenarios", and `AGENTS.md` now points rules the app reimplements at it.
+    - The owner's five calls: run against the services; seed `given` by direct insert; `@now` as the run's window; refusal params on the registry's declared keys; one file per rule area.
+    - Reviews:
+      - Round 1: Codex P2 (`@now` in a step `result`) and Greptile 4/5 (spawned-kit provenance; repeated JSON keys).
+      - Round 2: Codex P2 (an unpinned seeded status clock passed as `@now`). Every seeded kit now states its clock, a meta-test enforces it, and mutants scn-13/14/15 survive on `d638cc4` and are killed on `9e9fc8c`.
+      - Round 3: Codex clean (👍); Greptile 5/5.
+    - The `scn-` mutants: 15/15 killed. Full suite at `f44cc3a`: 3109 passed, 1 xfailed. `jsonschema` is now a declared dev dependency.
+    - **Merged before CI finished**, which the owner had not asked for ("merge once green"). `main` has no branch protection and the repo's auto-merge setting is off, so `gh pr merge --auto` merged immediately. Both CI runs then passed: the PR head and the push to `main`; the trees are identical. The owner is weighing a ruleset on `main` (required checks with an admin bypass for docs pushes, repo auto-merge on). **Until one exists, never use `--auto` as "merge when green".**
   - **Filed [#309](https://github.com/DeusMaximus/plamotrack/issues/309)** (`enhancement`): CHECKs for `orders.shipping_cost_minor` and `consumables.low_stock_threshold`. The migration must clear negatives an older import may have stored.
 - **Decisions (the owner's, 2026-10-01/02):**
   - `docs/import-export.md` was left for the release under the published-release rule; the owner did not object. Before that rule, PRs edited it directly.
@@ -75,7 +84,7 @@ Template:
     - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
     - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
 - **Next:**
-  1. **#307**, the shared scenario fixtures: design the JSON format first (starting rows, an operation, an expected state or a refusal with `code` and `params`). Reuse `tests/fixtures/golden/seed.py`'s deterministic ids. Document the format in `.agents/testing-and-review.md`.
+  1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
   2. **#304**, import on a phone: the owner's decisions on modes and the 390 px preview, then mockups, before code.
   3. #309 when convenient: a migration plus a migration-data test.
   4. Carried:
