@@ -39,7 +39,11 @@ Shape:
   or **Add only**. That is the way from plamotrack for iPhone to your own server:
   export an archive in the app, import it here. **Replace everything** stays on a
   tablet or a computer, as does the full template pack; the starter sheet is on the
-  phone too.
+  phone too. On every screen size: an import's error now appears inside the Import
+  card, beside the button that caused it, rather than at the top of the page; an
+  import that has started says so, with its mode, until it finishes, and its mode
+  and file can't be changed meanwhile; and "or browse for one" on the desktop's drop
+  zone can be reached with the keyboard.
 - **README:** nothing (the phone screenshot in its gallery is Home, not Data
   management).
 - **Docs site:** `using/phone-and-tablet.mdx` → "What a phone leaves out": Data
@@ -48,7 +52,9 @@ Shape:
   above the tab bar. Its `phone-data` screenshots (light and dark) and their alt text
   and caption are retaken (`e2e/screenshots.spec.ts` with `SCREENSHOTS_OUT`): the
   export card and the import under it. `using/import-export.mdx`'s opening paragraph:
-  a phone imports too, in those two modes. If the plamotrack-ios move has a page by
+  a phone imports too, in those two modes — and, if the page describes where an
+  import's errors appear or how to pick a file, that errors appear in the Import card
+  and that Browse is keyboard-reachable. If the plamotrack-ios move has a page by
   then, it links here.
 
 ## #309 — the database refuses a negative shipping cost or low-stock threshold (PR #313, `4651ce2`)

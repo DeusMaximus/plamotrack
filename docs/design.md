@@ -3774,6 +3774,13 @@ import it here. That undoes the first of the three reasons the phone was export 
   row a kit, the one template a phone might fill in (Numbers, Sheets) and the way
   someone starting from a spreadsheet gets going. The full pack — nine files in a zip —
   stays on the wider shapes, and its button names the starter sheet as its stand-in.
+- **An import that has been sent is the operation's, not the draft's** (#314 round
+  2). The fall-back may throw the draft away under it, and an import that reached
+  the server is not stopped by that. Aborting the request wouldn't stop it either:
+  the transaction may already be committing. So `submitted` holds the mode it was
+  sent with, a status line in the card names it ("Importing — Replace
+  everything…"), and the actions stay up, saying "Importing…", until it answers.
+  Meanwhile the mode and the file can't be changed, in any shell.
 - **The import's failures are said in its card**, last in it — under Preview when
   a preview is refused, just above the bar when an apply is. At the head of the
   section, where every error used to go, a phone put it a screen above the button

@@ -449,8 +449,25 @@ test("an import on a phone (#304): a CSV previewed and applied, Add only; an arc
         expect.soft(resting.bottom, "at rest, the bar is above the starter sheet").toBeLessThan(starter.y);
         expect.soft(resting.bottom, "at rest, clear of the tab bar").toBeLessThanOrEqual(tabBar.y + 0.5);
 
+        // An Apply already sent is the import's, not the draft's: it says what it
+        // is doing, by mode, until it answers, and the mode cannot be changed
+        // under it (#314 round 2, Codex finding 5). Held at the network so the
+        // pending state is there to be read.
+        let releaseApply = () => {};
+        const applyHeld = new Promise<void>((resolve) => (releaseApply = resolve));
+        await page.route("**/import/apply", async (route) => {
+          await applyHeld;
+          await route.continue();
+        });
         await apply.click();
+        await expect(main.getByText("Importing — Add only…"), "the sent import says what it is").toBeVisible();
+        await expect(page.getByRole("button", { name: "Importing…" })).toBeVisible();
+        await expect(main.getByRole("radio", { name: "Merge" }), "the mode cannot change under it").toBeDisabled();
+        await expect(main.getByRole("button", { name: "Change", exact: true })).toBeDisabled();
+        releaseApply();
         await expect(main.getByText("Import complete")).toBeVisible();
+        await expect(main.getByText("Importing — Add only…")).toHaveCount(0);
+        await page.unroute("**/import/apply");
         await expect(apply).toHaveCount(0);
         await expect(main.getByRole("button", { name: "Choose a file" })).toBeVisible();
         const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
@@ -475,11 +492,19 @@ test("an import on a phone (#304): a CSV previewed and applied, Add only; an arc
     // The badge's column is the badge's width, the label beside it — asked of
     // a short label, which is where the table handed the spare width to the
     // badge's column (seen in the simulator; long names take it all).
+    // Measured from the badge to the label *cell's* edge, so the allowance is
+    // rounding, not the cell's padding — the first version allowed 12.5 px,
+    // which the mutant that removes `w-px` alone fitted inside (Codex, round 2,
+    // finding 6). At 390 px and at the phone shell's widest, 744, where the
+    // spare width is largest; at 320 there is none to hand out.
     await main.getByRole("button", { name: /^Instance settings \d/ }).click();
     const settingsRow = main.getByRole("row").filter({ hasText: /row 2/ }).first();
-    const [badge, label] = await Promise.all([rect(settingsRow.locator("td").nth(1).locator("span")), rect(settingsRow.locator("td").nth(2))]);
-    // The label cell's own padding (0.75rem) and nothing more.
-    expect.soft(label.x - badge.right, "the label beside its badge").toBeLessThanOrEqual(12.5);
+    for (const width of [390, 744]) {
+      await page.setViewportSize({ width, height: 844 });
+      const [badge, label] = await Promise.all([rect(settingsRow.locator("td").nth(1).locator("span")), rect(settingsRow.locator("td").nth(2))]);
+      expect.soft(label.x - badge.right, `at ${width} px, the badge's column is the badge`).toBeLessThanOrEqual(0.5);
+    }
+    await page.setViewportSize(sizesFor("phone")[0]);
     await page.getByRole("button", { name: "Cancel" }).click();
     await expect(page.getByRole("button", { name: "Apply import" })).toHaveCount(0);
     await expect(main.getByText("plamotrack-export.zip")).toHaveCount(0);
@@ -569,6 +594,41 @@ test("an import begun on a tablet survives a turn through the phone shell, unles
   await expect(page.getByRole("radio", { name: "Merge" })).toBeChecked();
   await expect(page.getByRole("main").getByRole("alert"), "the refusal went with the mode").toHaveCount(0);
   await page.setViewportSize({ width: 820, height: 1180 });
+
+  // An Apply already sent outlives the turn that throws its draft away: the
+  // fall-back still takes the draft to Merge, but the page keeps saying that a
+  // Replace everything is under way until it answers, in every shape (#314
+  // round 2, Codex finding 5). Held, then **aborted** at the network — it
+  // never reaches the server, so nothing is replaced — and the failure is said
+  // in the Import card.
+  await page.locator('input[type="file"]').setInputFiles(retailerCsv(`${TAG} Held Apply`));
+  await mode.selectOption("replace_all");
+  await preview.click();
+  await page.getByPlaceholder("REPLACE").fill("REPLACE");
+  let releaseApply = () => {};
+  const applyHeld = new Promise<void>((resolve) => (releaseApply = resolve));
+  await page.route("**/import/apply", async (route) => {
+    await applyHeld;
+    await route.abort();
+  });
+  await apply.click();
+  const pending = page.getByRole("main").getByText("Importing — Replace everything…");
+  await expect(pending).toBeVisible();
+  await expect(mode, "the mode cannot change under it").toBeDisabled();
+  await page.setViewportSize({ width: 744, height: 1133 });
+  await expect(page.getByRole("radio", { name: "Merge" })).toBeChecked();
+  await expect(pending, "after the turn, still pending, under its own mode").toBeVisible();
+  await expect(page.getByRole("button", { name: "Importing…" }), "and its bar").toBeVisible();
+  await page.setViewportSize({ width: 820, height: 1180 });
+  // The tablet's shape first — its select — or the phone's bar, still drawn
+  // until the page hears of the turn, answers for the desktop's row.
+  await expect(mode, "the tablet's shape again").toBeVisible();
+  await expect(pending, "and turned back").toBeVisible();
+  await expect(page.getByRole("button", { name: "Importing…" }), "with its actions, though its plan went with the draft").toBeVisible();
+  releaseApply();
+  await expect(page.getByRole("main").getByRole("alert"), "its failure is said in the card").toBeVisible();
+  await expect(pending).toHaveCount(0);
+  await page.unroute("**/import/apply");
 
   // Never applied: nothing was written, and there is nothing to clean up.
   await page.getByText("choose a different file").click();

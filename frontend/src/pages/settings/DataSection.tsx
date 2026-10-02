@@ -76,6 +76,12 @@ export function DataSection() {
   const [result, setResult] = useState<ImportResult | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState<"preview" | "apply" | null>(null);
+  // The import that has been sent, by the mode it was sent with — the
+  // operation's, not the draft's. The draft (file, mode, plan) can still be
+  // thrown away under it, by the phone's fall-back, and an import that has
+  // reached the server is not stopped by that: the page keeps saying it is
+  // under way, and what it is, until it answers (#314 round 2, Codex finding 5).
+  const [submitted, setSubmitted] = useState<ImportMode | null>(null);
   const [error, setError] = useState<string | null>(null);
   // The import's own failures, said inside its card rather than at the head of
   // the section: on a phone the head is a screen above Preview and the bar, and
@@ -168,6 +174,7 @@ export function DataSection() {
   async function runApply() {
     if (!file || !plan) return;
     setBusy("apply");
+    setSubmitted(mode);
     setImportError(null);
     try {
       const applied = await api.applyImport(
@@ -186,6 +193,7 @@ export function DataSection() {
       setImportError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setBusy(null);
+      setSubmitted(null);
     }
   }
 
@@ -331,7 +339,7 @@ export function DataSection() {
               onDrop={(event) => {
                 event.preventDefault();
                 setDragging(false);
-                pickFile(event.dataTransfer.files[0] ?? null);
+                if (busy === null) pickFile(event.dataTransfer.files[0] ?? null);
               }}
               className={`rounded-md border border-dashed px-4 py-6 text-center ${
                 dragging ? "border-accent bg-accent-soft" : "border-border-strong bg-surface-alt"
@@ -344,6 +352,7 @@ export function DataSection() {
                   <button
                     type="button"
                     onClick={reset}
+                    disabled={busy !== null}
                     data-focus-key={FOCUS.file}
                     className="text-xs text-accent hover:underline"
                   >
@@ -372,7 +381,7 @@ export function DataSection() {
             {phone ? (
               // `min-w-0`: a fieldset's own minimum is its content's, which
               // widened the page under a large browser font.
-              <fieldset className="min-w-0">
+              <fieldset className="min-w-0" disabled={submitted !== null}>
                 <legend className="mb-1 text-xs font-medium text-muted">{t("data.modeLabel")}</legend>
                 <div className="grid grid-cols-2 gap-2">
                   {PHONE_IMPORT_MODES.map((option) => (
@@ -402,6 +411,7 @@ export function DataSection() {
                 <Select
                   value={mode}
                   onChange={(event) => chooseMode(event.target.value as ImportMode)}
+                  disabled={submitted !== null}
                   data-focus-key={FOCUS.mode}
                   className="w-56"
                 >
@@ -424,11 +434,14 @@ export function DataSection() {
           </div>
           <p className="mt-1.5 text-xs text-muted">{t(`importMode.${mode}.blurb`)}</p>
 
-          {plan && (
+          {/* The actions stay while an import is under way even when its plan
+              has gone with the draft — they say "Importing…" — so this box is
+              drawn for either. */}
+          {(plan || submitted) && (
             <div className="mt-4 space-y-3">
-              <ImportPreview plan={plan} />
+              {plan && <ImportPreview plan={plan} />}
 
-              {mode === "replace_all" && !blocked && (
+              {plan && mode === "replace_all" && !blocked && (
                 <label
                   data-focus-stand-in={FOCUS.mode}
                   className="block rounded-sm border border-danger/40 bg-danger/10 px-3 py-2"
@@ -455,6 +468,12 @@ export function DataSection() {
                 </div>
               )}
             </div>
+          )}
+
+          {submitted && (
+            <p role="status" className="mt-3 text-sm text-muted">
+              {t("data.applying", { mode: t(`importMode.${submitted}.label`) })}
+            </p>
           )}
 
           {/* Last in the card: under Preview when a preview is refused, and
@@ -494,7 +513,7 @@ export function DataSection() {
             Apply is never a long preview's scroll away; at rest under the
             card. The width of `main`, its gutters included, so nothing scrolls
             past beside it. */}
-        {phone && plan && (
+        {phone && (plan || submitted) && (
           <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-20 -mx-4 mt-3 grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2.5 border-t border-rule bg-surface px-4 py-3">
             {cancelButton(BAR_BUTTON_CLASS)}
             {applyButton(BAR_BUTTON_CLASS)}

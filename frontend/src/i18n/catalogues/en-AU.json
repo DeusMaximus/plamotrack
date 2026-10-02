@@ -725,6 +725,7 @@
     "previewChanges": "Preview changes",
     "replaceConfirm": "This deletes your current collection. Type REPLACE to confirm.",
     "importing": "Importing…",
+    "applying": "Importing — {{mode}}…",
     "applyImport": "Apply import",
     "complete": "Import complete",
     "result": {
