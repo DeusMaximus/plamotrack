@@ -6535,15 +6535,15 @@ CASES += [
     (
         "309-1. the upgrade adds the CHECKs without clearing the negatives",
         CHECKS_309,
-        '        cleared = bind.execute(\n            sa.text(f"UPDATE {table} SET {column} = NULL WHERE {column} < 0")\n        ).rowcount\n',
-        "        cleared = 0\n",
+        '        clear = f"UPDATE {table} SET {column} = NULL WHERE {column} < 0"\n',
+        '        clear = "SELECT 1"\n',
         "non_negative_checks_clear_negatives",
     ),
     (
         "309-2. the upgrade clears zero as well",
         CHECKS_309,
-        'WHERE {column} < 0")',
-        'WHERE {column} <= 0")',
+        'WHERE {column} < 0"\n',
+        'WHERE {column} <= 0"\n',
         "non_negative_checks_clear_negatives",
     ),
     (
