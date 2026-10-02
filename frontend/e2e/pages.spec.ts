@@ -157,6 +157,16 @@ const focused = (page: Page): Promise<string> =>
     return active.getAttribute("aria-label") ?? active.textContent?.trim() ?? active.tagName;
   });
 
+/** Whether the keyboard is on an alert or the box that holds one — and not on
+ *  `<body>`, which holds every alert on the page: asked as "does the focused
+ *  element contain an alert", a lost keyboard answered yes (#314, round 4). */
+const keyboardOnRefusal = (page: Page): Promise<boolean> =>
+  page.evaluate(() => {
+    const active = document.activeElement;
+    if (!active || active === document.body) return false;
+    return active.getAttribute("role") === "alert" || active.querySelector('[role="alert"]') !== null;
+  });
+
 /** A date as en-AU writes it in digits — "19/09/2026" in Chromium, "19/9/2026"
  *  in WebKit, whose ICU pads nothing. */
 const A_DATE = /^\d{1,2}\/\d{1,2}\/\d{4}$/;
@@ -387,11 +397,20 @@ test("an import on a phone (#304): a CSV previewed and applied, Add only; an arc
         // A file the importer refuses says so in the Import card, on screen
         // beside Preview — not at the head of the section, a screen above.
         await main.locator('input[type="file"]').setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("not a sheet\n") });
-        await main.getByRole("button", { name: "Preview changes" }).click();
+        // By the keyboard: Preview disables itself while it reads, and the
+        // refusal that comes back takes the keyboard (Codex round 4: already so
+        // on `main`, folded in with the same mechanism).
+        await main.getByRole("button", { name: "Preview changes" }).focus();
+        await page.keyboard.press("Enter");
         const refused = main.locator("section").filter({ has: page.getByRole("heading", { name: "Import", exact: true }) }).getByRole("alert");
         await expect(refused).toHaveText("Import a .csv or a .zip archive.");
         await expect(refused).toBeInViewport();
         await expect(main.getByRole("alert")).toHaveCount(1);
+        await expect
+          .poll(() => keyboardOnRefusal(page), {
+            message: "a refused preview hands the keyboard to the refusal",
+          })
+          .toBe(true);
         // Thirty rows: a preview longer than the screen, which is what the bar is for.
         const names = Array.from({ length: 30 }, (_, i) => `${shop} ${size.width} ${String(i + 1).padStart(2, "0")}`);
         const name = names[0];
@@ -416,10 +435,13 @@ test("an import on a phone (#304): a CSV previewed and applied, Add only; an arc
         await main.getByText("Add only", { exact: true }).click();
         await expect(main.getByRole("radio", { name: "Add only" })).toBeChecked();
         await expect(main.getByText("Add what's new and leave everything you already have untouched.")).toBeVisible();
-        await main.getByRole("button", { name: "Preview changes" }).click();
+        // By the keyboard again: a plan gives it back to Preview.
+        await main.getByRole("button", { name: "Preview changes" }).focus();
+        await page.keyboard.press("Enter");
 
         const section = main.getByRole("button", { name: /^Retailers \d/ });
         await expect(section).toHaveAttribute("aria-expanded", "true");
+        await expect.poll(() => focused(page), { message: "a plan gives the keyboard back to Preview" }).toBe("Preview changes");
         // A new file takes the refusal away.
         await expect(main.getByRole("alert")).toHaveCount(0);
         // The row number is under the label, not a column of its own, and the
@@ -459,8 +481,22 @@ test("an import on a phone (#304): a CSV previewed and applied, Add only; an arc
           await applyHeld;
           await route.continue();
         });
-        await apply.click();
-        await expect(main.getByText("Importing — Add only…"), "the sent import says what it is").toBeVisible();
+        // By the keyboard, from the bar, with the long preview scrolled to its
+        // top: the pending import takes the keyboard and is brought into view,
+        // clear of the sticky head and the bar (Codex round 4, finding 10).
+        await main.getByRole("heading", { name: "Import", exact: true }).evaluate((heading) => heading.scrollIntoView({ block: "start" }));
+        await apply.focus();
+        await page.keyboard.press("Enter");
+        const status = main.getByText("Importing — Add only…");
+        await expect(status, "the sent import says what it is").toBeVisible();
+        await expect.poll(() => focused(page), { message: "the pending import has the keyboard" }).toBe("Importing — Add only…");
+        const [statusBox, barButton, head] = await Promise.all([
+          rect(status),
+          rect(page.getByRole("button", { name: "Importing…" })),
+          rect(page.locator("header").first()),
+        ]);
+        expect.soft(statusBox.y, "the pending import is below the sticky head").toBeGreaterThanOrEqual(head.bottom - 0.5);
+        expect.soft(statusBox.bottom, "and above the bar").toBeLessThanOrEqual(barButton.y + 0.5);
         await expect(page.getByRole("button", { name: "Importing…" })).toBeVisible();
         await expect(main.getByRole("radio", { name: "Merge" }), "the mode cannot change under it").toBeDisabled();
         await expect(main.getByRole("button", { name: "Change", exact: true })).toBeDisabled();
@@ -658,13 +694,42 @@ test("an import begun on a tablet survives a turn through the phone shell, unles
   await expect(page.getByRole("main").getByRole("alert"), "its failure is said in the card").toBeVisible();
   await expect(pending).toHaveCount(0);
   await expect
-    .poll(() => page.evaluate(() => Boolean(document.activeElement?.querySelector('[role="alert"]'))), {
+    .poll(() => keyboardOnRefusal(page), {
       message: "the keyboard goes from the pending import to its outcome",
     })
     .toBe(true);
   await page.unroute("**/import/apply");
 
-  // Never applied: nothing was written, and there is nothing to clean up.
+  // An outcome holding the keyboard, replaced by the next file dropped onto the
+  // drop zone, hands the keyboard to that file's Preview — a drop moves no
+  // focus of its own (Codex round 4, finding 11). This one is applied, so it
+  // cleans up after itself.
+  const firstShop = `${TAG} Applied Before A Drop`;
+  const api = await apiContext();
+  try {
+    await page.locator('input[type="file"]').setInputFiles(retailerCsv(firstShop));
+    await mode.selectOption("add_only");
+    await preview.click();
+    await apply.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByText("Import complete")).toBeVisible();
+    await expect.poll(() => focused(page), { message: "the outcome has the keyboard" }).toMatch(/^Import complete/);
+    const dataTransfer = await page.evaluateHandle((name) => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File([`name\n${name}\n`], "retailers.csv", { type: "text/csv" }));
+      return transfer;
+    }, `${TAG} Dropped Next`);
+    await page.getByText("Drop a .csv or .zip here").dispatchEvent("drop", { dataTransfer });
+    await expect(page.getByText("retailers.csv", { exact: true }), "the dropped file is the draft").toBeVisible();
+    await expect(page.getByText("Import complete")).toHaveCount(0);
+    await expect.poll(() => focused(page), { message: "the removed outcome hands the keyboard to the new draft" }).toBe("Preview changes");
+  } finally {
+    const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
+    for (const retailer of retailers.filter((r) => r.name === firstShop)) await api.delete(`/retailers/${retailer.id}`);
+    await api.dispose();
+  }
+
+  // The dropped file was never applied: nothing more to clean up.
   await page.getByText("choose a different file").click();
 
   // And every control the two shapes draw differently, or only one draws,

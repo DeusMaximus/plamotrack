@@ -9,6 +9,7 @@ import { IMPORT_MODES } from "../../api/types";
 import { ImportPreview } from "../../components/ImportPreview";
 import { BAR_BUTTON_CLASS } from "../../components/Modal";
 import { Button, Card, ErrorBanner, Select } from "../../components/ui";
+import { focusByKey } from "../../lib/focusKey";
 import { formatFileSize } from "../../lib/format";
 import { counted, importTableLabel } from "../../lib/labels";
 import { useShell } from "../../lib/shell";
@@ -50,6 +51,28 @@ const FOCUS = {
   pending: "import-pending",
   starter: "data-starter-sheet",
 } as const;
+
+/** The keyboard has nowhere: on `<body>`, or on a control that has just been
+ *  disabled under it (`:disabled`, so one a `<fieldset>` disables counts too). */
+function keyboardLost(): boolean {
+  const active = document.activeElement;
+  return active === null || active === document.body || active.matches(":disabled");
+}
+
+/** Give an element the keyboard and bring it into view — only the nearest
+ *  scroll, and clear of what is sticky over the page on a phone (the scroll
+ *  margins on the element itself). `preventScroll` alone left a pending import
+ *  focused 1,100 px below a long preview (#314 round 4, Codex finding 10). */
+function reveal(element: HTMLElement | null) {
+  if (!element) return;
+  element.focus({ preventScroll: true });
+  element.scrollIntoView({ block: "nearest" });
+}
+
+/** Room for what sits over the page on a phone when something is revealed: the
+ *  sticky head (`PageHeader`'s 3.5rem) above; below, the tab bar (3.5rem) and
+ *  the import's own bar (a 3rem button in 1.5rem of padding), and the inset. */
+const REVEAL_MARGINS = "max-md:scroll-mt-16 max-md:scroll-mb-[calc(8rem+env(safe-area-inset-bottom))]";
 
 /** Data management in two shapes (design §13.7). From 768 px: Export, the
  *  blank templates, and Import with a drop zone, a mode `<select>` and its
@@ -125,6 +148,7 @@ export function DataSection() {
 
   function pickFile(next: File | null) {
     previewSeq.current += 1;
+    if (outcomeRef.current?.contains(document.activeElement)) outcomeReplaced.current = true;
     setFile(next);
     // Any change invalidates the preview — never let an Apply run against a plan
     // the user is no longer looking at.
@@ -217,16 +241,37 @@ export function DataSection() {
   const outcomeRef = useRef<HTMLDivElement>(null);
   const wasSubmitted = useRef(false);
   useEffect(() => {
-    const active = document.activeElement;
-    const lost = active === null || active === document.body || (active as HTMLButtonElement).disabled === true;
     if (submitted !== null) {
       wasSubmitted.current = true;
-      if (lost) pendingRef.current?.focus({ preventScroll: true });
+      if (keyboardLost()) reveal(pendingRef.current);
     } else if (wasSubmitted.current) {
       wasSubmitted.current = false;
-      if (lost) outcomeRef.current?.focus({ preventScroll: true });
+      if (keyboardLost()) reveal(outcomeRef.current);
     }
   }, [submitted]);
+
+  // A preview has the same two moments (#314 round 4, already so on `main`):
+  // Preview disables itself while it reads, and Chromium drops the keyboard a
+  // just-disabled button held. When it answers, the keyboard goes to a refusal,
+  // or back to Preview.
+  const previewWas = useRef(busy);
+  useEffect(() => {
+    const was = previewWas.current;
+    previewWas.current = busy;
+    if (was !== "preview" || busy !== null || !keyboardLost()) return;
+    if (importError) reveal(outcomeRef.current);
+    else focusByKey(FOCUS.preview);
+  }, [busy, importError]);
+
+  // An outcome holding the keyboard and replaced by the next file — dropped onto
+  // the drop zone, which moves no focus of its own — hands it to that file's
+  // Preview (#314 round 4, Codex finding 11).
+  const outcomeReplaced = useRef(false);
+  useEffect(() => {
+    if (!outcomeReplaced.current) return;
+    outcomeReplaced.current = false;
+    if (keyboardLost()) focusByKey(FOCUS.preview);
+  }, [file]);
 
   function chooseMode(next: ImportMode) {
     previewSeq.current += 1;
@@ -509,7 +554,7 @@ export function DataSection() {
               role="status"
               tabIndex={-1}
               data-focus-key={FOCUS.pending}
-              className="mt-3 text-sm text-muted"
+              className={`mt-3 text-sm text-muted ${REVEAL_MARGINS}`}
             >
               {t("data.applying", { mode: t(`importMode.${submitted}.label`) })}
             </p>
@@ -518,7 +563,7 @@ export function DataSection() {
           {/* Last in the card: under Preview when a preview is refused, and
               just above Apply — the phone's bar — when an apply is. */}
           {importError && (
-            <div ref={outcomeRef} tabIndex={-1} className="mt-3">
+            <div ref={outcomeRef} tabIndex={-1} className={`mt-3 ${REVEAL_MARGINS}`}>
               <ErrorBanner message={importError} />
             </div>
           )}
@@ -527,7 +572,7 @@ export function DataSection() {
             <div
               ref={outcomeRef}
               tabIndex={-1}
-              className="mt-4 rounded-sm border border-status-complete/40 bg-status-complete/10 px-3 py-2 text-sm text-status-complete">
+              className={`mt-4 ${REVEAL_MARGINS} rounded-sm border border-status-complete/40 bg-status-complete/10 px-3 py-2 text-sm text-status-complete`}>
               <p className="font-medium">{t("data.complete")}</p>
               <p className="mt-0.5">
                 {t("data.result.created", counted({}, result.created))}

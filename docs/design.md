@@ -3787,7 +3787,12 @@ import it here. That undoes the first of the three reasons the phone was export 
   focusable (`tabIndex={-1}`) and carries a key of its own (`import-pending`), and
   every pending control names it as its last stand-in. Sending the import gives
   the status the keyboard, and the answer gives it to the outcome, but only where
-  the keyboard is nowhere else.
+  the keyboard is nowhere else. **Where the keyboard is moved, it is revealed**
+  (round 4): a nearest scroll, with scroll margins clearing the phone's sticky head
+  and its bar over the tab bar. `preventScroll` alone left the status focused far
+  below a long preview. A preview's answer gives the keyboard to its refusal or
+  back to Preview; `main` lost it there too. A focused outcome replaced by a dropped
+  file hands it to that file's Preview.
 - **The import's failures are said in its card**, last in it — under Preview when
   a preview is refused, just above the bar when an apply is. At the head of the
   section, where every error used to go, a phone put it a screen above the button
