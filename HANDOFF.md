@@ -62,10 +62,11 @@ Template:
 - **State:**
   - **Unreleased on `main`:** #294, #289, #247, #302 (#299, #300, #301), #310 (#305), #313 (#309, a migration) and now **#314 (#304)**. See `.agents/next-release.md`; #304's entry owes the docs site's phone page (and retaken `phone-data` screenshots) and the import page's opening line.
   - **Not checked by anyone** for #304 (the coverage record has the full list): VoiceOver announcing the status line; native CSV selection on iOS; Android pickers; a physical device; a real plamotrack-ios archive.
-  - **Known gaps, not filed:**
-    - Leaving Data management while an import runs: the same on `main`.
-    - Download errors still show at the section's head, a screen away from the starter sheet on a phone.
-  - **Flaky:** `lists.spec.ts`'s #275 test ("a dialog opened before the turn's news arrives") failed once on `tablet` in a full run. It fails 1 in 3 on `main` too, not this PR's. Not filed.
+  - **Known gaps, filed:**
+    - #315: leaving Data management while an import runs (the same on `main`; an Add only repeat can duplicate kits).
+    - #316: download errors show at the section's head, a screen away from the starter sheet on a phone.
+    - #317: `lists.spec.ts`'s #275 test fails about 1 in 3 on the `tablet` project, on `main` too.
+  - **New, from the owner's use on a phone:** #318, a page-size preference (10 / 20 / All), stored in the browser like the theme, with All by default in the phone shell. Its open questions are in the issue, including revising design §13.1's "the one deliberate exception" to rule 11.
   - **The iOS Simulator** (iPhone 18 Pro) is still booted, with the owner's dev session in its Safari. The dev servers are stopped. Throwaway databases dropped, no worktrees, `main` clean.
   - Merged branches left on origin: `feat/304-phone-import`, plus the ones listed below.
   - **Carried:**
@@ -73,7 +74,7 @@ Template:
     - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
     - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
 - **Next:**
-  1. File the two known gaps and the #275 flake, if the owner wants them tracked.
+  1. #318 (page size on a phone) wants the owner's answers to its "To decide" list before code; then #315–#317 by priority. #317 first if CI starts flaking on it.
   2. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
   3. Carried:
      - #279's edge probes, then #281's packaging; #282's VPS path;
