@@ -33,7 +33,7 @@ Shape:
 
 ---
 
-## #309 — the database refuses a negative shipping cost or low-stock threshold (PR TBD)
+## #309 — the database refuses a negative shipping cost or low-stock threshold (PR #313)
 - **Release note:** Upgrading clears any negative shipping cost or low-stock threshold
   to blank. Only an import made before this release's import range checks (#305) could
   have stored one; the upgrade log says how many it cleared. From then on the database
