@@ -28,6 +28,7 @@ from sqlalchemy.exc import IntegrityError
 from alembic import command
 from app import config
 from app.db import get_sessionmaker
+from app.models.base import Base
 
 # The revisions under test and the parents their seeds are planted at.
 INITIAL = "71ddc06de024"
@@ -43,11 +44,12 @@ AUTH_TABLES = "f1058c5de0f3"
 OIDC_LOGIN = "0db6c35d0a7e"
 SESSION_AUTH_MODE = "4f3a9c1e7b2d"
 MCP_OAUTH_STATE = "d5e9362140ea"
+NON_NEGATIVE_CHECKS = "5cbec7813500"
 
 # The current migration head, as a literal (this module keeps revision ids as
 # literals on purpose — see the header). The "recovered to head" / "nothing
 # moved" assertions compare against it, so a new migration bumps this one line.
-HEAD = MCP_OAUTH_STATE
+HEAD = NON_NEGATIVE_CHECKS
 
 
 def db(sql: str, **params) -> list[tuple]:
@@ -558,3 +560,135 @@ def test_session_auth_mode_backfills_local_and_admits_only_the_two_modes(walk):
     walk.down(OIDC_LOGIN)
     assert not column_exists("session", "auth_mode")
     assert db("SELECT count(*) FROM session") == [(2,)]
+
+
+# --- 5cbec7813500: shipping cost and low-stock threshold CHECKs (#309) -----------
+
+
+def test_non_negative_checks_clear_negatives_to_null_and_keep_the_rest(walk):
+    """An importer before #305 could store a negative in either column; the upgrade
+    clears exactly those to null (the owner's call: null claims nothing, 0 would
+    claim free shipping or an alert at zero) and leaves zero, positive and null
+    alone. Afterwards the database refuses a negative; the downgrade drops both
+    constraints and cannot bring a cleared value back."""
+    walk.down(MCP_OAUTH_STATE)
+    retailer_id = uuid.uuid4()
+    db("INSERT INTO retailers (id, name) VALUES (:r, 'Migration Test Shop 309')", r=retailer_id)
+    shipping = {"negative": -100, "zero": 0, "positive": 250, "null": None}
+    for label, value in shipping.items():
+        db(
+            "INSERT INTO orders (id, retailer_id, order_date, order_number, currency_code, "
+            "shipping_cost_minor) VALUES (:o, :r, :d, :n, 'AUD', :s)",
+            o=uuid.uuid4(),
+            r=retailer_id,
+            d=date(2026, 3, 14),
+            n=label,
+            s=value,
+        )
+    threshold = {"negative": -1, "zero": 0, "positive": 3, "null": None}
+    for label, value in threshold.items():
+        db(
+            "INSERT INTO consumables (id, name, category, quantity_on_hand, low_stock_threshold) "
+            "VALUES (:i, :n, 'paint', 1, :t)",
+            i=uuid.uuid4(),
+            n=label,
+            t=value,
+        )
+
+    walk.up(NON_NEGATIVE_CHECKS)
+    assert dict(db("SELECT order_number, shipping_cost_minor FROM orders")) == {
+        "negative": None,
+        "zero": 0,
+        "positive": 250,
+        "null": None,
+    }
+    assert dict(db("SELECT name, low_stock_threshold FROM consumables")) == {
+        "negative": None,
+        "zero": 0,
+        "positive": 3,
+        "null": None,
+    }
+    with pytest.raises(IntegrityError, match="ck_orders_shipping_cost_non_negative"):
+        db("UPDATE orders SET shipping_cost_minor = -1 WHERE order_number = 'zero'")
+    with pytest.raises(IntegrityError, match="ck_consumables_low_stock_threshold_non_negative"):
+        db("UPDATE consumables SET low_stock_threshold = -1 WHERE name = 'zero'")
+
+    walk.down(MCP_OAUTH_STATE)
+    db("UPDATE orders SET shipping_cost_minor = -1 WHERE order_number = 'zero'")
+    db("UPDATE consumables SET low_stock_threshold = -1 WHERE name = 'zero'")
+    assert db("SELECT shipping_cost_minor FROM orders WHERE order_number = 'negative'") == [(None,)]
+
+
+def test_every_migration_renders_offline(capsys):
+    """`alembic upgrade --sql` renders the whole chain as a script without touching a
+    database (env.py's offline mode). A migration that reads a result executes
+    nothing offline and crashed there: #309's first form read `.rowcount` (Greptile,
+    PR #313 round 1). The clean-up has to reach the script, ahead of the CHECK."""
+    command.upgrade(Config("alembic.ini"), f"base:{HEAD}", sql=True)
+    script = capsys.readouterr().out
+    clear = script.index(
+        "UPDATE orders SET shipping_cost_minor = NULL WHERE shipping_cost_minor < 0"
+    )
+    assert script.index("ck_orders_shipping_cost_non_negative") > clear
+    assert "UPDATE consumables SET low_stock_threshold = NULL WHERE low_stock_threshold < 0" in (
+        script
+    )
+
+
+#: Where the models are built for comparison, beside the migrated schema.
+MODELS_PROBE = "models_probe_309"
+
+
+async def _check_definitions(schema: str) -> dict[tuple[str, str], str]:
+    async with get_sessionmaker()() as session:
+        rows = await session.execute(
+            text(
+                "SELECT t.relname, c.conname, pg_get_constraintdef(c.oid) "
+                "FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid "
+                "JOIN pg_namespace n ON n.oid = t.relnamespace "
+                "WHERE c.contype = 'c' AND n.nspname = :schema"
+            ),
+            {"schema": schema},
+        )
+        return {(table, name): definition for table, name, definition in rows}
+
+
+async def _models_and_migrations() -> tuple[dict, dict]:
+    engine = get_sessionmaker().kw["bind"]
+    async with engine.begin() as conn:
+        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{MODELS_PROBE}" CASCADE'))
+        await conn.execute(text(f'CREATE SCHEMA "{MODELS_PROBE}"'))
+        await conn.run_sync(
+            lambda sync: Base.metadata.create_all(
+                sync.execution_options(schema_translate_map={None: MODELS_PROBE})
+            )
+        )
+    try:
+        migrated = await _check_definitions("public")
+        built = await _check_definitions(MODELS_PROBE)
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA "{MODELS_PROBE}" CASCADE'))
+    tables = {table.name for table in Base.metadata.sorted_tables}
+    return built, {key: value for key, value in migrated.items() if key[0] in tables}
+
+
+def test_every_check_the_models_declare_is_in_the_migrated_schema():
+    """The models and the migrations each declare the constraints, and nothing held
+    the two together: a CHECK added to a model without a migration, or the reverse,
+    passed every test (found while doing #309). Compared by name **and definition**
+    (Greptile, PR #313 round 1: a same-named constraint with another bound passed
+    the name-only form). Both sides are Postgres's own rendering: the models are
+    built into a scratch schema, so `BETWEEN` and `IN`, which Postgres rewrites,
+    read the same on both."""
+    built, migrated = asyncio.run(_models_and_migrations())
+    assert len(built) >= 20, built
+    assert built == migrated, {
+        "in the models only": sorted(set(built) - set(migrated)),
+        "in the database only": sorted(set(migrated) - set(built)),
+        "defined differently": {
+            key: (built[key], migrated[key])
+            for key in set(built) & set(migrated)
+            if built[key] != migrated[key]
+        },
+    }

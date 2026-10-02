@@ -2837,7 +2837,10 @@ negative value imported, which no other writer could store. Each bounded column 
 declares its range in `spec.py` (`minimum` / `maximum`), the planner refuses a value
 outside it as a row error after money scaling (named as the cell the sheet wrote),
 and `tests/test_import_ranges.py` holds the declarations to both the CHECKs and the
-request schemas. The rating's numbers live once, in `services/numeric.py`.
+request schemas. The rating's numbers live once, in `services/numeric.py`. Since
+#309 the database holds those two as well: CHECK constraints, with the upgrade clearing
+any negative an earlier import stored to null ("not recorded", "no alert"), never to 0,
+which would claim free shipping or an alert at zero.
 
 A blank cell in an *included* column means null; a column omitted from the file entirely
 is left alone. That's needed for archive fidelity, but it makes partial sheets dangerous

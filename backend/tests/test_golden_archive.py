@@ -482,7 +482,19 @@ async def test_the_fixture_restores_into_an_empty_instance_losslessly(client):
     archive = golden_zip()
     plan = await preview(client, archive)
     assert plan["blocking_errors"] == []
-    assert plan["warnings"] == []
+    # The one warning the fixture may earn: once a migration lands after it was
+    # generated, its manifest names an older schema, which the importer says out
+    # loud (§12.1). `schema_version` is volatile, not contract, so that is not a
+    # reason to regenerate it; but it is the only warning allowed. #309's
+    # migration was the first to move the head, and this assertion failed.
+    archived = json.loads((GOLDEN / "manifest.json").read_bytes())["schema_version"]
+    head = ScriptDirectory.from_config(Config("alembic.ini")).get_current_head()
+    drift = {
+        "code": "import.schema_drift",
+        "params": {"archive_schema": archived, "instance_schema": head},
+    }
+    expected = [] if archived == head else [drift]
+    assert [{"code": w["code"], "params": w["params"]} for w in plan["warnings"]] == expected
     for table in plan["tables"]:
         # The settings singleton always exists, so restoring it is an update.
         expected = {"update"} if table["table"] == "instance_settings" else {"create"}

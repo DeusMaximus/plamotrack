@@ -33,6 +33,14 @@ Shape:
 
 ---
 
+## #309 — the database refuses a negative shipping cost or low-stock threshold (PR #313)
+- **Release note:** Upgrading clears any negative shipping cost or low-stock threshold
+  to blank. Only an import made before this release's import range checks (#305) could
+  have stored one; the upgrade log says how many it cleared. From then on the database
+  refuses a negative in either, as every other way in already did.
+- **README:** nothing.
+- **Docs site:** the upgrade notes for this release: the one-line clean-up above.
+
 ## #305 — an import with an out-of-range value is refused in the preview, not at apply (PR #310, `8ba9c6e`)
 - **Release note:** An import holding a rating outside 1–5, or a negative stock level,
   price, cost, shipping cost, low-stock threshold or quantity used, is now refused in

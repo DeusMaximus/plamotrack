@@ -42,7 +42,11 @@ class Consumable(UUIDPrimaryKeyMixin, Base):
     quantity_on_hand: Mapped[int] = mapped_column(default=0)
     low_stock_threshold: Mapped[int | None]
 
-    __table_args__ = (CheckConstraint("quantity_on_hand >= 0", name="quantity_non_negative"),)
+    __table_args__ = (
+        CheckConstraint("quantity_on_hand >= 0", name="quantity_non_negative"),
+        # Null is "no alert"; a negative threshold could never fire (#309).
+        CheckConstraint("low_stock_threshold >= 0", name="low_stock_threshold_non_negative"),
+    )
 
 
 class Upgrade(UUIDPrimaryKeyMixin, Base):

@@ -58,6 +58,13 @@ class Order(UUIDPrimaryKeyMixin, Base):
     # on hand", not "on hand + on order".
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
+    # Every writer refuses a negative shipping cost (REST and MCP through
+    # `NonNegativeInt4`, the importer through its column bound since #305); the
+    # database says so too since #309.
+    __table_args__ = (
+        CheckConstraint("shipping_cost_minor >= 0", name="shipping_cost_non_negative"),
+    )
+
     items: Mapped[list["OrderItem"]] = relationship(
         back_populates="order", cascade="all, delete-orphan"
     )

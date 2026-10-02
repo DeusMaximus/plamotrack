@@ -129,8 +129,11 @@ def _declared(table: str, column: str) -> tuple[int | None, int | None]:
 
 def test_every_range_check_is_declared_on_its_column():
     checks = _range_checks()
-    # Ten at the time of writing; the floor keeps the walk from passing on nothing.
-    assert len(checks) >= 10, checks
+    # Twelve since #309 added the shipping-cost and low-stock-threshold CHECKs; the
+    # floor keeps the walk from passing on nothing.
+    assert len(checks) >= 12, checks
+    assert ("orders", "shipping_cost_minor") in checks
+    assert ("consumables", "low_stock_threshold") in checks
     for key, bounds in checks.items():
         if key in OWN_GUARD:
             assert _declared(*key) == (None, None), key
