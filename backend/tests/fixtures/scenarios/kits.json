@@ -1,0 +1,112 @@
+{
+  "format": "plamotrack-scenarios",
+  "version": 1,
+  "note": "Build dates on a status change (§3.1, #94, services/kits.py `stamp_build_date`): entering building stamps build_started_at, entering complete stamps build_completed_at, but only a date that is empty and that the same request did not state, even as null. Read by backend/tests/test_scenarios.py AND by plamotrack-ios's domain tests. Add a case here rather than to either suite. The format is .agents/testing-and-review.md → 'Behaviour scenarios'. `why` is for the reader; nothing asserts on it.",
+  "scenarios": [
+    {
+      "id": "starting-a-build-stamps-its-start",
+      "why": "an empty start date takes the moment of the change",
+      "given": { "kits": [{ "id": "@kits:zaku", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "status_updated_at": "2026-03-01T00:00:00+00:00" }] },
+      "steps": [{ "op": "update_kit", "args": { "kit_id": "@kits:zaku", "status": "building" } }],
+      "then": {
+        "tables": {
+          "kits": [
+            {
+              "id": "@kits:zaku",
+              "status": "building",
+              "status_updated_at": "@now",
+              "build_started_at": "@now",
+              "build_completed_at": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a-start-date-stated-with-the-change-wins",
+      "why": "a backfill: the request says when the build began",
+      "given": { "kits": [{ "id": "@kits:gouf", "name": "Gouf", "grade": "HG", "scale": "1/144", "status": "backlog", "status_updated_at": "2026-03-01T00:00:00+00:00" }] },
+      "steps": [
+        {
+          "op": "update_kit",
+          "args": { "kit_id": "@kits:gouf", "status": "building", "build_started_at": "2026-04-01T00:00:00+00:00" }
+        }
+      ],
+      "then": {
+        "tables": {
+          "kits": [
+            { "id": "@kits:gouf", "status": "building", "build_started_at": "2026-04-01T00:00:00+00:00" }
+          ]
+        }
+      }
+    },
+    {
+      "id": "an-empty-date-stated-with-the-change-stays-empty",
+      "why": "null in the request is an answer, not an absence: the build has no recorded start",
+      "given": { "kits": [{ "id": "@kits:dom", "name": "Dom", "grade": "HG", "scale": "1/144", "status": "backlog", "status_updated_at": "2026-03-01T00:00:00+00:00" }] },
+      "steps": [
+        { "op": "update_kit", "args": { "kit_id": "@kits:dom", "status": "building", "build_started_at": null } }
+      ],
+      "then": { "tables": { "kits": [{ "id": "@kits:dom", "status": "building", "build_started_at": null }] } }
+    },
+    {
+      "id": "finishing-stamps-completion-and-keeps-the-start",
+      "why": "completion stamps its own date; a start already recorded is never restamped",
+      "given": {
+        "kits": [
+          {
+            "id": "@kits:zaku",
+            "name": "Zaku II",
+            "grade": "HG", "scale": "1/144",
+            "status": "building",
+            "status_updated_at": "2026-03-21T10:00:00+00:00",
+            "build_started_at": "2026-03-21T10:00:00+00:00"
+          }
+        ]
+      },
+      "steps": [{ "op": "update_kit", "args": { "kit_id": "@kits:zaku", "status": "complete", "rating": 4 } }],
+      "then": {
+        "tables": {
+          "kits": [
+            {
+              "id": "@kits:zaku",
+              "status": "complete",
+              "rating": 4,
+              "build_started_at": "2026-03-21T10:00:00+00:00",
+              "build_completed_at": "@now"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "a-change-that-is-not-a-change-stamps-nothing",
+      "why": "only a transition stamps: setting building on a building kit moves no clock",
+      "given": {
+        "kits": [
+          {
+            "id": "@kits:zaku",
+            "name": "Zaku II",
+            "grade": "HG", "scale": "1/144",
+            "status": "building",
+            "status_updated_at": "2026-03-21T10:00:00+00:00",
+            "build_started_at": null
+          }
+        ]
+      },
+      "steps": [{ "op": "update_kit", "args": { "kit_id": "@kits:zaku", "status": "building" } }],
+      "then": {
+        "tables": {
+          "kits": [
+            {
+              "id": "@kits:zaku",
+              "status": "building",
+              "status_updated_at": "2026-03-21T10:00:00+00:00",
+              "build_started_at": null
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

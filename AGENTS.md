@@ -781,6 +781,9 @@ for four instances of one money rule applied unevenly (`.agents/lessons.md` →
   `frontend/src/lib/__fixtures__/money-cases.json` is read by both `format.test.ts`
   and `backend/tests/test_currency.py`. Two hand-maintained lists drift, and a
   drifted pair reads green on both sides with a wrong number in the database.
+  The same holds across repositories: a business rule plamotrack-ios reimplements
+  gets a behaviour scenario in `backend/tests/fixtures/scenarios/` (#307), which
+  both sides run (`.agents/testing-and-review.md` → "Behaviour scenarios").
 
 ## Writing the test: sweep the values, not just the paths
 

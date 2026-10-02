@@ -1,0 +1,142 @@
+{
+  "format": "plamotrack-scenarios",
+  "version": 1,
+  "note": "Archive imports (§12.4, §12.5, AGENTS.md rule 10): re-importing your own export changes nothing in any mode, and an import never derives stock. `\"archive\": \"export\"` is this instance's own export at that step; `{\"tables\": ...}` is a hand-written sheet in CSV cells. Read by backend/tests/test_scenarios.py AND by plamotrack-ios's domain tests. Add a case here rather than to either suite. The format is .agents/testing-and-review.md → 'Behaviour scenarios'. `why` is for the reader; nothing asserts on it.",
+  "scenarios": [
+    {
+      "id": "merging-your-own-export-changes-nothing",
+      "why": "§12.5: every row matches by id and differs in nothing, so nothing is created, updated or skipped",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan", "rating": 5 }],
+        "consumables": [
+          { "id": "@consumables:marker", "name": "Gundam Marker GM01", "category": "marker", "quantity_on_hand": 3 }
+        ],
+        "orders": [
+          { "id": "@orders:hlj", "retailer_id": "@retailers:hlj", "order_date": "2026-03-14", "currency_code": "JPY", "received_at": "2026-03-20T00:00:00+00:00" }
+        ],
+        "order_items": [
+          { "id": "@order_items:kit", "order_id": "@orders:hlj", "item_type": "kit", "quantity": 1, "unit_price_minor": 2450, "currency_code": "JPY" },
+          { "id": "@order_items:marker", "order_id": "@orders:hlj", "item_type": "consumable", "catalog_ref_id": "@consumables:marker", "quantity": 3, "unit_price_minor": 330, "currency_code": "JPY" }
+        ],
+        "kits": [
+          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "order_item_id": "@order_items:kit", "status_updated_at": "2026-03-20T00:00:00+00:00" }
+        ]
+      },
+      "steps": [
+        {
+          "op": "import_archive",
+          "args": { "mode": "merge", "archive": "export" },
+          "result": { "created": 0, "updated": 0, "skipped": 0, "kits_spawned": 0 }
+        }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "adding-only-from-your-own-export-skips-every-row",
+      "why": "add-only leaves every existing record alone: the six collection rows and the settings row are all skipped",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan", "rating": 5 }],
+        "consumables": [
+          { "id": "@consumables:marker", "name": "Gundam Marker GM01", "category": "marker", "quantity_on_hand": 3 }
+        ],
+        "orders": [
+          { "id": "@orders:hlj", "retailer_id": "@retailers:hlj", "order_date": "2026-03-14", "currency_code": "JPY", "received_at": "2026-03-20T00:00:00+00:00" }
+        ],
+        "order_items": [
+          { "id": "@order_items:kit", "order_id": "@orders:hlj", "item_type": "kit", "quantity": 1, "unit_price_minor": 2450, "currency_code": "JPY" },
+          { "id": "@order_items:marker", "order_id": "@orders:hlj", "item_type": "consumable", "catalog_ref_id": "@consumables:marker", "quantity": 3, "unit_price_minor": 330, "currency_code": "JPY" }
+        ],
+        "kits": [
+          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "order_item_id": "@order_items:kit", "status_updated_at": "2026-03-20T00:00:00+00:00" }
+        ]
+      },
+      "steps": [
+        {
+          "op": "import_archive",
+          "args": { "mode": "add_only", "archive": "export" },
+          "result": { "created": 0, "updated": 0, "skipped": 7, "kits_spawned": 0 }
+        }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "replacing-everything-with-your-own-export-restores-it-exactly",
+      "why": "replace-all deletes the collection and recreates all six rows with their own ids; the result is the collection it replaced",
+      "given": {
+        "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan", "rating": 5 }],
+        "consumables": [
+          { "id": "@consumables:marker", "name": "Gundam Marker GM01", "category": "marker", "quantity_on_hand": 3 }
+        ],
+        "orders": [
+          { "id": "@orders:hlj", "retailer_id": "@retailers:hlj", "order_date": "2026-03-14", "currency_code": "JPY", "received_at": "2026-03-20T00:00:00+00:00" }
+        ],
+        "order_items": [
+          { "id": "@order_items:kit", "order_id": "@orders:hlj", "item_type": "kit", "quantity": 1, "unit_price_minor": 2450, "currency_code": "JPY" },
+          { "id": "@order_items:marker", "order_id": "@orders:hlj", "item_type": "consumable", "catalog_ref_id": "@consumables:marker", "quantity": 3, "unit_price_minor": 330, "currency_code": "JPY" }
+        ],
+        "kits": [
+          { "id": "@kits:a", "name": "Zaku II", "grade": "HG", "scale": "1/144", "status": "backlog", "order_item_id": "@order_items:kit", "status_updated_at": "2026-03-20T00:00:00+00:00" }
+        ]
+      },
+      "steps": [
+        {
+          "op": "import_archive",
+          "args": { "mode": "replace_all", "archive": "export", "confirm": "REPLACE" },
+          "result": { "created": 6, "updated": 0, "skipped": 0, "kits_spawned": 0 }
+        }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "importing-a-received-order-never-adds-stock",
+      "why": "rule 10: quantity_on_hand comes only from the catalog sheets; a received line in an import states history, it doesn't deliver",
+      "given": {
+        "consumables": [
+          { "id": "@consumables:cement", "name": "Tamiya Extra Thin Cement", "category": "cement", "quantity_on_hand": 1 }
+        ]
+      },
+      "steps": [
+        {
+          "op": "import_archive",
+          "args": {
+            "mode": "merge",
+            "archive": {
+              "tables": {
+                "orders": [
+                  {
+                    "id": "@orders:sheet",
+                    "retailer_name": "Corner Hobbies",
+                    "order_date": "2026-02-01",
+                    "currency_code": "AUD",
+                    "received_at": "2026-02-01T05:00:00+00:00"
+                  }
+                ],
+                "order_items": [
+                  {
+                    "id": "@order_items:sheet",
+                    "order_id": "@orders:sheet",
+                    "item_type": "consumable",
+                    "catalog_name": "Tamiya Extra Thin Cement",
+                    "quantity": "2",
+                    "unit_price": "7.00",
+                    "currency_code": "AUD"
+                  }
+                ]
+              }
+            }
+          },
+          "result": { "created": 3, "updated": 0 }
+        }
+      ],
+      "then": {
+        "tables": {
+          "retailers": [{ "name": "Corner Hobbies" }],
+          "orders": [{ "id": "@orders:sheet", "received_at": "2026-02-01T05:00:00+00:00" }],
+          "order_items": [
+            { "id": "@order_items:sheet", "catalog_ref_id": "@consumables:cement", "quantity": 2, "unit_price_minor": 700 }
+          ]
+        }
+      }
+    }
+  ]
+}

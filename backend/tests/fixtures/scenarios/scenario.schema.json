@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/DeusMaximus/plamotrack/backend/tests/fixtures/scenarios/scenario.schema.json",
+  "title": "plamotrack behaviour scenarios",
+  "description": "One file of behaviour scenarios (#307). The format is described in .agents/testing-and-review.md, under 'Behaviour scenarios'. Read by backend/tests/test_scenarios.py and by plamotrack-ios's domain tests.",
+  "type": "object",
+  "required": ["format", "version", "note", "scenarios"],
+  "additionalProperties": false,
+  "properties": {
+    "format": { "const": "plamotrack-scenarios" },
+    "version": { "const": 1 },
+    "note": { "type": "string", "minLength": 1 },
+    "scenarios": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/scenario" } }
+  },
+  "$defs": {
+    "handle": {
+      "description": "A record's id inside one scenario: @<table>:<name>. Each runner maps it to one uuid.",
+      "type": "string",
+      "pattern": "^@[a-z_]+:[a-z0-9_-]+$"
+    },
+    "table": {
+      "enum": [
+        "instance_settings",
+        "retailers",
+        "tools",
+        "consumables",
+        "upgrades",
+        "display_items",
+        "orders",
+        "order_items",
+        "kits",
+        "upgrade_applications",
+        "kit_photos"
+      ]
+    },
+    "cell": {
+      "description": "A typed archive value: integers for counts and minor units, null for null, strings for text, enums, dates and UTC timestamps.",
+      "type": ["string", "integer", "boolean", "null"]
+    },
+    "row": {
+      "type": "object",
+      "additionalProperties": { "$ref": "#/$defs/cell" }
+    },
+    "tables": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/table" },
+      "additionalProperties": { "type": "array", "items": { "$ref": "#/$defs/row" } }
+    },
+    "refusal": {
+      "type": "object",
+      "required": ["kind", "code", "params"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "enum": ["not_found", "conflict", "invalid_input"] },
+        "code": { "type": "string", "pattern": "^[a-z_]+\\.[a-z_]+$" },
+        "params": { "type": "object" }
+      }
+    },
+    "step": {
+      "type": "object",
+      "required": ["op", "args"],
+      "additionalProperties": false,
+      "properties": {
+        "op": {
+          "enum": [
+            "create_retailer",
+            "update_retailer",
+            "create_catalog_item",
+            "update_catalog_item",
+            "create_order",
+            "update_order",
+            "mark_order_shipped",
+            "receive_order",
+            "delete_order",
+            "update_kit",
+            "adjust_stock",
+            "apply_upgrade",
+            "withdraw_upgrade_application",
+            "import_archive"
+          ]
+        },
+        "args": { "type": "object" },
+        "as": { "$ref": "#/$defs/handle" },
+        "expect": {
+          "oneOf": [
+            { "const": "ok" },
+            {
+              "type": "object",
+              "required": ["refused"],
+              "additionalProperties": false,
+              "properties": { "refused": { "$ref": "#/$defs/refusal" } }
+            }
+          ]
+        },
+        "result": { "type": "object" },
+        "why": { "type": "string" }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "required": ["id", "why", "given", "steps", "then"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+        "why": { "type": "string", "minLength": 1 },
+        "given": { "$ref": "#/$defs/tables" },
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/step" } },
+        "then": {
+          "oneOf": [
+            { "const": "unchanged" },
+            {
+              "type": "object",
+              "required": ["tables"],
+              "additionalProperties": false,
+              "properties": { "tables": { "$ref": "#/$defs/tables" } }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

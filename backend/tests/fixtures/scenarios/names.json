@@ -1,0 +1,113 @@
+{
+  "format": "plamotrack-scenarios",
+  "version": 1,
+  "note": "Names are unique per table regardless of case and surrounding whitespace, for retailers and every catalog table (§12.4, #107, services/names.py). Read by backend/tests/test_scenarios.py AND by plamotrack-ios's domain tests. Add a case here rather than to either suite. The format is .agents/testing-and-review.md → 'Behaviour scenarios'. `why` is for the reader; nothing asserts on it.",
+  "scenarios": [
+    {
+      "id": "a-retailer-named-like-another-in-other-case-is-refused",
+      "why": "trimmed and case-folded, ' hobby link JAPAN ' is the shop already on record",
+      "given": { "retailers": [{ "id": "@retailers:hlj", "name": "Hobby Link Japan" }] },
+      "steps": [
+        {
+          "op": "create_retailer",
+          "args": { "name": " hobby link JAPAN " },
+          "expect": {
+            "refused": {
+              "kind": "conflict",
+              "code": "name.duplicate",
+              "params": { "kind": "retailers", "name": "Hobby Link Japan", "existing_id": "@retailers:hlj" }
+            }
+          }
+        }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "renaming-a-retailer-onto-another-is-refused",
+      "why": "a rename answers to the same rule as a create",
+      "given": {
+        "retailers": [
+          { "id": "@retailers:hlj", "name": "Hobby Link Japan" },
+          { "id": "@retailers:amiami", "name": "AmiAmi" }
+        ]
+      },
+      "steps": [
+        {
+          "op": "update_retailer",
+          "args": { "retailer_id": "@retailers:amiami", "name": "HOBBY LINK JAPAN" },
+          "expect": {
+            "refused": {
+              "kind": "conflict",
+              "code": "name.duplicate",
+              "params": { "kind": "retailers", "name": "Hobby Link Japan", "existing_id": "@retailers:hlj" }
+            }
+          }
+        }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "a-catalog-item-named-like-another-in-other-case-is-refused",
+      "why": "the same rule on a catalog table",
+      "given": {
+        "consumables": [
+          { "id": "@consumables:cement", "name": "Tamiya Extra Thin Cement", "category": "cement", "quantity_on_hand": 1 }
+        ]
+      },
+      "steps": [
+        {
+          "op": "create_catalog_item",
+          "args": { "item_type": "consumable", "name": "tamiya extra thin cement", "category": "cement" },
+          "expect": {
+            "refused": {
+              "kind": "conflict",
+              "code": "name.duplicate",
+              "params": { "kind": "consumables", "name": "Tamiya Extra Thin Cement", "existing_id": "@consumables:cement" }
+            }
+          }
+        }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "renaming-a-catalog-item-onto-another-is-refused",
+      "why": "a rename answers to the same rule as a create",
+      "given": {
+        "tools": [
+          { "id": "@tools:nippers", "name": "Godhand Ultimate Nippers", "category": "cutting", "quantity_on_hand": 1 },
+          { "id": "@tools:knife", "name": "Hobby knife", "category": "cutting", "quantity_on_hand": 1 }
+        ]
+      },
+      "steps": [
+        {
+          "op": "update_catalog_item",
+          "args": { "item_type": "tool", "item_id": "@tools:knife", "name": "godhand ultimate NIPPERS" },
+          "expect": {
+            "refused": {
+              "kind": "conflict",
+              "code": "name.duplicate",
+              "params": { "kind": "tools", "name": "Godhand Ultimate Nippers", "existing_id": "@tools:nippers" }
+            }
+          }
+        }
+      ],
+      "then": "unchanged"
+    },
+    {
+      "id": "re-casing-an-item-s-own-name-is-allowed",
+      "why": "the only row the new name matches is the row being renamed",
+      "given": {
+        "tools": [
+          { "id": "@tools:nippers", "name": "Godhand Ultimate Nippers", "category": "cutting", "quantity_on_hand": 1 }
+        ]
+      },
+      "steps": [
+        {
+          "op": "update_catalog_item",
+          "args": { "item_type": "tool", "item_id": "@tools:nippers", "name": "GodHand Ultimate Nippers" }
+        }
+      ],
+      "then": { "tables": { "tools": [{ "id": "@tools:nippers", "name": "GodHand Ultimate Nippers" }] } }
+    }
+  ]
+}
