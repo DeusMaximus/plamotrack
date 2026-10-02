@@ -41,6 +41,46 @@ Template:
 
 ---
 
+## 2026-10-03 — Claude Code (Opus 5.5) — #304 MERGED as `39a9661` (PR #314): a phone imports — Merge and Add only, Apply in a bar above the tab bar; review routing settled
+
+- **Done:**
+  - **[PR #314](https://github.com/DeusMaximus/plamotrack/pull/314)** squash-merged as **`39a9661`** by `--auto --match-head-commit` at `b15ba9f`, after all three checks. #304 is closed.
+    - The owner's calls (02/10): Merge and Add only on a phone, `replace_all` never drawn; the same `ImportPreview` with phone folds; the starter sheet only, after the import; a mockup first. Cancel left and Apply right, as in every dialog's bar, against the mockup.
+    - The mockup is a private canvas on the owner's account (the link is in the agent's memory, not in the repo).
+    - Verified in the iOS Simulator (iPhone 18 Pro, Safari, the dev instance; the owner signed in): the archive downloaded and picked from Files, previewed, cancelled. Nothing was applied to the dev database.
+    - What the design settled is in design §13.7, "Amended — #304": the sent import as its own phase (`submitted`), preview numbering (`previewSeq`), and where the keyboard goes at each transition.
+  - **Reviews:**
+    - Round 1 was the GitHub autoreviews: Greptile 4/5, the Codex connector two P2s.
+    - Rounds 2–4 were briefed Codex in the desktop app (GPT 6.1 Sol): NO-GO (1 P2, 2 P3), NO-GO (1 P2, reclassified P3 by exposure on the owner's call, plus 1 P3), then **GO** with 2 P3s. Those two were taken, and a sibling from `main` was folded in (a preview's answer dropping the keyboard), with no fifth round.
+    - The PR body has every round's mutant table and a coverage record. Two lessons are in `.agents/lessons.md` (#304).
+  - **Final state at `b15ba9f`:** full Chromium e2e 185 passed / 0 failed; WebKit `pages.spec.ts` 12 passed; the held-request tests ×5 in each engine; 650 unit tests.
+  - **Process, on `main` (owner, 03/10):**
+    - Review briefs live in `.dev/<issue>/review-brief-<n>.md` and travel as a one-line paste; they are no longer printed in chat.
+    - Small PRs ride Greptile (only the first review is automatic; re-runs are the owner's) and the Codex connector (`@codex review`).
+    - Big PRs get briefed Codex on the Mac: the plugin's task route without a browser, the desktop app with one.
+    - All of this is now in `.agents/testing-and-review.md` and `.agents/review-brief.md`.
+- **State:**
+  - **Unreleased on `main`:** #294, #289, #247, #302 (#299, #300, #301), #310 (#305), #313 (#309, a migration) and now **#314 (#304)**. See `.agents/next-release.md`; #304's entry owes the docs site's phone page (and retaken `phone-data` screenshots) and the import page's opening line.
+  - **Not checked by anyone** for #304 (the coverage record has the full list): VoiceOver announcing the status line; native CSV selection on iOS; Android pickers; a physical device; a real plamotrack-ios archive.
+  - **Known gaps, not filed:**
+    - Leaving Data management while an import runs: the same on `main`.
+    - Download errors still show at the section's head, a screen away from the starter sheet on a phone.
+  - **Flaky:** `lists.spec.ts`'s #275 test ("a dialog opened before the turn's news arrives") failed once on `tablet` in a full run. It fails 1 in 3 on `main` too, not this PR's. Not filed.
+  - **The iOS Simulator** (iPhone 18 Pro) is still booted, with the owner's dev session in its Safari. The dev servers are stopped. Throwaway databases dropped, no worktrees, `main` clean.
+  - Merged branches left on origin: `feat/304-phone-import`, plus the ones listed below.
+  - **Carried:**
+    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
+    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
+    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
+- **Next:**
+  1. File the two known gaps and the #275 flake, if the owner wants them tracked.
+  2. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
+  3. Carried:
+     - #279's edge probes, then #281's packaging; #282's VPS path;
+     - at the next release, work through `.agents/next-release.md`, including #304's docs-site page;
+     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
+     - posting the rehearsal on #285.
+
 ## 2026-10-02 — Claude Code (Opus 5.5) — #305 (`8ba9c6e`, PR #310), #307 (`f8d7f0d`, PR #311) and #309 (`4651ce2`, PR #313) MERGED; #306 fixed on the docs site; `main` gets a ruleset
 
 - **Done:**
@@ -251,48 +291,3 @@ Template:
      - Posting the rehearsal on #285.
      - Untested: the release-to-release update, and the Windows commands in Git Bash.
      - Cloud-feasible candidates: #124, #125, #268, #238, and the importer bugs #110, #116, #134 and #137.
-
-## 2026-09-25 — Claude Code (Opus 5.5) — #247 MERGED as `6000d96` (PR #298): kit lists sort by the date they print (`started`, `completed`, `newest`); list pages drop an unknown filter or sort from the URL
-
-- **Done:**
-  - [PR #298](https://github.com/DeusMaximus/plamotrack/pull/298) squash-merged as **`6000d96`**, pinned to the reviewed head `09f2260`; #247 closed.
-    - `GET /kits` and MCP `list_kits` gain `started` and `completed` (the build's own date, newest first, undated kits last, `NULLS LAST` spelled out, ties by creation then id) and `newest` (created, newest first). `created`, `recent` and `name` are unchanged; `created` is still the API default.
-    - Home: the bench sorts by `started`; Recently completed by `completed`, its *view all* `/kits?status=complete&sort=completed`. The Backlog strip keeps `recent` (newest arrivals); its *view all* is `/kits?status=backlog`, the page's default.
-    - `completedOn` is the build date or null; an undated build prints "—" on Home and in the Kits page's Completed column.
-    - Kits page menu: Newest added (the default), Oldest added, Recently started, Recently completed, Name A–Z. `recent` is not offered.
-    - `useEnumParam` now drops a filter or sort value outside a page's vocabulary from the URL (replace, no history entry), on every list page. This came from Greptile's P2 in round 1: old `/kits?sort=recent` links, and old Orders links with `status=shipped`.
-    - Docs: design §7, §13.2, §13.4. Its README lines were reverted to the release's wording afterwards (below).
-  - Tests:
-    - One shared fixture, `frontend/src/lib/__fixtures__/kit-sort-cases.json`, read by `backend/tests/test_kit_sorts.py` (16 cases) and `src/lib/home.test.ts` (18).
-    - Negative control on unfixed `main`: backend 12 red / 4 green, frontend 7 red / 36 green.
-    - The `247-` mutation set: 7/7 killed.
-    - E2E: the full Chromium suite, 184 passed. `list-urls.spec.ts` covers the URL clean-up, and its new assertions fail without the fix.
-  - `.agents/testing-and-review.md`: the cloud e2e recipe, a note on running the mutation harness in a worktree, and the suite counts.
-- **Decisions (the owner's, 2026-09-25):**
-  - New sorts beside `recent`, not a status-aware `recent`.
-  - `recent` comes off the Kits page and nowhere else; the page defaults to `newest`.
-  - The Backlog *view all* opens the page's default order.
-  - **No fallback for a missing build date:** undated builds print none and sort last. The issue had proposed falling back to the status clock.
-  - **Review call:** Greptile only, with Codex in its own cloud session available. Greptile went 4/5 then 5/5. The owner triggered CodeRabbit once: two Minor doc findings, both taken; its docstring warning declined.
-- **State:**
-  - **On the live instance once released:** completed kits imported without a completion date show "—" and sort last until dated. So do kits created directly as `complete`, because a create never stamps a build date.
-  - **Unreleased on `main`:** #294 (Pocket ID `resource`), #289 (`create_order` `retailer_id`), #247.
-  - **Cloud image:** Playwright drives the preinstalled Chromium through the recipe; no WebKit.
-  - **New rule (the owner's, 2026-09-25; `AGENTS.md` → Release artifacts, `.agents/releases.md` step 7):** the docs site and the README's user-facing parts describe the **published release**, never `main`. The README lines #289 and #247 had changed went back to the v0.5.2-alpha wording on `main` the same day.
-  - **Owed at the next release:** see `.agents/next-release.md` (the owner's call, 2026-09-25). It has entries for #247, #289 and #294; each user-visible PR adds its own, and after publication the entries that release shipped are removed.
-  - **Unfiled defect, carried:** `_assemble_database_url` in `app/config.py` does not bracket an IPv6 `POSTGRES_HOST`. Compose pins `POSTGRES_HOST: db`, so only a source run with an IPv6 literal hits it.
-  - **Carried from the 2026-09-23 #294 entry:**
-    - **testhost is in the spike's state, not the gate's.** `/opt/plamotrack-280` runs the #294 build behind the tunnel against Pocket ID. The gate's stack and Keycloak are stopped. `probe.py teardown --base https://NAME --ssh root@HOST` restores them.
-    - **Don't recreate Keycloak's container:** its `sub` would change.
-    - The Claude.ai "Testing" connector points at the tunnel name.
-    - The LXC is a v0.5.2 release install. #278 is open for the owner's skill-zip check.
-  - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
-- **Next:**
-  1. At the next release: work through `.agents/next-release.md` (release step 7). Nothing changes on docs.gunp.la before then.
-  2. The IPv6 `POSTGRES_HOST` defect: file it and fix it (small; can be done in a cloud session).
-  3. Cloud-feasible candidates:
-     - #124 (possibly already covered by the description; owner's call);
-     - #125 (bigger than it looks: order edits, the importer, the dialog);
-     - #268 and #238 (Chromium e2e now runs in the cloud);
-     - the importer bugs #110, #116, #134 and #137.
-  4. Carried: #279's edge probes then #281's packaging; the #280 decision; `probe.py teardown`; posting the rehearsal on #285; the release-to-release update and Git Bash commands, untested.

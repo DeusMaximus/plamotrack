@@ -1689,3 +1689,37 @@ configuration also changes where the session's own reads and writes go. Ask what
 the mutant does to the test session itself, not only to the test. And ask where a
 green or red result would look different: a kill measured on a scratch machine says
 nothing about the machine the procedure is written for.
+
+## The mutant took two classes, and the allowance fitted the other one (#304, PR #314 round 2)
+
+The badge column's fix was two classes on one cell, `max-md:w-px max-md:pe-0`. The
+author's mutant removed both, measured 17 px against a 12.5 px allowance, and the PR
+said "killed". The allowance had been chosen as "the label cell's own padding", which
+was really the width of the *other* class's effect. So the true single-site mutant,
+`w-px` alone, left a gap of 8 px at 390 px and 109 px at 744. That fitted inside the
+allowance, and it survived when the reviewer ran it. Before that, the check had lived
+on a long label, where the mutant survived outright, because long names take the
+spare width themselves.
+
+What to keep: **a mutant is one site, and the anchor says which**. Two classes in one
+string are two sites. And **an allowance is a claim about what else the
+measurement contains**: name what it is for, then ask whether a mutant of the fix
+could hide inside it. A tolerance should be rounding unless something measured says
+otherwise. Measure where the defect has room to show (a short label; the widest end
+of the shell), not where the fixture happens to be.
+
+## `<body>` contains every alert (#304, PR #314 round 4)
+
+"The keyboard goes from the pending import to its outcome" asserted
+`document.activeElement.querySelector('[role="alert"]')`. When the keyboard is lost,
+`activeElement` is `<body>`, and `<body>` contains every alert on the page. So the
+assertion passed in exactly the state it existed to catch. Its mutant was killed only
+by a sibling assertion in another test, so the mutation pass looked clean. It was
+found when the next round's test, asking the same question for a refused preview,
+passed on the unfixed head, where the reviewer had already measured `<body>`.
+
+What to keep: **a containment check has a degenerate container: the root**. Exclude
+it explicitly, as `keyboardOnRefusal` does. Better, assert the named element, which
+#259's "Inside was the wrong question" already says for focus *within* a dialog.
+And **a mutant killed elsewhere says nothing about this assertion**: when you add
+an assertion for a defect, kill its mutant *through that assertion*, in that test.

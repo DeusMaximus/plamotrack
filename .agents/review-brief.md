@@ -5,16 +5,15 @@ prompt has been rewritten from memory every time. The parts that recur are the p
 that have cost time when forgotten: `--body-file` not `--body`, the phrase *mutation
 testing*, a fresh chat per Cursor round, a worktree rather than `git checkout --` for
 the negative control, the attribution line. This file holds them once. The agent
-opening the PR fills the `‹slots›` and **prints the finished brief directly in the
-chat, in full, inside a fenced block the owner can copy** — a four-backtick fence,
-because the brief itself contains three-backtick blocks. Never hand over only a path
-to a file in a temp directory: the owner's next step is paste, not `cat` (owner's
-call, 2026-08-24). Saving a scratchpad copy alongside is fine as a backup for later
-rounds; it is not the deliverable. **Since 2026-09-17 the scratchpad copy is also
-how the brief travels:** the owner's paste into the Codex app is one line — *"Follow
-the review brief at `<path>`"* — and the reviewer reads the file, so 17 KB of
-backticks never goes through a clipboard. The brief is still printed in chat in full;
-that is what the owner reads and what the record keeps. The reasons behind the fixed parts are in
+opening the PR fills the `‹slots›`, **saves the finished brief as
+`.dev/<issue>/review-brief-<round>.md`** (gitignored, in the checkout the reviewer
+runs in) and gives the owner **one line** to paste into the Codex app — *"Follow the
+review brief at `<absolute path>`"* — with a few lines in chat saying what it asks.
+**The whole brief is not printed in chat** (owner's call, 2026-10-03): the reviewer
+reads the file, so a chat copy only duplicated it. History: until 2026-10-03 the
+brief was printed in full as well; before 2026-09-17 the printed copy *was* the
+paste; and on 2026-08-24 the owner ruled out handing over a bare path into a temp
+directory. A `.dev/` file plus the one-liner is neither. The reasons behind the fixed parts are in
 `testing-and-review.md` → "External review" and `lessons.md` → "Review"; this file
 is the shape, not the why.
 

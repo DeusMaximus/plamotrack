@@ -845,6 +845,16 @@ the release gate instead. State the call and the reason in the hand-off entry.
 
 ### Which reviewer
 
+**Routing by size (owner's call, 2026-10-03, on #314):**
+- **Small changes** ride the automatic GitHub reviews.
+  - **Greptile** reviews a PR's first push on its own. Re-runs are the owner's to trigger, and it is capped at 50 a month.
+  - **The Codex connector** reviews when a PR opens. Re-run it with a PR comment, `@codex review`, optionally followed by what to look at.
+  - Both read the diff; neither runs this repo's suites, so a clean pass is not a measured GO. On #314 they were still worth it: the connector found a real defect nothing else had (picking the same file again fires no `change`).
+- **Big changes** get a briefed round of real Codex on the owner's Mac.
+  - Use the Claude Code plugin's task route when the round has no browser or Docker leg.
+  - Otherwise use the **Codex desktop app**: anything with Playwright, which is most frontend work. #314's rounds 2–4 ran there (GPT 6.1 Sol): NO-GO, NO-GO, GO, each finding replayed with a control.
+- GLM 5.3 / 5.3 Flash in T3 Code stays an option for a big round. Capacity is not the constraint.
+
 | Reviewer | Fits | Notes |
 | --- | --- | --- |
 | **GLM 5.3 Flash (Zhipu AI, via T3 Code on OpenRouter)** | **The default** for feature and fix rounds, any size | 1M context — holds a 2,000-insertion PR, its body and the process docs at once. Three rounds on 2026-08-28 (#171 GO+3P3, #173 GO+1P3, #174 GO+4P3): re-measures claims rather than reading them (its negative-control breakdowns have been exact), sweeps systematically (an AST prose-diff caught an author overclaim), probes empirically (injected a mutant to test an audit's pin), and discloses scope honestly. ~20 min and ~$0.07 a round (11.1M tokens ≈ $0.22 across all three, 96 % cache hit, OpenRouter billing). **Calibration: its findings have been reliable; its *remedies* are not pre-verified — measure a suggested fix like any claim** (#174 P3-1's suggested remedy failed measurement; the finding itself was right and subtle). It has not yet caught a hidden P2 on a branch that wasn't already exhaustively self-verified — widen its lane when it does. **#302 round 1 (2026-09-25):** it caught one. The branch had been exhaustively self-verified: a negative control, 9/9 mutants and a 28,128-case fuzz. It still found a P2: a mutant that sent the harness session's alembic and truncation to the dev database, invisible in the cloud where the author ran it. Its remedy for a P3 failed measurement again: it broke a real zone `%25`. Widening its lane is the owner's call. Replaced Cursor / Grok 4.6 (retired 2026-08-28, owner's call: the 256K context ceiling made large PRs a truncation risk; GLM holds them whole). |
@@ -858,10 +868,14 @@ queue. Both external tools output to chat unless told otherwise.
 
 ### Briefing a reviewer
 
-**The brief is a template — `.agents/review-brief.md`.** Fill its `‹slots›` and
-**print the finished brief in the chat, in full, in a copyable fenced block**
-(four backticks — the brief contains three-backtick blocks); a path to a scratchpad
-file is not a deliverable (owner's call, 2026-08-24). Don't write one from memory:
+**The brief is a template — `.agents/review-brief.md`.** Fill its `‹slots›`, save the
+finished brief as `.dev/<issue>/review-brief-<round>.md` (gitignored, in the checkout
+the reviewer runs in), and hand the owner **one line** to paste into the Codex app:
+*"Follow the review brief at `<absolute path>`"*, with a few lines in chat on what it
+asks. **Don't print the whole brief in chat** (owner's call, 2026-10-03: the reviewer
+reads the file, so the chat copy only duplicated it). That replaces the 2026-08-24 rule,
+which was about a bare temp-file path being no deliverable: the `.dev/` file is the
+deliverable now, and the one-liner is how it travels. Don't write a brief from memory:
 the fixed sentences are the wording that has worked, and the file's last section is
 the checklist that produces the per-PR "where I'd push" bullets, which is where the
 findings come from. The template also names the PR-body sections it points at
@@ -869,9 +883,7 @@ findings come from. The template also names the PR-body sections it points at
 so write the PR body to that shape. The bullets below are why the fixed parts say
 what they say:
 
-- **One line, not a wall of text:** save the finished brief to a file as well as
-  printing it, and give the owner the one-line paste — *"Follow the review brief at
-  `<path>`"*. Free **:8000 and :5173** before a frontend round: the e2e config reuses
+- **One line, not a wall of text:** the one-line paste above. Free **:8000 and :5173** before a frontend round: the e2e config reuses
   whatever is listening, and the dev database's owner password is not the suite's.
 - **Prepare the environment first:** deps installed (`uv sync`, `npm install`),
   db up, everything offline-resolvable. Otherwise every install is an approval
