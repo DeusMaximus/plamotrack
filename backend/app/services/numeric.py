@@ -15,6 +15,12 @@ import re
 #: can be reached from a CSV cell.
 INT4_MIN, INT4_MAX = -2_147_483_648, 2_147_483_647
 
+#: A rating's range: one to five stars, on kits and retailers. A product rule rather
+#: than a storage limit, declared here so the request schemas (`schemas.numeric.
+#: Rating`), the importer's column declarations (`portability/spec.py`) and the
+#: `rating_range` CHECK constraints answer to one pair of numbers (#305).
+RATING_MIN, RATING_MAX = 1, 5
+
 #: A digit run grouped in threes — the only reading of a comma this parser accepts:
 #: "1,299" and "1,234,567", never "12,34".
 _GROUPED_INTEGER = re.compile(r"[+-]?\d{1,3}(?:,\d{3})+")

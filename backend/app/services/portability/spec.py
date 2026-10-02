@@ -60,7 +60,12 @@ from app.services.instance_settings import (
     validate_interface_language,
     validate_time_zone,
 )
-from app.services.numeric import require_int4, strip_numeric_grouping
+from app.services.numeric import (
+    RATING_MAX,
+    RATING_MIN,
+    require_int4,
+    strip_numeric_grouping,
+)
 
 # --- cell parsers --------------------------------------------------------------
 
@@ -269,6 +274,14 @@ class ColumnSpec:
     #: converted_price_aud_minor stated its currency, converted_price_minor doesn't.
     alias_fills: tuple[tuple[str, str], ...] = ()
     help: str = ""
+    #: The value's domain, inclusive, where the column has one beyond int4: a
+    #: rating's 1–5, stock's floor of 0. The importer refuses a value outside it as
+    #: a row error in the preview (#305) — before, the database's CHECK refused it
+    #: at flush, a 500 after a preview that called the import clean. The same
+    #: bounds the request schemas hold REST and MCP to; `tests/test_import_ranges.py`
+    #: keeps the three — CHECKs, schemas, these — together.
+    minimum: int | None = None
+    maximum: int | None = None
 
     @property
     def is_alternate(self) -> bool:
@@ -308,6 +321,8 @@ def col(
     aliases: tuple[str, ...] = (),
     alias_fills: tuple[tuple[str, str], ...] = (),
     help: str = "",
+    minimum: int | None = None,
+    maximum: int | None = None,
 ) -> ColumnSpec:
     return ColumnSpec(
         name=name,
@@ -322,6 +337,8 @@ def col(
         aliases=aliases,
         alias_fills=alias_fills,
         help=help,
+        minimum=minimum,
+        maximum=maximum,
     )
 
 
@@ -513,7 +530,7 @@ RETAILERS = TableSpec(
         id_col(),
         col("name", parse_text, required=True),
         col("url", parse_text),
-        col("rating", parse_int, help="Overall, 1-5."),
+        col("rating", parse_int, help="Overall, 1-5.", minimum=RATING_MIN, maximum=RATING_MAX),
         col("packing_quality", enum_parser(PackingQuality)),
         col("shipping_speed", enum_parser(ShippingSpeed)),
         col("would_order_again", enum_parser(WouldOrderAgain)),
@@ -531,8 +548,13 @@ TOOLS = TableSpec(
         id_col(),
         col("name", parse_text, required=True),
         col("category", parse_text, required=True, help="cutting / filing / gluing / ..."),
-        col("quantity_on_hand", parse_int, help="Physically on hand. Not derived from orders."),
-        col("unit_cost_reference_minor", parse_int, help=_MONEY_HELP),
+        col(
+            "quantity_on_hand",
+            parse_int,
+            help="Physically on hand. Not derived from orders.",
+            minimum=0,
+        ),
+        col("unit_cost_reference_minor", parse_int, help=_MONEY_HELP, minimum=0),
         col(
             # Pre-0.2.3 exports named this column and held major units in it, with no
             # currency anywhere on the table — which is the ambiguity #19 removed. It
@@ -566,8 +588,13 @@ CONSUMABLES = TableSpec(
         id_col(),
         col("name", parse_text, required=True),
         col("category", parse_text, required=True, help="paint / cement / blades / ..."),
-        col("quantity_on_hand", parse_int, help="Physically on hand. Not derived from orders."),
-        col("low_stock_threshold", parse_int),
+        col(
+            "quantity_on_hand",
+            parse_int,
+            help="Physically on hand. Not derived from orders.",
+            minimum=0,
+        ),
+        col("low_stock_threshold", parse_int, minimum=0),
     ),
     label=lambda row: row.get("name") or "(unnamed consumable)",
     natural_key=_name_key,
@@ -581,7 +608,12 @@ UPGRADES = TableSpec(
         id_col(),
         col("name", parse_text, required=True),
         col("manufacturer", parse_text, required=True),
-        col("quantity_on_hand", parse_int, help="Physically on hand. Not derived from orders."),
+        col(
+            "quantity_on_hand",
+            parse_int,
+            help="Physically on hand. Not derived from orders.",
+            minimum=0,
+        ),
     ),
     label=lambda row: row.get("name") or "(unnamed upgrade)",
     natural_key=_name_key,
@@ -606,7 +638,12 @@ DISPLAY_ITEMS = TableSpec(
             help="Kit scale the piece suits, e.g. 1/144. Blank = non-scale or not recorded.",
         ),
         col("manufacturer", parse_text, help="Optional — a scratch-built piece has none."),
-        col("quantity_on_hand", parse_int, help="Physically on hand. Not derived from orders."),
+        col(
+            "quantity_on_hand",
+            parse_int,
+            help="Physically on hand. Not derived from orders.",
+            minimum=0,
+        ),
         col("notes", parse_text),
     ),
     label=lambda row: row.get("name") or "(unnamed display item)",
@@ -636,7 +673,7 @@ ORDERS = TableSpec(
         col("delivery_service", parse_text, help="Blank = local pickup/purchase."),
         col("tracking_number", parse_text),
         col("tracking_url", parse_text),
-        col("shipping_cost_minor", parse_int, help=_MONEY_HELP),
+        col("shipping_cost_minor", parse_int, help=_MONEY_HELP, minimum=0),
         col(
             "shipping_cost",
             parse_decimal,
@@ -697,7 +734,7 @@ ORDER_ITEMS = TableSpec(
             help="Used when catalog_ref_id is blank or unknown; created at quantity 0 if new.",
         ),
         col("quantity", parse_int, required=True, help="Kit lines fan out into this many kits."),
-        col("unit_price_minor", parse_int, help=_MONEY_HELP),
+        col("unit_price_minor", parse_int, help=_MONEY_HELP, minimum=0),
         col(
             "unit_price",
             parse_decimal,
@@ -710,6 +747,7 @@ ORDER_ITEMS = TableSpec(
         col(
             "converted_price_minor",
             parse_int,
+            minimum=0,
             # Pre-0.2 exports named this converted_price_aud_minor and had no
             # companion currency column. The retired name asserted AUD, so rows
             # arriving under it are stamped AUD rather than silently reinterpreted
@@ -783,7 +821,13 @@ KITS = TableSpec(
             parse_datetime,
             help="When it was declared finished. Blank = not recorded — never invented.",
         ),
-        col("rating", parse_int, help="1-5, set on completion."),
+        col(
+            "rating",
+            parse_int,
+            help="1-5, set on completion.",
+            minimum=RATING_MIN,
+            maximum=RATING_MAX,
+        ),
         col("build_notes", parse_text),
         col(
             "order_item_id",
@@ -817,7 +861,7 @@ UPGRADE_APPLICATIONS = TableSpec(
             mirrors="upgrade_id",
         ),
         col("kit_id", parse_uuid, role=ColumnRole.REF, ref_table="kits", required=True),
-        col("quantity_used", parse_int, required=True),
+        col("quantity_used", parse_int, required=True, minimum=1),
         col("applied_at", parse_datetime),
     ),
     label=lambda row: f"upgrade application × {render(row.get('quantity_used'))}",
