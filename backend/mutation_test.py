@@ -6567,6 +6567,20 @@ CASES += [
         "",
         "every_check_the_models_declare",
     ),
+    (
+        "309-6. the upgrade reads a row count offline as well (the round-1 crash)",
+        CHECKS_309,
+        "        if context.is_offline_mode():\n",
+        "        if False:\n",
+        "every_migration_renders_offline",
+    ),
+    (
+        "309-7. the model's CHECK keeps its name and changes its bound",
+        ROOT / "app/models/orders.py",
+        'CheckConstraint("shipping_cost_minor >= 0", name="shipping_cost_non_negative")',
+        'CheckConstraint("shipping_cost_minor >= 1", name="shipping_cost_non_negative")',
+        "every_check_the_models_declare",
+    ),
 ]
 
 TEST_FILES = [

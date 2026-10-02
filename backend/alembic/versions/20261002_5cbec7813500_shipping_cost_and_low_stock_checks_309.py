@@ -10,7 +10,9 @@ would fail the upgrade.
 So the upgrade first clears what can't be kept. A negative becomes **null**,
 never 0: null is "not recorded" for a shipping cost and "no alert" for a
 threshold, while 0 would assert free shipping or an alert at zero, which
-nobody stated (the owner's call, 2026-10-02). It logs how many rows it cleared.
+nobody stated (the owner's call, 2026-10-02). Online, it logs how many rows it
+cleared; offline (`--sql`) it writes the UPDATE for whoever runs the script, with no
+result to count.
 
 Downgrade drops the two constraints. It cannot restore the cleared values.
 
@@ -25,7 +27,7 @@ from collections.abc import Sequence
 
 import sqlalchemy as sa
 
-from alembic import op
+from alembic import context, op
 
 revision: str = "5cbec7813500"
 down_revision: str | None = "d5e9362140ea"
@@ -43,13 +45,16 @@ CHECKS = (
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
     for table, column, name in CHECKS:
-        cleared = bind.execute(
-            sa.text(f"UPDATE {table} SET {column} = NULL WHERE {column} < 0")
-        ).rowcount
-        if cleared:
-            log.info("%s.%s: cleared %d negative value(s) to null (#309)", table, column, cleared)
+        clear = f"UPDATE {table} SET {column} = NULL WHERE {column} < 0"
+        if context.is_offline_mode():
+            # `--sql` renders a script and executes nothing: there is no row count,
+            # and reading one raised (Greptile, PR #313 round 1).
+            op.execute(clear)
+        else:
+            cleared = op.get_bind().execute(sa.text(clear)).rowcount
+            if cleared:
+                log.info("%s.%s: cleared %d negative value(s) to null", table, column, cleared)
         op.create_check_constraint(name, table, f"{column} >= 0")
 
 

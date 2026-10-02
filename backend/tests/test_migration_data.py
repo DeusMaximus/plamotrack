@@ -22,7 +22,7 @@ from decimal import Decimal
 
 import pytest
 from alembic.config import Config
-from sqlalchemy import CheckConstraint, text
+from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 
 from alembic import command
@@ -619,29 +619,76 @@ def test_non_negative_checks_clear_negatives_to_null_and_keep_the_rest(walk):
     assert db("SELECT shipping_cost_minor FROM orders WHERE order_number = 'negative'") == [(None,)]
 
 
-def test_every_check_the_models_declare_is_in_the_migrated_schema():
-    """The models and the migrations each declare the constraints, and nothing else
-    held the two together: a CHECK added to a model without a migration, or the
-    reverse, passed every test (found while doing #309). Compared by name, which the
-    naming convention makes deterministic; a definition that drifted under the same
-    name is not caught here."""
-    declared = {
-        constraint.name
-        for table in Base.metadata.sorted_tables
-        for constraint in table.constraints
-        if isinstance(constraint, CheckConstraint)
-    }
-    tables = [table.name for table in Base.metadata.sorted_tables]
-    migrated = {
-        name
-        for (name,) in db(
-            "SELECT c.conname FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid "
-            "JOIN pg_namespace n ON n.oid = t.relnamespace "
-            "WHERE c.contype = 'c' AND n.nspname = current_schema() AND t.relname = ANY(:tables)",
-            tables=tables,
+def test_every_migration_renders_offline(capsys):
+    """`alembic upgrade --sql` renders the whole chain as a script without touching a
+    database (env.py's offline mode). A migration that reads a result executes
+    nothing offline and crashed there: #309's first form read `.rowcount` (Greptile,
+    PR #313 round 1). The clean-up has to reach the script, ahead of the CHECK."""
+    command.upgrade(Config("alembic.ini"), f"base:{HEAD}", sql=True)
+    script = capsys.readouterr().out
+    clear = script.index(
+        "UPDATE orders SET shipping_cost_minor = NULL WHERE shipping_cost_minor < 0"
+    )
+    assert script.index("ck_orders_shipping_cost_non_negative") > clear
+    assert "UPDATE consumables SET low_stock_threshold = NULL WHERE low_stock_threshold < 0" in (
+        script
+    )
+
+
+#: Where the models are built for comparison, beside the migrated schema.
+MODELS_PROBE = "models_probe_309"
+
+
+async def _check_definitions(schema: str) -> dict[tuple[str, str], str]:
+    async with get_sessionmaker()() as session:
+        rows = await session.execute(
+            text(
+                "SELECT t.relname, c.conname, pg_get_constraintdef(c.oid) "
+                "FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid "
+                "JOIN pg_namespace n ON n.oid = t.relnamespace "
+                "WHERE c.contype = 'c' AND n.nspname = :schema"
+            ),
+            {"schema": schema},
         )
-    }
-    assert declared == migrated, {
-        "in the models only": sorted(declared - migrated),
-        "in the database only": sorted(migrated - declared),
+        return {(table, name): definition for table, name, definition in rows}
+
+
+async def _models_and_migrations() -> tuple[dict, dict]:
+    engine = get_sessionmaker().kw["bind"]
+    async with engine.begin() as conn:
+        await conn.execute(text(f'DROP SCHEMA IF EXISTS "{MODELS_PROBE}" CASCADE'))
+        await conn.execute(text(f'CREATE SCHEMA "{MODELS_PROBE}"'))
+        await conn.run_sync(
+            lambda sync: Base.metadata.create_all(
+                sync.execution_options(schema_translate_map={None: MODELS_PROBE})
+            )
+        )
+    try:
+        migrated = await _check_definitions("public")
+        built = await _check_definitions(MODELS_PROBE)
+    finally:
+        async with engine.begin() as conn:
+            await conn.execute(text(f'DROP SCHEMA "{MODELS_PROBE}" CASCADE'))
+    tables = {table.name for table in Base.metadata.sorted_tables}
+    return built, {key: value for key, value in migrated.items() if key[0] in tables}
+
+
+def test_every_check_the_models_declare_is_in_the_migrated_schema():
+    """The models and the migrations each declare the constraints, and nothing held
+    the two together: a CHECK added to a model without a migration, or the reverse,
+    passed every test (found while doing #309). Compared by name **and definition**
+    (Greptile, PR #313 round 1: a same-named constraint with another bound passed
+    the name-only form). Both sides are Postgres's own rendering: the models are
+    built into a scratch schema, so `BETWEEN` and `IN`, which Postgres rewrites,
+    read the same on both."""
+    built, migrated = asyncio.run(_models_and_migrations())
+    assert len(built) >= 20, built
+    assert built == migrated, {
+        "in the models only": sorted(set(built) - set(migrated)),
+        "in the database only": sorted(set(migrated) - set(built)),
+        "defined differently": {
+            key: (built[key], migrated[key])
+            for key in set(built) & set(migrated)
+            if built[key] != migrated[key]
+        },
     }
