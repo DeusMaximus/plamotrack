@@ -464,9 +464,28 @@ test("an import on a phone (#304): a CSV previewed and applied, Add only; an arc
         await expect(page.getByRole("button", { name: "Importing…" })).toBeVisible();
         await expect(main.getByRole("radio", { name: "Merge" }), "the mode cannot change under it").toBeDisabled();
         await expect(main.getByRole("button", { name: "Change", exact: true })).toBeDisabled();
+        // The sent phase ends on the API's answer; the data refresh that follows
+        // is not part of it (Codex round 3, finding 9). With that refresh held,
+        // the result is there, nothing still says "Importing…", the next file
+        // can be chosen — and the keyboard is on the outcome, not <body>.
+        let releaseRefresh = () => {};
+        const refreshHeld = new Promise<void>((resolve) => (releaseRefresh = resolve));
+        let refreshAsked = false;
+        await page.route("**/api/settings", async (route) => {
+          if (route.request().method() === "GET") {
+            refreshAsked = true;
+            await refreshHeld;
+          }
+          await route.continue();
+        });
         releaseApply();
         await expect(main.getByText("Import complete")).toBeVisible();
-        await expect(main.getByText("Importing — Add only…")).toHaveCount(0);
+        await expect.poll(() => refreshAsked, { message: "the refresh is under way" }).toBe(true);
+        await expect(main.getByText("Importing — Add only…"), "the sent phase ended with the answer").toHaveCount(0);
+        await expect(main.getByRole("button", { name: "Choose a file" }), "the next file can be chosen").toBeEnabled();
+        await expect.poll(() => focused(page), { message: "the keyboard is on the outcome" }).toMatch(/^Import complete/);
+        releaseRefresh();
+        await page.unroute("**/api/settings");
         await page.unroute("**/import/apply");
         await expect(apply).toHaveCount(0);
         await expect(main.getByRole("button", { name: "Choose a file" })).toBeVisible();
@@ -611,12 +630,22 @@ test("an import begun on a tablet survives a turn through the phone shell, unles
     await applyHeld;
     await route.abort();
   });
-  await apply.click();
+  // By the keyboard: sending it disables Apply, which takes the keyboard with
+  // it unless something is given it — the pending import's status is (Codex
+  // round 3, finding 8).
+  await apply.focus();
+  await page.keyboard.press("Enter");
   const pending = page.getByRole("main").getByText("Importing — Replace everything…");
   await expect(pending).toBeVisible();
+  await expect.poll(() => focused(page), { message: "sending it hands the keyboard to the pending import" }).toBe("Importing — Replace everything…");
   await expect(mode, "the mode cannot change under it").toBeDisabled();
+  // Codex's reproduction: the confirmation is still enabled, the turn removes
+  // it, and the mode it named as its stand-in is disabled — the pending import
+  // stands in after it.
+  await page.getByPlaceholder("REPLACE").focus();
   await page.setViewportSize({ width: 744, height: 1133 });
   await expect(page.getByRole("radio", { name: "Merge" })).toBeChecked();
+  await expect.poll(() => focused(page), { message: "the removed confirmation hands the keyboard to the pending import" }).toBe("Importing — Replace everything…");
   await expect(pending, "after the turn, still pending, under its own mode").toBeVisible();
   await expect(page.getByRole("button", { name: "Importing…" }), "and its bar").toBeVisible();
   await page.setViewportSize({ width: 820, height: 1180 });
@@ -628,6 +657,11 @@ test("an import begun on a tablet survives a turn through the phone shell, unles
   releaseApply();
   await expect(page.getByRole("main").getByRole("alert"), "its failure is said in the card").toBeVisible();
   await expect(pending).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => Boolean(document.activeElement?.querySelector('[role="alert"]'))), {
+      message: "the keyboard goes from the pending import to its outcome",
+    })
+    .toBe(true);
   await page.unroute("**/import/apply");
 
   // Never applied: nothing was written, and there is nothing to clean up.

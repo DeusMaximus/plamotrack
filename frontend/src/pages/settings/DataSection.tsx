@@ -1,6 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { FileText, Upload } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { api, ApiError, downloadFile } from "../../api/client";
@@ -47,6 +47,7 @@ const FOCUS = {
   preview: "import-preview",
   apply: "import-apply",
   cancel: "import-cancel",
+  pending: "import-pending",
   starter: "data-starter-sheet",
 } as const;
 
@@ -176,26 +177,56 @@ export function DataSection() {
     setBusy("apply");
     setSubmitted(mode);
     setImportError(null);
+    let applied: ImportResult;
     try {
-      const applied = await api.applyImport(
+      applied = await api.applyImport(
         file,
         mode,
         plan.plan_hash,
         mode === "replace_all" ? confirmText.trim().toUpperCase() : undefined,
       );
-      setResult(applied);
-      setPlan(null);
-      setFile(null);
-      setConfirmText("");
-      if (fileInput.current) fileInput.current.value = "";
-      await queryClient.invalidateQueries();
     } catch (err) {
       setImportError(err instanceof ApiError ? err.message : String(err));
-    } finally {
       setBusy(null);
       setSubmitted(null);
+      return;
     }
+    // The sent phase ends on the answer, in one commit with what it brought:
+    // the result, and a draft emptied for the next file. Refreshing the rest
+    // of the app's data comes after and is not part of it — awaited inside it,
+    // the page said "Importing…" beside "Import complete" with the pickers
+    // enabled (#314 round 3, Codex finding 9).
+    setResult(applied);
+    setPlan(null);
+    setFile(null);
+    setConfirmText("");
+    if (fileInput.current) fileInput.current.value = "";
+    setBusy(null);
+    setSubmitted(null);
+    await queryClient.invalidateQueries();
   }
+
+  // A sent import has somewhere to keep the keyboard (#314 round 3, Codex
+  // finding 8). Sending it disables Apply, and Chromium then drops the focus a
+  // keyboard put there; the controls that would stand in for it — the mode —
+  // are disabled for the same reason. So while it runs the keyboard is given
+  // to its status, which carries a key of its own and is what every pending
+  // control names as its last stand-in; when it answers, to the outcome. Only
+  // where nothing else has the keyboard: someone who moved on keeps their place.
+  const pendingRef = useRef<HTMLParagraphElement>(null);
+  const outcomeRef = useRef<HTMLDivElement>(null);
+  const wasSubmitted = useRef(false);
+  useEffect(() => {
+    const active = document.activeElement;
+    const lost = active === null || active === document.body || (active as HTMLButtonElement).disabled === true;
+    if (submitted !== null) {
+      wasSubmitted.current = true;
+      if (lost) pendingRef.current?.focus({ preventScroll: true });
+    } else if (wasSubmitted.current) {
+      wasSubmitted.current = false;
+      if (lost) outcomeRef.current?.focus({ preventScroll: true });
+    }
+  }, [submitted]);
 
   function chooseMode(next: ImportMode) {
     previewSeq.current += 1;
@@ -322,6 +353,7 @@ export function DataSection() {
                   icon={Upload}
                   data-focus-key={FOCUS.file}
                   onClick={openPicker}
+                  disabled={busy !== null}
                   className="w-full justify-center"
                 >
                   {t("data.chooseFile")}
@@ -367,6 +399,7 @@ export function DataSection() {
                   <button
                     type="button"
                     onClick={openPicker}
+                    disabled={busy !== null}
                     data-focus-key={FOCUS.file}
                     className="text-xs text-accent hover:underline"
                   >
@@ -443,7 +476,7 @@ export function DataSection() {
 
               {plan && mode === "replace_all" && !blocked && (
                 <label
-                  data-focus-stand-in={FOCUS.mode}
+                  data-focus-stand-in={`${FOCUS.mode} ${FOCUS.pending}`}
                   className="block rounded-sm border border-danger/40 bg-danger/10 px-3 py-2"
                 >
                   <span className="mb-1 block text-xs font-medium text-danger">
@@ -462,7 +495,7 @@ export function DataSection() {
                   with a `replace_all` plan takes the plan too, so then the
                   mode stands in for them. */}
               {!phone && (
-                <div data-focus-stand-in={FOCUS.mode} className="flex items-center gap-2">
+                <div data-focus-stand-in={`${FOCUS.mode} ${FOCUS.pending}`} className="flex items-center gap-2">
                   {applyButton()}
                   {cancelButton()}
                 </div>
@@ -471,7 +504,13 @@ export function DataSection() {
           )}
 
           {submitted && (
-            <p role="status" className="mt-3 text-sm text-muted">
+            <p
+              ref={pendingRef}
+              role="status"
+              tabIndex={-1}
+              data-focus-key={FOCUS.pending}
+              className="mt-3 text-sm text-muted"
+            >
               {t("data.applying", { mode: t(`importMode.${submitted}.label`) })}
             </p>
           )}
@@ -479,13 +518,16 @@ export function DataSection() {
           {/* Last in the card: under Preview when a preview is refused, and
               just above Apply — the phone's bar — when an apply is. */}
           {importError && (
-            <div className="mt-3">
+            <div ref={outcomeRef} tabIndex={-1} className="mt-3">
               <ErrorBanner message={importError} />
             </div>
           )}
 
           {result && (
-            <div className="mt-4 rounded-sm border border-status-complete/40 bg-status-complete/10 px-3 py-2 text-sm text-status-complete">
+            <div
+              ref={outcomeRef}
+              tabIndex={-1}
+              className="mt-4 rounded-sm border border-status-complete/40 bg-status-complete/10 px-3 py-2 text-sm text-status-complete">
               <p className="font-medium">{t("data.complete")}</p>
               <p className="mt-0.5">
                 {t("data.result.created", counted({}, result.created))}
@@ -514,7 +556,9 @@ export function DataSection() {
             card. The width of `main`, its gutters included, so nothing scrolls
             past beside it. */}
         {phone && (plan || submitted) && (
-          <div className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-20 -mx-4 mt-3 grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2.5 border-t border-rule bg-surface px-4 py-3">
+          <div
+            data-focus-stand-in={FOCUS.pending}
+            className="sticky bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-20 -mx-4 mt-3 grid grid-cols-[minmax(0,1fr)_minmax(0,2fr)] gap-2.5 border-t border-rule bg-surface px-4 py-3">
             {cancelButton(BAR_BUTTON_CLASS)}
             {applyButton(BAR_BUTTON_CLASS)}
           </div>

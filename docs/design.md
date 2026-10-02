@@ -3780,7 +3780,14 @@ import it here. That undoes the first of the three reasons the phone was export 
   the transaction may already be committing. So `submitted` holds the mode it was
   sent with, a status line in the card names it ("Importing — Replace
   everything…"), and the actions stay up, saying "Importing…", until it answers.
-  Meanwhile the mode and the file can't be changed, in any shell.
+  Meanwhile the mode and the file can't be changed, in any shell. **The phase
+  ends on the API's answer** (round 3); the refresh of the rest of the app's data
+  comes after it. **And it has somewhere to keep the keyboard:** sending it
+  disables Apply, and its stand-in, the mode, is disabled too. So the status is
+  focusable (`tabIndex={-1}`) and carries a key of its own (`import-pending`), and
+  every pending control names it as its last stand-in. Sending the import gives
+  the status the keyboard, and the answer gives it to the outcome, but only where
+  the keyboard is nowhere else.
 - **The import's failures are said in its card**, last in it — under Preview when
   a preview is refused, just above the bar when an apply is. At the head of the
   section, where every error used to go, a phone put it a screen above the button
