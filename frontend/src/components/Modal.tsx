@@ -158,7 +158,7 @@ const PHONE_BAR_CLASS =
  *  (`min-h`, not `h`; important, because `Button` has a `touch:min-h-10` of
  *  its own that the stylesheet happens to emit later — dialogs.spec.ts's
  *  "is a bar button" is what said so). */
-const BAR_BUTTON_CLASS = "min-h-12! justify-center px-[4px] text-center text-[15px]";
+export const BAR_BUTTON_CLASS = "min-h-12! justify-center px-[4px] text-center text-[15px]";
 const PHONE_BAR_BUTTON_CLASS =
   "max-md:min-h-12! max-md:justify-center max-md:px-[4px] max-md:text-center max-md:text-[15px]";
 

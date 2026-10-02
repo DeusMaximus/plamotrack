@@ -3113,7 +3113,8 @@ its foot could sit under Safari's toolbar; no web manifest and no touch icon.
   (§13.4); dialogs as full-screen sheets with a fixed action bar; **Export CSV is
   not in the phone page headers**, and Settings → Data management on a phone is
   export only — the line drawn at the phone shell, by width like every other
-  layout decision here, not at touch devices.
+  layout decision here, not at touch devices. (Amended by #304, below: a phone
+  imports, Merge and Add only.)
 - **A table that stays a table folds by its *container's* width**, not the
   device's, the way Home already lays out (§13.2).
 - **Home-screen install is a manifest and icons.** No service worker, no offline
@@ -3580,7 +3581,8 @@ build decided, and what it measured:
   the chevron names the open section's link.
 - **Fields fill their card on a phone** (`max-md:max-w-none` on the caps the
   desktop keeps), and Date style and Hour cycle share a row while each has 9rem.
-- **Data management below 768 px renders its export card and one sentence** —
+- **Data management below 768 px renders its export card and one sentence**
+  (superseded by #304, at the end of this section) —
   the Templates and Import cards are not in the DOM, which is what "should not
   sit a thumb's width from a mis-tap" means; hidden would have left them to a
   keyboard and a screen reader. The import's state is held above the cards, so
@@ -3737,3 +3739,45 @@ Reported as a WebKit loss of two to six runs in ten after repeated turns; the tu
 and the engine were the harness's (Playwright's WebKit resolves a viewport change
 before the page hears of it). With the `change` events held (`e2e/shellEvents.ts`) it
 was eight in eight in both engines, and lists.spec.ts and shell.spec.ts hold it there.
+
+**Amended — #304, import on a phone (owner's calls, 02/10/2026).** plamotrack-ios
+keeps its own store, and the CSV archive is its only way to a server: someone moving
+to their own instance has the archive *on their phone*, and the documented path is to
+import it here. That undoes the first of the three reasons the phone was export only
+(nobody prepares a CSV on a phone); the other two are answered rather than kept:
+
+- **`replace_all` stays off the phone** — two modes, Merge and Add only, as segments
+  (radios in their labels), never a `<select>` holding the third. The move does not
+  need it: merging an archive into an empty instance restores it whole
+  (`test_golden_archive.py`'s round trip). A tablet turned to a phone while replacing
+  everything falls back to Merge and loses the plan in the same render, so no Apply
+  can run a plan the phone does not offer; the file stays.
+- **The preview is the same `ImportPreview`** — it had already stopped being "wide
+  diff tables": a section per table, a row its badge and its label. On a phone the
+  row number joins the line under the label instead of taking a column, a label
+  wraps anywhere (a table's columns are as narrow as their longest word, which
+  widened the page under a large browser font), and a section's rows no longer
+  scroll inside a 20rem box: the page is the one thing a thumb scrolls.
+- **Apply and Cancel are a dialog's bar, on the page**: Cancel a share, Apply two,
+  held above the tab bar (`sticky`, the tab bar's 3.5rem and the home indicator's
+  inset) while the Import card is on screen, at rest under it — so a long preview
+  never puts Apply a scroll away. `main`'s width, gutters included, so nothing
+  scrolls past beside it.
+- **The picker is a button**, *Choose a file*, then the file's row with *Change*;
+  there is nothing to drop onto on a phone. The input accepts the MIME types beside
+  the extensions, for pickers that filter by type.
+- **Of the blank templates, the starter sheet alone**, after the import: one CSV, a
+  row a kit, the one template a phone might fill in (Numbers, Sheets) and the way
+  someone starting from a spreadsheet gets going. The full pack — nine files in a zip —
+  stays on the wider shapes, and its button names the starter sheet as its stand-in.
+- **The import's failures are said in its card**, last in it — under Preview when
+  a preview is refused, just above the bar when an apply is. At the head of the
+  section, where every error used to go, a phone put it a screen above the button
+  that caused it, and a refused file read as a tap that did nothing (found in the
+  iOS Simulator). On a phone the badge's column hugs the badge (`w-px`): the table
+  had handed the number column's width to every column, and a short label lost a
+  third of its row.
+- **Focus across the turn** is by key, as everywhere (`lib/focusKey.ts`): the file
+  control, the mode, Preview, Apply, Cancel and the starter sheet each carry one in
+  both shapes; the pack and the replace confirmation name a stand-in.
+

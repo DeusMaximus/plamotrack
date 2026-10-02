@@ -33,6 +33,24 @@ Shape:
 
 ---
 
+## #304 — a phone can import (PR #NNN, `sha`)
+- **Release note:** Settings → Data management on a phone now imports: choose a .zip
+  archive or a .csv from your phone's files, preview it, and apply it, with **Merge**
+  or **Add only**. That is the way from plamotrack for iPhone to your own server:
+  export an archive in the app, import it here. **Replace everything** stays on a
+  tablet or a computer, as does the full template pack; the starter sheet is on the
+  phone too.
+- **README:** nothing (the phone screenshot in its gallery is Home, not Data
+  management).
+- **Docs site:** `using/phone-and-tablet.mdx` → "What a phone leaves out": Data
+  management on a phone imports, Merge and Add only; Replace everything and the full
+  template pack need 768 px; the preview reads per table, and Apply sits in a bar
+  above the tab bar. Its `phone-data` screenshots (light and dark) and their alt text
+  and caption are retaken (`e2e/screenshots.spec.ts` with `SCREENSHOTS_OUT`): the
+  export card and the import under it. `using/import-export.mdx`'s opening paragraph:
+  a phone imports too, in those two modes. If the plamotrack-ios move has a page by
+  then, it links here.
+
 ## #309 — the database refuses a negative shipping cost or low-stock threshold (PR #313, `4651ce2`)
 - **Release note:** Upgrading clears any negative shipping cost or low-stock threshold
   to blank. Only an import made before this release's import range checks (#305) could
