@@ -41,7 +41,7 @@ Template:
 
 ---
 
-## 2026-10-02 — Claude Code (Opus 5.5) — #305 MERGED as `8ba9c6e` (PR #310) and #307 as `f8d7f0d` (PR #311); #306 fixed on the docs site; #309 filed
+## 2026-10-02 — Claude Code (Opus 5.5) — #305 (`8ba9c6e`, PR #310), #307 (`f8d7f0d`, PR #311) and #309 (`4651ce2`, PR #313) MERGED; #306 fixed on the docs site; `main` gets a ruleset
 
 - **Done:**
   - **#306** closed by [plamotrack-docs#8](https://github.com/DeusMaximus/plamotrack-docs/pull/8), merged as `bb30824`.
@@ -71,13 +71,23 @@ Template:
       - Round 2: Codex P2 (an unpinned seeded status clock passed as `@now`). Every seeded kit now states its clock, a meta-test enforces it, and mutants scn-13/14/15 survive on `d638cc4` and are killed on `9e9fc8c`.
       - Round 3: Codex clean (👍); Greptile 5/5.
     - The `scn-` mutants: 15/15 killed. Full suite at `f44cc3a`: 3109 passed, 1 xfailed. `jsonschema` is now a declared dev dependency.
-    - **Merged before CI finished**, which the owner had not asked for ("merge once green"). `main` has no branch protection and the repo's auto-merge setting is off, so `gh pr merge --auto` merged immediately. Both CI runs then passed: the PR head and the push to `main`; the trees are identical. **Since then `main` has a ruleset** (id 24351954): required checks Backend, Frontend and Integration, no force push or deletion, the admin role bypassing for docs pushes, and repo auto-merge on. `--auto` now waits; this entry's own PR was the test. Never `--admin` (`AGENTS.md` → Git conventions).
-  - **Filed [#309](https://github.com/DeusMaximus/plamotrack/issues/309)** (`enhancement`): CHECKs for `orders.shipping_cost_minor` and `consumables.low_stock_threshold`. The migration must clear negatives an older import may have stored.
+    - **Merged before CI finished**, which the owner had not asked for ("merge once green"). `main` has no branch protection and the repo's auto-merge setting is off, so `gh pr merge --auto` merged immediately. Both CI runs then passed: the PR head and the push to `main`; the trees are identical. Since then `main` has a ruleset (below).
+  - **[PR #313](https://github.com/DeusMaximus/plamotrack/pull/313)** merged as **`4651ce2`** from head `10d959b` by `--auto`, after all three checks; #309 (filed this session) is closed.
+    - Migration `5cbec7813500`: negatives cleared to **null** (the owner's call), the count logged online, then `ck_orders_shipping_cost_non_negative` and `ck_consumables_low_stock_threshold_non_negative`. Offline (`--sql`) it writes the UPDATE.
+    - New guards in `test_migration_data.py`: every migration renders offline, and every model CHECK matches the migrated schema by name **and definition** (the models are built into a scratch schema and compared through `pg_get_constraintdef`). No existing drift was found.
+    - The `309-` mutants: 7/7.
+    - Reviews: Codex clean twice. Greptile flagged offline `.rowcount` (P1) and the name-only guard (P2), both fixed; then 5/5.
+    - **CI caught one failure the ruleset held back:** #303's golden restore test required no warnings, and the new migration made the fixture's `schema_version` stale (`import.schema_drift`). The test now expects exactly that warning; no regeneration is needed (testing-and-review says so).
+    - Full suite 3116 passed, 1 xfailed.
+  - **Ruleset "main"** (id 24351954) and repo auto-merge, set up at the owner's request:
+    - required checks Backend, Frontend and Integration; force pushes and deletion blocked; the admin role bypasses "Always".
+    - Tested: a direct docs push bypasses it, and `--auto` waits (#312).
+    - `AGENTS.md`: never `--admin`; "merge when green" is `--auto --match-head-commit`.
 - **Decisions (the owner's, 2026-10-01/02):**
   - `docs/import-export.md` was left for the release under the published-release rule; the owner did not object. Before that rule, PRs edited it directly.
   - Greptile reviews; the PRs squash-merge pinned to the reviewed head.
 - **State:**
-  - **Unreleased on `main`:** #294, #289, #247, #302 (#299, #300, #301) and #310 (#305); see `.agents/next-release.md`. #303 (PR #308) is test-only and owes nothing. The release also owes the Pocket ID docs page. #300 remains the most exposed: v0.5.2-alpha's `migrate` stops on a punctuated `POSTGRES_PASSWORD`.
+  - **Unreleased on `main`:** #294, #289, #247, #302 (#299, #300, #301), #310 (#305) and #313 (#309, a migration); see `.agents/next-release.md`. #303 (PR #308) is test-only and owes nothing. The release also owes the Pocket ID docs page. #300 remains the most exposed: v0.5.2-alpha's `migrate` stops on a punctuated `POSTGRES_PASSWORD`.
   - Merged branches left on origin: `feat/303-golden-archive`, `fix/305-import-range-checks`, `fix/archive-keeps-ids` (docs repo), plus the three older ones.
   - **Carried:**
     - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
@@ -86,8 +96,7 @@ Template:
 - **Next:**
   1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
   2. **#304**, import on a phone: the owner's decisions on modes and the 390 px preview, then mockups, before code.
-  3. #309 when convenient: a migration plus a migration-data test.
-  4. Carried:
+  3. Carried:
      - #279's edge probes, then #281's packaging; #282's VPS path;
      - at the next release, work through `.agents/next-release.md`;
      - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
