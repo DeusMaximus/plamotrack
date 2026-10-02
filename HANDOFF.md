@@ -41,6 +41,49 @@ Template:
 
 ---
 
+## 2026-10-02 — Claude Code (Opus 5.5) — #305 MERGED as `8ba9c6e` (PR #310): the importer holds a value to its column's range; #306 fixed on the docs site; #309 filed
+
+- **Done:**
+  - **#306** closed by [plamotrack-docs#8](https://github.com/DeusMaximus/plamotrack-docs/pull/8), merged as `bb30824`.
+    - The backups page no longer says an archive "does not preserve ids". The import page now says a restore into a new instance keeps them.
+    - Checked first against `v0.5.2-alpha`, in a worktree: the golden archive restored into an empty instance kept all 35 ids.
+    - The merge sentence names only retailers, catalog items and orders. Kits match by id alone, so "matching records" would have overclaimed.
+  - **[PR #310](https://github.com/DeusMaximus/plamotrack/pull/310)** squash-merged as **`8ba9c6e`**, pinned to the reviewed head `96a8ff0`; #305 is closed.
+    - Reproduced on `main` first. 11 range CHECKs previewed clean and then failed the apply with a 500. `shipping_cost_minor` and `low_stock_threshold`, which have no CHECK, stored negative values.
+    - The fix:
+      - `ColumnSpec.minimum` / `maximum` on 12 columns;
+      - `RATING_MIN` / `RATING_MAX` in `services/numeric.py`, read by `schemas.numeric.Rating` too;
+      - `_check_ranges` after money scaling, quoting the cell as written (header, alias included, and text);
+      - codes `import.cell_below_minimum` and `import.cell_above_maximum`.
+    - `tests/test_import_ranges.py`, 63 cases:
+      - CHECKs, request schemas and declarations agree, and the CHECK walk is total;
+      - every bound one step out, in merge and `replace_all`;
+      - the bound itself imports;
+      - update rows, the alias header, the starter sheet.
+    - The `305-` mutants: 10/10 killed. Full suite at `f28eb28`: 3060 passed, 1 xfailed.
+    - Greptile: 4/5 with two P2s (the source cell; the audit skipping unknown CHECK forms), both taken in `96a8ff0`; round 2 5/5. CI green.
+    - `.agents/next-release.md` has the entry; it owes the docs site and `docs/import-export.md` a line on ranges.
+  - **Filed [#309](https://github.com/DeusMaximus/plamotrack/issues/309)** (`enhancement`): CHECKs for `orders.shipping_cost_minor` and `consumables.low_stock_threshold`. The migration must clear negatives an older import may have stored.
+- **Decisions (the owner's, 2026-10-01/02):**
+  - `docs/import-export.md` was left for the release under the published-release rule; the owner did not object. Before that rule, PRs edited it directly.
+  - Greptile reviews; the PRs squash-merge pinned to the reviewed head.
+- **State:**
+  - **Unreleased on `main`:** #294, #289, #247, #302 (#299, #300, #301) and #310 (#305); see `.agents/next-release.md`. #303 (PR #308) is test-only and owes nothing. The release also owes the Pocket ID docs page. #300 remains the most exposed: v0.5.2-alpha's `migrate` stops on a punctuated `POSTGRES_PASSWORD`.
+  - Merged branches left on origin: `feat/303-golden-archive`, `fix/305-import-range-checks`, `fix/archive-keeps-ids` (docs repo), plus the three older ones.
+  - **Carried:**
+    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
+    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
+    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
+- **Next:**
+  1. **#307**, the shared scenario fixtures: design the JSON format first (starting rows, an operation, an expected state or a refusal with `code` and `params`). Reuse `tests/fixtures/golden/seed.py`'s deterministic ids. Document the format in `.agents/testing-and-review.md`.
+  2. **#304**, import on a phone: the owner's decisions on modes and the 390 px preview, then mockups, before code.
+  3. #309 when convenient: a migration plus a migration-data test.
+  4. Carried:
+     - #279's edge probes, then #281's packaging; #282's VPS path;
+     - at the next release, work through `.agents/next-release.md`;
+     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
+     - posting the rehearsal on #285.
+
 ## 2026-10-01 — Claude Code (Opus 5.5) — #303 MERGED as `e5ad6cc` (PR #308): a golden archive pins the CSV contract; #303–#307 triaged
 
 - **Done:**
@@ -235,44 +278,3 @@ Template:
      - #268 and #238 (Chromium e2e now runs in the cloud);
      - the importer bugs #110, #116, #134 and #137.
   4. Carried: #279's edge probes then #281's packaging; the #280 decision; `probe.py teardown`; posting the rehearsal on #285; the release-to-release update and Git Bash commands, untested.
-
-## 2026-09-25 — Claude Code (Opus 5.5) — #289 MERGED as `e72a7cc` (PR #297): MCP `create_order` names its shop by `retailer_id` or by name, and an id is never a name; the first cloud session from `main` checks the hook
-
-- **Done:**
-  - [PR #297](https://github.com/DeusMaximus/plamotrack/pull/297) squash-merged as **`e72a7cc`**, pinned to the reviewed head `5bbf46b`; #289 closed.
-    - `create_order` takes `retailer_id` beside `retailer`, exactly one per call. The id goes straight to the order service, so an unknown id is `retailer.not_found` and nothing is written.
-    - `get_or_create_retailer` refuses a name that parses as an id (any spelling `uuid.UUID()` takes, after the trim), even where a stored row already carries that string as its name. New code `name.is_id`, plus its fixture and en-AU catalogue entries.
-    - Docs: the tool description, design §7 and the README's MCP table.
-  - Tests: `tests/test_mcp_order_retailer.py`, 23 cases, 20 red / 3 green on unfixed `main`. The `289-` mutation set killed 7/7, and the file joins `TEST_FILES`. Backend 2859 passed, 1 xfailed (predates the branch); frontend vitest 631; CI 3/3 green.
-- **Decisions (the owner's, 2026-09-25):**
-  - **No delete tools on MCP.** Deleting anything is the user's call. `update_order`'s existing `changes.retailer_id` repoints an order; the UI renames or deletes.
-  - The CSV importer's `retailer_name` keeps its select-or-create without the refusal: its preview lists the stub before anything is written, and an old archive must still import. No sibling filed.
-  - **Review call:** Greptile and CodeRabbit only. Greptile gave 5/5 with no findings; CodeRabbit had no actionable comments. Its docstring-coverage warning was declined, as on #295 and #296. The owner's note: CodeRabbit allows about one included review per hour, while Greptile can be re-run for follow-up rounds.
-  - The owner cleaned up the junk retailers #289 had minted on the live instance.
-- **State:**
-  - **The cloud hook, first session from `main`:** its summary matched the #296 entry. `TEST_DATABASE_URL` reached later shells, so the `CLAUDE_ENV_FILE` export works. Whether the snapshot is cached after the hook is still unobserved.
-  - **Playwright in the cloud image:** `@playwright/test` 1.62.1 expects Chromium build 1234. It drives the preinstalled build 1194 (Chrome 141) when given `executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome'`. WebKit is not installed. The e2e suite itself has not been tried here.
-  - `.agents/testing-and-review.md`'s suite counts are behind: backend ~1750 there, 2859 measured; frontend ~628, 631.
-  - **Unfiled defect, carried:** `_assemble_database_url` in `app/config.py` does not bracket an IPv6 `POSTGRES_HOST`. `::1` yields a DSN `make_url` rejects.
-  - **Unreleased on `main`:**
-    - #294: v0.5.2 still forwards `resource`, so a Pocket ID install needs the API-registration workaround (#280 findings §2a) until the next release.
-    - #289: v0.5.2's `create_order` still has no `retailer_id`.
-  - **Carried from the 2026-09-23 #294 entry:**
-    - **testhost is in the spike's state, not the gate's.** `/opt/plamotrack-280` runs the #294 build (`-f docker-compose.yml -f override-294.yml`) behind the tunnel in OIDC mode against Pocket ID. The gate's stack (`/opt/plamotrack`, v0.5.2) and Keycloak are stopped, volumes kept. `probe.py teardown --base https://NAME --ssh root@HOST` removes the spike and starts both.
-    - **Don't recreate Keycloak's container.** It mounts `realm.json` from `/opt/plamotrack/.agents/deployment-gate/keycloak/`. A new container changes `sub`, and the gate's collection then needs `recovery rebind-oidc`.
-    - The owner's Claude.ai "Testing" connector points at the tunnel name; remove it when the spike is done. Spike secrets are in `~/.plamotrack-gate/spike-280/`.
-    - The LXC is a v0.5.2 release install. #278 is open for the owner's skill-zip check.
-  - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
-- **Next:**
-  1. Owner: file the IPv6 `POSTGRES_HOST` defect, or start it; it's small and cloud-feasible.
-  2. **Cloud-feasible candidates** from this session's survey:
-     - #247: needs the owner's pick first; the issue recommends new `completed` and `started` sort values.
-     - #124 and #125: `create_order`'s undocumented constraints; no `series` on its kit.
-     - #268 and #238: frontend; the Chromium-only e2e above is unproven.
-     - The importer bugs #110, #116, #134 and #137.
-  3. Carried:
-     - #279's two edge probes, then #281's packaging, then one proof deployment.
-     - The #280 decision (owner).
-     - `probe.py teardown` when the spike is done.
-     - Posting the rehearsal on #285 (offered).
-     - Untested: the release-to-release update, and the Windows commands in Git Bash.
