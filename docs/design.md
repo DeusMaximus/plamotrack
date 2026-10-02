@@ -3751,7 +3751,11 @@ import it here. That undoes the first of the three reasons the phone was export 
   need it: merging an archive into an empty instance restores it whole
   (`test_golden_archive.py`'s round trip). A tablet turned to a phone while replacing
   everything falls back to Merge and loses the plan in the same render, so no Apply
-  can run a plan the phone does not offer; the file stays.
+  can run a plan the phone does not offer; the file stays. A preview still in
+  flight then is dropped when it answers — every preview carries a number that
+  anything discarding a plan moves on (another file, another mode, Cancel, the
+  fall-back), which closed the same race on the desktop's mode select (#314
+  review).
 - **The preview is the same `ImportPreview`** — it had already stopped being "wide
   diff tables": a section per table, a row its badge and its label. On a phone the
   row number joins the line under the label instead of taking a column, a label

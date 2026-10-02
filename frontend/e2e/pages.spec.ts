@@ -399,7 +399,17 @@ test("an import on a phone (#304): a CSV previewed and applied, Add only; an arc
         // The file row replaces the picker's button, and Change opens the picker again.
         await expect(main.getByText("retailers.csv", { exact: true })).toBeVisible();
         await expect(main.getByRole("button", { name: "Choose a file" })).toHaveCount(0);
-        const chooser = page.waitForEvent("filechooser");
+        // Change empties the input before the picker opens, or picking the same
+        // file again fires no `change` (#314 review, Codex P2) — and a pick that
+        // brings no file, a cancel, keeps the file already chosen.
+        const input = main.locator('input[type="file"]');
+        let chooser = page.waitForEvent("filechooser");
+        await main.getByRole("button", { name: "Change", exact: true }).click();
+        await chooser;
+        expect(await input.evaluate((element: HTMLInputElement) => element.value), "emptied before the picker opens").toBe("");
+        await input.dispatchEvent("change");
+        await expect(main.getByText("retailers.csv", { exact: true }), "a cancel keeps the file").toBeVisible();
+        chooser = page.waitForEvent("filechooser");
         await main.getByRole("button", { name: "Change", exact: true }).click();
         await (await chooser).setFiles(retailerCsv(...names));
 
@@ -514,7 +524,52 @@ test("an import begun on a tablet survives a turn through the phone shell, unles
   await expect(page.getByText(file, { exact: true }), "the file stays").toBeVisible();
   await expect.poll(() => focused(page), { message: "Apply import, replacing everything" }).toBe("Merge");
   await page.setViewportSize({ width: 820, height: 1180 });
-  await expect(page.getByRole("main").getByRole("combobox")).toHaveValue("merge");
+  const mode = page.getByRole("main").getByRole("combobox");
+  await expect(mode).toHaveValue("merge");
+
+  // A preview still in flight when its plan is thrown away stays thrown away —
+  // by the turn's fall-back, and by a mode changed on the tablet itself. Held
+  // at the network, released after, and read once the page has heard it: the
+  // Preview button is enabled again only after the answer is handled (#314
+  // review: Greptile P1, Codex P2).
+  const preview = page.getByRole("button", { name: "Preview changes" });
+  for (const discard of ["the turn", "another mode"] as const) {
+    await page.setViewportSize({ width: 820, height: 1180 });
+    await mode.selectOption("replace_all");
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/import/preview", async (route) => {
+      await held;
+      await route.continue();
+    });
+    await preview.click();
+    await expect(page.getByRole("button", { name: "Reading…" })).toBeVisible();
+    if (discard === "the turn") {
+      await page.setViewportSize({ width: 744, height: 1133 });
+      await expect(page.getByRole("radio", { name: "Merge" })).toBeChecked();
+    } else {
+      await mode.selectOption("add_only");
+    }
+    const answered = page.waitForResponse("**/import/preview");
+    release();
+    await answered;
+    await expect(preview, `${discard}: the answer is handled`).toBeEnabled();
+    await expect(page.getByText(/^Read as/), `${discard}: no plan comes back`).toHaveCount(0);
+    await expect(apply, `${discard}: nothing to apply`).toHaveCount(0);
+    await page.unroute("**/import/preview");
+  }
+
+  // A refusal under Replace everything goes with the mode it was for.
+  await page.setViewportSize({ width: 820, height: 1180 });
+  await mode.selectOption("replace_all");
+  await page.locator('input[type="file"]').setInputFiles({ name: "notes.txt", mimeType: "text/plain", buffer: Buffer.from("x\n") });
+  await preview.click();
+  await expect(page.getByRole("main").getByRole("alert")).toHaveText("Import a .csv or a .zip archive.");
+  await page.setViewportSize({ width: 744, height: 1133 });
+  await expect(page.getByRole("radio", { name: "Merge" })).toBeChecked();
+  await expect(page.getByRole("main").getByRole("alert"), "the refusal went with the mode").toHaveCount(0);
+  await page.setViewportSize({ width: 820, height: 1180 });
+
   // Never applied: nothing was written, and there is nothing to clean up.
   await page.getByText("choose a different file").click();
 

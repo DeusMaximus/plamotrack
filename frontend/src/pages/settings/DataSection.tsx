@@ -82,17 +82,31 @@ export function DataSection() {
   // a refused file looked like a tap that did nothing (#304, in the simulator).
   const [importError, setImportError] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
+  // Which preview is the current one. Everything that throws a plan away —
+  // another file, another mode, Cancel, the phone's fall-back from
+  // `replace_all` — moves it on, and a preview that answers under an older
+  // number is dropped: one still in flight would otherwise put back the plan it
+  // was asked for, under a mode or a file the page no longer shows, and Apply
+  // would send that plan's hash with the new mode (#314 review: Greptile P1,
+  // Codex P2).
+  const previewSeq = useRef(0);
 
   // Adjusted while rendering, not in an effect, so the phone never draws a
-  // frame with no segment pressed and a `replace_all` plan under it.
+  // frame with no segment pressed and a `replace_all` plan under it. The
+  // counter is moved on here too, a ref written during render: it is only ever
+  // compared for inequality, so a render React repeats moves it twice to no
+  // effect.
   if (phone && mode === "replace_all") {
+    previewSeq.current += 1;
     setMode("merge");
     setPlan(null);
     setResult(null);
     setConfirmText("");
+    setImportError(null);
   }
 
   function reset() {
+    previewSeq.current += 1;
     setFile(null);
     setPlan(null);
     setResult(null);
@@ -103,6 +117,7 @@ export function DataSection() {
   }
 
   function pickFile(next: File | null) {
+    previewSeq.current += 1;
     setFile(next);
     // Any change invalidates the preview — never let an Apply run against a plan
     // the user is no longer looking at.
@@ -122,16 +137,31 @@ export function DataSection() {
 
   async function runPreview() {
     if (!file) return;
+    const asked = ++previewSeq.current;
     setBusy("preview");
     setImportError(null);
     setResult(null);
     try {
-      setPlan(await api.previewImport(file, mode));
+      const planned = await api.previewImport(file, mode);
+      if (asked === previewSeq.current) setPlan(planned);
     } catch (err) {
+      if (asked !== previewSeq.current) return;
       setPlan(null);
       setImportError(err instanceof ApiError ? err.message : String(err));
     } finally {
       setBusy(null);
+    }
+  }
+
+  /** The picker, opened with the input emptied first: a file input whose value
+   *  is already that path fires no `change` when the same file is picked again —
+   *  a fresh export of the same name, a CSV edited and saved — and the old
+   *  preview stayed (#314 review, Codex P2). The file the page holds is React's,
+   *  so a cancelled pick loses nothing. */
+  function openPicker() {
+    if (fileInput.current) {
+      fileInput.current.value = "";
+      fileInput.current.click();
     }
   }
 
@@ -160,6 +190,7 @@ export function DataSection() {
   }
 
   function chooseMode(next: ImportMode) {
+    previewSeq.current += 1;
     setMode(next);
     setPlan(null);
     setResult(null);
@@ -249,7 +280,12 @@ export function DataSection() {
             ref={fileInput}
             type="file"
             accept=".csv,.zip,text/csv,application/zip"
-            onChange={(event) => pickFile(event.target.files?.[0] ?? null)}
+            // A pick with no file in it — a cancel, where an engine reports one —
+            // keeps the file already chosen.
+            onChange={(event) => {
+              const next = event.target.files?.[0];
+              if (next) pickFile(next);
+            }}
             className="hidden"
             id="import-file"
           />
@@ -264,7 +300,7 @@ export function DataSection() {
                 <Button
                   variant="secondary"
                   data-focus-key={FOCUS.file}
-                  onClick={() => fileInput.current?.click()}
+                  onClick={openPicker}
                   disabled={busy !== null}
                   className="shrink-0"
                 >
@@ -277,7 +313,7 @@ export function DataSection() {
                   variant="secondary"
                   icon={Upload}
                   data-focus-key={FOCUS.file}
-                  onClick={() => fileInput.current?.click()}
+                  onClick={openPicker}
                   className="w-full justify-center"
                 >
                   {t("data.chooseFile")}
@@ -321,7 +357,7 @@ export function DataSection() {
                       takes no focus, and the input is `display: none`. */}
                   <button
                     type="button"
-                    onClick={() => fileInput.current?.click()}
+                    onClick={openPicker}
                     data-focus-key={FOCUS.file}
                     className="text-xs text-accent hover:underline"
                   >
