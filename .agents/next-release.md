@@ -33,7 +33,7 @@ Shape:
 
 ---
 
-## #304 — a phone can import (PR #NNN, `sha`)
+## #304 — a phone can import (PR #314, `sha`)
 - **Release note:** Settings → Data management on a phone now imports: choose a .zip
   archive or a .csv from your phone's files, preview it, and apply it, with **Merge**
   or **Add only**. That is the way from plamotrack for iPhone to your own server:
