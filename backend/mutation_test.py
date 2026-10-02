@@ -6528,6 +6528,47 @@ CASES += [
     ),
 ]
 
+# --- #309: the shipping-cost and low-stock-threshold CHECKs, and the model/schema
+# CHECK agreement. Migration mutants under the mig- set's clean-tree cover. ------
+CHECKS_309 = VERS / "20261002_5cbec7813500_shipping_cost_and_low_stock_checks_309.py"
+CASES += [
+    (
+        "309-1. the upgrade adds the CHECKs without clearing the negatives",
+        CHECKS_309,
+        '        cleared = bind.execute(\n            sa.text(f"UPDATE {table} SET {column} = NULL WHERE {column} < 0")\n        ).rowcount\n',
+        "        cleared = 0\n",
+        "non_negative_checks_clear_negatives",
+    ),
+    (
+        "309-2. the upgrade clears zero as well",
+        CHECKS_309,
+        'WHERE {column} < 0")',
+        'WHERE {column} <= 0")',
+        "non_negative_checks_clear_negatives",
+    ),
+    (
+        "309-3. the CHECK admits -1",
+        CHECKS_309,
+        '        op.create_check_constraint(name, table, f"{column} >= 0")\n',
+        '        op.create_check_constraint(name, table, f"{column} >= -1")\n',
+        "non_negative_checks_clear_negatives",
+    ),
+    (
+        "309-4. the downgrade keeps the CHECKs",
+        CHECKS_309,
+        '        op.drop_constraint(name, table, type_="check")\n',
+        "        pass\n",
+        "non_negative_checks_clear_negatives",
+    ),
+    (
+        "309-5. the model forgets the orders CHECK the migration adds",
+        ROOT / "app/models/orders.py",
+        '    __table_args__ = (\n        CheckConstraint("shipping_cost_minor >= 0", name="shipping_cost_non_negative"),\n    )\n',
+        "",
+        "every_check_the_models_declare",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
