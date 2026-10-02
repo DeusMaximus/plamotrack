@@ -63,6 +63,15 @@ layer), Postgres, React frontend. Single-collection per instance, MIT licensed.
   on it and #244 (the gate), released together (owner's call, 2026-09-11; design §7.1).
 - **Commit or push only when the user asks.** Don't take a green test run as
   permission.
+- **`main` has a ruleset** (Settings → Rules, "main", since 2026-10-02). It blocks
+  force pushes and deletion, and it requires the CI checks **Backend**, **Frontend**
+  and **Integration** before a merge. Branches need not be up to date. The repository
+  admin role bypasses it ("Always allow"), which is what lets the small docs commits
+  above go straight to `main`, and every agent here pushes as that admin. So the
+  rules hold only if merges never use the bypass: **never pass `--admin` to `gh pr
+  merge`**. "Merge it once it's green" means `gh pr merge --squash --auto
+  --match-head-commit <reviewed sha>`, which waits for the three checks. Before the
+  ruleset existed, `--auto` merged #311 at once, mid-CI.
 - Anything outward-facing — pushing a tag, cutting a release, changing repo
   settings or visibility — needs explicit confirmation each time. Approval for one
   doesn't carry to the next.
