@@ -167,7 +167,7 @@ test("the close button also returns focus to the opener", async ({ page }) => {
 });
 
 test("order line items expand from the keyboard", async ({ page }) => {
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(RETAILER)}`);
 
   // Scoped to this spec's own order, not `.first()` — on a populated instance
   // that is whichever row happens to sort first. A `<tr>` from 768 px and a
@@ -317,7 +317,7 @@ test("a date input keeps its own Tab through its parts (#267's trap)", async ({ 
   // passed *Add line* over, inside the dialog the whole time, which containment
   // cannot see. So the stop is asserted by name, under WebKit too; only the
   // count of parts is Chromium's.
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(RETAILER)}`);
   await page.locator("tr, li").filter({ hasText: RETAILER }).getByRole("button", { name: /^Edit / }).click();
   const dialog = page.getByRole("dialog", { name: "Edit order" });
   await expect(dialog.getByRole("button", { name: "Add line" })).toBeVisible();

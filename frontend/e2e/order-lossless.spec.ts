@@ -104,7 +104,7 @@ test("editing only the tracking number leaves currency, scale and free shipping 
   expect(before.shipping_cost_minor).toBe(0);
   expect(await kitScale(kitId)).toBe("1/100");
 
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const row = page.getByRole("row").filter({ hasText: ORDER });
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "Edit" }).click();
@@ -147,7 +147,7 @@ test("a cold edit waits for the data it rebuilds the form from", async ({ page }
     await route.continue();
   });
 
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const row = page.getByRole("row").filter({ hasText: ORDER });
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "Edit" }).click();
@@ -225,7 +225,7 @@ test("a tracking-only edit leaves two divergent kits on the same line divergent"
   const [firstBefore, secondBefore] = await kitsOf(MULTI);
   expect(secondBefore.scale).toBe("1/60"); // control: the seed diverged
 
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const row = page.getByRole("row").filter({ hasText: MULTI });
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "Edit" }).click();
@@ -246,7 +246,7 @@ test("a tracking-only edit leaves two divergent kits on the same line divergent"
 test("a warm page does not revert a kit changed while it was open", async ({ page }) => {
   // The cached kit list satisfied the old hydration gate instantly, so the form
   // snapshotted values already superseded in the database and wrote them back.
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   await expect(page.getByRole("row").filter({ hasText: MULTI })).toBeVisible();
 
   // From here the kit list is frozen at what the page already holds. Opening the
@@ -282,7 +282,7 @@ test("a warm page does not revert a kit changed while it was open", async ({ pag
 });
 
 test("the editor hydrates from a fresh read, not the page's cache (#67)", async ({ page }) => {
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   await expect(page.getByRole("row").filter({ hasText: MULTI })).toBeVisible();
 
   // Lands after the page cached its list. The pre-#67 editor hydrated from that
@@ -303,7 +303,7 @@ test("a price edit does not revert a kit changed while the dialog was open (#67)
   // hydrated. The form provably holds the older values — only the dirty-only
   // kit payload keeps it from echoing them. No stall needed: the ordering is
   // enforced by awaiting hydration (the field renders) before the change.
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const row = page.getByRole("row").filter({ hasText: MULTI });
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "Edit" }).click();
@@ -353,7 +353,7 @@ test("an order deleted under a stale row says so instead of loading forever (PR 
     })
   ).json()) as { id: string };
 
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const row = page.getByRole("row").filter({ hasText: `GONE-${suffix}` });
   await expect(row).toBeVisible();
 

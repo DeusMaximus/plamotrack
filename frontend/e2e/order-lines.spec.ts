@@ -101,7 +101,7 @@ async function expand(page: import("@playwright/test").Page, number: string) {
 test("the stored conversion sits under the total whatever the header currency", async ({
   page,
 }) => {
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const row = rowOf(page, FREE_POST);
   await expect(row).toBeVisible();
   // The header is AUD, the line JPY: the line's own total, then its snapshot.
@@ -110,7 +110,7 @@ test("the stored conversion sits under the total whatever the header currency", 
 });
 
 test("an explicitly free shipping is a line in the box, with its service", async ({ page }) => {
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const box = await expand(page, FREE_POST);
   await expect(box).toContainText("Shipping · Free Post");
   await expect(box).toContainText("$0.00");
@@ -118,7 +118,7 @@ test("an explicitly free shipping is a line in the box, with its service", async
 });
 
 test("the expanded lines share one type column", async ({ page }) => {
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const box = await expand(page, SHIPPED);
   const kit = box.getByText(/^kit$/i);
   const consumable = box.getByText(/^consumable$/i);

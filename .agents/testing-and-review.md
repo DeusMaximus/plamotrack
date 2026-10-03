@@ -52,10 +52,19 @@ psqlc() { docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T
 psqlc postgres "DROP DATABASE IF EXISTS plamotrack_e2e;"      # separate calls: DROP DATABASE
 psqlc postgres "CREATE DATABASE plamotrack_e2e OWNER $POSTGRES_USER;"   # can't share a transaction
 ( cd backend  && DATABASE_URL="$DSN" uv run alembic upgrade head )
-( cd frontend && DATABASE_URL="$DSN" npx playwright test --workers=1 )   # one worker, CI's shape: the multi-worker local default fails specs from cross-file contention
+( cd frontend && DATABASE_URL="$DSN" npx playwright test --workers=1 )   # one worker, CI's shape: the multi-worker local default fails tests that read collection-wide state (#324)
 psqlc plamotrack_e2e "select count(*) from kits union all select count(*) from orders union all select count(*) from retailers"   # all 0
 psqlc postgres "DROP DATABASE plamotrack_e2e;"
 ```
+
+**A test finds its row on a list by the list's own narrowing, never by position on
+page 1** (#317). From 768 px a list draws ten rows a page, and the suite's other files
+put rows ahead of a test's own: orders dated after it, names that sort before it,
+other projects running the same file. Kits, Orders and Retailers open with `?q=` naming
+the test's own record. Inventory can't be narrowed (Upgrades has no category), so
+it opens through `openListAt` (`e2e/listRows.ts`), which steps `?page=` until the row
+is drawn. A list the test reads as a whole, like Home's counts or an import's preview,
+is #324's problem, not this one.
 
 Every count must be zero afterwards — a spec that leaves rows behind is a spec that
 will collide with the next one.

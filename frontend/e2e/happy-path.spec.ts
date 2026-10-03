@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { apiContext } from "./api";
+import { openListAt } from "./listRows";
 
 // Unique names so the test never collides with (or damages) real dev data.
 const suffix = Date.now().toString(36);
@@ -25,7 +26,7 @@ test.use({ viewport: { width: 1440, height: 900 } });
 test("create order → receive → kits and stock update", async ({ page }) => {
   page.on("dialog", (dialog) => dialog.accept());
 
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   await page.getByRole("button", { name: "New order" }).click();
 
   // Retailer quick-add
@@ -55,8 +56,7 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   await expect(orderRow.getByText("Pending")).toBeVisible();
 
   // Stock must NOT count while the order is pending
-  await page.goto("/inventory");
-  await page.getByRole("button", { name: "Consumables" }).click();
+  await openListAt(page, "/inventory?tab=consumables", MARKER);
   const markerRow = page.getByRole("row").filter({ hasText: MARKER });
   await expect(markerRow).toBeVisible();
   // The count, not the cell: the "on hand" cell also holds the −/+ stepper (#55),
@@ -67,7 +67,7 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   // Ship, then receive — both live in the Edit dialog now (#120): filling a
   // date that isn't stored yet performs the transition on save. Today's date =
   // "it happened now" (the server stamps the moment), matching the old dialogs.
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   await orderRow.getByRole("button", { name: "Edit" }).click();
   const editDialog = page.getByRole("dialog", { name: "Edit order" });
   await editDialog.getByLabel("Shipped on").fill(TODAY);
@@ -86,12 +86,11 @@ test("create order → receive → kits and stock update", async ({ page }) => {
   await expect(orderRow.getByText(/· same day/).filter({ visible: true })).toBeVisible();
 
   // Stock applied…
-  await page.goto("/inventory");
-  await page.getByRole("button", { name: "Consumables" }).click();
+  await openListAt(page, "/inventory?tab=consumables", MARKER);
   await expect(markerRow.getByTestId("stock-count")).toHaveText("3");
 
   // …and the kit advanced to Backlog (in hand, unbuilt)
-  await page.goto("/kits");
+  await page.goto(`/kits?q=${encodeURIComponent(KIT)}`);
   const kitRow = page.getByRole("row").filter({ hasText: KIT });
   await expect(kitRow).toBeVisible();
   await expect(kitRow.getByText("Backlog").first()).toBeVisible();

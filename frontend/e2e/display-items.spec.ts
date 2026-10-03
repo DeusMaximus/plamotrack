@@ -25,6 +25,7 @@ import { expect, test } from "@playwright/test";
  */
 
 import { apiContext } from "./api";
+import { openListAt } from "./listRows";
 const suffix = Date.now().toString(36);
 const STAND = `E2E Stand ${suffix}`;
 const SCENERY = `E2E Diorama Set ${suffix}`;
@@ -59,7 +60,9 @@ test("the Display tab adds an item, and blank optional fields store as null", as
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
 
-  // `exact`, because the row's stepper buttons carry the name too ("Remove one …").
+  // On whichever page its name puts it (#317); `exact`, because the row's
+  // stepper buttons carry the name too ("Remove one …").
+  await openListAt(page, "/inventory?tab=display-items", STAND);
   await expect(page.getByRole("cell", { name: STAND, exact: true })).toBeVisible();
 
   const api = await apiContext();
