@@ -1773,6 +1773,21 @@ test("a turn out of the phone shell lands on the page that holds the keyboard's 
   // A phone draws every row and the rail ten (#318): turned with the keyboard on
   // row 12, page 1 has nothing carrying its key. The rail opens on the page that
   // holds the row instead, and says so in the URL.
+  //
+  // Armed by one step below: the moment the turn writes `?page=2`, choose page 3
+  // — in the same task, before React has committed the turn's navigation, which
+  // is the window in which the turn is still holding its page.
+  await page.addInitScript(() => {
+    const replace = history.replaceState.bind(history);
+    history.replaceState = (data: unknown, unused: string, url?: string | URL | null) => {
+      replace(data, unused, url);
+      const w = window as unknown as { __choosePage3?: boolean };
+      if (w.__choosePage3 && String(url ?? "").includes("page=2")) {
+        w.__choosePage3 = false;
+        queueMicrotask(() => (document.querySelector('main [aria-label="Page 3"]') as HTMLElement | null)?.click());
+      }
+    };
+  });
   const api = await apiContext();
   const anchorTag = `${TAG} Anchor`;
   try {
@@ -1844,6 +1859,20 @@ test("a turn out of the phone shell lands on the page that holds the keyboard's 
     await expect.soft(pencil3(), label).toBeFocused({ timeout: 2_000 });
     await expect.poll(pageInUrl, label).toBeNull();
   }
+
+  // A page chosen while the turn still holds its own is the person's, and it
+  // stays chosen (Greptile on #322): the turn writes page 2, page 3 is chosen
+  // before the router has heard of page 2, and the turn stands down.
+  await page.setViewportSize(portrait);
+  await openList(page, list, anchorTag);
+  await pencil12().focus();
+  await page.evaluate(() => void ((window as unknown as { __choosePage3?: boolean }).__choosePage3 = true));
+  await page.setViewportSize(landscape);
+  await expect(range("21–25 of 25"), "page 3, chosen mid-turn").toBeVisible();
+  await page.waitForTimeout(500);
+  await expect(range("21–25 of 25"), "page 3, still").toBeVisible();
+  expect(pageInUrl(), "page 3, chosen mid-turn").toBe("3");
+  expect(await page.evaluate(() => (window as unknown as { __choosePage3?: boolean }).__choosePage3), "the choice was made").toBe(false);
 
   // A dialog opened from row 12 and closed after the turn: its opener's row is
   // the one drawn, so closing has somewhere to give the keyboard back.

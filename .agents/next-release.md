@@ -33,10 +33,12 @@ Shape:
 
 ---
 
-## #318 — a phone shows every row (PR #319)
+## #318 — a phone shows every row (PR #319; #321, PR #322)
 - **Release note:** On a phone, the list pages (Kits, Orders, Inventory, Retailers)
   now show every row in one long list instead of ten a page; search and the filters
-  narrow it. Tablets and desktops still show ten a page.
+  narrow it. Tablets and desktops still show ten a page. Turning a tablet from the
+  phone layout to the wider one opens the list on the page that holds the row you
+  were on, so the keyboard stays on it.
 - **README:** nothing.
 - **Docs site:** the phone page says lists show every row (no pager); any page that
   says "ten rows a page" without qualification gains "on a tablet or desktop". Phone

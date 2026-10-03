@@ -837,10 +837,13 @@ export function InventoryPage() {
   const filteredConsumables = inCategory(consumables.data);
   const filteredDisplayItems = inCategory(displayItems.data);
   const filteredUpgrades = upgrades.data ?? [];
-  const pagedTools = paging.slice(filteredTools);
-  const pagedConsumables = paging.slice(filteredConsumables);
-  const pagedUpgrades = paging.slice(filteredUpgrades);
-  const pagedDisplayItems = paging.slice(filteredDisplayItems);
+  // The tab on screen alone: the others' rows can still be in the query cache,
+  // and a record id one table shares with another (an import may choose ids)
+  // would otherwise pick the page a turn lands on (#321, Codex P2 on #322).
+  const pagedTools = paging.slice(tab === "tools" ? filteredTools : []);
+  const pagedConsumables = paging.slice(tab === "consumables" ? filteredConsumables : []);
+  const pagedUpgrades = paging.slice(tab === "upgrades" ? filteredUpgrades : []);
+  const pagedDisplayItems = paging.slice(tab === "display-items" ? filteredDisplayItems : []);
   const shownCount =
     tab === "tools"
       ? pagedTools.total

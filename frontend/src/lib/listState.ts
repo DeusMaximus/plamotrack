@@ -199,6 +199,11 @@ export function usePageParam(): [number, Setter<number>] {
   return [readPage(params.get(PAGE_PARAM)), useCallback((next: number) => write(String(next)), [write])];
 }
 
+/** A turn out of the phone shell in progress (#321): the keys of the record to
+ *  keep drawn, and the page it wrote to the URL — "" for page 1, `null` until it
+ *  has written. */
+type Turn = { keys: readonly string[]; wrote: string | null };
+
 /** A list page's paging (#318): ten a page from 768 px, and in the phone shell
  *  every row — one long scroll under a thumb, with no pager and nothing to
  *  choose; the search and the filter sheet are what narrow a long list there.
@@ -241,10 +246,10 @@ export function usePaging(): {
   // may still be on its way when the turn renders (a tablet turned back within
   // a moment; caught at 1 run in 8) — so the turn decides the page, not the URL.
   const [seen, setSeen] = useState(shell);
-  const [turn, setTurn] = useState<readonly string[] | null>(null);
+  const [turn, setTurn] = useState<Turn | null>(null);
   if (seen !== shell) {
     setSeen(shell);
-    setTurn(seen === "phone" && !all ? focusedRecordKeys() : null);
+    setTurn(seen === "phone" && !all ? { keys: focusedRecordKeys(), wrote: null } : null);
   }
   // The page `slice` found the record on this render, for the effect to write.
   const landed = useRef<number | null>(null);
@@ -252,7 +257,7 @@ export function usePaging(): {
   const slice = <T extends { id: string }>(rows: readonly T[]): Paged<T> => {
     if (all) return paginate(rows, 1, "all");
     if (turn !== null) {
-      const index = rows.findIndex((row) => turn.some((key) => key.endsWith(`:${row.id}`)));
+      const index = rows.findIndex((row) => turn.keys.some((key) => key.endsWith(`:${row.id}`)));
       if (index >= 0) landed.current = Math.floor(index / PAGE_SIZE) + 1;
       return paginate(rows, landed.current ?? 1, PAGE_SIZE);
     }
@@ -264,16 +269,21 @@ export function usePaging(): {
   // router's location: a navigation changes the address at once and reaches
   // React later, in a transition, so the location a turn renders with can be
   // one the address has already left (the phone's drop, caught at 2 runs in
-  // 10). It stands down once both say the page, re-asked at every navigation.
+  // 10). It writes once, then stands down when the router agrees — or at once
+  // if the address moves anywhere else: a page chosen, a filter changed, any
+  // navigation but its own is the person's, and theirs wins (Greptile on #322).
   const pageParam = params.get(PAGE_PARAM);
   const { key: locationKey } = useLocation();
   useEffect(() => {
     if (turn === null) return;
-    const target = landed.current ?? 1;
-    const wanted = target === 1 ? null : String(target);
     const address = new URLSearchParams(window.location.search).get(PAGE_PARAM);
-    if (address !== wanted) write({ [PAGE_PARAM]: wanted }, { replace: true });
-    else if (pageParam === wanted) setTurn(null);
+    if (turn.wrote === null) {
+      const target = landed.current ?? 1;
+      const wanted = target === 1 ? "" : String(target);
+      if ((address ?? "") !== wanted) write({ [PAGE_PARAM]: wanted || null }, { replace: true });
+      setTurn({ ...turn, wrote: wanted });
+    } else if ((address ?? "") !== turn.wrote) setTurn(null);
+    else if ((pageParam ?? "") === turn.wrote) setTurn(null);
   }, [turn, pageParam, locationKey, write]);
   return { setPage, slice };
 }
