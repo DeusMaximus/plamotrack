@@ -7,7 +7,9 @@
  * browser silently fell back to English, because nothing ever loaded it.
  * docs/translating.md step 3 sends contributors here. */
 import enAU from "./catalogues/en-AU.json";
+import ja from "./catalogues/ja.json";
 
 export const CATALOGUES = {
   "en-AU": enAU,
+  ja,
 } as const;
