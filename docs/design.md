@@ -3005,7 +3005,8 @@ inside the edit dialog, next to the fields it destroys. Orders keeps its expanda
 lines, kit lines showing their kit status and catalog lines noting that stock applies
 on receipt (§3.9), with a shipping line closing the box and the lines' converted total
 under the order's own (§6). Built as #232 (2026-09-10), with what the Orders artboard
-added: the count beside the page title, a pager of ten rows a page whose page is one
+added: the count beside the page title, a pager of ten rows a page (every row on a
+phone since #318, §13.7) whose page is one
 more URL parameter (`?page=2`, clamped onto the last page when the list shrinks — a
 filter, sort or search change resets it), and the sort as the server's — `GET /kits`
 and `GET /orders` take `sort` and `limit`, on REST and the MCP list tools alike, so
@@ -3383,10 +3384,11 @@ and tablet e2e, screenshots, the release (#260).
   (`lists.spec.ts`, "no change of representation leaves the keyboard on
   `<body>`"): every focusable control, the three ways the page can change under
   it. It says only *never nowhere*; the named tests beside it say where.
-- **The pager on a phone** offers five pages at most — the ends and the current
+- **The pager on a phone** offered five pages at most — the ends and the current
   page with a neighbour either side — at 44 px each, on their own line when
-  they do not fit beside the range: the desktop's window is nine entries from
-  the middle of a long list, wider than the screen.
+  they did not fit beside the range: the desktop's window is nine entries from
+  the middle of a long list, wider than the screen. Since #318 a phone shows
+  every row and draws no pages at all (the amendment below).
 - **The guard**: `e2e/lists.spec.ts`, in all three projects, on rows it seeds —
   the from-empty suite had only ever seen empty lists. It carries each field's
   null as well as its widest value; its run tag is digits, because the tag is a
@@ -3804,3 +3806,34 @@ import it here. That undoes the first of the three reasons the phone was export 
   control, the mode, Preview, Apply, Cancel and the starter sheet each carry one in
   both shapes; the pack and the replace confirmation name a stand-in.
 
+**Amended — #318, every row on a phone (owner's calls, 03/10/2026).** Ten rows and a
+pager is right at a desk and awkward under a thumb, where one long scroll is the
+natural shape, and there is no reason to page a list on a phone. So the phone shell
+shows every row and draws no pages; from 768 px it is ten a page, as before. The lists
+already fetch every row and page in the browser (`paginate`), so this fetches nothing
+more; it only draws more.
+
+- **Decided by the shell, not chosen.** A first build offered *Rows per page* (10,
+  20, All) as a browser-local preference, one value per shell; the owner dropped it
+  before review: nothing on a phone wants pages, and a preference for the wider
+  shells alone was not wanted either. So nothing is stored, the theme stays §13.1's
+  one exception, and a tablet turned across 768 px switches live, like every other
+  shell decision. `usePaging` (`lib/listState.ts`) is the list pages' one entry.
+- **`?page=` on a phone is dropped in place** (a replace, no history entry), whether
+  it came from a shared link, a bookmark or a turn into the phone shell: the URL never
+  names a page the list is not showing (#247's rule). Turned back, the list is on
+  page 1.
+- **Focus**: a page button names the page's primary action (`page-action`) as its
+  stand-in — a turn into the phone shell takes every page away. The phone's compact
+  page window went with the pages.
+- **Measured** before deciding (03/10/2026; Chromium, 390 × 844, the from-empty
+  database seeded with 300 kits, 300 orders, 300 consumables and 300 retailers —
+  about 2.5 times the owner's 116 kits, 3.7 times their 82 orders). Unthrottled, a
+  list of 300 is on screen in 220–430 ms against 130–250 ms for ten; at a 4× CPU
+  throttle (a mid-range phone) 0.9–2.1 s against 0.4–0.7 s, Orders the slowest —
+  5,200 nodes, and about 5.7 s of long tasks around its load, so the page is busy
+  for a few seconds after it appears. Scrolling top to bottom never dropped a
+  frame past 50 ms in either case; a search narrowing 300 kits took 0.7 s and a
+  stock change on the 300th consumable 1.3 s at 4×. Nothing to do at this scale; if
+  a collection's Orders grows into the hundreds on a slow phone, its cards are where
+  to look first, not a pager.

@@ -36,7 +36,7 @@ import {
 } from "../components/ui";
 import { currencyOptions, formatMoney, formatNumber, majorToMinor, minorToMajor, stepFor } from "../lib/format";
 import { counted, itemTypeLabel, itemTypePlural } from "../lib/labels";
-import { paginate, useEnumParam, usePageParam, useTextParam, useWriteParams } from "../lib/listState";
+import { paginate, useEnumParam, usePaging, useTextParam, useWriteParams } from "../lib/listState";
 import { usePresentationVersion } from "../lib/presentation";
 import { useShell } from "../lib/shell";
 
@@ -44,9 +44,6 @@ type Tab = "tools" | "consumables" | "upgrades" | "display-items";
 type InventoryItem = Tool | Consumable | Upgrade | DisplayItem;
 
 const TABS: Tab[] = ["tools", "consumables", "upgrades", "display-items"];
-
-/** Rows per page on the list pages (§13.4). */
-const PAGE_SIZE = 10;
 
 /** The CSV table key, which is the spec registry's key and not the route segment:
  * `/display-items` is the REST resource, `display_items.csv` is the file. Every
@@ -773,7 +770,7 @@ export function InventoryPage() {
   // The tab, the category and the page are the URL (§13.4, #232).
   const [tab] = useEnumParam<Tab>("tab", TABS, "tools");
   const [categoryFilter, setCategoryFilter] = useTextParam("category");
-  const [page, setPage] = usePageParam();
+  const paging = usePaging();
   const writeParams = useWriteParams();
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<InventoryItem | null>(null);
@@ -840,10 +837,10 @@ export function InventoryPage() {
   const filteredConsumables = inCategory(consumables.data);
   const filteredDisplayItems = inCategory(displayItems.data);
   const filteredUpgrades = upgrades.data ?? [];
-  const pagedTools = paginate(filteredTools, page, PAGE_SIZE);
-  const pagedConsumables = paginate(filteredConsumables, page, PAGE_SIZE);
-  const pagedUpgrades = paginate(filteredUpgrades, page, PAGE_SIZE);
-  const pagedDisplayItems = paginate(filteredDisplayItems, page, PAGE_SIZE);
+  const pagedTools = paginate(filteredTools, paging.page, paging.pageSize);
+  const pagedConsumables = paginate(filteredConsumables, paging.page, paging.pageSize);
+  const pagedUpgrades = paginate(filteredUpgrades, paging.page, paging.pageSize);
+  const pagedDisplayItems = paginate(filteredDisplayItems, paging.page, paging.pageSize);
   const shownCount =
     tab === "tools"
       ? pagedTools.total
@@ -927,7 +924,7 @@ export function InventoryPage() {
         (tools.isError ? (
           <ErrorBanner message={t("inventory.loadFailed.tools", { message: (tools.error as Error).message })} />
         ) : pagedTools.total && phone ? (
-          <CardList footer={<Pager paged={pagedTools} onPage={setPage} />}>
+          <CardList footer={<Pager paged={pagedTools} onPage={paging.setPage} />}>
             {pagedTools.rows.map((tool) => (
               <StockCard
                 key={tool.id}
@@ -1007,7 +1004,7 @@ export function InventoryPage() {
                 ))}
               </tbody>
             </table>
-            <Pager paged={pagedTools} onPage={setPage} />
+            <Pager paged={pagedTools} onPage={paging.setPage} />
           </div>
         ) : (
           <EmptyState>
@@ -1030,7 +1027,7 @@ export function InventoryPage() {
             })}
           />
         ) : pagedConsumables.total && phone ? (
-          <CardList footer={<Pager paged={pagedConsumables} onPage={setPage} />}>
+          <CardList footer={<Pager paged={pagedConsumables} onPage={paging.setPage} />}>
             {pagedConsumables.rows.map((item) => {
               const low =
                 item.low_stock_threshold !== null &&
@@ -1118,7 +1115,7 @@ export function InventoryPage() {
                 })}
               </tbody>
             </table>
-            <Pager paged={pagedConsumables} onPage={setPage} />
+            <Pager paged={pagedConsumables} onPage={paging.setPage} />
           </div>
         ) : (
           <EmptyState>
@@ -1137,7 +1134,7 @@ export function InventoryPage() {
         (upgrades.isError ? (
           <ErrorBanner message={t("inventory.loadFailed.upgrades", { message: (upgrades.error as Error).message })} />
         ) : pagedUpgrades.total && phone ? (
-          <CardList footer={<Pager paged={pagedUpgrades} onPage={setPage} />}>
+          <CardList footer={<Pager paged={pagedUpgrades} onPage={paging.setPage} />}>
             {pagedUpgrades.rows.map((upgrade) => (
               <StockCard
                 key={upgrade.id}
@@ -1207,7 +1204,7 @@ export function InventoryPage() {
                 ))}
               </tbody>
             </table>
-            <Pager paged={pagedUpgrades} onPage={setPage} />
+            <Pager paged={pagedUpgrades} onPage={paging.setPage} />
           </div>
         ) : (
           <EmptyState>
@@ -1223,7 +1220,7 @@ export function InventoryPage() {
             })}
           />
         ) : pagedDisplayItems.total && phone ? (
-          <CardList footer={<Pager paged={pagedDisplayItems} onPage={setPage} />}>
+          <CardList footer={<Pager paged={pagedDisplayItems} onPage={paging.setPage} />}>
             {pagedDisplayItems.rows.map((row) => (
               <StockCard
                 key={row.id}
@@ -1284,7 +1281,7 @@ export function InventoryPage() {
                 ))}
               </tbody>
             </table>
-            <Pager paged={pagedDisplayItems} onPage={setPage} />
+            <Pager paged={pagedDisplayItems} onPage={paging.setPage} />
           </div>
         ) : (
           <EmptyState>

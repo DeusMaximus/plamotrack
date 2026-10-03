@@ -33,6 +33,16 @@ Shape:
 
 ---
 
+## #318 — a phone shows every row (PR #319)
+- **Release note:** On a phone, the list pages (Kits, Orders, Inventory, Retailers)
+  now show every row in one long list instead of ten a page; search and the filters
+  narrow it. Tablets and desktops still show ten a page.
+- **README:** nothing.
+- **Docs site:** the phone page says lists show every row (no pager); any page that
+  says "ten rows a page" without qualification gains "on a tablet or desktop". Phone
+  screenshots of a list with more than ten rows change shape (no pager); retake the
+  ones that show one.
+
 ## #304 — a phone can import (PR #314, `39a9661`)
 - **Release note:** Settings → Data management on a phone now imports: choose a .zip
   archive or a .csv from your phone's files, preview it, and apply it, with **Merge**
