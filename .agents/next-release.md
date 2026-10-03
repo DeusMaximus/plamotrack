@@ -33,7 +33,7 @@ Shape:
 
 ---
 
-## #318 — a phone shows every row (PR #TBD)
+## #318 — a phone shows every row (PR #319)
 - **Release note:** On a phone, the list pages (Kits, Orders, Inventory, Retailers)
   now show every row in one long list instead of ten a page; search and the filters
   narrow it. Tablets and desktops still show ten a page.
