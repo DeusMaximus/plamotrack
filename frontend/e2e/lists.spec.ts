@@ -1712,6 +1712,61 @@ test("a phone shows every row and wider pages ten (#318)", async ({ page }, test
   }
 });
 
+test("every list on a phone shows every row, not only Kits (#318)", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "phone", "the phone shell's");
+  test.setTimeout(120_000);
+  // Each list has its own cards and its own pager call, so each gets more than
+  // a page of ten (Greptile P2 on #319): a page still slicing ten would show a
+  // pager and hide its eleventh row. Narrowed to this test's rows where the page
+  // can be — a search, a category — and counted against the range otherwise.
+  const ELEVEN = 11;
+  const every = `${TAG} Every`;
+  const category = `${TAG.toLowerCase()} every`;
+  const api = await apiContext();
+  try {
+    const shop = await post<{ id: string }>(api, "/retailers", { name: `${every} Shop` });
+    for (let n = 1; n <= ELEVEN; n += 1) {
+      const nn = String(n).padStart(2, "0");
+      await post(api, "/retailers", { name: `${every} Retailer ${nn}` });
+      await post(api, "/tools", { name: `${every} Tool ${nn}`, category, quantity_on_hand: 1 });
+      await post(api, "/consumables", { name: `${every} Consumable ${nn}`, category, quantity_on_hand: 1 });
+      await post(api, "/upgrades", { name: `${every} Upgrade ${nn}`, manufacturer: "Metallic Forge", quantity_on_hand: 1 });
+      await post(api, "/display-items", { name: `${every} Display ${nn}`, category, quantity_on_hand: 1 });
+      await post(api, "/orders", {
+        retailer_id: shop.id,
+        order_date: day(60 + n),
+        order_number: `EVR-${suffix}-${nn}`,
+        currency_code: "JPY",
+        items: [{ item_type: "kit", quantity: 1, unit_price_minor: 1000, currency_code: "JPY", kit: { name: `Every ${suffix} ${nn}`, grade: "HG" } }],
+      });
+    }
+  } finally {
+    await api.dispose();
+  }
+  const cat = encodeURIComponent(category);
+  // [path, the text every seeded row carries, whether the path narrows to them]
+  const lists: [string, string, boolean][] = [
+    [`/orders?q=${encodeURIComponent(`${every} Shop`)}`, `EVR-${suffix}-`, true],
+    [`/retailers?q=${encodeURIComponent(`${every} Retailer`)}`, `${every} Retailer`, true],
+    [`/inventory?tab=tools&category=${cat}`, `${every} Tool`, true],
+    [`/inventory?tab=consumables&category=${cat}`, `${every} Consumable`, true],
+    [`/inventory?tab=upgrades`, `${every} Upgrade`, false],
+    [`/inventory?tab=display-items&category=${cat}`, `${every} Display`, true],
+  ];
+  await page.setViewportSize({ width: 390, height: 844 });
+  for (const [path, mark, narrowed] of lists) {
+    await openList(page, `${path}&page=2`, mark);
+    await expect(rowOf(page, mark), path).toHaveCount(ELEVEN);
+    await expect(page.getByRole("navigation", { name: "Pages" }), path).toHaveCount(0);
+    const range = (await shown(main(page).getByText(/^1–\d+ of \d+$/)).first().textContent()) ?? "";
+    const [, to, total] = /^1–(\d+) of (\d+)$/.exec(range) ?? [];
+    expect(to, `${path}: ${range}`).toBe(total);
+    if (narrowed) expect(Number(total), `${path}: ${range}`).toBe(ELEVEN);
+    else expect(Number(total), `${path}: ${range}`).toBeGreaterThanOrEqual(ELEVEN);
+    await expect(page, path).toHaveURL((url) => !url.searchParams.has("page"));
+  }
+});
+
 test("Access tokens is a table where its box has room and card rows where it has not", async ({ page }, testInfo) => {
   // Chosen by the box, not the shell (§13.7): the Settings pane is two columns
   // beside the rail, so an iPad in portrait is cards too. A live token with
