@@ -1928,8 +1928,16 @@ test("every control in a row past ten keeps the keyboard across the turn, on eve
       const label = `${path} ${key}: 744 → 1133 px`;
       await page.setViewportSize(portrait);
       await openList(page, path, mark);
-      const total = Number(/of (\d+)$/.exec((await shown(main(page).getByText(/^1–\d+ of \d+$/)).first().textContent()) ?? "")?.[1]);
       const control = shown(page.locator(`[data-focus-key="${key}"]`)).first();
+      // The row's place in the whole list, where every row is drawn: the page
+      // the rail owes it. Not the list's last page — the upgrades tab is not
+      // narrowed, and a name sorting after this one would make that wrong.
+      const index = await control.evaluate((el) => {
+        const row = el.closest("li, tr");
+        const rows = row?.parentElement ? [...row.parentElement.children].filter((child) => child.getClientRects().length > 0) : [];
+        return row ? rows.indexOf(row) : -1;
+      });
+      expect(index, `${label}: the row's place`).toBeGreaterThanOrEqual(10);
       await control.focus();
       await page.setViewportSize(landscape);
       // The swap first: asked before the rail has rendered, the phone's control
@@ -1938,7 +1946,7 @@ test("every control in a row past ten keeps the keyboard across the turn, on eve
       await expect
         .poll(() => page.evaluate(() => document.activeElement?.closest("[data-focus-key]")?.getAttribute("data-focus-key") ?? (document.activeElement === document.body ? "<body>" : "<unkeyed>")), { message: label, timeout: 2_000 })
         .toBe(key);
-      await expect.poll(() => new URL(page.url()).searchParams.get("page"), label).toBe(String(Math.ceil(total / 10)));
+      await expect.poll(() => new URL(page.url()).searchParams.get("page"), label).toBe(String(Math.floor(index / 10) + 1));
     }
   }
 });
