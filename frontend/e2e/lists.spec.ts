@@ -1767,6 +1767,182 @@ test("every list on a phone shows every row, not only Kits (#318)", async ({ pag
   }
 });
 
+test("a turn out of the phone shell lands on the page that holds the keyboard's row (#321)", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "tablet", "an iPad mini turning: 744 px one way, 1133 the other");
+  test.setTimeout(180_000);
+  // A phone draws every row and the rail ten (#318): turned with the keyboard on
+  // row 12, page 1 has nothing carrying its key. The rail opens on the page that
+  // holds the row instead, and says so in the URL.
+  const api = await apiContext();
+  const anchorTag = `${TAG} Anchor`;
+  try {
+    for (let n = 1; n <= 25; n += 1) {
+      await post(api, "/kits", { name: `${anchorTag} ${String(n).padStart(2, "0")}`, grade: "HG" });
+    }
+  } finally {
+    await api.dispose();
+  }
+  const portrait = { width: 744, height: 1133 };
+  const landscape = { width: 1133, height: 744 };
+  const list = `/kits?q=${encodeURIComponent(anchorTag)}`;
+  const pencils = () => shown(main(page).getByRole("button", { name: new RegExp(`^Edit ${anchorTag} `) }));
+  const range = (text: string) => shown(main(page).getByText(text, { exact: true }));
+  const pageInUrl = () => new URL(page.url()).searchParams.get("page");
+
+  // Every row's name, read where every row is drawn.
+  await page.setViewportSize(portrait);
+  await openList(page, list, anchorTag);
+  await expect(range("1–25 of 25")).toBeVisible();
+  const names = await pencils().evaluateAll((found) => found.map((el) => el.getAttribute("aria-label") ?? ""));
+  expect(names).toHaveLength(25);
+
+  // Row 12, 3 and 23 of 25: pages 2, 1 and 3.
+  for (const [row, landsOn, shows] of [
+    [12, "2", "11–20 of 25"],
+    [3, null, "1–10 of 25"],
+    [23, "3", "21–25 of 25"],
+  ] as const) {
+    const label = `row ${row}, 744 → 1133 px`;
+    await page.setViewportSize(portrait);
+    await openList(page, list, anchorTag);
+    await expect(range("1–25 of 25"), label).toBeVisible();
+    const name = names[row - 1];
+    await shown(main(page).getByRole("button", { name, exact: true })).focus();
+    await page.setViewportSize(landscape);
+    await expect(range(shows), label).toBeVisible();
+    await expect.soft(shown(main(page).getByRole("button", { name, exact: true })), label).toBeFocused({ timeout: 2_000 });
+    await expect.poll(pageInUrl, label).toBe(landsOn);
+  }
+
+  // There and back: the phone drops the page and keeps the row; the rail finds it again.
+  const name12 = names[11];
+  const pencil12 = () => shown(main(page).getByRole("button", { name: name12, exact: true }));
+  await page.setViewportSize(landscape);
+  await openList(page, `${list}&page=2`, anchorTag);
+  await pencil12().focus();
+  await page.setViewportSize(portrait);
+  await expect(range("1–25 of 25")).toBeVisible();
+  await expect.soft(pencil12(), "row 12, 1133 → 744 px").toBeFocused({ timeout: 2_000 });
+  await expect.poll(pageInUrl, "the phone drops the page").toBeNull();
+  await page.setViewportSize(landscape);
+  await expect(range("11–20 of 25")).toBeVisible();
+  await expect.soft(pencil12(), "row 12, 744 → 1133 px again").toBeFocused({ timeout: 2_000 });
+
+  // The same race with the row on page 1: the phone's drop of `?page=2` may
+  // still be reaching the router when the turn renders, and the rail must not
+  // take the stale page 2 from it — row 3 is on page 1.
+  const name3 = names[2];
+  const pencil3 = () => shown(main(page).getByRole("button", { name: name3, exact: true }));
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const label = `row 3 after a page 2, attempt ${attempt}`;
+    await page.setViewportSize(landscape);
+    await openList(page, `${list}&page=2`, anchorTag);
+    await page.setViewportSize(portrait);
+    await pencil3().focus();
+    await page.setViewportSize(landscape);
+    await expect(range("1–10 of 25"), label).toBeVisible();
+    await expect.soft(pencil3(), label).toBeFocused({ timeout: 2_000 });
+    await expect.poll(pageInUrl, label).toBeNull();
+  }
+
+  // A dialog opened from row 12 and closed after the turn: its opener's row is
+  // the one drawn, so closing has somewhere to give the keyboard back.
+  await page.setViewportSize(portrait);
+  await openList(page, list, anchorTag);
+  await pencil12().focus();
+  await page.keyboard.press("Enter");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.setViewportSize(landscape);
+  await expect(range("11–20 of 25"), "under the dialog").toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect.soft(pencil12(), "row 12's dialog, closed after 744 → 1133 px").toBeFocused({ timeout: 2_000 });
+  await expect.poll(pageInUrl, "row 12's dialog").toBe("2");
+
+  // The keyboard on no row: page 1, and the control keeps it. In the same
+  // page load as the dialog above, so an opener it failed to release would
+  // still pull the list to row 12's page.
+  await page.setViewportSize(portrait);
+  await expect(range("1–25 of 25")).toBeVisible();
+  const search = main(page).getByRole("searchbox").or(main(page).getByPlaceholder(/^Search/)).first();
+  await search.focus();
+  await page.setViewportSize(landscape);
+  await expect(range("1–10 of 25"), "the search focused").toBeVisible();
+  await expect.soft(search, "the search focused, 744 → 1133 px").toBeFocused();
+  expect(pageInUrl(), "the search focused").toBeNull();
+});
+
+test("every control in a row past ten keeps the keyboard across the turn, on every list (#321)", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "tablet", "an iPad mini turning: 744 px one way, 1133 the other");
+  test.setTimeout(300_000);
+  // The sweep above seeds lists shorter than a page, which is why it never saw
+  // the phone's every row against the rail's ten. Twelve rows a list here, and
+  // every keyed control in a row on page 2 is focused on the phone and turned.
+  const TWELVE = 12;
+  const past = `${TAG} Past`;
+  const category = `${TAG.toLowerCase()} past`;
+  const api = await apiContext();
+  try {
+    const shop = await post<{ id: string }>(api, "/retailers", { name: `${past} Shop` });
+    for (let n = 1; n <= TWELVE; n += 1) {
+      const nn = String(n).padStart(2, "0");
+      await post(api, "/retailers", { name: `${past} Retailer ${nn}`, website: `https://past${nn}.example` });
+      await post(api, "/tools", { name: `${past} Tool ${nn}`, category, quantity_on_hand: 1 });
+      await post(api, "/consumables", { name: `${past} Consumable ${nn}`, category, quantity_on_hand: 1 });
+      await post(api, "/upgrades", { name: `${past} Upgrade ${nn}`, manufacturer: "Metallic Forge", quantity_on_hand: 1 });
+      await post(api, "/display-items", { name: `${past} Display ${nn}`, category, quantity_on_hand: 1 });
+      await post(api, "/orders", {
+        retailer_id: shop.id,
+        order_date: day(70 + n),
+        order_number: `PST-${suffix}-${nn}`,
+        tracking_number: `PST${suffix}${nn}`,
+        tracking_url: `https://lists-e2e.example/track/PST${suffix}${nn}`,
+        currency_code: "JPY",
+        items: [{ item_type: "kit", quantity: 1, unit_price_minor: 1000, currency_code: "JPY", kit: { name: `Past ${suffix} ${nn}`, grade: "HG" } }],
+      });
+    }
+  } finally {
+    await api.dispose();
+  }
+  const cat = encodeURIComponent(category);
+  const lists: [string, string][] = [
+    [`/orders?q=${encodeURIComponent(`${past} Shop`)}`, `PST-${suffix}-`],
+    [`/retailers?q=${encodeURIComponent(`${past} Retailer`)}`, `${past} Retailer`],
+    [`/inventory?tab=tools&category=${cat}`, `${past} Tool`],
+    [`/inventory?tab=consumables&category=${cat}`, `${past} Consumable`],
+    [`/inventory?tab=upgrades`, `${past} Upgrade`],
+    [`/inventory?tab=display-items&category=${cat}`, `${past} Display`],
+  ];
+  const portrait = { width: 744, height: 1133 };
+  const landscape = { width: 1133, height: 744 };
+  for (const [path, mark] of lists) {
+    await page.setViewportSize(portrait);
+    await openList(page, path, mark);
+    // The list's last row: on page 2 of the rail whatever else the list holds.
+    const last = rowOf(page, mark).last();
+    const keys = await last.locator("[data-focus-key]").evaluateAll((found) =>
+      found.filter((el) => el.getClientRects().length > 0).map((el) => el.getAttribute("data-focus-key") ?? ""),
+    );
+    expect(keys.length, `${path}: keyed controls in the last row`).toBeGreaterThan(0);
+    for (const key of keys) {
+      const label = `${path} ${key}: 744 → 1133 px`;
+      await page.setViewportSize(portrait);
+      await openList(page, path, mark);
+      const total = Number(/of (\d+)$/.exec((await shown(main(page).getByText(/^1–\d+ of \d+$/)).first().textContent()) ?? "")?.[1]);
+      const control = shown(page.locator(`[data-focus-key="${key}"]`)).first();
+      await control.focus();
+      await page.setViewportSize(landscape);
+      // The swap first: asked before the rail has rendered, the phone's control
+      // still has the keyboard and the answer is the question.
+      await expect(shown(main(page).locator("table")), label).toHaveCount(1);
+      await expect
+        .poll(() => page.evaluate(() => document.activeElement?.closest("[data-focus-key]")?.getAttribute("data-focus-key") ?? (document.activeElement === document.body ? "<body>" : "<unkeyed>")), { message: label, timeout: 2_000 })
+        .toBe(key);
+      await expect.poll(() => new URL(page.url()).searchParams.get("page"), label).toBe(String(Math.ceil(total / 10)));
+    }
+  }
+});
+
 test("Access tokens is a table where its box has room and card rows where it has not", async ({ page }, testInfo) => {
   // Chosen by the box, not the shell (§13.7): the Settings pane is two columns
   // beside the rail, so an iPad in portrait is cards too. A live token with
