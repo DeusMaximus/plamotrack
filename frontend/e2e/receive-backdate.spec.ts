@@ -51,7 +51,7 @@ test("shipping and receiving with a backdate stamps the order and its kits with 
     })
   ).json();
 
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const orderRow = page.getByRole("row").filter({ hasText: SHOP });
   await orderRow.getByRole("button", { name: "Edit" }).click();
   const dialog = page.getByRole("dialog", { name: "Edit order" });

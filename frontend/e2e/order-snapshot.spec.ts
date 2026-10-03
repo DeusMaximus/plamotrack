@@ -53,7 +53,7 @@ async function findOrder(orderNumber: string): Promise<{ id: string; items: Line
 /** Open the order in the UI, bump its first line's quantity, save. Deliberately an
  *  edit that says nothing about the snapshot — that's the whole scenario. */
 async function bumpQuantityInTheBrowser(page: Page, orderNumber: string, quantity: number) {
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   const row = page.getByRole("row").filter({ hasText: orderNumber });
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "Edit" }).click();
@@ -63,7 +63,7 @@ async function bumpQuantityInTheBrowser(page: Page, orderNumber: string, quantit
 }
 
 test("a snapshot typed into the form survives a later quantity edit", async ({ page }) => {
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   await page.getByRole("button", { name: "New order" }).click();
   await page.getByRole("dialog").getByRole("combobox", { name: /^Retailer/ }).selectOption({ label: SHOP });
   await page.getByLabel("Currency").fill(foreign);

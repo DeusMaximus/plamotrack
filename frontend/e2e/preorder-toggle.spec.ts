@@ -17,7 +17,7 @@ const KIT_A = `E2E Preorder Kit A ${suffix}`;
 const KIT_B = `E2E Preorder Kit B ${suffix}`;
 
 test("the pre-order toggle spawns every kit line as pre_ordered", async ({ page }) => {
-  await page.goto("/orders");
+  await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
   await page.getByRole("button", { name: "New order" }).click();
 
   await page.getByRole("button", { name: "New retailer" }).click();

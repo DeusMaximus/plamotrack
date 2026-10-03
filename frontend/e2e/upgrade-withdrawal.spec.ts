@@ -68,7 +68,7 @@ async function stockOnHand(): Promise<number> {
 
 test("withdraw with restore returns the stock", async ({ page }) => {
   await applyViaApi(2); // 5 -> 3
-  await page.goto("/kits");
+  await page.goto(`/kits?q=${encodeURIComponent(KIT)}`);
   await page
     .getByRole("row", { name: new RegExp(KIT) })
     .getByRole("button", { name: "Edit" })
@@ -92,7 +92,7 @@ test("withdraw with restore returns the stock", async ({ page }) => {
 
 test("withdraw without restore keeps the stock spent", async ({ page }) => {
   await applyViaApi(1); // 5 -> 4
-  await page.goto("/kits");
+  await page.goto(`/kits?q=${encodeURIComponent(KIT)}`);
   await page
     .getByRole("row", { name: new RegExp(KIT) })
     .getByRole("button", { name: "Edit" })
