@@ -291,7 +291,8 @@ export function PageHeader({
 
 /** A list table's footer (§13.4): the range shown and, past one page, the
  *  pager — the ends and a window around the current page. The page is URL
- *  state, so the caller owns it. */
+ *  state, so the caller owns it (`usePaging`). A phone shows every row (#318)
+ *  and so never draws the pages, only the range. */
 export function Pager({
   paged,
   onPage,
@@ -304,9 +305,6 @@ export function Pager({
   className?: string;
 }) {
   const { t } = useTranslation();
-  // A page is 44 px on a phone (§13.7): five of them, and the pages on their
-  // own line when they do not fit beside the range.
-  const phone = useShell() === "phone";
   return (
     <div
       className={`flex items-center justify-between gap-x-4 gap-y-1 px-3.5 py-3 text-xs text-muted tabular-nums max-md:flex-wrap max-md:px-2 ${className}`}
@@ -319,11 +317,8 @@ export function Pager({
         })}
       </span>
       {paged.pages > 1 && (
-        // On a phone the pages wrap: they are a finger each *in rem*, and under
-        // a 40 px browser font five of them are 550 px of a 320 px screen (#260,
-        // found by pages.spec.ts once its own seed gave Kits a second page).
-        <nav aria-label={t("list.pagination")} className="flex items-center gap-1 max-md:flex-wrap max-md:justify-end">
-          {pageWindow(paged.page, paged.pages, phone).map((page, index) =>
+        <nav aria-label={t("list.pagination")} className="flex items-center gap-1">
+          {pageWindow(paged.page, paged.pages).map((page, index) =>
             page === null ? (
               <span key={`gap-${index}`} aria-hidden className="px-1 text-faint">
                 …
@@ -334,12 +329,12 @@ export function Pager({
                 type="button"
                 aria-label={t("list.page", { page: formatNumber(page) })}
                 aria-current={page === paged.page ? "page" : undefined}
-                // The pager is the table's foot in one shell and the card list's
-                // in the other, and a phone's window is shorter: a page that is
-                // in neither hands the keyboard to the current one, which is in
-                // both (`lib/focusKey.ts`).
+                // A phone shows every row and draws no pages (#318): a page
+                // focused when a turn crosses into it hands the keyboard to
+                // the page's primary action, which every shell draws
+                // (`lib/focusKey.ts`).
                 data-focus-key={`page:${page}`}
-                data-focus-stand-in={`page:${paged.page}`}
+                data-focus-stand-in={PAGE_ACTION_FOCUS}
                 onClick={() => onPage(page)}
                 className={`min-w-6.5 rounded-sm px-1.5 py-1 text-xs tabular-nums touch:min-h-11 touch:min-w-11 ${
                   page === paged.page

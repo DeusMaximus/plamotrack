@@ -50,7 +50,7 @@ import { filterOrders } from "../lib/listFilters";
 import {
   paginate,
   useEnumParam,
-  usePageParam,
+  usePaging,
   useSearchParam,
   useTextParam,
   useWriteParams,
@@ -104,9 +104,6 @@ const SORT_ORDER = Object.keys(SORT_LABEL) as OrderSort[];
 type OrderListState = { stage: OrderStage | ""; retailer: string; sort: OrderSort };
 const NO_FILTERS: OrderListState = { stage: "", retailer: "", sort: "placed" };
 
-/** Rows per page on the list pages (§13.4). */
-const PAGE_SIZE = 10;
-
 export function OrdersPage() {
   // Re-render when the instance's presentation settings arrive or change —
   // the plain format helpers below read them per call (#174 review, P3-1).
@@ -130,7 +127,7 @@ export function OrdersPage() {
   const [retailerFilter, setRetailerFilter] = useTextParam("retailer");
   const [search, setSearch] = useSearchParam("q");
   const [sort, setSort] = useEnumParam<OrderSort>("sort", ORDER_SORTS, "placed");
-  const [page, setPage] = usePageParam();
+  const paging = usePaging();
   const writeParams = useWriteParams();
   // Cards and the filter sheet are the phone's (§13.7); the sheet's state is
   // not the shell's, so a sheet open across a rotation stays a dialog.
@@ -193,7 +190,7 @@ export function OrdersPage() {
       ),
     [orders, stageFilter, retailerFilter, search, retailerName],
   );
-  const paged = paginate(visible, page, PAGE_SIZE);
+  const paged = paginate(visible, paging.page, paging.pageSize);
   const retailerOptions = useMemo(
     () => [...(retailers ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
     [retailers],
@@ -330,7 +327,7 @@ export function OrdersPage() {
               />
             ))}
           </ul>
-          <Pager paged={paged} onPage={setPage} className="" />
+          <Pager paged={paged} onPage={paging.setPage} className="" />
         </>
       ) : paged.total > 0 ? (
         // `@container`: the table folds to the width this box has, not the
@@ -513,7 +510,7 @@ export function OrdersPage() {
             </tbody>
           </table>
           </ReferenceRuler>
-          <Pager paged={paged} onPage={setPage} />
+          <Pager paged={paged} onPage={paging.setPage} />
         </div>
       ) : (
         <EmptyState>

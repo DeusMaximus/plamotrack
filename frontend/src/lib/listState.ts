@@ -13,6 +13,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { useLocation, useNavigationType, useSearchParams } from "react-router-dom";
 
+import { useShell } from "./shell";
+
 export const PAGE_PARAM = "page";
 
 /** One of an allowed set, else the fallback — the value axis a link can carry. */
@@ -42,14 +44,21 @@ export type Paged<T> = {
   to: number;
 };
 
+/** Rows a page holds: a count, or every row — the phone's (#318, `usePaging`). */
+export type PageSize = number | "all";
+
+/** Rows a page from 768 px up (§13.4). */
+export const PAGE_SIZE = 10;
+
 /** The slice of `rows` for `page`, clamping a page past the end onto the last
- *  one so a bookmark outlives a shrinking list. */
-export function paginate<T>(rows: readonly T[], page: number, pageSize: number): Paged<T> {
+ *  one so a bookmark outlives a shrinking list. Under "all" there is one page. */
+export function paginate<T>(rows: readonly T[], page: number, pageSize: PageSize): Paged<T> {
   const total = rows.length;
-  const pages = Math.max(1, Math.ceil(total / pageSize));
+  const size = pageSize === "all" ? Math.max(1, total) : pageSize;
+  const pages = Math.max(1, Math.ceil(total / size));
   const shown = Math.min(Math.max(1, page), pages);
-  const start = (shown - 1) * pageSize;
-  const slice = rows.slice(start, start + pageSize);
+  const start = (shown - 1) * size;
+  const slice = rows.slice(start, start + size);
   return {
     rows: slice,
     total,
@@ -61,25 +70,12 @@ export function paginate<T>(rows: readonly T[], page: number, pageSize: number):
 }
 
 /** The pager's labels: every page when few, else the ends and a window around
- *  the current page with `null` for each gap — "1 2 3 4 5 … 11".
- *
- *  `compact` is the phone's (§13.7): at most five pages — the two ends and the
- *  current page with a neighbour either side, "1 … 4 5 6 … 11". A page button is
- *  44 px there, and the full window's nine entries are wider than a 390 px
- *  screen from the middle of a long list. */
-export function pageWindow(page: number, pages: number, compact = false): (number | null)[] {
-  if (pages <= (compact ? 5 : 7)) return Array.from({ length: pages }, (_, index) => index + 1);
-  const around = compact
-    ? new Set([1, pages, page - 1, page, page + 1])
-    : new Set([1, 2, pages - 1, pages, page - 1, page, page + 1]);
-  if (compact) {
-    // At an end the window is one-sided: keep three pages together there.
-    if (page <= 2) around.add(3);
-    if (page >= pages - 1) around.add(pages - 2);
-  } else {
-    if (page <= 4) for (let n = 1; n <= 5; n += 1) around.add(n);
-    if (page >= pages - 3) for (let n = pages - 4; n <= pages; n += 1) around.add(n);
-  }
+ *  the current page with `null` for each gap — "1 2 3 4 5 … 11". */
+export function pageWindow(page: number, pages: number): (number | null)[] {
+  if (pages <= 7) return Array.from({ length: pages }, (_, index) => index + 1);
+  const around = new Set([1, 2, pages - 1, pages, page - 1, page, page + 1]);
+  if (page <= 4) for (let n = 1; n <= 5; n += 1) around.add(n);
+  if (page >= pages - 3) for (let n = pages - 4; n <= pages; n += 1) around.add(n);
   const sorted = [...around].filter((n) => n >= 1 && n <= pages).sort((a, b) => a - b);
   const out: (number | null)[] = [];
   for (const n of sorted) {
@@ -200,4 +196,26 @@ export function usePageParam(): [number, Setter<number>] {
   const [params] = useSearchParams();
   const write = useParamWriter(PAGE_PARAM, "1", false);
   return [readPage(params.get(PAGE_PARAM)), useCallback((next: number) => write(String(next)), [write])];
+}
+
+/** A list page's page and page size (#318): ten a page from 768 px, and in the
+ *  phone shell every row — one long scroll under a thumb, with no pager and
+ *  nothing to choose; the search and the filter sheet are what narrow a long
+ *  list there. Decided by the shell alone (§13.7), so a tablet turned across
+ *  768 px switches live. Under "all" there is one page, and `?page=` is dropped
+ *  in place as soon as it is seen — from a shared link, a bookmark, or a turn
+ *  into the phone shell — rather than left naming a page the list is not
+ *  showing (#247's rule for the URL). */
+export function usePaging(): { page: number; setPage: Setter<number>; pageSize: PageSize } {
+  const [page, setPage] = usePageParam();
+  const all = useShell() === "phone";
+  const [params] = useSearchParams();
+  const write = useWriteParams();
+  const stray = all && params.has(PAGE_PARAM);
+  useEffect(() => {
+    if (stray) write({ [PAGE_PARAM]: null }, { replace: true });
+  }, [stray, write]);
+  // The page as the URL has it: under "all" `paginate` shows page 1 whatever
+  // was asked for, so the render before the drop lands draws every row too.
+  return { page, setPage, pageSize: all ? "all" : PAGE_SIZE };
 }

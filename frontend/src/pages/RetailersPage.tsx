@@ -34,7 +34,7 @@ import {
   shippingSpeedLabel,
   wouldOrderAgainLabel,
 } from "../lib/labels";
-import { paginate, usePageParam, useSearchParam } from "../lib/listState";
+import { paginate, usePaging, useSearchParam } from "../lib/listState";
 import { usePresentationVersion } from "../lib/presentation";
 import { useShell } from "../lib/shell";
 
@@ -55,9 +55,6 @@ interface RetailerFormValues {
   would_order_again: WouldOrderAgain | "";
   notes: string;
 }
-
-/** Rows per page on the list pages (§13.4). */
-const PAGE_SIZE = 10;
 
 function RetailerFormModal({
   retailer,
@@ -215,7 +212,7 @@ export function RetailersPage() {
   const [modal, setModal] = useState<{ retailer?: Retailer } | null>(null);
   // The search and the page are the URL (§13.4, #232).
   const [search, setSearch] = useSearchParam("q");
-  const [page, setPage] = usePageParam();
+  const paging = usePaging();
   // Card rows are the phone's (§13.7).
   const phone = useShell() === "phone";
   const {
@@ -242,7 +239,7 @@ export function RetailersPage() {
         .some((value) => value.toLowerCase().includes(needle)),
     );
   }, [retailers, search]);
-  const paged = paginate(visible, page, PAGE_SIZE);
+  const paged = paginate(visible, paging.page, paging.pageSize);
 
   return (
     <div className="space-y-4">
@@ -276,7 +273,7 @@ export function RetailersPage() {
       {isError ? (
         <ErrorBanner message={t("retailers.loadFailed", { message: (error as Error).message })} />
       ) : paged.total > 0 && phone ? (
-        <CardList footer={<Pager paged={paged} onPage={setPage} />}>
+        <CardList footer={<Pager paged={paged} onPage={paging.setPage} />}>
           {paged.rows.map((retailer) => (
             <CardRow
               key={retailer.id}
@@ -445,7 +442,7 @@ export function RetailersPage() {
               ))}
             </tbody>
           </table>
-          <Pager paged={paged} onPage={setPage} />
+          <Pager paged={paged} onPage={paging.setPage} />
         </div>
       ) : (
         <EmptyState>

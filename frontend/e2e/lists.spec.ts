@@ -1657,96 +1657,55 @@ test("a card says who it is under the browser's own font-size preference", async
   }
 });
 
-test("a long list's pager fits a phone", async ({ page }, testInfo) => {
-  test.skip(testInfo.project.name !== "phone", "the compact pager is the phone shell's");
+test("a phone shows every row and wider pages ten (#318)", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "phone", "the phone project turns into the rail and back; one is enough");
   test.setTimeout(120_000);
-  // Nine pages, opened in the middle: the full window there is nine entries
-  // ("1 2 … 4 5 6 … 8 9"), wider at 44 px a page than the screen. Seeded here,
-  // not for every project: it is eighty-one rows.
+  // Twenty-five rows: more than one page of ten, so the two shells differ.
   const api = await apiContext();
-  const pagerTag = `${TAG} Pager`;
+  const pagedTag = `${TAG} Paged`;
   const ids: string[] = [];
+  const pages = page.getByRole("navigation", { name: "Pages" });
+  const pageButton = (n: number) => pages.getByRole("button", { name: `Page ${n}`, exact: true });
+  const range = (text: string) => shown(main(page).getByText(text, { exact: true }));
+  const list = `/kits?q=${encodeURIComponent(pagedTag)}`;
   try {
-    for (let n = 1; n <= 81; n += 1) {
-      const resp = await api.post("/kits", { data: { name: `${pagerTag} ${String(n).padStart(2, "0")}`, grade: "HG" } });
+    for (let n = 1; n <= 25; n += 1) {
+      const resp = await api.post("/kits", { data: { name: `${pagedTag} ${String(n).padStart(2, "0")}`, grade: "HG" } });
       expect(resp.ok(), await resp.text()).toBeTruthy();
       ids.push(((await resp.json()) as { id: string }).id);
     }
+    // A phone: every row, no pager, and a page in a shared link is dropped from
+    // the address bar rather than left naming a page that is not shown.
     for (const size of sizesFor("phone")) {
       await page.setViewportSize(size);
-      for (const at of [1, 5, 9]) {
-        await openList(page, `/kits?q=${encodeURIComponent(pagerTag)}&page=${at}`, pagerTag);
-        const pager = page.getByRole("navigation", { name: "Pages" });
-        const label = `page ${at} of 9 at ${size.width} px`;
-        await expect(pager.getByRole("button", { name: `Page ${at}`, exact: true }), label).toHaveAttribute("aria-current", "page");
-        expect.soft(await pager.getByRole("button").count(), `${label}: pages offered`).toBeLessThanOrEqual(5);
-        for (const button of await pager.getByRole("button").all()) {
-          const box = await button.boundingBox();
-          expect.soft(Math.min(box?.width ?? 0, box?.height ?? 0), `${label}: a page is a 44 px target`).toBeGreaterThanOrEqual(44);
-        }
-        const edges = await pager.evaluate((nav) => {
-          const rect = nav.getBoundingClientRect();
-          return [rect.left, rect.right, document.documentElement.scrollWidth, document.documentElement.clientWidth];
-        });
-        expect.soft(edges[0], `${label}: the pager starts on screen`).toBeGreaterThanOrEqual(0);
-        expect.soft(edges[1], `${label}: the pager ends on screen`).toBeLessThanOrEqual(size.width);
-        expect.soft(edges[2], `${label}: the document scrolls sideways`).toBeLessThanOrEqual(edges[3]);
-      }
-      // And it still pages: the ends are always offered.
-      await page.getByRole("navigation", { name: "Pages" }).getByRole("button", { name: "Page 1", exact: true }).click();
-      await expect(page).toHaveURL((url) => !url.searchParams.has("page"));
-      await expect(page.getByText("1–10 of 81")).toBeVisible();
+      await openList(page, `${list}&page=2`, pagedTag);
+      await expect(range("1–25 of 25"), `${size.width} px`).toBeVisible();
+      await expect(rowOf(page, pagedTag), `${size.width} px`).toHaveCount(25);
+      await expect(pages, `${size.width} px`).toHaveCount(0);
+      await expect(page, `${size.width} px`).toHaveURL((url) => !url.searchParams.has("page") && url.searchParams.get("q") === pagedTag);
+      await expectFits(page, `every row at ${size.width} px`);
     }
-    // The pager is the table's foot in one shell and the card list's in the
-    // other — two sets of nodes — and the phone's window is the shorter. A page
-    // both offer keeps the keyboard; one only the long window offers hands it
-    // to the current page, which every window has.
-    const pager = page.getByRole("navigation", { name: "Pages" });
-    const pageButton = (n: number) => pager.getByRole("button", { name: `Page ${n}`, exact: true });
-    for (const [focused, expected] of [
-      [6, 6],
-      [2, 5],
-    ]) {
-      await page.setViewportSize({ width: 1133, height: 744 });
-      await openList(page, `/kits?q=${encodeURIComponent(pagerTag)}&page=5`, pagerTag);
-      await pageButton(focused).focus();
-      await page.setViewportSize({ width: 744, height: 1133 });
-      await expect(pageButton(2), "the phone's window at page 5 has no page 2").toHaveCount(0);
-      await expect.soft(pageButton(expected), `page ${focused} focused, 1133 → 744 px`).toBeFocused({ timeout: 2_000 });
-    }
-    // And under the browser's own font-size preference (#260): a page is a
-    // finger *in rem*, so at 40 px five of them are 550 px — the pages wrap
-    // onto lines of their own rather than widen a 320 px screen. Whether a list
-    // has a pager is a state no other font-size test puts on the page.
-    if (testInfo.project.use.browserName === undefined || testInfo.project.use.browserName === "chromium") {
-      for (const font of [32, 40]) {
-        const browser = await chromium.launch({ args: [`--blink-settings=defaultFontSize=${font}`] });
-        try {
-          const context = await browser.newContext({ storageState: STORAGE_STATE, hasTouch: true, isMobile: true, baseURL: APP });
-          const large = await context.newPage();
-          for (const width of [320, 390]) {
-            await large.setViewportSize({ width, height: 844 });
-            await openList(large, `/kits?q=${encodeURIComponent(pagerTag)}&page=5`, pagerTag);
-            const label = `page 5 of 9 at ${width} px, ${font} px font`;
-            expect(await large.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), "the root font size").toBe(font);
-            const report = await large.getByRole("navigation", { name: "Pages" }).evaluate((nav) => ({
-              pages: [...nav.querySelectorAll("button")].map((button) => Math.round(button.getBoundingClientRect().right)),
-              small: [...nav.querySelectorAll("button")].filter((button) => Math.min(button.getBoundingClientRect().width, button.getBoundingClientRect().height) < 44).length,
-              document: document.documentElement.scrollWidth,
-              screen: innerWidth,
-            }));
-            expect.soft(report.pages.length, `${label}: pages offered`).toBeGreaterThanOrEqual(3);
-            expect.soft(Math.max(...report.pages), `${label}: the last page ends on screen`).toBeLessThanOrEqual(width);
-            expect.soft(report.small, `${label}: pages under a finger`).toBe(0);
-            expect.soft(report.screen, `${label}: the layout viewport is the screen`).toBe(width);
-            expect.soft(report.document, `${label}: the document's width`).toBeLessThanOrEqual(width);
-          }
-          await context.close();
-        } finally {
-          await browser.close();
-        }
-      }
-    }
+
+    // Wider: ten a page, and the page is the URL's.
+    await page.setViewportSize({ width: 1133, height: 744 });
+    await openList(page, list, pagedTag);
+    await expect(range("1–10 of 25")).toBeVisible();
+    await pageButton(2).click();
+    await expect(page).toHaveURL((url) => url.searchParams.get("page") === "2");
+    await expect(range("11–20 of 25")).toBeVisible();
+
+    // Turned into a phone with a page focused: the pages are gone, so the
+    // keyboard goes to the page's primary action, the page is dropped, and
+    // every row is shown. Turned back, it is page 1 of ten again.
+    await pageButton(3).focus();
+    await page.setViewportSize({ width: 744, height: 1133 });
+    await expect(pages).toHaveCount(0);
+    await expect.soft(page.getByRole("button", { name: "Add kit" }), "page 3 focused, 1133 → 744 px").toBeFocused({ timeout: 2_000 });
+    await expect(page).toHaveURL((url) => !url.searchParams.has("page"));
+    await expect(range("1–25 of 25")).toBeVisible();
+    await page.setViewportSize({ width: 1133, height: 744 });
+    await expect(range("1–10 of 25")).toBeVisible();
+    await expect(pageButton(1)).toHaveAttribute("aria-current", "page");
   } finally {
     for (const id of ids) await api.delete(`/kits/${id}`);
     await api.dispose();

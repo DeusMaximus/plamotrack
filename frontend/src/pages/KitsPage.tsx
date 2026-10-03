@@ -44,7 +44,7 @@ import { filterKits } from "../lib/listFilters";
 import {
   paginate,
   useEnumParam,
-  usePageParam,
+  usePaging,
   useSearchParam,
   useTextParam,
   useWriteParams,
@@ -66,9 +66,6 @@ function completedCell(kit: Kit): string {
   );
   return dateWithElapsed(date, days);
 }
-
-/** Rows per page on the list pages (§13.4). */
-const PAGE_SIZE = 10;
 
 /** The sorts the page offers: every wire sort but `recent`, whose order follows a
  *  date no column shows — when each kit last changed status, a different event
@@ -109,7 +106,7 @@ export function KitsPage() {
   const [seriesFilter, setSeriesFilter] = useTextParam("series");
   const [search, setSearch] = useSearchParam("q");
   const [sort, setSort] = useEnumParam<KitPageSort>("sort", SORT_ORDER, NO_FILTERS.sort);
-  const [page, setPage] = usePageParam();
+  const paging = usePaging();
   const writeParams = useWriteParams();
   const [modal, setModal] = useState<{ mode: "add" } | { mode: "edit"; kit: Kit } | null>(null);
   // Card rows and the filter sheet are the phone's (§13.7); the sheet's state
@@ -141,7 +138,7 @@ export function KitsPage() {
     () => filterKits(kits ?? [], { status: statusFilter, series: seriesFilter, search }),
     [kits, statusFilter, seriesFilter, search],
   );
-  const paged = paginate(visible, page, PAGE_SIZE);
+  const paged = paginate(visible, paging.page, paging.pageSize);
   const editLabel = (kit: Kit) => t("common.editNamed", { name: kit.name });
 
   return (
@@ -239,7 +236,7 @@ export function KitsPage() {
           {kits?.length === 0 ? t("kits.emptyNone") : t("kits.emptyFiltered")}
         </EmptyState>
       ) : phone ? (
-        <CardList footer={<Pager paged={paged} onPage={setPage} />}>
+        <CardList footer={<Pager paged={paged} onPage={paging.setPage} />}>
           {paged.rows.map((kit) => (
             <CardRow
               key={kit.id}
@@ -341,7 +338,7 @@ export function KitsPage() {
               ))}
             </tbody>
           </table>
-          <Pager paged={paged} onPage={setPage} />
+          <Pager paged={paged} onPage={paging.setPage} />
         </div>
       )}
 
