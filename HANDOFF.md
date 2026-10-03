@@ -41,6 +41,52 @@ Template:
 
 ---
 
+## 2026-10-03 — Claude Code (Opus 5.5) — #318 MERGED as `3f72272` (PR #319): every row on a phone, ten a page wider; #320 filed
+
+- **Done:**
+  - **[PR #319](https://github.com/DeusMaximus/plamotrack/pull/319)** squash-merged as **`3f72272`** from `f6d81c5`, after all three checks. #318 is closed.
+    - The phone shell (below 768 px) shows every row on Kits, Orders, Inventory's four tabs and Retailers, with no pager. From 768 px it's ten a page, as before.
+    - Decided by the shell alone. `usePaging()` in `lib/listState.ts` is the one entry; `paginate` takes `"all"`. On a phone `?page=` is dropped in place (a replace).
+    - A page button's focus stand-in is now `page-action`. The phone's compact `pageWindow`, and the e2e that measured its fit, are gone.
+    - The design record is design §13.7, "Amended — #318".
+  - **The owner's calls (03/10):**
+    - A first build had a *Rows per page* (10 / 20 / All) browser-local preference, one value per shell. The owner dropped it before review. Nothing is stored, and §13.1's "the theme is the one exception" stands.
+    - `?page=` is dropped, not ignored.
+    - Greptile's Orders P2 is "revisit later" → **#320**.
+  - **Measured before deciding.** Chromium, 390 px, 300 rows a list (the owner has 116 kits and 82 orders):
+    - 0.2–0.4 s unthrottled; 0.9–2.1 s at a 4× CPU throttle.
+    - No scroll frame past 50 ms.
+    - Orders is the heaviest: about 5.7 s of long tasks at 4×. That is #320.
+  - **Reviews:**
+    - Round 1: the Codex connector found nothing. Greptile gave 4/5 with two P2s. Coverage of the other lists was taken (`f6d81c5`: a phone test over the six other lists, with 6 mutants killed). Orders render cost was declined and filed as #320.
+    - No desktop Codex round: a small PR, by the owner's routing.
+  - **Final state:**
+    - Full Chromium e2e from empty at `befff4b`: 185 passed / 0 failed. Targeted re-runs after the later changes.
+    - WebKit: both #318 tests (`phone`) and the focus sweep (`tablet`) pass.
+    - Mutants 5/6 on the design, plus 6/6 per list. The survivor was an equivalent override, which was removed.
+    - 648 unit tests.
+- **State:**
+  - **Unreleased on `main`:** #294, #289, #247, #302 (#299, #300, #301), #310 (#305), #313 (#309, a migration), #314 (#304) and now **#319 (#318)**. See `.agents/next-release.md`. #318's entry owes the docs site's phone page a line, and retaken phone screenshots that show a pager.
+  - **Not checked** for #318: iOS Safari on a device or in the Simulator; VoiceOver; a physical phone.
+  - **Known gaps, filed:**
+    - #315: leaving Data management while an import runs. An Add only repeat can duplicate kits.
+    - #316: download errors show at the section's head.
+    - #317: `lists.spec.ts`'s #275 test fails about 1 in 3 on `tablet`, on `main` too.
+    - #320: Orders render cost at hundreds of orders on a phone.
+  - **Tooling:** the iOS Simulator (iPhone 18 Pro) is still booted with the owner's dev session. No dev servers or throwaway databases are left, and `main` is clean. Merged branches left on origin: `feat/318-page-size`, `feat/304-phone-import`.
+  - **Carried:**
+    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
+    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
+    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
+- **Next:**
+  1. **#317**: the flaky #275 test on `tablet`. It's next, by the owner's call. Then #315 and #316.
+  2. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
+  3. Carried:
+     - #279's edge probes, then #281's packaging; #282's VPS path;
+     - at the next release, work through `.agents/next-release.md`;
+     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
+     - posting the rehearsal on #285.
+
 ## 2026-10-03 — Claude Code (Opus 5.5) — #304 MERGED as `39a9661` (PR #314): a phone imports — Merge and Add only, Apply in a bar above the tab bar; review routing settled
 
 - **Done:**
@@ -254,41 +300,3 @@ Template:
      - Cloud-feasible candidates: #124, #125, #268, #238; the importer bugs #110, #116, #134 and #137.
      - Posting the rehearsal on #285.
      - Untested: the release-to-release update and the Git Bash commands.
-
-## 2026-09-25 — Claude Code (Opus 5.5) — #280 DECIDED and closed: Pocket ID is an optional supported provider; Claude.ai linked on the #294 build with no API registration; testhost back in the gate's state
-
-- **Done:**
-  - **The owner's last #280 leg.** On testhost, the #294 build with **0 Pocket ID APIs registered**, the owner removed the Claude.ai connector and added it again.
-    - Pocket ID's `/authorize` got `scope=openid` and no `resource`, and accepted it.
-    - The rest held: the Proton Pass passkey sign-in, `auth.mcp_grant_issued`, six tool calls returning 200, and a transparent refresh after the 1-minute token expired.
-    - Claude.ai first presented the old link's refresh token, which it had kept after the connector was removed. Pocket ID refused it, because its audience names a removed API, and Claude.ai asked to reconnect.
-    - Redacted evidence: `.dev/280/2026-09-25-claude-ai-no-workaround.txt` (gitignored).
-  - **`55c0d3c` on `main`:**
-    - Findings: §7 gains the run, and §8 becomes the decision.
-    - `.agents/next-release.md`, the #294 entry: the reconnect line, and the **Pocket ID docs page** owed at the next release.
-    - The `AGENTS.md` roadmap and design §11.1 record the decision.
-  - [Decision comment](https://github.com/DeusMaximus/plamotrack/issues/280#issuecomment-5828486387) posted on #280; the issue is **closed** as completed.
-  - **`probe.py teardown` ran.** The spike's stacks, its volumes and `/opt/plamotrack-280` are gone. The gate's stack (v0.5.2, `/opt/plamotrack`) and the **same** Keycloak container are up and healthy, so `sub` is unchanged. Two images are left on testhost, `plamotrack-api:294-spike` and Pocket ID v2.16.0: harmless and reusable.
-- **Decisions (the owner's, 2026-09-25):**
-  - Pocket ID is an **optional supported provider**. The owner's reason: it makes setting up OAuth for an assistant much easier.
-  - It is documented from the release that ships #294, because the docs describe the published release.
-  - Bundling it in a hosting template is #281's call, together with #279's platform. #282 can document it next to the reference Caddy.
-- **State:**
-  - **Owner:** delete the Claude.ai "Testing" connector. Its tunnel name pointed at the spike, which is gone.
-  - Unreleased on `main`: #294, #289 and #247. What each owes at release is in `.agents/next-release.md`.
-  - **Don't recreate Keycloak's container on testhost.** Its realm pins no user ids, so a new container changes `sub`, and the gate's collection then needs `recovery rebind-oidc`. It mounts `realm.json` from `/opt/plamotrack/.agents/deployment-gate/keycloak/`.
-  - Spike secrets remain in `~/.plamotrack-gate/spike-280/` for a rerun; `probe.py prepare` rebuilds the spike from scratch.
-  - Carried:
-    - The unfiled IPv6 `POSTGRES_HOST` defect (`_assemble_database_url` in `app/config.py`).
-    - #278 is open for the owner's skill-zip check.
-    - The LXC is a v0.5.2 release install.
-    - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
-- **Next:**
-  1. #279: two edge probes, a header-echo image on Railway's trial and a Render free service. They check the edge's source addresses, `X-Forwarded-For`, the resolver and the health-check `Host`. Then #281's packaging, which now includes whether to bundle Pocket ID, then one proof deployment.
-  2. #282's VPS path can build on the Pocket ID recipe: findings §4–§5 and §8.
-  3. At the next release: work through `.agents/next-release.md`, the Pocket ID page included.
-  4. Carried:
-     - The IPv6 defect.
-     - Posting the rehearsal on #285.
-     - Untested: the release-to-release update, and the Windows commands in Git Bash.
-     - Cloud-feasible candidates: #124, #125, #268, #238, and the importer bugs #110, #116, #134 and #137.
