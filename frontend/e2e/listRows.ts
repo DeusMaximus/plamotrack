@@ -12,23 +12,26 @@
  *  Below 768 px every row is drawn and page 1 is the only page. */
 import { expect, type Page } from "@playwright/test";
 
-const RANGE = /^\d+–\d+ of \d+$/;
-
 /** Open `path` on the page that shows `anchor` (a row's text), stepping
- *  `?page=` from 1 until it is drawn; fails when the last page has gone by
- *  without it. */
+ *  `?page=` from 1 until it is drawn; fails once the last page has gone by
+ *  without it. Where the last page is comes from the pager, not the range
+ *  text: the range is the instance's number formatting — "1,000", or another
+ *  script's digits — and the pager's last button is always the last page
+ *  (Codex and Greptile on #325). No page limit: it stops at the last page. */
 export async function openListAt(page: Page, path: string, anchor: string): Promise<void> {
   const join = path.includes("?") ? "&" : "?";
   const main = page.locator("main");
   const found = main.getByText(anchor).filter({ visible: true }).first();
-  const range = main.getByText(RANGE).filter({ visible: true }).first();
-  for (let at = 1; at <= 100; at += 1) {
+  // A row of either shape: the rows and the pager arrive in one commit.
+  const rows = main.locator("tbody tr, li").filter({ visible: true }).first();
+  const pages = main.getByRole("navigation", { name: "Pages" }).filter({ visible: true });
+  for (let at = 1; ; at += 1) {
     await page.goto(at === 1 ? path : `${path}${join}page=${at}`);
-    // The rows and the footer arrive in one commit: either says the list is in.
-    await expect(found.or(range).first(), `${path}: the list`).toBeVisible();
+    await expect(found.or(rows).first(), `${path}: the list`).toBeVisible();
     if (await found.isVisible()) return;
-    const [, to, total] = /^\d+–(\d+) of (\d+)$/.exec((await range.textContent()) ?? "") ?? [];
-    if (to === undefined || Number(to) >= Number(total)) break;
+    // One page (no pager), or the current page is the pager's last button.
+    if ((await pages.count()) === 0) break;
+    if ((await pages.getByRole("button").last().getAttribute("aria-current")) === "page") break;
   }
   throw new Error(`"${anchor}" is on no page of ${path}`);
 }
