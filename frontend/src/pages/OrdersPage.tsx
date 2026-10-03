@@ -48,7 +48,6 @@ import { invalidateOrderViews } from "../lib/invalidate";
 import { counted, countedPhrase, dateWithElapsed, itemTypeLabel } from "../lib/labels";
 import { filterOrders } from "../lib/listFilters";
 import {
-  paginate,
   useEnumParam,
   usePaging,
   useSearchParam,
@@ -190,7 +189,7 @@ export function OrdersPage() {
       ),
     [orders, stageFilter, retailerFilter, search, retailerName],
   );
-  const paged = paginate(visible, paging.page, paging.pageSize);
+  const paged = paging.slice(visible);
   const retailerOptions = useMemo(
     () => [...(retailers ?? [])].sort((a, b) => a.name.localeCompare(b.name)),
     [retailers],

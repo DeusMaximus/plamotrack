@@ -1723,3 +1723,38 @@ it explicitly, as `keyboardOnRefusal` does. Better, assert the named element, wh
 #259's "Inside was the wrong question" already says for focus *within* a dialog.
 And **a mutant killed elsewhere says nothing about this assertion**: when you add
 an assertion for a defect, kill its mutant *through that assertion*, in that test.
+
+## The sweep never had more than a page (#319 → #321)
+
+#319 made the phone draw every row while the rail still draws ten. A turn from phone
+to rail with the keyboard on row 12 then left it on `<body>`, which design §13.7's
+rule forbids. `lists.spec.ts`'s sweep, *no change of representation leaves the
+keyboard on `<body>`*, focuses every control and turns the page under it. It passed,
+because every list it seeds is shorter than ten rows, and the two shells differ only
+when a list is longer. #319's own review rounds didn't see it either. It surfaced
+while diagnosing a different flake (#317), whose unnarrowed upgrades list happened
+to hold more than a page.
+
+What to keep: **a sweep is exhaustive only over the states its seed puts the page
+in**. When a change makes two shapes differ by *how many* rows they draw (paging, a
+cap, a fold that hides rows), the row count is an axis. Seed past the boundary and
+put the keyboard beyond it: the CLAUDE.md value-axis rule, applied to a list's
+length.
+
+## The router's location is not the address (#321)
+
+The first #321 fix let a turn out of the phone stand down when the URL "already said"
+the page. It failed 1 run in 8, then 2 in 10 after a partial repair, always on a
+tablet turned back within a moment. The phone drops `?page=` with a navigation. React
+Router writes the browser's address at once and delivers the new location to React
+later, in a transition. So the turn rendered with a location the address had already
+left (a stale `?page=2`), trusted it, and the late drop then took the page away. The
+first repair (ignore the URL at the turn) still compared against the router's
+location to decide when to stop, and failed the same way.
+
+What to keep: **when a decision depends on the URL during a navigation, ask the
+address (`window.location`) and wait for the router to agree**. Neither alone is
+the state. And a race that shows 1 in 8 needs repeats to prove fixed: here 15 clean,
+then 10 under full CPU load, then each race mutant run ten times. One mutant (stand
+down without waiting for the router) survived 30 runs. It is kept as a guard and
+recorded as unobserved, not as equivalent.

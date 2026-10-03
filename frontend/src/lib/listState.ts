@@ -10,9 +10,10 @@
  *  the search resets the page: the page was a position in a list that no
  *  longer exists. */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigationType, useSearchParams } from "react-router-dom";
 
+import { focusedRecordKeys } from "./focusKey";
 import { useShell } from "./shell";
 
 export const PAGE_PARAM = "page";
@@ -198,24 +199,91 @@ export function usePageParam(): [number, Setter<number>] {
   return [readPage(params.get(PAGE_PARAM)), useCallback((next: number) => write(String(next)), [write])];
 }
 
-/** A list page's page and page size (#318): ten a page from 768 px, and in the
- *  phone shell every row — one long scroll under a thumb, with no pager and
- *  nothing to choose; the search and the filter sheet are what narrow a long
- *  list there. Decided by the shell alone (§13.7), so a tablet turned across
- *  768 px switches live. Under "all" there is one page, and `?page=` is dropped
- *  in place as soon as it is seen — from a shared link, a bookmark, or a turn
- *  into the phone shell — rather than left naming a page the list is not
- *  showing (#247's rule for the URL). */
-export function usePaging(): { page: number; setPage: Setter<number>; pageSize: PageSize } {
+/** A turn out of the phone shell in progress (#321): the keys of the record to
+ *  keep drawn, and the page it wrote to the URL — "" for page 1, `null` until it
+ *  has written. */
+type Turn = { keys: readonly string[]; wrote: string | null };
+
+/** A list page's paging (#318): ten a page from 768 px, and in the phone shell
+ *  every row — one long scroll under a thumb, with no pager and nothing to
+ *  choose; the search and the filter sheet are what narrow a long list there.
+ *  Decided by the shell alone (§13.7), so a tablet turned across 768 px
+ *  switches live. Under "all" there is one page, and `?page=` is dropped in
+ *  place as soon as it is seen — from a shared link, a bookmark, or a turn into
+ *  the phone shell — rather than left naming a page the list is not showing
+ *  (#247's rule for the URL).
+ *
+ *  **A turn out of the phone shell lands on the focused record's page** (#321).
+ *  Every row was drawn; ten are now. Page 1 would leave the keyboard on row 12
+ *  with nothing carrying its key, and it would fall to `<body>` — so the render
+ *  that crosses the line reads which record the keyboard is on, or will come
+ *  back to from an open dialog (`focusedRecordKeys`), and draws the page that
+ *  holds its row; the URL is then told (`?page=N`, a replace). A row's controls
+ *  carry `<prefix>:<row id>` keys, which is how the row is found. Nothing to
+ *  find — no keyboard on a row, a record this list does not hold — is page 1.
+ *
+ *  `slice` is the rows the page draws; call it during render, once per list. */
+export function usePaging(): {
+  setPage: Setter<number>;
+  slice: <T extends { id: string }>(rows: readonly T[]) => Paged<T>;
+} {
   const [page, setPage] = usePageParam();
-  const all = useShell() === "phone";
+  const shell = useShell();
+  const all = shell === "phone";
   const [params] = useSearchParams();
   const write = useWriteParams();
-  const stray = all && params.has(PAGE_PARAM);
+  const inUrl = params.has(PAGE_PARAM);
+  const stray = all && inUrl;
   useEffect(() => {
     if (stray) write({ [PAGE_PARAM]: null }, { replace: true });
   }, [stray, write]);
-  // The page as the URL has it: under "all" `paginate` shows page 1 whatever
-  // was asked for, so the render before the drop lands draws every row too.
-  return { page, setPage, pageSize: all ? "all" : PAGE_SIZE };
+
+  // The shell this list last rendered in, adjusted during render (React's
+  // pattern for state from the previous render) so the crossing render itself
+  // already draws the right rows: the commit that swaps them is the one that
+  // must hold the focused record's row. Coming out of the phone, whatever
+  // `?page=` says is stale by definition — the phone drops it, and that drop
+  // may still be on its way when the turn renders (a tablet turned back within
+  // a moment; caught at 1 run in 8) — so the turn decides the page, not the URL.
+  const [seen, setSeen] = useState(shell);
+  const [turn, setTurn] = useState<Turn | null>(null);
+  if (seen !== shell) {
+    setSeen(shell);
+    setTurn(seen === "phone" && !all ? { keys: focusedRecordKeys(), wrote: null } : null);
+  }
+  // The page `slice` found the record on this render, for the effect to write.
+  const landed = useRef<number | null>(null);
+  landed.current = null;
+  const slice = <T extends { id: string }>(rows: readonly T[]): Paged<T> => {
+    if (all) return paginate(rows, 1, "all");
+    if (turn !== null) {
+      const index = rows.findIndex((row) => turn.keys.some((key) => key.endsWith(`:${row.id}`)));
+      if (index >= 0) landed.current = Math.floor(index / PAGE_SIZE) + 1;
+      return paginate(rows, landed.current ?? 1, PAGE_SIZE);
+    }
+    return paginate(rows, page, PAGE_SIZE);
+  };
+  // The turn holds until the URL says its page — no `?page=` for page 1 — so a
+  // render in between still draws the row, and a late drop from the phone is
+  // written over rather than obeyed. Asked of the browser's address, not the
+  // router's location: a navigation changes the address at once and reaches
+  // React later, in a transition, so the location a turn renders with can be
+  // one the address has already left (the phone's drop, caught at 2 runs in
+  // 10). It writes once, then stands down when the router agrees — or at once
+  // if the address moves anywhere else: a page chosen, a filter changed, any
+  // navigation but its own is the person's, and theirs wins (Greptile on #322).
+  const pageParam = params.get(PAGE_PARAM);
+  const { key: locationKey } = useLocation();
+  useEffect(() => {
+    if (turn === null) return;
+    const address = new URLSearchParams(window.location.search).get(PAGE_PARAM);
+    if (turn.wrote === null) {
+      const target = landed.current ?? 1;
+      const wanted = target === 1 ? "" : String(target);
+      if ((address ?? "") !== wanted) write({ [PAGE_PARAM]: wanted || null }, { replace: true });
+      setTurn({ ...turn, wrote: wanted });
+    } else if ((address ?? "") !== turn.wrote) setTurn(null);
+    else if ((pageParam ?? "") === turn.wrote) setTurn(null);
+  }, [turn, pageParam, locationKey, write]);
+  return { setPage, slice };
 }

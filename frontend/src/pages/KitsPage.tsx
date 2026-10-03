@@ -42,7 +42,6 @@ import { invalidateKitViews } from "../lib/invalidate";
 import { countedPhrase, dateWithElapsed, ratingTooltip, statusLabel } from "../lib/labels";
 import { filterKits } from "../lib/listFilters";
 import {
-  paginate,
   useEnumParam,
   usePaging,
   useSearchParam,
@@ -138,7 +137,7 @@ export function KitsPage() {
     () => filterKits(kits ?? [], { status: statusFilter, series: seriesFilter, search }),
     [kits, statusFilter, seriesFilter, search],
   );
-  const paged = paginate(visible, paging.page, paging.pageSize);
+  const paged = paging.slice(visible);
   const editLabel = (kit: Kit) => t("common.editNamed", { name: kit.name });
 
   return (
