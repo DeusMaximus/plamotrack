@@ -114,7 +114,10 @@ const NAMES = {
   retailer: `${TAG} Hobby Works`,
   bareRetailer: `${TAG} Bare Shop`,
   twin: `${TAG} Twin`,
-  bareKit: `${TAG} Bare`,
+  // The widest word an ordinary name has — 116 real kit names, measured for
+  // #323 — so a budget set under it would break it, and the fold lines are
+  // held with it in the column.
+  bareKit: `${TAG} Bare (Unidentified`,
   transitKit: `${TAG} Shipped Kit`,
   tool: `${TAG} Nippers`,
   consumable: `${TAG} Cement`,
@@ -156,6 +159,20 @@ const WIDE_GLYPH_TRACKING = "WWWWWWWWWWWWWWWW";
 const NARROW_TRACKING = "11111111111111111111";
 const UNBOUNDED_NUMBER = "M".repeat(100);
 const CROSSING_TRACKING = "8888888888888";
+// #323: a word no line can hold, in every free-text field a table cell says —
+// a name, a category, a manufacturer, a grade, a scale, a note, an address, a
+// delivery service. A product code run together is a real name; this one is
+// wider than any table's box. Its own rows, one a list, each anchoring a page
+// of its own (Inventory cannot be narrowed to them, `listRows.ts`).
+const UNBROKEN = "MSN04IINIGHTINGALEVERNIERTHRUSTERSET1234567890MSN04IINIGHTINGALEVERNIERTHRUSTERSET1234567890";
+const UNBROKEN_NAMES = {
+  kit: `${TAG} ${UNBROKEN}`,
+  retailer: `${TAG} Unbroken ${UNBROKEN}`,
+  tool: `${TAG} ${UNBROKEN} Nippers`,
+  consumable: `${TAG} ${UNBROKEN} Cement`,
+  upgrade: `${TAG} ${UNBROKEN} Thrusters`,
+  display: `${TAG} ${UNBROKEN} Base`,
+};
 const SHIPPED_TITLE = "Shipped by the retailer";
 const RECEIVED_TITLE = "Delivered · days in transit";
 
@@ -210,7 +227,8 @@ test.beforeAll(async () => {
 
   await post(api, "/tools", {
     name: NAMES.tool,
-    category: "nippers",
+    // The widest word an ordinary category has (#323: the owner's catalog).
+    category: "Workstation (Portable)",
     quantity_on_hand: 12, // two digits: the count a phone's stepper is asked to hold under a large font
     unit_cost_reference_minor: 4500,
     unit_cost_reference_currency: "AUD",
@@ -340,6 +358,32 @@ test.beforeAll(async () => {
     currency_code: "JPY",
     items: [kitLine(`Wide ${suffix} H`, "HG", 1300)],
   });
+
+  // #323: every free-text field a table cell says, unbroken.
+  await post(api, "/kits", { name: UNBROKEN_NAMES.kit, grade: UNBROKEN, scale: UNBROKEN, kit_number: UNBROKEN, series: UNBROKEN });
+  const unbrokenRetailer = await post(api, "/retailers", {
+    name: UNBROKEN_NAMES.retailer,
+    url: `https://www.${UNBROKEN.toLowerCase()}.example`,
+  });
+  await post(api, "/orders", {
+    retailer_id: unbrokenRetailer.id,
+    order_date: day(55),
+    delivery_service: UNBROKEN,
+    shipping_cost_minor: 900,
+    currency_code: "JPY",
+    items: [kitLine(`Wide ${suffix} ${UNBROKEN}`, UNBROKEN, 1400)],
+  });
+  await post(api, "/tools", { name: UNBROKEN_NAMES.tool, category: UNBROKEN, quantity_on_hand: 1, condition_notes: UNBROKEN });
+  await post(api, "/consumables", { name: UNBROKEN_NAMES.consumable, category: UNBROKEN, quantity_on_hand: 1 });
+  await post(api, "/upgrades", { name: UNBROKEN_NAMES.upgrade, manufacturer: UNBROKEN, quantity_on_hand: 1 });
+  await post(api, "/display-items", {
+    name: UNBROKEN_NAMES.display,
+    category: UNBROKEN,
+    scale: UNBROKEN,
+    manufacturer: UNBROKEN,
+    quantity_on_hand: 1,
+    notes: UNBROKEN,
+  });
   await api.dispose();
 });
 
@@ -401,6 +445,12 @@ test("no list page scrolls sideways, no table outgrows its box, no row control i
     ["/inventory?tab=consumables", NAMES.consumable],
     ["/inventory?tab=upgrades", NAMES.upgrade],
     ["/inventory?tab=display-items", NAMES.display],
+    // #323: the unbroken rows — Kits, Orders and Retailers draw theirs with the
+    // rows above; Inventory's are wherever their names sort.
+    ["/inventory", UNBROKEN_NAMES.tool],
+    ["/inventory?tab=consumables", UNBROKEN_NAMES.consumable],
+    ["/inventory?tab=upgrades", UNBROKEN_NAMES.upgrade],
+    ["/inventory?tab=display-items", UNBROKEN_NAMES.display],
   ];
   for (const size of sizesFor(testInfo.project.name)) {
     await page.setViewportSize(size);
@@ -436,6 +486,13 @@ test("at no box width is a table wider than its box", async ({ page }, testInfo)
     [`/kits?q=${q}`, NAMES.twin, 634, 1300],
     [`/orders?q=${q}`, NAMES.retailer, 634, 1300],
     [`/retailers?q=${q}`, NAMES.retailer, 634, 1300],
+    // Inventory never folds, and its box is as wide as the shell leaves it:
+    // the same span, with the rows that hold every free-text field unbroken
+    // (#323).
+    ["/inventory", UNBROKEN_NAMES.tool, 634, 1300],
+    ["/inventory?tab=consumables", UNBROKEN_NAMES.consumable, 634, 1300],
+    ["/inventory?tab=upgrades", UNBROKEN_NAMES.upgrade, 634, 1300],
+    ["/inventory?tab=display-items", UNBROKEN_NAMES.display, 634, 1300],
   ] as const) {
     await openList(page, path, anchor);
     if (path.startsWith("/orders")) await expandEveryOrder(page);
@@ -651,13 +708,94 @@ test("the desktop folds one thing, and only where its box is short", async ({ pa
         // that clips. The control is live — its sizer is wider than the box —
         // and the box and the document are not (`expectFits`, below).
         const box = await main(page).locator(".overflow-x-auto").first().evaluate((el) => el.clientWidth);
-        // Two sizers, the column's and the fold's copy's; either will do.
-        const sizer = await main(page).locator(`[data-text="${UNBOUNDED_NUMBER}"]`).first().evaluate((el) => el.getBoundingClientRect().width);
+        // Two sizers, the column's and the fold's copy's, each in its own
+        // copy's font since #323 — the fold's is 12 px — so the wider.
+        const sizer = Math.max(
+          ...(await main(page).locator(`[data-text="${UNBOUNDED_NUMBER}"]`).evaluateAll((els) => els.map((el) => el.getBoundingClientRect().width))),
+        );
         expect(sizer, `at ${width} px: the unbounded number's sizer is wider than the box (${box} px)`).toBeGreaterThan(box);
       }
       await expectFits(page, `${path} at ${width} px`);
     }
   }
+});
+
+test("a free-text value gives way by its value: an ordinary one is a plain word", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "phone", "a phone's cards measure nothing; a table's ruler does");
+  // #323: the fit tests prove the unbroken rows fit; this is the other half of
+  // the rule — that they fit because *they* break, and that nothing ordinary
+  // does. A budget set under the widest ordinary word ("(Unidentified", the
+  // widest of 116 real kit names; "Workstation", of a real catalog) would
+  // break it, and every ordinary row would be re-laid-out (§13.7: `anywhere`
+  // lowers a column's minimum and reshapes the text).
+  const cases: [string, string, [string, "normal" | "anywhere"][]][] = [
+    [`/kits?q=${q}`, NAMES.twin, [[NAMES.bareKit, "normal"], [UNBROKEN_NAMES.kit, "anywhere"]]],
+    [`/orders?q=${q}`, NAMES.retailer, [[NAMES.retailer, "normal"], [UNBROKEN_NAMES.retailer, "anywhere"]]],
+    [`/retailers?q=${q}`, NAMES.retailer, [[NAMES.retailer, "normal"], [UNBROKEN_NAMES.retailer, "anywhere"]]],
+    ["/inventory", NAMES.tool, [[NAMES.tool, "normal"], ["Workstation (Portable)", "normal"]]],
+    ["/inventory", UNBROKEN_NAMES.tool, [[UNBROKEN_NAMES.tool, "anywhere"]]],
+    ["/inventory?tab=display-items", UNBROKEN_NAMES.display, [[UNBROKEN_NAMES.display, "anywhere"]]],
+  ];
+  for (const size of sizesFor(testInfo.project.name)) {
+    await page.setViewportSize(size);
+    for (const [path, anchor, values] of cases) {
+      await openList(page, path, anchor);
+      for (const [text, wrap] of values) {
+        const said = shown(main(page).getByText(text, { exact: true })).first();
+        await expect(said, `${path} at ${size.width} px: "${text}"`).toBeVisible();
+        expect
+          .soft(await said.evaluate((el) => getComputedStyle(el).overflowWrap), `${path} at ${size.width} px: "${text}" overflow-wrap`)
+          .toBe(wrap);
+      }
+      // Every free-text field of the unbroken row, not only its name: a cell
+      // the rule never reached is a plain word as wide as the box.
+      // Leaf spans, so a grade chip is asked about its text and not its frame;
+      // any case, so the address is asked too. Orders has none: its unbroken
+      // retailer is a name (above), and its delivery service is in the lines.
+      const unbroken = shown(main(page).locator("td span:not(:has(*))").filter({ hasText: new RegExp(`^[^ ]*${UNBROKEN}[^ ]*$`, "i") }));
+      const cells = await unbroken.all();
+      if (!path.startsWith("/orders") && (anchor === NAMES.twin || anchor === NAMES.retailer || anchor.includes(UNBROKEN))) {
+        expect(cells.length, `${path} at ${size.width} px: the unbroken row's fields were found`).toBeGreaterThan(0);
+      }
+      for (const cell of cells) {
+        expect
+          .soft(await cell.evaluate((el) => getComputedStyle(el).overflowWrap), `${path} at ${size.width} px: an unbroken field's overflow-wrap`)
+          .toBe("anywhere");
+      }
+      // A clipping box hides what it cannot hold rather than widen the table:
+      // the order's lines clip, so an unbroken delivery service wrapped there
+      // or was cut off, and only its right edge says which (mutant M11).
+      if (path.startsWith("/orders")) {
+        await expandEveryOrder(page);
+        const service = shown(main(page).getByText(`Shipping · ${UNBROKEN}`, { exact: true })).first();
+        await expect(service, `${path} at ${size.width} px: the delivery service`).toBeVisible();
+        const past = await service.evaluate((el) => {
+          const box = (el.closest(".grid") as HTMLElement).getBoundingClientRect();
+          return Math.round(el.getBoundingClientRect().right - box.right);
+        });
+        expect.soft(past, `${path} at ${size.width} px: px of the delivery service past its lines' edge`).toBeLessThanOrEqual(0);
+      }
+    }
+  }
+
+  // The floor: a value that breaks anywhere breaks into lines no narrower than
+  // 3em, whatever the table is squeezed to — at a box no table fits, every
+  // column is at its minimum, and without a floor that minimum is one letter
+  // (mutant M10; the references' floor is held above, with "HLJ").
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await openList(page, "/inventory?tab=display-items", UNBROKEN_NAMES.display);
+  await page.evaluate(() => {
+    (document.querySelector("main .overflow-x-auto") as HTMLElement).style.width = "400px";
+  });
+  const broken = await main(page)
+    .locator("td span:not(:has(*))")
+    .evaluateAll((spans) =>
+      spans
+        .filter((el) => getComputedStyle(el).overflowWrap === "anywhere")
+        .map((el) => el.getBoundingClientRect().width / parseFloat(getComputedStyle(el).fontSize)),
+    );
+  expect(broken.length, "the unbroken display item's fields break anywhere").toBeGreaterThanOrEqual(5);
+  for (const em of broken) expect.soft(em, "an unbroken field's width at a 400 px box, in em").toBeGreaterThanOrEqual(2.99);
 });
 
 test("a reference's rule follows the font that is drawn", async ({ page }, testInfo) => {
@@ -762,13 +900,13 @@ test("the filter sheet, a link and the desktop's selects produce the same list",
   await openList(page, `/kits?q=${q}`, NAMES.twin);
   await expect(opener).toHaveAccessibleName("Filter and sort");
 
-  // Seven kits carry the tag: the twins, the bare one, the built one, and one
-  // spawned by each order. Nothing chosen: the button counts the whole (searched) list, and
+  // Eight kits carry the tag: the twins, the bare one, the built one, one
+  // spawned by each order, and #323's unbroken one. Nothing chosen: the button counts the whole (searched) list, and
   // applying it writes nothing — every parameter is dropped at its default.
   await opener.click();
-  await expect(sheet.getByRole("button", { name: "Show 7 kits" })).toBeVisible();
+  await expect(sheet.getByRole("button", { name: "Show 8 kits" })).toBeVisible();
   await expect(sheet.getByRole("button", { name: /^All statuses/ })).toHaveAttribute("aria-pressed", "true");
-  await sheet.getByRole("button", { name: "Show 7 kits" }).click();
+  await sheet.getByRole("button", { name: "Show 8 kits" }).click();
   await expect(sheet).toHaveCount(0);
   expect(Object.fromEntries(new URL(page.url()).searchParams)).toEqual({ q: TAG });
 
@@ -800,7 +938,7 @@ test("the filter sheet, a link and the desktop's selects produce the same list",
   await expect(sheet.getByLabel("Filter by series")).toHaveValue(SERIES);
   await expect(sheet.getByRole("button", { name: "Name A–Z" })).toHaveAttribute("aria-pressed", "true");
   await sheet.getByRole("button", { name: "Clear", exact: true }).click();
-  await expect(sheet.getByRole("button", { name: "Show 7 kits" })).toBeVisible();
+  await expect(sheet.getByRole("button", { name: "Show 8 kits" })).toBeVisible();
   await expect(sheet.getByRole("button", { name: "Newest added" })).toHaveAttribute("aria-pressed", "true");
   await page.keyboard.press("Escape");
 
@@ -1589,7 +1727,7 @@ test("a card says who it is under the browser's own font-size preference", async
           if (path === "/inventory") {
             // The stepper on its own line, not on the facts': beside it they
             // were squeezed to an ellipsis.
-            const facts = card.getByText(/nippers/).first();
+            const facts = card.getByText(/Workstation/).first();
             await expect.soft(facts, `${path} ${at}: the tool's category`).toBeVisible();
             expect.soft(await isCut(facts), `${path} ${at}: the tool's category is cut`).toBe(false);
             await stepperFits(card, `${path} ${at}, a two-digit count`);

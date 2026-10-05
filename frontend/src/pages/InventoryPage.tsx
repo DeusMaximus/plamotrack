@@ -16,6 +16,7 @@ import type {
   UpgradeUpdate,
 } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
+import { Measured, TableRuler } from "../components/Measured";
 import { Modal } from "../components/Modal";
 import {
   Button,
@@ -753,12 +754,15 @@ function StockCard({
   );
 }
 
-/** A card's facts on one line, the dot between them; absent ones drop out. */
+/** A card's facts, the dot between them; absent ones drop out. They wrap, and a
+ *  word no line holds breaks (`main` is `break-words`): a card is the only place
+ *  a phone says them (§13.7). An ellipsis cut a real category, "Workstation
+ *  (Portable)", at a 40 px font on a 320 px phone (#323). */
 function Facts({ values }: { values: (string | null | undefined)[] }) {
   const { t } = useTranslation();
   const present = values.filter((value): value is string => Boolean(value));
   if (present.length === 0) return null;
-  return <span className="min-w-0 truncate">{present.join(t("common.dotSeparator"))}</span>;
+  return <span className="min-w-0">{present.join(t("common.dotSeparator"))}</span>;
 }
 
 export function InventoryPage() {
@@ -906,9 +910,12 @@ export function InventoryPage() {
       </div>
 
       {tab !== "upgrades" && categoryOptions.length > 0 && (
+        // `max-w-52`, as the Kits series and Orders retailer filters: a select is
+        // as wide as its widest option, and a category is free text — one word
+        // no line can hold widened the whole page (#323).
         <Select
           aria-label={t("inventory.filterByCategory")}
-          className="!w-auto max-md:!w-full"
+          className="!w-auto max-w-52 max-md:!w-full max-md:max-w-none"
           value={categoryFilter}
           onChange={(event) => setCategoryFilter(event.target.value)}
         >
@@ -960,6 +967,7 @@ export function InventoryPage() {
           </CardList>
         ) : pagedTools.total ? (
           <div className="overflow-x-auto rounded-md border border-border bg-surface">
+            <TableRuler>
             <table className="w-full text-sm">
               <thead>
                 <tr className={TABLE_HEAD_ROW_CLASS}>
@@ -974,8 +982,12 @@ export function InventoryPage() {
               <tbody>
                 {pagedTools.rows.map((tool) => (
                   <tr key={tool.id} className="border-b border-rule last:border-0">
-                    <td className="px-3 py-2 font-medium">{tool.name}</td>
-                    <td className="px-3 py-2">{tool.category}</td>
+                    <td className="px-3 py-2 font-medium">
+                      <Measured text={tool.name} kind="name" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Measured text={tool.category} kind="text" />
+                    </td>
                     <td className="px-3 py-2">
                       <span className="me-2 tabular-nums" data-testid="stock-count">
                         {formatNumber(tool.quantity_on_hand)}
@@ -991,7 +1003,9 @@ export function InventoryPage() {
                             tool.unit_cost_reference_currency,
                           )}
                     </td>
-                    <td className="px-3 py-2 text-muted">{tool.condition_notes ?? "—"}</td>
+                    <td className="px-3 py-2 text-muted">
+                      {tool.condition_notes ? <Measured text={tool.condition_notes} kind="text" /> : "—"}
+                    </td>
                     <td className="px-3 py-2 text-end">
                       <div className="flex items-center justify-end gap-1">
                         <IconButton
@@ -1007,6 +1021,7 @@ export function InventoryPage() {
                 ))}
               </tbody>
             </table>
+            </TableRuler>
             <Pager paged={pagedTools} onPage={paging.setPage} />
           </div>
         ) : (
@@ -1064,6 +1079,7 @@ export function InventoryPage() {
           </CardList>
         ) : pagedConsumables.total ? (
           <div className="overflow-x-auto rounded-md border border-border bg-surface">
+            <TableRuler>
             <table className="w-full text-sm">
               <thead>
                 <tr className={TABLE_HEAD_ROW_CLASS}>
@@ -1081,8 +1097,12 @@ export function InventoryPage() {
                     item.quantity_on_hand <= item.low_stock_threshold;
                   return (
                     <tr key={item.id} className="border-b border-rule last:border-0">
-                      <td className="px-3 py-2 font-medium">{item.name}</td>
-                      <td className="px-3 py-2">{item.category}</td>
+                      <td className="px-3 py-2 font-medium">
+                        <Measured text={item.name} kind="name" />
+                      </td>
+                      <td className="px-3 py-2">
+                        <Measured text={item.category} kind="text" />
+                      </td>
                       <td className="px-3 py-2">
                         <span
                           className={`me-2 tabular-nums ${low ? "font-semibold text-danger" : ""}`}
@@ -1118,6 +1138,7 @@ export function InventoryPage() {
                 })}
               </tbody>
             </table>
+            </TableRuler>
             <Pager paged={pagedConsumables} onPage={paging.setPage} />
           </div>
         ) : (
@@ -1164,6 +1185,7 @@ export function InventoryPage() {
           </CardList>
         ) : pagedUpgrades.total ? (
           <div className="overflow-x-auto rounded-md border border-border bg-surface">
+            <TableRuler>
             <table className="w-full text-sm">
               <thead>
                 <tr className={TABLE_HEAD_ROW_CLASS}>
@@ -1176,8 +1198,12 @@ export function InventoryPage() {
               <tbody>
                 {pagedUpgrades.rows.map((upgrade) => (
                   <tr key={upgrade.id} className="border-b border-rule last:border-0">
-                    <td className="px-3 py-2 font-medium">{upgrade.name}</td>
-                    <td className="px-3 py-2">{upgrade.manufacturer}</td>
+                    <td className="px-3 py-2 font-medium">
+                      <Measured text={upgrade.name} kind="name" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Measured text={upgrade.manufacturer} kind="text" />
+                    </td>
                     <td className="px-3 py-2">
                       <span className="me-2 tabular-nums" data-testid="stock-count">
                         {formatNumber(upgrade.quantity_on_hand)}
@@ -1207,6 +1233,7 @@ export function InventoryPage() {
                 ))}
               </tbody>
             </table>
+            </TableRuler>
             <Pager paged={pagedUpgrades} onPage={paging.setPage} />
           </div>
         ) : (
@@ -1243,6 +1270,7 @@ export function InventoryPage() {
           </CardList>
         ) : pagedDisplayItems.total ? (
           <div className="overflow-x-auto rounded-md border border-border bg-surface">
+            <TableRuler>
             <table className="w-full text-sm">
               <thead>
                 <tr className={TABLE_HEAD_ROW_CLASS}>
@@ -1258,17 +1286,27 @@ export function InventoryPage() {
               <tbody>
                 {pagedDisplayItems.rows.map((row) => (
                   <tr key={row.id} className="border-b border-rule last:border-0">
-                    <td className="px-3 py-2 font-medium">{row.name}</td>
-                    <td className="px-3 py-2">{row.category}</td>
-                    <td className="px-3 py-2">{row.scale ?? "—"}</td>
-                    <td className="px-3 py-2">{row.manufacturer ?? "—"}</td>
+                    <td className="px-3 py-2 font-medium">
+                      <Measured text={row.name} kind="name" />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Measured text={row.category} kind="text" />
+                    </td>
+                    <td className="px-3 py-2">
+                      {row.scale ? <Measured text={row.scale} kind="text" /> : "—"}
+                    </td>
+                    <td className="px-3 py-2">
+                      {row.manufacturer ? <Measured text={row.manufacturer} kind="text" /> : "—"}
+                    </td>
                     <td className="px-3 py-2">
                       <span className="me-2 tabular-nums" data-testid="stock-count">
                         {formatNumber(row.quantity_on_hand)}
                       </span>
                       <StockStepper item={row} queryKey="display-items" onError={setActionError} />
                     </td>
-                    <td className="px-3 py-2 text-muted">{row.notes ?? "—"}</td>
+                    <td className="px-3 py-2 text-muted">
+                      {row.notes ? <Measured text={row.notes} kind="text" /> : "—"}
+                    </td>
                     <td className="px-3 py-2 text-end">
                       <div className="flex items-center justify-end gap-1">
                         <IconButton
@@ -1284,6 +1322,7 @@ export function InventoryPage() {
                 ))}
               </tbody>
             </table>
+            </TableRuler>
             <Pager paged={pagedDisplayItems} onPage={paging.setPage} />
           </div>
         ) : (

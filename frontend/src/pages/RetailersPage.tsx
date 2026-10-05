@@ -8,6 +8,7 @@ import { api, ApiError } from "../api/client";
 import type { PackingQuality, Retailer, ShippingSpeed, WouldOrderAgain } from "../api/types";
 import { PACKING_QUALITIES, SHIPPING_SPEEDS, WOULD_ORDER_AGAIN } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
+import { Measured, TableRuler } from "../components/Measured";
 import { Modal } from "../components/Modal";
 import {
   Button,
@@ -356,6 +357,7 @@ export function RetailersPage() {
         // beside the rail; beside the sidebar the box is 976 px at 1280, so the
         // desktop never is.
         <div className="@container overflow-x-auto rounded-md border border-border bg-surface">
+          <TableRuler>
           <table className="w-full text-sm">
             <thead>
               <tr className={TABLE_HEAD_ROW_CLASS}>
@@ -374,7 +376,9 @@ export function RetailersPage() {
               {paged.rows.map((retailer) => (
                 <tr key={retailer.id} className="border-b border-rule last:border-0">
                   <td className="px-3 py-2">
-                    <div className="font-medium">{retailer.name}</div>
+                    <div className="font-medium">
+                      <Measured text={retailer.name} kind="name" />
+                    </div>
                     {retailer.url && (
                       <a
                         href={retailer.url}
@@ -383,7 +387,7 @@ export function RetailersPage() {
                         data-focus-key={`retailer-url:${retailer.id}`}
                         className="text-xs text-accent hover:underline"
                       >
-                        {retailer.url.replace(/^https?:\/\//, "")}
+                        <Measured text={retailer.url.replace(/^https?:\/\//, "")} kind="text" />
                       </a>
                     )}
                     {/* `w-0 min-w-full`: as wide as the cell turns out, without a
@@ -442,6 +446,7 @@ export function RetailersPage() {
               ))}
             </tbody>
           </table>
+          </TableRuler>
           <Pager paged={paged} onPage={paging.setPage} />
         </div>
       ) : (

@@ -3263,8 +3263,8 @@ and tablet e2e, screenshots, the release (#260).
   **Wider on screen, not longer in characters** (round 2, finding 5: thirteen
   `W`s are 183 px where thirteen digits are 115): each reference is measured,
   by the browser, as the widest piece it will not break — an invisible copy
-  laid out at `min-content` in one ruler per table (`ReferenceRuler`,
-  `OrdersPage.tsx`), reached through a portal so it is never inside a fold's
+  laid out at `min-content` in one ruler per table (`ReferenceRuler` in
+  `OrdersPage.tsx` then; `TableRuler`, `components/Measured.tsx`, since #323, below), reached through a portal so it is never inside a fold's
   `display: none` half, holding the text as a pseudo-element's content so that
   a test's `getByText` cannot prefer it to the visible text, at the table's own
   `tabular-nums` because a canvas cannot be told those and measures digits
@@ -3851,3 +3851,44 @@ more; it only draws more.
   stock change on the 300th consumable 1.3 s at 4×. Nothing to do at this scale; if
   a collection's Orders grows into the hundreds on a slow phone, its cards are where
   to look first, not a pager.
+
+**Amended — #323, every free-text cell gives way by its value (06/10/2026).** The rule
+above ("What a line cannot know gives way instead") was applied to dates and to
+Orders' references, and never to names. One word no line can hold — a product code
+run together, the issue's case, as an upgrade's name — held every list's table past
+its box from 768 px up, the row's Edit control with it: Kits was 2,956 px in a 770 px
+box at 900 px. `lists.spec.ts` checked exactly this, but only for its own rows, which
+had no such word; a multi-worker run put `dialogs.spec.ts`'s unbroken upgrade on the
+Upgrades tab and it failed there.
+
+- **The class is free text, not names.** Grade and scale are free text (#96), as are a
+  category, a manufacturer, a kit's number and series, a note, a shop's address and a
+  delivery service; each had the same defect. Every free-text value a list's table
+  cell says is now drawn through `Measured` (`components/Measured.tsx`), the old
+  `Reference` lifted out of `OrdersPage.tsx`. Its ruler is now any table's
+  (`TableRuler`), and its copy takes the font from the text it measures, not from the
+  ruler: a name is medium, a grade chip semibold and tracked.
+- **Budgets from real data.** `name` is 10em: "(Unidentified" is the widest word of
+  the owner's 116 kit names, 6.2em in Inter's medium. `text` is 8em: "Workstation", a
+  real category, is 5.7em. Ordinary values stay plain words, so ordinary rows lay out
+  as before; the e2e rule test seeds both words and holds them to `normal`.
+- **A floor below the budget**, unlike a reference's: 4em for a name, 3em for other
+  text. A table has one of these per column, and an unbroken value in each — in
+  different rows, which is the same thing to the table — has to fit the narrowest box
+  (638 px beside the rail at 768). With 4em everywhere, Display's seven columns were
+  4 px past it.
+- **The siblings.** Inventory's category filter was the one list filter `<select>`
+  with no width cap, and a select is as wide as its widest option: it scrolled the
+  document. It now has the `max-w-52` that Kits' series filter and Orders' retailer
+  filter already had. On a phone, a kit card's scale was `shrink-0` and the grade chip
+  could not narrow, so an unbroken one pushed the card past a 320 px screen. The
+  scale may now narrow, and `GradeChip` gives way as `Chip` does below 768 px. A
+  clipping box (an order's lines) hid an unbroken delivery service rather than widen
+  the table, so the test asks whether it is cut, not whether it fits.
+  And seeding a real category ("Workstation (Portable)") where the spec had
+  "nippers" showed an Inventory card's facts cut to an ellipsis at a 40 px font on
+  a 320 px phone, against "the facts under it wrap" above. They wrap now.
+- **Not in this change: Home.** A strip row's meta is `whitespace-nowrap` by design,
+  and a bench card says the kit number beside the grade; an unbroken grade, scale or
+  number scrolls Home sideways from 768 px. How its strips give way is its own
+  decision (#326).

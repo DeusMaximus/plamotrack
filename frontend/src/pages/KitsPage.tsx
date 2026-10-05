@@ -17,6 +17,7 @@ import {
   ToggleOption,
 } from "../components/FilterSheet";
 import { KitFormModal } from "../components/KitFormModal";
+import { Measured, TableRuler } from "../components/Measured";
 import { StatusBadge } from "../components/StatusBadge";
 import {
   Button,
@@ -253,7 +254,7 @@ export function KitsPage() {
               <CardMeta>
                 <StatusBadge status={kit.status} />
                 <GradeChip grade={kit.grade} />
-                {kit.scale && <span className="shrink-0">{kit.scale}</span>}
+                {kit.scale && <span className="min-w-0">{kit.scale}</span>}
                 {kit.series && <span className={CARD_WORDS}>{kit.series}</span>}
               </CardMeta>
             </CardRow>
@@ -267,6 +268,7 @@ export function KitsPage() {
         // is under it beside the rail; beside the sidebar the box is 976 px at
         // 1280, so the desktop never is.
         <div className="@container overflow-x-auto rounded-md border border-border bg-surface">
+          <TableRuler>
           <table className="w-full text-sm">
             <thead>
               <tr className={TABLE_HEAD_ROW_CLASS}>
@@ -284,22 +286,35 @@ export function KitsPage() {
               {paged.rows.map((kit) => (
                 <tr key={kit.id} className="border-b border-rule last:border-0 hover:bg-chip">
                   <td className="px-3 py-2">
-                    <div className="font-medium">{kit.name}</div>
+                    <div className="font-medium">
+                      <Measured text={kit.name} kind="name" />
+                    </div>
                     {/* Always there: folded, it is where the grade and scale go,
                         whether or not a number or series follows. Unfolded and
                         empty it has no line box, so no height. */}
                     <div className="text-xs text-muted">
                       <span className="hidden @max-[48rem]:inline">
                         <GradeChip grade={kit.grade} />
-                        {kit.scale && <span className="ms-2">{kit.scale}</span>}
+                        {kit.scale && (
+                          <span className="ms-2">
+                            <Measured text={kit.scale} kind="text" />
+                          </span>
+                        )}
                         {(kit.kit_number || kit.series) && t("common.dotSeparator")}
                       </span>
-                      {[kit.kit_number, kit.series].filter(Boolean).join(t("common.dotSeparator"))}
+                      {(kit.kit_number || kit.series) && (
+                        <Measured
+                          text={[kit.kit_number, kit.series].filter(Boolean).join(t("common.dotSeparator"))}
+                          kind="text"
+                        />
+                      )}
                     </div>
                   </td>
-                  <td className="px-3 py-2 @max-[48rem]:hidden">{kit.grade}</td>
                   <td className="px-3 py-2 @max-[48rem]:hidden">
-                    {kit.scale ?? "—"}
+                    <Measured text={kit.grade} kind="text" />
+                  </td>
+                  <td className="px-3 py-2 @max-[48rem]:hidden">
+                    {kit.scale ? <Measured text={kit.scale} kind="text" /> : "—"}
                   </td>
                   {/* Display only (#120): status changes go through Edit, where the
                       dates, rating and notes a real transition travels with live. The
@@ -337,6 +352,7 @@ export function KitsPage() {
               ))}
             </tbody>
           </table>
+          </TableRuler>
           <Pager paged={paged} onPage={paging.setPage} />
         </div>
       )}
