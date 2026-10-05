@@ -1782,3 +1782,32 @@ measures only the values its own file seeds measures your imagination**: seed th
 widest value the product can hold (CLAUDE.md, "Enumerate what the field can
 hold").
 
+
+## Under its budget is still a width (#323, PR #328 rounds 1–3)
+
+#323's fix gave every free-text cell a per-value rule: a word wider than its budget
+breaks, anything narrower stays whole. The tests seeded an unbroken word in every
+field and the widest real ordinary words, and every one of 15 mutants died. Codex's
+first round still found the bug with one ordinary Display row: five words, none near
+a budget, 675 px in a 638 px box. **A rule that judges each value alone says nothing
+about their sum**, and a table's minimum width is the sum of its columns' widest
+words. The seeds had covered both ends of each field and never the middle of all of
+them at once.
+
+The answer was to fold Inventory at lines measured with a word just under its budget
+in every column. Round 2 beat those lines with values that were still allowed:
+words nearer the budget, a wider currency, a fully dated kit. It beat Kits' #258 line
+the same way. **A fixed line bounds the rows it was measured with**, and each raise
+only invites the next combination. The third round would have found one too. What
+ended it was naming the mechanism as the limit, scoping the structural fix out (#329,
+fold to fit), and correcting the comment that had said "above the line any mix of
+values fits", which was false. Codex's round 3 checked the scoped PR against `main`
+in 1,540 paired measurements: no regressions.
+
+Two harness traps from the same PR:
+- **A worktree whose `node_modules` is a symlink to another checkout** has Vite
+  answering 403 for the web font, outside its `fs.allow`. Four unrelated tests went
+  red in the negative control and were nearly counted. Run `npm ci` in the worktree.
+- **The near-budget rows hid both floors.** Other rows' words held every column wider
+  than a floor, so a mutant that removed one survived. A floor is observable only
+  where nothing else holds the column: measure the row alone.

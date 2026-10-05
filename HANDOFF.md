@@ -41,6 +41,53 @@ Template:
 
 ---
 
+## 2026-10-06 — Claude Code (Opus 5.5) — #323 MERGED as `b2343a4` (PR #328): every free-text table cell gives way by its value; Inventory's Tools and Display fold; #326, #327, #329 filed
+
+- **Done:**
+  - **[PR #328](https://github.com/DeusMaximus/plamotrack/pull/328)** squash-merged as **`b2343a4`**, pinned to the reviewed head `b57dc13` after all three checks. #323 is closed.
+    - `frontend/src/components/Measured.tsx` (new) is Orders' `Reference`, lifted out and generalised as `Measured`/`TableRuler`.
+      - A value breaks anywhere only when its widest word is past a budget: `name` 10em, `text` 8em; the references keep 6em and 8.3em.
+      - It breaks down to a floor: 4em for a name, 3em for text.
+      - The measuring copy takes the drawn text's font.
+    - Every free-text cell that sets a column's width goes through it: Kits, Orders (including the lines box's delivery service), Retailers, and all four Inventory tables.
+    - **Siblings fixed in the same PR:**
+      - Inventory's category `<select>` gets `max-w-52`;
+      - a phone kit card's scale may narrow, and `GradeChip` wraps below 768 px;
+      - Inventory card `Facts` wrap instead of truncating.
+    - **Round 1 (Codex, P2):** words under their budgets add up. Inventory's **Tools fold Condition below 44rem, and Display fold Manufacturer and Notes below 55rem**. Both lines are measured with a word just under its budget in every column at once.
+    - **Round 2 (Codex, P2):** allowed values still outgrow fixed lines, Kits' #258 line included. **Owner's call:** ship as measured, state the contract (a line holds what it was measured with; past it the box scrolls), and file **#329, fold to fit**.
+    - **Round 3:** GO. Codex made 1,540 paired measurements against `main`: no regressions, and 565 main overflows now fit.
+  - **Tests** (`lists.spec.ts`): seeds with every free-text field unbroken; near-budget rows on all four Inventory tabs; the real widest words ("(Unidentified" 6.2em, "Workstation" 5.7em); a rule test (ordinary words stay plain, unbroken ones break, both floors, a clipped delivery service); Inventory in the sweep and the fold test. 22 mutants killed over the rounds.
+  - **Filed:**
+    - [#326](https://github.com/DeusMaximus/plamotrack/issues/326): Home has the same defect in its no-wrap strips. It's a design call.
+    - [#327](https://github.com/DeusMaximus/plamotrack/issues/327): WebKit's Tools table is 6 px over at 768 px with a ten-digit count. A failed test's leftover rows found it.
+    - [#329](https://github.com/DeusMaximus/plamotrack/issues/329): fold to fit, on every list. Codex's cautions are in its comment: no observer loop, invalidation when content changes, and tables that never fold today.
+  - Lesson: `.agents/lessons.md` → "Under its budget is still a width".
+- **Decisions (owner, 06/10):**
+  - Fold Inventory rather than break every value in a table that doesn't fit.
+  - Ship #328 scoped and sequence #329 after it.
+  - Desktop Codex for every round.
+- **State:**
+  - **Unreleased on `main`:** #294, #289, #247, #302, #310, #313 (a migration), #314, #319, #322 and now **#328**. See `.agents/next-release.md`; #323's entry is there.
+  - **Unexplained:** one full Chromium run at `a92e784` had two `tablet` tests fail because a list wasn't drawn within 5 s of loading. It didn't reproduce in 17/17 plus 3× repeats. Codex's settled-frame probe saw no observer churn from `Measured`. If it recurs, look there first.
+  - **Known gaps, filed:** #329, #326, #327; #324 (local runs need `--workers=1`); #320; #315; #316.
+  - **Tooling:**
+    - No dev servers, worktrees or e2e databases are left, and `main` is clean.
+    - Merged branches left on origin: `fix/323-unbroken-names`, `fix/321-focus-row-page`, `fix/317-narrow-list-lookups`, `feat/318-page-size`.
+    - Review briefs: `.dev/323/review-brief-{1,2,3}.md`.
+  - **Carried:**
+    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
+    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
+    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
+- **Next:**
+  1. #329 (fold to fit; it closes Codex's round-2 finding and Kits' line), or #326 (Home) by the owner's priority. Then #315 and #316. #324 when local multi-worker runs matter.
+  2. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
+  3. Carried:
+     - #279's edge probes, then #281's packaging; #282's VPS path;
+     - at the next release, work through `.agents/next-release.md`;
+     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
+     - posting the rehearsal on #285.
+
 ## 2026-10-05 — Claude Code (Opus 5.5) — #321 MERGED as `277cb0a` (PR #322) and #317 MERGED as `3fba4c3` (PR #325); #323, #324 filed
 
 - **Done:**
@@ -226,61 +273,6 @@ Template:
   1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
   2. **#304**, import on a phone: the owner's decisions on modes and the 390 px preview, then mockups, before code.
   3. Carried:
-     - #279's edge probes, then #281's packaging; #282's VPS path;
-     - at the next release, work through `.agents/next-release.md`;
-     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
-     - posting the rehearsal on #285.
-
-## 2026-10-01 — Claude Code (Opus 5.5) — #303 MERGED as `e5ad6cc` (PR #308): a golden archive pins the CSV contract; #303–#307 triaged
-
-- **Done:**
-  - **Triage of #303–#307**, the plamotrack-ios follow-ups, in this order:
-    - #303, the golden fixture (in review, below);
-    - #306, the docs-site ids sentence: a docs-repo PR, and v0.5.2 already preserves ids, so it does not wait for a release;
-    - #305, the import range checks;
-    - #307, the scenario fixtures, which reuse #303's seed;
-    - #304, import on a phone, which needs the owner's UI decisions first.
-    - Nothing was posted on the issues.
-  - **[PR #308](https://github.com/DeusMaximus/plamotrack/pull/308)** squash-merged as **`e5ad6cc`**, pinned to the reviewed head `c20fad2`; #303 is closed.
-    - The fixture: `backend/tests/fixtures/golden/archive/`, members committed as files. It is an export of an invented collection that `tests/fixtures/golden/seed.py` builds through REST.
-    - The tests: `tests/test_golden_archive.py`, 49 of them, with literal headers, member order and manifest keys, plus the byte, cell and amount rules and three round trips.
-    - Regenerate with `GOLDEN_REGENERATE=1 uv run pytest tests/test_golden_archive.py -k reproduces`.
-    - **Found and fixed:**
-      - `.gitattributes`' `eol=lf` would have rewritten the fixture's CRLF on `git add`; the fixture folder is now `-text`.
-      - `upgrade_applications` exported with no tiebreak; it now sorts by `(applied_at, id)`.
-    - The `303-` mutants: 10/10 killed. 303-7 survived the first run (the manifest's formatting was never compared), and the comparison was fixed. 303-10 came from review.
-    - Full backend suite at `f130461`: 2924 passed, 1 xfailed.
-    - Docs: design §12.1 (the contract) and `.agents/testing-and-review.md` → "The golden archive".
-    - Merging `main` (#302) conflicted in `mutation_test.py`. Both case sets are kept, 678 labels, every anchor matches once; the three affected suites pass (129).
-- **Decisions (the owner's, 2026-10-01):**
-  - **Row order is stable, not meaningful.** The importer never reads it. Name order follows the database's collation, so the fixture uses names every collation sorts alike, and a test holds that. `COLLATE "C"` was declined.
-  - **Greptile** reviews #308.
-  - Also in the PR body: the manifest's `schema_version`, `app_version` and `exported_at` are excluded from the pin, and `README.txt` is regenerable prose, not contract.
-- **State:**
-  - **Review:** Greptile round 1 at `f130461` scored 4/5 with three P2s, all taken in `c20fad2`:
-    - the export's `schema_version`, `app_version` and `exported_at` are now checked before they are excluded from the byte comparison (new mutant 303-10);
-    - the second import is now applied, not only previewed;
-    - the harness's refusal message names `.gitattributes`.
-    - Round 2 at `c20fad2` scored 5/5 with no findings. CI passed: Backend, Frontend, Integration.
-  - #303 needs no `.agents/next-release.md` entry, because nothing a user sees changes.
-  - The merged branch `feat/303-golden-archive` is left on origin, as the others are.
-  - **Carried from the #302 entry:**
-    - **Unreleased on `main`:** #294, #289, #247, and #302 (#299, #300, #301); see `.agents/next-release.md`. The next release also owes the Pocket ID docs page. #300 is the most exposed: v0.5.2-alpha's `migrate` stops for a `POSTGRES_PASSWORD` holding anything but letters, digits and `- _ . ~`.
-    - **Owner:**
-      - allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access;
-      - delete the Claude.ai "Testing" connector.
-    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
-    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
-    - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
-- **Next:**
-  1. plamotrack-ios can copy `backend/tests/fixtures/golden/archive/` from `main` now.
-  2. #306 in `plamotrack-docs`: confirm against `v0.5.2-alpha` that a restore into an empty instance keeps ids, then fix the sentence.
-  3. #305:
-     - reproduce first (`rating=7`, `quantity_on_hand=-2`, preview then apply);
-     - list the range CHECKs from the models' metadata, not from the issue's list: `low_stock_threshold` has no CHECK, while `quantity > 0`, `quantity_used > 0` and `unit_cost_reference_minor >= 0` are missing from the issue;
-     - a test that fails on any range CHECK on a portable table that the preview doesn't diagnose.
-  4. #307: design the scenario fixture format, reusing #303's seed; then #304, starting with the owner's decisions and mockups.
-  5. Carried:
      - #279's edge probes, then #281's packaging; #282's VPS path;
      - at the next release, work through `.agents/next-release.md`;
      - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
