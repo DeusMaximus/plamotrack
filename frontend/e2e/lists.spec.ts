@@ -96,6 +96,9 @@ const FOLD = {
   kitGrade: 768,
   retailerNotes: 736,
   tokenTable: 576,
+  // #323: measured with a word just under its budget in every free-text column.
+  toolCondition: 704,
+  displayNotes: 880,
 };
 
 // Digits, not base 36: the tag is a word of the retailer's name and a segment of
@@ -165,6 +168,21 @@ const CROSSING_TRACKING = "8888888888888";
 // wider than any table's box. Its own rows, one a list, each anchoring a page
 // of its own (Inventory cannot be narrowed to them, `listRows.ts`).
 const UNBROKEN = "MSN04IINIGHTINGALEVERNIERTHRUSTERSET1234567890MSN04IINIGHTINGALEVERNIERTHRUSTERSET1234567890";
+// And the other side of the budgets (Codex #328, finding 1): words that stay
+// plain — 9.74em in a name's medium, 7.73em in other text, in Chromium and
+// WebKit alike — in every free-text column of a row at once. No one value
+// breaks, so the table's minimum is the sum of them; Inventory's fold lines are
+// drawn from it. Plus the reviewer's own ordinary row, which overflowed Display
+// at 768 px with nothing near a budget.
+const NEAR_NAME = "WWWMMMMMMoo";
+const NEAR_TEXT = "WWWWWMMM";
+const NEAR_NAMES = {
+  tool: `${TAG} ${NEAR_NAME} Tool`,
+  consumable: `${TAG} ${NEAR_NAME} Consumable`,
+  upgrade: `${TAG} ${NEAR_NAME} Upgrade`,
+  display: `${TAG} ${NEAR_NAME} Display`,
+  ordinaryDisplay: `${TAG} Weatherproof Display`,
+};
 const UNBROKEN_NAMES = {
   kit: `${TAG} ${UNBROKEN}`,
   retailer: `${TAG} Unbroken ${UNBROKEN}`,
@@ -384,6 +402,34 @@ test.beforeAll(async () => {
     quantity_on_hand: 1,
     notes: UNBROKEN,
   });
+
+  // Codex #328, finding 1: under every budget at once.
+  await post(api, "/tools", {
+    name: NEAR_NAMES.tool,
+    category: NEAR_TEXT,
+    quantity_on_hand: 12,
+    unit_cost_reference_minor: 4500,
+    unit_cost_reference_currency: "AUD",
+    condition_notes: NEAR_TEXT,
+  });
+  await post(api, "/consumables", { name: NEAR_NAMES.consumable, category: NEAR_TEXT, quantity_on_hand: 1, low_stock_threshold: 2 });
+  await post(api, "/upgrades", { name: NEAR_NAMES.upgrade, manufacturer: NEAR_TEXT, quantity_on_hand: 2 });
+  await post(api, "/display-items", {
+    name: NEAR_NAMES.display,
+    category: NEAR_TEXT,
+    scale: NEAR_TEXT,
+    manufacturer: NEAR_TEXT,
+    quantity_on_hand: 3,
+    notes: NEAR_TEXT,
+  });
+  await post(api, "/display-items", {
+    name: NEAR_NAMES.ordinaryDisplay,
+    category: "Accessories",
+    scale: "Non-scale",
+    manufacturer: "Kotobukiya",
+    quantity_on_hand: 1,
+    notes: "Polyurethane",
+  });
   await api.dispose();
 });
 
@@ -451,6 +497,11 @@ test("no list page scrolls sideways, no table outgrows its box, no row control i
     ["/inventory?tab=consumables", UNBROKEN_NAMES.consumable],
     ["/inventory?tab=upgrades", UNBROKEN_NAMES.upgrade],
     ["/inventory?tab=display-items", UNBROKEN_NAMES.display],
+    ["/inventory", NEAR_NAMES.tool],
+    ["/inventory?tab=consumables", NEAR_NAMES.consumable],
+    ["/inventory?tab=upgrades", NEAR_NAMES.upgrade],
+    ["/inventory?tab=display-items", NEAR_NAMES.display],
+    ["/inventory?tab=display-items", NEAR_NAMES.ordinaryDisplay],
   ];
   for (const size of sizesFor(testInfo.project.name)) {
     await page.setViewportSize(size);
@@ -493,6 +544,12 @@ test("at no box width is a table wider than its box", async ({ page }, testInfo)
     ["/inventory?tab=consumables", UNBROKEN_NAMES.consumable, 634, 1300],
     ["/inventory?tab=upgrades", UNBROKEN_NAMES.upgrade, 634, 1300],
     ["/inventory?tab=display-items", UNBROKEN_NAMES.display, 634, 1300],
+    // …and with every free-text column a word under its budget (Codex #328).
+    ["/inventory", NEAR_NAMES.tool, 634, 1300],
+    ["/inventory?tab=consumables", NEAR_NAMES.consumable, 634, 1300],
+    ["/inventory?tab=upgrades", NEAR_NAMES.upgrade, 634, 1300],
+    ["/inventory?tab=display-items", NEAR_NAMES.display, 634, 1300],
+    ["/inventory?tab=display-items", NEAR_NAMES.ordinaryDisplay, 634, 1300],
   ] as const) {
     await openList(page, path, anchor);
     if (path.startsWith("/orders")) await expandEveryOrder(page);
@@ -643,6 +700,20 @@ test("a fold moves what a column said and never drops it", async ({ page }, test
     await expect.soft(header("Notes"), `Retailers "Notes" column ${at} (box ${box})`).toHaveCount(unfolded(box, FOLD.retailerNotes) ? 1 : 0);
     await once(rowOf(page, NAMES.retailer), NOTES, `Retailers ${at}: the notes`);
     await expect.soft(rowOf(page, NAMES.bareRetailer).locator("td").first(), `Retailers ${at}: a bare retailer is its name`).toHaveText(NAMES.bareRetailer);
+
+    // --- Inventory (#323): Tools' Condition, and Display's Manufacturer and
+    // Notes, to a second line under the name.
+    await openList(page, "/inventory", NAMES.tool);
+    box = await boxWidth(page);
+    await expect.soft(header("Condition"), `Tools "Condition" column ${at} (box ${box})`).toHaveCount(unfolded(box, FOLD.toolCondition) ? 1 : 0);
+    await once(rowOf(page, NAMES.tool), "Blade slightly worn at the tip", `Tools ${at}: the condition`);
+    await openList(page, "/inventory?tab=display-items", NAMES.display);
+    box = await boxWidth(page);
+    for (const name of ["Manufacturer", "Notes"]) {
+      await expect.soft(header(name), `Display "${name}" column ${at} (box ${box})`).toHaveCount(unfolded(box, FOLD.displayNotes) ? 1 : 0);
+    }
+    await once(rowOf(page, NAMES.display), /Bandai/, `Display ${at}: the manufacturer`);
+    await once(rowOf(page, NAMES.display), /Clear, with the long arm/, `Display ${at}: the notes`);
   }
 });
 
@@ -735,6 +806,8 @@ test("a free-text value gives way by its value: an ordinary one is a plain word"
     ["/inventory", NAMES.tool, [[NAMES.tool, "normal"], ["Workstation (Portable)", "normal"]]],
     ["/inventory", UNBROKEN_NAMES.tool, [[UNBROKEN_NAMES.tool, "anywhere"]]],
     ["/inventory?tab=display-items", UNBROKEN_NAMES.display, [[UNBROKEN_NAMES.display, "anywhere"]]],
+    // The fold lines' premise: a word under its budget never breaks.
+    ["/inventory?tab=display-items", NEAR_NAMES.display, [[NEAR_NAMES.display, "normal"]]],
   ];
   for (const size of sizesFor(testInfo.project.name)) {
     await page.setViewportSize(size);
@@ -778,24 +851,45 @@ test("a free-text value gives way by its value: an ordinary one is a plain word"
     }
   }
 
-  // The floor: a value that breaks anywhere breaks into lines no narrower than
-  // 3em, whatever the table is squeezed to — at a box no table fits, every
-  // column is at its minimum, and without a floor that minimum is one letter
-  // (mutant M10; the references' floor is held above, with "HLJ").
+  // The floors: a value that breaks anywhere breaks into lines no narrower than
+  // its floor — 4em for a name, 3em for other text — whatever the table is
+  // squeezed to. At a 200 px box no table fits and every column is at its
+  // minimum. Without the name's floor a broken name is 2.65em, held only by the
+  // "Name" header (mutant M10); without the text floor the scale is 2.90em,
+  // held by "Scale" (M10b) — a narrow margin: a column is never narrower than
+  // its header, and every other free-text header is wider than 3em.
+  // The references' floor is held above, with "HLJ".
   await page.setViewportSize({ width: 1280, height: 900 });
   await openList(page, "/inventory?tab=display-items", UNBROKEN_NAMES.display);
-  await page.evaluate(() => {
-    (document.querySelector("main .overflow-x-auto") as HTMLElement).style.width = "400px";
-  });
+  // Alone: every other row on the page holds the columns open by its own words
+  // (the near-budget name is 9.74em), and a floor shows only where nothing else
+  // does. The rows are taken out of the drawn table for the measurement; the
+  // page is reloaded after it.
+  await page.evaluate((unbroken) => {
+    for (const row of document.querySelectorAll("main tbody tr")) if (!row.textContent?.includes(unbroken)) row.remove();
+    (document.querySelector("main .overflow-x-auto") as HTMLElement).style.width = "200px";
+  }, UNBROKEN);
   const broken = await main(page)
     .locator("td span:not(:has(*))")
     .evaluateAll((spans) =>
       spans
-        .filter((el) => getComputedStyle(el).overflowWrap === "anywhere")
-        .map((el) => el.getBoundingClientRect().width / parseFloat(getComputedStyle(el).fontSize)),
+        // Drawn ones: since Display folds (#323), the columns it folded keep a
+        // hidden copy, which has no width at all.
+        .filter((el) => el.getClientRects().length > 0 && getComputedStyle(el).overflowWrap === "anywhere")
+        .map((el) => ({
+          // A name is the first cell's own line, not the folded one under it.
+          name: el.parentElement?.matches("td:first-child") ?? false,
+          em: el.getBoundingClientRect().width / parseFloat(getComputedStyle(el).fontSize),
+        })),
     );
-  expect(broken.length, "the unbroken display item's fields break anywhere").toBeGreaterThanOrEqual(5);
-  for (const em of broken) expect.soft(em, "an unbroken field's width at a 400 px box, in em").toBeGreaterThanOrEqual(2.99);
+  // Folded at 200 px: the name, the category, the scale, and the manufacturer
+  // and notes as one line under the name.
+  expect(broken.length, "the unbroken display item's fields break anywhere").toBeGreaterThanOrEqual(4);
+  expect(broken.filter((field) => field.name).length, "the unbroken display item's name is among them").toBe(1);
+  for (const { name, em } of broken) {
+    expect.soft(em, `an unbroken ${name ? "name" : "field"}'s width at a 200 px box, in em`).toBeGreaterThanOrEqual(name ? 3.99 : 2.99);
+  }
+  await page.reload();
 });
 
 test("a reference's rule follows the font that is drawn", async ({ page }, testInfo) => {

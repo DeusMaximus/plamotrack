@@ -178,8 +178,11 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   text a cell says breaks once its widest word is past a measured
                         #   budget — measured by the browser in `components/Measured.tsx`,
                         #   never counted in characters — and an ordinary one is a plain
-                        #   word. A new free-text cell owes it `Measured` (#323), and a
-                        #   new filter `<select>` a width cap. A fold keeps a hidden copy
+                        #   word. A new free-text cell owes it `Measured` (#323), a new
+                        #   filter `<select>` a width cap, and a table with several
+                        #   free-text columns a fold line measured with a word just under
+                        #   its budget in each — budgets bound a value, not a row (#328).
+                        #   A fold keeps a hidden copy
                         #   of what it moves, so a test reading a row's text filters for
                         #   the visible one — MorePage (the phone's fifth tab),
                         #   and settings/ (SettingsPage + sections, including Data

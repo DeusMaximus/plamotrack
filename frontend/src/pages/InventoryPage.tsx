@@ -966,7 +966,14 @@ export function InventoryPage() {
             ))}
           </CardList>
         ) : pagedTools.total ? (
-          <div className="overflow-x-auto rounded-md border border-border bg-surface">
+          // `@container`: the table folds to the width this box has (§13.7, #323).
+          // Below 44rem (704 px) Condition leaves its column for the name's
+          // second line. The line is measured with a word just under its budget
+          // (`Measured`) in every free-text column at once — the widest the
+          // table gets with nothing broken: 690 px, WebKit with a touch screen.
+          // Above it any mix of values fits; below it the folded table needs
+          // 558. Every iPad in portrait beside the rail is under it.
+          <div className="@container overflow-x-auto rounded-md border border-border bg-surface">
             <TableRuler>
             <table className="w-full text-sm">
               <thead>
@@ -975,7 +982,7 @@ export function InventoryPage() {
                   <th className="px-3 py-2.5">{t("inventory.category")}</th>
                   <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
                   <th className="px-3 py-2.5">{t("inventory.headerRefCost")}</th>
-                  <th className="px-3 py-2.5">{t("inventory.headerCondition")}</th>
+                  <th className="px-3 py-2.5 @max-[44rem]:hidden">{t("inventory.headerCondition")}</th>
                   <th className="px-3 py-2.5" />
                 </tr>
               </thead>
@@ -984,6 +991,11 @@ export function InventoryPage() {
                   <tr key={tool.id} className="border-b border-rule last:border-0">
                     <td className="px-3 py-2 font-medium">
                       <Measured text={tool.name} kind="name" />
+                      {tool.condition_notes && (
+                        <div className="hidden text-xs font-normal text-muted @max-[44rem]:block">
+                          <Measured text={tool.condition_notes} kind="text" />
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <Measured text={tool.category} kind="text" />
@@ -1003,7 +1015,7 @@ export function InventoryPage() {
                             tool.unit_cost_reference_currency,
                           )}
                     </td>
-                    <td className="px-3 py-2 text-muted">
+                    <td className="px-3 py-2 text-muted @max-[44rem]:hidden">
                       {tool.condition_notes ? <Measured text={tool.condition_notes} kind="text" /> : "—"}
                     </td>
                     <td className="px-3 py-2 text-end">
@@ -1269,7 +1281,12 @@ export function InventoryPage() {
             ))}
           </CardList>
         ) : pagedDisplayItems.total ? (
-          <div className="overflow-x-auto rounded-md border border-border bg-surface">
+          // `@container`, as Tools (#323): below 55rem (880 px) Manufacturer and
+          // Notes leave their columns for the name's second line. Measured the
+          // same way — every free-text column a word under its budget — the
+          // whole table needs 873 px (WebKit, touch) and the folded one 609.
+          // Beside the rail from 1024 px it is whole; beside the sidebar always.
+          <div className="@container overflow-x-auto rounded-md border border-border bg-surface">
             <TableRuler>
             <table className="w-full text-sm">
               <thead>
@@ -1277,9 +1294,9 @@ export function InventoryPage() {
                   <th className="px-3 py-2.5">{t("common.name")}</th>
                   <th className="px-3 py-2.5">{t("inventory.category")}</th>
                   <th className="px-3 py-2.5">{t("inventory.scale")}</th>
-                  <th className="px-3 py-2.5">{t("inventory.manufacturer")}</th>
+                  <th className="px-3 py-2.5 @max-[55rem]:hidden">{t("inventory.manufacturer")}</th>
                   <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2.5">{t("inventory.notes")}</th>
+                  <th className="px-3 py-2.5 @max-[55rem]:hidden">{t("inventory.notes")}</th>
                   <th className="px-3 py-2.5" />
                 </tr>
               </thead>
@@ -1288,6 +1305,14 @@ export function InventoryPage() {
                   <tr key={row.id} className="border-b border-rule last:border-0">
                     <td className="px-3 py-2 font-medium">
                       <Measured text={row.name} kind="name" />
+                      {(row.manufacturer || row.notes) && (
+                        <div className="hidden text-xs font-normal text-muted @max-[55rem]:block">
+                          <Measured
+                            text={[row.manufacturer, row.notes].filter(Boolean).join(t("common.dotSeparator"))}
+                            kind="text"
+                          />
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2">
                       <Measured text={row.category} kind="text" />
@@ -1295,7 +1320,7 @@ export function InventoryPage() {
                     <td className="px-3 py-2">
                       {row.scale ? <Measured text={row.scale} kind="text" /> : "—"}
                     </td>
-                    <td className="px-3 py-2">
+                    <td className="px-3 py-2 @max-[55rem]:hidden">
                       {row.manufacturer ? <Measured text={row.manufacturer} kind="text" /> : "—"}
                     </td>
                     <td className="px-3 py-2">
@@ -1304,7 +1329,7 @@ export function InventoryPage() {
                       </span>
                       <StockStepper item={row} queryKey="display-items" onError={setActionError} />
                     </td>
-                    <td className="px-3 py-2 text-muted">
+                    <td className="px-3 py-2 text-muted @max-[55rem]:hidden">
                       {row.notes ? <Measured text={row.notes} kind="text" /> : "—"}
                     </td>
                     <td className="px-3 py-2 text-end">

@@ -37,7 +37,14 @@ import { createPortal } from "react-dom";
  *  different rows, which is the same thing to the table — has to fit the
  *  narrowest box a table is drawn in (638 px, beside the rail at 768): with a
  *  4em floor for every one, Display's seven columns, five of them free text,
- *  were 4 px past it.
+ *  were 4 px past it (before it folded).
+ *
+ *  **A budget bounds one value, never a row** (Codex #328, finding 1). Words
+ *  that each stay plain still add up: a table's minimum is the sum of its
+ *  columns' widest words, and one ordinary Display row overflowed at 768. So a
+ *  table with several free-text columns owes a fold line measured with a word
+ *  just under its budget in every one of them at once — above it any mix of
+ *  values fits — as Inventory's Tools and Display have (`InventoryPage.tsx`).
  *
  *  **Measured, not counted** (Codex #266, finding 5): the width of the widest
  *  piece the browser will not break, from a copy laid out at `min-content` in a

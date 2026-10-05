@@ -3863,8 +3863,10 @@ Upgrades tab and it failed there.
 
 - **The class is free text, not names.** Grade and scale are free text (#96), as are a
   category, a manufacturer, a kit's number and series, a note, a shop's address and a
-  delivery service; each had the same defect. Every free-text value a list's table
-  cell says is now drawn through `Measured` (`components/Measured.tsx`), the old
+  delivery service; each had the same defect. Every free-text value that sets a list
+  table's column width is now drawn through `Measured` (`components/Measured.tsx`) —
+  the ones a cell already truncates, a retailer's notes and an order line's label,
+  set none and stay as they were — the old
   `Reference` lifted out of `OrdersPage.tsx`. Its ruler is now any table's
   (`TableRuler`), and its copy takes the font from the text it measures, not from the
   ruler: a name is medium, a grade chip semibold and tracked.
@@ -3877,6 +3879,22 @@ Upgrades tab and it failed there.
   different rows, which is the same thing to the table — has to fit the narrowest box
   (638 px beside the rail at 768). With 4em everywhere, Display's seven columns were
   4 px past it.
+- **A value under its budget is still a width** (Codex #328, finding 1). Each value is
+  judged alone, and a table's minimum is the sum of its columns' widest words: one
+  ordinary Display row — "Weatherproof Display", "Accessories", "Non-scale",
+  "Kotobukiya", "Polyurethane", nothing near a budget — was 675 px in the 638 px box
+  at 768 (Chromium; 692 in WebKit), Edit past the edge. Inventory's tables were the
+  only lists that never folded, so they fold now, by their box as the others do, at
+  lines drawn from the worst case nothing breaks: a word just under its budget in
+  every free-text column at once (9.74em for the name, 7.73em for the rest — the same
+  in Chromium and WebKit). Above the line any mix of values fits, since a value over
+  its budget shrinks to a floor below it; below the line the folded columns ride
+  under the name. Tools needs 690 px whole (WebKit, touch), so below 44rem (704 px)
+  Condition folds, leaving 558; Display needs 873 whole, so below 55rem (880 px)
+  Manufacturer and Notes fold, leaving 608. Consumables and Upgrades need at most 545
+  and never fold. Rejected: breaking every measured value in a table that does not
+  fit — it catches any combination, but breaks ordinary words mid-word wherever a
+  table is tight.
 - **The siblings.** Inventory's category filter was the one list filter `<select>`
   with no width cap, and a select is as wide as its widest option: it scrolled the
   document. It now has the `max-w-52` that Kits' series filter and Orders' retailer
