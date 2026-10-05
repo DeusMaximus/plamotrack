@@ -3887,14 +3887,25 @@ Upgrades tab and it failed there.
   only lists that never folded, so they fold now, by their box as the others do, at
   lines drawn from the worst case nothing breaks: a word just under its budget in
   every free-text column at once (9.74em for the name, 7.73em for the rest — the same
-  in Chromium and WebKit). Above the line any mix of values fits, since a value over
-  its budget shrinks to a floor below it; below the line the folded columns ride
-  under the name. Tools needs 690 px whole (WebKit, touch), so below 44rem (704 px)
+  in Chromium and WebKit), with ordinary values in the other columns; below the
+  line the folded columns ride under the name. Tools needs 690 px whole (WebKit, touch), so below 44rem (704 px)
   Condition folds, leaving 558; Display needs 873 whole, so below 55rem (880 px)
   Manufacturer and Notes fold, leaving 608. Consumables and Upgrades need at most 545
   and never fold. Rejected: breaking every measured value in a table that does not
   fit — it catches any combination, but breaks ordinary words mid-word wherever a
   table is tight.
+- **A fixed line bounds the rows it was measured with, not every allowed value**
+  (Codex #328, round 2). Words nearer the budgets than the lines assumed (9.99em and
+  7.98em) in every column, a cost in CHF or A$9,999.00 on Tools, or a completed, rated,
+  fully dated kit with near-budget words in every field, outgrow the Tools and
+  Display lines and Kits' #258 line, in both engines — 864–898 px tables in 770–880
+  px boxes. None is near the owner's data (6.2em and 5.7em at most). Raising every
+  line to the theoretical maximum would fold most tables on the desktop and still
+  enumerate cases, so the owner's call (06/10/2026) was to ship the lines as measured
+  and state the contract: a line holds the realistic rows it was measured with, and
+  past it the box scrolls, as this section has always said. Folding *to fit* — a table
+  that measures itself and folds before paint when it is wider than its box — is
+  the structural answer for every list, and is #329.
 - **The siblings.** Inventory's category filter was the one list filter `<select>`
   with no width cap, and a select is as wide as its widest option: it scrolled the
   document. It now has the `max-w-52` that Kits' series filter and Orders' retailer

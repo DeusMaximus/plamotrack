@@ -181,7 +181,8 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   word. A new free-text cell owes it `Measured` (#323), a new
                         #   filter `<select>` a width cap, and a table with several
                         #   free-text columns a fold line measured with a word just under
-                        #   its budget in each — budgets bound a value, not a row (#328).
+                        #   its budget in each — budgets bound a value, not a row (#328);
+                        #   a fixed line still bounds only what it was measured with (#329).
                         #   A fold keeps a hidden copy
                         #   of what it moves, so a test reading a row's text filters for
                         #   the visible one — MorePage (the phone's fifth tab),

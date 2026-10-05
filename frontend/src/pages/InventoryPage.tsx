@@ -969,10 +969,12 @@ export function InventoryPage() {
           // `@container`: the table folds to the width this box has (§13.7, #323).
           // Below 44rem (704 px) Condition leaves its column for the name's
           // second line. The line is measured with a word just under its budget
-          // (`Measured`) in every free-text column at once — the widest the
-          // table gets with nothing broken: 690 px, WebKit with a touch screen.
-          // Above it any mix of values fits; below it the folded table needs
-          // 558. Every iPad in portrait beside the rail is under it.
+          // (`Measured`) in every free-text column at once (9.74em, 7.73em) and
+          // an ordinary cost: 690 px, WebKit with a touch screen. Below it the
+          // folded table needs 558. Every iPad in portrait beside the rail is
+          // under it. A line bounds the rows it was measured with, not every
+          // value: words nearer the budgets, or a wider currency, outgrow it,
+          // and the box scrolls (#329 is folding to fit instead).
           <div className="@container overflow-x-auto rounded-md border border-border bg-surface">
             <TableRuler>
             <table className="w-full text-sm">
