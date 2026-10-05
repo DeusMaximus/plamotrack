@@ -41,6 +41,48 @@ Template:
 
 ---
 
+## 2026-10-05 — Claude Code (Opus 5.5) — #321 MERGED as `277cb0a` (PR #322) and #317 MERGED as `3fba4c3` (PR #325); #323, #324 filed
+
+- **Done:**
+  - **#317 was never a focus race.** Its #275 test opens `/inventory?tab=upgrades`, which can't be narrowed. With more than ten upgrades sorting ahead, the row is on page 2; 11 seeded leftovers reproduce it every time.
+  - **The sweep** found 38 lookups of that shape across 13 spec files (classified on #317's thread).
+  - **[PR #325](https://github.com/DeusMaximus/plamotrack/pull/325)** squash-merged as **`3fba4c3`** after `main` was merged in at `f9e8c6a`. It is test-only:
+    - Kits, Orders and Retailers open with `?q=` naming the test's own record.
+    - Inventory opens through `e2e/listRows.ts` → `openListAt`, which steps `?page=` and reads the pager, not the locale-formatted range (round 1, Codex and Greptile).
+    - `lists.spec`'s `openList` delegates to it.
+    - Local multi-worker runs: 17 failures on `main`, then 8–10. The rest are #324, #321, #323 and slow saves.
+  - **[PR #322](https://github.com/DeusMaximus/plamotrack/pull/322)** squash-merged as **`277cb0a`**; #321 is closed. It fixes #319's regression: a turn from phone to rail with the keyboard past row 10 fell to `<body>`.
+    - `usePaging()` (`lib/listState.ts`) now owns slicing via `paging.slice(rows)`. In the crossing render it lands on the page holding the record from `focusedRecordKeys()` (open dialogs' openers via `Modal`'s `holdOpener`, then the focused control) and writes `?page=N`.
+    - The hold writes once and asks the browser's address, not only the router. Another navigation ends it (round 1, Greptile).
+    - Inventory slices only the tab on screen (round 1, Codex P2).
+    - Design §13.7 ("Amended — #318", last bullet), AGENTS.md (the focusKey line) and two lessons are updated.
+  - **Reviews:**
+    - #322 round 1: Codex P1 and P2, Greptile 4/5; all taken. Round 2, briefed Codex desktop: **GO**, no findings, with five extra probes.
+    - #325: Codex P2 and Greptile 4/5, both taken; the connector's re-review was clean.
+  - **Decisions (owner, 03–05/10):** C over B for #321; separate PRs; fix #317's whole class in one branch; #322 got a briefed desktop round, #325 the connector only.
+- **State:**
+  - **Unreleased on `main`:** #294, #289, #247, #302, #310, #313 (a migration), #314, #319 and now **#322**, folded into #318's entry. #325 is test-only. See `.agents/next-release.md`.
+  - **Coverage gap on #322**, recorded in its PR body and not filed: the mutant *no turn while the URL has a page* survived 16 runs in Codex's replay. A deterministic witness needs the router's update held across a turn.
+  - **Known gaps, filed:**
+    - **#323 (bug, product):** an unbroken name widens all seven list tables past their box from 768 px up, measured. `lists.spec`'s fit test seeds only its own rows.
+    - **#324:** Home and import e2e read collection-wide state, so the local multi-worker default fails. Keep `--workers=1` until it's fixed.
+    - **#320:** Orders' render cost at hundreds of orders on a phone.
+    - **#315:** leaving Data management mid-import.
+    - **#316:** download errors at the section's head.
+  - **Tooling:** the iOS Simulator is still booted. No dev servers, worktrees or e2e databases are left, and `main` is clean. Merged branches left on origin: `fix/321-focus-row-page`, `fix/317-narrow-list-lookups`, `feat/318-page-size`.
+  - **Carried:**
+    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
+    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
+    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
+- **Next:**
+  1. #323 (product; a by-value rule for names, like `ReferenceRuler`), then #315 and #316 by priority. #324 when local multi-worker runs matter.
+  2. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
+  3. Carried:
+     - #279's edge probes, then #281's packaging; #282's VPS path;
+     - at the next release, work through `.agents/next-release.md`;
+     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
+     - posting the rehearsal on #285.
+
 ## 2026-10-03 — Claude Code (Opus 5.5) — #318 MERGED as `3f72272` (PR #319): every row on a phone, ten a page wider; #320 filed
 
 - **Done:**
@@ -243,60 +285,3 @@ Template:
      - at the next release, work through `.agents/next-release.md`;
      - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
      - posting the rehearsal on #285.
-
-## 2026-09-25 — Claude Code (Opus 5.5) — #299, #300, #301 MERGED as `b7f8a47` (PR #302): an IPv6 `POSTGRES_HOST`, a `%` in the URL alembic reads, and secrets echoed by a settings refusal
-
-- **Done:**
-  - Filed three bugs, each reproduced on `main` at `23e4b0e`:
-    - [#299](https://github.com/DeusMaximus/plamotrack/issues/299): the IPv6 `POSTGRES_HOST` carried from the last entry;
-    - [#300](https://github.com/DeusMaximus/plamotrack/issues/300): alembic's ConfigParser refuses any `%`, so a punctuated `POSTGRES_PASSWORD` stops the **published** `migrate` service;
-    - [#301](https://github.com/DeusMaximus/plamotrack/issues/301): a `Settings` refusal printed `input_value=`, which held the head and tail of `.env`'s secrets, into the container log.
-  - [PR #302](https://github.com/DeusMaximus/plamotrack/pull/302) squash-merged as **`b7f8a47`**, pinned to the reviewed head `c927060`. #299, #300 and #301 are closed.
-    - `config.py` renders the URL with `URL.create`, unwraps `[::1]`, and refuses a colon outside an IPv6 literal (only when assembling). It also sets `hide_input_in_errors=True`.
-    - `alembic/env.py` doubles `%`.
-    - `asyncpg_dsn` writes a host's `%` as `%25`.
-  - Tests:
-    - `tests/test_database_url.py` (76): 46 red / 30 green on unfixed `main`.
-    - `tests/test_settings_errors.py` (4): 4 red.
-    - The `dsn-` mutation set: 10/10 killed, and both files are in `TEST_FILES`.
-    - Backend: 2955 passed, 1 xfailed (predates the branch).
-    - A one-off credential fuzz, 28,128 pairs through all four readers, found 0 regressions. The script is in the PR body.
-  - `.agents/next-release.md` has the entry.
-- **Decisions (the owner's, 2026-09-25):**
-  - **A zone id is raw in the SQLAlchemy URL, `%25` only for asyncpg's parser**, not RFC 6874 everywhere as the task first said. SQLAlchemy never decodes a host, and the resolver refuses `fe80::1%25lo`.
-  - **#300 and #301 ride in the same PR** as separate issues: same class, and each is needed for #299's fix to be complete and not leak.
-  - **Session bookkeeping commits straight to `main`**, a cloud session included: hand-off entries, their rotation, the merge record. This is the owner's standing go-ahead (2026-09-25), matching `AGENTS.md` → Git conventions.
-- **State:**
-  - **Reviews:**
-    - Greptile scored it 5/5 with no findings.
-    - GLM 5.3's round 1 at `dd6f3df` was **NO-GO**, with a P2 and three P3s, answered on the thread.
-    - Round 2 at `b3aa1e9` was **GO**. Its one finding (5, a P3 record clause) was taken in the PR body.
-    - P2 fixed: the harness's first dsn-5 sent the mutant session to the dev database. Re-anchored, then made judge-only at `b3aa1e9`, because the re-anchor still redirected under an IPv6 `.env` host. Proven with a canary row; the rule is in testing-and-review, the case in lessons.md.
-    - P3 finding 2: the finding was right, the remedy was declined with a counterexample. The state store reads the engine's host; decoding `%25` first breaks a real zone `%25`.
-    - P3s 3 and 4: a tripwire comment in `config.py`, and record corrections.
-  - **This entry reached `main` with the squash; the merge record was committed on `main` directly.** `main` got the #280 entry below first, so `main` was merged into the branch: both entries kept, and the #294 entry rotated out.
-  - **Proven in Compose, not with the shipped image:** Docker runs in the cloud session once `dockerd` is started (`.agents/testing-and-review.md` → Docker in a cloud session). The `migrate` service ran with its image swapped for the Python base plus the locked dependencies, the source mounted, and a punctuated `POSTGRES_PASSWORD` in `.env`.
-    - `main` failed with #300's interpolation error, and its log printed the URL and password.
-    - The branch migrated to head.
-    - With an OIDC misconfiguration, `main`'s log printed the signing key's tail (#301); the branch's printed none.
-    - The API image itself can't be built there: the `uv` blob on `ghcr.io` is refused by the egress policy.
-  - **Not testable in the cloud session:** a live IPv6 connection (the container's kernel has no IPv6 stack), and the shipped image (the ghcr blob host is refused). GLM round 2 closed both on the owner's Mac.
-    - Postgres on `[::1]`: the engine and the state store's pool both connected.
-    - The packaged stack built as written: `migrate` ran online with a punctuated password, and the OIDC refusal printed no secret.
-    - Still open: a pool to a zone-id host, which needs Linux.
-  - **Unreleased on `main`:** #294, #289, #247, and #302 (#299, #300, #301); see `.agents/next-release.md`. It also owes the Pocket ID docs page. #300 is the most exposed: v0.5.2-alpha's `migrate` stops for a `POSTGRES_PASSWORD` holding anything but letters, digits and `- _ . ~` until the next release.
-  - **Carried from the 2026-09-25 #280 entry:**
-    - #280 is decided and closed: Pocket ID is an optional supported provider, documented from the release that ships #294.
-    - testhost is back in the gate's state: `probe.py teardown` ran, and the gate's stack (v0.5.2) and the same Keycloak container are up.
-    - **Owner:** delete the Claude.ai "Testing" connector; the spike it pointed at is gone.
-    - Don't recreate Keycloak's container on testhost: a new one changes `sub`, and the gate's collection then needs `recovery rebind-oidc`.
-    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
-    - Merged branches still on origin: `claude/plamotrack-cloud-setup-jgjfo0`, `fix/294-upstream-resource`, `claude/practical-heisenberg-fminub`.
-- **Next:**
-  1. Owner: allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access (said 25/09/2026). That is what lets a cloud session build the API image; the recipe is in `.agents/testing-and-review.md` → Docker in a cloud session.
-  2. At the next release: work through `.agents/next-release.md` (release step 7), the Pocket ID page included.
-  3. Carried from the #280 entry: #279's two edge probes, then #281's packaging, which includes whether to bundle Pocket ID; #282's VPS path can build on the Pocket ID recipe (findings §4–§5, §8).
-  4. Carried:
-     - Cloud-feasible candidates: #124, #125, #268, #238; the importer bugs #110, #116, #134 and #137.
-     - Posting the rehearsal on #285.
-     - Untested: the release-to-release update and the Git Bash commands.
