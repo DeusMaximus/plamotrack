@@ -136,6 +136,30 @@ export function unansweredKeys(): string[] {
   return place.keys;
 }
 
+/** The keys of the controls that opened the dialogs now open, outermost
+ *  first. `Modal` holds its opener's here while it is open (`holdOpener`): the
+ *  focused control is then inside the dialog and carries no key, and the record
+ *  the keyboard will go back to is the opener's. */
+const openers: (readonly string[])[] = [];
+
+/** Hold an open dialog's opener keys; the return releases them at close. */
+export function holdOpener(keys: readonly string[]): () => void {
+  openers.push(keys);
+  return () => {
+    const at = openers.indexOf(keys);
+    if (at >= 0) openers.splice(at, 1);
+  };
+}
+
+/** The records the keyboard is on or will come back to — the open dialogs'
+ *  openers, then the focused control — for a list that changes which rows it
+ *  draws in a turn and must keep that record's row among them (#321,
+ *  `usePaging`). Read at the render that crosses the line, before the commit
+ *  that swaps the rows: the focused control is still the one that was. */
+export function focusedRecordKeys(): string[] {
+  return [...openers.flat(), ...(place?.keys ?? [])];
+}
+
 /** Keep the keyboard's place when the page changes shape under it. Turning an
  *  iPad mini (744 px one way, 1133 the other) or dragging a window across 768 px
  *  swaps a list's table for cards; if the focused control was one of the rows',

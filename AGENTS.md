@@ -161,7 +161,10 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   that stopped being drawn) give the keyboard to whatever carries
                         #   the key now. A new control of either kind owes itself one, and
                         #   lists.spec.ts's sweep — every control, every way the page
-                        #   changes — is where a missing one shows (§13.7)
+                        #   changes — is where a missing one shows (§13.7). A change that
+                        #   draws different *rows* (the phone's every row against the
+                        #   rail's ten, #321) owes the focused record its row: `usePaging`
+                        #   lands on its page, read through `focusedRecordKeys`
     lib/listFilters.ts  # what a list page's filters and search keep — one pure function
                         #   each, read by the page for its rows and by the filter sheet
                         #   for the count on its button, so the two cannot disagree

@@ -3826,6 +3826,20 @@ more; it only draws more.
 - **Focus**: a page button names the page's primary action (`page-action`) as its
   stand-in — a turn into the phone shell takes every page away. The phone's compact
   page window went with the pages.
+- **A turn out of the phone lands on the focused record's page** (#321, owner's call
+  03/10/2026). Every row was drawn and ten are now: page 1 left the keyboard on row 12
+  with nothing carrying its key, and it fell to `<body>` — a regression #319 shipped,
+  which the focus sweep missed because every list it seeds is shorter than a page.
+  `usePaging` reads, in the render that crosses the line, which record the keyboard
+  is on or will come back to (`focusedRecordKeys`: an open dialog's opener, which
+  `Modal` holds while it is open, then the focused control), draws the page that
+  holds its row, and writes `?page=N`. The turn decides the page, not the URL — the
+  phone's drop of `?page=` can still be on its way — and it holds until the
+  browser's address *and* the router's location say that page: a navigation changes
+  the address at once and reaches React later, in a transition, and a turn that
+  trusted the router stood down on a stale page 2 (two runs in ten, a tablet turned
+  back within a moment). Rejected: every row control naming `page-action` as a last
+  stand-in, which keeps the rule and loses the place.
 - **Measured** before deciding (03/10/2026; Chromium, 390 × 844, the from-empty
   database seeded with 300 kits, 300 orders, 300 consumables and 300 retailers —
   about 2.5 times the owner's 116 kits, 3.7 times their 82 orders). Unthrottled, a

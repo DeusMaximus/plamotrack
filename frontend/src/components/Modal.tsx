@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 
-import { focusFirst, focusKeysOf, unansweredKeys } from "../lib/focusKey";
+import { focusFirst, focusKeysOf, holdOpener, unansweredKeys } from "../lib/focusKey";
 import { useShell } from "../lib/shell";
 import { Button } from "./ui";
 
@@ -240,6 +240,9 @@ export function Modal({
     const opener = active === document.body ? null : active;
     const openerKeys = opener === null ? unansweredKeys() : focusKeysOf(opener);
     const appRoot = document.getElementById("root");
+    // While open, a list turned out of the phone shell keeps the opener's row
+    // drawn, so there is something to give the keyboard back to (#321).
+    const releaseOpener = holdOpener(openerKeys);
 
     openDialogs += 1;
     // `inert` and not just a focus trap: a trap governs Tab, while inert also
@@ -259,6 +262,7 @@ export function Modal({
       // subtree silently does nothing, which would strand the user at <body>.
       if (appRoot && openDialogs === 0) appRoot.inert = false;
       restoreFocus(opener, openerKeys);
+      releaseOpener();
     };
   }, []);
 

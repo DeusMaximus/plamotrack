@@ -36,7 +36,7 @@ import {
 } from "../components/ui";
 import { currencyOptions, formatMoney, formatNumber, majorToMinor, minorToMajor, stepFor } from "../lib/format";
 import { counted, itemTypeLabel, itemTypePlural } from "../lib/labels";
-import { paginate, useEnumParam, usePaging, useTextParam, useWriteParams } from "../lib/listState";
+import { useEnumParam, usePaging, useTextParam, useWriteParams } from "../lib/listState";
 import { usePresentationVersion } from "../lib/presentation";
 import { useShell } from "../lib/shell";
 
@@ -837,10 +837,13 @@ export function InventoryPage() {
   const filteredConsumables = inCategory(consumables.data);
   const filteredDisplayItems = inCategory(displayItems.data);
   const filteredUpgrades = upgrades.data ?? [];
-  const pagedTools = paginate(filteredTools, paging.page, paging.pageSize);
-  const pagedConsumables = paginate(filteredConsumables, paging.page, paging.pageSize);
-  const pagedUpgrades = paginate(filteredUpgrades, paging.page, paging.pageSize);
-  const pagedDisplayItems = paginate(filteredDisplayItems, paging.page, paging.pageSize);
+  // The tab on screen alone: the others' rows can still be in the query cache,
+  // and a record id one table shares with another (an import may choose ids)
+  // would otherwise pick the page a turn lands on (#321, Codex P2 on #322).
+  const pagedTools = paging.slice(tab === "tools" ? filteredTools : []);
+  const pagedConsumables = paging.slice(tab === "consumables" ? filteredConsumables : []);
+  const pagedUpgrades = paging.slice(tab === "upgrades" ? filteredUpgrades : []);
+  const pagedDisplayItems = paging.slice(tab === "display-items" ? filteredDisplayItems : []);
   const shownCount =
     tab === "tools"
       ? pagedTools.total
