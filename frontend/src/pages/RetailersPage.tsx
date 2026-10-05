@@ -34,7 +34,7 @@ import {
   shippingSpeedLabel,
   wouldOrderAgainLabel,
 } from "../lib/labels";
-import { paginate, usePaging, useSearchParam } from "../lib/listState";
+import { usePaging, useSearchParam } from "../lib/listState";
 import { usePresentationVersion } from "../lib/presentation";
 import { useShell } from "../lib/shell";
 
@@ -239,7 +239,7 @@ export function RetailersPage() {
         .some((value) => value.toLowerCase().includes(needle)),
     );
   }, [retailers, search]);
-  const paged = paginate(visible, paging.page, paging.pageSize);
+  const paged = paging.slice(visible);
 
   return (
     <div className="space-y-4">
