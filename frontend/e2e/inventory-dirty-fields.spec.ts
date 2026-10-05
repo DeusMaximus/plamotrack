@@ -12,6 +12,7 @@
 import { expect, test } from "@playwright/test";
 
 import { apiContext } from "./api";
+import { openListAt } from "./listRows";
 
 const suffix = Date.now().toString(36);
 const STALE_TOOL = `E2E Stale Nippers ${suffix}`;
@@ -56,7 +57,7 @@ async function patchTool(id: string, data: Record<string, unknown>): Promise<voi
 
 /** Open the tool's edit dialog on the Inventory page. */
 async function openEditor(page: import("@playwright/test").Page, name: string) {
-  await page.goto("/inventory");
+  await openListAt(page, "/inventory", name);
   const row = page.getByRole("row").filter({ hasText: name });
   await expect(row).toBeVisible();
   await row.getByRole("button", { name: "Edit" }).click();

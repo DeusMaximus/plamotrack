@@ -75,7 +75,9 @@ test("the catalog picker offers an item created seconds ago instead of a second 
   // Timers keep running, so the picker's 250 ms debounce still fires.
   await page.clock.setFixedTime(new Date());
 
-  await page.goto("/orders");
+  // Narrowed to this test's shop: its orders are dated today, and today's
+  // orders from other files can outnumber a page (#317).
+  await page.goto(`/orders?q=${encodeURIComponent(SEARCH_SHOP)}`);
 
   // Order A: a brand-new consumable via the typeahead — this populates the cache
   // for the search term with "no results".

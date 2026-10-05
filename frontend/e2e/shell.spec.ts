@@ -478,7 +478,7 @@ test.describe("touch sizes", () => {
     for (const size of sizes) {
       await test.step(`${size.width} × ${size.height}`, async () => {
         await page.setViewportSize(size);
-        await page.goto("/retailers");
+        await page.goto(`/retailers?q=${encodeURIComponent(SHOP)}`);
         const shell = shellFor(size.width);
         const touch = project !== "app" || shell === "phone";
 

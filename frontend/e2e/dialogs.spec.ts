@@ -35,6 +35,7 @@
 import { chromium, expect, test, type Locator, type Page } from "@playwright/test";
 
 import { APP, STORAGE_STATE, apiContext } from "./api";
+import { openListAt } from "./listRows";
 
 type Size = { width: number; height: number };
 
@@ -492,7 +493,7 @@ test("every dialog fits a phone's screen and is the panel it was on a tablet", a
     });
 
     await test.step(`Edit consumable ${at}`, async () => {
-      await page.goto("/inventory?tab=consumables");
+      await openListAt(page, "/inventory?tab=consumables", NAMES.consumable);
       await page.getByRole("button", { name: `Edit ${NAMES.consumable}` }).click();
       await expect(dialog(page)).toBeVisible();
       await expectDialogFits(page, `Edit consumable ${at}`, isPhone(size));
@@ -501,8 +502,14 @@ test("every dialog fits a phone's screen and is the panel it was on a tablet", a
     });
 
     await test.step(`Apply to kit ${at}`, async () => {
-      await page.goto("/inventory?tab=upgrades");
-      await page.getByRole("button", { name: "Apply to kit" }).first().click();
+      // This file's own upgrade, which has stock: the first row's Apply is
+      // disabled when that upgrade has none on hand (#317).
+      await openListAt(page, "/inventory?tab=upgrades", NAMES.upgrade);
+      await page
+        .locator("main tbody tr, main li")
+        .filter({ visible: true, hasText: NAMES.upgrade })
+        .getByRole("button", { name: "Apply to kit" })
+        .click();
       await expect(dialog(page)).toBeVisible();
       await expectDialogFits(page, `Apply to kit ${at}`, isPhone(size));
       await expectFrame(page, "Apply", `Apply to kit ${at}`);

@@ -1758,3 +1758,27 @@ the state. And a race that shows 1 in 8 needs repeats to prove fixed: here 15 cl
 then 10 under full CPU load, then each race mutant run ten times. One mutant (stand
 down without waiting for the router) survived 30 runs. It is kept as a guard and
 recorded as unobserved, not as equivalent.
+
+## Contention was a detector, and it was pointing at the product too (#317)
+
+#317 was filed as a focus test that failed about 1 in 3 on `tablet`. It was never a
+focus race. The Upgrades list the test opens can't be narrowed, and on 2 October the
+database held other upgrades that sorted ahead, so the row sat on page 2. A sweep
+found 38 lookups of the same shape across 13 files. The local multi-worker default
+failed 17 tests a run on `main`, and the memory note "it fails ~6 specs from
+contention" had been carrying that for weeks as a reason to pass `--workers=1`.
+
+Measuring the fix with the multi-worker default is what paid off. The class went (17
+failures down to 8–10), and what remained sorted into three other things. Two were
+other test classes: #324, Home and import counts; and #321, a real focus regression.
+The third was a product bug: #323, every list table overflowing on an unbroken name.
+`lists.spec`'s fit test checks exactly that, but only against rows its own file
+seeds. Another file's deliberately unbroken upgrade, sharing the page only because
+the workers overlapped, showed the defect.
+
+What to keep: **"fails under contention" is a finding, not an environment**. Read
+each failure before reaching for the flag that hides them. And **a check that
+measures only the values its own file seeds measures your imagination**: seed the
+widest value the product can hold (CLAUDE.md, "Enumerate what the field can
+hold").
+

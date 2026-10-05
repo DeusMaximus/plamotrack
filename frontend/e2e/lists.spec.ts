@@ -51,6 +51,7 @@ import { chromium, expect, request, test, type APIRequestContext, type Locator, 
 
 import { API, APP, STORAGE_STATE, apiContext } from "./api";
 import { expandEveryOrder, expectFits, isCut, linesOf, main, shown, sweepBox } from "./lists";
+import { openListAt } from "./listRows";
 import { holdShellEvents, installShellEventHold, releaseShellEvents } from "./shellEvents";
 
 type Size = { width: number; height: number };
@@ -355,11 +356,12 @@ test.afterAll(async () => {
 const rowOf = (page: Page, text: string): Locator =>
   shown(main(page).locator("tbody tr, li")).filter({ hasText: text });
 
+/** On the page that shows `anchor` (`listRows.ts`, #317): Inventory cannot be
+ *  narrowed to this file's rows, and what sorts ahead of them is the suite's.
+ *  A shown match: on a table shell the retailer's name is first an <option> of
+ *  the inline filter, which no closed select displays. */
 async function openList(page: Page, path: string, anchor: string): Promise<void> {
-  await page.goto(path);
-  // A shown match: on a table shell the retailer's name is first an <option> of
-  // the inline filter, which no closed select displays.
-  await expect(shown(main(page).getByText(anchor)).first()).toBeVisible();
+  await openListAt(page, path, anchor);
 }
 
 /** What the page itself complains of while a test drives it: uncaught errors
