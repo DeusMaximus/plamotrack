@@ -33,6 +33,21 @@ Shape:
 
 ---
 
+## #323 — a long word no longer pushes a list past the screen (PR #328)
+- **Release note:** A name, category, manufacturer, grade, scale, note or shop
+  address with no space in it — a product code run together, say — used to make a
+  list's table wider than the page from tablet width up, pushing the row's Edit
+  button out of sight; on a phone, a long grade or scale did the same to a kit's
+  card. Such a word now breaks across lines where it has to. Ordinary names lay out
+  exactly as before. Inventory's category filter is no longer as wide as its
+  longest category. On a tablet, Inventory's Tools and Display tables now fold
+  like the other lists: Condition (Tools) and Manufacturer and Notes (Display) move
+  under the item's name when the table is short of room, rather than pushing the
+  Edit button out of sight. And on a phone, an Inventory card's details wrap
+  instead of being cut off with an ellipsis.
+- **README:** nothing.
+- **Docs site:** nothing.
+
 ## #318 — a phone shows every row (PR #319; #321, PR #322)
 - **Release note:** On a phone, the list pages (Kits, Orders, Inventory, Retailers)
   now show every row in one long list instead of ten a page; search and the filters

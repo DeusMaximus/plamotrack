@@ -3263,8 +3263,8 @@ and tablet e2e, screenshots, the release (#260).
   **Wider on screen, not longer in characters** (round 2, finding 5: thirteen
   `W`s are 183 px where thirteen digits are 115): each reference is measured,
   by the browser, as the widest piece it will not break — an invisible copy
-  laid out at `min-content` in one ruler per table (`ReferenceRuler`,
-  `OrdersPage.tsx`), reached through a portal so it is never inside a fold's
+  laid out at `min-content` in one ruler per table (`ReferenceRuler` in
+  `OrdersPage.tsx` then; `TableRuler`, `components/Measured.tsx`, since #323, below), reached through a portal so it is never inside a fold's
   `display: none` half, holding the text as a pseudo-element's content so that
   a test's `getByText` cannot prefer it to the visible text, at the table's own
   `tabular-nums` because a canvas cannot be told those and measures digits
@@ -3851,3 +3851,73 @@ more; it only draws more.
   stock change on the 300th consumable 1.3 s at 4×. Nothing to do at this scale; if
   a collection's Orders grows into the hundreds on a slow phone, its cards are where
   to look first, not a pager.
+
+**Amended — #323, every free-text cell gives way by its value (06/10/2026).** The rule
+above ("What a line cannot know gives way instead") was applied to dates and to
+Orders' references, and never to names. One word no line can hold — a product code
+run together, the issue's case, as an upgrade's name — held every list's table past
+its box from 768 px up, the row's Edit control with it: Kits was 2,956 px in a 770 px
+box at 900 px. `lists.spec.ts` checked exactly this, but only for its own rows, which
+had no such word; a multi-worker run put `dialogs.spec.ts`'s unbroken upgrade on the
+Upgrades tab and it failed there.
+
+- **The class is free text, not names.** Grade and scale are free text (#96), as are a
+  category, a manufacturer, a kit's number and series, a note, a shop's address and a
+  delivery service; each had the same defect. Every free-text value that sets a list
+  table's column width is now drawn through `Measured` (`components/Measured.tsx`) —
+  the ones a cell already truncates, a retailer's notes and an order line's label,
+  set none and stay as they were — the old
+  `Reference` lifted out of `OrdersPage.tsx`. Its ruler is now any table's
+  (`TableRuler`), and its copy takes the font from the text it measures, not from the
+  ruler: a name is medium, a grade chip semibold and tracked.
+- **Budgets from real data.** `name` is 10em: "(Unidentified" is the widest word of
+  the owner's 116 kit names, 6.2em in Inter's medium. `text` is 8em: "Workstation", a
+  real category, is 5.7em. Ordinary values stay plain words, so ordinary rows lay out
+  as before; the e2e rule test seeds both words and holds them to `normal`.
+- **A floor below the budget**, unlike a reference's: 4em for a name, 3em for other
+  text. A table has one of these per column, and an unbroken value in each — in
+  different rows, which is the same thing to the table — has to fit the narrowest box
+  (638 px beside the rail at 768). With 4em everywhere, Display's seven columns were
+  4 px past it.
+- **A value under its budget is still a width** (Codex #328, finding 1). Each value is
+  judged alone, and a table's minimum is the sum of its columns' widest words: one
+  ordinary Display row — "Weatherproof Display", "Accessories", "Non-scale",
+  "Kotobukiya", "Polyurethane", nothing near a budget — was 675 px in the 638 px box
+  at 768 (Chromium; 692 in WebKit), Edit past the edge. Inventory's tables were the
+  only lists that never folded, so they fold now, by their box as the others do, at
+  lines drawn from the worst case nothing breaks: a word just under its budget in
+  every free-text column at once (9.74em for the name, 7.73em for the rest — the same
+  in Chromium and WebKit), with ordinary values in the other columns; below the
+  line the folded columns ride under the name. Tools needs 690 px whole (WebKit, touch), so below 44rem (704 px)
+  Condition folds, leaving 558; Display needs 873 whole, so below 55rem (880 px)
+  Manufacturer and Notes fold, leaving 608. Consumables and Upgrades need at most 545
+  and never fold. Rejected: breaking every measured value in a table that does not
+  fit — it catches any combination, but breaks ordinary words mid-word wherever a
+  table is tight.
+- **A fixed line bounds the rows it was measured with, not every allowed value**
+  (Codex #328, round 2). Words nearer the budgets than the lines assumed (9.99em and
+  7.98em) in every column, a cost in CHF or A$9,999.00 on Tools, or a completed, rated,
+  fully dated kit with near-budget words in every field, outgrow the Tools and
+  Display lines and Kits' #258 line, in both engines — 864–898 px tables in 770–880
+  px boxes. None is near the owner's data (6.2em and 5.7em at most). Raising every
+  line to the theoretical maximum would fold most tables on the desktop and still
+  enumerate cases, so the owner's call (06/10/2026) was to ship the lines as measured
+  and state the contract: a line holds the realistic rows it was measured with, and
+  past it the box scrolls, as this section has always said. Folding *to fit* — a table
+  that measures itself and folds before paint when it is wider than its box — is
+  the structural answer for every list, and is #329.
+- **The siblings.** Inventory's category filter was the one list filter `<select>`
+  with no width cap, and a select is as wide as its widest option: it scrolled the
+  document. It now has the `max-w-52` that Kits' series filter and Orders' retailer
+  filter already had. On a phone, a kit card's scale was `shrink-0` and the grade chip
+  could not narrow, so an unbroken one pushed the card past a 320 px screen. The
+  scale may now narrow, and `GradeChip` gives way as `Chip` does below 768 px. A
+  clipping box (an order's lines) hid an unbroken delivery service rather than widen
+  the table, so the test asks whether it is cut, not whether it fits.
+  And seeding a real category ("Workstation (Portable)") where the spec had
+  "nippers" showed an Inventory card's facts cut to an ellipsis at a 40 px font on
+  a 320 px phone, against "the facts under it wrap" above. They wrap now.
+- **Not in this change: Home.** A strip row's meta is `whitespace-nowrap` by design,
+  and a bench card says the kit number beside the grade; an unbroken grade, scale or
+  number scrolls Home sideways from 768 px. How its strips give way is its own
+  decision (#326).

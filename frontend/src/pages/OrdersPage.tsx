@@ -1,22 +1,13 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Pencil, Plus, Search } from "lucide-react";
-import {
-  Fragment,
-  createContext,
-  useContext,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
-import { createPortal } from "react-dom";
+import { Fragment, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { api, metaQuery, summaryQuery } from "../api/client";
 import type { Order, OrderItem, OrderStage, Retailer } from "../api/types";
 import { ORDER_SORTS, ORDER_STAGES, type OrderSort } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
+import { Measured, TableRuler } from "../components/Measured";
 import {
   FILTERS_FOCUS,
   FilterSheet,
@@ -342,7 +333,7 @@ export function OrdersPage() {
         // and 625 px — lists.spec.ts seeds those rows and gives the box every
         // width. A line is a guess about rows nobody has typed yet, so what it
         // cannot know gives way by its value — a date written in words wraps
-        // (`dateWrap`), a long reference breaks (`Reference`) — and past that the
+        // (`dateWrap`), a long reference breaks (`Measured`) — and past that the
         // box still scrolls.
         //
         // By the box at every width, the desktop included (the owner's call,
@@ -354,7 +345,7 @@ export function OrdersPage() {
         // whole, a 1180 px one and a mini the first fold, 1024–1080 px and every
         // portrait the second.
         <div className="@container overflow-x-auto rounded-md border border-border bg-surface">
-          <ReferenceRuler>
+          <TableRuler>
           <table className="w-full text-sm">
             <thead>
               <tr className={TABLE_HEAD_ROW_CLASS}>
@@ -418,16 +409,16 @@ export function OrdersPage() {
                     </td>
                     <td className="px-3 py-2">{formatDate(order.order_date)}</td>
                     <td className="px-3 py-2 font-medium">
-                      {retailerName.get(order.retailer_id) ?? "…"}
+                      <Measured text={retailerName.get(order.retailer_id) ?? "…"} kind="name" />
                       {order.order_number && (
                         <div className="hidden text-xs font-normal text-muted @max-[66rem]:block">
-                          <Reference text={order.order_number} kind="orderNumber" />
+                          <Measured text={order.order_number} kind="orderNumber" />
                         </div>
                       )}
                     </td>
                     <td className="px-3 py-2 text-muted @max-[66rem]:hidden">
                       {order.order_number ? (
-                        <Reference text={order.order_number} kind="orderNumber" />
+                        <Measured text={order.order_number} kind="orderNumber" />
                       ) : (
                         "—"
                       )}
@@ -508,7 +499,7 @@ export function OrdersPage() {
               ))}
             </tbody>
           </table>
-          </ReferenceRuler>
+          </TableRuler>
           <Pager paged={paged} onPage={paging.setPage} />
         </div>
       ) : (
@@ -681,7 +672,7 @@ function StageDates({ order, className = "" }: { order: Order; className?: strin
 function Tracking({ order }: { order: Order }) {
   const { t } = useTranslation();
   const number = order.tracking_number ? (
-    <Reference text={order.tracking_number} kind="tracking" />
+    <Measured text={order.tracking_number} kind="tracking" />
   ) : null;
   if (!order.tracking_url) return number ?? <>—</>;
   return (
@@ -696,93 +687,6 @@ function Tracking({ order }: { order: Order }) {
     >
       {number ?? t("orders.trackingLinkFallback")}
     </a>
-  );
-}
-
-/** What the fold lines were measured with (§13.7), in the width the browser
- *  draws it: a tracking number of thirteen characters with nowhere to break
- *  (Japan Post's, 115 px at the table's 14 px — 8.2em), and an order number
- *  that breaks at its hyphens into pieces no wider than "12345678-" (82 px,
- *  5.9em). A reference wider than that — a USPS number is twenty-two digits, a
- *  marketplace's order number nineteen with no hyphen, and thirteen letters are
- *  wider than thirteen digits (Codex #266, findings 2 and 5) — is one
- *  unbreakable word, and held whole it pushed the row's edit control out of the
- *  box at widths where nothing folds. So a reference wider than the budget may
- *  break anywhere, down to lines as wide as the budget and no narrower; one
- *  within it is left exactly as it was, a plain word, and the table's ordinary
- *  rows lay out as they always did.
- *
- *  **Measured, not counted** (finding 5: a count of characters stood in for
- *  this once): the width of the widest piece the browser will not break, from
- *  a copy the browser lays out at `min-content` in `ReferenceRuler` — one box
- *  per table, out of flow, no size, clipped, at the table's font and figures,
- *  with each reference's text as a pseudo-element's content rather than text
- *  of its own. Every one of those is a lesson. A copy laid out inside the cell
- *  was scrollable overflow; inside a fold's `display: none` half it had no
- *  width to measure; as DOM text it was the deepest match for `getByText`,
- *  which prefers it to the visible text; and a canvas's `measureText` cannot be
- *  told the table's `tabular-nums`, so its digits are narrower than the cell's.
- *  In em, so one measurement serves the column's copy and the fold's smaller
- *  one alike, and the root font size can be anything (finding 6).
- *
- *  By the value and not for every row, and for two reasons now: `overflow-wrap:
- *  anywhere` lowers a column's minimum width and a table squeezes every column
- *  that has give; and in Chromium it also changes the text's shaping — kerning
- *  stops at a break opportunity, and there is one after every character — so
- *  "EJ482113905JP" is 105 px as a plain word and 110 px under `anywhere`, and
- *  wrapped at the cell's edge with nothing squeezed at all. */
-const REFERENCE_BUDGET = {
-  orderNumber: { em: 6, wrap: "inline-block min-w-[6em] wrap-anywhere" }, // "12345678-" is 5.9em
-  tracking: { em: 8.3, wrap: "inline-block min-w-[8.3em] wrap-anywhere" }, // Japan Post's 13 are 8.2em
-} as const;
-
-const RulerContext = createContext<HTMLElement | null>(null);
-
-/** Where a table's references are measured: rendered once inside the table's
- *  box, at the table's font and figures. `Reference` puts its sizer here
- *  through a portal. A `Reference` with no ruler above it — a card's lines —
- *  measures nothing and stays a plain word, which there is inside a
- *  `wrap-anywhere` flex item. */
-function ReferenceRuler({ children }: { children: ReactNode }) {
-  const [ruler, setRuler] = useState<HTMLElement | null>(null);
-  return (
-    <RulerContext.Provider value={ruler}>
-      {children}
-      <div ref={setRuler} aria-hidden className="absolute h-0 w-0 overflow-hidden text-sm tabular-nums" />
-    </RulerContext.Provider>
-  );
-}
-
-function Reference({ text, kind }: { text: string; kind: keyof typeof REFERENCE_BUDGET }) {
-  const ruler = useContext(RulerContext);
-  const sizer = useRef<HTMLSpanElement>(null);
-  const [wide, setWide] = useState(false);
-  useLayoutEffect(() => {
-    const element = sizer.current;
-    if (!element) return;
-    const measure = () => {
-      const em = parseFloat(getComputedStyle(element).fontSize);
-      setWide(element.getBoundingClientRect().width / em > REFERENCE_BUDGET[kind].em);
-    };
-    measure();
-    // And when its size changes — the web font arriving after the first paint.
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [text, kind, ruler]);
-  return (
-    <>
-      <span className={wide ? REFERENCE_BUDGET[kind].wrap : undefined}>{text}</span>
-      {ruler &&
-        createPortal(
-          <span
-            ref={sizer}
-            data-text={text}
-            className="invisible block w-min whitespace-normal before:content-[attr(data-text)]"
-          />,
-          ruler,
-        )}
-    </>
   );
 }
 
@@ -1010,9 +914,11 @@ function LinesBox({ order, itemName }: { order: Order; itemName: Map<string, str
       {shipping && (
         <div className="col-span-4 flex items-center justify-between gap-3.5 border-t border-rule bg-surface px-3 py-2 text-xs text-muted">
           <span>
-            {shipping.service
-              ? t("orders.shippingLineWith", { service: shipping.service })
-              : t("orders.shippingLine")}
+            {shipping.service ? (
+              <Measured text={t("orders.shippingLineWith", { service: shipping.service })} kind="text" />
+            ) : (
+              t("orders.shippingLine")
+            )}
           </span>
           <span className="tabular-nums">{shipping.amount ?? "—"}</span>
         </div>

@@ -13,6 +13,7 @@ import { formatNumber } from "../lib/format";
 import { pageWindow, type Paged } from "../lib/listState";
 import { useShell } from "../lib/shell";
 import { BrandMark } from "./BrandMark";
+import { Measured } from "./Measured";
 
 const BUTTON_VARIANTS = {
   primary: "bg-accent text-accent-ink hover:opacity-90 disabled:opacity-50",
@@ -388,11 +389,14 @@ export function Chip({
   );
 }
 
-/** The grade, as the compact chip the artboards draw beside a kit's name. */
+/** The grade, as the compact chip the artboards draw beside a kit's name. A
+ *  grade is free text (#96), so it gives way as any free text does (#323): in
+ *  a table by its value (`Measured`), and on a phone as `Chip` does — no wider
+ *  than its line, breaking inside a word it cannot hold. */
 export function GradeChip({ grade }: { grade: string }) {
   return (
-    <span className="inline-flex h-5 items-center rounded-sm bg-chip px-1.5 text-[11.5px] font-semibold tracking-wide text-text">
-      {grade}
+    <span className="inline-flex min-h-5 items-center rounded-sm bg-chip px-1.5 text-[11.5px] font-semibold tracking-wide text-text max-md:max-w-full max-md:wrap-anywhere">
+      <Measured text={grade} kind="text" />
     </span>
   );
 }

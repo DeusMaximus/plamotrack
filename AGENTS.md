@@ -174,10 +174,16 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   the desktop's included; the fold lines are measured, read the
                         #   comments before moving one (§13.7). What a line cannot know
                         #   gives way by its *value*: a date in words wraps, one in digits
-                        #   never does (`dateInDigits`); a reference wider than the measured
-                        #   budget breaks — measured by the browser in `ReferenceRuler`,
+                        #   never does (`dateInDigits`); a reference, a name or any free
+                        #   text a cell says breaks once its widest word is past a measured
+                        #   budget — measured by the browser in `components/Measured.tsx`,
                         #   never counted in characters — and an ordinary one is a plain
-                        #   word. A fold keeps a hidden copy
+                        #   word. A new free-text cell owes it `Measured` (#323), a new
+                        #   filter `<select>` a width cap, and a table with several
+                        #   free-text columns a fold line measured with a word just under
+                        #   its budget in each — budgets bound a value, not a row (#328);
+                        #   a fixed line still bounds only what it was measured with (#329).
+                        #   A fold keeps a hidden copy
                         #   of what it moves, so a test reading a row's text filters for
                         #   the visible one — MorePage (the phone's fifth tab),
                         #   and settings/ (SettingsPage + sections, including Data
