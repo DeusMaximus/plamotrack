@@ -33,7 +33,7 @@ Shape:
 
 ---
 
-## #323 — a long word no longer pushes a list past the screen (PR pending)
+## #323 — a long word no longer pushes a list past the screen (PR #328)
 - **Release note:** A name, category, manufacturer, grade, scale, note or shop
   address with no space in it — a product code run together, say — used to make a
   list's table wider than the page from tablet width up, pushing the row's Edit
