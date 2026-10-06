@@ -33,7 +33,7 @@ Shape:
 
 ---
 
-## #329, #327 — list tables fold when they don't fit, whatever the rows hold (PR pending)
+## #329, #327 — list tables fold when they don't fit, whatever the rows hold (PR #330, `75e0218`)
 - **Release note:** From tablet width up, a list's table moves a column under the
   name (or a date under the status) when the whole table doesn't fit the space it
   has. It used to do this at fixed widths, so some unusual but valid rows (long words

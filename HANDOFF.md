@@ -82,14 +82,24 @@ Template:
     - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
     - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
     - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
-- **Next:**
-  1. #331: subscribe `TokenList` to the presentation version, test both response orders, and sweep the other formatters (rule 11).
-  2. #326 (Home) once the owner picks wrap, truncate or stack; then #315, #316, and #324 when local multi-worker runs matter.
-  3. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
-  4. Carried:
+- **Next — the pre-release plan (owner, 06/10):** fix these five before cutting the next release, **in this order**, each its own PR:
+  1. **#315**, in a **new session**: an import's state is lost when you leave Data management, and a repeated Add-only import duplicates kits. Owner's call still open: keep the sent import's state above the routes (recommended: it also covers a reload), or block navigation while it runs. Ask before building. Expect a briefed Codex round.
+  2. **#316**, after #315 merges (same file, `DataSection.tsx`): on a phone, a failed download's error shows a screen away from its button.
+  3. **#331**: subscribe `TokenList` to the presentation version, test both response orders, and sweep the other formatters (rule 11).
+  4. **#268**: the Inventory stock stepper drops focus to `<body>` on every press. Give the keyboard back to the record's control.
+  5. **#326** (Home scrolls sideways): owner's call still open on a strip's grade and scale — wrap, truncate, or stack under the name (recommended: stack, the narrow strip's existing shape). Expect a briefed Codex round.
+
+  #331 and #268 are small enough for the bots' automatic reviews alone. **Then the release**, likely **v0.6.0-alpha**: a migration (#313), a changed MCP tool (#289: `create_order` takes the shop's id) and two new phone features. Work through `.agents/releases.md` and `.agents/next-release.md`.
+  - The owner's Gunpla skill needs a refresh at the LXC upgrade, because of #289.
+  - #309's upgrade-notes line is drafted in the ledger.
+  - #278 waits on the owner's skill-zip check.
+
+  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
+- **Also next:**
+  1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
+  2. Carried:
      - #279's edge probes, then #281's packaging; #282's VPS path;
-     - at the next release, work through `.agents/next-release.md`;
-     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
+     - cloud candidates: #124, #125, #238, #110, #116, #134 and #137;
      - posting the rehearsal on #285.
 
 ## 2026-10-06 — Claude Code (Opus 5.5) — #323 MERGED as `b2343a4` (PR #328): every free-text table cell gives way by its value; Inventory's Tools and Display fold; #326, #327, #329 filed
