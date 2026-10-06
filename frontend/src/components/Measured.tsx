@@ -8,6 +8,8 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 
+import { useRefit } from "../lib/refit";
+
 /** What a table cell cannot know gives way by its value (design §13.7, "What a
  *  line cannot know gives way instead"; #258, #323). A table sizes a column to
  *  the widest piece of text in it the browser will not break, so one word wider
@@ -41,13 +43,10 @@ import { createPortal } from "react-dom";
  *
  *  **A budget bounds one value, never a row** (Codex #328, finding 1). Words
  *  that each stay plain still add up: a table's minimum is the sum of its
- *  columns' widest words, and one ordinary Display row overflowed at 768. So a
- *  table with several free-text columns owes a fold line measured with a word
- *  just under its budget in every one of them at once, as Inventory's Tools and
- *  Display have (`InventoryPage.tsx`). A line still bounds only the rows it was
- *  measured with, not every value the app accepts — words nearer the budgets in
- *  every column, a wider currency, a fully dated kit outgrow one (Codex #328,
- *  round 2); past it the box scrolls, and #329 is folding to fit instead.
+ *  columns' widest words, and one ordinary Display row overflowed at 768. No
+ *  fold line drawn from one set of rows holds every value the app accepts
+ *  (round 2), so a table with columns to give folds by measuring its whole
+ *  layout (`FoldToFit`, #329); past its last fold the box scrolls.
  *
  *  **Measured, not counted** (Codex #266, finding 5): the width of the widest
  *  piece the browser will not break, from a copy laid out at `min-content` in a
@@ -113,6 +112,10 @@ export function Measured({ text, kind }: { text: string; kind: Budget }) {
   const drawn = useRef<HTMLSpanElement>(null);
   const sizer = useRef<HTMLSpanElement>(null);
   const [wide, setWide] = useState(false);
+  // A value that starts or stops breaking changes the table's width without the
+  // table rendering again: a folding table chooses its stage again (#329).
+  const refit = useRefit();
+  useLayoutEffect(() => refit?.(), [wide, refit]);
   useLayoutEffect(() => {
     const element = sizer.current;
     const source = drawn.current;

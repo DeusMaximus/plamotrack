@@ -2,14 +2,16 @@
  * The list pages under every date style the Settings page offers (design §13.7,
  * #258; Codex #266, finding 2).
  *
- * lists.spec.ts measures the tables with the instance's default formatting, and
- * the fold lines were set from those rows — "27/08/2026 · 9 d". The formatting
+ * lists.spec.ts measures the tables with the instance's default formatting —
+ * "27/08/2026 · 9 d" — and #258's fold lines were set from those rows. The formatting
  * locale and the date style are instance settings (AGENTS.md rule 11), and
  * `full` writes that cell "Thursday, 27 August 2026 · 9 d": held to one line,
  * the Orders table was 121 px wider than its box at 1280 px and its edit control
  * off the edge at every width. A date in words wraps now, and this holds it:
  * the same every-width sweep, the same rows and the wide ones, under each style
- * in the owner's locale and the longest one in three others.
+ * in the owner's locale and the longest one in three others — and since the
+ * tables fold to fit (#329), the stage drawn at each width is the first that
+ * fits under each style too.
  *
  * It flips the settings singleton, so it runs in the `settings` project — after
  * every other project, never beside one (playwright.config.ts) — and puts back
@@ -135,7 +137,8 @@ const FORMATS: [string, string][] = [
 
 for (const [locale, style] of FORMATS) {
   test(`no list outgrows its box with dates written ${locale} ${style}`, async ({ page }) => {
-    test.setTimeout(120_000);
+    // A frame a width in the sweeps (#329): about thirty seconds of them.
+    test.setTimeout(240_000);
     const api = await apiContext();
     const patched = await api.patch("/settings", { data: { formatting_locale: locale, date_style: style, hour_cycle: "h12" } });
     expect(patched.ok(), await patched.text()).toBeTruthy();
@@ -156,10 +159,11 @@ for (const [locale, style] of FORMATS) {
 
     // Every width a table's box can have, as lists.spec.ts does it.
     await page.setViewportSize({ width: 1270, height: 900 });
-    for (const [path, anchor, from, to] of [
-      [`/orders?q=${q}`, RETAILER, 634, 1300],
-      [`/kits?q=${q}`, `${TAG} Built`, 634, 1300],
-      ["/settings/tokens", `${TAG} token`, 300, 652],
+    // The number of fold stages each has (lists.spec.ts's `STAGES`).
+    for (const [path, anchor, from, to, stages] of [
+      [`/orders?q=${q}`, RETAILER, 634, 1300, 2],
+      [`/kits?q=${q}`, `${TAG} Built`, 634, 1300, 1],
+      ["/settings/tokens", `${TAG} token`, 300, 652, 1],
     ] as const) {
       await page.goto(path);
       await expect(shown(page.locator("main").getByText(anchor)).first()).toBeVisible();
@@ -167,10 +171,11 @@ for (const [locale, style] of FORMATS) {
         await expect(shown(main(page).getByTitle(SHIPPED_TITLE).filter({ hasText: expected })).first(), `the ship date reads "${expected}"`).toBeVisible();
         await expandEveryOrder(page);
       }
-      const overflowing = await sweepBox(page, from, to);
+      const overflowing = await sweepBox(page, from, to, stages);
       expect(overflowing, `${path}: no table box on the page`).not.toBeNull();
       expect.soft(overflowing?.measured, `${path}: every width measured`).toBe(to - from + 1);
       expect.soft(overflowing?.widths, `${path}: box widths at which the list is wider than its box`).toEqual([]);
+      expect.soft(overflowing?.misfolded, `${path}: box widths at which the stage drawn is not the first that fits`).toEqual([]);
     }
 
     // The real sizes, where the page and not a hand sets the box: a phone's

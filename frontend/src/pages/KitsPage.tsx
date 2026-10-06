@@ -17,6 +17,7 @@ import {
   ToggleOption,
 } from "../components/FilterSheet";
 import { KitFormModal } from "../components/KitFormModal";
+import { FoldToFit } from "../components/FoldToFit";
 import { Measured, TableRuler } from "../components/Measured";
 import { StatusBadge } from "../components/StatusBadge";
 import {
@@ -261,20 +262,19 @@ export function KitsPage() {
           ))}
         </CardList>
       ) : (
-        // `@container`: the table folds to the width this box has, not the
-        // device's (§13.7). Below 48rem (768 px) — the 732 px the full table
-        // needs on the demo data, and a little — Grade and Scale leave their columns for
-        // the name's second line, the card row's shape. Every iPad in portrait
-        // is under it beside the rail; beside the sidebar the box is 976 px at
-        // 1280, so the desktop never is.
-        <div className="@container overflow-x-auto rounded-md border border-border bg-surface">
+        // Folds to fit its box (§13.7, #329): when the whole table is wider
+        // than the box, Grade and Scale leave their columns for the name's
+        // second line, the card row's shape. With ordinary rows that is every
+        // iPad in portrait beside the rail and never the desktop; a fully dated,
+        // rated kit with long words in every field folds it at 900 px too.
+        <FoldToFit stages={1} className="overflow-x-auto rounded-md border border-border bg-surface">
           <TableRuler>
           <table className="w-full text-sm">
             <thead>
               <tr className={TABLE_HEAD_ROW_CLASS}>
                 <th className="px-3 py-2.5">{t("kits.headerKit")}</th>
-                <th className="px-3 py-2.5 @max-[48rem]:hidden">{t("kits.grade")}</th>
-                <th className="px-3 py-2.5 @max-[48rem]:hidden">{t("kits.scale")}</th>
+                <th className="px-3 py-2.5 group-data-fold-1/fold:hidden">{t("kits.grade")}</th>
+                <th className="px-3 py-2.5 group-data-fold-1/fold:hidden">{t("kits.scale")}</th>
                 <th className="px-3 py-2.5">{t("kits.status")}</th>
                 <th className="px-3 py-2.5">{t("kits.headerRating")}</th>
                 <th className="px-3 py-2.5">{t("kits.headerStarted")}</th>
@@ -293,7 +293,7 @@ export function KitsPage() {
                         whether or not a number or series follows. Unfolded and
                         empty it has no line box, so no height. */}
                     <div className="text-xs text-muted">
-                      <span className="hidden @max-[48rem]:inline">
+                      <span className="hidden group-data-fold-1/fold:inline">
                         <GradeChip grade={kit.grade} />
                         {kit.scale && (
                           <span className="ms-2">
@@ -310,10 +310,10 @@ export function KitsPage() {
                       )}
                     </div>
                   </td>
-                  <td className="px-3 py-2 @max-[48rem]:hidden">
+                  <td className="px-3 py-2 group-data-fold-1/fold:hidden">
                     <Measured text={kit.grade} kind="text" />
                   </td>
-                  <td className="px-3 py-2 @max-[48rem]:hidden">
+                  <td className="px-3 py-2 group-data-fold-1/fold:hidden">
                     {kit.scale ? <Measured text={kit.scale} kind="text" /> : "—"}
                   </td>
                   {/* Display only (#120): status changes go through Edit, where the
@@ -338,7 +338,7 @@ export function KitsPage() {
                   {/* One control per row (§13.4): edit opens the dialog, where Delete lives.
                       `touch:px-0`: the 44 px target carries its own margin around
                       the icon, so a touch table needs no more width than a mouse's
-                      — one fold line serves both. */}
+                      and folds where a mouse's does. */}
                   <td className="px-2 py-2 text-end touch:px-0">
                     <IconButton
                       label={editLabel(kit)}
@@ -354,7 +354,7 @@ export function KitsPage() {
           </table>
           </TableRuler>
           <Pager paged={paged} onPage={paging.setPage} />
-        </div>
+        </FoldToFit>
       )}
 
       {modal && (

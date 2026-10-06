@@ -3223,7 +3223,9 @@ and tablet e2e, screenshots, the release (#260).
   1180 px iPad and a mini the first fold, and 1024–1080 px and every portrait
   the second. A line is a guess about rows nobody has typed yet — so what a line
   cannot know gives way instead (below), and past that the box still scrolls, as
-  it always did.
+  it always did. *(Superseded by #329: the lines are gone, and a table folds when
+  its whole layout does not fit — "Amended — #329" below. The widths here are
+  still what those rows need.)*
 - **A fold moves what a column said; it never drops it, and never says it
   twice.** A received order shows its delivery date with the days it took *and*
   its ship date under the chip — both columns moved. A null moves as nothing:
@@ -3921,3 +3923,91 @@ Upgrades tab and it failed there.
   and a bench card says the kit number beside the grade; an unbroken grade, scale or
   number scrolls Home sideways from 768 px. How its strips give way is its own
   decision (#326).
+
+**Amended — #329, tables fold to fit (06/10/2026).** Every list table from 768 px
+used to fold at a fixed line, a container query in rem measured once with one set of
+rows: Kits 48rem, Orders 66rem and 60rem, Retailers 46rem, Tools 44rem, Display 55rem,
+Access tokens 36rem. The bullet above records why no line can be right: words that
+each stay under their budgets add up, and Codex's second round on #328 put allowed
+values past every line in both engines. So a table now folds by measuring itself
+(`components/FoldToFit.tsx`):
+
+- **The first stage that fits, tried from the whole table up, every time.** Stage 0 is
+  the whole table and each stage folds more; a pass sets each stage on the box in
+  turn (`data-fold-1`, `data-fold-2`, cumulative), asks whether the box is wider
+  inside than out, and stops at the first that fits — or at the last, past which the
+  box scrolls, as it always has. A pass never starts from the stage drawn and never
+  reasons "fold if over, unfold if under", which oscillates (Codex's probe of that
+  shape flipped 60 times in 60 frames). The answer is a function of the box's width
+  and the rows, so unchanged inputs choose the same stage; and since a wider box
+  never needs more folding, a fold that toggles a classic scrollbar settles in one
+  more pass. The cells read the stage as `group-data-fold-<n>/fold:` variants where
+  they read `@max-[…rem]:` before; the stage is an attribute set before paint, not
+  React state.
+- **Four inputs, four triggers.** The box's width, through a `ResizeObserver` on a
+  zero-height sentinel as wide as the box — not the box, whose height a fold changes
+  inside its own callback (the observer-loop error), and not the table, which, `w-full`
+  and folded, keeps the box's width when its widest row leaves and so reports nothing
+  when it could unfold. The rows, through every commit of the box (a page, a filter, a
+  search, a tab, an order's lines). A value deciding to break, which commits alone:
+  `Measured` calls `useRefit()`'s function. A web font arriving: each face's
+  `loaded` promise — not the font set's `loadingdone`, which WebKit never fired for
+  the stylesheet's faces, leaving a table folded where Inter fit it whole. Each
+  queues one pass in a microtask, so a commit touching every cell measures once,
+  after React's synchronous re-renders and before paint.
+- **The fold hands on the focus it hides.** A pass that ends with the focused control
+  undrawn gives the keyboard to whatever carries its key now (`focusFirst`), before
+  paint. The first version left that to `useFocusAcrossShells`, whose observer hears
+  any control lose its box, and every focus test passed. CI's Integration run then
+  lost the Tracking link one run in five on a turn across the sidebar's line. The
+  viewport narrows a frame before the shell changes, so Orders folds to its second
+  stage at the sidebar's box for one frame and unfolds the next. The hook moved the
+  keyboard to the link's copy in the opened lines from inside its own delivery, so it
+  began watching the copy a frame later. By then the copy was hidden, and a hidden box
+  reports nothing to a new observation. The keyboard sat on `<body>` until something
+  else answered. The fold knows when it hides the focused control, so it answers
+  itself. The hook still answers for shells and for everything a fold doesn't
+  draw.
+- **Stages.** Kits 1 (Grade and Scale under the name), Orders 2 (the number under the
+  retailer; then Shipped, Received under the chip and Tracking into the lines),
+  Retailers 1 (Notes), Tools 1 (Condition), Display 1 (Manufacturer and Notes),
+  Access tokens 1 (the cards). Consumables and Upgrades have none: with a word just
+  under its budget in every free-text column and ten-digit counts, they fit the
+  narrowest box a table is drawn in (638 px) unfolded, in both engines. Access tokens is also stage 1
+  in the phone shell whatever its box, as every list there is cards — at 744 px (an
+  iPad mini in portrait) it was a table before.
+- **What the e2e holds.** The fixed `FOLD` lines are gone from `lists.spec.ts`. Every
+  box width from 634 to 1300 px (and back down, every seventh) and every real size
+  checks that the stage drawn is the first that fits, tried by hand in the test
+  (`foldState`), and that no observer error is reported. Without a resize: a search
+  that narrows Kits in place to an ordinary row unfolds it, and back; a second order
+  arriving on a refetch folds Orders to its second stage under a focused Tracking
+  link, and the keyboard lands on the link's stand-in; the web font arriving decides
+  the stage of a box set between what the table needs in each font. Codex's round-2
+  payloads, ten-digit counts (#327) and A$9,999.00 are seeded rows. Two orderings are
+  held by hand: a value whose break decision changes only after the font's own pass
+  (its measuring copies' observer deliveries held while the font arrives — Codex's
+  witness, PR #330; the value is chosen on the machine, since which run of glyphs
+  crosses the budget depends on its fallback font), and a control in a folded copy
+  kept focused, with no `focusout`, through passes whose trial hides it and that end
+  at the stage they began (Greptile, PR #330). And every frame of ten turns across
+  the sidebar's line, with the keyboard on a Tracking link whose lines are open: never
+  on `<body>`. Mutants: a fold that steps from the drawn stage, no per-commit pass, no
+  sentinel, observing the table, no font trigger, no `Measured` refit, no focus
+  observer, no phone floor for tokens, a browser that drops focus during the trial,
+  and a fold that leaves hidden focus to the hook — each killed. #258's literal desktop lines ("1280 to 1361
+  px fold the order number") became what the rows imply: with these rows, 1280 folds
+  the order number, 1440 nothing, Kits and Retailers never.
+- **An On hand cell wraps (#327).** WebKit found no break between the count and the
+  stepper beside it, both inline boxes, where Chromium did: a ten-digit count made
+  the column 208 px there against 136, and every Inventory table was 13–80 px past
+  its box beside the rail with all its folds taken. The count, the stepper and
+  Consumables' Restock chip are now a flex row that wraps (`StockCell`): one line
+  wherever the column has room, as before, and the count above the stepper where it
+  has not, in both engines. A failed run of the font-size test had left that row
+  behind for the next file, which is how it was found; its rows now go in `finally`
+  and in the file's own clean-up, which a timeout still runs.
+- **Rejected:** keeping the lines and adding a fit check for the rows that outgrow
+  them (two mechanisms, and the lines still guess); folding by `table.scrollWidth`
+  alone through an observer on the table (misses unfolding); React state for the
+  stage (a render per trial).

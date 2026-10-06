@@ -1811,3 +1811,40 @@ Two harness traps from the same PR:
 - **The near-budget rows hid both floors.** Other rows' words held every column wider
   than a floor, so a mutant that removed one survived. A floor is observable only
   where nothing else holds the column: measure the row alone.
+
+## The test's observer is the page's to the browser (#329)
+
+Folding to fit moved the fold from a container query into a `ResizeObserver`. The
+first full run of the box sweep flooded the log with "ResizeObserver loop completed
+with undelivered notifications" and stalled. That is the exact error Codex had
+warned a fold-to-fit observer would raise. The count gave the cause away: 666 in a
+667-width sweep, on Consumables too, which has no fold at all. The sweep waited for
+each width with an observer of its own and set the next width in that observer's
+microtask, still inside the browser's observer step. **A size changed inside the
+step is undeliverable whoever changed it**, and the browser reports it against the
+page. Resolving the wait in a task of its own (`setTimeout`) took it to zero, and the
+sweep now asserts no observer error at all, which a mutant observing the table
+instead of the sentinel then tripped.
+
+Two more from the same branch:
+- **A killed run leaves its rows.** Stopping a Playwright run skips `afterAll`, and the
+  next run's tests found two run tags on one Inventory page and failed on them. After
+  any interrupted run, recreate the throwaway database before trusting the next one.
+- **Mutants of a mechanism with several triggers survive one at a time.** The font
+  listener and `Measured`'s refit each covered for the other on the tagged Kits list,
+  where a near-budget word crossed its budget when Inter arrived. Only a page with
+  ordinary words isolated the font listener — and that test then failed under WebKit,
+  which fires no `loadingdone` for a stylesheet's faces: the listener had only ever
+  worked in Chromium. Each face's `loaded` promise replaced it. `Measured`'s refit
+  survived alone until Codex staged the ordering it guards: hold the measuring copies'
+  `ResizeObserver` deliveries while the font arrives and its pass runs, then release
+  them, so the value starts breaking after the table chose. The author had called
+  that ordering impossible to stage; it took a wrapped `ResizeObserver` in an init
+  script.
+- **A transient state is a state.** Turning across the sidebar's line folds Orders for
+  one frame, at the old shell's box, and unfolds it the next. Every focus test passed
+  locally, and CI lost the keyboard one run in five. A probe that logged each frame
+  showed the bounce at once; reasoning about the final states never would have. The
+  focus hook's deferred watch (its own lesson in `focusKey.ts`) missed a control
+  hidden before the watch began, so now the fold hands on focus it hides itself
+  (`FoldToFit`), and a test samples every frame of ten such turns.
