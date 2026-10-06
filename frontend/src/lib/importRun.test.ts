@@ -41,10 +41,11 @@ const answered = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 // `ApiError` from the same fresh graph, or `instanceof` asks of another class.
 let run: Run;
 let ApiError: typeof import("../api/client").ApiError;
+let setCsrfToken: typeof import("../api/client").setCsrfToken;
 beforeEach(async () => {
   vi.resetModules();
   run = await import("./importRun");
-  ({ ApiError } = await import("../api/client"));
+  ({ ApiError, setCsrfToken } = await import("../api/client"));
 });
 
 describe("an import sent", () => {
@@ -75,7 +76,7 @@ describe("a section watching when it answers", () => {
   it("is told, and the refresh comes after", async () => {
     const order: string[] = [];
     const request = held();
-    run.watchImportRun((ended) => order.push("result" in ended ? `told ${ended.result.created}` : "told error"));
+    run.watchImportRun((ended) => order.push(ended && "result" in ended ? `told ${ended.result.created}` : "told error"));
     run.sendImport("add_only", request.send, async () => {
       order.push("refreshed");
     });
@@ -203,9 +204,10 @@ describe("the session ending (signed out, expired, another tab)", () => {
     run.sendImport("add_only", request.send, refreshed);
     run.forgetImportRun();
     expect(run.importRunState()).toEqual({ pending: null, outcome: null });
+    expect(told.mock.calls, "a mounted section is told it was forgotten").toEqual([[null]]);
     request.answer(RESULT);
     await answered();
-    expect(told).not.toHaveBeenCalled();
+    expect(told.mock.calls, "and nothing after").toEqual([[null]]);
     expect(refreshed).not.toHaveBeenCalled();
     expect(run.importRunState()).toEqual({ pending: null, outcome: null });
   });
@@ -217,6 +219,68 @@ describe("the session ending (signed out, expired, another tab)", () => {
     await answered();
     run.forgetImportRun();
     expect(run.importRunState().outcome).toBeNull();
+  });
+});
+
+describe("an import belongs to the owner session it was sent under (PR #332 round 3)", () => {
+  it("is kept on every read of that session — however often, and after a clear and refetch", async () => {
+    setCsrfToken("session-a");
+    const request = held();
+    run.sendImport("merge", request.send, async () => {});
+    run.keepImportRunFor("session-a");
+    run.keepImportRunFor("session-a");
+    expect(run.importRunState().pending, "in flight").toBe("merge");
+    request.answer(RESULT);
+    await answered();
+    run.keepImportRunFor("session-a");
+    expect(run.importRunState().outcome, "answered").toEqual({ result: RESULT });
+  });
+
+  it("is forgotten by another owner session's read — signed in again here or in another tab", async () => {
+    setCsrfToken("session-a");
+    const request = held();
+    const told: unknown[] = [];
+    run.watchImportRun((ended) => told.push(ended));
+    run.sendImport("merge", request.send, async () => {});
+    run.keepImportRunFor("session-b");
+    expect(run.importRunState()).toEqual({ pending: null, outcome: null });
+    expect(told, "the section is told").toEqual([null]);
+    request.answer(RESULT);
+    await answered();
+    expect(told, "and the old answer goes nowhere").toEqual([null]);
+  });
+
+  it("is forgotten by a read that is not the owner's, an outcome as much as a request", async () => {
+    setCsrfToken("session-a");
+    const request = held();
+    run.sendImport("merge", request.send, async () => {});
+    request.answer(RESULT);
+    await answered();
+    run.keepImportRunFor(null);
+    expect(run.importRunState().outcome).toBeNull();
+  });
+
+  it("with nothing to keep, a read does nothing — no section is told of a forgetting", () => {
+    const told = vi.fn();
+    run.watchImportRun(told);
+    run.keepImportRunFor(null);
+    run.keepImportRunFor("session-b");
+    expect(told).not.toHaveBeenCalled();
+  });
+
+  it("one sent with no session token belongs to none, and the next owner read forgets it", () => {
+    setCsrfToken(null);
+    run.sendImport("merge", held().send, async () => {});
+    run.keepImportRunFor("session-a");
+    expect(run.importRunState().pending).toBeNull();
+  });
+
+  it("the session is the send's, not the latest token's", () => {
+    setCsrfToken("session-a");
+    run.sendImport("merge", held().send, async () => {});
+    setCsrfToken("session-b");
+    run.keepImportRunFor("session-b");
+    expect(run.importRunState().pending, "sent under a, read under b").toBeNull();
   });
 });
 

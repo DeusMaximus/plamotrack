@@ -3824,13 +3824,21 @@ import it here. That undoes the first of the three reasons the phone was export 
   (`useBlocker`) or hand-intercepted links, and it holds the tab bar hostage for
   the import's seconds. A reload or a closed tab still loses the outcome and
   aborts the request mid-flight, so while it is in flight the page asks first
-  (`beforeunload`). The session ending forgets it: `AuthGate` does, whenever the
-  session reads as anything but the owner's — signed out here, in another tab,
-  or expired. Not the Sign out click: a logout that fails leaves the owner signed
-  in and the import running (round 1; #333 is that path's other loose ends), and
-  one that succeeds but whose re-read fails leaves the cached session saying
-  `owner` until a read says otherwise, which is before anyone can sign in again
-  (round 2).
+  (`beforeunload`). **An import belongs to the owner session it was sent
+  under** (round 3), identified by its CSRF token, which is one per session (an
+  HMAC of the session's own token). `AuthGate` forgets it on any read that is not
+  that session: signed out, expired, or another owner session, signed in again
+  here or in another tab while this tab read nothing between. Read as a state
+  alone, `owner` → `owner` across two sessions looked like no change, and the old
+  import's answer reached the new session. A read of the same session keeps it,
+  however the cache got there: a late sign-in's clear and re-read is `owner` →
+  nothing → `owner`, and the import is live. A confirmed logout (204) forgets
+  at once in the tab that sent it, whether or not the session can be re-read; a
+  refused one leaves the session and the import running (round 1; #333 is that
+  path's other loose ends). A mounted section is told when the import is
+  forgotten, so its card stops saying it is under way. And an accepted send
+  replaces the last outcome: a failure left beside "Importing…" read as the new
+  import's (round 3).
 - **The import's failures are said in its card**, last in it — under Preview when
   a preview is refused, just above the bar when an apply is. At the head of the
   section, where every error used to go, a phone put it a screen above the button

@@ -97,6 +97,13 @@ export function setCsrfToken(token: string | null): void {
   csrfToken = token;
 }
 
+/** The token the next unsafe request will carry. One per session — an HMAC of
+ *  the session's own token — so it also says *which* owner session a write was
+ *  sent under (#315: an import belongs to the session that sent it). */
+export function csrfTokenInUse(): string | null {
+  return csrfToken;
+}
+
 const UNSAFE = new Set(["POST", "PATCH", "PUT", "DELETE"]);
 
 function withCsrf(method: string, headers: HeadersInit): HeadersInit {

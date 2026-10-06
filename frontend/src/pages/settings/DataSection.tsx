@@ -233,6 +233,10 @@ export function DataSection() {
     if (!sent) return;
     setSubmitted(mode);
     setRefusal(null);
+    // The import sent replaces the last one's outcome — a failure left beside
+    // "Importing…" read as this one's (PR #332 round 3, Codex finding 4). Only
+    // once it is sent: a send refused as a duplicate dismisses nothing.
+    setOutcome(null);
   }
 
   // The sent phase ends on the answer, in one commit with what it brought: the
@@ -247,7 +251,7 @@ export function DataSection() {
       watchImportRun((ended) => {
         setSubmitted(null);
         setOutcome(ended);
-        if ("error" in ended) return;
+        if (ended === null || "error" in ended) return;
         setPlan(null);
         setFile(null);
         setConfirmText("");
