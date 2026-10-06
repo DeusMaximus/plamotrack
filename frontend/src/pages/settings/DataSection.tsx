@@ -10,7 +10,8 @@ import { ImportPreview } from "../../components/ImportPreview";
 import { BAR_BUTTON_CLASS } from "../../components/Modal";
 import { Button, Card, ErrorBanner, Select } from "../../components/ui";
 import { focusByKey } from "../../lib/focusKey";
-import { importRunState, sendImport, watchImportRun } from "../../lib/importRun";
+import type { ImportOutcome } from "../../lib/importRun";
+import { acknowledgeImportOutcome, importRunState, sendImport, watchImportRun } from "../../lib/importRun";
 import { formatFileSize } from "../../lib/format";
 import { counted, importTableLabel } from "../../lib/labels";
 import { useShell } from "../../lib/shell";
@@ -102,7 +103,7 @@ export function DataSection() {
   const [plan, setPlan] = useState<ImportPlan | null>(null);
   // An import sent before the section was left is the module's (`importRun`,
   // #315): the section starts from it — still under way, or how it ended, an
-  // outcome `watchImportRun` then claims so it is shown this once.
+  // outcome it keeps until this section has painted it (`shown`, below).
   const [result, setResult] = useState<ImportResult | null>(() => {
     const ended = importRunState().outcome;
     return ended && "result" in ended ? ended.result : null;
@@ -124,6 +125,10 @@ export function DataSection() {
     const ended = importRunState().outcome;
     return ended && "error" in ended ? ended.error : null;
   });
+  // The outcome this section was told of, until it has painted it: then the
+  // module forgets it (below), and not before — a section told while it is
+  // being torn down never paints, and the next one is told again.
+  const [shown, setShown] = useState<ImportOutcome | null>(() => importRunState().outcome);
   // Previewing, or an import under way: either holds every control that would
   // change the draft, and an import under way holds Preview and Apply too.
   const working = busy !== null || submitted !== null;
@@ -241,6 +246,7 @@ export function DataSection() {
     () =>
       watchImportRun((ended) => {
         setSubmitted(null);
+        setShown(ended);
         if ("error" in ended) {
           setImportError(ended.error);
           return;
@@ -253,6 +259,16 @@ export function DataSection() {
       }),
     [],
   );
+
+  // Painted, not merely committed: two frames, so the first has been drawn.
+  // Leaving before then cancels it, and the outcome waits for the next visit.
+  useEffect(() => {
+    if (!shown) return;
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => acknowledgeImportOutcome(shown));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [shown]);
 
   // A sent import has somewhere to keep the keyboard (#314 round 3, Codex
   // finding 8). Sending it disables Apply, and Chromium then drops the focus a

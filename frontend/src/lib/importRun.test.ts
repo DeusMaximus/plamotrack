@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ImportResult } from "../api/types";
 
 type Run = typeof import("./importRun");
+type ImportOutcome = import("./importRun").ImportOutcome;
 
 const RESULT = {
   mode: "add_only",
@@ -81,7 +82,24 @@ describe("a section watching when it answers", () => {
     request.answer(RESULT);
     await answered();
     expect(order).toEqual(["told 3", "refreshed"]);
-    expect(run.importRunState(), "told, so nothing waits").toEqual({ pending: null, outcome: null });
+    const told = run.importRunState().outcome;
+    expect(told, "told is not shown: it waits until the section has painted it").toEqual({ result: RESULT });
+    run.acknowledgeImportOutcome(told!);
+    expect(run.importRunState(), "painted, so nothing waits").toEqual({ pending: null, outcome: null });
+  });
+
+  it("is told again on the next visit when it was torn down before it painted (PR #332 review)", async () => {
+    const request = held();
+    // Told during the navigation that removes it: the listener is still
+    // hooked, the section's state is about to be thrown away.
+    const leaving = run.watchImportRun(() => {});
+    run.sendImport("add_only", request.send, async () => {});
+    request.answer(RESULT);
+    await answered();
+    leaving();
+    const back: unknown[] = [];
+    run.watchImportRun((ended) => back.push(ended));
+    expect(back, "the next section is told").toEqual([{ result: RESULT }]);
   });
 
   it("is told of a failure, in the API's words, and nothing is refreshed", async () => {
@@ -124,7 +142,8 @@ describe("with no section watching when it answers", () => {
     const back: unknown[] = [];
     run.watchImportRun((ended) => back.push(ended));
     expect(back, "handed over as it is watched, not on the next answer").toEqual([{ result: RESULT }]);
-    expect(run.importRunState().outcome, "and forgotten").toBeNull();
+    run.acknowledgeImportOutcome(back[0] as ImportOutcome);
+    expect(run.importRunState().outcome, "and forgotten once painted").toBeNull();
 
     const again: unknown[] = [];
     run.watchImportRun((ended) => again.push(ended));
@@ -149,6 +168,20 @@ describe("with no section watching when it answers", () => {
     request.answer(RESULT);
     await answered();
     expect(told).toEqual([{ result: RESULT }]);
+  });
+
+  it("a stale acknowledgement leaves a newer outcome alone", async () => {
+    const first = held();
+    run.sendImport("add_only", first.send, async () => {});
+    first.answer(RESULT);
+    await answered();
+    const old = run.importRunState().outcome!;
+    const second = held();
+    run.sendImport("merge", second.send, async () => {});
+    second.refuse(new ApiError(409, "stale"));
+    await answered();
+    run.acknowledgeImportOutcome(old);
+    expect(run.importRunState().outcome, "the newer outcome is still to be shown").toEqual({ error: "stale" });
   });
 
   it("a new import clears an outcome nobody claimed", async () => {

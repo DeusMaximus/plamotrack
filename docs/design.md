@@ -3806,15 +3806,22 @@ import it here. That undoes the first of the three reasons the phone was export 
   leaving can still throw it away, because it has not happened. A section mounted
   while the import runs says so and offers no file to pick. One mounted when it
   answers is told in the same tick, so the result and the emptied draft are one
-  commit (round 3's rule, kept). With none mounted the outcome waits, and the next
-  section claims it: shown once, as an outcome seen in place goes when the section
-  is left. Arriving takes nobody's keyboard: the keyboard moves at the moments of
-  sending and answering, never on mount. The other direction, blocking navigation
-  while it runs, was turned down: it needs a data router (`useBlocker`) or
-  hand-intercepted links, and it holds the tab bar hostage for the import's
-  seconds. A reload or a closed tab still loses the outcome and aborts the request
-  mid-flight, so while it is in flight the page asks first (`beforeunload`).
-  Signing out forgets it.
+  commit (round 3's rule, kept); one mounted after it answered starts from the
+  outcome. Either way the outcome stays in the module until a section has
+  **painted** it (two animation frames after committing it), then it is
+  forgotten: shown once, as an outcome seen in place goes when the section is
+  left. Being told is not being shown (PR #332 review): a section can be told
+  while a navigation tears it down, or commit the outcome under a link's
+  transition that replaces it before the next frame, and the first version lost
+  the outcome both ways. Arriving takes nobody's keyboard: the keyboard moves at
+  the moments of sending and answering, never on mount. The other direction,
+  blocking navigation while it runs, was turned down: it needs a data router
+  (`useBlocker`) or hand-intercepted links, and it holds the tab bar hostage for
+  the import's seconds. A reload or a closed tab still loses the outcome and
+  aborts the request mid-flight, so while it is in flight the page asks first
+  (`beforeunload`). Signing out forgets it, once the re-read session is no longer
+  the owner's: a logout that fails leaves the tab signed in and the import
+  running (#333 is that path's other loose ends).
 - **The import's failures are said in its card**, last in it — under Preview when
   a preview is refused, just above the bar when an apply is. At the head of the
   section, where every error used to go, a phone put it a screen above the button

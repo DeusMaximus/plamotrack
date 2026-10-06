@@ -13,9 +13,14 @@
  *    file to pick — there is nothing to send twice.
  *  - When it answers, a section that is mounted is told in the same tick
  *    (`watchImportRun`), so the result and the emptied draft land in one
- *    commit (#314 round 3, Codex finding 9). With none mounted, the outcome
- *    waits here, and the next section to mount claims it: shown once, then
- *    gone, as an outcome seen in place goes when the section is left.
+ *    commit (#314 round 3, Codex finding 9). With none mounted, the next
+ *    section to mount is told as it mounts.
+ *  - Either way the outcome stays here until a section has put it on the
+ *    screen (`acknowledgeImportOutcome`, after a paint): shown once, then
+ *    gone, as an outcome seen in place goes when the section is left. Being
+ *    told is not being shown — a section can be told while it is being torn
+ *    down, or commit the outcome under a navigation that replaces it before
+ *    the next frame, and either lost it for good (PR #332 review).
  *  - A reload or a closed tab would lose it all the same, and abort the
  *    request mid-flight besides; while it is in flight the page asks first. */
 
@@ -75,23 +80,26 @@ function settle(sent: number, answer: ImportOutcome, afterwards?: () => Promise<
   if (sent !== generation) return;
   if (typeof window !== "undefined") window.removeEventListener("beforeunload", holdThePage);
   pending = null;
-  if (listener) listener(answer);
-  else outcome = answer;
+  outcome = answer;
+  listener?.(answer);
   if (afterwards) void afterwards();
 }
 
-/** The Data section, while it is mounted: told how an import ended, once. An
- *  outcome that came while it was away is handed over at once and forgotten. */
+/** The Data section, while it is mounted: told how an import ended. An
+ *  outcome that came while it was away is handed over at once. */
 export function watchImportRun(onOutcome: (outcome: ImportOutcome) => void): () => void {
   listener = onOutcome;
-  if (outcome) {
-    const waiting = outcome;
-    outcome = null;
-    onOutcome(waiting);
-  }
+  if (outcome) onOutcome(outcome);
   return () => {
     if (listener === onOutcome) listener = null;
   };
+}
+
+/** The section has painted this outcome: it is forgotten here, so the next
+ *  visit is a fresh one. One it no longer holds — a newer import's, or none —
+ *  is left alone. */
+export function acknowledgeImportOutcome(seen: ImportOutcome): void {
+  if (outcome === seen) outcome = null;
 }
 
 /** Signing out: nothing of this session's import is kept for the next one. A
