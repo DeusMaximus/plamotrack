@@ -33,7 +33,7 @@ Shape:
 
 ---
 
-## #316 — a failure in Settings is said beside the button that failed (PR #NNN)
+## #316 — a failure in Settings is said beside the button that failed (PR #334)
 - **Release note:** In Settings, an error now appears next to the control that
   caused it. A failed download says so in its own card, rather than at the top of
   Data management, which on a phone was a screen above the starter sheet. A failed
