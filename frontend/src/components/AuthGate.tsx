@@ -4,6 +4,7 @@ import { useForm } from "react-hook-form";
 import { useTranslation } from "react-i18next";
 
 import { ApiError, api, authSessionQuery, setCsrfToken } from "../api/client";
+import { forgetImportRun } from "../lib/importRun";
 import { providerName } from "../lib/labels";
 import { BrandMark } from "./BrandMark";
 import { Button, Card, ErrorBanner, Field, Input } from "./ui";
@@ -22,6 +23,18 @@ export function AuthGate({ children }: { children: ReactNode }) {
   useEffect(() => {
     setCsrfToken(session?.csrf_token ?? null);
   }, [session?.csrf_token]);
+
+  // An import this tab sent (#315) belongs to the owner's session, and goes
+  // when the session reads as anything else: signed out here, ended in another
+  // tab, or expired. Read off the session, not off the Sign out click — a
+  // logout that fails leaves the owner signed in and the import running (PR
+  // #332 round 1), and one that succeeds but whose re-read fails leaves the
+  // cached session saying `owner` until a read says otherwise, which is before
+  // anyone can sign in again (round 2).
+  const state = session?.state;
+  useEffect(() => {
+    if (state !== undefined && state !== "owner") forgetImportRun();
+  }, [state]);
 
   const onAuthed = async () => {
     // A fresh identity: drop every cached query so nothing from before the

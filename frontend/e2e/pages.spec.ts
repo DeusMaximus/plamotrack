@@ -30,7 +30,8 @@
  */
 import { chromium, expect, test, type Locator, type Page } from "@playwright/test";
 
-import { APP, STORAGE_STATE, apiContext } from "./api";
+import { APP, OWNER_PASSWORD, STORAGE_STATE, apiContext } from "./api";
+import { holdShellEvents, installShellEventHold, releaseShellEvents } from "./shellEvents";
 
 type Size = { width: number; height: number };
 
@@ -919,10 +920,13 @@ test("an import sent outlives leaving the section: back, it is still under way, 
     await page.unroute("**/import/apply");
 
     // Told is not shown (PR #332 review): an outcome the section was told of
-    // but never painted — the answer landing as a navigation tears it down,
-    // or commits it under one that replaces it before the next frame — is
-    // shown on the next visit. Held here by a page that paints nothing: no
-    // animation frame is delivered while the answer comes in place.
+    // but left before it acknowledged it — the answer landing as a navigation
+    // tears it down, or committed under one that replaces it before the next
+    // frame — is shown on the next visit. The acknowledgement waits on the
+    // page's animation-frame callbacks, so here none is delivered while the
+    // answer comes in place. (The browser still paints — the stub is the
+    // callback API, not the compositor, Codex round 2 — so what this holds is
+    // that acknowledging is deferred to the frames and cancelled by leaving.)
     const answerInPlace = await sendHeld("continue");
     await page.evaluate(() => {
       const w = window as unknown as { __raf: typeof requestAnimationFrame };
@@ -938,12 +942,12 @@ test("an import sent outlives leaving the section: back, it is still under way, 
       window.requestAnimationFrame = (window as unknown as { __raf: typeof requestAnimationFrame }).__raf;
     });
     await page.goBack();
-    await expect(complete, "never painted, so shown on the next visit").toBeVisible();
+    await expect(complete, "never acknowledged, so shown on the next visit").toBeVisible();
     await painted();
     await leave();
     await page.goBack();
     await expect(main.getByRole("heading", { name: "Import", exact: true })).toBeVisible();
-    await expect(complete, "painted this time, and gone").toHaveCount(0);
+    await expect(complete, "acknowledged this time, and gone").toHaveCount(0);
     await page.unroute("**/import/apply");
     expect(await ours(), "still one row: Add only skipped the shop it had").toHaveLength(1);
   } finally {
@@ -989,6 +993,175 @@ test("a sign-out that fails keeps the import it sent: the session, and the impor
     const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
     for (const retailer of retailers.filter((r) => r.name === shop)) await api.delete(`/retailers/${retailer.id}`);
     await api.dispose();
+  }
+});
+
+/** An import's answer as the API words it, for a request held and then
+ *  answered by the test instead of the server — so Replace everything is
+ *  never run against the suite's database. */
+const importAnswer = (mode: string, created = 1) => ({
+  status: 200,
+  contentType: "application/json",
+  body: JSON.stringify({
+    mode,
+    source: "retailers.csv",
+    created,
+    updated: 0,
+    skipped: 0,
+    kits_spawned: 0,
+    kits_removed: 0,
+    kits_advanced: 0,
+    rows_deleted: {},
+    warnings: [],
+  }),
+});
+
+test("an answer that lands in the turn to a phone is drawn there, then forgotten (PR #332 round 2)", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "tablet", "one project is enough: the test sets both sides of the line itself");
+  // Codex's reproduction: Replace everything sent at 820 px; the screen turns
+  // to a phone, and the answer comes before the page hears of the turn, so
+  // the render that takes the answer is also the one that falls back from
+  // `replace_all`. The fall-back is the draft's; the outcome is the
+  // import's, and is drawn. Kept as three states, the fall-back cleared the
+  // drawn result while the acknowledged copy forgot it unseen.
+  await page.setViewportSize({ width: 820, height: 1180 });
+  await installShellEventHold(page);
+  await page.goto("/settings/data");
+  const main = page.getByRole("main");
+  await main.locator('input[type="file"]').setInputFiles(retailerCsv(`${TAG} Turned Mid-Answer`));
+  await main.getByRole("combobox").selectOption("replace_all");
+  await main.getByRole("button", { name: "Preview changes" }).click();
+  await page.getByPlaceholder("REPLACE").fill("REPLACE");
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/import/apply", async (route) => {
+    await held;
+    await route.fulfill(importAnswer("replace_all"));
+  });
+  await page.getByRole("button", { name: "Apply import" }).click();
+  await expect(main.getByText("Importing — Replace everything…")).toBeVisible();
+  await page.evaluate(() => {
+    const w = window as unknown as { __drawn?: boolean };
+    w.__drawn = false;
+    new MutationObserver(() => {
+      if (document.querySelector("main")?.textContent?.includes("Import complete")) w.__drawn = true;
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+  await holdShellEvents(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(main.getByRole("combobox"), "the page has not heard of the turn").toHaveValue("replace_all");
+  const answered = page.waitForResponse("**/import/apply");
+  release();
+  await answered;
+  await expect(page.getByRole("radio", { name: "Merge" }), "the draft fell back").toBeChecked();
+  await releaseShellEvents(page);
+  await expect(main.getByText("Import complete"), "the outcome is drawn, in the phone's shape").toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { __drawn: boolean }).__drawn)).toBe(true);
+  await expect(main.getByText("Importing — Replace everything…")).toHaveCount(0);
+  // Drawn, so acknowledged: shown once.
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  await page.getByRole("link", { name: "Kits", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Kits" })).toBeVisible();
+  await page.goBack();
+  await expect(main.getByRole("heading", { name: "Import", exact: true })).toBeVisible();
+  await expect(main.getByText("Import complete"), "seen, and gone").toHaveCount(0);
+  await page.unroute("**/import/apply");
+});
+
+test("an answer that lands between a section's first render and its listener is handed over (PR #332 round 2)", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "app", "one project is enough: the window is the mount's, not the shell's");
+  // Codex's witness for M2: the request is a promise held in the page, and
+  // a MutationObserver answers it as the returning section's heading is
+  // inserted — after the mount read the import as pending, before its effect
+  // hooked the listener. Only the module's hand-over at watch time tells it.
+  await page.goto("/settings/data");
+  const main = page.getByRole("main");
+  await main.locator('input[type="file"]').setInputFiles(retailerCsv(`${TAG} Answered At Mount`));
+  await main.getByRole("button", { name: "Preview changes" }).click();
+  await page.evaluate((answer) => {
+    const w = window as unknown as { __answer?: () => void };
+    const real = window.fetch.bind(window);
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+      String(input).endsWith("/import/apply")
+        ? new Promise<Response>((resolve) => {
+            w.__answer = () => resolve(new Response(answer.body, { status: 200, headers: { "Content-Type": answer.contentType } }));
+          })
+        : real(input, init)) as typeof fetch;
+  }, importAnswer("merge"));
+  await page.getByRole("button", { name: "Apply import" }).click();
+  await expect(main.getByText("Importing — Merge…")).toBeVisible();
+  await page.getByRole("link", { name: "Kits", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Kits" })).toBeVisible();
+  await page.evaluate(() => {
+    const w = window as unknown as { __answer: () => void; __answeredAt?: string };
+    new MutationObserver((_, observer) => {
+      const main = document.querySelector("main");
+      if (!Array.from(main?.querySelectorAll("h2, h3") ?? []).some((heading) => heading.textContent === "Import")) return;
+      observer.disconnect();
+      w.__answeredAt = main!.textContent!.includes("Importing — Merge…") ? "pending" : "other";
+      w.__answer();
+    }).observe(document.body, { childList: true, subtree: true });
+  });
+  await page.getByRole("link", { name: "Settings", exact: true }).click();
+  await sectionNav(page).getByRole("link", { name: "Data management", exact: true }).click();
+  await expect(main.getByText("Import complete"), "handed over at watch time").toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { __answeredAt?: string }).__answeredAt), "answered with the section mounted as pending").toBe("pending");
+  await expect(main.getByText("Importing — Merge…")).toHaveCount(0);
+});
+
+test("a sign-out that succeeds takes the import with it, though the session could not be re-read (PR #332 round 2)", async ({ browser }, testInfo) => {
+  test.skip(testInfo.project.name !== "app", "one project is enough: the boundary is the session's, not the shell's");
+  // Codex's reproduction, in a session of its own: the logout succeeds, both
+  // re-reads of the session fail, so the page goes on believing the owner is
+  // here. The import's answer must still not reach whoever signs in next —
+  // the session reads `anonymous` before anyone can, and that is when it goes.
+  const context = await browser.newContext({ baseURL: APP, viewport: { width: 1280, height: 720 }, storageState: { cookies: [], origins: [] } });
+  const page = await context.newPage();
+  const main = page.getByRole("main");
+  let release = () => {};
+  try {
+    await page.goto("/settings/data");
+    await page.getByLabel("Password").fill(OWNER_PASSWORD);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(main.getByRole("heading", { name: "Import", exact: true })).toBeVisible();
+    await main.locator('input[type="file"]').setInputFiles(retailerCsv(`${TAG} Signed Out Under`));
+    await main.getByRole("button", { name: "Preview changes" }).click();
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/import/apply", async (route) => {
+      await held;
+      await route.fulfill(importAnswer("merge"));
+    });
+    await page.getByRole("button", { name: "Apply import" }).click();
+    await expect(main.getByText("Importing — Merge…")).toBeVisible();
+    let reads = 0;
+    await page.route("**/auth/session", (route) => {
+      reads += 1;
+      return route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ detail: "session read failed" }) });
+    });
+    const logout = page.waitForResponse("**/auth/logout");
+    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    expect((await logout).status(), "the logout succeeded").toBe(204);
+    await expect.poll(() => reads, { message: "and every re-read failed" }).toBeGreaterThanOrEqual(2);
+    await page.getByRole("link", { name: "Kits", exact: true }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Kits" })).toBeVisible();
+    await page.unroute("**/auth/session");
+    const anonymous = page.waitForResponse("**/auth/session");
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+    expect(((await (await anonymous).json()) as { state: string }).state).toBe("anonymous");
+    await expect(page.getByRole("heading", { name: "Sign in", exact: true })).toBeVisible();
+    const answered = page.waitForResponse("**/import/apply");
+    release();
+    await answered;
+    await page.getByLabel("Password").fill(OWNER_PASSWORD);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await page.getByRole("link", { name: "Settings", exact: true }).click();
+    await sectionNav(page).getByRole("link", { name: "Data management", exact: true }).click();
+    await expect(main.getByRole("heading", { name: "Import", exact: true })).toBeVisible();
+    await expect(main.getByText("Import complete"), "the next session is not handed the last one's import").toHaveCount(0);
+    await expect(main.getByText("Importing — Merge…")).toHaveCount(0);
+  } finally {
+    release();
+    await context.close();
   }
 });
 

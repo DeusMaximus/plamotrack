@@ -194,7 +194,7 @@ describe("with no section watching when it answers", () => {
   });
 });
 
-describe("signing out", () => {
+describe("the session ending (signed out, expired, another tab)", () => {
   it("forgets the import: in flight, its answer is dropped and nothing is refreshed", async () => {
     const request = held();
     const told = vi.fn();

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { api, ApiError, downloadFile } from "../../api/client";
-import type { ImportMode, ImportPlan, ImportResult } from "../../api/types";
+import type { ImportMode, ImportPlan } from "../../api/types";
 import { IMPORT_MODES } from "../../api/types";
 import { ImportPreview } from "../../components/ImportPreview";
 import { BAR_BUTTON_CLASS } from "../../components/Modal";
@@ -101,13 +101,18 @@ export function DataSection() {
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState<ImportMode>("merge");
   const [plan, setPlan] = useState<ImportPlan | null>(null);
-  // An import sent before the section was left is the module's (`importRun`,
-  // #315): the section starts from it — still under way, or how it ended, an
-  // outcome it keeps until this section has painted it (`shown`, below).
-  const [result, setResult] = useState<ImportResult | null>(() => {
-    const ended = importRunState().outcome;
-    return ended && "result" in ended ? ended.result : null;
-  });
+  // How the sent import ended — the operation's, not the draft's, and the
+  // module's until this section has painted it (`importRun`, #315). The
+  // section starts from it, so one sent before the section was left is drawn
+  // from the first frame. It is one state, and the result and the apply's
+  // failure below are read from it, so what is drawn and what is acknowledged
+  // as painted cannot part: kept as three, the phone's fall-back cleared the
+  // drawn result and left the acknowledged copy, which then forgot an outcome
+  // never on screen (PR #332 round 2, Codex finding 2). Someone's own move on
+  // the draft dismisses it — another file, another mode, Cancel, a preview;
+  // the fall-back throws the draft away under it and leaves it be.
+  const [outcome, setOutcome] = useState<ImportOutcome | null>(() => importRunState().outcome);
+  const result = outcome && "result" in outcome ? outcome.result : null;
   const [confirmText, setConfirmText] = useState("");
   const [busy, setBusy] = useState<"preview" | null>(null);
   // The import that has been sent, by the mode it was sent with — the
@@ -118,17 +123,13 @@ export function DataSection() {
   // Nor by leaving: a section mounted under it says the same (#315).
   const [submitted, setSubmitted] = useState<ImportMode | null>(() => importRunState().pending);
   const [error, setError] = useState<string | null>(null);
-  // The import's own failures, said inside its card rather than at the head of
-  // the section: on a phone the head is a screen above Preview and the bar, and
-  // a refused file looked like a tap that did nothing (#304, in the simulator).
-  const [importError, setImportError] = useState<string | null>(() => {
-    const ended = importRunState().outcome;
-    return ended && "error" in ended ? ended.error : null;
-  });
-  // The outcome this section was told of, until it has painted it: then the
-  // module forgets it (below), and not before — a section told while it is
-  // being torn down never paints, and the next one is told again.
-  const [shown, setShown] = useState<ImportOutcome | null>(() => importRunState().outcome);
+  // A preview's refusal: the draft's, so it goes with the draft. With the
+  // apply's failure it is the import's own failures, said inside its card
+  // rather than at the head of the section: on a phone the head is a screen
+  // above Preview and the bar, and a refused file looked like a tap that did
+  // nothing (#304, in the simulator).
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const importError = refusal ?? (outcome && "error" in outcome ? outcome.error : null);
   // Previewing, or an import under way: either holds every control that would
   // change the draft, and an import under way holds Preview and Apply too.
   const working = busy !== null || submitted !== null;
@@ -151,19 +152,18 @@ export function DataSection() {
     previewSeq.current += 1;
     setMode("merge");
     setPlan(null);
-    setResult(null);
     setConfirmText("");
-    setImportError(null);
+    setRefusal(null);
   }
 
   function reset() {
     previewSeq.current += 1;
     setFile(null);
     setPlan(null);
-    setResult(null);
+    setOutcome(null);
     setConfirmText("");
     setError(null);
-    setImportError(null);
+    setRefusal(null);
     if (fileInput.current) fileInput.current.value = "";
   }
 
@@ -174,8 +174,8 @@ export function DataSection() {
     // Any change invalidates the preview — never let an Apply run against a plan
     // the user is no longer looking at.
     setPlan(null);
-    setResult(null);
-    setImportError(null);
+    setOutcome(null);
+    setRefusal(null);
   }
 
   async function download(path: string, name: string) {
@@ -191,15 +191,15 @@ export function DataSection() {
     if (!file) return;
     const asked = ++previewSeq.current;
     setBusy("preview");
-    setImportError(null);
-    setResult(null);
+    setRefusal(null);
+    setOutcome(null);
     try {
       const planned = await api.previewImport(file, mode);
       if (asked === previewSeq.current) setPlan(planned);
     } catch (err) {
       if (asked !== previewSeq.current) return;
       setPlan(null);
-      setImportError(err instanceof ApiError ? err.message : String(err));
+      setRefusal(err instanceof ApiError ? err.message : String(err));
     } finally {
       setBusy(null);
     }
@@ -232,7 +232,7 @@ export function DataSection() {
     );
     if (!sent) return;
     setSubmitted(mode);
-    setImportError(null);
+    setRefusal(null);
   }
 
   // The sent phase ends on the answer, in one commit with what it brought: the
@@ -246,12 +246,8 @@ export function DataSection() {
     () =>
       watchImportRun((ended) => {
         setSubmitted(null);
-        setShown(ended);
-        if ("error" in ended) {
-          setImportError(ended.error);
-          return;
-        }
-        setResult(ended.result);
+        setOutcome(ended);
+        if ("error" in ended) return;
         setPlan(null);
         setFile(null);
         setConfirmText("");
@@ -260,15 +256,18 @@ export function DataSection() {
     [],
   );
 
-  // Painted, not merely committed: two frames, so the first has been drawn.
-  // Leaving before then cancels it, and the outcome waits for the next visit.
+  // The outcome drawn is the outcome acknowledged, two frames after it was
+  // committed: then the module forgets it, and not before. A section told of
+  // it while it is torn down never commits it (PR #332 round 1), and one that
+  // dismisses or loses it first cancels the frames; either way it waits for
+  // the next visit.
   useEffect(() => {
-    if (!shown) return;
+    if (!outcome) return;
     let frame = requestAnimationFrame(() => {
-      frame = requestAnimationFrame(() => acknowledgeImportOutcome(shown));
+      frame = requestAnimationFrame(() => acknowledgeImportOutcome(outcome));
     });
     return () => cancelAnimationFrame(frame);
-  }, [shown]);
+  }, [outcome]);
 
   // A sent import has somewhere to keep the keyboard (#314 round 3, Codex
   // finding 8). Sending it disables Apply, and Chromium then drops the focus a
@@ -301,9 +300,9 @@ export function DataSection() {
     const was = previewWas.current;
     previewWas.current = busy;
     if (was !== "preview" || busy !== null || !keyboardLost()) return;
-    if (importError) reveal(outcomeRef.current);
+    if (refusal) reveal(outcomeRef.current);
     else focusByKey(FOCUS.preview);
-  }, [busy, importError]);
+  }, [busy, refusal]);
 
   // An outcome holding the keyboard and replaced by the next file — dropped onto
   // the drop zone, which moves no focus of its own — hands it to that file's
@@ -319,8 +318,8 @@ export function DataSection() {
     previewSeq.current += 1;
     setMode(next);
     setPlan(null);
-    setResult(null);
-    setImportError(null);
+    setOutcome(null);
+    setRefusal(null);
   }
 
   const blocked = (plan?.blocking_errors.length ?? 0) > 0;

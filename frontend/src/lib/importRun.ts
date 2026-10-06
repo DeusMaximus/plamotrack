@@ -102,8 +102,9 @@ export function acknowledgeImportOutcome(seen: ImportOutcome): void {
   if (outcome === seen) outcome = null;
 }
 
-/** Signing out: nothing of this session's import is kept for the next one. A
- *  request still in flight runs on at the server, and its answer is dropped. */
+/** The owner's session has ended (`AuthGate`, on any session that reads as
+ *  not the owner's): nothing of its import is kept for the next one. A request
+ *  still in flight runs on at the server, and its answer is dropped. */
 export function forgetImportRun(): void {
   generation += 1;
   pending = null;

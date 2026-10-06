@@ -4,8 +4,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 
 import { api, authSessionQuery, setCsrfToken } from "../api/client";
-import type { AuthSession } from "../api/types";
-import { forgetImportRun } from "./importRun";
 
 export function useSignOut(): () => Promise<void> {
   const queryClient = useQueryClient();
@@ -22,11 +20,6 @@ export function useSignOut(): () => Promise<void> {
       // from its last result — caught by e2e/auth.spec.ts).
       setCsrfToken(null);
       await queryClient.invalidateQueries({ queryKey: authSessionQuery.queryKey });
-      // The import this tab sent (#315) goes with the session — once the
-      // session has gone. A logout that failed leaves the owner signed in
-      // here, and the import still running: forgotten, it answered into
-      // nothing and the same file could be sent again (PR #332 review).
-      if (queryClient.getQueryData<AuthSession>(authSessionQuery.queryKey)?.state !== "owner") forgetImportRun();
       queryClient.removeQueries({
         predicate: (query) => query.queryKey[0] !== authSessionQuery.queryKey[0],
       });
