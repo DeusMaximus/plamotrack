@@ -6,7 +6,7 @@ import type {
   TextareaHTMLAttributes,
 } from "react";
 import { Star, type LucideIcon } from "lucide-react";
-import { forwardRef } from "react";
+import { forwardRef, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 
 import { formatNumber } from "../lib/format";
@@ -132,12 +132,24 @@ export function Field({
   );
 }
 
-export function ErrorBanner({ message }: { message: string | null }) {
+/** A failure, said where the control that failed is (#316): by its card, or by
+ *  its Save. With `reveal`, a message that appears is scrolled into view, the
+ *  nearest way and clear of the phone's sticky head and tab bar, for a failure
+ *  said away from its control — a row deep in a long list, a button at the foot
+ *  of a card whose end is under the tab bar — so the tap does not look like it
+ *  did nothing. The keyboard stays where it was. Beside a Save it is not
+ *  needed: the Save was just on screen. */
+export function ErrorBanner({ message, reveal = false }: { message: string | null; reveal?: boolean }) {
+  const banner = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (reveal && message) banner.current?.scrollIntoView({ block: "nearest" });
+  }, [reveal, message]);
   if (!message) return null;
   return (
     <div
+      ref={banner}
       role="alert"
-      className="rounded-sm border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger"
+      className="rounded-sm border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger max-md:scroll-mt-16 max-md:scroll-mb-[calc(4.5rem+env(safe-area-inset-bottom))]"
     >
       {message}
     </div>

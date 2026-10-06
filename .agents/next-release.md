@@ -33,6 +33,15 @@ Shape:
 
 ---
 
+## #316 — a failure in Settings is said beside the button that failed (PR #NNN)
+- **Release note:** In Settings, an error now appears next to the control that
+  caused it. A failed download says so in its own card, rather than at the top of
+  Data management, which on a phone was a screen above the starter sheet. A failed
+  Save says so beside Save. A failed token revoke is scrolled into view, wherever
+  the token is in a long list.
+- **README:** nothing.
+- **Docs site:** nothing.
+
 ## #315 — an import keeps going when you leave Data management, and says how it ended when you come back (PR #332, `48c37b9`)
 - **Release note:** Leaving Settings → Data management while an import ran used to
   lose track of it: the import finished on the server, but coming back showed an

@@ -385,6 +385,145 @@ test("the archive downloads from a phone", async ({ page }, testInfo) => {
   await expect(page.getByRole("alert")).toHaveCount(0);
 });
 
+/** Whether an element is on screen and clear of what is held over the page —
+ *  the phone's sticky head above it, its tab bar below — where someone who has
+ *  just tapped a control can read it without scrolling. `toBeInViewport` counts
+ *  an element under the tab bar as seen. */
+const clearlyOnScreen = (locator: Locator): Promise<boolean> =>
+  locator.evaluate((element) => {
+    const box = element.getBoundingClientRect();
+    let top = 0;
+    let bottom = innerHeight;
+    for (const held of document.querySelectorAll("header, nav")) {
+      const position = getComputedStyle(held).position;
+      if (position !== "sticky" && position !== "fixed") continue;
+      const bar = held.getBoundingClientRect();
+      if (bar.height === 0 || bar.height > innerHeight / 2) continue;
+      if (bar.top <= 1) top = Math.max(top, bar.bottom);
+      else if (bar.bottom >= innerHeight - 1) bottom = Math.min(bottom, bar.top);
+    }
+    return box.height > 0 && box.top >= top - 0.5 && box.bottom <= bottom + 0.5;
+  });
+
+/** The Settings card titled `title`. */
+const settingsCard = (page: Page, title: string): Locator =>
+  page.getByRole("main").locator("section").filter({ has: page.getByRole("heading", { name: title, exact: true }) });
+
+test("a failed download says so in the card whose button failed, on screen (#316)", async ({ page }, testInfo) => {
+  // On a phone the starter sheet is the last card, a screen or more below the
+  // section's head, where every download's error used to be said: the tap
+  // looked like it did nothing. Every download, every shape.
+  const downloads: [button: string, card: string, phoneDraws: boolean][] = [
+    ["Download full archive (.zip)", "Export", true],
+    ["Kits .csv", "Export", true],
+    ["Starter sheet (.csv)", "Blank templates", true],
+    ["Full template pack (.zip)", "Blank templates", false],
+  ];
+  await page.route("**/export/**", (route) => route.fulfill({ status: 500, contentType: "application/json", body: "{}" }));
+  for (const size of sizesFor(testInfo.project.name)) {
+    for (const [button, card, phoneDraws] of downloads) {
+      if (isPhone(size) && !phoneDraws) continue;
+      await test.step(`${size.width} × ${size.height}: ${button}`, async () => {
+        await page.setViewportSize(size);
+        await page.goto("/settings/data");
+        await page.getByRole("button", { name: button, exact: true }).click();
+        const alert = settingsCard(page, card).getByRole("alert");
+        await expect(alert, "said in the card whose button failed").toHaveText("Export failed (500)");
+        await expect(page.getByRole("main").getByRole("alert"), "and only there").toHaveCount(1);
+        await expect.poll(() => clearlyOnScreen(alert), { message: "on screen, clear of the bars" }).toBe(true);
+      });
+    }
+  }
+  await page.unroute("**/export/**");
+});
+
+test("a failed save says so beside its button, on screen (#316's siblings)", async ({ page }, testInfo) => {
+  // Each Settings form said its failure at its head, its Save at its foot: on
+  // the smallest phone Language's Save is below the fold, and its error then
+  // sat under the sticky head. The same answer in all three forms.
+  await page.route("**/settings", (route) =>
+    route.request().method() === "PATCH"
+      ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ detail: "the save failed" }) })
+      : route.fallback(),
+  );
+  await page.route("**/auth/tokens", (route) =>
+    route.request().method() === "POST"
+      ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ detail: "the save failed" }) })
+      : route.fallback(),
+  );
+  const forms: [path: string, card: string, edit: (main: Locator) => Promise<void>, button: string][] = [
+    ["/settings/general", "Reference currency", (main) => main.getByLabel("Currency code").fill("NZD"), "Save"],
+    [
+      "/settings/language",
+      "Language & formatting",
+      async (main) => {
+        const style = main.getByLabel("Date style");
+        const current = await style.inputValue();
+        const other = await style.locator("option").evaluateAll((options, now) => options.map((o) => (o as HTMLOptionElement).value).find((v) => v !== now)!, current);
+        await style.selectOption(other);
+      },
+      "Save",
+    ],
+    ["/settings/tokens", "Create a token", (main) => main.getByLabel("Name").fill(`${TAG} Refused Token`), "Create token"],
+  ];
+  for (const size of sizesFor(testInfo.project.name)) {
+    for (const [path, card, edit, button] of forms) {
+      await test.step(`${size.width} × ${size.height}: ${path}`, async () => {
+        await page.setViewportSize(size);
+        await page.goto(path);
+        const main = page.getByRole("main");
+        await edit(main);
+        await main.getByRole("button", { name: button, exact: true }).click();
+        const alert = settingsCard(page, card).getByRole("alert");
+        await expect(alert).toHaveText("the save failed");
+        await expect.poll(() => clearlyOnScreen(alert), { message: "on screen, clear of the bars" }).toBe(true);
+      });
+    }
+  }
+  await page.unrouteAll({ behavior: "wait" });
+});
+
+test("a failed revoke is said on screen, wherever its row is in a long list (#316's sibling)", async ({ page }, testInfo) => {
+  // The list said a refused revoke at its head; the tenth row's Revoke is a
+  // screen and more below it on a phone, half a screen on the desktop.
+  const api = await apiContext();
+  const names = Array.from({ length: 10 }, (_, i) => `${TAG} Long List ${testInfo.project.name} ${String(i + 1).padStart(2, "0")}`);
+  const ids: string[] = [];
+  try {
+    for (const name of names) {
+      const resp = await api.post("/auth/tokens", { data: { name, scopes: ["collection:read"] } });
+      expect(resp.ok()).toBeTruthy();
+      ids.push(((await resp.json()) as { id: string }).id);
+    }
+    await page.route("**/auth/tokens/*", (route) =>
+      route.request().method() === "DELETE"
+        ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ detail: "the revoke failed" }) })
+        : route.fallback(),
+    );
+    page.on("dialog", (dialog) => void dialog.accept());
+    for (const size of sizesFor(testInfo.project.name)) {
+      await test.step(`${size.width} × ${size.height}`, async () => {
+        await page.setViewportSize(size);
+        await page.goto("/settings/tokens");
+        const main = page.getByRole("main");
+        // The oldest of ours, whichever way the list sorts: the row furthest
+        // from the head of the two ends is the one that matters, so try both.
+        for (const name of [names[0], names[names.length - 1]]) {
+          const row = main.locator("li, tr").filter({ hasText: name }).filter({ visible: true });
+          await row.getByRole("button", { name: "Revoke", exact: true }).click();
+          const alert = settingsCard(page, "Your tokens").getByRole("alert");
+          await expect(alert).toHaveText("the revoke failed");
+          await expect.poll(() => clearlyOnScreen(alert), { message: `${name}: on screen, clear of the bars` }).toBe(true);
+        }
+      });
+    }
+    await page.unroute("**/auth/tokens/*");
+  } finally {
+    for (const id of ids) await api.delete(`/auth/tokens/${id}`);
+    await api.dispose();
+  }
+});
+
 test("an import on a phone (#304): a CSV previewed and applied, Add only; an archive previewed and cancelled", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "phone", "the phone shell's own shape; the wider ones are settings.spec.ts's");
   const shop = `${TAG} Phone Import`;

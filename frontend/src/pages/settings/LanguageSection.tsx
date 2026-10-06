@@ -136,7 +136,6 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
         </div>
       )}
       <form onSubmit={onSubmit} className="space-y-3">
-        <ErrorBanner message={error} />
         <Field label={t("settings.language.interfaceLanguage")} required className="max-w-72 max-md:max-w-none">
           <Select {...register("interface_language")}>
             {resolved.fallback && (
@@ -212,6 +211,9 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
             {formatMoneyWith(draft.formatting_locale, 499900, settings.reference_currency)}
           </span>
         </p>
+        {/* Beside its Save, not at the form's head: on the smallest phone the
+            head is under the sticky bar by the time Save is reached (#316). */}
+        <ErrorBanner message={error} />
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={!isDirty || isSubmitting}>
             {isSubmitting ? t("settings.language.saving") : t("common.save")}
