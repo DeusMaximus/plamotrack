@@ -1848,3 +1848,39 @@ Two more from the same branch:
   focus hook's deferred watch (its own lesson in `focusKey.ts`) missed a control
   hidden before the watch began, so now the fold hands on focus it hides itself
   (`FoldToFit`), and a test samples every frame of ten such turns.
+
+## Equivalent until someone finds the ordering (#315, PR #332 rounds 1–3)
+
+Three review rounds, each a GO with P3s, and two of the author's claims withdrawn on
+the way. Each one said a defect couldn't happen or couldn't be seen, and each fell to
+an ordering or an entry path the author hadn't walked:
+
+- **"Equivalent in practice" was claimed for two mutants, and both died.** M3 (the
+  section not reading the outcome at mount) survived every test that came back by the
+  browser's Back, which renders synchronously. The app's own link renders in a
+  transition, and there the first frame lacked the outcome. Round 2's M17 (forget on
+  any session read) was claimed equivalent because "a change to `owner` only happens at
+  load or sign-in". Codex held a real sign-in response in the page until a visibility
+  re-read had drawn the app and an import was sent. The sign-in's own continuation
+  then cleared the cache: `owner` → nothing → `owner`, with a live import.
+- **"The e2e can't see it" was wrong again** (as with `Measured`'s refit on #329). An
+  answer between a mount's render and its listener looked impossible to time. Codex
+  held `fetch` as a promise in the page and released it from a `MutationObserver` as
+  the section's heading was inserted.
+- **Being told is not being shown, and one outcome kept as three copies parts.** The
+  store treated a hooked listener as proof the outcome was seen (the GitHub bot's P1).
+  The fix kept the outcome until the section acknowledged it, but `result`,
+  `importError` and the acknowledged copy were separate states. The phone's fall-back
+  cleared one and not another, so the module forgot an outcome never drawn. One
+  `outcome` state, drawn and acknowledged as the same thing, closed it. Then the sweep
+  of every place that clears it missed the send itself (round 3's regression).
+- **A state is not an identity.** `AuthGate` forgot the import when the session read
+  `anonymous`. Another tab signing out and in again gives this tab `owner` → `owner`:
+  no change to the state, a different session. The CSRF token, one per session, is the
+  identity.
+
+**Before calling a mutant equivalent or a case untestable, list the entry paths and
+orderings the code can meet:** each way in (Back, link, URL, reload); each async
+continuation still in flight (a held request, a sign-in's `onAuthed`); and each other
+tab. Try to stage the worst one, with a held promise in the page released by an
+observer. Only if that fails, say "equivalent", and name what was tried.

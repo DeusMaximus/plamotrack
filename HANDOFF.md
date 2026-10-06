@@ -41,6 +41,51 @@ Template:
 
 ---
 
+## 2026-10-07 — Claude Code (Opus 5.5) — #315 MERGED as `48c37b9` (PR #332): an import sent outlives leaving Data management; #333 filed
+
+- **Done:**
+  - **[PR #332](https://github.com/DeusMaximus/plamotrack/pull/332)** squash-merged as **`48c37b9`**, pinned to `c303e38` after all three checks. #315 is closed.
+    - **Owner's call (06/10):** hold the sent import above the routes, not block navigation (`<BrowserRouter>` has no `useBlocker`).
+    - `frontend/src/lib/importRun.ts` (new) is a module store, one import per tab. It holds the request, its outcome, a `beforeunload` hold while in flight, and the owner session the import was sent under (its CSRF token, one per session).
+    - A section mounted under a running import says so and holds the picker. The outcome is shown once, then acknowledged two animation frames after it is drawn.
+    - `DataSection.tsx` holds **one** `outcome` state, drawn and acknowledged as the same thing. A preview's refusal is a draft state of its own. The phone's fall-back clears only the draft. An accepted send replaces the last outcome.
+    - `AuthGate.tsx` calls `keepImportRunFor(...)` on every session read: the import goes on any read that is not its own session (signed out, expired, another owner session in another tab). `useSignOut` forgets it on a confirmed 204. A forgotten import is told to the section, so its card lets go.
+  - **Review:** Codex rounds 1–3 were each GO with P3s, all fixed in the PR. Codex's GitHub bot raised one P1 ("told is not shown"), also fixed.
+    - Withdrawn claims: M3 and M17 "equivalent", and "M2 can't be seen in the browser".
+    - Lesson: `.agents/lessons.md` → "Equivalent until someone finds the ordering".
+  - **Filed [#333](https://github.com/DeusMaximus/plamotrack/issues/333):** a failed sign-out clears the CSRF token and `AuthGate` never restores it (the re-read token is the same), and nothing says it failed. It predates #315.
+- **Decisions (owner, 06–07/10):** fix round 2's structural finding in the PR, not as a follow-up; merge after round 3 without a round 4, once a production-build check passed (15/15).
+- **State:**
+  - **Unreleased on `main`:** #294, #289, #247, #302, #310, #313 (a migration), #314, #319, #322, #328, #330, and now **#332**. See `.agents/next-release.md`. #315's entry owes the docs site's `using/import-export.mdx` a paragraph.
+  - **Tests:**
+    - `importRun.test.ts` has 22 unit tests.
+    - `pages.spec.ts` has the #315 e2e: leave and come back by Back and by links, a stubbed-frames step, the phone-turn answer, the mount-to-listener answer, the retry in three modes, two cross-tab session orderings, and a late sign-in. Several are Codex's reproductions; some open their own browser context with a real sign-in.
+    - 19 mutants, all killed; the table is in PR #332's body.
+  - **Runs at `c303e38`:** Chromium suite 207 passed / 89 skipped / 0 failed; WebKit and the production build, the import tests 15/15.
+  - **Known gaps, filed:** #333, #331, #326, #324 (local runs need `--workers=1`), #320, #316.
+  - **Tooling:**
+    - `main` is clean; no worktrees, servers or e2e databases are left.
+    - Merged branches left on origin: `fix/315-import-outlives-section`, `fix/329-fold-to-fit`, `fix/323-unbroken-names`, `fix/321-focus-row-page`, `fix/317-narrow-list-lookups`, `feat/318-page-size`.
+    - Briefs, responses and Codex's harnesses are in `.dev/315/`.
+  - **Carried:**
+    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
+    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
+    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
+- **Next — the pre-release plan (owner, 06/10), continued.** Each is its own PR, in this order:
+  1. **#316** (same file, `DataSection.tsx`): on a phone, a failed download's error shows a screen away from its button. Mind the new state shape: `error` (downloads), `refusal` (previews) and `outcome` (the sent import) are separate.
+  2. **#331**: subscribe `TokenList` to the presentation version, test both response orders, and sweep the other formatters (rule 11).
+  3. **#268**: the Inventory stock stepper drops focus to `<body>` on every press. Give the keyboard back to the record's control.
+  4. **#326** (Home scrolls sideways): the owner's call is still open on a strip's grade and scale (wrap, truncate, or stack under the name; recommended: stack). Expect a briefed Codex round.
+
+  #316, #331 and #268 are small enough for the bots' automatic reviews alone. **Then the release**, likely **v0.6.0-alpha**: a migration (#313), a changed MCP tool (#289: `create_order` takes the shop's id) and two new phone features. Work through `.agents/releases.md` and `.agents/next-release.md`.
+  - The owner's Gunpla skill needs a refresh at the LXC upgrade, because of #289. #309's upgrade-notes line is drafted in the ledger.
+  - #333 can wait for after the release, or go in with #316 if it's convenient (`signOut.ts`, `AuthGate.tsx`).
+
+  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
+- **Also next:**
+  1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`.
+  2. Carried: #279's edge probes, then #281's packaging; #282's VPS path; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
+
 ## 2026-10-06 — Claude Code (Opus 5.5) — #329 and #327 MERGED as `75e0218` (PR #330): list tables fold to fit their box; #331 filed
 
 - **Done:**
@@ -234,46 +279,5 @@ Template:
   3. Carried:
      - #279's edge probes, then #281's packaging; #282's VPS path;
      - at the next release, work through `.agents/next-release.md`;
-     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
-     - posting the rehearsal on #285.
-
-## 2026-10-03 — Claude Code (Opus 5.5) — #304 MERGED as `39a9661` (PR #314): a phone imports — Merge and Add only, Apply in a bar above the tab bar; review routing settled
-
-- **Done:**
-  - **[PR #314](https://github.com/DeusMaximus/plamotrack/pull/314)** squash-merged as **`39a9661`** by `--auto --match-head-commit` at `b15ba9f`, after all three checks. #304 is closed.
-    - The owner's calls (02/10): Merge and Add only on a phone, `replace_all` never drawn; the same `ImportPreview` with phone folds; the starter sheet only, after the import; a mockup first. Cancel left and Apply right, as in every dialog's bar, against the mockup.
-    - The mockup is a private canvas on the owner's account (the link is in the agent's memory, not in the repo).
-    - Verified in the iOS Simulator (iPhone 18 Pro, Safari, the dev instance; the owner signed in): the archive downloaded and picked from Files, previewed, cancelled. Nothing was applied to the dev database.
-    - What the design settled is in design §13.7, "Amended — #304": the sent import as its own phase (`submitted`), preview numbering (`previewSeq`), and where the keyboard goes at each transition.
-  - **Reviews:**
-    - Round 1 was the GitHub autoreviews: Greptile 4/5, the Codex connector two P2s.
-    - Rounds 2–4 were briefed Codex in the desktop app (GPT 6.1 Sol): NO-GO (1 P2, 2 P3), NO-GO (1 P2, reclassified P3 by exposure on the owner's call, plus 1 P3), then **GO** with 2 P3s. Those two were taken, and a sibling from `main` was folded in (a preview's answer dropping the keyboard), with no fifth round.
-    - The PR body has every round's mutant table and a coverage record. Two lessons are in `.agents/lessons.md` (#304).
-  - **Final state at `b15ba9f`:** full Chromium e2e 185 passed / 0 failed; WebKit `pages.spec.ts` 12 passed; the held-request tests ×5 in each engine; 650 unit tests.
-  - **Process, on `main` (owner, 03/10):**
-    - Review briefs live in `.dev/<issue>/review-brief-<n>.md` and travel as a one-line paste; they are no longer printed in chat.
-    - Small PRs ride Greptile (only the first review is automatic; re-runs are the owner's) and the Codex connector (`@codex review`).
-    - Big PRs get briefed Codex on the Mac: the plugin's task route without a browser, the desktop app with one.
-    - All of this is now in `.agents/testing-and-review.md` and `.agents/review-brief.md`.
-- **State:**
-  - **Unreleased on `main`:** #294, #289, #247, #302 (#299, #300, #301), #310 (#305), #313 (#309, a migration) and now **#314 (#304)**. See `.agents/next-release.md`; #304's entry owes the docs site's phone page (and retaken `phone-data` screenshots) and the import page's opening line.
-  - **Not checked by anyone** for #304 (the coverage record has the full list): VoiceOver announcing the status line; native CSV selection on iOS; Android pickers; a physical device; a real plamotrack-ios archive.
-  - **Known gaps, filed:**
-    - #315: leaving Data management while an import runs (the same on `main`; an Add only repeat can duplicate kits).
-    - #316: download errors show at the section's head, a screen away from the starter sheet on a phone.
-    - #317: `lists.spec.ts`'s #275 test fails about 1 in 3 on the `tablet` project, on `main` too.
-  - **New, from the owner's use on a phone:** #318, a page-size preference (10 / 20 / All), stored in the browser like the theme, with All by default in the phone shell. Its open questions are in the issue, including revising design §13.1's "the one deliberate exception" to rule 11.
-  - **The iOS Simulator** (iPhone 18 Pro) is still booted, with the owner's dev session in its Safari. The dev servers are stopped. Throwaway databases dropped, no worktrees, `main` clean.
-  - Merged branches left on origin: `feat/304-phone-import`, plus the ones listed below.
-  - **Carried:**
-    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
-    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
-    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
-- **Next:**
-  1. #318 (page size on a phone) wants the owner's answers to its "To decide" list before code; then #315–#317 by priority. #317 first if CI starts flaking on it.
-  2. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
-  3. Carried:
-     - #279's edge probes, then #281's packaging; #282's VPS path;
-     - at the next release, work through `.agents/next-release.md`, including #304's docs-site page;
      - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
      - posting the rehearsal on #285.
