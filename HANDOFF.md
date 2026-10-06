@@ -41,6 +41,57 @@ Template:
 
 ---
 
+## 2026-10-06 — Claude Code (Opus 5.5) — #329 and #327 MERGED as `75e0218` (PR #330): list tables fold to fit their box; #331 filed
+
+- **Done:**
+  - **[PR #330](https://github.com/DeusMaximus/plamotrack/pull/330)** squash-merged as **`75e0218`**, pinned to head `4850f13` after all three checks. #329 and #327 are closed.
+    - `frontend/src/components/FoldToFit.tsx` (new) replaces every fixed fold line (the old `@max-[…rem]` container queries).
+      - Each pass tries the stages from the whole table up and draws the first that fits; past the last stage the box scrolls.
+      - The stage is a `data-fold-<n>` attribute on the box, read by `group-data-fold-<n>/fold:` variants.
+      - A pass runs in a microtask, triggered by: a zero-height sentinel's `ResizeObserver`; every commit of the box; `useRefit()` (`lib/refit.ts`, called by `Measured` when its break decision flips); and each font face's `loaded` promise. WebKit fires no `loadingdone` for stylesheet faces.
+      - A pass that hides the focused control hands the keyboard on itself. See the CI finding below.
+    - Stages: Kits 1, Orders 2, Retailers 1, Tools 1, Display 1, Access tokens 1 (the cards). Consumables and Upgrades have none.
+    - Access tokens are always cards in the phone shell. That changes the 744 px iPad mini in portrait.
+    - #327: Inventory's On hand cell is a wrapping flex row (`StockCell`). WebKit wouldn't wrap a ten-digit count above the stepper.
+  - **Tests** (`lists.spec.ts`, `lists.ts`):
+    - Fixed `FOLD` lines are replaced by `foldState` (the first stage that fits, tried by hand).
+    - `sweepBox` waits a frame per width, sweeps up and back down, and asserts no misfold and no observer error. It is slow: about 2.5 min per project.
+    - New content-driven tests: rows narrowed in place, a refetch under a focused link, the web font arriving, Codex's held-delivery `Measured` witness (it picks its value per machine), same-stage focus (Greptile), and every frame of a one-frame fold.
+    - Codex's round-2 payloads, ten-digit counts and A$9,999.00 are seeded.
+  - **Review:**
+    - Codex: GO, with one P3 that predates the branch, filed as [#331](https://github.com/DeusMaximus/plamotrack/issues/331).
+    - Greptile: one P2 (a missing test), answered and resolved.
+    - CI Integration then found a real defect: on sidebar → rail, Orders folds for one frame at the old shell's box. The focus hook's deferred watch missed the hidden copy and left the keyboard on `<body>`. Fixed in `4850f13`.
+  - Lessons: `.agents/lessons.md` → "The test's observer is the page's to the browser".
+- **Decisions (owner, 06/10):**
+  - Add Codex's M5 witness and merge.
+  - File the P3 rather than fix it in this PR.
+- **State:**
+  - **Unreleased on `main`:** #294, #289, #247, #302, #310, #313 (a migration), #314, #319, #322, #328, and now **#330**. See `.agents/next-release.md`; the "#329, #327" entry is there.
+  - **CI is slower**: Integration took 16 min on `c3e37e1`, because the sweeps wait a frame per width.
+  - **Mutants**, all killed (the table is in PR #330's body):
+    - step from the drawn stage; no per-commit pass; no sentinel; observe the table;
+    - no font trigger; no `Measured` refit; no focus observer; no phone floor for tokens;
+    - a browser blurring during the trial; a fold that leaves hidden focus to the hook.
+  - **Known gaps, filed:** #331, #326 (Home strips, which need a design call), #324 (local runs need `--workers=1`), #320, #315, #316.
+  - **Tooling:**
+    - No dev servers or e2e databases are left, and `main` is clean.
+    - Merged branches left on origin: `fix/329-fold-to-fit`, `fix/323-unbroken-names`, `fix/321-focus-row-page`, `fix/317-narrow-list-lookups`, `feat/318-page-size`.
+    - Review brief and replies are in `.dev/329/`.
+  - **Carried:**
+    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
+    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
+    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
+- **Next:**
+  1. #331: subscribe `TokenList` to the presentation version, test both response orders, and sweep the other formatters (rule 11).
+  2. #326 (Home) once the owner picks wrap, truncate or stack; then #315, #316, and #324 when local multi-worker runs matter.
+  3. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
+  4. Carried:
+     - #279's edge probes, then #281's packaging; #282's VPS path;
+     - at the next release, work through `.agents/next-release.md`;
+     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
+     - posting the rehearsal on #285.
+
 ## 2026-10-06 — Claude Code (Opus 5.5) — #323 MERGED as `b2343a4` (PR #328): every free-text table cell gives way by its value; Inventory's Tools and Display fold; #326, #327, #329 filed
 
 - **Done:**
@@ -214,66 +265,5 @@ Template:
   3. Carried:
      - #279's edge probes, then #281's packaging; #282's VPS path;
      - at the next release, work through `.agents/next-release.md`, including #304's docs-site page;
-     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
-     - posting the rehearsal on #285.
-
-## 2026-10-02 — Claude Code (Opus 5.5) — #305 (`8ba9c6e`, PR #310), #307 (`f8d7f0d`, PR #311) and #309 (`4651ce2`, PR #313) MERGED; #306 fixed on the docs site; `main` gets a ruleset
-
-- **Done:**
-  - **#306** closed by [plamotrack-docs#8](https://github.com/DeusMaximus/plamotrack-docs/pull/8), merged as `bb30824`.
-    - The backups page no longer says an archive "does not preserve ids". The import page now says a restore into a new instance keeps them.
-    - Checked first against `v0.5.2-alpha`, in a worktree: the golden archive restored into an empty instance kept all 35 ids.
-    - The merge sentence names only retailers, catalog items and orders. Kits match by id alone, so "matching records" would have overclaimed.
-  - **[PR #310](https://github.com/DeusMaximus/plamotrack/pull/310)** squash-merged as **`8ba9c6e`**, pinned to the reviewed head `96a8ff0`; #305 is closed.
-    - Reproduced on `main` first. 11 range CHECKs previewed clean and then failed the apply with a 500. `shipping_cost_minor` and `low_stock_threshold`, which have no CHECK, stored negative values.
-    - The fix:
-      - `ColumnSpec.minimum` / `maximum` on 12 columns;
-      - `RATING_MIN` / `RATING_MAX` in `services/numeric.py`, read by `schemas.numeric.Rating` too;
-      - `_check_ranges` after money scaling, quoting the cell as written (header, alias included, and text);
-      - codes `import.cell_below_minimum` and `import.cell_above_maximum`.
-    - `tests/test_import_ranges.py`, 63 cases:
-      - CHECKs, request schemas and declarations agree, and the CHECK walk is total;
-      - every bound one step out, in merge and `replace_all`;
-      - the bound itself imports;
-      - update rows, the alias header, the starter sheet.
-    - The `305-` mutants: 10/10 killed. Full suite at `f28eb28`: 3060 passed, 1 xfailed.
-    - Greptile: 4/5 with two P2s (the source cell; the audit skipping unknown CHECK forms), both taken in `96a8ff0`; round 2 5/5. CI green.
-    - `.agents/next-release.md` has the entry; it owes the docs site and `docs/import-export.md` a line on ranges.
-  - **[PR #311](https://github.com/DeusMaximus/plamotrack/pull/311)** squash-merged as **`f8d7f0d`** from head `9e9fc8c`; #307 is closed.
-    - Behaviour scenarios shared with plamotrack-ios: `backend/tests/fixtures/scenarios/` (`scenario.schema.json` and 6 files, 31 scenarios); the runner is `tests/test_scenarios.py`. The format is in `.agents/testing-and-review.md` → "Behaviour scenarios", and `AGENTS.md` now points rules the app reimplements at it.
-    - The owner's five calls: run against the services; seed `given` by direct insert; `@now` as the run's window; refusal params on the registry's declared keys; one file per rule area.
-    - Reviews:
-      - Round 1: Codex P2 (`@now` in a step `result`) and Greptile 4/5 (spawned-kit provenance; repeated JSON keys).
-      - Round 2: Codex P2 (an unpinned seeded status clock passed as `@now`). Every seeded kit now states its clock, a meta-test enforces it, and mutants scn-13/14/15 survive on `d638cc4` and are killed on `9e9fc8c`.
-      - Round 3: Codex clean (👍); Greptile 5/5.
-    - The `scn-` mutants: 15/15 killed. Full suite at `f44cc3a`: 3109 passed, 1 xfailed. `jsonschema` is now a declared dev dependency.
-    - **Merged before CI finished**, which the owner had not asked for ("merge once green"). `main` has no branch protection and the repo's auto-merge setting is off, so `gh pr merge --auto` merged immediately. Both CI runs then passed: the PR head and the push to `main`; the trees are identical. Since then `main` has a ruleset (below).
-  - **[PR #313](https://github.com/DeusMaximus/plamotrack/pull/313)** merged as **`4651ce2`** from head `10d959b` by `--auto`, after all three checks; #309 (filed this session) is closed.
-    - Migration `5cbec7813500`: negatives cleared to **null** (the owner's call), the count logged online, then `ck_orders_shipping_cost_non_negative` and `ck_consumables_low_stock_threshold_non_negative`. Offline (`--sql`) it writes the UPDATE.
-    - New guards in `test_migration_data.py`: every migration renders offline, and every model CHECK matches the migrated schema by name **and definition** (the models are built into a scratch schema and compared through `pg_get_constraintdef`). No existing drift was found.
-    - The `309-` mutants: 7/7.
-    - Reviews: Codex clean twice. Greptile flagged offline `.rowcount` (P1) and the name-only guard (P2), both fixed; then 5/5.
-    - **CI caught one failure the ruleset held back:** #303's golden restore test required no warnings, and the new migration made the fixture's `schema_version` stale (`import.schema_drift`). The test now expects exactly that warning; no regeneration is needed (testing-and-review says so).
-    - Full suite 3116 passed, 1 xfailed.
-  - **Ruleset "main"** (id 24351954) and repo auto-merge, set up at the owner's request:
-    - required checks Backend, Frontend and Integration; force pushes and deletion blocked; the admin role bypasses "Always".
-    - Tested: a direct docs push bypasses it, and `--auto` waits (#312).
-    - `AGENTS.md`: never `--admin`; "merge when green" is `--auto --match-head-commit`.
-- **Decisions (the owner's, 2026-10-01/02):**
-  - `docs/import-export.md` was left for the release under the published-release rule; the owner did not object. Before that rule, PRs edited it directly.
-  - Greptile reviews; the PRs squash-merge pinned to the reviewed head.
-- **State:**
-  - **Unreleased on `main`:** #294, #289, #247, #302 (#299, #300, #301), #310 (#305) and #313 (#309, a migration); see `.agents/next-release.md`. #303 (PR #308) is test-only and owes nothing. The release also owes the Pocket ID docs page. #300 remains the most exposed: v0.5.2-alpha's `migrate` stops on a punctuated `POSTGRES_PASSWORD`.
-  - Merged branches left on origin: `feat/303-golden-archive`, `fix/305-import-range-checks`, `fix/archive-keeps-ids` (docs repo), plus the three older ones.
-  - **Carried:**
-    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
-    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
-    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
-- **Next:**
-  1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
-  2. **#304**, import on a phone: the owner's decisions on modes and the 390 px preview, then mockups, before code.
-  3. Carried:
-     - #279's edge probes, then #281's packaging; #282's VPS path;
-     - at the next release, work through `.agents/next-release.md`;
      - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
      - posting the rehearsal on #285.
