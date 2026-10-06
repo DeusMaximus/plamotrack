@@ -3797,6 +3797,48 @@ import it here. That undoes the first of the three reasons the phone was export 
   below a long preview. A preview's answer gives the keyboard to its refusal or
   back to Preview; `main` lost it there too. A focused outcome replaced by a dropped
   file hands it to that file's Preview.
+- **…and the operation outlives the section** (#315, the owner's call). Held in
+  the section, a sent import went with it when the section was left: the server
+  finished it, coming back found a fresh draft, and nothing stopped the same file
+  being applied again, which under Add only adds every kit twice. The request and
+  its answer now live in a module above the routes (`lib/importRun.ts`, one import
+  at a time, for the life of the tab); the draft stays in the section, where
+  leaving can still throw it away, because it has not happened. A section mounted
+  while the import runs says so and offers no file to pick. One mounted when it
+  answers is told in the same tick, so the result and the emptied draft are one
+  commit (round 3's rule, kept); one mounted after it answered starts from the
+  outcome. Either way the outcome stays in the module until a section has
+  **painted** it (two animation frames after committing it), then it is
+  forgotten: shown once, as an outcome seen in place goes when the section is
+  left. Being told is not being shown (PR #332 review): a section can be told
+  while a navigation tears it down, or commit the outcome under a link's
+  transition that replaces it before the next frame, and the first version lost
+  the outcome both ways. **What is drawn is what is acknowledged** (round 2): the
+  section holds the outcome as one state, and the result and the apply's failure
+  are read from it. Held as three, the phone's fall-back cleared the drawn result
+  while the copy being acknowledged forgot it unseen. The fall-back is the
+  draft's and leaves the outcome be; a preview's refusal, the draft's, is a state
+  of its own and goes with it. Arriving takes nobody's keyboard: the keyboard moves at
+  the moments of sending and answering, never on mount. The other direction,
+  blocking navigation while it runs, was turned down: it needs a data router
+  (`useBlocker`) or hand-intercepted links, and it holds the tab bar hostage for
+  the import's seconds. A reload or a closed tab still loses the outcome and
+  aborts the request mid-flight, so while it is in flight the page asks first
+  (`beforeunload`). **An import belongs to the owner session it was sent
+  under** (round 3), identified by its CSRF token, which is one per session (an
+  HMAC of the session's own token). `AuthGate` forgets it on any read that is not
+  that session: signed out, expired, or another owner session, signed in again
+  here or in another tab while this tab read nothing between. Read as a state
+  alone, `owner` → `owner` across two sessions looked like no change, and the old
+  import's answer reached the new session. A read of the same session keeps it,
+  however the cache got there: a late sign-in's clear and re-read is `owner` →
+  nothing → `owner`, and the import is live. A confirmed logout (204) forgets
+  at once in the tab that sent it, whether or not the session can be re-read; a
+  refused one leaves the session and the import running (round 1; #333 is that
+  path's other loose ends). A mounted section is told when the import is
+  forgotten, so its card stops saying it is under way. And an accepted send
+  replaces the last outcome: a failure left beside "Importing…" read as the new
+  import's (round 3).
 - **The import's failures are said in its card**, last in it — under Preview when
   a preview is refused, just above the bar when an apply is. At the head of the
   section, where every error used to go, a phone put it a screen above the button

@@ -33,6 +33,21 @@ Shape:
 
 ---
 
+## #315 — an import keeps going when you leave Data management, and says how it ended when you come back (PR #332)
+- **Release note:** Leaving Settings → Data management while an import ran used to
+  lose track of it: the import finished on the server, but coming back showed an
+  empty Import card, with nothing to say it had run, and the same file could be
+  applied again (under Add only, adding its kits a second time). Now, coming back
+  while it runs shows it under way, with no file to pick until it ends; coming back
+  after shows how it ended, once. Reloading or closing the tab while an import runs
+  asks first.
+- **README:** nothing.
+- **Docs site:** `using/import-export.mdx`, under "Preview before you commit", one
+  more paragraph: once you click **Apply import**, the import runs to the end even
+  if you go to another page; come back to Data management to see it under way, then
+  how it ended. Reloading or closing the tab while it runs asks first, because that
+  would lose the outcome.
+
 ## #329, #327 — list tables fold when they don't fit, whatever the rows hold (PR #330, `75e0218`)
 - **Release note:** From tablet width up, a list's table moves a column under the
   name (or a date under the status) when the whole table doesn't fit the space it

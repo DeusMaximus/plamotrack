@@ -4,12 +4,17 @@
 import { useQueryClient } from "@tanstack/react-query";
 
 import { api, authSessionQuery, setCsrfToken } from "../api/client";
+import { forgetImportRun } from "./importRun";
 
 export function useSignOut(): () => Promise<void> {
   const queryClient = useQueryClient();
   return async () => {
     try {
       await api.logout();
+      // Ended, by the server's word: the import this tab sent goes with it
+      // (#315), whether or not the session can be re-read below. A refused
+      // logout leaves both running (PR #332 rounds 1 and 3).
+      forgetImportRun();
     } finally {
       // Whatever the server said, this browser is done: forget the CSRF token,
       // re-read the session — it now reports anonymous, so the AuthGate swaps to
