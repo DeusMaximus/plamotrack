@@ -452,7 +452,17 @@ test("a failed save says so beside its button, on screen (#316's siblings)", asy
       : route.fallback(),
   );
   const forms: [path: string, card: string, edit: (main: Locator) => Promise<void>, button: string][] = [
-    ["/settings/general", "Reference currency", (main) => main.getByLabel("Currency code").fill("NZD"), "Save"],
+    [
+      "/settings/general",
+      "Reference currency",
+      // Another currency than the instance's, or the form stays pristine and
+      // Save disabled (PR #334 review): the setting outlives a run.
+      async (main) => {
+        const field = main.getByLabel("Currency code");
+        await field.fill((await field.inputValue()) === "NZD" ? "JPY" : "NZD");
+      },
+      "Save",
+    ],
     [
       "/settings/language",
       "Language & formatting",
@@ -481,6 +491,28 @@ test("a failed save says so beside its button, on screen (#316's siblings)", asy
     }
   }
   await page.unrouteAll({ behavior: "wait" });
+});
+
+test("a token list that fails to load says so at its head, and leaves the page where it was (PR #334 review)", async ({ page }, testInfo) => {
+  // The list's banner says a refused Revoke and a failed load alike; only the
+  // Revoke is brought into view. On the smallest phone the list's head is below
+  // the fold, under the Create card, and revealing a load failure there moved
+  // the page away from the form someone was about to use.
+  await page.route("**/auth/tokens", (route) =>
+    route.request().method() === "GET"
+      ? route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ detail: "the list failed" }) })
+      : route.fallback(),
+  );
+  for (const size of sizesFor(testInfo.project.name)) {
+    await test.step(`${size.width} × ${size.height}`, async () => {
+      await page.setViewportSize(size);
+      await page.goto("/settings/tokens");
+      await expect(settingsCard(page, "Your tokens").getByRole("alert")).toHaveText("the list failed");
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+      expect(await page.evaluate(() => scrollY), "the page was not moved").toBe(0);
+    });
+  }
+  await page.unroute("**/auth/tokens");
 });
 
 test("a failed revoke is said on screen, wherever its row is in a long list (#316's sibling)", async ({ page }, testInfo) => {
