@@ -1835,6 +1835,9 @@ Two more from the same branch:
   where a near-budget word crossed its budget when Inter arrived. Only a page with
   ordinary words isolated the font listener — and that test then failed under WebKit,
   which fires no `loadingdone` for a stylesheet's faces: the listener had only ever
-  worked in Chromium. Each face's `loaded` promise replaced it. `Measured`'s refit is still killed only
-  together with it: the ordering it guards, a value that flips after the font event
-  has refit, could not be staged deterministically.
+  worked in Chromium. Each face's `loaded` promise replaced it. `Measured`'s refit
+  survived alone until Codex staged the ordering it guards: hold the measuring copies'
+  `ResizeObserver` deliveries while the font arrives and its pass runs, then release
+  them, so the value starts breaking after the table chose. The author had called
+  that ordering impossible to stage; it took a wrapped `ResizeObserver` in an init
+  script.

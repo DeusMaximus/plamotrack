@@ -1266,6 +1266,189 @@ test("a table chooses its fold again when the web font arrives", async ({ page }
   await expectFoldsToFit(page, STAGES.kits, `in Inter, at ${width} px`);
 });
 
+test("a value that starts breaking after the font's pass chooses the fold again", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "phone", "a phone has cards, not a table to fold");
+  test.setTimeout(90_000);
+  // `Measured` decides whether a value breaks in its own observer, and its new
+  // decision commits without the table rendering — so it asks the table to
+  // choose again (`useRefit`). The test above never needs that: there the font's
+  // own pass is the news. This one orders the two (Codex, PR #330 round 1): a
+  // scale of twelve figures and a full stop is a plain word in the fallback and
+  // past its budget in Inter, so it starts breaking only once the font is in;
+  // the measuring copies' observer deliveries are held while the font arrives and
+  // its pass runs, and released after. The box is set where the table fits only
+  // once the scale breaks. A mutant without the call survived every other test.
+  await page.addInitScript(() => {
+    const held: (() => void)[] = [];
+    const w = window as unknown as { __holdSizers: boolean; __releaseSizers: () => void };
+    w.__holdSizers = false;
+    w.__releaseSizers = () => {
+      w.__holdSizers = false;
+      for (const deliver of held.splice(0)) deliver();
+    };
+    const Native = window.ResizeObserver;
+    window.ResizeObserver = class extends Native {
+      constructor(callback: ResizeObserverCallback) {
+        super((entries, observer) => {
+          if (w.__holdSizers && entries.some((entry) => entry.target instanceof Element && entry.target.matches("[data-text]"))) {
+            held.push(() => callback(entries, observer));
+          } else callback(entries, observer);
+        });
+      }
+    };
+  });
+  const api = await apiContext();
+  const name = `Refit witness ${suffix}`;
+  await post(api, "/kits", { name, grade: "HG", scale: "888888888888." });
+  await api.dispose();
+
+  const fonts: Route[] = [];
+  await page.route((url) => url.pathname.endsWith(".woff2"), (route) => {
+    fonts.push(route);
+  });
+  const loaded = () => page.evaluate(() => [...document.fonts].filter((face) => face.family.includes("Inter Variable") && face.status === "loaded").length);
+  /** The narrowest box the whole table fits, tried by hand. */
+  const needWhole = () =>
+    page.evaluate(() => {
+      const box = document.querySelector("main .group\\/fold") as HTMLElement;
+      const drawn = box.hasAttribute("data-fold-1");
+      const width = box.style.width;
+      box.removeAttribute("data-fold-1");
+      let need = 300;
+      for (; need < 1600; need += 1) {
+        box.style.width = `${need}px`;
+        if (box.scrollWidth <= box.clientWidth) break;
+      }
+      box.style.width = width;
+      box.toggleAttribute("data-fold-1", drawn);
+      return need;
+    });
+  const breaks = () => shown(main(page).getByText("888888888888.")).first().evaluate((el) => getComputedStyle(el).overflowWrap);
+  /** Load with the font held; then hold the copies' deliveries, let the font in,
+   *  and wait for its own pass (two frames after its faces settle). */
+  const fontInSizersHeld = async (before?: () => Promise<void>) => {
+    await page.goto(`/kits?q=${encodeURIComponent(name)}`, { waitUntil: "domcontentloaded" });
+    await expect(shown(main(page).getByText(name, { exact: true }))).toBeVisible();
+    await expect.poll(() => fonts.length, "the web font was asked for").toBeGreaterThan(0);
+    expect(await loaded(), "the precondition: no face of the web font is in yet").toBe(0);
+    await before?.();
+    await page.evaluate(() => {
+      (window as unknown as { __holdSizers: boolean }).__holdSizers = true;
+    });
+    for (const route of fonts.splice(0)) await route.continue();
+    await expect.poll(loaded, "the web font arrives").toBeGreaterThan(0);
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      for (let frame = 0; frame < 2; frame += 1) await new Promise(requestAnimationFrame);
+    });
+  };
+  const release = () => page.evaluate(() => (window as unknown as { __releaseSizers: () => void }).__releaseSizers());
+
+  await page.setViewportSize({ width: 1270, height: 900 });
+  await fontInSizersHeld();
+  const unbroken = await needWhole();
+  expect(await breaks(), "in Inter, before the copy's news: still a plain word").toBe("normal");
+  await release();
+  await expect.poll(breaks, "in Inter, after it: the scale breaks").toBe("anywhere");
+  const broken = await needWhole();
+  testInfo.annotations.push({ type: "fonts", description: `the whole table needs ${unbroken} px before the scale breaks, ${broken} px after` });
+  expect(broken, "the precondition: breaking the scale makes the table narrower").toBeLessThan(unbroken);
+
+  // Again, with the box where only the broken scale fits whole.
+  await fontInSizersHeld(async () => {
+    await page.evaluate((w) => {
+      (document.querySelector("main .group\\/fold") as HTMLElement).style.width = `${w}px`;
+    }, broken);
+    await afterResize(page);
+  });
+  expect(await breaks(), "the precondition: the font is in and the scale has not broken yet").toBe("normal");
+  expect(await foldState(page, STAGES.kits).then((state) => state?.drawn), "the font's pass: folded").toBe(1);
+  await release();
+  await expect.poll(breaks, "the scale breaks").toBe("anywhere");
+  await expect
+    .poll(async () => (await foldState(page, STAGES.kits))?.drawn, { message: `the table chose again at ${broken} px`, timeout: 3_000 })
+    .toBe(0);
+  await expectFoldsToFit(page, STAGES.kits, `after the scale broke, at ${broken} px`);
+});
+
+test("a pass that ends at the stage it began keeps the keyboard where it was", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "phone", "a phone has cards, not a table to fold");
+  test.setTimeout(90_000);
+  // Every pass tries the stages from the whole table up (`FoldToFit`), so a
+  // control in a folded copy — a token card's Revoke, the Tracking link in an
+  // order's opened lines — is hidden for the length of the trial even when the
+  // pass ends where it began. A browser that dropped focus in that instant would
+  // leave the keyboard on <body> with the page looking unchanged, and the focus
+  // hook would not answer: by the time it looks, the control is drawn again
+  // (Greptile, PR #330). So: the control keeps focus through such passes, and
+  // never so much as loses it.
+  const api = await apiContext();
+  const minted = await api.post("/auth/tokens", { data: { name: `${TAG} same-stage token`, scopes: ["collection:read"] } });
+  expect(minted.ok(), await minted.text()).toBeTruthy();
+  const token = (await minted.json()) as { id: string };
+  try {
+    await page.setViewportSize({ width: 1270, height: 900 });
+    /** Size the fold box by hand and wait for the fold's pass. */
+    const boxAt = async (width: number) => {
+      await page.evaluate((w) => {
+        (document.querySelector("main .group\\/fold") as HTMLElement).style.width = `${w}px`;
+      }, width);
+      await afterResize(page);
+    };
+    /** Focus `control`, count what it hears, give the box each width, and say
+     *  whether it held the keyboard throughout at an unchanged stage. */
+    const holds = async (control: Locator, stages: number, widths: number[], label: string) => {
+      const stage = (await foldState(page, stages))?.drawn;
+      // The precondition: the trial does hide it — at stage 0 it is not drawn.
+      expect(
+        await control.evaluate((el, n) => {
+          const box = el.closest(".group\\/fold") as HTMLElement;
+          const was = [...Array(n)].map((_, i) => box.hasAttribute(`data-fold-${i + 1}`));
+          for (let i = 1; i <= n; i += 1) box.removeAttribute(`data-fold-${i}`);
+          const drawn = el.getClientRects().length > 0;
+          was.forEach((on, i) => box.toggleAttribute(`data-fold-${i + 1}`, on));
+          return drawn;
+        }, stages),
+        `${label}: the precondition — the whole table's trial hides it`,
+      ).toBe(false);
+      await control.focus();
+      await control.evaluate((el) => {
+        const w = window as unknown as { __lost: number };
+        w.__lost = 0;
+        el.addEventListener("focusout", () => (w.__lost += 1));
+      });
+      for (const width of widths) {
+        await boxAt(width);
+        expect.soft(await foldState(page, stages).then((state) => state?.drawn), `${label} at ${width} px: the stage it began at`).toBe(stage);
+      }
+      await expect.soft(control, `${label}: still focused`).toBeFocused();
+      expect.soft(await page.evaluate(() => (window as unknown as { __lost: number }).__lost), `${label}: focusout events`).toBe(0);
+    };
+
+    // Access tokens as cards, in a box too narrow for the table.
+    await page.goto("/settings/tokens");
+    await expect(shown(page.getByText(`${TAG} same-stage token`))).toHaveCount(1);
+    await boxAt(450);
+    expect(await foldState(page, STAGES.tokens).then((state) => state?.drawn), "tokens at 450 px: cards").toBe(1);
+    const revoke = shown(page.getByTestId("token-card")).filter({ hasText: `${TAG} same-stage token` }).getByRole("button", { name: "Revoke" });
+    await holds(revoke, STAGES.tokens, [451, 452, 450], "a token card's Revoke");
+
+    // Orders at its second stage, an order's lines open, the keyboard on the
+    // Tracking link the lines carry there.
+    await openList(page, `/orders?q=${q}`, NAMES.retailer);
+    await boxAt(640);
+    expect(await foldState(page, STAGES.orders).then((state) => state?.drawn), "orders at 640 px: the second stage").toBe(2);
+    await rowOf(page, ORDER_NUMBER).getByRole("button", { name: /line items for/ }).click();
+    const link = shown(main(page).getByRole("link", { name: TRACKING }));
+    await expect(link, "the tracking link, in the lines").toHaveCount(1);
+    expect(await link.evaluate((a) => a.closest("td")?.getAttribute("colspan") ?? null), "…and not a column").not.toBeNull();
+    await holds(link, STAGES.orders, [641, 642, 640], "the Tracking link in the lines");
+  } finally {
+    await api.delete(`/auth/tokens/${token.id}`);
+    await api.dispose();
+  }
+});
+
 test("an order card opens its lines as the table row does", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "phone", "the cards are the phone shell's");
   await openList(page, `/orders?q=${q}`, NAMES.retailer);

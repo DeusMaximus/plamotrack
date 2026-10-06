@@ -3975,10 +3975,15 @@ values past every line in both engines. So a table now folds by measuring itself
   arriving on a refetch folds Orders to its second stage under a focused Tracking
   link, and the keyboard lands on the link's stand-in; the web font arriving decides
   the stage of a box set between what the table needs in each font. Codex's round-2
-  payloads, ten-digit counts (#327) and A$9,999.00 are seeded rows. Mutants: a fold
-  that steps from the drawn stage, no per-commit pass, no sentinel, observing the
-  table, no font listener, no focus observer, no phone floor for tokens — each killed;
-  `Measured`'s refit only together with the font listener. #258's literal desktop lines ("1280 to 1361
+  payloads, ten-digit counts (#327) and A$9,999.00 are seeded rows. Two orderings are
+  held by hand: a value that starts breaking only after the font's own pass (its
+  measuring copies' observer deliveries held while the font arrives — Codex's witness,
+  PR #330), and a control in a folded copy kept focused, with no `focusout`, through
+  passes whose trial hides it and that end at the stage they began (Greptile, PR #330).
+  Mutants: a fold that steps from the drawn stage, no per-commit pass, no sentinel,
+  observing the table, no font trigger, no `Measured` refit, no focus observer, no
+  phone floor for tokens, and a browser that drops focus during the trial — each
+  killed. #258's literal desktop lines ("1280 to 1361
   px fold the order number") became what the rows imply: with these rows, 1280 folds
   the order number, 1440 nothing, Kits and Retailers never.
 - **An On hand cell wraps (#327).** WebKit found no break between the count and the
