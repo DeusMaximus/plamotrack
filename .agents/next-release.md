@@ -33,7 +33,7 @@ Shape:
 
 ---
 
-## #315 — an import keeps going when you leave Data management, and says how it ended when you come back (PR #NNN)
+## #315 — an import keeps going when you leave Data management, and says how it ended when you come back (PR #332)
 - **Release note:** Leaving Settings → Data management while an import ran used to
   lose track of it: the import finished on the server, but coming back showed an
   empty Import card, with nothing to say it had run, and the same file could be
