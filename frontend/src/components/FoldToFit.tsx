@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useRef, type ReactNode } from "react";
 
+import { focusFirst, focusKeysOf } from "../lib/focusKey";
 import { RefitContext } from "../lib/refit";
 
 /** Fold to fit (design §13.7, #329). A list table from 768 px folds a column
@@ -48,9 +49,17 @@ import { RefitContext } from "../lib/refit";
  *  Each schedules one pass in a microtask, so a commit that touches a hundred
  *  cells measures once — after React's synchronous re-renders, before paint.
  *
- *  **Focus** needs nothing new: a fold that hides the focused control is the
- *  `ResizeObserver` in `useFocusAcrossShells` (`lib/focusKey.ts`), which hears a
- *  control lose its box whatever took it — a viewport, or the rows. */
+ *  **Focus: the pass hands the keyboard on itself.** A pass that ends with the
+ *  focused control hidden gives the keyboard to whatever carries its key now
+ *  (`lib/focusKey.ts`), before the frame is painted. The focus hook's observer
+ *  would hear the control lose its box too — but not always in time: a turn
+ *  across the sidebar's line folds the table for one frame at the sidebar's
+ *  box, before the shell changes, and unfolds it the next. The hook moves the
+ *  keyboard to the folded copy from inside its own delivery and can only start
+ *  watching that copy a frame later — by when the copy is hidden already, and a
+ *  hidden box reports nothing to a new observation. The keyboard sat on
+ *  `<body>` for a frame or more (CI caught it one run in five, on #330). The
+ *  fold knows when it hides the focused control; it says so. */
 
 /** Whether the box is wider inside than out — the question the e2e asks too. */
 const boxOverflows = (box: HTMLElement): boolean => box.scrollWidth > box.clientWidth;
@@ -103,7 +112,10 @@ export function FoldToFit({ stages, floor = 0, overflows = boxOverflows, classNa
     queueMicrotask(() => {
       queued.current = false;
       const element = box.current;
-      if (element) chooseStage(element, inputs.current.stages, inputs.current.floor, inputs.current.overflows);
+      if (!element) return;
+      chooseStage(element, inputs.current.stages, inputs.current.floor, inputs.current.overflows);
+      const active = document.activeElement;
+      if (active && element.contains(active) && active.getClientRects().length === 0) focusFirst(focusKeysOf(active));
     });
   }, []);
   // Every commit: the rows this was given may be different ones.

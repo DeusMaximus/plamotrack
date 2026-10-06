@@ -157,9 +157,10 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   `data-focus-key="kit:<id>"`, one some shape does not draw at all
                         #   names what stands in for it (`data-focus-stand-in`), and `Modal`
                         #   (at close — and at open, when the commit that mounted it
-                        #   took its opener, #275) and `useFocusAcrossShells` (a shell change; a control
-                        #   that stopped being drawn) give the keyboard to whatever carries
-                        #   the key now. A new control of either kind owes itself one, and
+                        #   took its opener, #275), `useFocusAcrossShells` (a shell change; a control
+                        #   that stopped being drawn) and `FoldToFit` (a pass that hid the
+                        #   focused control — it answers itself, #330) give the keyboard to
+                        #   whatever carries the key now. A new control of either kind owes itself one, and
                         #   lists.spec.ts's sweep — every control, every way the page
                         #   changes — is where a missing one shows (§13.7). A change that
                         #   draws different *rows* (the phone's every row against the

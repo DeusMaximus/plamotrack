@@ -1841,3 +1841,10 @@ Two more from the same branch:
   them, so the value starts breaking after the table chose. The author had called
   that ordering impossible to stage; it took a wrapped `ResizeObserver` in an init
   script.
+- **A transient state is a state.** Turning across the sidebar's line folds Orders for
+  one frame, at the old shell's box, and unfolds it the next. Every focus test passed
+  locally, and CI lost the keyboard one run in five. A probe that logged each frame
+  showed the bounce at once; reasoning about the final states never would have. The
+  focus hook's deferred watch (its own lesson in `focusKey.ts`) missed a control
+  hidden before the watch began, so now the fold hands on focus it hides itself
+  (`FoldToFit`), and a test samples every frame of ten such turns.

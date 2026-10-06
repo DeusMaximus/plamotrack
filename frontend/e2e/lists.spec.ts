@@ -1266,18 +1266,27 @@ test("a table chooses its fold again when the web font arrives", async ({ page }
   await expectFoldsToFit(page, STAGES.kits, `in Inter, at ${width} px`);
 });
 
-test("a value that starts breaking after the font's pass chooses the fold again", async ({ page }, testInfo) => {
+test("a value that changes its break after the font's pass chooses the fold again", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === "phone", "a phone has cards, not a table to fold");
-  test.setTimeout(90_000);
+  test.setTimeout(120_000);
   // `Measured` decides whether a value breaks in its own observer, and its new
   // decision commits without the table rendering — so it asks the table to
-  // choose again (`useRefit`). The test above never needs that: there the font's
-  // own pass is the news. This one orders the two (Codex, PR #330 round 1): a
-  // scale of twelve figures and a full stop is a plain word in the fallback and
-  // past its budget in Inter, so it starts breaking only once the font is in;
-  // the measuring copies' observer deliveries are held while the font arrives and
-  // its pass runs, and released after. The box is set where the table fits only
-  // once the scale breaks. A mutant without the call survived every other test.
+  // choose again (`useRefit`). The font test above never needs that: there the
+  // font's own pass is the news. This one orders the two (Codex, PR #330 round
+  // 1): a scale that is a plain word in one font and past its budget in the
+  // other, its measuring copies' observer deliveries held while the font
+  // arrives and its pass runs, and released after — with the box where the
+  // table fits in one of the two decisions and not the other. A mutant without
+  // the call survived every other test.
+  //
+  // Which value crosses depends on the machine's fallback font: twelve figures
+  // and a full stop do on macOS (plain in the fallback, breaking in Inter) and
+  // not on CI's Linux. So the value is chosen here — a run of one glyph and a
+  // full stop, of whichever glyph and length one font puts furthest past the
+  // 8em budget (§13.7, a literal) and the other furthest under it, in either
+  // direction — and the fold is expected to go whichever way that decision
+  // moves the table.
+  const BUDGET_EM = 8;
   await page.addInitScript(() => {
     const held: (() => void)[] = [];
     const w = window as unknown as { __holdSizers: boolean; __releaseSizers: () => void };
@@ -1297,16 +1306,75 @@ test("a value that starts breaking after the font's pass chooses the fold again"
       }
     };
   });
-  const api = await apiContext();
-  const name = `Refit witness ${suffix}`;
-  await post(api, "/kits", { name, grade: "HG", scale: "888888888888." });
-  await api.dispose();
-
   const fonts: Route[] = [];
   await page.route((url) => url.pathname.endsWith(".woff2"), (route) => {
     fonts.push(route);
   });
   const loaded = () => page.evaluate(() => [...document.fonts].filter((face) => face.family.includes("Inter Variable") && face.status === "loaded").length);
+  const fontIn = async () => {
+    for (const route of fonts.splice(0)) await route.continue();
+    await expect.poll(loaded, "the web font arrives").toBeGreaterThan(0);
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      for (let frame = 0; frame < 2; frame += 1) await new Promise(requestAnimationFrame);
+    });
+  };
+  const openHeld = async (path: string, anchor: string) => {
+    // Not `openList`: `load` waits for the held font (WebKit).
+    await page.goto(path, { waitUntil: "domcontentloaded" });
+    await expect(shown(main(page).getByText(anchor, { exact: true })).first()).toBeVisible();
+    await expect.poll(() => fonts.length, "the web font was asked for").toBeGreaterThan(0);
+    expect(await loaded(), "the precondition: no face of the web font is in yet").toBe(0);
+  };
+  await page.setViewportSize({ width: 1270, height: 900 });
+
+  // 1. The value: each candidate's width in a scale cell's font, in both fonts.
+  const candidates = ["8", "1", "0", "W", "m", "l", "x"].flatMap((glyph) => Array.from({ length: 40 }, (_, n) => `${glyph.repeat(n + 3)}.`));
+  const ems = () =>
+    page.evaluate((texts) => {
+      // As `Measured` measures: its copy's layout, and every property it takes
+      // from the drawn text — a scale value's, here.
+      const drawn = document.querySelector("main tbody td:nth-child(3) span") as HTMLElement;
+      const style = getComputedStyle(drawn);
+      const PROPERTIES = ["fontFamily", "fontSize", "fontStyle", "fontWeight", "fontStretch", "fontKerning", "fontVariantNumeric", "fontFeatureSettings", "letterSpacing", "wordSpacing", "textTransform"] as const;
+      const host = document.createElement("div");
+      host.style.cssText = "position:absolute;width:0;height:0;overflow:hidden";
+      document.body.append(host);
+      const ems = texts.map((text) => {
+        const probe = document.createElement("span");
+        probe.textContent = text;
+        probe.style.cssText = "display:block;width:min-content;white-space:normal;visibility:hidden";
+        for (const property of PROPERTIES) probe.style[property] = style[property];
+        host.append(probe);
+        const em = probe.getBoundingClientRect().width / parseFloat(getComputedStyle(probe).fontSize);
+        probe.remove();
+        return em;
+      });
+      host.remove();
+      return ems;
+    }, candidates);
+  await openHeld(`/kits?q=${encodeURIComponent(NAMES.twin)}`, NAMES.twin);
+  const fallbackEms = await ems();
+  await fontIn();
+  const interEms = await ems();
+  // The widest margin either side, so the choice never rests on a hundredth of an em.
+  const margin = (n: number) =>
+    fallbackEms[n] > BUDGET_EM === interEms[n] > BUDGET_EM ? -1 : Math.min(Math.abs(fallbackEms[n] - BUDGET_EM), Math.abs(interEms[n] - BUDGET_EM));
+  const pick = candidates.reduce((best, _, n) => (margin(n) > margin(best) ? n : best), 0);
+  testInfo.annotations.push({
+    type: "fonts",
+    description: `chose "${candidates[pick]}": ${fallbackEms[pick].toFixed(2)}em in the fallback, ${interEms[pick].toFixed(2)}em in Inter`,
+  });
+  expect(margin(pick), "a value whose break the font decides, by more than 0.05em either side").toBeGreaterThan(0.05);
+  const scale = candidates[pick];
+  const before = fallbackEms[pick] > BUDGET_EM ? "anywhere" : "normal";
+  const after = interEms[pick] > BUDGET_EM ? "anywhere" : "normal";
+
+  const api = await apiContext();
+  const name = `Refit witness ${suffix}`;
+  await post(api, "/kits", { name, grade: "HG", scale });
+  await api.dispose();
+  const path = `/kits?q=${encodeURIComponent(name)}`;
   /** The narrowest box the whole table fits, tried by hand. */
   const needWhole = () =>
     page.evaluate(() => {
@@ -1323,52 +1391,44 @@ test("a value that starts breaking after the font's pass chooses the fold again"
       box.toggleAttribute("data-fold-1", drawn);
       return need;
     });
-  const breaks = () => shown(main(page).getByText("888888888888.")).first().evaluate((el) => getComputedStyle(el).overflowWrap);
-  /** Load with the font held; then hold the copies' deliveries, let the font in,
-   *  and wait for its own pass (two frames after its faces settle). */
-  const fontInSizersHeld = async (before?: () => Promise<void>) => {
-    await page.goto(`/kits?q=${encodeURIComponent(name)}`, { waitUntil: "domcontentloaded" });
-    await expect(shown(main(page).getByText(name, { exact: true }))).toBeVisible();
-    await expect.poll(() => fonts.length, "the web font was asked for").toBeGreaterThan(0);
-    expect(await loaded(), "the precondition: no face of the web font is in yet").toBe(0);
-    await before?.();
-    await page.evaluate(() => {
+  const wrap = () => shown(main(page).getByText(scale, { exact: true })).first().evaluate((el) => getComputedStyle(el).overflowWrap);
+  const holdSizers = () =>
+    page.evaluate(() => {
       (window as unknown as { __holdSizers: boolean }).__holdSizers = true;
     });
-    for (const route of fonts.splice(0)) await route.continue();
-    await expect.poll(loaded, "the web font arrives").toBeGreaterThan(0);
-    await page.evaluate(async () => {
-      await document.fonts.ready;
-      for (let frame = 0; frame < 2; frame += 1) await new Promise(requestAnimationFrame);
-    });
-  };
   const release = () => page.evaluate(() => (window as unknown as { __releaseSizers: () => void }).__releaseSizers());
 
-  await page.setViewportSize({ width: 1270, height: 900 });
-  await fontInSizersHeld();
-  const unbroken = await needWhole();
-  expect(await breaks(), "in Inter, before the copy's news: still a plain word").toBe("normal");
+  // 2. What the table needs whole before the copy's news and after it.
+  await openHeld(path, name);
+  await holdSizers();
+  await fontIn();
+  expect(await wrap(), "in Inter, before the copy's news: the fallback's decision").toBe(before);
+  const needBefore = await needWhole();
   await release();
-  await expect.poll(breaks, "in Inter, after it: the scale breaks").toBe("anywhere");
-  const broken = await needWhole();
-  testInfo.annotations.push({ type: "fonts", description: `the whole table needs ${unbroken} px before the scale breaks, ${broken} px after` });
-  expect(broken, "the precondition: breaking the scale makes the table narrower").toBeLessThan(unbroken);
+  await expect.poll(wrap, "in Inter, after it: Inter's decision").toBe(after);
+  const needAfter = await needWhole();
+  testInfo.annotations.push({ type: "need", description: `${scale}: ${before} → ${after}; the whole table needs ${needBefore} px → ${needAfter} px` });
+  expect(needAfter, "the precondition: the decision changes what the table needs").not.toBe(needBefore);
 
-  // Again, with the box where only the broken scale fits whole.
-  await fontInSizersHeld(async () => {
-    await page.evaluate((w) => {
-      (document.querySelector("main .group\\/fold") as HTMLElement).style.width = `${w}px`;
-    }, broken);
-    await afterResize(page);
-  });
-  expect(await breaks(), "the precondition: the font is in and the scale has not broken yet").toBe("normal");
-  expect(await foldState(page, STAGES.kits).then((state) => state?.drawn), "the font's pass: folded").toBe(1);
+  // 3. Again, with the box where the table is whole in one decision and not
+  // the other: the font's pass chooses by the first, the copy's news the second.
+  const width = Math.min(needBefore, needAfter);
+  const stageFor = (need: number) => (need <= width ? 0 : 1);
+  await openHeld(path, name);
+  await page.evaluate((w) => {
+    (document.querySelector("main .group\\/fold") as HTMLElement).style.width = `${w}px`;
+  }, width);
+  await afterResize(page);
+  await holdSizers();
+  await fontIn();
+  expect(await wrap(), "the precondition: the font is in and the decision has not changed yet").toBe(before);
+  expect(await foldState(page, STAGES.kits).then((state) => state?.drawn), `the font's pass, at ${width} px`).toBe(stageFor(needBefore));
   await release();
-  await expect.poll(breaks, "the scale breaks").toBe("anywhere");
+  await expect.poll(wrap, "the decision changes").toBe(after);
   await expect
-    .poll(async () => (await foldState(page, STAGES.kits))?.drawn, { message: `the table chose again at ${broken} px`, timeout: 3_000 })
-    .toBe(0);
-  await expectFoldsToFit(page, STAGES.kits, `after the scale broke, at ${broken} px`);
+    .poll(async () => (await foldState(page, STAGES.kits))?.drawn, { message: `the table chose again at ${width} px`, timeout: 3_000 })
+    .toBe(stageFor(needAfter));
+  await expectFoldsToFit(page, STAGES.kits, `after the decision changed, at ${width} px`);
 });
 
 test("a pass that ends at the stage it began keeps the keyboard where it was", async ({ page }, testInfo) => {
@@ -1983,6 +2043,50 @@ test("a fold or a swap inside one shell hands the keyboard to where the control 
   await page.setViewportSize(portrait);
   await expect.soft(link, "tracking, lines open: 1180 → 820 px").toBeFocused({ timeout: 2_000 });
   expect.soft(complaints, "errors the page reported").toEqual([]);
+});
+
+test("a fold that lasts one frame does not leave the keyboard on <body> for it", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "phone", "a phone has cards, not a table to fold");
+  test.setTimeout(120_000);
+  // Across the sidebar's line the viewport narrows a frame before the shell
+  // does, so Orders folds to its second stage at the sidebar's box for one
+  // frame and unfolds the next. With an order's lines open and the keyboard on
+  // its Tracking link, the focus hook moved the keyboard to the link's copy in
+  // the lines from inside its own delivery, began watching it a frame later —
+  // and by then the copy was hidden, which a new observation never reports. The
+  // keyboard sat on <body> for a frame or more; the sweep below caught it one
+  // run in five on CI (#330). Every frame is sampled here, ten turns over.
+  const lost: string[] = [];
+  for (let turn = 0; turn < 10; turn += 1) {
+    await page.setViewportSize({ width: 1300, height: 900 });
+    await openList(page, `/orders?q=${q}`, NAMES.retailer);
+    await rowOf(page, ORDER_NUMBER).getByRole("button", { name: /line items for/ }).click();
+    const link = shown(main(page).getByRole("link", { name: TRACKING }));
+    await expect(link).toHaveCount(1);
+    expect(await link.evaluate((a) => a.closest("td")?.getAttribute("colspan") ?? null), "the precondition: the link is the column's").toBeNull();
+    await link.focus();
+    await page.evaluate(() => {
+      const w = window as unknown as { __frames: string[] };
+      w.__frames = [];
+      let frame = 0;
+      const sample = () => {
+        if (document.activeElement === document.body) w.__frames.push(`frame ${frame}`);
+        if (++frame < 12) requestAnimationFrame(sample);
+      };
+      requestAnimationFrame(sample);
+      document.addEventListener("focusout", (event) => {
+        if (event.relatedTarget === null) w.__frames.push(`focusout to nowhere at frame ${frame}`);
+      });
+    });
+    await page.setViewportSize({ width: 1100, height: 900 });
+    const frames = await page.evaluate(async () => {
+      for (let n = 0; n < 14; n += 1) await new Promise(requestAnimationFrame);
+      return (window as unknown as { __frames: string[] }).__frames;
+    });
+    if (frames.length > 0) lost.push(`turn ${turn}: ${frames.join(", ")}`);
+    await expect.soft(link, `turn ${turn}: the keyboard is back on the column's link`).toBeFocused();
+  }
+  expect(lost, "frames on <body>, and focus lost to nowhere").toEqual([]);
 });
 
 test("no change of representation leaves the keyboard on <body>", async ({ page }, testInfo) => {

@@ -3955,10 +3955,19 @@ values past every line in both engines. So a table now folds by measuring itself
   the stylesheet's faces, leaving a table folded where Inter fit it whole. Each
   queues one pass in a microtask, so a commit touching every cell measures once,
   after React's synchronous re-renders and before paint.
-- **Focus needed nothing new.** `useFocusAcrossShells` already observes the focused
-  control's box and hands the keyboard on when it loses it, whatever took it; a fold
-  the rows decide — a second order arriving on a refetch, the Tracking link folding
-  away under the keyboard — lands on the link's stand-in as a resize's fold does.
+- **The fold hands on the focus it hides.** A pass that ends with the focused control
+  undrawn gives the keyboard to whatever carries its key now (`focusFirst`), before
+  paint. The first version left that to `useFocusAcrossShells`, whose observer hears
+  any control lose its box, and every focus test passed. CI's Integration run then
+  lost the Tracking link one run in five on a turn across the sidebar's line. The
+  viewport narrows a frame before the shell changes, so Orders folds to its second
+  stage at the sidebar's box for one frame and unfolds the next. The hook moved the
+  keyboard to the link's copy in the opened lines from inside its own delivery, so it
+  began watching the copy a frame later. By then the copy was hidden, and a hidden box
+  reports nothing to a new observation. The keyboard sat on `<body>` until something
+  else answered. The fold knows when it hides the focused control, so it answers
+  itself. The hook still answers for shells and for everything a fold doesn't
+  draw.
 - **Stages.** Kits 1 (Grade and Scale under the name), Orders 2 (the number under the
   retailer; then Shipped, Received under the chip and Tracking into the lines),
   Retailers 1 (Notes), Tools 1 (Condition), Display 1 (Manufacturer and Notes),
@@ -3976,14 +3985,17 @@ values past every line in both engines. So a table now folds by measuring itself
   link, and the keyboard lands on the link's stand-in; the web font arriving decides
   the stage of a box set between what the table needs in each font. Codex's round-2
   payloads, ten-digit counts (#327) and A$9,999.00 are seeded rows. Two orderings are
-  held by hand: a value that starts breaking only after the font's own pass (its
-  measuring copies' observer deliveries held while the font arrives — Codex's witness,
-  PR #330), and a control in a folded copy kept focused, with no `focusout`, through
-  passes whose trial hides it and that end at the stage they began (Greptile, PR #330).
-  Mutants: a fold that steps from the drawn stage, no per-commit pass, no sentinel,
-  observing the table, no font trigger, no `Measured` refit, no focus observer, no
-  phone floor for tokens, and a browser that drops focus during the trial — each
-  killed. #258's literal desktop lines ("1280 to 1361
+  held by hand: a value whose break decision changes only after the font's own pass
+  (its measuring copies' observer deliveries held while the font arrives — Codex's
+  witness, PR #330; the value is chosen on the machine, since which run of glyphs
+  crosses the budget depends on its fallback font), and a control in a folded copy
+  kept focused, with no `focusout`, through passes whose trial hides it and that end
+  at the stage they began (Greptile, PR #330). And every frame of ten turns across
+  the sidebar's line, with the keyboard on a Tracking link whose lines are open: never
+  on `<body>`. Mutants: a fold that steps from the drawn stage, no per-commit pass, no
+  sentinel, observing the table, no font trigger, no `Measured` refit, no focus
+  observer, no phone floor for tokens, a browser that drops focus during the trial,
+  and a fold that leaves hidden focus to the hook — each killed. #258's literal desktop lines ("1280 to 1361
   px fold the order number") became what the rows imply: with these rows, 1280 folds
   the order number, 1440 nothing, Kits and Retailers never.
 - **An On hand cell wraps (#327).** WebKit found no break between the count and the
