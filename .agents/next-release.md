@@ -33,6 +33,20 @@ Shape:
 
 ---
 
+## #329, #327 — list tables fold when they don't fit, whatever the rows hold (PR pending)
+- **Release note:** From tablet width up, a list's table moves a column under the
+  name (or a date under the status) when the whole table doesn't fit the space it
+  has. It used to do this at fixed widths, so some unusual but valid rows (long words
+  in every field, a fully dated and rated kit, a ten-digit stock count, a large
+  cost in some currencies) could still push the row's Edit button out of sight. A
+  table now folds only when it has to, and unfolds when the rows that needed it
+  are gone. In Safari on an iPad, an Inventory item's count now goes above its − and
+  + buttons when the column is short of room, instead of pushing the table wide.
+  Settings → Access tokens shows card rows on a phone, as every list there does,
+  including on a phone-width iPad mini.
+- **README:** nothing.
+- **Docs site:** nothing.
+
 ## #323 — a long word no longer pushes a list past the screen (PR #328)
 - **Release note:** A name, category, manufacturer, grade, scale, note or shop
   address with no space in it — a product code run together, say — used to make a

@@ -8,6 +8,7 @@ import { api, ApiError } from "../api/client";
 import type { PackingQuality, Retailer, ShippingSpeed, WouldOrderAgain } from "../api/types";
 import { PACKING_QUALITIES, SHIPPING_SPEEDS, WOULD_ORDER_AGAIN } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
+import { FoldToFit } from "../components/FoldToFit";
 import { Measured, TableRuler } from "../components/Measured";
 import { Modal } from "../components/Modal";
 import {
@@ -350,13 +351,11 @@ export function RetailersPage() {
           ))}
         </CardList>
       ) : paged.total > 0 ? (
-        // `@container`: the table folds to the width this box has, not the
-        // device's (§13.7). Below 46rem (736 px) — the 707 px the full table
-        // needs, and a little — Notes leaves its column for a second,
-        // truncated line under the name. Every iPad in portrait is under it
-        // beside the rail; beside the sidebar the box is 976 px at 1280, so the
-        // desktop never is.
-        <div className="@container overflow-x-auto rounded-md border border-border bg-surface">
+        // Folds to fit its box (§13.7, #329): when the whole table is wider
+        // than the box, Notes leaves its column for a second, truncated line
+        // under the name — with ordinary rows, every iPad in portrait beside
+        // the rail, never the desktop.
+        <FoldToFit stages={1} className="overflow-x-auto rounded-md border border-border bg-surface">
           <TableRuler>
           <table className="w-full text-sm">
             <thead>
@@ -366,7 +365,7 @@ export function RetailersPage() {
                 <th className="px-3 py-2.5">{t("retailers.headerPacking")}</th>
                 <th className="px-3 py-2.5">{t("retailers.headerShipping")}</th>
                 <th className="px-3 py-2.5">{t("retailers.headerAgain")}</th>
-                <th className="px-3 py-2.5 @max-[46rem]:hidden">
+                <th className="px-3 py-2.5 group-data-fold-1/fold:hidden">
                   {t("retailers.notes")}
                 </th>
                 <th className="px-3 py-2.5" />
@@ -395,7 +394,7 @@ export function RetailersPage() {
                         props its column open at the full length of the note. */}
                     {retailer.notes && (
                       <div
-                        className="hidden w-0 min-w-full truncate text-xs text-muted @max-[46rem]:block"
+                        className="hidden w-0 min-w-full truncate text-xs text-muted group-data-fold-1/fold:block"
                         title={retailer.notes}
                       >
                         {retailer.notes}
@@ -425,14 +424,14 @@ export function RetailersPage() {
                     )}
                   </td>
                   <td
-                    className="max-w-48 truncate px-3 py-2 text-muted @max-[46rem]:hidden"
+                    className="max-w-48 truncate px-3 py-2 text-muted group-data-fold-1/fold:hidden"
                     title={retailer.notes ?? ""}
                   >
                     {retailer.notes ?? "—"}
                   </td>
                   {/* `touch:px-0`: the 44 px target carries its own margin around
                       the icon, so a touch table needs no more width than a
-                      mouse's — one fold line serves both. */}
+                      mouse's and folds where a mouse's does. */}
                   <td className="px-2 py-2 text-end touch:px-0">
                     <IconButton
                       label={t("common.editNamed", { name: retailer.name })}
@@ -448,7 +447,7 @@ export function RetailersPage() {
           </table>
           </TableRuler>
           <Pager paged={paged} onPage={paging.setPage} />
-        </div>
+        </FoldToFit>
       ) : (
         <EmptyState>
           {isLoading

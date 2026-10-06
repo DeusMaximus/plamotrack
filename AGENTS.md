@@ -153,7 +153,7 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   shell.test.ts holds the hook and the stylesheet together
     lib/focusKey.ts     # focus by record — the rule is "every change of representation
                         #   accounts for the focused control": one drawn differently per
-                        #   shell (or folded away, or swapped by a container query) carries
+                        #   shell (or folded away, or swapped for cards by a fold) carries
                         #   `data-focus-key="kit:<id>"`, one some shape does not draw at all
                         #   names what stands in for it (`data-focus-stand-in`), and `Modal`
                         #   (at close — and at open, when the commit that mounted it
@@ -170,19 +170,23 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   for the count on its button, so the two cannot disagree
     pages/              # HomePage (§13.2: bench, strips, mail), KitsPage, OrdersPage,
                         #   InventoryPage, RetailersPage — card rows below 768 px, a table
-                        #   from there that folds by its own box's width (`@container`),
-                        #   the desktop's included; the fold lines are measured, read the
-                        #   comments before moving one (§13.7). What a line cannot know
+                        #   from there that folds to fit its own box — `FoldToFit`
+                        #   (`components/FoldToFit.tsx`, #329) tries each stage from the
+                        #   whole table up before paint and draws the first that fits,
+                        #   the desktop's included; cells read the stage as
+                        #   `group-data-fold-<n>/fold:` variants, never a container query
+                        #   in rem (a fixed line bounds only the rows it was measured with,
+                        #   §13.7). What a fold cannot hold
                         #   gives way by its *value*: a date in words wraps, one in digits
                         #   never does (`dateInDigits`); a reference, a name or any free
                         #   text a cell says breaks once its widest word is past a measured
                         #   budget — measured by the browser in `components/Measured.tsx`,
                         #   never counted in characters — and an ordinary one is a plain
                         #   word. A new free-text cell owes it `Measured` (#323), a new
-                        #   filter `<select>` a width cap, and a table with several
-                        #   free-text columns a fold line measured with a word just under
-                        #   its budget in each — budgets bound a value, not a row (#328);
-                        #   a fixed line still bounds only what it was measured with (#329).
+                        #   filter `<select>` a width cap, and a part of a table that
+                        #   changes its width without the table rendering owes it
+                        #   `useRefit()` (`Measured` calls it) — budgets bound a value, not
+                        #   a row (#328), so the fold has to see the whole row (#329).
                         #   A fold keeps a hidden copy
                         #   of what it moves, so a test reading a row's text filters for
                         #   the visible one — MorePage (the phone's fifth tab),

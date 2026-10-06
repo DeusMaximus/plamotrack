@@ -169,9 +169,9 @@ export function focusedRecordKeys(): string[] {
  *
  *  Two ways a control stops being there, and one answer to each. **Removed** —
  *  React swapped the subtree because the shell changed: the layout effect on
- *  `shell` below. **No longer drawn** — a container query folded its column
- *  away or showed the cards instead of the table, with no shell change and no
- *  render at all (an iPad Air turning, 1180 to 820 px, is the rail both ways;
+ *  `shell` below. **No longer drawn** — a table folded its column away or
+ *  showed the cards instead of the table (`FoldToFit`, #329), with no shell
+ *  change and no render of the control at all (an iPad Air turning, 1180 to 820 px, is the rail both ways;
  *  Codex #266, finding 4): a `ResizeObserver` on the focused control, which
  *  reports a control that lost its box whatever took it, before the frame is
  *  painted (run in Chromium and WebKit; Firefox never). Where focus is at that moment is not one answer, in one

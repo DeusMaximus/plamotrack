@@ -64,36 +64,151 @@ export async function expectFits(page: Page, label: string): Promise<void> {
   expect.soft(report.escaped, `${label}: controls outside their list`).toEqual([]);
 }
 
+/** The fold stage a list's table is drawn at, and the one it should be (design
+ *  §13.7, #329): the first, from the whole table up, at which the table's
+ *  scrolling box is not wider inside than out — or the last, `stages`, when none
+ *  is. Tried here, by hand and synchronously, so nothing of the page's own can
+ *  run between a stage and its measurement: each stage's `data-fold-<n>`
+ *  attributes are set on the box (cumulative: stage 2 is both), the box
+ *  measured, and what was drawn put back. `floor`: the stage a box may not
+ *  unfold past (Access tokens on a phone). Null when no fold box is drawn. */
+export function foldState(
+  page: Page,
+  stages: number,
+  floor = 0,
+): Promise<{ drawn: number; expected: number; fits: boolean[] } | null> {
+  return page.evaluate(
+    ([stages, floor]) => {
+      const onScreen = (element: Element) => element.getClientRects().length > 0;
+      const box = [...document.querySelectorAll<HTMLElement>(".group\\/fold")].find(onScreen);
+      if (!box) return null;
+      const scroller = box.matches(".overflow-x-auto") ? box : (box.querySelector(".overflow-x-auto") as HTMLElement);
+      const stageOf = () => [...box.attributes].filter((a) => /^data-fold-\d+$/.test(a.name)).length;
+      const set = (stage: number) => {
+        for (let n = 1; n <= stages; n += 1) box.toggleAttribute(`data-fold-${n}`, n <= stage);
+      };
+      const drawn = stageOf();
+      const fits: boolean[] = [];
+      for (let stage = 0; stage <= stages; stage += 1) {
+        set(stage);
+        fits.push(scroller.scrollWidth <= scroller.clientWidth);
+      }
+      set(drawn);
+      const first = fits.findIndex((fit, stage) => fit && stage >= floor);
+      return { drawn, expected: first === -1 ? stages : first, fits };
+    },
+    [stages, floor] as const,
+  );
+}
+
+/** Wait until the page has had a frame to answer a change of size: its
+ *  `ResizeObserver`s run before the frame is painted, the fold's first among
+ *  them, and one observing a new target always reports it — so this one,
+ *  started after the change, reports after the fold has chosen. It resolves in
+ *  a task of its own: a caller that changed a size again from inside the
+ *  observers' step would have the browser report "ResizeObserver loop completed
+ *  with undelivered notifications" — the test's doing, once a width, and
+ *  indistinguishable from the page's (measured: 666 in a 667-width sweep). */
+export const afterResize = (page: Page): Promise<void> =>
+  page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        const observer = new ResizeObserver(() => {
+          observer.disconnect();
+          setTimeout(resolve);
+        });
+        observer.observe(document.documentElement);
+      }),
+  );
+
+/** How many times a fold box's stage changes over `frames` frames from now —
+ *  a mechanism that has settled changes nothing (Codex, on #329: a probe that
+ *  folded by its current width flipped 60 times in 60 frames). */
+export function stageChanges(page: Page, frames = 30): Promise<number> {
+  return page.evaluate(async (frames) => {
+    let changes = 0;
+    const observer = new MutationObserver((records) => {
+      changes += records.filter((record) => /^data-fold-\d+$/.test(record.attributeName ?? "")).length;
+    });
+    for (const box of document.querySelectorAll(".group\\/fold")) observer.observe(box, { attributes: true });
+    for (let frame = 0; frame < frames; frame += 1) await new Promise(requestAnimationFrame);
+    observer.disconnect();
+    return changes;
+  }, frames);
+}
+
 /** Give the list's box every width from `first` to `last` and report the ones at
  *  which the list — the table, or the cards that replace it — is wider than the
- *  box or has a control past its edge. */
-export function sweepBox(page: Page, first: number, last: number): Promise<{ widths: number[]; measured: number } | null> {
+ *  box or has a control past its edge, and the ones at which the fold drawn is
+ *  not the first that fits (`foldState`). A frame a width: the fold is chosen
+ *  in a `ResizeObserver`, as a person's resize would have it, and the stage is
+ *  read once the observers have run. `stages`: the box's fold stages. Then back
+ *  down, every seventh width (reported negative): a box that narrows is the
+ *  case an observer of the *table* misses — at its minimum it stops resizing
+ *  while the box goes on shrinking — and a mutant that watched it survived the
+ *  climb alone (#329). */
+export function sweepBox(
+  page: Page,
+  first: number,
+  last: number,
+  stages: number,
+  floor = 0,
+): Promise<{ widths: number[]; misfolded: string[]; measured: number } | null> {
   return page.evaluate(
-      ([from, to]) => {
-        const onScreen = (element: Element) => element.getClientRects().length > 0;
-        const root = document.querySelector("main") as HTMLElement;
-        const box = [...root.querySelectorAll<HTMLElement>(".overflow-x-auto")].find((el) => el.querySelector("table"));
-        if (!box) return null;
-        // The element the container queries read: the box, or the wrapper round
-        // it where a list swaps the table for cards (Access tokens).
-        const container = (box.closest('[class*="@container"]') as HTMLElement | null) ?? box;
-        const widths: number[] = [];
-        let measured = 0;
-        for (let width = from; width <= to; width += 1) {
-          container.style.width = `${width}px`;
-          const list = onScreen(box) ? box : (container.querySelector("ul") as HTMLElement);
-          if (!list || !onScreen(list)) return { widths: [-width], measured };
-          measured += 1;
-          const controls = [...list.querySelectorAll<HTMLElement>("button, a[href]")].filter(onScreen);
-          const edge = list.getBoundingClientRect().right + 0.5;
-          if (list.scrollWidth > list.clientWidth || controls.some((control) => control.getBoundingClientRect().right > edge)) {
-            widths.push(width);
-          }
+    async ([from, to, stages, floor]) => {
+      const onScreen = (element: Element) => element.getClientRects().length > 0;
+      const root = document.querySelector("main") as HTMLElement;
+      const box = [...root.querySelectorAll<HTMLElement>(".overflow-x-auto")].find((el) => el.querySelector("table"));
+      if (!box) return null;
+      // The element the fold is chosen for and the sweep sizes: the box, or the
+      // wrapper round it where a list swaps the table for cards (Access tokens).
+      const container = (box.closest(".group\\/fold") as HTMLElement | null) ?? box;
+      const stageOf = () => [...container.attributes].filter((a) => /^data-fold-\d+$/.test(a.name)).length;
+      const set = (stage: number) => {
+        for (let n = 1; n <= stages; n += 1) container.toggleAttribute(`data-fold-${n}`, n <= stage);
+      };
+      const answered = () =>
+        new Promise<void>((resolve) => {
+          const observer = new ResizeObserver(() => {
+            observer.disconnect();
+            setTimeout(resolve);
+          });
+          observer.observe(container);
+        });
+      const widths: number[] = [];
+      const misfolded: string[] = [];
+      let measured = 0;
+      const down: number[] = [];
+      for (let width = to - 7; width >= from; width -= 7) down.push(-width);
+      for (const signed of [...Array.from({ length: to - from + 1 }, (_, n) => from + n), ...down]) {
+        const width = Math.abs(signed);
+        container.style.width = `${width}px`;
+        await answered();
+        const list = onScreen(box) ? box : (container.querySelector("ul") as HTMLElement);
+        if (!list || !onScreen(list)) return { widths: [-width], misfolded, measured };
+        if (signed > 0) measured += 1;
+        const controls = [...list.querySelectorAll<HTMLElement>("button, a[href]")].filter(onScreen);
+        const edge = list.getBoundingClientRect().right + 0.5;
+        if (list.scrollWidth > list.clientWidth || controls.some((control) => control.getBoundingClientRect().right > edge)) {
+          widths.push(signed);
         }
-        container.style.width = "";
-        return { widths, measured };
-      },
-      [first, last],
+        if (stages > 0) {
+          const drawn = stageOf();
+          const fits: boolean[] = [];
+          for (let stage = 0; stage <= stages; stage += 1) {
+            set(stage);
+            fits.push(box.scrollWidth <= box.clientWidth);
+          }
+          set(drawn);
+          const firstFit = fits.findIndex((fit, stage) => fit && stage >= floor);
+          const expected = firstFit === -1 ? stages : firstFit;
+          if (drawn !== expected) misfolded.push(`${signed}: drawn ${drawn}, fits at ${expected}`);
+        }
+      }
+      container.style.width = "";
+      return { widths, misfolded, measured };
+    },
+    [first, last, stages, floor] as const,
   );
 }
 

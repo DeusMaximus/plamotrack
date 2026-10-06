@@ -7,6 +7,7 @@ import { api, metaQuery, summaryQuery } from "../api/client";
 import type { Order, OrderItem, OrderStage, Retailer } from "../api/types";
 import { ORDER_SORTS, ORDER_STAGES, type OrderSort } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
+import { FoldToFit } from "../components/FoldToFit";
 import { Measured, TableRuler } from "../components/Measured";
 import {
   FILTERS_FOCUS,
@@ -320,31 +321,17 @@ export function OrdersPage() {
           <Pager paged={paged} onPage={paging.setPage} className="" />
         </>
       ) : paged.total > 0 ? (
-        // `@container`: the table folds to the width this box has, not the
-        // device's (§13.7), in two steps. Below 66rem (1056 px) the order number
-        // rides under the retailer's name; below 60rem (960 px) Shipped and
-        // Received go under the status chip and Tracking into the expanded
-        // lines. A fold moves what a column said, it never drops it.
-        //
-        // The lines are what the table needs with ordinary rows in it, and a
-        // little: not the demo's 953 px, because an order that was shipped *and*
-        // received says "27/08/2026 · 9 d" where the demo says a date. With that
-        // and a seventeen-character order number the three shapes need 1040, 935
-        // and 625 px — lists.spec.ts seeds those rows and gives the box every
-        // width. A line is a guess about rows nobody has typed yet, so what it
-        // cannot know gives way by its value — a date written in words wraps
-        // (`dateWrap`), a long reference breaks (`Measured`) — and past that the
-        // box still scrolls.
-        //
-        // By the box at every width, the desktop included (the owner's call,
-        // 2026-09-18): beside the sidebar the box is the viewport less 306 px, so
-        // from 1280 to 1361 px the order number is under the retailer — where
-        // `main` had the table 60 px wider than its box and the edit control off
-        // its edge — and from 1362 px (a 1366 px laptop, a 13-inch iPad) the
-        // table is whole. Beside the rail an 11-inch iPad Pro in landscape has it
-        // whole, a 1180 px one and a mini the first fold, 1024–1080 px and every
-        // portrait the second.
-        <div className="@container overflow-x-auto rounded-md border border-border bg-surface">
+        // Folds to fit its box (§13.7, #329), in two stages: first the order
+        // number rides under the retailer's name; then Shipped and Received go
+        // under the status chip and Tracking into the expanded lines. A fold
+        // moves what a column said, it never drops it. Each stage is taken only
+        // when the table before it is wider than the box — the desktop's
+        // included (the owner's call, 2026-09-18: beside the sidebar at 1280 px,
+        // an order both shipped and received puts the number under the
+        // retailer). What a fold cannot hold gives way by its value — a date
+        // written in words wraps (`dateWrap`), a long reference breaks
+        // (`Measured`) — and past the second stage the box scrolls.
+        <FoldToFit stages={2} className="overflow-x-auto rounded-md border border-border bg-surface">
           <TableRuler>
           <table className="w-full text-sm">
             <thead>
@@ -352,19 +339,19 @@ export function OrdersPage() {
                 <th className="w-8 px-3 py-2" />
                 <th className="px-3 py-2.5">{t("orders.headerDate")}</th>
                 <th className="px-3 py-2.5">{t("orders.headerRetailer")}</th>
-                <th className="px-3 py-2.5 @max-[66rem]:hidden">
+                <th className="px-3 py-2.5 group-data-fold-1/fold:hidden">
                   {t("orders.headerOrderNumber")}
                 </th>
                 <th className="px-3 py-2.5">{t("orders.headerStatus")}</th>
-                <th className="px-3 py-2.5 @max-[60rem]:hidden">
+                <th className="px-3 py-2.5 group-data-fold-2/fold:hidden">
                   {t("orders.headerShipped")}
                 </th>
-                <th className="px-3 py-2.5 @max-[60rem]:hidden">
+                <th className="px-3 py-2.5 group-data-fold-2/fold:hidden">
                   {t("orders.headerReceived")}
                 </th>
                 <th className="px-3 py-2.5">{t("orders.headerItems")}</th>
                 <th className="px-3 py-2.5">{t("orders.headerTotal")}</th>
-                <th className="px-3 py-2.5 @max-[60rem]:hidden">
+                <th className="px-3 py-2.5 group-data-fold-2/fold:hidden">
                   {t("orders.headerTracking")}
                 </th>
                 <th className="px-3 py-2.5" />
@@ -411,12 +398,12 @@ export function OrdersPage() {
                     <td className="px-3 py-2 font-medium">
                       <Measured text={retailerName.get(order.retailer_id) ?? "…"} kind="name" />
                       {order.order_number && (
-                        <div className="hidden text-xs font-normal text-muted @max-[66rem]:block">
+                        <div className="hidden text-xs font-normal text-muted group-data-fold-1/fold:block">
                           <Measured text={order.order_number} kind="orderNumber" />
                         </div>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-muted @max-[66rem]:hidden">
+                    <td className="px-3 py-2 text-muted group-data-fold-1/fold:hidden">
                       {order.order_number ? (
                         <Measured text={order.order_number} kind="orderNumber" />
                       ) : (
@@ -428,19 +415,19 @@ export function OrdersPage() {
                         row at once, which is what the tooltip couldn't (#120). */}
                     <td className="px-3 py-2">
                       <OrderStageChip stage={order.stage} />
-                      <StageDates order={order} className="mt-1 hidden @max-[60rem]:block" />
+                      <StageDates order={order} className="mt-1 hidden group-data-fold-2/fold:block" />
                     </td>
                     {/* nowrap: "in transit · 6 d" split across lines reads as two
                         facts, and a date in digits never benefits from wrapping —
                         one in words does (`dateWrap`). */}
                     <td
-                      className={`${dateWrap(order.shipped_at)} px-3 py-2 text-muted @max-[60rem]:hidden`}
+                      className={`${dateWrap(order.shipped_at)} px-3 py-2 text-muted group-data-fold-2/fold:hidden`}
                       title={t("orders.shippedTooltip")}
                     >
                       {order.shipped_at ? formatDate(order.shipped_at) : "—"}
                     </td>
                     <td
-                      className={`${dateWrap(order.received_at)} px-3 py-2 text-muted @max-[60rem]:hidden`}
+                      className={`${dateWrap(order.received_at)} px-3 py-2 text-muted group-data-fold-2/fold:hidden`}
                       title={t("orders.receivedTooltip")}
                     >
                       {receivedCell(order)}
@@ -464,12 +451,12 @@ export function OrdersPage() {
                         <div className="text-xs text-muted">{convertedTotal(order)}</div>
                       )}
                     </td>
-                    <td className="px-3 py-2 @max-[60rem]:hidden">
+                    <td className="px-3 py-2 group-data-fold-2/fold:hidden">
                       <Tracking order={order} />
                     </td>
                     {/* `touch:px-0`: the 44 px target carries its own margin around
                         the icon, so a touch table needs no more width than a
-                        mouse's — one pair of fold lines serves both. */}
+                        mouse's and folds where a mouse's does. */}
                     <td
                       className="px-2 py-2 text-end touch:px-0"
                       onClick={(event) => event.stopPropagation()}
@@ -501,7 +488,7 @@ export function OrdersPage() {
           </table>
           </TableRuler>
           <Pager paged={paged} onPage={paging.setPage} />
-        </div>
+        </FoldToFit>
       ) : (
         <EmptyState>
           {isLoading
@@ -925,7 +912,7 @@ function LinesBox({ order, itemName }: { order: Order; itemName: Map<string, str
       )}
       {/* Where the Tracking column goes when the table folds it away (§13.7). */}
       {hasTracking(order) && (
-        <div className="col-span-4 hidden items-center justify-between gap-3.5 border-t border-rule bg-surface px-3 py-2 text-xs text-muted @max-[60rem]:flex">
+        <div className="col-span-4 hidden items-center justify-between gap-3.5 border-t border-rule bg-surface px-3 py-2 text-xs text-muted group-data-fold-2/fold:flex">
           <span>{t("orders.headerTracking")}</span>
           <span className="min-w-0 text-end text-text wrap-anywhere">
             <Tracking order={order} />

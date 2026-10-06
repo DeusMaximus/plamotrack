@@ -16,6 +16,7 @@ import type {
   UpgradeUpdate,
 } from "../api/types";
 import { ExportCsvButton } from "../components/ExportCsvButton";
+import { FoldToFit } from "../components/FoldToFit";
 import { Measured, TableRuler } from "../components/Measured";
 import { Modal } from "../components/Modal";
 import {
@@ -614,6 +615,17 @@ function LargeStepper({
  * is for there, so the two buttons are full 44 px targets with the count between
  * them — the count the table shows in its own cell. Same names, same delta.
  */
+/** A table row's On hand cell: the count, the stepper and what follows them —
+ *  one line where the column has room, wrapped where it has not (#327). As
+ *  inline boxes they were one line in WebKit whatever the column, the engine
+ *  finding no break between a word and an `inline-flex` box where Chromium
+ *  breaks: a ten-digit count made the column 208 px there against Chromium's
+ *  136, and held every Inventory table past its box beside the rail even fully
+ *  folded. A flex row that wraps breaks the same in both. */
+function StockCell({ children }: { children: ReactNode }) {
+  return <div className="flex flex-wrap items-center gap-x-2 gap-y-1">{children}</div>;
+}
+
 function StockStepper({
   item,
   queryKey,
@@ -966,16 +978,11 @@ export function InventoryPage() {
             ))}
           </CardList>
         ) : pagedTools.total ? (
-          // `@container`: the table folds to the width this box has (§13.7, #323).
-          // Below 44rem (704 px) Condition leaves its column for the name's
-          // second line. The line is measured with a word just under its budget
-          // (`Measured`) in every free-text column at once (9.74em, 7.73em) and
-          // an ordinary cost: 690 px, WebKit with a touch screen. Below it the
-          // folded table needs 558. Every iPad in portrait beside the rail is
-          // under it. A line bounds the rows it was measured with, not every
-          // value: words nearer the budgets, or a wider currency, outgrow it,
-          // and the box scrolls (#329 is folding to fit instead).
-          <div className="@container overflow-x-auto rounded-md border border-border bg-surface">
+          // Folds to fit its box (§13.7, #323, #329): when the whole table is
+          // wider than the box, Condition leaves its column for the name's second
+          // line. Words just under their budgets in every free-text column need
+          // about 690 px whole, so every iPad in portrait beside the rail.
+          <FoldToFit stages={1} className="overflow-x-auto rounded-md border border-border bg-surface">
             <TableRuler>
             <table className="w-full text-sm">
               <thead>
@@ -984,7 +991,7 @@ export function InventoryPage() {
                   <th className="px-3 py-2.5">{t("inventory.category")}</th>
                   <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
                   <th className="px-3 py-2.5">{t("inventory.headerRefCost")}</th>
-                  <th className="px-3 py-2.5 @max-[44rem]:hidden">{t("inventory.headerCondition")}</th>
+                  <th className="px-3 py-2.5 group-data-fold-1/fold:hidden">{t("inventory.headerCondition")}</th>
                   <th className="px-3 py-2.5" />
                 </tr>
               </thead>
@@ -994,7 +1001,7 @@ export function InventoryPage() {
                     <td className="px-3 py-2 font-medium">
                       <Measured text={tool.name} kind="name" />
                       {tool.condition_notes && (
-                        <div className="hidden text-xs font-normal text-muted @max-[44rem]:block">
+                        <div className="hidden text-xs font-normal text-muted group-data-fold-1/fold:block">
                           <Measured text={tool.condition_notes} kind="text" />
                         </div>
                       )}
@@ -1003,10 +1010,12 @@ export function InventoryPage() {
                       <Measured text={tool.category} kind="text" />
                     </td>
                     <td className="px-3 py-2">
-                      <span className="me-2 tabular-nums" data-testid="stock-count">
-                        {formatNumber(tool.quantity_on_hand)}
-                      </span>
-                      <StockStepper item={tool} queryKey="tools" onError={setActionError} />
+                      <StockCell>
+                        <span className="tabular-nums" data-testid="stock-count">
+                          {formatNumber(tool.quantity_on_hand)}
+                        </span>
+                        <StockStepper item={tool} queryKey="tools" onError={setActionError} />
+                      </StockCell>
                     </td>
                     <td className="px-3 py-2">
                       {tool.unit_cost_reference_minor === null ||
@@ -1017,7 +1026,7 @@ export function InventoryPage() {
                             tool.unit_cost_reference_currency,
                           )}
                     </td>
-                    <td className="px-3 py-2 text-muted @max-[44rem]:hidden">
+                    <td className="px-3 py-2 text-muted group-data-fold-1/fold:hidden">
                       {tool.condition_notes ? <Measured text={tool.condition_notes} kind="text" /> : "—"}
                     </td>
                     <td className="px-3 py-2 text-end">
@@ -1037,7 +1046,7 @@ export function InventoryPage() {
             </table>
             </TableRuler>
             <Pager paged={pagedTools} onPage={paging.setPage} />
-          </div>
+          </FoldToFit>
         ) : (
           <EmptyState>
             {tools.isLoading
@@ -1118,18 +1127,16 @@ export function InventoryPage() {
                         <Measured text={item.category} kind="text" />
                       </td>
                       <td className="px-3 py-2">
-                        <span
-                          className={`me-2 tabular-nums ${low ? "font-semibold text-danger" : ""}`}
-                          data-testid="stock-count"
-                        >
-                          {formatNumber(item.quantity_on_hand)}
-                        </span>
-                        <StockStepper item={item} queryKey="consumables" onError={setActionError} />
-                        {low && (
-                          <Chip tone="text-danger" className="ms-2">
-                            {t("inventory.restock")}
-                          </Chip>
-                        )}
+                        <StockCell>
+                          <span
+                            className={`tabular-nums ${low ? "font-semibold text-danger" : ""}`}
+                            data-testid="stock-count"
+                          >
+                            {formatNumber(item.quantity_on_hand)}
+                          </span>
+                          <StockStepper item={item} queryKey="consumables" onError={setActionError} />
+                          {low && <Chip tone="text-danger">{t("inventory.restock")}</Chip>}
+                        </StockCell>
                       </td>
                       <td className="px-3 py-2">
                         {item.low_stock_threshold === null
@@ -1219,10 +1226,12 @@ export function InventoryPage() {
                       <Measured text={upgrade.manufacturer} kind="text" />
                     </td>
                     <td className="px-3 py-2">
-                      <span className="me-2 tabular-nums" data-testid="stock-count">
-                        {formatNumber(upgrade.quantity_on_hand)}
-                      </span>
-                      <StockStepper item={upgrade} queryKey="upgrades" onError={setActionError} />
+                      <StockCell>
+                        <span className="tabular-nums" data-testid="stock-count">
+                          {formatNumber(upgrade.quantity_on_hand)}
+                        </span>
+                        <StockStepper item={upgrade} queryKey="upgrades" onError={setActionError} />
+                      </StockCell>
                     </td>
                     <td className="px-3 py-2 text-end">
                       <div className="flex items-center justify-end gap-1">
@@ -1283,12 +1292,12 @@ export function InventoryPage() {
             ))}
           </CardList>
         ) : pagedDisplayItems.total ? (
-          // `@container`, as Tools (#323): below 55rem (880 px) Manufacturer and
-          // Notes leave their columns for the name's second line. Measured the
-          // same way — every free-text column a word under its budget — the
-          // whole table needs 873 px (WebKit, touch) and the folded one 609.
-          // Beside the rail from 1024 px it is whole; beside the sidebar always.
-          <div className="@container overflow-x-auto rounded-md border border-border bg-surface">
+          // Folds to fit, as Tools (#323, #329): Manufacturer and Notes leave
+          // their columns for the name's second line. Words just under their
+          // budgets in every free-text column need about 873 px whole, so with
+          // those it is whole beside the rail from 1024 px, beside the sidebar
+          // from 1280.
+          <FoldToFit stages={1} className="overflow-x-auto rounded-md border border-border bg-surface">
             <TableRuler>
             <table className="w-full text-sm">
               <thead>
@@ -1296,9 +1305,9 @@ export function InventoryPage() {
                   <th className="px-3 py-2.5">{t("common.name")}</th>
                   <th className="px-3 py-2.5">{t("inventory.category")}</th>
                   <th className="px-3 py-2.5">{t("inventory.scale")}</th>
-                  <th className="px-3 py-2.5 @max-[55rem]:hidden">{t("inventory.manufacturer")}</th>
+                  <th className="px-3 py-2.5 group-data-fold-1/fold:hidden">{t("inventory.manufacturer")}</th>
                   <th className="px-3 py-2.5">{t("inventory.headerOnHand")}</th>
-                  <th className="px-3 py-2.5 @max-[55rem]:hidden">{t("inventory.notes")}</th>
+                  <th className="px-3 py-2.5 group-data-fold-1/fold:hidden">{t("inventory.notes")}</th>
                   <th className="px-3 py-2.5" />
                 </tr>
               </thead>
@@ -1308,7 +1317,7 @@ export function InventoryPage() {
                     <td className="px-3 py-2 font-medium">
                       <Measured text={row.name} kind="name" />
                       {(row.manufacturer || row.notes) && (
-                        <div className="hidden text-xs font-normal text-muted @max-[55rem]:block">
+                        <div className="hidden text-xs font-normal text-muted group-data-fold-1/fold:block">
                           <Measured
                             text={[row.manufacturer, row.notes].filter(Boolean).join(t("common.dotSeparator"))}
                             kind="text"
@@ -1322,16 +1331,18 @@ export function InventoryPage() {
                     <td className="px-3 py-2">
                       {row.scale ? <Measured text={row.scale} kind="text" /> : "—"}
                     </td>
-                    <td className="px-3 py-2 @max-[55rem]:hidden">
+                    <td className="px-3 py-2 group-data-fold-1/fold:hidden">
                       {row.manufacturer ? <Measured text={row.manufacturer} kind="text" /> : "—"}
                     </td>
                     <td className="px-3 py-2">
-                      <span className="me-2 tabular-nums" data-testid="stock-count">
-                        {formatNumber(row.quantity_on_hand)}
-                      </span>
-                      <StockStepper item={row} queryKey="display-items" onError={setActionError} />
+                      <StockCell>
+                        <span className="tabular-nums" data-testid="stock-count">
+                          {formatNumber(row.quantity_on_hand)}
+                        </span>
+                        <StockStepper item={row} queryKey="display-items" onError={setActionError} />
+                      </StockCell>
                     </td>
-                    <td className="px-3 py-2 text-muted @max-[55rem]:hidden">
+                    <td className="px-3 py-2 text-muted group-data-fold-1/fold:hidden">
                       {row.notes ? <Measured text={row.notes} kind="text" /> : "—"}
                     </td>
                     <td className="px-3 py-2 text-end">
@@ -1351,7 +1362,7 @@ export function InventoryPage() {
             </table>
             </TableRuler>
             <Pager paged={pagedDisplayItems} onPage={paging.setPage} />
-          </div>
+          </FoldToFit>
         ) : (
           <EmptyState>
             {displayItems.isLoading

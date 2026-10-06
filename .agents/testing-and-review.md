@@ -181,17 +181,26 @@ a page-level check calls a clipped edit control fine. What #258 learned doing it
   to pass or fail a fold line on the letters the clock dealt. Digits are tabular in
   a table cell; use them where the tag sits in a width-setting cell.
 - **Sweep the box, don't sample the viewport.** Nine viewports are nine points; a
-  fold line a few pixels short of what its table needs is a band a few pixels wide
-  between them (the second Orders fold overflowed from 866 to 927 px and no sampled
-  width was in it). Set the container's `style.width` to every px from the narrowest
-  box to the widest — container queries answer the box, whatever set its width — and
-  collect the widths that overflow. Under a touch project *and* a mouse one: the
-  44 px pencil must not cost the table anything.
-- **To read what a fold state needs**, disable the fold (`@max-[1rem]`) and take the
-  last overflowing width plus one. Put the line over that, not on it — and say the
-  devices either side of it out loud: a rounder number 16 px higher would have folded
-  every 1366 px laptop. A container query reads the box's *content* width, so a 1 px
-  border is 2 px of the arithmetic.
+  fold a few pixels off is a band a few pixels wide between them (the second Orders
+  fold line overflowed from 866 to 927 px and no sampled width was in it). `sweepBox`
+  (`e2e/lists.ts`) sets the fold box's `style.width` to every px from the narrowest box
+  to the widest, then back down every seventh, and at each collects overflow and a
+  stage that is not the first that fits. Since #329 the fold is chosen in a
+  `ResizeObserver`, so the sweep waits a frame a width (about 11 s a table) and must
+  resolve that wait in a task of its own: setting the next width from inside the
+  observers' step is the *test's* "ResizeObserver loop" error, once a width, and it
+  reads exactly like the page's. Under a touch project *and* a mouse one: the 44 px
+  pencil must not cost the table anything — and under WebKit, whose inline line
+  breaking differs (#327: no break between a word and an `inline-flex` box).
+- **Which stage a table should be at** is the first that fits, and `foldState` tries
+  each by hand, synchronously, so nothing of the page's runs between a stage and its
+  measurement. A fold decided by content needs content-driven tests too: rows that
+  leave while the rest stay mounted (a mutant without the per-commit pass survived a
+  test that swapped one row for another), a refetch, a web font arriving on a page
+  where no value crosses a budget. And after a turn under WebKit, wait for the fold
+  (a column's header) before asserting where focus is — `setViewportSize` resolves
+  before the page has heard of the resize (#275), and the fold now follows the page,
+  not the stylesheet.
 - **`getByText` sees hidden elements.** A CSS fold keeps a hidden second copy of what
   it moves, and `expect(getByText("MS-91055")).toBeVisible()` becomes a strict-mode
   violation at widths where nothing ever folds. A test that reads a list row's text
@@ -293,7 +302,7 @@ selects and a button; a sweep of **every** control then found the pager, two lin
 Export CSV and the entire navigation, in code a reviewer had already passed. So:
 enumerate the focusable controls from the page, focus each, change the page under it
 each way it can change — a shell's line (744 ↔ 1133 px), a fold inside one shell
-(1180 ↔ 820 px: no shell change, no render, only a container query), the other shell
+(1180 ↔ 820 px: no shell change, no render, only a fold), the other shell
 line (1100 ↔ 1300 px) — and assert the keyboard is not on `<body>`. Re-read the list
 after every change (a shell swap replaces the nodes, and a probe that tagged them once
 silently skipped everything remounted — it reported 27 losses where there were 211).

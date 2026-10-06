@@ -1811,3 +1811,30 @@ Two harness traps from the same PR:
 - **The near-budget rows hid both floors.** Other rows' words held every column wider
   than a floor, so a mutant that removed one survived. A floor is observable only
   where nothing else holds the column: measure the row alone.
+
+## The test's observer is the page's to the browser (#329)
+
+Folding to fit moved the fold from a container query into a `ResizeObserver`. The
+first full run of the box sweep flooded the log with "ResizeObserver loop completed
+with undelivered notifications" and stalled. That is the exact error Codex had
+warned a fold-to-fit observer would raise. The count gave the cause away: 666 in a
+667-width sweep, on Consumables too, which has no fold at all. The sweep waited for
+each width with an observer of its own and set the next width in that observer's
+microtask, still inside the browser's observer step. **A size changed inside the
+step is undeliverable whoever changed it**, and the browser reports it against the
+page. Resolving the wait in a task of its own (`setTimeout`) took it to zero, and the
+sweep now asserts no observer error at all, which a mutant observing the table
+instead of the sentinel then tripped.
+
+Two more from the same branch:
+- **A killed run leaves its rows.** Stopping a Playwright run skips `afterAll`, and the
+  next run's tests found two run tags on one Inventory page and failed on them. After
+  any interrupted run, recreate the throwaway database before trusting the next one.
+- **Mutants of a mechanism with several triggers survive one at a time.** The font
+  listener and `Measured`'s refit each covered for the other on the tagged Kits list,
+  where a near-budget word crossed its budget when Inter arrived. Only a page with
+  ordinary words isolated the font listener — and that test then failed under WebKit,
+  which fires no `loadingdone` for a stylesheet's faces: the listener had only ever
+  worked in Chromium. Each face's `loaded` promise replaced it. `Measured`'s refit is still killed only
+  together with it: the ordering it guards, a value that flips after the font event
+  has refit, could not be staged deterministically.

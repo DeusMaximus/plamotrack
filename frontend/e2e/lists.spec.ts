@@ -1,8 +1,8 @@
 /**
  * List pages on a phone and a tablet (design §13.7, #258). Below 768 px a list is
  * card rows and its filters one bottom sheet; from 768 px it stays a table, and a
- * table folds to the width its *box* has — under the rail that is the viewport
- * less 130 px, so every iPad folds something. Runs in three projects
+ * table folds when it does not fit its *box* (#329) — under the rail that is the
+ * viewport less 130 px, so every iPad folds something. Runs in three projects
  * (playwright.config.ts): `phone` and `tablet` with a touch screen, `app` with a
  * mouse, which is also the rail in a narrow desktop window. What it holds:
  *
@@ -43,14 +43,16 @@
  * series; a retailer with only a name; an order with no number or dates — since
  * a fold is a place a null can leave a dangling separator or an empty line.
  *
- * Widths, fold lines and sizes are literals from the decision record, never
- * imported from `src/` — a test that reads its expectations from the code under
- * test moves with it.
+ * Widths, sizes and each table's number of fold stages are literals from the
+ * decision record, never imported from `src/` — a test that reads its
+ * expectations from the code under test moves with it. Which stage a table
+ * should be drawn at is not a literal since #329: it is the first at which the
+ * table fits its box, and `foldState` (lists.ts) tries each by hand to say so.
  */
-import { chromium, expect, request, test, type APIRequestContext, type Locator, type Page, type Route } from "@playwright/test";
+import { chromium, expect, request, test, type APIRequestContext, type Browser, type Locator, type Page, type Route } from "@playwright/test";
 
 import { API, APP, STORAGE_STATE, apiContext } from "./api";
-import { expandEveryOrder, expectFits, isCut, linesOf, main, shown, sweepBox } from "./lists";
+import { afterResize, expandEveryOrder, expectFits, foldState, isCut, linesOf, main, shown, stageChanges, sweepBox } from "./lists";
 import { openListAt } from "./listRows";
 import { holdShellEvents, installShellEventHold, releaseShellEvents } from "./shellEvents";
 
@@ -60,7 +62,7 @@ type Size = { width: number; height: number };
 // the round's fixes wrap where they used to clip, and wrapping is decided by the
 // narrow end) — and the four tablet widths #258's done-when names
 // (768, 820, 1024, 1180). `app` has a mouse: 900 and 1100 are the rail in a
-// narrow desktop window — the other pointer across the same fold lines.
+// narrow desktop window — the other pointer across the same folds.
 const SIZES: Record<string, Size[]> = {
   app: [
     { width: 900, height: 800 },
@@ -87,19 +89,10 @@ const sizesFor = (project: string): Size[] => {
 };
 const isPhone = (size: Size) => size.width < 768;
 
-/** The fold lines, in px of the table's box at the default 16 px rem (§13.7,
- *  "Built — #258"): at or above it the column is a column — at every viewport,
- *  the desktop's included. */
-const FOLD = {
-  orderNumber: 1056,
-  orderDates: 960,
-  kitGrade: 768,
-  retailerNotes: 736,
-  tokenTable: 576,
-  // #323: measured with a word just under its budget in every free-text column.
-  toolCondition: 704,
-  displayNotes: 880,
-};
+/** How many stages each table folds through (§13.7, #329): stage 0 is the whole
+ *  table, and each stage folds more. Consumables and Upgrades have none — their
+ *  widest rows fit the narrowest box a table is drawn in. */
+const STAGES = { kits: 1, orders: 2, retailers: 1, tools: 1, consumables: 0, upgrades: 0, display: 1, tokens: 1 };
 
 // Digits, not base 36: the tag is a word of the retailer's name and a segment of
 // the order number, the two cells that set their columns' minimum widths, and
@@ -118,8 +111,8 @@ const NAMES = {
   bareRetailer: `${TAG} Bare Shop`,
   twin: `${TAG} Twin`,
   // The widest word an ordinary name has — 116 real kit names, measured for
-  // #323 — so a budget set under it would break it, and the fold lines are
-  // held with it in the column.
+  // #323 — so a budget set under it would break it, and the folds are
+  // measured with it in the column.
   bareKit: `${TAG} Bare (Unidentified`,
   transitKit: `${TAG} Shipped Kit`,
   tool: `${TAG} Nippers`,
@@ -131,8 +124,8 @@ const SERIES = `${TAG} Saga`;
 const NOTES = "Double-boxes everything and answers email within the hour, which is rarer than it should be.";
 const ORDER_NUMBER = `LST-${suffix}-0001`;
 const TRACKING = "EJ482113905JP";
-// The values a row can hold that are wider than the ordinary ones the fold lines
-// were measured with (Codex #266, findings 1 and 2): an order number of thirty-two
+// The values a row can hold that are wider than the ordinary ones #258's fold
+// lines were measured with (Codex #266, findings 1 and 2): an order number of thirty-two
 // digits with nowhere to break — wider than a 320 px phone's card, so it has to
 // break — a USPS tracking number with its routing prefix, thirty digits, for the
 // same reason — and a total in three currencies with its converted line. Digits, like the tag, so the widths are the same every run.
@@ -171,8 +164,8 @@ const UNBROKEN = "MSN04IINIGHTINGALEVERNIERTHRUSTERSET1234567890MSN04IINIGHTINGA
 // And the other side of the budgets (Codex #328, finding 1): words that stay
 // plain — 9.74em in a name's medium, 7.73em in other text, in Chromium and
 // WebKit alike — in every free-text column of a row at once. No one value
-// breaks, so the table's minimum is the sum of them; Inventory's fold lines are
-// drawn from it. Plus the reviewer's own ordinary row, which overflowed Display
+// breaks, so the table's minimum is the sum of them; Inventory's tables fold
+// for it (#323, then to fit, #329). Plus the reviewer's own ordinary row, which overflowed Display
 // at 768 px with nothing near a budget.
 const NEAR_NAME = "WWWMMMMMMoo";
 const NEAR_TEXT = "WWWWWMMM";
@@ -182,6 +175,24 @@ const NEAR_NAMES = {
   upgrade: `${TAG} ${NEAR_NAME} Upgrade`,
   display: `${TAG} ${NEAR_NAME} Display`,
   ordinaryDisplay: `${TAG} Weatherproof Display`,
+};
+// Codex's payloads from #328's second round, through the real API (#329): words
+// still under their budgets (9.99em and 7.98em) in every free-text column at
+// once, with the widest ordinary values beside them — a fully dated, rated kit;
+// a cost in Swiss francs. Each overflowed its fixed fold line (Kits by 118 px at
+// 900 px); folded to fit, each fits. And the widest counts and cost a Tools or
+// Display row holds (#327): ten digits, and A$9,999.00.
+const CODEX_NAME = "WWWMMMMMMooi";
+const CODEX_TEXT = "WWWWWMMMi";
+const CODEX_NAMES = {
+  kit: `${TAG} WWWMMMMMMoo`,
+  tool: `${TAG} ${CODEX_NAME} Tool`,
+  toolMax: `${TAG} ${CODEX_NAME} Tool Max`,
+  display: `${TAG} ${CODEX_NAME} Display`,
+  displayMax: `${TAG} ${CODEX_NAME} Display Max`,
+  // The two tables with no fold: the most they hold has to fit unfolded.
+  consumableMax: `${TAG} ${CODEX_NAME} Consumable Max`,
+  upgradeMax: `${TAG} ${CODEX_NAME} Upgrade Max`,
 };
 const UNBROKEN_NAMES = {
   kit: `${TAG} ${UNBROKEN}`,
@@ -422,6 +433,55 @@ test.beforeAll(async () => {
     quantity_on_hand: 3,
     notes: NEAR_TEXT,
   });
+  // Codex #328, round 2 (#329), and #327's ten digits.
+  const codexKit = await post(api, "/kits", {
+    name: CODEX_NAMES.kit,
+    grade: "WWWWWMMM",
+    scale: "WWWWWMMM",
+    kit_number: "WWWWWMMM",
+    series: "WWWWWMMM",
+    status: "complete",
+    build_started_at: "2026-01-01T00:00:00Z",
+    build_completed_at: "2026-01-02T00:00:00Z",
+  });
+  const codexRated = await api.patch(`/kits/${codexKit.id}`, { data: { rating: 5 } });
+  expect(codexRated.ok(), await codexRated.text()).toBeTruthy();
+  await post(api, "/tools", {
+    name: CODEX_NAMES.tool,
+    category: CODEX_TEXT,
+    quantity_on_hand: 12,
+    unit_cost_reference_minor: 4500,
+    unit_cost_reference_currency: "CHF",
+    condition_notes: CODEX_TEXT,
+  });
+  await post(api, "/tools", {
+    name: CODEX_NAMES.toolMax,
+    category: CODEX_TEXT,
+    quantity_on_hand: 2147483646,
+    unit_cost_reference_minor: 999900,
+    unit_cost_reference_currency: "AUD",
+    condition_notes: CODEX_TEXT,
+  });
+  for (const [name, count] of [
+    [CODEX_NAMES.display, 12],
+    [CODEX_NAMES.displayMax, 2147483646],
+  ] as const) {
+    await post(api, "/display-items", {
+      name,
+      category: CODEX_TEXT,
+      scale: CODEX_TEXT,
+      manufacturer: CODEX_TEXT,
+      quantity_on_hand: count,
+      notes: CODEX_TEXT,
+    });
+  }
+  await post(api, "/consumables", {
+    name: CODEX_NAMES.consumableMax,
+    category: CODEX_TEXT,
+    quantity_on_hand: 2147483646,
+    low_stock_threshold: 2147483646,
+  });
+  await post(api, "/upgrades", { name: CODEX_NAMES.upgradeMax, manufacturer: CODEX_TEXT, quantity_on_hand: 2147483646 });
   await post(api, "/display-items", {
     name: NEAR_NAMES.ordinaryDisplay,
     category: "Accessories",
@@ -471,11 +531,26 @@ async function pageComplaints(page: Page): Promise<string[]> {
   return complaints;
 }
 
-/** The width the container queries read: the table box's content width. */
-const boxWidth = (page: Page): Promise<number> =>
-  shown(main(page).locator(".overflow-x-auto").filter({ has: page.locator("table") }))
-    .first()
-    .evaluate((box) => box.clientWidth);
+/** How many fold stages the table at `path` has (`STAGES`). */
+const stagesOf = (path: string): number => {
+  if (path.startsWith("/kits")) return STAGES.kits;
+  if (path.startsWith("/orders")) return STAGES.orders;
+  if (path.startsWith("/retailers")) return STAGES.retailers;
+  if (path.includes("tab=consumables")) return STAGES.consumables;
+  if (path.includes("tab=upgrades")) return STAGES.upgrades;
+  if (path.includes("tab=display-items")) return STAGES.display;
+  if (path.startsWith("/inventory")) return STAGES.tools;
+  throw new Error(`lists.spec.ts knows no table at ${path}`);
+};
+
+/** The table is drawn at the first fold stage at which it fits its box — or
+ *  its last, past which the box scrolls (§13.7, #329). */
+async function expectFoldsToFit(page: Page, stages: number, label: string, floor = 0): Promise<number> {
+  const state = await foldState(page, stages, floor);
+  expect(state, `${label}: no fold box drawn`).not.toBeNull();
+  expect.soft(state?.drawn, `${label}: the stage drawn (fits at each stage: ${state?.fits.join(", ")})`).toBe(state?.expected);
+  return state?.drawn ?? -1;
+}
 
 // ---------------------------------------------------------------------------
 
@@ -502,6 +577,14 @@ test("no list page scrolls sideways, no table outgrows its box, no row control i
     ["/inventory?tab=upgrades", NEAR_NAMES.upgrade],
     ["/inventory?tab=display-items", NEAR_NAMES.display],
     ["/inventory?tab=display-items", NEAR_NAMES.ordinaryDisplay],
+    // Codex #328, round 2 (#329), and #327's ten digits: Kits draws its row
+    // with the rows above.
+    ["/inventory", CODEX_NAMES.tool],
+    ["/inventory", CODEX_NAMES.toolMax],
+    ["/inventory?tab=display-items", CODEX_NAMES.display],
+    ["/inventory?tab=display-items", CODEX_NAMES.displayMax],
+    ["/inventory?tab=consumables", CODEX_NAMES.consumableMax],
+    ["/inventory?tab=upgrades", CODEX_NAMES.upgradeMax],
   ];
   for (const size of sizesFor(testInfo.project.name)) {
     await page.setViewportSize(size);
@@ -515,49 +598,60 @@ test("no list page scrolls sideways, no table outgrows its box, no row control i
         .toHaveCount(isPhone(size) ? 0 : 1);
       if (path.startsWith("/orders")) await expandEveryOrder(page);
       await expectFits(page, `${path} at ${size.width} px`);
+      if (!isPhone(size) && stagesOf(path) > 0) await expectFoldsToFit(page, stagesOf(path), `${path} at ${size.width} px`);
     }
   }
 });
 
-test("at no box width is a table wider than its box", async ({ page }, testInfo) => {
+test("at no box width is a table wider than its box, and none folds more than it must", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === "phone", "a phone has cards, not a table to fold");
-  // The sizes above are nine points on a line; a fold line a few pixels short
-  // of what its table needs is a band a few pixels wide between them — the
-  // second Orders fold was exactly that for an afternoon, overflowing from 866
-  // to 927 px and nowhere a viewport was looking. So: every width. The box is
-  // given each width from a little under the rail's narrowest (638 px, the
-  // viewport less 130 at 768 — a real iPad; the 4 px under it is slack the
-  // fully folded Orders table, which needs 625, has to keep) to the desktop's
-  // at 1600 px (1300), by hand — container queries answer the box, whatever set
-  // its width, so the viewport it is done under does not matter.
+  // The sizes above are a few points on a line; what a fold does between them
+  // is a band they never look at — under #258's fixed lines the second Orders
+  // fold overflowed from 866 to 927 px for an afternoon, nowhere a viewport was
+  // looking. So: every width, from a little under the rail's narrowest box
+  // (638 px, the viewport less 130 at 768 — a real iPad) to the desktop's at
+  // 1600 px (1300), set on the box by hand — the fold answers the box, whatever
+  // set its width, so the viewport it is done under does not matter. At each,
+  // the list fits its box, and the stage drawn is the first that fits
+  // (`sweepBox`, `foldState`): never less folded than it must be, never more.
   // `tablet` runs it with a touch screen and `app` with a mouse: the 44 px
-  // pencil must cost the table nothing.
+  // pencil must cost the table nothing. A frame a width, so it is slow.
+  test.setTimeout(600_000);
+  const complaints = await pageComplaints(page);
   await page.setViewportSize({ width: 1270, height: 900 });
-  for (const [path, anchor, from, to] of [
-    [`/kits?q=${q}`, NAMES.twin, 634, 1300],
-    [`/orders?q=${q}`, NAMES.retailer, 634, 1300],
-    [`/retailers?q=${q}`, NAMES.retailer, 634, 1300],
-    // Inventory never folds, and its box is as wide as the shell leaves it:
-    // the same span, with the rows that hold every free-text field unbroken
-    // (#323).
-    ["/inventory", UNBROKEN_NAMES.tool, 634, 1300],
-    ["/inventory?tab=consumables", UNBROKEN_NAMES.consumable, 634, 1300],
-    ["/inventory?tab=upgrades", UNBROKEN_NAMES.upgrade, 634, 1300],
-    ["/inventory?tab=display-items", UNBROKEN_NAMES.display, 634, 1300],
-    // …and with every free-text column a word under its budget (Codex #328).
-    ["/inventory", NEAR_NAMES.tool, 634, 1300],
-    ["/inventory?tab=consumables", NEAR_NAMES.consumable, 634, 1300],
-    ["/inventory?tab=upgrades", NEAR_NAMES.upgrade, 634, 1300],
-    ["/inventory?tab=display-items", NEAR_NAMES.display, 634, 1300],
-    ["/inventory?tab=display-items", NEAR_NAMES.ordinaryDisplay, 634, 1300],
+  for (const [path, anchor] of [
+    [`/kits?q=${q}`, NAMES.twin],
+    [`/orders?q=${q}`, NAMES.retailer],
+    [`/retailers?q=${q}`, NAMES.retailer],
+    // Every free-text field unbroken (#323)…
+    ["/inventory", UNBROKEN_NAMES.tool],
+    ["/inventory?tab=consumables", UNBROKEN_NAMES.consumable],
+    ["/inventory?tab=upgrades", UNBROKEN_NAMES.upgrade],
+    ["/inventory?tab=display-items", UNBROKEN_NAMES.display],
+    // …every free-text column a word under its budget (Codex #328)…
+    ["/inventory", NEAR_NAMES.tool],
+    ["/inventory?tab=consumables", NEAR_NAMES.consumable],
+    ["/inventory?tab=upgrades", NEAR_NAMES.upgrade],
+    ["/inventory?tab=display-items", NEAR_NAMES.display],
+    ["/inventory?tab=display-items", NEAR_NAMES.ordinaryDisplay],
+    // …and nearer, with the widest counts and costs (round 2, #327).
+    ["/inventory", CODEX_NAMES.toolMax],
+    ["/inventory?tab=display-items", CODEX_NAMES.displayMax],
+    ["/inventory?tab=consumables", CODEX_NAMES.consumableMax],
+    ["/inventory?tab=upgrades", CODEX_NAMES.upgradeMax],
   ] as const) {
     await openList(page, path, anchor);
     if (path.startsWith("/orders")) await expandEveryOrder(page);
-    const overflowing = await sweepBox(page, from, to);
-    expect(overflowing, `${path}: no table box on the page`).not.toBeNull();
-    expect.soft(overflowing?.measured, `${path}: every width measured`).toBe(to - from + 1);
-    expect.soft(overflowing?.widths, `${path}: box widths at which the list is wider than its box`).toEqual([]);
+    const [from, to] = [634, 1300];
+    const swept = await sweepBox(page, from, to, stagesOf(path));
+    expect(swept, `${path}: no table box on the page`).not.toBeNull();
+    expect.soft(swept?.measured, `${path}: every width measured`).toBe(to - from + 1);
+    expect.soft(swept?.widths, `${path}: box widths at which the list is wider than its box`).toEqual([]);
+    expect.soft(swept?.misfolded, `${path}: box widths at which the stage drawn is not the first that fits`).toEqual([]);
   }
+  // And the fold chose each stage without the browser reporting an observer it
+  // could not deliver to (Codex, on #329).
+  expect.soft(complaints, "errors the page reported").toEqual([]);
 
   // A wide reference breaks within its budget and no narrower: its floor is
   // what keeps a column from squeezing it to a sliver of a letter a line. Seen
@@ -567,13 +661,17 @@ test("at no box width is a table wider than its box", async ({ page }, testInfo)
   // no overflow either way; mutants W4 and W4b in the PR).
   await page.goto(`/orders?retailer=${shortRetailerId}`);
   await expect(shown(main(page).getByText(TWO_CURRENCY_NUMBER)).first()).toBeVisible();
-  const boxOf = (width: string) =>
-    page.evaluate((w) => {
+  const boxOf = async (width: string) => {
+    await page.evaluate((w) => {
       (document.querySelector("main .overflow-x-auto") as HTMLElement).style.width = w;
     }, width);
-  // Just over the second fold line — 970 px outside, 968 of content, the border
-  // being 2 px of the arithmetic — the Tracking column is still a column.
+    await afterResize(page);
+  };
+  // In a 970 px box the one order's Tracking column is a column (the order
+  // number may be under the retailer), and the number in it is held by
+  // nothing but its floor.
   await boxOf("970px");
+  expect(await foldState(page, STAGES.orders).then((state) => state?.drawn), "the precondition: Tracking is a column").toBeLessThan(2);
   const tracking = shown(main(page).getByText(WIDE_GLYPH_TRACKING)).first();
   expect(await tracking.evaluate((el) => el.closest("td")?.getAttribute("colspan") ?? null), "the tracking number is in its column").toBeNull();
   expect.soft(await linesOf(tracking), "lines a wide-glyph tracking number takes alone in its column at a 970 px box").toBeLessThanOrEqual(2);
@@ -623,7 +721,10 @@ test("a fold moves what a column said and never drops it", async ({ page }, test
       .soft(shown(typeof target === "string" || target instanceof RegExp ? scope.getByText(target) : target), label)
       .toHaveCount(1);
   const header = (name: string) => shown(main(page).getByRole("columnheader", { name, exact: true }));
-  const unfolded = (box: number, line: number) => box >= line;
+  /** The stage the table is drawn at — the first that fits, which the fit
+   *  tests hold it to — and whether stage `n` leaves a column a column. */
+  const stageDrawn = async (stages: number) => (await foldState(page, stages))?.drawn ?? -1;
+  const unfolded = (stage: number, n: number) => stage < n;
 
   for (const size of sizesFor(testInfo.project.name)) {
     await page.setViewportSize(size);
@@ -631,9 +732,9 @@ test("a fold moves what a column said and never drops it", async ({ page }, test
 
     // --- Kits: Grade and Scale, to the name's second line.
     await openList(page, `/kits?q=${q}`, NAMES.twin);
-    let box = await boxWidth(page);
+    let stage = await stageDrawn(STAGES.kits);
     for (const name of ["Grade", "Scale"]) {
-      await expect.soft(header(name), `Kits "${name}" column ${at} (box ${box})`).toHaveCount(unfolded(box, FOLD.kitGrade) ? 1 : 0);
+      await expect.soft(header(name), `Kits "${name}" column ${at} (stage ${stage})`).toHaveCount(unfolded(stage, 1) ? 1 : 0);
     }
     const twin = rowOf(page, NAMES.twin).first();
     await once(twin, twin.getByText("HG", { exact: true }), `Kits ${at}: the grade`);
@@ -650,10 +751,10 @@ test("a fold moves what a column said and never drops it", async ({ page }, test
     // --- Orders: the number under the retailer; the dates under the chip; the
     // tracking into the expanded lines.
     await openList(page, `/orders?q=${q}`, NAMES.retailer);
-    box = await boxWidth(page);
-    await expect.soft(header("Order #"), `Orders "Order #" column ${at} (box ${box})`).toHaveCount(unfolded(box, FOLD.orderNumber) ? 1 : 0);
+    stage = await stageDrawn(STAGES.orders);
+    await expect.soft(header("Order #"), `Orders "Order #" column ${at} (stage ${stage})`).toHaveCount(unfolded(stage, 1) ? 1 : 0);
     for (const name of ["Shipped", "Received", "Tracking"]) {
-      await expect.soft(header(name), `Orders "${name}" column ${at} (box ${box})`).toHaveCount(unfolded(box, FOLD.orderDates) ? 1 : 0);
+      await expect.soft(header(name), `Orders "${name}" column ${at} (stage ${stage})`).toHaveCount(unfolded(stage, 2) ? 1 : 0);
     }
     const transit = rowOf(page, ORDER_NUMBER);
     await once(transit, ORDER_NUMBER, `Orders ${at}: the order number`);
@@ -666,10 +767,12 @@ test("a fold moves what a column said and never drops it", async ({ page }, test
     // nothing under the name or the chip — not an empty line, not a dash.
     const pending = rowOf(page, "Pending");
     await expect.soft(pending.getByTitle(SHIPPED_TITLE).filter({ hasText: /\d/ }), `Orders ${at}: a pending order has no ship date`).toHaveCount(0);
-    if (!unfolded(box, FOLD.orderDates)) {
+    if (!unfolded(stage, 2)) {
       await expect.soft(shown(pending.getByTitle(SHIPPED_TITLE)), `Orders ${at}: no empty folded line`).toHaveCount(0);
     }
     await expandEveryOrder(page);
+    // The lines are part of the table: open, they can need another stage.
+    stage = await stageDrawn(STAGES.orders);
     await once(main(page), TRACKING, `Orders ${at}: the tracking number`);
     // The references at every size, folded or not: an ordinary one breaks only
     // where it always did (the number at its hyphens, three lines at most; the
@@ -681,7 +784,7 @@ test("a fold moves what a column said and never drops it", async ({ page }, test
       [ORDER_NUMBER, "the order number", 3],
       [TWO_CURRENCY_NUMBER, "the wide-glyph order number", 4],
       [TRACKING, "the tracking number", 1],
-      ...(unfolded(box, FOLD.orderDates)
+      ...(unfolded(stage, 2)
         ? ([
             [WIDE_GLYPH_TRACKING, "the wide-glyph tracking number", 2],
             [NARROW_TRACKING, "the narrow-digit tracking number", 2],
@@ -696,47 +799,48 @@ test("a fold moves what a column said and never drops it", async ({ page }, test
 
     // --- Retailers: Notes, to a second line under the name.
     await openList(page, `/retailers?q=${q}`, NAMES.retailer);
-    box = await boxWidth(page);
-    await expect.soft(header("Notes"), `Retailers "Notes" column ${at} (box ${box})`).toHaveCount(unfolded(box, FOLD.retailerNotes) ? 1 : 0);
+    stage = await stageDrawn(STAGES.retailers);
+    await expect.soft(header("Notes"), `Retailers "Notes" column ${at} (stage ${stage})`).toHaveCount(unfolded(stage, 1) ? 1 : 0);
     await once(rowOf(page, NAMES.retailer), NOTES, `Retailers ${at}: the notes`);
     await expect.soft(rowOf(page, NAMES.bareRetailer).locator("td").first(), `Retailers ${at}: a bare retailer is its name`).toHaveText(NAMES.bareRetailer);
 
     // --- Inventory (#323): Tools' Condition, and Display's Manufacturer and
     // Notes, to a second line under the name.
     await openList(page, "/inventory", NAMES.tool);
-    box = await boxWidth(page);
-    await expect.soft(header("Condition"), `Tools "Condition" column ${at} (box ${box})`).toHaveCount(unfolded(box, FOLD.toolCondition) ? 1 : 0);
+    stage = await stageDrawn(STAGES.tools);
+    await expect.soft(header("Condition"), `Tools "Condition" column ${at} (stage ${stage})`).toHaveCount(unfolded(stage, 1) ? 1 : 0);
     await once(rowOf(page, NAMES.tool), "Blade slightly worn at the tip", `Tools ${at}: the condition`);
     await openList(page, "/inventory?tab=display-items", NAMES.display);
-    box = await boxWidth(page);
+    stage = await stageDrawn(STAGES.display);
     for (const name of ["Manufacturer", "Notes"]) {
-      await expect.soft(header(name), `Display "${name}" column ${at} (box ${box})`).toHaveCount(unfolded(box, FOLD.displayNotes) ? 1 : 0);
+      await expect.soft(header(name), `Display "${name}" column ${at} (stage ${stage})`).toHaveCount(unfolded(stage, 1) ? 1 : 0);
     }
     await once(rowOf(page, NAMES.display), /Bandai/, `Display ${at}: the manufacturer`);
     await once(rowOf(page, NAMES.display), /Clear, with the long arm/, `Display ${at}: the notes`);
   }
 });
 
-test("the desktop folds one thing, and only where its box is short", async ({ page }, testInfo) => {
+test("the desktop folds only what does not fit", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === "phone", "a table shell's");
   // Beside the sidebar a list's box is the viewport less 306 px (the sidebar, the
-  // page's padding, the box's own border). `main` left the
-  // desktop alone, and with ordinary rows its Orders table was 60 px wider than
-  // that box at 1280 px, the edit control off its edge (#258: the demo data the
-  // widths were measured on has no order both shipped and received). The folds
-  // answer the box at every width (the owner's call, 2026-09-18), so the literal
-  // expectation: from 1280 to 1361 px the order number is under the retailer and
-  // nothing else has moved; from 1362 px — a 1366 px laptop, a 13-inch iPad —
-  // every column is a column. A fold line drawn too high or too low fails here
-  // by name, where the other tests compute the shape a box should have.
+  // page's padding, the box's own border). `main` left the desktop alone, and
+  // with ordinary rows its Orders table was 60 px wider than that box at
+  // 1280 px, the edit control off its edge (#258: the demo data the widths were
+  // measured on has no order both shipped and received). The folds answer the
+  // box at every width (the owner's call, 2026-09-18), and since #329 they fold
+  // what does not fit and nothing else. With these rows: at 1280 px the order
+  // number is under the retailer and nothing else has moved; at 1440 every
+  // column is a column; Kits and Retailers are whole throughout — Codex's fully
+  // dated kit included, which needs 888 px beside the sidebar's 974. Between,
+  // the stage drawn is the first that fits (`expectFoldsToFit`).
   const KITS = ["Kit", "Grade", "Scale", "Status", "Rating", "Started", "Completed"];
   const RETAILERS = ["Name", "Rating", "Packing", "Shipping", "Again?", "Notes"];
   const ORDERS = ["Date", "Retailer", "Order #", "Status", "Shipped", "Received", "Items", "Total", "Tracking"];
   for (const [width, orders] of [
     [1280, ORDERS.filter((name) => name !== "Order #")],
-    [1361, ORDERS.filter((name) => name !== "Order #")],
-    [1362, ORDERS],
-    [1366, ORDERS],
+    [1361, null],
+    [1362, null],
+    [1366, null],
     [1440, ORDERS],
   ] as const) {
     await page.setViewportSize({ width, height: 900 });
@@ -746,14 +850,18 @@ test("the desktop folds one thing, and only where its box is short", async ({ pa
       [`/retailers?q=${q}`, NAMES.retailer, RETAILERS],
     ] as const) {
       await openList(page, path, anchor);
-      const visible = await shown(main(page).getByRole("columnheader")).allInnerTexts();
-      expect.soft(visible.filter(Boolean).map((text) => text.toUpperCase()), `${path} at ${width} px`).toEqual(
-        headers.map((text) => text.toUpperCase()),
-      );
+      const stage = await expectFoldsToFit(page, stagesOf(path), `${path} at ${width} px`);
+      if (path.startsWith("/orders")) expect.soft(stage, `${path} at ${width} px: the desktop folds the order number at most`).toBeLessThanOrEqual(1);
+      if (headers) {
+        const visible = await shown(main(page).getByRole("columnheader")).allInnerTexts();
+        expect.soft(visible.filter(Boolean).map((text) => text.toUpperCase()), `${path} at ${width} px`).toEqual(
+          headers.map((text) => text.toUpperCase()),
+        );
+      }
       if (path.startsWith("/orders")) {
         await expandEveryOrder(page);
         // The ordinary references lay out as they always did, at every width —
-        // where the table is squeezed (1280, 1361) as where it has room: the
+        // where the table is folded (1280) as where it has room: the
         // tracking number on one line, the order number breaking at its hyphens
         // and nowhere else (three pieces, so three lines at most). A reference
         // wider than its budget may break anywhere; the budget is what these
@@ -791,6 +899,131 @@ test("the desktop folds one thing, and only where its box is short", async ({ pa
   }
 });
 
+test("a table folds and unfolds when its rows change, with no resize to tell it", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "phone", "a phone has cards, not a table to fold");
+  // A fold decided by what the rows hold changes when the rows do (#329): a
+  // search narrows them, a page turns, a tab opens. Unfolding is the half that
+  // nothing else reports — a folded `w-full` table whose widest row leaves keeps
+  // its box's width, so an observer of the table hears nothing (Codex, on #329:
+  // zero callbacks over 30 frames). Beside the rail at 900 px the box is 770 px;
+  // Codex's fully dated kit needs 888 whole, an ordinary bare kit far less. The
+  // search narrows this run's kits to the bare one *in place*: its row stays
+  // mounted and every other leaves, so nothing new is drawn to say the table
+  // changed — the case only the table's own commit answers (a mutant without
+  // it survived a version of this test that swapped one row for another,
+  // whose new cells said so).
+  const complaints = await pageComplaints(page);
+  await page.setViewportSize({ width: 900, height: 800 });
+  await openList(page, `/kits?q=${q}`, CODEX_NAMES.kit);
+  const search = main(page).getByRole("searchbox");
+  const box = () => main(page).locator(".overflow-x-auto").first().evaluate((el) => el.clientWidth);
+  const width = await box();
+  const grade = shown(main(page).getByRole("columnheader", { name: "Grade", exact: true }));
+  for (const [query, anchor, rows, stage] of [
+    [TAG, CODEX_NAMES.kit, 9, 1],
+    [NAMES.bareKit, NAMES.bareKit, 1, 0],
+    [TAG, CODEX_NAMES.kit, 9, 1],
+  ] as const) {
+    await search.fill(query);
+    await expect(shown(main(page).getByText(anchor, { exact: true })), `"${query}": the row`).toBeVisible();
+    await expect(shown(main(page).locator("tbody tr")), `"${query}": the rows`).toHaveCount(rows);
+    await expect.poll(async () => (await foldState(page, STAGES.kits))?.drawn, `"${query}": the stage`).toBe(stage);
+    await expectFoldsToFit(page, STAGES.kits, `"${query}"`);
+    await expect.soft(grade, `"${query}": the Grade column`).toHaveCount(stage === 0 ? 1 : 0);
+    expect(await box(), `"${query}": the precondition — the box kept its width`).toBe(width);
+    // Settled: the same rows in the same box choose the same stage, frame after frame.
+    expect.soft(await stageChanges(page), `"${query}": the stage changed over 30 settled frames`).toBe(0);
+  }
+  expect.soft(complaints, "errors the page reported").toEqual([]);
+});
+
+test("a fold the rows decide hands the keyboard to where the control went", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "phone", "a phone has cards, not a table to fold");
+  test.setTimeout(60_000);
+  // Every fold carries the focused control's key (`lib/focusKey.ts`), and the
+  // focus hook hears a control lose its box whatever took it — so a fold the
+  // *rows* decide, with no resize and no shell change, must hand the keyboard
+  // on as one a viewport decides does (Codex, on #329). Orders' Tracking link
+  // is the one control in a column that folds: at the second stage it is gone
+  // from the row, and its stand-in is the row's line-items toggle. The box is
+  // set just wide enough for one ordinary order at the first stage; a second
+  // order, delivered — a Received date the first lacks — then arrives the way
+  // another tab's or an agent's write does, on a refetch, and needs more.
+  const complaints = await pageComplaints(page);
+  const api = await apiContext();
+  // Untagged, with a tracking number of its own: the tagged lists are other
+  // tests', and they find their rows by the tag and the number.
+  const shop = await post(api, "/retailers", { name: `Refit Shop ${suffix}` });
+  const kitLine = { item_type: "kit", quantity: 1, unit_price_minor: 2800, currency_code: "JPY", kit: { name: `Refit ${suffix} A`, grade: "HG" } };
+  const first = await post(api, "/orders", {
+    retailer_id: shop.id,
+    order_date: day(10),
+    order_number: `RFT-${suffix}`,
+    tracking_number: `RR${suffix}JP`,
+    tracking_url: `https://lists-e2e.example/track/refit-${suffix}`,
+    currency_code: "JPY",
+    shipped_at: iso(8),
+    items: [kitLine],
+  });
+  await page.setViewportSize({ width: 1270, height: 900 });
+  await page.goto(`/orders?retailer=${shop.id}`);
+  const link = shown(main(page).locator(`[data-focus-key="order-tracking:${first.id}"]`));
+  await expect(link, "the tracking link, in its column").toHaveCount(1);
+  // The narrowest box at which this one order fits at the first stage, found
+  // by trying each width by hand (`foldState`'s way): there, one more line's
+  // worth of width tips it into the second.
+  const need = await page.evaluate(() => {
+    const box = document.querySelector("main .group\\/fold") as HTMLElement;
+    const drawn = [box.hasAttribute("data-fold-1"), box.hasAttribute("data-fold-2")];
+    box.setAttribute("data-fold-1", "");
+    box.removeAttribute("data-fold-2");
+    let width = 400;
+    for (; width < 1200; width += 1) {
+      box.style.width = `${width}px`;
+      if (box.scrollWidth <= box.clientWidth) break;
+    }
+    box.toggleAttribute("data-fold-1", drawn[0]);
+    box.toggleAttribute("data-fold-2", drawn[1]);
+    return width;
+  });
+  await page.evaluate((width) => {
+    (document.querySelector("main .group\\/fold") as HTMLElement).style.width = `${width + 2}px`;
+  }, need);
+  await afterResize(page);
+  expect(await expectFoldsToFit(page, STAGES.orders, "one order"), "the precondition: one order is at the first stage").toBe(1);
+  await link.focus();
+  await expect(link).toBeFocused();
+
+  const second = await post(api, "/orders", {
+    retailer_id: shop.id,
+    order_date: day(12),
+    order_number: `RFT-${suffix}-2`,
+    currency_code: "JPY",
+    shipped_at: iso(11),
+    received: true,
+    received_at: iso(2),
+    items: [{ ...kitLine, kit: { name: `Refit ${suffix} B`, grade: "HG" } }],
+  });
+  await api.dispose();
+  // A refetch the way the app makes one: the list is stale after 5 s, and a
+  // window that becomes visible again asks for it (the event bubbles to
+  // `window`, where the query client listens).
+  await page.waitForTimeout(5_500);
+  await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange", { bubbles: true })));
+  await expect(shown(main(page).locator(`[data-focus-key="order-lines:${second.id}"]`)), "the second order arrives").toHaveCount(1);
+  await expect.poll(async () => (await foldState(page, STAGES.orders))?.drawn, "two orders: the second stage").toBe(2);
+  await expectFoldsToFit(page, STAGES.orders, "two orders");
+  expect(await page.evaluate(() => (document.querySelector("main .group\\/fold") as HTMLElement).style.width), "the precondition: no resize").toBe(`${need + 2}px`);
+  await expect
+    .poll(() => page.evaluate(() => document.activeElement?.closest("[data-focus-key]")?.getAttribute("data-focus-key") ?? (document.activeElement === document.body ? "<body>" : "<unkeyed>")), {
+      message: "the keyboard went to the tracking link's stand-in",
+      timeout: 2_000,
+    })
+    .toBe(`order-lines:${first.id}`);
+  expect.soft(await stageChanges(page), "the stage changed over 30 settled frames").toBe(0);
+  expect.soft(complaints, "errors the page reported").toEqual([]);
+});
+
 test("a free-text value gives way by its value: an ordinary one is a plain word", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name === "phone", "a phone's cards measure nothing; a table's ruler does");
   // #323: the fit tests prove the unbroken rows fit; this is the other half of
@@ -806,7 +1039,7 @@ test("a free-text value gives way by its value: an ordinary one is a plain word"
     ["/inventory", NAMES.tool, [[NAMES.tool, "normal"], ["Workstation (Portable)", "normal"]]],
     ["/inventory", UNBROKEN_NAMES.tool, [[UNBROKEN_NAMES.tool, "anywhere"]]],
     ["/inventory?tab=display-items", UNBROKEN_NAMES.display, [[UNBROKEN_NAMES.display, "anywhere"]]],
-    // The fold lines' premise: a word under its budget never breaks.
+    // The budgets' premise: a word under its budget never breaks.
     ["/inventory?tab=display-items", NEAR_NAMES.display, [[NEAR_NAMES.display, "normal"]]],
   ];
   for (const size of sizesFor(testInfo.project.name)) {
@@ -928,6 +1161,9 @@ test("a reference's rule follows the font that is drawn", async ({ page }, testI
   };
   const before = await state();
   expect(before.wrap, `in the fallback font, ${before.em.toFixed(2)}em: the rule`).toBe(before.rule);
+  // And the fold, which every glyph's width decides (#329): chosen again when
+  // the font arrives, as the rule is.
+  await expectFoldsToFit(page, STAGES.orders, "in the fallback font");
   for (const route of held) await route.continue();
   await expect.poll(loaded, "the web font arrives").toBeGreaterThan(0);
   // The measurement follows the font — unless this machine's fallback has the
@@ -939,6 +1175,12 @@ test("a reference's rule follows the font that is drawn", async ({ page }, testI
     .not.toBe(before.em)
     .then(() => true, () => false);
   await expect.poll(async () => (await state()).wrap, `in the web font: the rule`).toBe((await state()).rule);
+  await expect
+    .poll(async () => {
+      const fold = await foldState(page, STAGES.orders);
+      return fold && fold.drawn === fold.expected;
+    }, "in the web font: the stage drawn is the first that fits")
+    .toBe(true);
   const after = await state();
   testInfo.annotations.push({
     type: "fonts",
@@ -946,6 +1188,82 @@ test("a reference's rule follows the font that is drawn", async ({ page }, testI
       !changed ? " (the fallback has the web font's metrics: nothing to follow)" : before.rule === after.rule ? " (no crossing on this machine's fallback)" : ""
     }`,
   });
+});
+
+test("a table chooses its fold again when the web font arrives", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name === "phone", "a phone has cards, not a table to fold");
+  test.setTimeout(90_000);
+  // Every glyph's width is the font's, so the width a table needs changes when
+  // the web font replaces the fallback after the first paint — with no resize
+  // and no render of the table (#329; Codex asked for it). The box is set
+  // between what the whole Kits table needs in the two fonts, so the font
+  // decides the stage: learnt from one load, put to a second. Held, not
+  // blocked, as the reference test above does it; routing turns the cache off,
+  // so the second load waits for the font again. The twins alone: ordinary
+  // words, none near a budget, so no value starts breaking when the font
+  // changes and tells the table so (`Measured` → `useRefit`) — the font's own
+  // event is the only news (a mutant without it survived on the whole tagged
+  // list, where a near-budget word did cross).
+  const held: Route[] = [];
+  let holding = true;
+  await page.route((url) => url.pathname.endsWith(".woff2"), (route) => {
+    if (holding) held.push(route);
+    else void route.continue();
+  });
+  const release = async () => {
+    holding = false;
+    for (const route of held.splice(0)) await route.continue();
+  };
+  const loaded = () => page.evaluate(() => [...document.fonts].filter((face) => face.family.includes("Inter Variable") && face.status === "loaded").length);
+  /** The narrowest box the whole table fits, tried by hand. */
+  const needWhole = () =>
+    page.evaluate(() => {
+      const box = document.querySelector("main .group\\/fold") as HTMLElement;
+      const drawn = box.hasAttribute("data-fold-1");
+      const width = box.style.width;
+      box.removeAttribute("data-fold-1");
+      let need = 400;
+      for (; need < 1600; need += 1) {
+        box.style.width = `${need}px`;
+        if (box.scrollWidth <= box.clientWidth) break;
+      }
+      box.style.width = width;
+      box.toggleAttribute("data-fold-1", drawn);
+      return need;
+    });
+  const open = async () => {
+    // Not `openList`: `load` waits for the held font (WebKit).
+    await page.goto(`/kits?q=${encodeURIComponent(NAMES.twin)}`, { waitUntil: "domcontentloaded" });
+    await expect(shown(main(page).getByText(NAMES.twin)).first()).toBeVisible();
+    await expect.poll(() => held.length, "the web font was asked for").toBeGreaterThan(0);
+    expect(await loaded(), "the precondition: no face of the web font is in yet").toBe(0);
+  };
+  await page.setViewportSize({ width: 1270, height: 900 });
+  await open();
+  const fallback = await needWhole();
+  await release();
+  await expect.poll(loaded, "the web font arrives").toBeGreaterThan(0);
+  await page.evaluate(() => document.fonts.ready);
+  const inter = await needWhole();
+  testInfo.annotations.push({ type: "fonts", description: `the twins' whole Kits table needs ${fallback} px in the fallback, ${inter} px in Inter` });
+  test.skip(fallback === inter, "this machine's fallback has Inter's metrics: the font decides nothing");
+
+  // Between the two: whole in the narrower font, folded in the wider.
+  const width = Math.max(fallback, inter) - 1;
+  const stageIn = (need: number) => (need <= width ? 0 : 1);
+  holding = true;
+  await open();
+  await page.evaluate((w) => {
+    (document.querySelector("main .group\\/fold") as HTMLElement).style.width = `${w}px`;
+  }, width);
+  await afterResize(page);
+  expect(await foldState(page, STAGES.kits).then((state) => state?.drawn), `in the fallback, at ${width} px`).toBe(stageIn(fallback));
+  await release();
+  await expect.poll(loaded, "the web font arrives").toBeGreaterThan(0);
+  await expect
+    .poll(async () => (await foldState(page, STAGES.kits))?.drawn, { message: `in Inter, at ${width} px`, timeout: 3_000 })
+    .toBe(stageIn(inter));
+  await expectFoldsToFit(page, STAGES.kits, `in Inter, at ${width} px`);
 });
 
 test("an order card opens its lines as the table row does", async ({ page }, testInfo) => {
@@ -994,13 +1312,14 @@ test("the filter sheet, a link and the desktop's selects produce the same list",
   await openList(page, `/kits?q=${q}`, NAMES.twin);
   await expect(opener).toHaveAccessibleName("Filter and sort");
 
-  // Eight kits carry the tag: the twins, the bare one, the built one, one
-  // spawned by each order, and #323's unbroken one. Nothing chosen: the button counts the whole (searched) list, and
+  // Nine kits carry the tag: the twins, the bare one, the built one, one
+  // spawned by each order, #323's unbroken one and Codex's fully dated one
+  // (#329). Nothing chosen: the button counts the whole (searched) list, and
   // applying it writes nothing — every parameter is dropped at its default.
   await opener.click();
-  await expect(sheet.getByRole("button", { name: "Show 8 kits" })).toBeVisible();
+  await expect(sheet.getByRole("button", { name: "Show 9 kits" })).toBeVisible();
   await expect(sheet.getByRole("button", { name: /^All statuses/ })).toHaveAttribute("aria-pressed", "true");
-  await sheet.getByRole("button", { name: "Show 8 kits" }).click();
+  await sheet.getByRole("button", { name: "Show 9 kits" }).click();
   await expect(sheet).toHaveCount(0);
   expect(Object.fromEntries(new URL(page.url()).searchParams)).toEqual({ q: TAG });
 
@@ -1032,7 +1351,7 @@ test("the filter sheet, a link and the desktop's selects produce the same list",
   await expect(sheet.getByLabel("Filter by series")).toHaveValue(SERIES);
   await expect(sheet.getByRole("button", { name: "Name A–Z" })).toHaveAttribute("aria-pressed", "true");
   await sheet.getByRole("button", { name: "Clear", exact: true }).click();
-  await expect(sheet.getByRole("button", { name: "Show 8 kits" })).toBeVisible();
+  await expect(sheet.getByRole("button", { name: "Show 9 kits" })).toBeVisible();
   await expect(sheet.getByRole("button", { name: "Newest added" })).toHaveAttribute("aria-pressed", "true");
   await page.keyboard.press("Escape");
 
@@ -1363,9 +1682,9 @@ test("the keyboard keeps its place on a row when the rows change shape under it"
 test("a fold or a swap inside one shell hands the keyboard to where the control went", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "tablet", "an iPad Air turning: 1180 px one way, 820 the other — the rail both ways");
   test.setTimeout(120_000);
-  // No shell change and no render: a container query stops drawing the focused
-  // control, the browser drops focus to <body>, and nothing keyed on the shell
-  // can notice (Codex #266, finding 4). Two tokens, so "the same token's Revoke"
+  // No shell change: a fold stops drawing the focused control, the browser
+  // drops focus to <body>, and nothing keyed on the shell can notice (Codex
+  // #266, finding 4). Two tokens, so "the same token's Revoke"
   // is a claim about the record and not about there being one button.
   const landscape = { width: 1180, height: 820 };
   const portrait = { width: 820, height: 1180 };
@@ -1394,8 +1713,10 @@ test("a fold or a swap inside one shell hands the keyboard to where the control 
         const before = await shape();
         await revoke(name).focus();
         await page.setViewportSize(to);
-        // The precondition, said out loud: the turn did swap the table and the cards.
-        expect(await shape(), `tokens ${from.width} → ${to.width} px: the list changed shape`).toBe(1 - before);
+        // The precondition, said out loud: the turn did swap the table and the
+        // cards. Polled: the fold is chosen when the resize reaches the page, and
+        // WebKit's `setViewportSize` resolves before it has (#275).
+        await expect.poll(shape, `tokens ${from.width} → ${to.width} px: the list changed shape`).toBe(1 - before);
         await expect.soft(revoke(name), `tokens ${from.width} → ${to.width} px: Revoke of "${name.replace(TAG, "…")}"`).toBeFocused({ timeout: 2_000 });
       }
     }
@@ -1470,6 +1791,10 @@ test("a fold or a swap inside one shell hands the keyboard to where the control 
   await lines.click();
   await link.focus();
   await page.setViewportSize(landscape);
+  // The column back first: until the turn reaches the page (WebKit's resolves
+  // before it has, #275) the focused link in the lines is still drawn, and
+  // "focused" would be true of the wrong one.
+  await expect(shown(main(page).getByRole("columnheader", { name: "Tracking" })), "the column unfolded").toHaveCount(1);
   await expect.soft(link, "tracking, lines open: 820 → 1180 px").toBeFocused({ timeout: 2_000 });
   expect(await link.evaluate((a) => a.closest("td")?.getAttribute("colspan") ?? null), "…and it is the column's link").toBeNull();
   await page.setViewportSize(portrait);
@@ -1721,19 +2046,22 @@ test("a card says who it is under the browser's own font-size preference", async
     // the squares there — so it is on the page at both sizes, with the most the
     // column can store beside it, and an ordinary kit with the widest facts
     // there are (#270: Pre-ordered, MGEX, 1/100, a series).
+    // Its rows go when it ends, whatever it ends in (#327): a failure left them
+    // for the next file, and the ten-digit tool found a 6 px overflow on a page
+    // no clean run shares with it. `finally` for an assertion that fails, and
+    // the file's own list (`post`) for a timeout, which runs no `finally`.
     const api = await apiContext();
-    const seeded: string[] = [];
-    for (const [route, data] of [
-      ["/tools", { name: wideCountName, category: "nippers", quantity_on_hand: 1234 }],
-      ["/tools", { name: widestCountName, category: "nippers", quantity_on_hand: 2147483646 }],
-      ["/kits", { name: wideFactsName, grade: "MGEX", scale: "1/100", status: "pre_ordered", series: SERIES }],
-    ] as const) {
-      const made = await api.post(route, { data });
-      expect(made.ok(), await made.text()).toBeTruthy();
-      seeded.push(`${route}/${((await made.json()) as { id: string }).id}`);
-    }
-    const browser = await chromium.launch({ args: [`--blink-settings=defaultFontSize=${font}`] });
+    const mine: string[] = [];
+    let browser: Browser | undefined;
     try {
+      for (const [route, data] of [
+        ["/tools", { name: wideCountName, category: "nippers", quantity_on_hand: 1234 }],
+        ["/tools", { name: widestCountName, category: "nippers", quantity_on_hand: 2147483646 }],
+        ["/kits", { name: wideFactsName, grade: "MGEX", scale: "1/100", status: "pre_ordered", series: SERIES }],
+      ] as const) {
+        mine.push(`${route}/${(await post(api, route, data)).id}`);
+      }
+      browser = await chromium.launch({ args: [`--blink-settings=defaultFontSize=${font}`] });
       const context = await browser.newContext({ storageState: STORAGE_STATE, hasTouch: true, isMobile: true, baseURL: APP });
       const page = await context.newPage();
       for (const size of sizesFor("phone")) {
@@ -1884,8 +2212,8 @@ test("a card says who it is under the browser's own font-size preference", async
       }
       await context.close();
     } finally {
-      await browser.close();
-      for (const path of seeded) await api.delete(path);
+      await browser?.close();
+      for (const path of mine) await api.delete(path);
       await api.dispose();
     }
   }
@@ -2214,9 +2542,10 @@ test("every control in a row past ten keeps the keyboard across the turn, on eve
   }
 });
 
-test("Access tokens is a table where its box has room and card rows where it has not", async ({ page }, testInfo) => {
-  // Chosen by the box, not the shell (§13.7): the Settings pane is two columns
-  // beside the rail, so an iPad in portrait is cards too. A live token with
+test("Access tokens is a table where it fits its box and card rows where it does not", async ({ page }, testInfo) => {
+  // Chosen by measuring the box, not by the shell's line (§13.7, #329): the
+  // Settings pane is two columns beside the rail, so an iPad in portrait is
+  // cards too — and a phone always is, as every list there. A live token with
   // every date set — an expiry, and used once — is the widest row there is.
   // Leaves a revoked row behind, as tokens.spec.ts does: nothing deletes a token.
   const api = await apiContext();
@@ -2238,11 +2567,11 @@ test("Access tokens is a table where its box has room and card rows where it has
       const cards = page.getByTestId("token-cards");
       const table = page.getByTestId("token-table");
       await expect(shown(page.getByText(name)), `${at}: the token is listed once`).toHaveCount(1);
-      const room = await table.locator("xpath=..").evaluate((container) => container.clientWidth);
-      await expect.soft(shown(table), `${at}: the table (box ${room})`).toHaveCount(room >= FOLD.tokenTable ? 1 : 0);
-      await expect.soft(shown(cards), `${at}: the cards (box ${room})`).toHaveCount(room >= FOLD.tokenTable ? 0 : 1);
+      const asTable = (await expectFoldsToFit(page, STAGES.tokens, at, isPhone(size) ? 1 : 0)) === 0;
+      await expect.soft(shown(table), `${at}: the table`).toHaveCount(asTable ? 1 : 0);
+      await expect.soft(shown(cards), `${at}: the cards`).toHaveCount(asTable ? 0 : 1);
 
-      const entry = shown(page.getByTestId(room >= FOLD.tokenTable ? "token-row" : "token-card")).filter({ hasText: name });
+      const entry = shown(page.getByTestId(asTable ? "token-row" : "token-card")).filter({ hasText: name });
       const revoke = entry.getByRole("button", { name: "Revoke" });
       await expect(revoke, `${at}: Revoke`).toBeVisible();
       const edges = await revoke.evaluate((button) => {
@@ -2255,7 +2584,7 @@ test("Access tokens is a table where its box has room and card rows where it has
       expect.soft(edges.scroll, `${at}: the list is wider than its box`).toBeLessThanOrEqual(edges.client);
       expect.soft(edges.doc, `${at}: the document scrolls sideways`).toBeLessThanOrEqual(0);
       // A finger has no hover: the card says the time as well as the date.
-      if (room < FOLD.tokenTable) await expect.soft(entry.getByText(/^Created: .*\d:\d\d/), `${at}: the instant in full`).toBeVisible();
+      if (!asTable) await expect.soft(entry.getByText(/^Created: .*\d:\d\d/), `${at}: the instant in full`).toBeVisible();
     }
 
     // And every width the Settings pane's box can have below 1280 px — 396 px at
@@ -2264,9 +2593,10 @@ test("Access tokens is a table where its box has room and card rows where it has
       await page.setViewportSize({ width: 1270, height: 900 });
       await page.goto("/settings/tokens");
       await expect(shown(page.getByText(name))).toHaveCount(1);
-      const overflowing = await sweepBox(page, 300, 652);
+      const overflowing = await sweepBox(page, 300, 652, STAGES.tokens);
       expect.soft(overflowing?.measured, "tokens: every width measured").toBe(353);
       expect.soft(overflowing?.widths, "tokens: box widths at which the list is wider than its box").toEqual([]);
+      expect.soft(overflowing?.misfolded, "tokens: box widths at which cards are drawn where the table fits, or the reverse").toEqual([]);
     }
   } finally {
     await api.delete(`/auth/tokens/${token.id}`);

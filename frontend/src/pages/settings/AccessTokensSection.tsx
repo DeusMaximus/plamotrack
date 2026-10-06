@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 
 import { api, ApiError, tokensQuery } from "../../api/client";
 import type { AccessToken, AccessTokenMinted, TokenScope } from "../../api/types";
+import { FoldToFit } from "../../components/FoldToFit";
 import {
   Button,
   Card,
@@ -16,6 +17,7 @@ import {
   TABLE_HEAD_ROW_CLASS,
 } from "../../components/ui";
 import { dateInDigits, formatDate, formatDateTime, formatNumber } from "../../lib/format";
+import { useShell } from "../../lib/shell";
 import { SectionHeader } from "./SectionHeader";
 
 /** Settings → Access tokens (§5.5 family 6; #189): mint, list and revoke the
@@ -164,6 +166,7 @@ function MintedCard({ minted, onDone }: { minted: AccessTokenMinted; onDone: () 
 }
 
 function TokenList() {
+  const phone = useShell() === "phone";
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { data: tokens, error } = useQuery(tokensQuery);
@@ -205,21 +208,21 @@ function TokenList() {
         // pages' px-3: five columns at px-3 miss the 652 px box by a few pixels
         // for a populated row, and the miss lands as a wrapped second line.
         //
-        // `@container` (§13.7, #258): a populated row needs 553 px, and this box
-        // is the viewport less 372 px beside the rail — under that on every iPad
-        // in portrait as well as on a phone. Below 36rem (576 px) it shows card rows
-        // instead, chosen by the box's own width and not by the 768 px shell
-        // line, so an iPad gets them inside the two-column Settings page. Both
-        // are in the tree and CSS shows one — from 1210 px up the box is its
-        // 652 px cap, so the desktop always shows the table. The two Revokes of
-        // a token carry one focus key, and when the box crosses the line under
-        // a focused one the keyboard goes to the one that is drawn
-        // (`lib/focusKey.ts`; Codex #266, finding 4 — an iPad Air turning is
-        // the rail both ways, so no shell change is there to notice it).
-        <div className="@container">
+        // Card rows where the table does not fit its box (§13.7, #258, #329) —
+        // a populated row needs about 553 px, and this box is the viewport less
+        // 372 px beside the rail, so every iPad in portrait — and on a phone
+        // always, as every list there is cards. Chosen by measuring, not by the
+        // 768 px shell line, so an iPad gets them inside the two-column Settings
+        // page; from 1210 px up the box is its 652 px cap and a populated row
+        // fits. Both are in the tree and one is drawn. The two Revokes of a
+        // token carry one focus key, and when the shape changes under a focused
+        // one the keyboard goes to the one that is drawn (`lib/focusKey.ts`;
+        // Codex #266, finding 4 — an iPad Air turning is the rail both ways, so
+        // no shell change is there to notice it).
+        <FoldToFit stages={1} floor={phone ? 1 : 0} overflows={tableOverflows}>
           <ul
             data-testid="token-cards"
-            className="divide-y divide-rule rounded-md border border-border @min-[36rem]:hidden"
+            className="hidden divide-y divide-rule rounded-md border border-border group-data-fold-1/fold:block"
           >
             {tokens.map((token) => (
               <TokenCard
@@ -232,7 +235,7 @@ function TokenList() {
           </ul>
           <div
             data-testid="token-table"
-            className="overflow-x-auto rounded-md border border-border @max-[36rem]:hidden"
+            className="overflow-x-auto rounded-md border border-border group-data-fold-1/fold:hidden"
           >
           <table className="w-full text-sm">
             <thead>
@@ -256,11 +259,17 @@ function TokenList() {
             </tbody>
           </table>
           </div>
-        </div>
+        </FoldToFit>
       )}
     </Card>
   );
 }
+
+/** What has to fit: the table's own scrolling box, not the cards beside it. */
+const tableOverflows = (box: HTMLElement): boolean => {
+  const table = box.querySelector<HTMLElement>('[data-testid="token-table"]');
+  return table !== null && table.scrollWidth > table.clientWidth;
+};
 
 /** A stored instant as a date in the table, the full date-time on hover. */
 function Instant({ iso }: { iso: string }) {
