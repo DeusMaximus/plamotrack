@@ -10,6 +10,7 @@ import { ImportPreview } from "../../components/ImportPreview";
 import { BAR_BUTTON_CLASS } from "../../components/Modal";
 import { Button, Card, ErrorBanner, Select } from "../../components/ui";
 import { focusByKey } from "../../lib/focusKey";
+import { importRunState, sendImport, watchImportRun } from "../../lib/importRun";
 import { formatFileSize } from "../../lib/format";
 import { counted, importTableLabel } from "../../lib/labels";
 import { useShell } from "../../lib/shell";
@@ -83,11 +84,13 @@ const REVEAL_MARGINS = "max-md:scroll-mt-16 max-md:scroll-mb-[calc(8rem+env(safe
  *  is on screen — then the starter sheet alone, the one blank template a phone
  *  might fill in (in Numbers, say); the full pack stays on the wider shapes.
  *  The line is the shell's, by width, not a touch screen's: an iPad is a fair
- *  place to import from, `replace_all` included. The import's state is held
+ *  place to import from, `replace_all` included. The import's draft is held
  *  here, above both shapes, so a tablet turned to 744 px and back finds its
  *  file and its preview where it left them — unless it was replacing
  *  everything, which a phone does not offer: then the mode falls back to Merge
- *  and the preview goes, so no Apply can run a plan the phone cannot show. */
+ *  and the preview goes, so no Apply can run a plan the phone cannot show. An
+ *  import once sent is held above the routes instead (`lib/importRun.ts`,
+ *  #315): leaving the section does not stop it, and must not lose it. */
 export function DataSection() {
   const { t } = useTranslation();
   const phone = useShell() === "phone";
@@ -97,20 +100,33 @@ export function DataSection() {
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState<ImportMode>("merge");
   const [plan, setPlan] = useState<ImportPlan | null>(null);
-  const [result, setResult] = useState<ImportResult | null>(null);
+  // An import sent before the section was left is the module's (`importRun`,
+  // #315): the section starts from it — still under way, or how it ended, an
+  // outcome `watchImportRun` then claims so it is shown this once.
+  const [result, setResult] = useState<ImportResult | null>(() => {
+    const ended = importRunState().outcome;
+    return ended && "result" in ended ? ended.result : null;
+  });
   const [confirmText, setConfirmText] = useState("");
-  const [busy, setBusy] = useState<"preview" | "apply" | null>(null);
+  const [busy, setBusy] = useState<"preview" | null>(null);
   // The import that has been sent, by the mode it was sent with — the
   // operation's, not the draft's. The draft (file, mode, plan) can still be
   // thrown away under it, by the phone's fall-back, and an import that has
   // reached the server is not stopped by that: the page keeps saying it is
   // under way, and what it is, until it answers (#314 round 2, Codex finding 5).
-  const [submitted, setSubmitted] = useState<ImportMode | null>(null);
+  // Nor by leaving: a section mounted under it says the same (#315).
+  const [submitted, setSubmitted] = useState<ImportMode | null>(() => importRunState().pending);
   const [error, setError] = useState<string | null>(null);
   // The import's own failures, said inside its card rather than at the head of
   // the section: on a phone the head is a screen above Preview and the bar, and
   // a refused file looked like a tap that did nothing (#304, in the simulator).
-  const [importError, setImportError] = useState<string | null>(null);
+  const [importError, setImportError] = useState<string | null>(() => {
+    const ended = importRunState().outcome;
+    return ended && "error" in ended ? ended.error : null;
+  });
+  // Previewing, or an import under way: either holds every control that would
+  // change the draft, and an import under way holds Preview and Apply too.
+  const working = busy !== null || submitted !== null;
   const [dragging, setDragging] = useState(false);
   // Which preview is the current one. Everything that throws a plan away —
   // another file, another mode, Cancel, the phone's fall-back from
@@ -196,39 +212,47 @@ export function DataSection() {
     }
   }
 
-  async function runApply() {
+  function runApply() {
     if (!file || !plan) return;
-    setBusy("apply");
+    const sent = sendImport(
+      mode,
+      () =>
+        api.applyImport(
+          file,
+          mode,
+          plan.plan_hash,
+          mode === "replace_all" ? confirmText.trim().toUpperCase() : undefined,
+        ),
+      () => queryClient.invalidateQueries(),
+    );
+    if (!sent) return;
     setSubmitted(mode);
     setImportError(null);
-    let applied: ImportResult;
-    try {
-      applied = await api.applyImport(
-        file,
-        mode,
-        plan.plan_hash,
-        mode === "replace_all" ? confirmText.trim().toUpperCase() : undefined,
-      );
-    } catch (err) {
-      setImportError(err instanceof ApiError ? err.message : String(err));
-      setBusy(null);
-      setSubmitted(null);
-      return;
-    }
-    // The sent phase ends on the answer, in one commit with what it brought:
-    // the result, and a draft emptied for the next file. Refreshing the rest
-    // of the app's data comes after and is not part of it — awaited inside it,
-    // the page said "Importing…" beside "Import complete" with the pickers
-    // enabled (#314 round 3, Codex finding 9).
-    setResult(applied);
-    setPlan(null);
-    setFile(null);
-    setConfirmText("");
-    if (fileInput.current) fileInput.current.value = "";
-    setBusy(null);
-    setSubmitted(null);
-    await queryClient.invalidateQueries();
   }
+
+  // The sent phase ends on the answer, in one commit with what it brought: the
+  // result, and a draft emptied for the next file — told in the tick the
+  // answer comes, so these are batched as one. Refreshing the rest of the
+  // app's data comes after and is not part of it — awaited inside it, the page
+  // said "Importing…" beside "Import complete" with the pickers enabled (#314
+  // round 3, Codex finding 9). A section mounted after the answer is handed it
+  // here at once; its draft is empty already.
+  useEffect(
+    () =>
+      watchImportRun((ended) => {
+        setSubmitted(null);
+        if ("error" in ended) {
+          setImportError(ended.error);
+          return;
+        }
+        setResult(ended.result);
+        setPlan(null);
+        setFile(null);
+        setConfirmText("");
+        if (fileInput.current) fileInput.current.value = "";
+      }),
+    [],
+  );
 
   // A sent import has somewhere to keep the keyboard (#314 round 3, Codex
   // finding 8). Sending it disables Apply, and Chromium then drops the focus a
@@ -239,13 +263,15 @@ export function DataSection() {
   // where nothing else has the keyboard: someone who moved on keeps their place.
   const pendingRef = useRef<HTMLParagraphElement>(null);
   const outcomeRef = useRef<HTMLDivElement>(null);
-  const wasSubmitted = useRef(false);
+  // Moments, not states: a section mounted under an import already sent, or
+  // over one already answered, takes nobody's keyboard (#315).
+  const wasSubmitted = useRef(submitted !== null);
   useEffect(() => {
-    if (submitted !== null) {
-      wasSubmitted.current = true;
+    const was = wasSubmitted.current;
+    wasSubmitted.current = submitted !== null;
+    if (submitted !== null && !was) {
       if (keyboardLost()) reveal(pendingRef.current);
-    } else if (wasSubmitted.current) {
-      wasSubmitted.current = false;
+    } else if (submitted === null && was) {
       if (keyboardLost()) reveal(outcomeRef.current);
     }
   }, [submitted]);
@@ -288,18 +314,18 @@ export function DataSection() {
   const applyButton = (className = "") => (
     <Button
       onClick={runApply}
-      disabled={blocked || needsConfirm || busy !== null}
+      disabled={blocked || needsConfirm || working}
       data-focus-key={FOCUS.apply}
       className={className}
     >
-      {busy === "apply" ? t("data.importing") : t("data.applyImport")}
+      {submitted !== null ? t("data.importing") : t("data.applyImport")}
     </Button>
   );
   const cancelButton = (className = "") => (
     <Button
       variant="secondary"
       onClick={reset}
-      disabled={busy !== null}
+      disabled={working}
       data-focus-key={FOCUS.cancel}
       className={className}
     >
@@ -385,7 +411,7 @@ export function DataSection() {
                   variant="secondary"
                   data-focus-key={FOCUS.file}
                   onClick={openPicker}
-                  disabled={busy !== null}
+                  disabled={working}
                   className="shrink-0"
                 >
                   {t("data.changeFile")}
@@ -398,7 +424,7 @@ export function DataSection() {
                   icon={Upload}
                   data-focus-key={FOCUS.file}
                   onClick={openPicker}
-                  disabled={busy !== null}
+                  disabled={working}
                   className="w-full justify-center"
                 >
                   {t("data.chooseFile")}
@@ -416,7 +442,7 @@ export function DataSection() {
               onDrop={(event) => {
                 event.preventDefault();
                 setDragging(false);
-                if (busy === null) pickFile(event.dataTransfer.files[0] ?? null);
+                if (!working) pickFile(event.dataTransfer.files[0] ?? null);
               }}
               className={`rounded-md border border-dashed px-4 py-6 text-center ${
                 dragging ? "border-accent bg-accent-soft" : "border-border-strong bg-surface-alt"
@@ -429,7 +455,7 @@ export function DataSection() {
                   <button
                     type="button"
                     onClick={reset}
-                    disabled={busy !== null}
+                    disabled={working}
                     data-focus-key={FOCUS.file}
                     className="text-xs text-accent hover:underline"
                   >
@@ -444,7 +470,7 @@ export function DataSection() {
                   <button
                     type="button"
                     onClick={openPicker}
-                    disabled={busy !== null}
+                    disabled={working}
                     data-focus-key={FOCUS.file}
                     className="text-xs text-accent hover:underline"
                   >
@@ -503,7 +529,7 @@ export function DataSection() {
             )}
             <Button
               onClick={runPreview}
-              disabled={!file || busy !== null}
+              disabled={!file || working}
               data-focus-key={FOCUS.preview}
               className="max-md:justify-center"
             >

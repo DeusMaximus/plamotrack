@@ -3797,6 +3797,24 @@ import it here. That undoes the first of the three reasons the phone was export 
   below a long preview. A preview's answer gives the keyboard to its refusal or
   back to Preview; `main` lost it there too. A focused outcome replaced by a dropped
   file hands it to that file's Preview.
+- **…and the operation outlives the section** (#315, the owner's call). Held in
+  the section, a sent import went with it when the section was left: the server
+  finished it, coming back found a fresh draft, and nothing stopped the same file
+  being applied again, which under Add only adds every kit twice. The request and
+  its answer now live in a module above the routes (`lib/importRun.ts`, one import
+  at a time, for the life of the tab); the draft stays in the section, where
+  leaving can still throw it away, because it has not happened. A section mounted
+  while the import runs says so and offers no file to pick. One mounted when it
+  answers is told in the same tick, so the result and the emptied draft are one
+  commit (round 3's rule, kept). With none mounted the outcome waits, and the next
+  section claims it: shown once, as an outcome seen in place goes when the section
+  is left. Arriving takes nobody's keyboard: the keyboard moves at the moments of
+  sending and answering, never on mount. The other direction, blocking navigation
+  while it runs, was turned down: it needs a data router (`useBlocker`) or
+  hand-intercepted links, and it holds the tab bar hostage for the import's
+  seconds. A reload or a closed tab still loses the outcome and aborts the request
+  mid-flight, so while it is in flight the page asks first (`beforeunload`).
+  Signing out forgets it.
 - **The import's failures are said in its card**, last in it — under Preview when
   a preview is refused, just above the bar when an apply is. At the head of the
   section, where every error used to go, a phone put it a screen above the button

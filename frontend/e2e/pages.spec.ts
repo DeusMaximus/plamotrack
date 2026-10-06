@@ -775,6 +775,140 @@ test("an import begun on a tablet survives a turn through the phone shell, unles
   }
 });
 
+test("an import sent outlives leaving the section: back, it is still under way, then its outcome, once (#315)", async ({ page }, testInfo) => {
+  // Every shape: the section is left by the shell's own navigation, and comes
+  // back by the browser's Back — a route change, never a reload, or the tab
+  // would have nothing to remember.
+  const shop = `${TAG} Sent Then Left ${testInfo.project.name}`;
+  const main = page.getByRole("main");
+  /** Away to Kits — arrived, not just addressed: the router draws the next
+   *  page in a transition, and a Back before it lands never left the section. */
+  const leave = async () => {
+    await page.getByRole("link", { name: "Kits", exact: true }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Kits" })).toBeVisible();
+    await expect(main.getByRole("heading", { name: "Import", exact: true }), "the section is gone").toHaveCount(0);
+  };
+  const pending = main.getByText("Importing — Add only…");
+  const complete = main.getByText("Import complete");
+  // The way to a file in each shape: the drop zone's link, the phone's button.
+  const picker = main.getByRole("button", { name: /^(or browse for one|Choose a file)$/ });
+  const api = await apiContext();
+  const ours = async () =>
+    ((await (await api.get("/retailers")).json()) as { id: string; name: string }[]).filter((r) => r.name === shop);
+
+  /** A file previewed under Add only, and Apply sent with its request held at
+   *  the network until `release` — then continued, or aborted. */
+  async function sendHeld(then: "continue" | "abort") {
+    await page.goto("/settings/data");
+    await main.locator('input[type="file"]').setInputFiles(retailerCsv(shop));
+    if (testInfo.project.name === "phone") await main.getByText("Add only", { exact: true }).click();
+    else await main.getByRole("combobox").selectOption("add_only");
+    await main.getByRole("button", { name: "Preview changes" }).click();
+    const apply = page.getByRole("button", { name: "Apply import" });
+    await expect(apply).toBeEnabled();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/import/apply", async (route) => {
+      await held;
+      await (then === "continue" ? route.continue() : route.abort());
+    });
+    await apply.click();
+    await expect(pending).toBeVisible();
+    return release;
+  }
+
+  /** Whether the Import card's first drawing, after the next route change,
+   *  already says `text` (or holds an alert) — read in a MutationObserver,
+   *  which runs after React's commit and before its effects: an outcome handed
+   *  over only by an effect is a frame late, an empty card painted first. */
+  const firstDrawSays = async (text: string) => {
+    await page.evaluate((expected) => {
+      const probe = window as unknown as { __firstDraw?: boolean | null };
+      probe.__firstDraw = null;
+      new MutationObserver((_, observer) => {
+        const main = document.querySelector("main");
+        const headings = Array.from(main?.querySelectorAll("h1, h2, h3") ?? []);
+        if (!headings.some((heading) => heading.textContent === "Import")) return;
+        probe.__firstDraw =
+          expected === "an alert" ? main!.querySelector('[role="alert"]') !== null : main!.textContent!.includes(expected);
+        observer.disconnect();
+      }).observe(document.body, { childList: true, subtree: true });
+    }, text);
+    return () => page.evaluate(() => (window as unknown as { __firstDraw?: boolean | null }).__firstDraw);
+  };
+
+  try {
+    // Left while it is under way, and back before it answers: it is still
+    // under way, by its mode, and there is no file to pick — nothing to send
+    // a second time.
+    const release = await sendHeld("continue");
+    await leave();
+    // With the keyboard nowhere, which is when the section would give it to
+    // the import's status: it does at the moment of sending, not on arrival.
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.goBack();
+    await expect(page).toHaveURL(/\/settings\/data$/);
+    await expect(pending, "back while it runs: it says so").toBeVisible();
+    await expect.poll(() => focused(page), { message: "arriving takes nobody's keyboard" }).toBe("<body>");
+    await expect(picker, "and no file can be picked to send again").toBeDisabled();
+    await expect(main.getByRole("button", { name: "Preview changes" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Importing…" }), "its actions, though its plan went with the draft").toBeDisabled();
+
+    // A reload or a closed tab would lose it as well, and abort it besides:
+    // while it is in flight, the page asks first. (The browser's own prompt
+    // needs a gesture and a real unload; what decides it is this listener.)
+    const asks = () =>
+      page.evaluate(() => {
+        const event = new Event("beforeunload", { cancelable: true });
+        window.dispatchEvent(event);
+        return event.defaultPrevented;
+      });
+    expect(await asks(), "in flight, leaving the page is asked about").toBe(true);
+
+    // Left again, and it answers while nobody is looking.
+    await leave();
+    const answered = page.waitForResponse("**/import/apply");
+    release();
+    expect((await answered).ok()).toBeTruthy();
+    await expect.poll(async () => (await ours()).length, { message: "the import wrote its row" }).toBe(1);
+    expect(await asks(), "answered, the page lets go").toBe(false);
+    const drawnWithResult = await firstDrawSays("Import complete");
+    await page.goBack();
+    await expect(complete, "back after it answered: how it ended").toBeVisible();
+    expect(await drawnWithResult(), "from the card's first frame").toBe(true);
+    await expect(main.getByText(/^1 created/), "with what it did").toBeVisible();
+    await expect(pending).toHaveCount(0);
+    await expect(picker, "and the next file can be picked").toBeEnabled();
+    await expect(page.getByRole("button", { name: "Apply import" }), "the draft is empty").toHaveCount(0);
+
+    // Shown once: the visit after is a fresh one.
+    await leave();
+    await page.goBack();
+    await expect(main.getByRole("heading", { name: "Import", exact: true })).toBeVisible();
+    await expect(complete, "the outcome was seen, and is gone").toHaveCount(0);
+    expect(await ours(), "one import, one row").toHaveLength(1);
+    await page.unroute("**/import/apply");
+
+    // A failure that came while it was away is said in the card on return.
+    const refuse = await sendHeld("abort");
+    await leave();
+    const failed = page.waitForEvent("requestfailed", (request) => request.url().endsWith("/import/apply"));
+    refuse();
+    await failed;
+    const drawnWithFailure = await firstDrawSays("an alert");
+    await page.goBack();
+    const card = main.locator("section").filter({ has: page.getByRole("heading", { name: "Import", exact: true }) });
+    await expect(card.getByRole("alert"), "back after it failed: the failure, in the card").toBeVisible();
+    expect(await drawnWithFailure(), "from the card's first frame").toBe(true);
+    await expect(pending).toHaveCount(0);
+    await expect(picker).toBeEnabled();
+    await page.unroute("**/import/apply");
+  } finally {
+    for (const retailer of await ours()) await api.delete(`/retailers/${retailer.id}`);
+    await api.dispose();
+  }
+});
+
 // -------------------------------------------------------------------- Home
 
 test("Home on a phone: a completed row is two lines, the mail is three stacked groups, every control a finger", async ({
