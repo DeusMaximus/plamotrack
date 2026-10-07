@@ -33,7 +33,7 @@ Shape:
 
 ---
 
-## #326 — Home no longer scrolls sideways when a value has nowhere to break (PR #NNN)
+## #326 — Home no longer scrolls sideways when a value has nowhere to break (PR #337)
 - **Release note:** A grade, scale, kit number, kit name or carrier with no spaces
   no longer makes Home scroll sideways. A Backlog or Recently completed row whose
   details don't fit beside the name puts them under it, with the edit button
