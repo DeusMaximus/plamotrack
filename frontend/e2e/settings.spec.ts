@@ -8,7 +8,7 @@
  * `settings` project in playwright.config.ts. The original value is restored
  * in afterAll whether the tests pass or not.
  */
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { apiContext } from "./api";
 
@@ -386,6 +386,114 @@ test("a cold Home load re-renders its counts once the settings row arrives (#177
   } finally {
     await api.delete(`/kits/${kit.id}`);
     await api.patch("/settings", { data: { formatting_locale: original.formatting_locale } });
+    await api.dispose();
+  }
+});
+
+/** Hold every GET to `pattern` until `release()` — the late response under test. */
+async function holdGets(page: Page, pattern: string): Promise<() => void> {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => (release = resolve));
+  await page.route(pattern, async (route) => {
+    if (route.request().method() !== "GET") return route.fallback();
+    await gate;
+    await route.continue();
+  });
+  return release;
+}
+
+/** A locale whose digits are not the boot locale's, in the longest style: what the
+ *  Settings sections draw under it cannot pass for what they drew at boot. The
+ *  expected text is the browser's own Intl, asked in the page, so the assertion
+ *  names the rendering rather than a string written down here. */
+const SAVED = { formatting_locale: "ar-EG", date_style: "full" } as const;
+const ARABIC_DIGIT = /[٠-٩]/;
+
+test("Access tokens re-render under the saved settings whichever response arrives first (#331)", async ({
+  page,
+}) => {
+  const api = await apiContext();
+  await api.patch("/settings", { data: SAVED });
+  const zone = ((await (await api.get("/settings")).json()) as { time_zone: string }).time_zone;
+  const name = `e2e-331-token-${Date.now()}`;
+  const minted = await api.post("/auth/tokens", { data: { name, scopes: ["collection:read"] } });
+  expect(minted.ok(), await minted.text()).toBeTruthy();
+  const token = (await minted.json()) as { id: string; created_at: string };
+
+  // The row's Created cell, in the table (the settings project is 1280 px wide),
+  // and the expiry choice beside the list — both formatted per call.
+  const created = page.getByTestId("token-row").filter({ hasText: name }).locator("td").nth(1);
+  const thirtyDays = page.getByLabel("Expires").locator("option").nth(1);
+  const [boot, saved] = await page.evaluate(
+    ({ iso, zone, locale, style }) => [
+      new Date(iso).toLocaleDateString("en-AU", { timeZone: "UTC" }),
+      new Intl.DateTimeFormat(locale, { dateStyle: style, timeZone: zone }).format(new Date(iso)),
+    ],
+    { iso: token.created_at, zone, locale: SAVED.formatting_locale, style: SAVED.date_style },
+  );
+  expect(saved, "the saved style is not the boot one").not.toBe(boot);
+
+  try {
+    // The tokens first: the row is drawn under the boot defaults while the
+    // settings row is held — then the row's arrival alone, with no navigation
+    // and no interaction, re-draws it. The order Codex reproduced the defect in.
+    const releaseSettings = await holdGets(page, "**/api/settings");
+    await page.goto("/settings/tokens");
+    await expect(created).toHaveText(boot);
+    await expect(thirtyDays).toHaveText("In 30 days");
+    releaseSettings();
+    await expect(created).toHaveText(saved);
+    await expect(thirtyDays).toHaveText(ARABIC_DIGIT);
+    await page.unrouteAll();
+
+    // The settings first: the expiry choice already speaks the saved locale while
+    // the tokens are held — which proves the order — and the row then arrives
+    // in it.
+    const releaseTokens = await holdGets(page, "**/api/auth/tokens");
+    await page.goto("/settings/tokens");
+    await expect(thirtyDays).toHaveText(ARABIC_DIGIT);
+    await expect(page.getByTestId("token-row")).toHaveCount(0);
+    releaseTokens();
+    await expect(created).toHaveText(saved);
+    await page.unrouteAll();
+  } finally {
+    await api.delete(`/auth/tokens/${token.id}`);
+    await api.patch("/settings", {
+      data: { formatting_locale: original.formatting_locale, date_style: original.date_style },
+    });
+    await api.dispose();
+  }
+});
+
+test("Data management re-renders a chosen file's size once the settings row arrives (#331's sweep)", async ({
+  page,
+}) => {
+  const api = await apiContext();
+  await api.patch("/settings", { data: SAVED });
+  const [boot, saved] = await page.evaluate((locale) => {
+    const size = (tag: string) =>
+      `${new Intl.NumberFormat(tag, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(1.5)} KB`;
+    return [size("en-AU"), size(locale)];
+  }, SAVED.formatting_locale);
+  expect(saved).toMatch(ARABIC_DIGIT);
+
+  try {
+    const releaseSettings = await holdGets(page, "**/api/settings");
+    await page.goto("/settings/data");
+    // 1536 bytes is 1.5 KB: a decimal, so the separator shows as well as the digits.
+    await page.locator('input[type="file"]').setInputFiles({
+      name: "sizes.csv",
+      mimeType: "text/csv",
+      buffer: Buffer.alloc(1536, "a"),
+    });
+    const size = page.getByRole("main").getByText(boot, { exact: true });
+    await expect(size).toBeVisible();
+    releaseSettings();
+    await expect(page.getByRole("main").getByText(saved, { exact: true })).toBeVisible();
+    await expect(size).toHaveCount(0);
+    await page.unrouteAll();
+  } finally {
+    await api.patch("/settings", { data: { formatting_locale: original.formatting_locale, date_style: original.date_style } });
     await api.dispose();
   }
 });

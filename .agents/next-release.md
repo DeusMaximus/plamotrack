@@ -33,6 +33,13 @@ Shape:
 
 ---
 
+## #331 — Access tokens and Data management show dates and sizes in your saved format (PR #NNN)
+- **Release note:** Settings → Access tokens no longer shows its dates in the
+  default format when the token list loads before your saved settings. Data
+  management's file size and import counts now follow the saved format too.
+- **README:** nothing.
+- **Docs site:** nothing.
+
 ## #316 — a failure in Settings is said beside the button that failed (PR #334)
 - **Release note:** In Settings, an error now appears next to the control that
   caused it. A failed download says so in its own card, rather than at the top of
