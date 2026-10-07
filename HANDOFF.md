@@ -41,6 +41,49 @@ Template:
 
 ---
 
+## 2026-10-07 — Claude Code (Opus 5.5) — v0.6.0-alpha RELEASED (tag at `6dfc008`, prerelease); docs site and README updated
+
+- **Done:**
+  - **[v0.6.0-alpha](https://github.com/DeusMaximus/plamotrack/releases/tag/v0.6.0-alpha)** was published 2026-10-07 07:33 UTC as a prerelease, on the owner's approval at each step. It ships everything the ledger held, from #294 to #326.
+    - **Bump:** PR #338 → `6dfc008` (0.5.2 → 0.6.0 in the app, `pyproject.toml` and `uv.lock`).
+    - **Candidate:** [run 37581036003](https://github.com/DeusMaximus/plamotrack/actions/runs/37581036003), attempt 1, green, with Integration on native amd64 and arm64.
+    - **Annotated tag** `v0.6.0-alpha` at `6dfc008`.
+    - **Promote:** [run 37585808722](https://github.com/DeusMaximus/plamotrack/actions/runs/37585808722) → draft → published.
+    - **Checked by hand:** the published files downloaded anonymously pass `sha256sum -c` and are byte-identical to the gated bundle. Both version tags resolve anonymously to the gated digests. PostgreSQL is pinned at 16.15.
+  - **The first update from a release's files**, v0.5.2 → the candidate on testhost: green. Scripted by hand, since the driver has no phase for it. The state was a claimed owner, a retailer, two kits, an order and a PAT, plus a −3 low-stock threshold stored through 0.5.2's importer.
+    - After the update, `migrate` logged `cleared 1 negative value(s)`.
+    - The version, the 0.5.2 session, the token, the data and the volume all held, and MCP via the token listed 31 tools.
+    - The script and notes are in `.dev/release-0.6.0/` (gitignored). The procedure is in `.agents/releases.md`, step 5.
+  - **The deployment gate on the release files, every phase plus the tunnel:** green.
+    - Matrix: local 180, OIDC 183, tunnel 87 rows, 0 failing.
+    - T13: the link and all three restores.
+    - `/mcp` held 130 s through Cloudflare.
+  - **Real-client run (owner, 2026-10-07):** Claude.ai linked through `plamotest.gunp.la` and recorded an order through `create_order`. Confirmed server-side by the `auth.mcp_grant_issued` audit row and the order.
+  - **Docs site:** [plamotrack-docs#9](https://github.com/DeusMaximus/plamotrack-docs/pull/9) merged as `11561d3` (the changelog, install version, phone import, sorts, MCP reference, retaken screenshots, and a **new Pocket ID page**). Review fixes: Codex's Caddy HTTP-challenge P2, plus Greptile's four style-guide P2s.
+  - **README:** [PR #339](https://github.com/DeusMaximus/plamotrack/pull/339) merged as `36dfed4`. Codex caught the phone row still saying export-only; the same sweep fixed Milestone 6.7's row (Pocket ID supported, images published).
+  - **This commit:** `.agents/next-release.md` is emptied (all 15 entries shipped). `.agents/releases.md` records the update step's first run, and adds to step 7 that the README's own claims are read against the release, not only the ledger's lines.
+- **Decisions (owner, 07/10):** run the real-client check on Claude.ai; publish.
+- **State:**
+  - **Nothing is unreleased on `main`.**
+  - **testhost** is left in the **tunnel** configuration (`WEB_BIND` on the LAN, `PUBLIC_BASE_URL=https://plamotest.gunp.la`, OIDC with the gate's Keycloak). The gate's end state is saved on the host as `.env.before-claude-check`. The next gate run resets the host anyway. Claude.ai's test connector to `plamotest.gunp.la` is still linked on the owner's account.
+  - **The owner's LXC is on 0.5.2.** Upgrading it to 0.6.0 is the owner's; the Updating page covers it. **Gunpla skill refresh** at that upgrade, because `create_order` changed (#289). The release's `plamotrack-gunpla.zip` is current.
+  - **Known gaps, filed:** #333 (failed sign-out), #238, #324 (local runs need `--workers=1`), #320.
+  - **Tooling:**
+    - `main` is clean.
+    - The local `.dev/release-bundle`, `.dev/release-draft` and `.dev/gate-stage` directories can go.
+    - Merged branches left on origin: `release/v0.6.0-alpha`, `docs/readme-v0.6.0-alpha`, `fix/326-…`, `fix/268-…`, `fix/331-…`, `fix/316-…`, and older ones. In the docs repo: `release/v0.6.0-alpha`.
+  - **Carried:**
+    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
+    - **testhost:** don't recreate its Keycloak container; a new one changes `sub`.
+    - #278 is open for the owner's skill-zip check.
+- **Next:** the owner's pick. Candidates:
+  - **#333** (failed sign-out; small, `signOut.ts` and `AuthGate.tsx`);
+  - **M6.7**: #279's edge probes, then #281's packaging; #282's VPS path;
+  - **M7** waits on #28.
+
+  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
+- **Also next:** **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
+
 ## 2026-10-07 — Claude Code (Opus 5.5) — #326 MERGED as `8862a79` (PR #337): Home's strip rows stack under the name; the pre-release plan is done
 
 - **Done:**
@@ -215,64 +258,3 @@ Template:
 - **Also next:**
   1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`.
   2. Carried: #279's edge probes, then #281's packaging; #282's VPS path; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
-
-## 2026-10-06 — Claude Code (Opus 5.5) — #329 and #327 MERGED as `75e0218` (PR #330): list tables fold to fit their box; #331 filed
-
-- **Done:**
-  - **[PR #330](https://github.com/DeusMaximus/plamotrack/pull/330)** squash-merged as **`75e0218`**, pinned to head `4850f13` after all three checks. #329 and #327 are closed.
-    - `frontend/src/components/FoldToFit.tsx` (new) replaces every fixed fold line (the old `@max-[…rem]` container queries).
-      - Each pass tries the stages from the whole table up and draws the first that fits; past the last stage the box scrolls.
-      - The stage is a `data-fold-<n>` attribute on the box, read by `group-data-fold-<n>/fold:` variants.
-      - A pass runs in a microtask, triggered by: a zero-height sentinel's `ResizeObserver`; every commit of the box; `useRefit()` (`lib/refit.ts`, called by `Measured` when its break decision flips); and each font face's `loaded` promise. WebKit fires no `loadingdone` for stylesheet faces.
-      - A pass that hides the focused control hands the keyboard on itself. See the CI finding below.
-    - Stages: Kits 1, Orders 2, Retailers 1, Tools 1, Display 1, Access tokens 1 (the cards). Consumables and Upgrades have none.
-    - Access tokens are always cards in the phone shell. That changes the 744 px iPad mini in portrait.
-    - #327: Inventory's On hand cell is a wrapping flex row (`StockCell`). WebKit wouldn't wrap a ten-digit count above the stepper.
-  - **Tests** (`lists.spec.ts`, `lists.ts`):
-    - Fixed `FOLD` lines are replaced by `foldState` (the first stage that fits, tried by hand).
-    - `sweepBox` waits a frame per width, sweeps up and back down, and asserts no misfold and no observer error. It is slow: about 2.5 min per project.
-    - New content-driven tests: rows narrowed in place, a refetch under a focused link, the web font arriving, Codex's held-delivery `Measured` witness (it picks its value per machine), same-stage focus (Greptile), and every frame of a one-frame fold.
-    - Codex's round-2 payloads, ten-digit counts and A$9,999.00 are seeded.
-  - **Review:**
-    - Codex: GO, with one P3 that predates the branch, filed as [#331](https://github.com/DeusMaximus/plamotrack/issues/331).
-    - Greptile: one P2 (a missing test), answered and resolved.
-    - CI Integration then found a real defect: on sidebar → rail, Orders folds for one frame at the old shell's box. The focus hook's deferred watch missed the hidden copy and left the keyboard on `<body>`. Fixed in `4850f13`.
-  - Lessons: `.agents/lessons.md` → "The test's observer is the page's to the browser".
-- **Decisions (owner, 06/10):**
-  - Add Codex's M5 witness and merge.
-  - File the P3 rather than fix it in this PR.
-- **State:**
-  - **Unreleased on `main`:** #294, #289, #247, #302, #310, #313 (a migration), #314, #319, #322, #328, and now **#330**. See `.agents/next-release.md`; the "#329, #327" entry is there.
-  - **CI is slower**: Integration took 16 min on `c3e37e1`, because the sweeps wait a frame per width.
-  - **Mutants**, all killed (the table is in PR #330's body):
-    - step from the drawn stage; no per-commit pass; no sentinel; observe the table;
-    - no font trigger; no `Measured` refit; no focus observer; no phone floor for tokens;
-    - a browser blurring during the trial; a fold that leaves hidden focus to the hook.
-  - **Known gaps, filed:** #331, #326 (Home strips, which need a design call), #324 (local runs need `--workers=1`), #320, #315, #316.
-  - **Tooling:**
-    - No dev servers or e2e databases are left, and `main` is clean.
-    - Merged branches left on origin: `fix/329-fold-to-fit`, `fix/323-unbroken-names`, `fix/321-focus-row-page`, `fix/317-narrow-list-lookups`, `feat/318-page-size`.
-    - Review brief and replies are in `.dev/329/`.
-  - **Carried:**
-    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
-    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
-    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
-- **Next — the pre-release plan (owner, 06/10):** fix these five before cutting the next release, **in this order**, each its own PR:
-  1. **#315**, in a **new session**: an import's state is lost when you leave Data management, and a repeated Add-only import duplicates kits. Owner's call still open: keep the sent import's state above the routes (recommended: it also covers a reload), or block navigation while it runs. Ask before building. Expect a briefed Codex round.
-  2. **#316**, after #315 merges (same file, `DataSection.tsx`): on a phone, a failed download's error shows a screen away from its button.
-  3. **#331**: subscribe `TokenList` to the presentation version, test both response orders, and sweep the other formatters (rule 11).
-  4. **#268**: the Inventory stock stepper drops focus to `<body>` on every press. Give the keyboard back to the record's control.
-  5. **#326** (Home scrolls sideways): owner's call still open on a strip's grade and scale — wrap, truncate, or stack under the name (recommended: stack, the narrow strip's existing shape). Expect a briefed Codex round.
-
-  #331 and #268 are small enough for the bots' automatic reviews alone. **Then the release**, likely **v0.6.0-alpha**: a migration (#313), a changed MCP tool (#289: `create_order` takes the shop's id) and two new phone features. Work through `.agents/releases.md` and `.agents/next-release.md`.
-  - The owner's Gunpla skill needs a refresh at the LXC upgrade, because of #289.
-  - #309's upgrade-notes line is drafted in the ledger.
-  - #278 waits on the owner's skill-zip check.
-
-  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
-- **Also next:**
-  1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
-  2. Carried:
-     - #279's edge probes, then #281's packaging; #282's VPS path;
-     - cloud candidates: #124, #125, #238, #110, #116, #134 and #137;
-     - posting the rehearsal on #285.

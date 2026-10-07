@@ -48,8 +48,11 @@ publication and native CI cannot be certified by a local build.
    the five files with the candidate's, keep `.env`, `sha256sum -c SHA256SUMS`, and
    `docker compose up -d --no-build --wait`. Check the version, the session, the
    token, the data, that `<folder>_db-data` is the same volume (its CreatedAt), and
-   an MCP refresh plus initialize. v0.5.2-alpha had no predecessor with release
-   files, so the first run of this step is v0.5.2-alpha → the next release. The
+   an MCP refresh plus initialize. Its first run was v0.5.2-alpha → v0.6.0-alpha
+   (2026-10-07). The driver has no phase for it: it was scripted by hand against
+   the real API — state built on the old release (a claimed owner, records, a
+   token, and a row the new migration changes), then checked after the swap —
+   and its observations are in v0.6.0-alpha's release notes. The
    move from a source checkout was rehearsed for v0.4.1 → v0.5.2 (two variants:
    a new folder with `COMPOSE_PROJECT_NAME`, and the checkout renamed aside with
    a fresh folder of the old name); re-run it when a release adds a migration or
@@ -74,7 +77,11 @@ publication and native CI cannot be certified by a local build.
    `.agents/next-release.md`: write the release notes and the docs site's changelog
    from its **Release note** lines, make the README and docs-site changes its other
    lines name, and land the docs with the publication, not before it. Check it
-   against `git log <previous-tag>..<tag>` for a user-visible change with no entry.
+   against `git log <previous-tag>..<tag>` for a user-visible change with no entry,
+   and read the README's own claims (the feature table, the milestone rows) against
+   the release: an entry's "README: nothing" is a guess made when the change merged,
+   and v0.6.0-alpha's said so for the phone import while the feature table still
+   called a phone export-only (Codex, PR #339).
    Once the release is published, a docs commit on `main` removes the entries it
    shipped (changes in the tagged commit) and keeps any merged after the tag. Publishing the draft is a separate owner-approved
    action. Alpha releases retain the prerelease flag.
