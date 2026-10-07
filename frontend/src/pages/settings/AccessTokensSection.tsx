@@ -17,6 +17,7 @@ import {
   TABLE_HEAD_ROW_CLASS,
 } from "../../components/ui";
 import { dateInDigits, formatDate, formatDateTime, formatNumber } from "../../lib/format";
+import { usePresentationVersion } from "../../lib/presentation";
 import { useShell } from "../../lib/shell";
 import { SectionHeader } from "./SectionHeader";
 
@@ -27,6 +28,12 @@ import { SectionHeader } from "./SectionHeader";
  *  owner's session (a token cannot manage tokens), which the AuthGate has
  *  already established by the time this renders. */
 export function AccessTokensSection() {
+  // Re-render when the instance's presentation settings arrive or change: the
+  // list's dates and the expiry choices read them per call, and a Settings
+  // section is behind an Outlet that a re-render above it cannot reach. The
+  // tokens can arrive before the settings row, and nothing else re-draws
+  // them (#331).
+  usePresentationVersion();
   const { t } = useTranslation();
   const [minted, setMinted] = useState<AccessTokenMinted | null>(null);
 

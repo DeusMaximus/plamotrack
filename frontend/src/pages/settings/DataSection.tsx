@@ -14,6 +14,7 @@ import type { ImportOutcome } from "../../lib/importRun";
 import { acknowledgeImportOutcome, importRunState, sendImport, watchImportRun } from "../../lib/importRun";
 import { formatFileSize } from "../../lib/format";
 import { counted, importTableLabel } from "../../lib/labels";
+import { usePresentationVersion } from "../../lib/presentation";
 import { useShell } from "../../lib/shell";
 import { SectionHeader } from "./SectionHeader";
 
@@ -93,6 +94,9 @@ const REVEAL_MARGINS = "max-md:scroll-mt-16 max-md:scroll-mb-[calc(8rem+env(safe
  *  import once sent is held above the routes instead (`lib/importRun.ts`,
  *  #315): leaving the section does not stop it, and must not lose it. */
 export function DataSection() {
+  // A chosen file's size and the import's counts are formatted per call; see
+  // `AccessTokensSection` (#331).
+  usePresentationVersion();
   const { t } = useTranslation();
   const phone = useShell() === "phone";
   const queryClient = useQueryClient();
