@@ -168,9 +168,9 @@ export function HomePage() {
     // from 48 rem, two then three mail columns from 42 and 56 rem.
     //
     // `TableRuler`: where Home's free text is measured (#326). A grade, a scale,
-    // a kit number, a name or a carrier with nowhere to break scrolled the page
-    // sideways from 768 px; through `Measured`, one past its budget breaks and
-    // an ordinary one stays the plain word it was.
+    // a kit number or a carrier with nowhere to break scrolled the page sideways
+    // from 768 px; through `Measured`, one past its budget breaks and an
+    // ordinary one stays the plain word it was.
     <div className="@container space-y-7">
       <TableRuler>
         <PageHeader title={t("home.title")} brand />
@@ -345,8 +345,12 @@ function BenchCard({ kit, onEdit }: { kit: Kit; onEdit: () => void }) {
       >
         <Pencil size={15} aria-hidden />
       </IconButton>
-      <h3 className="pe-10 text-lg font-semibold leading-tight tracking-tight text-text">
-        <Measured text={kit.name} kind="name" />
+      {/* A block of its own, so a word with nowhere to break breaks where the
+          heading ends, before the edit control — not `Measured`, whose floor
+          is for a table's columns and ran under it at a 32 px browser font
+          (Greptile #337). */}
+      <h3 className="pe-10 text-lg font-semibold leading-tight tracking-tight break-words text-text">
+        {kit.name}
       </h3>
       <div className="flex flex-wrap items-center gap-2 text-[12.5px] tabular-nums text-muted">
         <GradeChip grade={kit.grade} />

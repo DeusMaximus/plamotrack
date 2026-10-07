@@ -4005,11 +4005,14 @@ Upgrades tab and it failed there.
     other, on one line where they fit (an ordinary row is as it was) and with the
     meta under the name where they do not. `stacked` is now only the decree that puts
     the meta on the second line under 26rem. Home is measured as a table is: one
-    `TableRuler` over the page, and the grade, scale, kit number, a bench card's name
-    and a mail card's date line (which says the carrier) through `Measured`, so a
-    value past its budget breaks and an ordinary one stays a plain word. Measured
-    with the issue's 92-character value in every field at 320–1440 px, in Chromium
-    and WebKit (`pages.spec.ts`).
+    `TableRuler` over the page, and the grade, scale, kit number and a mail card's
+    date line (which says the carrier) through `Measured`, so a value past its budget
+    breaks and an ordinary one stays a plain word. A bench card's name is a heading,
+    a block of its own: it breaks where it ends (`break-words`), since `Measured`'s
+    floor is for a table's columns and ran under the edit control at a 32 px browser
+    font (Greptile #337). Measured with the issue's 92-character value in every field
+    at 320–1440 px, and at 32 and 40 px fonts on a 320 px phone, in Chromium and
+    WebKit (`pages.spec.ts`).
 
 **Amended — #329, tables fold to fit (06/10/2026).** Every list table from 768 px
 used to fold at a fixed line, a container query in rem measured once with one set of

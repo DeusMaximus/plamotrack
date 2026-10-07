@@ -1651,8 +1651,41 @@ const HOME_WIDTHS: Record<string, number[]> = {
   tablet: [768, 820, 1024, 1180],
 };
 
+/** Nothing on Home past its card or strip, every control on the screen, and a
+ *  bench card's name ending before its edit control (#326; Greptile #337). */
+async function homeSpills(page: Page): Promise<{ boxes: number; out: string[] }> {
+  return page.evaluate(() => {
+    const main = document.querySelector("main")!;
+    const boxes = [...main.querySelectorAll<HTMLElement>("article, section > .rounded-md.border")];
+    const out: string[] = [];
+    for (const box of boxes) {
+      const outer = box.getBoundingClientRect();
+      for (const child of box.querySelectorAll<HTMLElement>("*")) {
+        const r = child.getBoundingClientRect();
+        if (r.width > 0 && (r.right > outer.right + 1 || r.left < outer.left - 1)) {
+          out.push(`${child.tagName} "${(child.getAttribute("aria-label") ?? child.textContent ?? "").slice(0, 30)}" [${Math.round(r.left)}–${Math.round(r.right)}] past [${Math.round(outer.left)}–${Math.round(outer.right)}]`);
+        }
+      }
+    }
+    for (const control of main.querySelectorAll<HTMLElement>("button, a[href]")) {
+      const r = control.getBoundingClientRect();
+      if (r.width > 0 && (r.right > innerWidth + 0.5 || r.left < -0.5)) out.push(`control "${control.getAttribute("aria-label") ?? control.textContent}" off the screen`);
+    }
+    for (const heading of main.querySelectorAll<HTMLElement>("article h3")) {
+      const pencil = heading.closest("article")!.querySelector("button")!.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(heading);
+      const text = [...range.getClientRects()].filter((r) => r.top < pencil.bottom && r.bottom > pencil.top);
+      const under = text.filter((r) => r.right > pencil.left + 0.5);
+      if (under.length > 0) out.push(`bench name "${heading.textContent?.slice(0, 30)}" runs under its edit control`);
+    }
+    return { boxes: boxes.length, out };
+  });
+}
+
 test("Home holds a grade, scale, kit number or shop with nowhere to break, and stacks a strip row under its name (#326)", async ({
   page,
+  browserName,
 }, testInfo) => {
   // The issue's value: 92 characters, nowhere to break.
   const WORD = "MSN04IINIGHTINGALEVERNIERTHRUSTERSET1234567890".repeat(2);
@@ -1694,25 +1727,7 @@ test("Home holds a grade, scale, kit number or shop with nowhere to break, and s
         await expectNoSidewaysScroll(page, `${width} px`);
 
         // Every card and strip: nothing past its own box, every control on the screen.
-        const spilled = await page.evaluate(() => {
-          const main = document.querySelector("main")!;
-          const boxes = [...main.querySelectorAll<HTMLElement>("article, section > .rounded-md.border")];
-          const out: string[] = [];
-          for (const box of boxes) {
-            const outer = box.getBoundingClientRect();
-            for (const child of box.querySelectorAll<HTMLElement>("*")) {
-              const r = child.getBoundingClientRect();
-              if (r.width > 0 && (r.right > outer.right + 1 || r.left < outer.left - 1)) {
-                out.push(`${child.tagName} "${(child.getAttribute("aria-label") ?? child.textContent ?? "").slice(0, 30)}" [${Math.round(r.left)}–${Math.round(r.right)}] past [${Math.round(outer.left)}–${Math.round(outer.right)}]`);
-              }
-            }
-          }
-          for (const control of main.querySelectorAll<HTMLElement>("button, a[href]")) {
-            const r = control.getBoundingClientRect();
-            if (r.width > 0 && (r.right > innerWidth + 0.5 || r.left < -0.5)) out.push(`control "${control.getAttribute("aria-label") ?? control.textContent}" off the screen`);
-          }
-          return { boxes: boxes.length, out };
-        });
+        const spilled = await homeSpills(page);
         expect(spilled.boxes, "cards and strips measured").toBeGreaterThan(3);
         expect.soft(spilled.out, `${width} px: past a card, or off the screen`).toEqual([]);
 
@@ -1746,6 +1761,29 @@ test("Home holds a grade, scale, kit number or shop with nowhere to break, and s
             .toBeLessThanOrEqual(3);
         }
       });
+    }
+
+    // And under the browser's own font-size preference on the narrowest phone,
+    // where the rem floors are widest against the px screen (Greptile #337: a
+    // bench name's 4em floor ran under its edit control at 32 px).
+    if (testInfo.project.name === "phone" && browserName === "chromium") {
+      for (const font of [32, 40]) {
+        await test.step(`320 px, ${font} px font`, async () => {
+          const browser = await chromium.launch({ args: [`--blink-settings=defaultFontSize=${font}`] });
+          try {
+            const context = await browser.newContext({ storageState: STORAGE_STATE, hasTouch: true, isMobile: true, baseURL: APP });
+            const big = await context.newPage();
+            await big.setViewportSize({ width: 320, height: 568 });
+            await big.goto("/");
+            await expect(big.getByRole("region", { name: "Backlog" }).getByText(names.backlog, { exact: true })).toBeVisible();
+            expect(await big.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), "the root font size").toBe(font);
+            await expectNoSidewaysScroll(big, `320 px, ${font} px font`);
+            expect.soft((await homeSpills(big)).out, `320 px, ${font} px font: past a card, or off the screen`).toEqual([]);
+          } finally {
+            await browser.close();
+          }
+        });
+      }
     }
   } finally {
     if (ids.order) await api.delete(`/orders/${ids.order}`);
