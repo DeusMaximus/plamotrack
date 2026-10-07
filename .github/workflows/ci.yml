@@ -124,7 +124,10 @@ jobs:
       COMPOSE_FILE: docker-compose.yml:docker-compose.build.yml
       PLAMOTRACK_SOURCE_REVISION: ${{ github.sha }}
       PLAMOTRACK_SOURCE_TAG: ci-${{ github.run_id }}-${{ github.run_attempt }}
-    timeout-minutes: 25
+    # 25 until #268: the job took 16 min on 06/10/2026, after #330's fold
+    # sweeps, and #335's passing rerun 24 min 12 s, its first attempt cancelled
+    # at the cap. The cap is for a hung run, not a slow one.
+    timeout-minutes: 40
 
     steps:
       - name: Check out the repository

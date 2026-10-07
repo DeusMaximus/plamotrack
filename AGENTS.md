@@ -158,7 +158,9 @@ frontend/               # React + Vite + TS, Tailwind v4, TanStack Query, react-
                         #   names what stands in for it (`data-focus-stand-in`), and `Modal`
                         #   (at close — and at open, when the commit that mounted it
                         #   took its opener, #275), `useFocusAcrossShells` (a shell change; a control
-                        #   that stopped being drawn) and `FoldToFit` (a pass that hid the
+                        #   that stopped being drawn; one disabled or removed under the keyboard,
+                        #   #268 — a control *waiting* on its request is `Button`'s `pending`,
+                        #   `aria-disabled`, and keeps it) and `FoldToFit` (a pass that hid the
                         #   focused control — it answers itself, #330) give the keyboard to
                         #   whatever carries the key now. A new control of either kind owes itself one, and
                         #   lists.spec.ts's sweep — every control, every way the page

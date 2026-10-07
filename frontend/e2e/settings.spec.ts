@@ -497,3 +497,62 @@ test("Data management re-renders a chosen file's size once the settings row arri
     await api.dispose();
   }
 });
+
+test("a Save keeps the keyboard while it waits, and gives it to the field before it once saved (#268)", async ({
+  page,
+}) => {
+  const api = await apiContext();
+  const before = (await (await api.get("/settings")).json()) as typeof original;
+  const other = before.reference_currency === "NZD" ? "CAD" : "NZD";
+  // By key: the button says "Saving…" while it waits.
+  const save = page.locator('[data-focus-key="settings-general-save"]');
+  const currency = page.getByLabel("Currency code");
+  try {
+    await page.goto("/settings/general");
+    await expect(currency).toHaveValue(before.reference_currency);
+
+    // Refused: Save is back, and so is the keyboard — beside the error (#316).
+    await page.route("**/api/settings", (route) =>
+      route.request().method() === "PATCH" ? route.fulfill({ status: 500 }) : route.fallback(),
+    );
+    await currency.fill(other);
+    await save.focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(save).toBeEnabled();
+    await expect(save, "refused: the keyboard is still on Save").toBeFocused();
+    await page.unrouteAll();
+
+    // Held: Save waits with the keyboard on it; saved, it has nothing left to
+    // save, and the keyboard is on the field before it.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/api/settings", async (route) => {
+      if (route.request().method() !== "PATCH") return route.fallback();
+      await gate;
+      await route.continue();
+    });
+    await page.keyboard.press("Enter");
+    await expect(save).toHaveAttribute("aria-disabled", "true");
+    await expect(save).toBeFocused();
+    release();
+    await expect(page.getByRole("status")).toHaveText("Saved");
+    await expect(save).toBeDisabled();
+    await expect(currency, "saved: the keyboard is on the field before Save").toBeFocused();
+    await page.unrouteAll();
+
+    // Language & formatting, the same rule: the field before its Save is the hour cycle.
+    await page.goto("/settings/language");
+    const style = page.getByLabel("Date style");
+    await style.selectOption(before.date_style === "medium" ? "long" : "medium");
+    await page.locator('[data-focus-key="settings-language-save"]').focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("status")).toHaveText("Saved");
+    await expect(page.getByLabel("Hour cycle")).toBeFocused();
+  } finally {
+    await api.patch("/settings", {
+      data: { reference_currency: before.reference_currency, date_style: before.date_style },
+    });
+    await api.dispose();
+  }
+});
