@@ -3622,7 +3622,8 @@ build decided, and what it measured:
   phone shell's strip is 712 px wide and two lines left most of each row empty.
   Under 26rem is every phone there is (408 px of strip on the widest); 26 and
   not Tailwind's 28 because a 1024 px tablet's two-up strip is 436 px and keeps
-  what it had. Backlog rows keep the wrap-by-need they had. **The mail is three stacked
+  what it had. Backlog rows keep the wrap-by-need they had (since #326, in the same
+  shape: the meta under the name, the pencil beside both). **The mail is three stacked
   groups on every phone there is; at the very top of the phone shell — an iPad
   mini in portrait, 712 px of box — it is two abreast**, because Home lays out
   by its box (§13.2) and that box has the room; the owner's drawing was a
@@ -3998,6 +3999,20 @@ Upgrades tab and it failed there.
   and a bench card says the kit number beside the grade; an unbroken grade, scale or
   number scrolls Home sideways from 768 px. How its strips give way is its own
   decision (#326).
+  - **Amended — #326 (07/10/2026).** The owner's call: a strip row **stacks under its
+    name**, the narrow Recently completed strip's shape, by need at every width. The
+    pencil has a column of its own beside both lines; the name and the meta share the
+    other, on one line where they fit (an ordinary row is as it was) and with the
+    meta under the name where they do not. `stacked` is now only the decree that puts
+    the meta on the second line under 26rem. Home is measured as a table is: one
+    `TableRuler` over the page, and the grade, scale, kit number and a mail card's
+    date line (which says the carrier) through `Measured`, so a value past its budget
+    breaks and an ordinary one stays a plain word. A bench card's name is a heading,
+    a block of its own: it breaks where it ends (`break-words`), since `Measured`'s
+    floor is for a table's columns and ran under the edit control at a 32 px browser
+    font (Greptile #337). Measured with the issue's 92-character value in every field
+    at 320–1440 px, and at 32 and 40 px fonts on a 320 px phone, in Chromium and
+    WebKit (`pages.spec.ts`).
 
 **Amended — #329, tables fold to fit (06/10/2026).** Every list table from 768 px
 used to fold at a fixed line, a container query in rem measured once with one set of

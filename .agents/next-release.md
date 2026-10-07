@@ -33,6 +33,14 @@ Shape:
 
 ---
 
+## #326 — Home no longer scrolls sideways when a value has nowhere to break (PR #337)
+- **Release note:** A grade, scale, kit number, kit name or carrier with no spaces
+  no longer makes Home scroll sideways. A Backlog or Recently completed row whose
+  details don't fit beside the name puts them under it, with the edit button
+  beside both lines. Ordinary rows look as they did.
+- **README:** nothing.
+- **Docs site:** nothing.
+
 ## #268 — the keyboard stays where you pressed (PR #336)
 - **Release note:** Pressing a button from the keyboard no longer sends the next
   Tab back to the top of the page. The stock steppers, Export CSV, Save, Create

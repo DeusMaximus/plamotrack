@@ -1540,7 +1540,8 @@ test("Home on a phone: a completed row is two lines, the mail is three stacked g
       for (const name of [NAMES.rated, NAMES.unrated]) {
         const title = completed.getByText(name, { exact: true });
         await expect(title).toBeVisible();
-        const row = title.locator("xpath=..");
+        // The row: the name and its meta share a cell, the pencil has its own (#326).
+        const row = title.locator("xpath=../..");
         const pencil = row.getByRole("button", { name: `Edit ${name}` });
         const date = row.getByText(A_DATE);
         const [rowBox, titleBox, dateBox, pencilBox] = await Promise.all([rect(row), rect(title), rect(date), rect(pencil)]);
@@ -1640,6 +1641,156 @@ test("from 768 px a completed row is the one line it was", async ({ page }, test
   const [titleBox, dateBox] = await Promise.all([rect(title), rect(row.getByText(A_DATE))]);
   expect(dateBox.x, "the date is beside the name").toBeGreaterThanOrEqual(titleBox.right - 0.5);
   expect(Math.abs(dateBox.y + dateBox.height / 2 - (titleBox.y + titleBox.height / 2)), "on the name's line").toBeLessThanOrEqual(3);
+});
+
+/** Home's widths for the unbroken values (#326): each project's own, and the rail's
+ *  ends — 768, where the issue measured the document at 1,109 px, and 1024. */
+const HOME_WIDTHS: Record<string, number[]> = {
+  app: [1280, 1440],
+  phone: [320, 390, 744],
+  tablet: [768, 820, 1024, 1180],
+};
+
+/** Nothing on Home past its card or strip, every control on the screen, and a
+ *  bench card's name ending before its edit control (#326; Greptile #337). */
+async function homeSpills(page: Page): Promise<{ boxes: number; out: string[] }> {
+  return page.evaluate(() => {
+    const main = document.querySelector("main")!;
+    const boxes = [...main.querySelectorAll<HTMLElement>("article, section > .rounded-md.border")];
+    const out: string[] = [];
+    for (const box of boxes) {
+      const outer = box.getBoundingClientRect();
+      for (const child of box.querySelectorAll<HTMLElement>("*")) {
+        const r = child.getBoundingClientRect();
+        if (r.width > 0 && (r.right > outer.right + 1 || r.left < outer.left - 1)) {
+          out.push(`${child.tagName} "${(child.getAttribute("aria-label") ?? child.textContent ?? "").slice(0, 30)}" [${Math.round(r.left)}–${Math.round(r.right)}] past [${Math.round(outer.left)}–${Math.round(outer.right)}]`);
+        }
+      }
+    }
+    for (const control of main.querySelectorAll<HTMLElement>("button, a[href]")) {
+      const r = control.getBoundingClientRect();
+      if (r.width > 0 && (r.right > innerWidth + 0.5 || r.left < -0.5)) out.push(`control "${control.getAttribute("aria-label") ?? control.textContent}" off the screen`);
+    }
+    for (const heading of main.querySelectorAll<HTMLElement>("article h3")) {
+      const pencil = heading.closest("article")!.querySelector("button")!.getBoundingClientRect();
+      const range = document.createRange();
+      range.selectNodeContents(heading);
+      const text = [...range.getClientRects()].filter((r) => r.top < pencil.bottom && r.bottom > pencil.top);
+      const under = text.filter((r) => r.right > pencil.left + 0.5);
+      if (under.length > 0) out.push(`bench name "${heading.textContent?.slice(0, 30)}" runs under its edit control`);
+    }
+    return { boxes: boxes.length, out };
+  });
+}
+
+test("Home holds a grade, scale, kit number or shop with nowhere to break, and stacks a strip row under its name (#326)", async ({
+  page,
+  browserName,
+}, testInfo) => {
+  // The issue's value: 92 characters, nowhere to break.
+  const WORD = "MSN04IINIGHTINGALEVERNIERTHRUSTERSET1234567890".repeat(2);
+  const stamp = Date.now().toString(36);
+  const names = { backlog: `${TAG} ${stamp} Unbroken backlog`, mail: `${TAG} ${stamp} Unbroken mail` };
+  const api = await apiContext();
+  const ids: { kits: string[]; order?: string; retailer?: string } = { kits: [] };
+  const post = async (route: string, data: object) => {
+    const resp = await api.post(route, { data });
+    expect(resp.ok(), `${route}: ${await resp.text()}`).toBeTruthy();
+    return ((await resp.json()) as { id: string }).id;
+  };
+  try {
+    ids.kits.push(await post("/kits", { name: names.backlog, grade: WORD, scale: WORD, status: "backlog" }));
+    // The bench card's name is a heading with nowhere to break as well.
+    ids.kits.push(
+      await post("/kits", { name: `${stamp}${WORD}`, grade: WORD, scale: WORD, kit_number: WORD, status: "building" }),
+    );
+    ids.retailer = await post("/retailers", { name: `${stamp}${WORD}` });
+    ids.order = await post("/orders", {
+      retailer_id: ids.retailer,
+      currency_code: "JPY",
+      order_date: "2026-09-06",
+      shipped_at: "2026-09-07T10:00:00+00:00",
+      delivery_service: WORD,
+      tracking_number: WORD,
+      items: [{ item_type: "kit", quantity: 1, unit_price_minor: 2800, currency_code: "JPY", kit: { name: names.mail, grade: WORD } }],
+    });
+    // Deleting the order takes the kit it spawned with it (rule 2).
+
+    for (const width of HOME_WIDTHS[testInfo.project.name] ?? []) {
+      await test.step(`${width} px`, async () => {
+        await page.setViewportSize({ width, height: 900 });
+        await page.goto("/");
+        const backlog = page.getByRole("region", { name: "Backlog" });
+        const title = backlog.getByText(names.backlog, { exact: true });
+        await expect(title).toBeVisible();
+        await expect(page.getByRole("region", { name: "In the mail" }).getByText(names.mail)).toBeVisible();
+        await expectNoSidewaysScroll(page, `${width} px`);
+
+        // Every card and strip: nothing past its own box, every control on the screen.
+        const spilled = await homeSpills(page);
+        expect(spilled.boxes, "cards and strips measured").toBeGreaterThan(3);
+        expect.soft(spilled.out, `${width} px: past a card, or off the screen`).toEqual([]);
+
+        // The strip row stacks: the name on its line, the grade and scale under
+        // it — whole, given way rather than cut — and the pencil beside both.
+        const row = title.locator("xpath=../..");
+        const pencil = row.getByRole("button", { name: `Edit ${names.backlog}` });
+        const grade = row.getByText(WORD, { exact: true }).first();
+        const [rowBox, titleBox, gradeBox, pencilBox] = await Promise.all([rect(row), rect(title), rect(grade), rect(pencil)]);
+        expect.soft(gradeBox.y, `${width} px: the grade is under the name`).toBeGreaterThanOrEqual(titleBox.bottom - 0.5);
+        expect.soft(pencilBox.x, `${width} px: the pencil is beside the grade`).toBeGreaterThanOrEqual(gradeBox.right - 0.5);
+        expect.soft(pencilBox.right, `${width} px: the pencil is inside the row`).toBeLessThanOrEqual(rowBox.right + 0.5);
+        expect
+          .soft(Math.abs(pencilBox.y + pencilBox.height / 2 - (rowBox.y + rowBox.height / 2)), `${width} px: the pencil is centred on the row`)
+          .toBeLessThanOrEqual(2);
+        const cut = await grade.evaluate((element) => element.scrollWidth > element.clientWidth + 1);
+        expect.soft(cut, `${width} px: the grade is whole`).toBe(false);
+
+        // And an ordinary row is the one line it was where the strip has room —
+        // from 390 px. At 320 the name's 9rem floor leaves "HG 1/144" no room
+        // beside it, and the row wrapped before this change too (the pencil
+        // went down with the meta then; it keeps its column now).
+        const plain = backlog.getByText(NAMES.backlog, { exact: true });
+        if (width >= 390) {
+          await expect(plain, `${width} px: the ordinary row is on the strip`).toBeVisible();
+          const plainRow = plain.locator("xpath=../..");
+          const [plainBox, chipBox] = await Promise.all([rect(plain), rect(plainRow.getByText("HG", { exact: true }))]);
+          expect.soft(chipBox.x, `${width} px: an ordinary grade is beside its name`).toBeGreaterThanOrEqual(plainBox.right - 0.5);
+          expect
+            .soft(Math.abs(chipBox.y + chipBox.height / 2 - (plainBox.y + plainBox.height / 2)), `${width} px: on the name's line`)
+            .toBeLessThanOrEqual(3);
+        }
+      });
+    }
+
+    // And under the browser's own font-size preference on the narrowest phone,
+    // where the rem floors are widest against the px screen (Greptile #337: a
+    // bench name's 4em floor ran under its edit control at 32 px).
+    if (testInfo.project.name === "phone" && browserName === "chromium") {
+      for (const font of [32, 40]) {
+        await test.step(`320 px, ${font} px font`, async () => {
+          const browser = await chromium.launch({ args: [`--blink-settings=defaultFontSize=${font}`] });
+          try {
+            const context = await browser.newContext({ storageState: STORAGE_STATE, hasTouch: true, isMobile: true, baseURL: APP });
+            const big = await context.newPage();
+            await big.setViewportSize({ width: 320, height: 568 });
+            await big.goto("/");
+            await expect(big.getByRole("region", { name: "Backlog" }).getByText(names.backlog, { exact: true })).toBeVisible();
+            expect(await big.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize)), "the root font size").toBe(font);
+            await expectNoSidewaysScroll(big, `320 px, ${font} px font`);
+            expect.soft((await homeSpills(big)).out, `320 px, ${font} px font: past a card, or off the screen`).toEqual([]);
+          } finally {
+            await browser.close();
+          }
+        });
+      }
+    }
+  } finally {
+    if (ids.order) await api.delete(`/orders/${ids.order}`);
+    for (const id of ids.kits) await api.delete(`/kits/${id}`);
+    if (ids.retailer) await api.delete(`/retailers/${ids.retailer}`);
+    await api.dispose();
+  }
 });
 
 // ------------------------------------------------- sign-in, setup and OIDC
