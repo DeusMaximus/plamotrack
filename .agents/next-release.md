@@ -33,7 +33,7 @@ Shape:
 
 ---
 
-## #268 — the keyboard stays where you pressed (PR #NNN)
+## #268 — the keyboard stays where you pressed (PR #336)
 - **Release note:** Pressing a button from the keyboard no longer sends the next
   Tab back to the top of the page. The stock steppers, Export CSV, Save, Create
   token, Revoke and Sign in keep the keyboard while they wait. Where a button
