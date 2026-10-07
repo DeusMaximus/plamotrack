@@ -67,14 +67,15 @@ export default defineConfig({
     // written for them — shell.spec.ts and lists.spec.ts (#258), dialogs.spec.ts
     // and dialog-keyboard.spec.ts (#259: the sheet frame, and the keyboard rules
     // it must keep at every width), pages.spec.ts (#260: Settings, Home and the
-    // sign-in screens), which `app` runs too, at the desktop size — and
+    // sign-in screens) and keyboard-place.spec.ts (#268: the phone's stepper and
+    // token cards are other elements), which `app` runs too, at the desktop size — and
     // phone.spec.ts, the happy path by thumb, which is the phone's alone. lists.spec.ts and dialogs.spec.ts
     // seed rows of their own and delete them, and nothing they run touches the
     // settings singleton — but they read dates the singleton formats, so
     // `settings` waits for them (above).
     {
       name: "phone",
-      testMatch: /(shell|lists|dialogs|dialog-keyboard|pages|phone)\.spec\.ts/,
+      testMatch: /(shell|lists|dialogs|dialog-keyboard|pages|keyboard-place|phone)\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         storageState: STORAGE_STATE,
@@ -85,7 +86,7 @@ export default defineConfig({
     },
     {
       name: "tablet",
-      testMatch: /(shell|lists|dialogs|dialog-keyboard|pages)\.spec\.ts/,
+      testMatch: /(shell|lists|dialogs|dialog-keyboard|pages|keyboard-place)\.spec\.ts/,
       dependencies: ["setup"],
       use: {
         storageState: STORAGE_STATE,

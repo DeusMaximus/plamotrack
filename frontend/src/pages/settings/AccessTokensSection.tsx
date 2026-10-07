@@ -63,6 +63,11 @@ const SCOPES: Record<Access, TokenScope[]> = {
  *  time so the server receives an offset-bearing ISO 8601 value. */
 const EXPIRY_DAYS = [30, 90, 365] as const;
 
+/** Focus keys (`lib/focusKey.ts`) for the controls that take the keyboard when
+ *  the one it was on is replaced or revoked (#268). */
+const TOKEN_NAME_FOCUS = "token-name";
+const TOKEN_COPY_FOCUS = "token-copy";
+
 function CreateCard({ onMinted }: { onMinted: (minted: AccessTokenMinted) => void }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -99,6 +104,7 @@ function CreateCard({ onMinted }: { onMinted: (minted: AccessTokenMinted) => voi
         <Field label={t("settings.tokens.nameLabel")} required error={errors.name?.message}>
           <Input
             maxLength={100}
+            data-focus-key={TOKEN_NAME_FOCUS}
             placeholder={t("settings.tokens.namePlaceholder")}
             autoComplete="off"
             {...register("name", {
@@ -126,7 +132,14 @@ function CreateCard({ onMinted }: { onMinted: (minted: AccessTokenMinted) => voi
         </Field>
         {/* Beside Create, as every Settings form says its failure (#316). */}
         <ErrorBanner message={error} />
-        <Button type="submit" disabled={isSubmitting}>
+        {/* The new token's card takes this form's place: the keyboard goes to
+            its Copy (#268). */}
+        <Button
+          type="submit"
+          pending={isSubmitting}
+          data-focus-key="token-create"
+          data-focus-stand-in={TOKEN_COPY_FOCUS}
+        >
           {isSubmitting ? t("settings.tokens.creating") : t("settings.tokens.createButton")}
         </Button>
       </form>
@@ -160,12 +173,14 @@ function MintedCard({ minted, onDone }: { minted: AccessTokenMinted; onDone: () 
           >
             {minted.token}
           </code>
-          <Button type="button" variant="secondary" onClick={copy}>
+          <Button type="button" variant="secondary" onClick={copy} data-focus-key={TOKEN_COPY_FOCUS}>
             {copied ? t("settings.tokens.copied") : t("settings.tokens.copy")}
           </Button>
         </div>
         <p className="text-xs text-muted">{t("settings.tokens.usageHint")}</p>
-        <Button type="button" onClick={onDone}>
+        {/* The form comes back in this card's place, and the keyboard to its
+            name (#268). */}
+        <Button type="button" onClick={onDone} data-focus-key="token-done" data-focus-stand-in={TOKEN_NAME_FOCUS}>
           {t("settings.tokens.done")}
         </Button>
       </div>
@@ -242,6 +257,7 @@ function TokenList() {
                 key={token.id}
                 token={token}
                 busy={revoke.isPending && revoke.variables?.id === token.id}
+                standIns={revokeStandIns(tokens, token.id)}
                 onRevoke={() => onRevoke(token)}
               />
             ))}
@@ -266,6 +282,7 @@ function TokenList() {
                   key={token.id}
                   token={token}
                   busy={revoke.isPending && revoke.variables?.id === token.id}
+                  standIns={revokeStandIns(tokens, token.id)}
                   onRevoke={() => onRevoke(token)}
                 />
               ))}
@@ -297,16 +314,28 @@ function tokenState(token: AccessToken) {
   return { revoked, expired, inactive: revoked || expired };
 }
 
+/** Where the keyboard goes when a revoked token's Revoke is gone (#268): the
+ *  next token that can still be revoked, else the one before it, else the new
+ *  token's name — so revoking several in turn is Enter, Enter, Enter. */
+function revokeStandIns(tokens: AccessToken[], id: string): string {
+  const revocable = tokens.filter((token) => !tokenState(token).inactive).map((token) => token.id);
+  const at = revocable.indexOf(id);
+  const neighbours = [revocable[at + 1], revocable[at - 1]].filter((other) => other !== undefined);
+  return [...neighbours.map((other) => `token:${other}`), TOKEN_NAME_FOCUS].join(" ");
+}
+
 /** A token as a card row, where the box is too narrow for the table (§13.7).
  *  The same facts, with the instants in full — the table's dates keep the time
  *  in a tooltip, and a finger has no hover (#263's note). */
 function TokenCard({
   token,
   busy,
+  standIns,
   onRevoke,
 }: {
   token: AccessToken;
   busy: boolean;
+  standIns: string;
   onRevoke: () => void;
 }) {
   const { t } = useTranslation();
@@ -360,8 +389,9 @@ function TokenCard({
           type="button"
           variant="danger"
           className="shrink-0"
-          disabled={busy}
+          pending={busy}
           onClick={onRevoke}
+          data-focus-stand-in={standIns}
           data-focus-key={`token:${token.id}`}
         >
           {busy ? t("settings.tokens.revoking") : t("settings.tokens.revoke")}
@@ -374,10 +404,12 @@ function TokenCard({
 function TokenRow({
   token,
   busy,
+  standIns,
   onRevoke,
 }: {
   token: AccessToken;
   busy: boolean;
+  standIns: string;
   onRevoke: () => void;
 }) {
   const { t } = useTranslation();
@@ -441,8 +473,9 @@ function TokenRow({
           <Button
             type="button"
             variant="danger"
-            disabled={busy}
+            pending={busy}
             onClick={onRevoke}
+            data-focus-stand-in={standIns}
             data-focus-key={`token:${token.id}`}
           >
             {busy ? t("settings.tokens.revoking") : t("settings.tokens.revoke")}

@@ -79,7 +79,11 @@ export function focusByKey(key: string): boolean {
   // inert, and an inert carrier takes no focus, so nothing under it answers.
   const carriers = document.querySelectorAll<HTMLElement>(`[${FOCUS_KEY}="${CSS.escape(key)}"]`);
   for (const carrier of carriers) {
-    if (!isDrawn(carrier)) continue;
+    // Disabled is asked first too: WebKit leaves `activeElement` on a control
+    // it has just disabled, so a disabled carrier that was focused would pass
+    // for the answer — measured on − at zero, where the keyboard stayed on the
+    // disabled − and never reached + (#268).
+    if (!isDrawn(carrier) || carrier.matches(":disabled")) continue;
     carrier.focus();
     if (document.activeElement === carrier) return true;
   }
@@ -201,7 +205,26 @@ export function focusedRecordKeys(): string[] {
  *  having run yet; a version with a `setTimeout` lost the race to a resize in
  *  lists.spec.ts. The mutants of this function are in #258's PR.) A deleted row
  *  keeps a key nothing carries, which finds nothing; an engine that fires
- *  nothing on removal never reaches the question. */
+ *  nothing on removal never reaches the question.
+ *
+ *  **And a control that can no longer act** (#268) — `disabled` under the
+ *  keyboard, or taken out of the page by a commit that is not a shell change:
+ *  **−** at zero, a Save with nothing left to save, a revoked token's Revoke,
+ *  Create replaced by the token it made. Disabling the focused control drops
+ *  the keyboard to `<body>` exactly as removing it does, and outside a dialog
+ *  nobody answered (`Modal` answers inside one; a dialog's keyed controls are
+ *  its Delete's twins, in one state, so there this finds nothing to give the
+ *  keyboard to and `Modal` is the one that does). A `MutationObserver` on
+ *  `disabled` and on the tree hands the keyboard to the first of the control's
+ *  keys something drawn can take — its own, for a twin, then the stand-ins it
+ *  names (−'s is +, a Save's the field before it). A control that is only *waiting* is not this: it keeps the
+ *  keyboard (`Button`'s `pending`, `aria-disabled`), because the person is
+ *  still there and it will act again. The observer acts while focus is on
+ *  `<body>`, or still on the disabled control: it runs in the mutation's own
+ *  microtask, before either engine has moved the keyboard (WebKit moves it
+ *  late, #259) — so the forgetting rule's `focusout` comes after the answer
+ *  and needs no exception for a disabled control (measured: one was written,
+ *  and no test in either engine could tell it was there). */
 export function useFocusAcrossShells(shell: Shell): void {
   useEffect(() => {
     let delivering = false;
@@ -233,9 +256,29 @@ export function useFocusAcrossShells(shell: Shell): void {
       if (delivering) deferred = requestAnimationFrame(watch);
       else watch();
     };
+    // Once per loss: a control nothing could answer for is not answered later,
+    // by whatever renders next with its key while the keyboard happens to be
+    // on `<body>` — that would be a jump nobody asked for. A disabled one is
+    // then forgotten; a removed one is kept for the shell effect below, whose
+    // frame-later answer exists for a twin that mounts in a later commit.
+    let answered: Element | null = null;
+    const stranded = new MutationObserver(() => {
+      const at = place;
+      if (at === null || at.control === answered) return;
+      const active = document.activeElement;
+      const disabled = at.control.isConnected && at.control.matches(":disabled");
+      const lost = disabled
+        ? active === document.body || active === at.control
+        : !at.control.isConnected && active === document.body;
+      if (!lost) return;
+      answered = at.control;
+      if (!focusFirst(at.keys) && disabled) remember(null);
+    });
     const onFocusIn = (event: FocusEvent) => {
       const control = event.target as Element | null;
       const keys = focusKeysOf(control);
+      // A control the keyboard comes back to can be lost again (a second Save).
+      answered = null;
       remember(control !== null && keys.length > 0 ? { control, keys } : null);
     };
     const onFocusOut = (event: FocusEvent) => {
@@ -249,7 +292,17 @@ export function useFocusAcrossShells(shell: Shell): void {
     };
     document.addEventListener("focusin", onFocusIn);
     document.addEventListener("focusout", onFocusOut);
+    // `disabled` alone of the attributes: it is the one that drops focus and
+    // that a control here changes on itself (`Modal` measured `hidden` and
+    // `inert` too; neither is set on a focused control outside a dialog).
+    stranded.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ["disabled"],
+    });
     return () => {
+      stranded.disconnect();
       hidden.disconnect();
       cancelAnimationFrame(deferred);
       document.removeEventListener("focusin", onFocusIn);

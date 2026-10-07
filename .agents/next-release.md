@@ -33,6 +33,16 @@ Shape:
 
 ---
 
+## #268 — the keyboard stays where you pressed (PR #NNN)
+- **Release note:** Pressing a button from the keyboard no longer sends the next
+  Tab back to the top of the page. The stock steppers, Export CSV, Save, Create
+  token, Revoke and Sign in keep the keyboard while they wait. Where a button
+  can't be pressed again, the keyboard moves to the obvious next control: from −
+  at zero to +, from a revoked token to the next one, from a finished Save to
+  the field before it, and from Create token to Copy.
+- **README:** nothing.
+- **Docs site:** nothing.
+
 ## #331 — Access tokens and Data management show dates and sizes in your saved format (PR #335)
 - **Release note:** Settings → Access tokens no longer shows its dates in the
   default format when the token list loads before your saved settings. Data

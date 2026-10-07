@@ -150,7 +150,8 @@ function OidcSetupScreen({ issuer }: { issuer: string | null }) {
           </Field>
           <Button
             type="submit"
-            disabled={isSubmitting || redirecting || !watch("token")}
+            disabled={!watch("token")}
+            pending={isSubmitting || redirecting}
             className="w-full"
           >
             {redirecting
@@ -189,7 +190,7 @@ function OidcLoginScreen({ issuer }: { issuer: string | null }) {
       <Card title={t("auth.loginTitle")} description={t("auth.oidcLoginIntro")}>
         <div className="space-y-3">
           <ErrorBanner message={error} />
-          <Button type="button" onClick={onClick} disabled={redirecting} className="w-full">
+          <Button type="button" onClick={onClick} pending={redirecting} className="w-full">
             {redirecting
               ? t("auth.redirecting", { provider })
               : t("auth.continueWithProvider", { provider })}
@@ -287,7 +288,7 @@ function SetupScreen({ onDone }: { onDone: () => void }) {
               {...register("confirm", { required: true })}
             />
           </Field>
-          <Button type="submit" disabled={isSubmitting || !watch("token")} className="w-full">
+          <Button type="submit" disabled={!watch("token")} pending={isSubmitting} className="w-full">
             {t("auth.createButton")}
           </Button>
         </form>
@@ -329,7 +330,9 @@ function LoginScreen({ onDone }: { onDone: () => void }) {
               {...register("password", { required: true })}
             />
           </Field>
-          <Button type="submit" disabled={isSubmitting} className="w-full">
+          {/* Waiting keeps the keyboard, so a refused password leaves it on Sign
+              in, beside the error (#268). */}
+          <Button type="submit" pending={isSubmitting} className="w-full">
             {t("auth.signInButton")}
           </Button>
         </form>

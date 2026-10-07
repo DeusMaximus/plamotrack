@@ -26,11 +26,15 @@ test("a signed-out browser must sign in, and sign out really ends the session", 
   await expect(signIn).toBeVisible();
   await expect(page.getByRole("link", { name: /orders/i })).toHaveCount(0);
 
-  // The wrong password: refused, and still on the sign-in screen.
+  // The wrong password, from the keyboard: refused, still on the sign-in
+  // screen, and the keyboard still on Sign in — it waited with it (#268).
   await page.getByLabel("Password").fill(`${OWNER_PASSWORD}-wrong`);
-  await page.getByRole("button", { name: "Sign in" }).click();
+  const submit = page.getByRole("button", { name: "Sign in" });
+  await submit.focus();
+  await page.keyboard.press("Enter");
   await expect(page.getByRole("alert")).toHaveText("That password isn't right.");
   await expect(signIn).toBeVisible();
+  await expect(submit).toBeFocused();
 
   // The failure budget (§5.6): one failure shuts the gate for BASE_DELAY (1 s),
   // during which the right password would be 429. Wait it out rather than race it.

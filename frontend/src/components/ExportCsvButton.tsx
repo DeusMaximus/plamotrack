@@ -29,7 +29,9 @@ export function ExportCsvButton({ table, label }: { table: string; label?: strin
       variant="secondary"
       icon={Download}
       onClick={run}
-      disabled={busy}
+      // Keeps the keyboard while the file is fetched (#268).
+      pending={busy}
+      data-focus-key={`export:${table}`}
       title={error ?? undefined}
       // A phone's page head has no room for it (`PageHeader`): the keyboard goes
       // to the action it stood beside.

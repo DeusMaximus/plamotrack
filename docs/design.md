@@ -3386,6 +3386,23 @@ and tablet e2e, screenshots, the release (#260).
   (`lists.spec.ts`, "no change of representation leaves the keyboard on
   `<body>`"): every focusable control, the three ways the page can change under
   it. It says only *never nowhere*; the named tests beside it say where.
+- **A control that changes its own state is a change of representation too**
+  (#268). Disabling the focused control drops the keyboard to `<body>` just as
+  removing it does, and outside a dialog nothing answered: every press of a
+  stock stepper sent the next Tab to the top of the page. Two kinds, two
+  answers. A control **waiting** on its own request keeps the keyboard —
+  `Button`'s `pending` is `aria-disabled` and refuses a second press, so two
+  presses are still one request (#55) — because the person is still there and
+  it will act again: the steppers, Export CSV, a Save or a Create in flight, a
+  Revoke, Sign in. A control that **cannot act any more** — disabled, or gone —
+  hands the keyboard to the stand-in it names, through one `MutationObserver` in
+  `useFocusAcrossShells`: − at zero names +, a Save with nothing left to save
+  the field before it (the owner's call, 07/10/2026), a revoked token's Revoke
+  the next token's, then the one before, then the new token's name, Create the
+  new token's Copy, Done the name. A loss is answered when it happens or not at
+  all — answered later, by whatever next draws the key, it would be a jump
+  nobody asked for, and on an iPhone a tap on Done would raise the on-screen
+  keyboard (`e2e/keyboard-place.spec.ts`).
 - **The pager on a phone** offered five pages at most — the ends and the current
   page with a neighbour either side — at 44 px each, on their own line when
   they did not fit beside the range: the desktop's window is nine entries from

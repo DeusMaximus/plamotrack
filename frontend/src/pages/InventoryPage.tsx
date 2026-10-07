@@ -481,7 +481,16 @@ function ApplyUpgradeModal({ upgrade, onClose }: { upgrade: Upgrade; onClose: ()
   );
 }
 
-type StepperTarget = { label: string; focusKey: string; disabled: boolean; onClick: () => void };
+/** `disabled`: it cannot act (− at zero), and the keyboard goes to `standIn`.
+ *  `pending`: the row's request is in flight — it keeps the keyboard (#268). */
+type StepperTarget = {
+  label: string;
+  focusKey: string;
+  standIn?: string;
+  disabled: boolean;
+  pending: boolean;
+  onClick: () => void;
+};
 
 /** The floor of a stepper's target and the gap between its parts, in px: the
  *  target is a physical thing, a finger's, not a typographic one. */
@@ -551,6 +560,7 @@ function LargeStepper({
   const square =
     "inline-flex aspect-square min-w-[44px] items-center justify-center rounded-sm border border-border-strong text-text " +
     "hover:bg-chip focus:outline-none focus:ring-1 focus:ring-accent disabled:cursor-not-allowed disabled:text-faint disabled:opacity-50 " +
+    "aria-disabled:cursor-not-allowed aria-disabled:text-faint aria-disabled:opacity-50 " +
     (stacked ? "w-full" : "w-11");
   const target = (at: StepperTarget, Icon: typeof Minus, place: string) => (
     <button
@@ -558,8 +568,10 @@ function LargeStepper({
       className={`${square} ${place}`}
       aria-label={at.label}
       data-focus-key={at.focusKey}
+      data-focus-stand-in={at.standIn}
       disabled={at.disabled}
-      onClick={at.onClick}
+      aria-disabled={at.pending || undefined}
+      onClick={at.pending ? undefined : at.onClick}
     >
       <Icon size={18} aria-hidden />
     </button>
@@ -669,13 +681,16 @@ function StockStepper({
         remove={{
           label: t("inventory.removeOne", { name: item.name }),
           focusKey: `stock-remove:${item.id}`,
-          disabled: pending || item.quantity_on_hand === 0,
+          standIn: `stock-add:${item.id}`,
+          disabled: item.quantity_on_hand === 0,
+          pending,
           onClick: () => void adjust(-1),
         }}
         add={{
           label: t("inventory.addOne", { name: item.name }),
           focusKey: `stock-add:${item.id}`,
-          disabled: pending,
+          disabled: false,
+          pending,
           onClick: () => void adjust(1),
         }}
       />
@@ -689,7 +704,9 @@ function StockStepper({
         className="px-2 py-0.5 leading-none"
         aria-label={t("inventory.removeOne", { name: item.name })}
         data-focus-key={`stock-remove:${item.id}`}
-        disabled={pending || item.quantity_on_hand === 0}
+        data-focus-stand-in={`stock-add:${item.id}`}
+        disabled={item.quantity_on_hand === 0}
+        pending={pending}
         onClick={() => void adjust(-1)}
       >
         −
@@ -699,7 +716,7 @@ function StockStepper({
         className="px-2 py-0.5 leading-none"
         aria-label={t("inventory.addOne", { name: item.name })}
         data-focus-key={`stock-add:${item.id}`}
-        disabled={pending}
+        pending={pending}
         onClick={() => void adjust(1)}
       >
         +

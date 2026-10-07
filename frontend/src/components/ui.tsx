@@ -16,26 +16,41 @@ import { BrandMark } from "./BrandMark";
 import { Measured } from "./Measured";
 
 const BUTTON_VARIANTS = {
-  primary: "bg-accent text-accent-ink hover:opacity-90 disabled:opacity-50",
+  primary: "bg-accent text-accent-ink hover:opacity-90 disabled:opacity-50 aria-disabled:opacity-50",
   secondary:
-    "border border-border-strong bg-transparent text-text hover:bg-chip disabled:text-faint",
-  danger: "border border-danger/40 bg-transparent text-danger hover:bg-danger/10 disabled:opacity-50",
+    "border border-border-strong bg-transparent text-text hover:bg-chip disabled:text-faint aria-disabled:text-faint",
+  danger:
+    "border border-danger/40 bg-transparent text-danger hover:bg-danger/10 disabled:opacity-50 aria-disabled:opacity-50",
 } as const;
 
 export function Button({
   variant = "primary",
   icon: Icon,
   className = "",
+  pending = false,
+  onClick,
   children,
   ...props
 }: ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: keyof typeof BUTTON_VARIANTS;
   /** A leading stroke icon (§13): the label stays the accessible name. */
   icon?: LucideIcon;
+  /** Waiting on its own request (#268): unavailable, and said so, but it keeps
+   *  the keyboard — `disabled` would drop the focused control to `<body>`, and
+   *  outside a dialog nothing gives it back. A press is refused here, the
+   *  form's submission with it, so two presses are still one request (#55).
+   *  `disabled` stays for a control that *cannot* act — and that one hands the
+   *  keyboard on to what it names (`lib/focusKey.ts`). */
+  pending?: boolean;
 }) {
   return (
     <button
-      className={`inline-flex max-w-full items-center gap-1.5 rounded-sm px-3 max-md:wrap-anywhere py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed touch:min-h-10 ${BUTTON_VARIANTS[variant]} ${className}`}
+      className={`inline-flex max-w-full items-center gap-1.5 rounded-sm px-3 max-md:wrap-anywhere py-1.5 text-sm font-medium transition-colors disabled:cursor-not-allowed aria-disabled:cursor-not-allowed touch:min-h-10 ${BUTTON_VARIANTS[variant]} ${className}`}
+      aria-disabled={pending || undefined}
+      onClick={(event) => {
+        if (pending) event.preventDefault();
+        else onClick?.(event);
+      }}
       {...props}
     >
       {Icon && <Icon size={15} aria-hidden />}

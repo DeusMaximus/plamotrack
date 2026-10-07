@@ -190,7 +190,7 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
             </Select>
           </Field>
           <Field label={t("settings.language.hourCycle")} required className="max-w-44 max-md:max-w-none max-md:flex-[1_1_9rem]">
-            <Select {...register("hour_cycle")}>
+            <Select data-focus-key="settings-hour-cycle" {...register("hour_cycle")}>
               {HOUR_CYCLES.map((cycle) => (
                 <option key={cycle} value={cycle}>
                   {t(`hourCycle.${cycle}`)}
@@ -215,7 +215,15 @@ function RegionCard({ settings }: { settings: InstanceSettings }) {
             head is under the sticky bar by the time Save is reached (#316). */}
         <ErrorBanner message={error} />
         <div className="flex items-center gap-3">
-          <Button type="submit" disabled={!isDirty || isSubmitting}>
+          {/* Waiting, it keeps the keyboard; saved, there is nothing left to
+              save, and the keyboard goes back to the field before it (#268). */}
+          <Button
+            type="submit"
+            disabled={!isDirty}
+            pending={isSubmitting}
+            data-focus-key="settings-language-save"
+            data-focus-stand-in="settings-hour-cycle"
+          >
             {isSubmitting ? t("settings.language.saving") : t("common.save")}
           </Button>
           {saved && !isDirty && (

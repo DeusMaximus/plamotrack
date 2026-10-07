@@ -82,6 +82,7 @@ function CurrencyCard({ settings }: { settings: InstanceSettings }) {
         >
           <Input
             list="settings-currencies"
+            data-focus-key="settings-currency"
             maxLength={3}
             {...register("reference_currency", {
               required: t("validation.currencyCode"),
@@ -99,7 +100,15 @@ function CurrencyCard({ settings }: { settings: InstanceSettings }) {
             head is under the sticky bar by the time Save is reached (#316). */}
         <ErrorBanner message={error} />
         <div className="flex items-center gap-3">
-          <Button type="submit" disabled={!isDirty || isSubmitting}>
+          {/* Waiting, it keeps the keyboard; saved, there is nothing left to
+              save, and the keyboard goes back to the field before it (#268). */}
+          <Button
+            type="submit"
+            disabled={!isDirty}
+            pending={isSubmitting}
+            data-focus-key="settings-general-save"
+            data-focus-stand-in="settings-currency"
+          >
             {isSubmitting ? t("settings.general.saving") : t("common.save")}
           </Button>
           {/* isDirty gates the confirmation so editing again retires it. */}
