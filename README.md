@@ -42,8 +42,9 @@ screenshots. This README is the short version.
 Six statuses — pre-ordered, ordered, in transit, backlog, building, complete — and a
 Home page that reads them the way a Sunday afternoon does. **On the bench** is what
 you're building, each kit with its start date, a day counter and your latest note.
-**Backlog** and **Recently completed** show the six most recent of each with the true
-count beside the heading, and a *view all* link into the full list, already filtered.
+**Backlog** shows the six newest arrivals and **Recently completed** the six latest
+finished builds, by the date each card prints, with the true count beside the heading
+and a *view all* link into the full list, already filtered.
 **In the mail** is the money still in flight — pre-ordered, ordered, in transit — as
 order cards with the retailer, the carrier and the tracking number once it ships.
 
@@ -190,8 +191,8 @@ Being honest up front beats you finding out at 11pm:
 | **Authentication, OAuth-compatible remote MCP, a tested TLS deployment** | ✅ Milestone 6 — owner login (password or OpenID Connect), personal access tokens, MCP OAuth for Claude web / ChatGPT web / MCP Inspector, and the reference Caddy deployment plus the other tested ways to expose an instance ([docs.gunp.la/deployment](https://docs.gunp.la/deployment/overview)) |
 | **MCP `2026-07-28` compatibility** | ✅ Milestone 6.1 — both protocol generations from the one `/mcp/` endpoint, negotiated per request; Claude.ai, ChatGPT, Gemini Spark, Mistral, MCP Inspector, Claude Code and the `mcp-remote` bridge verified against a v0.4.1 candidate, linked before the upgrade and still linked after it and after a restore |
 | **UI redesign** | ✅ Milestone 6.5 — one house look on semantic tokens with a per-browser light/dark/system switch, Home in place of the board, filter/sort/page in the list pages' URLs, one edit dialog per record (`docs/design.md` §13) |
-| **Phone and tablet layout** | ✅ Milestone 6.6 (v0.5.0-alpha) — three layouts by the width of the window: a bottom tab bar on a phone, an icon rail on a tablet or in a narrow window, the desktop unchanged from 1280 px (one exception: up to 1361 px the Orders table now tucks the order number under the retailer's name, where an ordinary row used to push the edit control off the table's edge). Touch-sized controls; Add to Home Screen (an icon and a standalone window; no offline mode); card rows on a phone with one *Filter and sort* sheet, and on a tablet tables that fold their columns to the width they have instead of scrolling sideways; every dialog a full-screen sheet on a phone, with its actions in a bar at the foot of the screen; Settings as a list of its sections there, and Data management offering the exports only — importing needs a screen from 768 px wide. Every page holds up under a browser font size of up to two and a half times the default on a 320 px phone (`docs/design.md` §13.7; [using it on a phone](https://docs.gunp.la/using/phone-and-tablet)) |
-| **Easy hosted deployment and public sandbox** | Planned — [Milestone 6.7](https://github.com/DeusMaximus/plamotrack/milestone/18): published images, one recommended hosting-platform template, a guided VPS path, simpler setup and tested recovery, plus a shared sandbox where visitors can edit invented data that resets daily. Hosting-provider selection and Pocket ID compatibility are not settled; these deployment options and the sandbox are not available yet. |
+| **Phone and tablet layout** | ✅ Milestone 6.6 (v0.5.0-alpha) — three layouts by the width of the window: a bottom tab bar on a phone, an icon rail on a tablet or in a narrow window, the desktop unchanged from 1280 px (one exception: up to 1361 px the Orders table now tucks the order number under the retailer's name, where an ordinary row used to push the edit control off the table's edge). Touch-sized controls; Add to Home Screen (an icon and a standalone window; no offline mode); card rows on a phone, every row in one list, with one *Filter and sort* sheet, and on a tablet tables that fold their columns to the width they have instead of scrolling sideways; every dialog a full-screen sheet on a phone, with its actions in a bar at the foot of the screen; Settings as a list of its sections there, and Data management exporting and importing (Merge or Add only on a phone since v0.6.0-alpha; Replace everything and the full template pack need a screen from 768 px wide). Every page holds up under a browser font size of up to two and a half times the default on a 320 px phone (`docs/design.md` §13.7; [using it on a phone](https://docs.gunp.la/using/phone-and-tablet)) |
+| **Easy hosted deployment and public sandbox** | In progress — [Milestone 6.7](https://github.com/DeusMaximus/plamotrack/milestone/18). Shipped: published images and release files (since v0.5.2-alpha), and [Pocket ID](https://docs.gunp.la/authentication/pocket-id) as a supported sign-in provider (v0.6.0-alpha). Planned: one recommended hosting-platform template, a guided VPS path, simpler setup and tested recovery, plus a shared sandbox where visitors can edit invented data that resets daily. Hosting-provider selection is not settled; these deployment options and the sandbox are not available yet. |
 | **Photo gallery per kit** | 🔨 Milestone 7 |
 | **Public read-only showcase page** | 🔨 Milestone 8 — after the admin and MCP paths are protected |
 
@@ -210,14 +211,14 @@ it, with the tested images pinned by digest for both `linux/amd64` and `linux/ar
 
 ```bash
 mkdir plamotrack && cd plamotrack
-for f in docker-compose.yml env.example plamotrack-gunpla.zip release.json SHA256SUMS; do curl -fsSLO "https://github.com/DeusMaximus/plamotrack/releases/download/v0.5.2-alpha/$f"; done
+for f in docker-compose.yml env.example plamotrack-gunpla.zip release.json SHA256SUMS; do curl -fsSLO "https://github.com/DeusMaximus/plamotrack/releases/download/v0.6.0-alpha/$f"; done
 sha256sum -c SHA256SUMS          # on macOS: shasum -a 256 -c SHA256SUMS
 cp env.example .env
 # open .env, replace change-me with a real password
 docker compose up -d --no-build --wait
 ```
 
-That's v0.5.2-alpha, the newest release when this was written; the
+That's v0.6.0-alpha, the newest release when this was written; the
 [releases page](https://github.com/DeusMaximus/plamotrack/releases) has anything newer.
 There is no `latest` tag: updating means choosing the next version on purpose, in the
 same folder ([Updating](https://docs.gunp.la/configuration/upgrading)). Keep the folder
@@ -396,7 +397,7 @@ Personal access tokens keep working in that mode too.
 |---|---|
 | `get_meta` | App version and the instance's reference currency — what an omitted `currency_code` means |
 | `get_summary` | The collection at a glance — kits per status, orders per stage (pre-ordered, ordered, in transit, received); the numbers Home shows |
-| `list_kits` | Filter by status, grade or series; `sort=recent` for the kits that last moved, `limit` for the first N |
+| `list_kits` | Filter by status, grade or series; `sort=completed` or `started` by the build's own dates, `recent` for the kits that last moved, `newest` for the latest added, `limit` for the first N |
 | `list_kit_series` | Series names already in use — check before writing a new spelling |
 | `get_kit` | One kit, in full |
 | `create_kit` | Add a kit that *wasn't* bought — a gift, a trade, a carry-over from before tracking; purchases go through `create_order` |
@@ -409,7 +410,7 @@ Personal access tokens keep working in that mode too.
 | `update_catalog_tool` / `_consumable` / `_upgrade` / `_display` | Edit a catalog row — one tool per catalog, each taking that table's own fields |
 | `list_retailers` | Every shop on record, report card included |
 | `create_retailer` / `update_retailer` | Add a shop; rate it, note the crushed box, fill in the report card |
-| `create_order` | Full order with lines; kits fan out, retailers are matched by name or created |
+| `create_order` | Full order with lines; kits fan out; the shop by its id from `list_retailers`, or by name — matched, or created if new |
 | `list_orders` | Optionally pending-only — how an agent finds the order a shipping email belongs to; `sort=recent` by the last status change, `limit` for the first N |
 | `get_order` | One order in full — the read an edit starts from |
 | `update_order` | Correct an order: header fields and/or the line set; refuses to silently drop lines you didn't restate |
