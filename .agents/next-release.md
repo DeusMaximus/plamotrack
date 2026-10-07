@@ -33,7 +33,7 @@ Shape:
 
 ---
 
-## #331 — Access tokens and Data management show dates and sizes in your saved format (PR #NNN)
+## #331 — Access tokens and Data management show dates and sizes in your saved format (PR #335)
 - **Release note:** Settings → Access tokens no longer shows its dates in the
   default format when the token list loads before your saved settings. Data
   management's file size and import counts now follow the saved format too.
