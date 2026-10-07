@@ -7,6 +7,7 @@ import { Link } from "react-router-dom";
 import { api, metaQuery, summaryQuery } from "../api/client";
 import type { Kit, Order } from "../api/types";
 import { KitFormModal } from "../components/KitFormModal";
+import { Measured, TableRuler } from "../components/Measured";
 import { OrderFormModal } from "../components/OrderFormModal";
 import { StatusBadge } from "../components/StatusBadge";
 import {
@@ -165,134 +166,141 @@ export function HomePage() {
     // and a viewport breakpoint put three mail columns into 720 px of content
     // (Codex #237 P3-2). Two bench cards from 42 rem of content, two strips
     // from 48 rem, two then three mail columns from 42 and 56 rem.
+    //
+    // `TableRuler`: where Home's free text is measured (#326). A grade, a scale,
+    // a kit number, a name or a carrier with nowhere to break scrolled the page
+    // sideways from 768 px; through `Measured`, one past its budget breaks and
+    // an ordinary one stays the plain word it was.
     <div className="@container space-y-7">
-      <PageHeader title={t("home.title")} brand />
-      {failed && (
-        <ErrorBanner message={t("home.loadFailed", { message: (failed.error as Error).message })} />
-      )}
+      <TableRuler>
+        <PageHeader title={t("home.title")} brand />
+        {failed && (
+          <ErrorBanner message={t("home.loadFailed", { message: (failed.error as Error).message })} />
+        )}
 
-      {/* On the bench: every kit in `building`, as wide cards — the bench is
-          small by nature, so it is never capped. */}
-      <section aria-labelledby="home-bench">
-        <SectionHead
-          id="home-bench"
-          label={t("home.onTheBench")}
-          count={counts?.kits.building}
-          testId="home-count-building"
-        />
-        {bench.data === undefined ? (
-          <EmptyState>{t("common.loading")}</EmptyState>
-        ) : bench.data.length === 0 ? (
-          <p className="text-sm text-muted">{t("home.benchEmpty")}</p>
-        ) : (
-          <div className="grid gap-4 @2xl:grid-cols-2">
-            {bench.data.map((kit) => (
-              <BenchCard key={kit.id} kit={kit} onEdit={() => setDialog({ kind: "kit", kit })} />
+        {/* On the bench: every kit in `building`, as wide cards — the bench is
+            small by nature, so it is never capped. */}
+        <section aria-labelledby="home-bench">
+          <SectionHead
+            id="home-bench"
+            label={t("home.onTheBench")}
+            count={counts?.kits.building}
+            testId="home-count-building"
+          />
+          {bench.data === undefined ? (
+            <EmptyState>{t("common.loading")}</EmptyState>
+          ) : bench.data.length === 0 ? (
+            <p className="text-sm text-muted">{t("home.benchEmpty")}</p>
+          ) : (
+            <div className="grid gap-4 @2xl:grid-cols-2">
+              {bench.data.map((kit) => (
+                <BenchCard key={kit.id} kit={kit} onEdit={() => setDialog({ kind: "kit", kit })} />
+              ))}
+            </div>
+          )}
+        </section>
+
+        <div className="grid gap-6 @3xl:grid-cols-2">
+          <section aria-labelledby="home-backlog" className="min-w-0">
+            <SectionHead
+              id="home-backlog"
+              label={t("home.backlog")}
+              count={counts?.kits.backlog}
+              testId="home-count-backlog"
+            />
+            <KitStrip
+              kits={backlog.data}
+              total={counts?.kits.backlog}
+              empty={t("home.backlogEmpty")}
+              viewAll={(total) => countedPhrase("home.viewAllBacklog", total)}
+              // The Kits page's own order (newest added), not the strip's arrival
+              // order: the page offers no sort by a date it does not show (#247,
+              // owner's call). The two differ only for a kit that arrived long
+              // after it was ordered.
+              to="/kits?status=backlog"
+              meta={(kit) => (
+                <>
+                  <GradeChip grade={kit.grade} />
+                  {kit.scale && <Measured text={kit.scale} kind="text" />}
+                </>
+              )}
+              onEdit={(kit) => setDialog({ kind: "kit", kit })}
+            />
+          </section>
+          <section aria-labelledby="home-completed" className="min-w-0">
+            <SectionHead
+              id="home-completed"
+              label={t("home.recentlyCompleted")}
+              count={counts?.kits.complete}
+              testId="home-count-complete"
+            />
+            <KitStrip
+              kits={completed.data}
+              total={counts?.kits.complete}
+              empty={t("home.completedEmpty")}
+              viewAll={(total) => countedPhrase("home.viewAllCompleted", total)}
+              to="/kits?status=complete&sort=completed"
+              stacked
+              meta={(kit) => {
+                const completedAt = completedOn(kit);
+                return (
+                  <>
+                    {kit.rating != null ? (
+                      <RatingStars rating={kit.rating} title={ratingTooltip(kit.rating)} />
+                    ) : (
+                      <span aria-hidden className="text-faint">
+                        —
+                      </span>
+                    )}
+                    {completedAt ? (
+                      <span>{formatDate(completedAt)}</span>
+                    ) : (
+                      <span aria-hidden className="text-faint">
+                        —
+                      </span>
+                    )}
+                  </>
+                );
+              }}
+              onEdit={(kit) => setDialog({ kind: "kit", kit })}
+            />
+          </section>
+        </div>
+
+        <section aria-labelledby="home-mail">
+          <SectionHead
+            id="home-mail"
+            label={t("home.inTheMail")}
+            count={inTheMail}
+            testId="home-count-mail"
+          />
+          <div className="grid gap-4 @2xl:grid-cols-2 @4xl:grid-cols-3">
+            {MAIL_STAGES.map((stage) => (
+              <MailColumn
+                key={stage}
+                stage={stage}
+                orders={pending.data === undefined ? undefined : mail[stage]}
+                total={counts?.orders[stage]}
+                retailerName={retailerName}
+                retailersUnavailable={retailersQuery.isError}
+                catalogName={catalogName}
+                onEdit={(order) => setDialog({ kind: "order", order })}
+              />
             ))}
           </div>
+        </section>
+
+        {dialog?.kind === "kit" && (
+          <KitFormModal kit={dialog.kit} onClose={() => setDialog(null)} onDelete={removeKit} />
         )}
-      </section>
-
-      <div className="grid gap-6 @3xl:grid-cols-2">
-        <section aria-labelledby="home-backlog" className="min-w-0">
-          <SectionHead
-            id="home-backlog"
-            label={t("home.backlog")}
-            count={counts?.kits.backlog}
-            testId="home-count-backlog"
+        {dialog?.kind === "order" && (
+          <OrderFormModal
+            order={dialog.order}
+            onClose={() => setDialog(null)}
+            onDelete={removeOrder}
           />
-          <KitStrip
-            kits={backlog.data}
-            total={counts?.kits.backlog}
-            empty={t("home.backlogEmpty")}
-            viewAll={(total) => countedPhrase("home.viewAllBacklog", total)}
-            // The Kits page's own order (newest added), not the strip's arrival
-            // order: the page offers no sort by a date it does not show (#247,
-            // owner's call). The two differ only for a kit that arrived long
-            // after it was ordered.
-            to="/kits?status=backlog"
-            meta={(kit) => (
-              <>
-                <GradeChip grade={kit.grade} />
-                {kit.scale && <span>{kit.scale}</span>}
-              </>
-            )}
-            onEdit={(kit) => setDialog({ kind: "kit", kit })}
-          />
-        </section>
-        <section aria-labelledby="home-completed" className="min-w-0">
-          <SectionHead
-            id="home-completed"
-            label={t("home.recentlyCompleted")}
-            count={counts?.kits.complete}
-            testId="home-count-complete"
-          />
-          <KitStrip
-            kits={completed.data}
-            total={counts?.kits.complete}
-            empty={t("home.completedEmpty")}
-            viewAll={(total) => countedPhrase("home.viewAllCompleted", total)}
-            to="/kits?status=complete&sort=completed"
-            stacked
-            meta={(kit) => {
-              const completedAt = completedOn(kit);
-              return (
-                <>
-                  {kit.rating != null ? (
-                    <RatingStars rating={kit.rating} title={ratingTooltip(kit.rating)} />
-                  ) : (
-                    <span aria-hidden className="text-faint">
-                      —
-                    </span>
-                  )}
-                  {completedAt ? (
-                    <span>{formatDate(completedAt)}</span>
-                  ) : (
-                    <span aria-hidden className="text-faint">
-                      —
-                    </span>
-                  )}
-                </>
-              );
-            }}
-            onEdit={(kit) => setDialog({ kind: "kit", kit })}
-          />
-        </section>
-      </div>
-
-      <section aria-labelledby="home-mail">
-        <SectionHead
-          id="home-mail"
-          label={t("home.inTheMail")}
-          count={inTheMail}
-          testId="home-count-mail"
-        />
-        <div className="grid gap-4 @2xl:grid-cols-2 @4xl:grid-cols-3">
-          {MAIL_STAGES.map((stage) => (
-            <MailColumn
-              key={stage}
-              stage={stage}
-              orders={pending.data === undefined ? undefined : mail[stage]}
-              total={counts?.orders[stage]}
-              retailerName={retailerName}
-              retailersUnavailable={retailersQuery.isError}
-              catalogName={catalogName}
-              onEdit={(order) => setDialog({ kind: "order", order })}
-            />
-          ))}
-        </div>
-      </section>
-
-      {dialog?.kind === "kit" && (
-        <KitFormModal kit={dialog.kit} onClose={() => setDialog(null)} onDelete={removeKit} />
-      )}
-      {dialog?.kind === "order" && (
-        <OrderFormModal
-          order={dialog.order}
-          onClose={() => setDialog(null)}
-          onDelete={removeOrder}
-        />
-      )}
+        )}
+      </TableRuler>
     </div>
   );
 }
@@ -338,12 +346,12 @@ function BenchCard({ kit, onEdit }: { kit: Kit; onEdit: () => void }) {
         <Pencil size={15} aria-hidden />
       </IconButton>
       <h3 className="pe-10 text-lg font-semibold leading-tight tracking-tight text-text">
-        {kit.name}
+        <Measured text={kit.name} kind="name" />
       </h3>
       <div className="flex flex-wrap items-center gap-2 text-[12.5px] tabular-nums text-muted">
         <GradeChip grade={kit.grade} />
-        {kit.scale && <span>{kit.scale}</span>}
-        {kit.kit_number && <span>{kit.kit_number}</span>}
+        {kit.scale && <Measured text={kit.scale} kind="text" />}
+        {kit.kit_number && <Measured text={kit.kit_number} kind="text" />}
       </div>
       <div className="flex flex-wrap items-baseline gap-x-2.5 text-[13px] tabular-nums text-muted">
         {kit.build_started_at ? (
@@ -382,9 +390,16 @@ function BenchCard({ kit, onEdit }: { kit: Kit; onEdit: () => void }) {
  *  there is, 408 px of strip on the widest — and not at 744 px, where the
  *  phone shell's one-column strip is 712 px and two lines left most of each
  *  row empty. 26 and not Tailwind's 28: a 1024 px tablet's two-up strip is
- *  436 px and keeps the wrap-by-need it had. The same tree: under the line the
- *  row is a grid, the meta's wrapper is `display: contents`, and the pencil
- *  takes a column of its own beside both lines. */
+ *  436 px and keeps the wrap-by-need it had.
+ *
+ *  **Every row stacks by need in that shape** (#326, the owner's call): the
+ *  pencil has a column of its own at every width, beside both lines, and the
+ *  name and the meta share the other — one line where they fit, as before, and
+ *  the meta under the name where they do not, giving way inside its line. The
+ *  meta had been one unbreakable line with the pencil in it, and a grade or a
+ *  scale with nowhere to break pushed both past the strip and the page
+ *  sideways. `stacked` is then only the decree: under 26rem the meta takes the
+ *  second line whether it fits beside the name or not. */
 function KitStrip({
   kits,
   total,
@@ -406,34 +421,28 @@ function KitStrip({
 }) {
   const { t } = useTranslation();
   if (kits === undefined) return <EmptyState>{t("common.loading")}</EmptyState>;
-  const row = stacked
-    ? "@max-[26rem]:grid @max-[26rem]:grid-cols-[minmax(0,1fr)_auto] @max-[26rem]:gap-y-0 @max-[26rem]:py-2"
-    : "";
+  // The name grows into the line it has (`flex-1`), so the meta beside it ends
+  // at the line's end, and the meta alone on the next line starts at its start.
+  const decree = stacked ? "@max-[26rem]:basis-full" : "";
   return (
     <div className="@container min-w-0 overflow-hidden rounded-md border border-border bg-surface">
       {kits.length === 0 && <div className="px-3.5 py-6 text-center text-sm text-muted">{empty}</div>}
       {kits.map((kit, index) => (
         <div
           key={kit.id}
-          className={`flex min-h-10 flex-wrap items-center gap-x-3 gap-y-0.5 px-3.5 py-1.5 ${row} ${index === 0 ? "" : "border-t border-rule"}`}
+          className={`grid min-h-10 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-2.5 px-3.5 py-1.5 ${stacked ? "@max-[26rem]:py-2" : ""} ${index === 0 ? "" : "border-t border-rule"}`}
         >
-          <span className="min-w-[min(9rem,100%)] flex-1 truncate text-sm font-medium text-text">{kit.name}</span>
-          <span
-            className={`ms-auto flex shrink-0 items-center gap-2.5 whitespace-nowrap text-[12.5px] tabular-nums text-muted ${stacked ? "@max-[26rem]:contents" : ""}`}
-          >
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5">
+            <span className="min-w-[min(9rem,100%)] flex-1 truncate text-sm font-medium text-text">{kit.name}</span>
             <span
-              className={`flex items-center gap-2.5 ${stacked ? "@max-[26rem]:col-start-1 @max-[26rem]:row-start-2 @max-[26rem]:flex-wrap @max-[26rem]:gap-y-0 @max-[26rem]:whitespace-normal" : ""}`}
+              className={`flex min-w-0 max-w-full flex-wrap items-center gap-x-2.5 text-[12.5px] tabular-nums text-muted ${decree}`}
             >
               {meta(kit)}
             </span>
-            <IconButton
-              label={t("common.editNamed", { name: kit.name })}
-              className={stacked ? "@max-[26rem]:col-start-2 @max-[26rem]:row-span-2 @max-[26rem]:row-start-1" : ""}
-              onClick={() => onEdit(kit)}
-            >
-              <Pencil size={15} aria-hidden />
-            </IconButton>
-          </span>
+          </div>
+          <IconButton label={t("common.editNamed", { name: kit.name })} onClick={() => onEdit(kit)}>
+            <Pencil size={15} aria-hidden />
+          </IconButton>
         </div>
       ))}
       {total !== undefined && total > 0 && (
@@ -571,7 +580,10 @@ function OrderCard({
           P3-2). The retailer alone truncates; the date wraps its own words. */}
       <div className="flex flex-wrap items-baseline justify-between gap-x-2 pe-8 text-[12.5px] touch:pe-10 tabular-nums text-muted">
         <span className="max-w-full truncate font-semibold text-text">{retailer}</span>
-        <span className="min-w-0">{when}</span>
+        {/* A carrier with nowhere to break gives way by its value (#326). */}
+        <span className="min-w-0">
+          <Measured text={when} kind="text" />
+        </span>
       </div>
       {lines.headline && (
         <CardLine line={lines.headline} className="pe-7 text-sm font-medium text-text touch:pe-10" />
