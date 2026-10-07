@@ -259,12 +259,25 @@ export function useFocusAcrossShells(shell: Shell): void {
     // Once per loss: a control nothing could answer for is not answered later,
     // by whatever renders next with its key while the keyboard happens to be
     // on `<body>` — that would be a jump nobody asked for. A disabled one is
-    // then forgotten; a removed one is kept for the shell effect below, whose
-    // frame-later answer exists for a twin that mounts in a later commit.
+    // then forgotten. A removed one is kept for the shell effect below, whose
+    // frame-later answer exists for a twin that mounts in a later commit — and
+    // only that long: two frames, so that answer has run whichever of the two
+    // commits came first, and then it is forgotten too, or the next shell
+    // change would answer it (Codex #336: a phone turned to the rail raised
+    // the on-screen keyboard for a token's name).
     let answered: Element | null = null;
+    let expiry = 0;
     const stranded = new MutationObserver(() => {
       const at = place;
       if (at === null || at.control === answered) return;
+      // The keys as the control says them *now*: its stand-ins can change
+      // while it has the keyboard — a Revoke's neighbours, when the list is
+      // refetched under it — and the loss is answered with the last ones it
+      // carried (Greptile #336).
+      if (at.control.isConnected) {
+        const keys = focusKeysOf(at.control);
+        if (keys.length > 0) at.keys = keys;
+      }
       const active = document.activeElement;
       const disabled = at.control.isConnected && at.control.matches(":disabled");
       const lost = disabled
@@ -272,7 +285,17 @@ export function useFocusAcrossShells(shell: Shell): void {
         : !at.control.isConnected && active === document.body;
       if (!lost) return;
       answered = at.control;
-      if (!focusFirst(at.keys) && disabled) remember(null);
+      if (focusFirst(at.keys)) return;
+      if (disabled) {
+        remember(null);
+        return;
+      }
+      cancelAnimationFrame(expiry);
+      expiry = requestAnimationFrame(() => {
+        expiry = requestAnimationFrame(() => {
+          if (place?.control === at.control) remember(null);
+        });
+      });
     });
     const onFocusIn = (event: FocusEvent) => {
       const control = event.target as Element | null;
@@ -294,7 +317,10 @@ export function useFocusAcrossShells(shell: Shell): void {
     document.addEventListener("focusout", onFocusOut);
     // `disabled` alone of the attributes: it is the one that drops focus and
     // that a control here changes on itself (`Modal` measured `hidden` and
-    // `inert` too; neither is set on a focused control outside a dialog).
+    // `inert` too; neither is set on a focused control outside a dialog). Not
+    // the key attributes: a change of the list that changes a control's
+    // stand-ins changes the tree too, and any mutation refreshes the keys
+    // (measured: watching them as well changed nothing a test could see).
     stranded.observe(document.body, {
       subtree: true,
       childList: true,
@@ -303,6 +329,7 @@ export function useFocusAcrossShells(shell: Shell): void {
     });
     return () => {
       stranded.disconnect();
+      cancelAnimationFrame(expiry);
       hidden.disconnect();
       cancelAnimationFrame(deferred);
       document.removeEventListener("focusin", onFocusIn);

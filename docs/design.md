@@ -3399,10 +3399,15 @@ and tablet e2e, screenshots, the release (#260).
   `useFocusAcrossShells`: − at zero names +, a Save with nothing left to save
   the field before it (the owner's call, 07/10/2026), a revoked token's Revoke
   the next token's, then the one before, then the new token's name, Create the
-  new token's Copy, Done the name. A loss is answered when it happens or not at
-  all — answered later, by whatever next draws the key, it would be a jump
-  nobody asked for, and on an iPhone a tap on Done would raise the on-screen
-  keyboard (`e2e/keyboard-place.spec.ts`).
+  new token's Copy, Done the name, and the name field Copy (Enter there creates
+  the token too). The stand-ins are read as the control carries them when the
+  keyboard is lost, not when it arrived: a Revoke's neighbours change when the
+  list is refetched under it. A loss is answered when it happens or not at all —
+  a removed control is kept two frames for the shell effect's late twin, then
+  forgotten — because answered later, by whatever next draws the key or by the
+  next shell change, it would be a jump nobody asked for, and on an iPhone a tap
+  on Done would raise the on-screen keyboard (`e2e/keyboard-place.spec.ts`; the
+  PR #336 review).
 - **The pager on a phone** offered five pages at most — the ends and the current
   page with a neighbour either side — at 44 px each, on their own line when
   they did not fit beside the range: the desktop's window is nine entries from

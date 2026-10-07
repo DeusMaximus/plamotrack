@@ -15,7 +15,7 @@
  * settings.spec.ts, since it saves the singleton; a refused sign-in is in
  * auth.spec.ts.
  */
-import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Locator, type Page, type Route } from "@playwright/test";
 
 import { apiContext } from "./api";
 import { openListAt } from "./listRows";
@@ -57,6 +57,25 @@ async function remove(route: string, id: string): Promise<void> {
   await api.delete(`${route}/${id}`);
   await api.dispose();
 }
+
+type Listed = { id: string; name: string; revoked_at: string | null };
+
+/** The tokens the page draws a Revoke for — every one not revoked, expired or
+ *  not — in the list's order. */
+async function listedWithRevoke(api: APIRequestContext): Promise<Listed[]> {
+  return ((await (await api.get("/auth/tokens")).json()) as Listed[]).filter((token) => token.revoked_at === null);
+}
+
+async function mint(api: APIRequestContext, name: string, expiresAt?: string): Promise<string> {
+  const minted = await api.post("/auth/tokens", {
+    data: { name, scopes: ["collection:read"], ...(expiresAt ? { expires_at: expiresAt } : {}) },
+  });
+  expect(minted.ok(), await minted.text()).toBeTruthy();
+  return ((await minted.json()) as { id: string }).id;
+}
+
+const revokeOf = (page: Page, name: string): Locator =>
+  shown(page.getByTestId(/^token-(row|card)$/).filter({ hasText: name })).getByRole("button", { name: "Revoke" });
 
 const stepper = (page: Page, which: "Add one" | "Remove one", name: string): Locator =>
   shown(page.locator("main").getByRole("button", { name: `${which} ${name}`, exact: true }));
@@ -142,20 +161,8 @@ test("a revoked token's Revoke hands the keyboard to the next token's, then to t
   const api = await apiContext();
   const names = [1, 2].map((n) => `E2E Keyboard ${testInfo.project.name} ${suffix} revoke ${n}`);
   const ids: string[] = [];
-  for (const name of names) {
-    const minted = await api.post("/auth/tokens", { data: { name, scopes: ["collection:read"] } });
-    expect(minted.ok(), await minted.text()).toBeTruthy();
-    ids.push(((await minted.json()) as { id: string }).id);
-  }
-  type Listed = { id: string; name: string; revoked_at: string | null; expires_at: string | null };
-  /** The tokens that can still be revoked, in the list's order — what the page
-   *  draws a Revoke for. */
-  const revocable = async () =>
-    ((await (await api.get("/auth/tokens")).json()) as Listed[]).filter(
-      (token) => token.revoked_at === null && (token.expires_at === null || Date.parse(token.expires_at) > Date.now()),
-    );
-  const revokeOf = (name: string) =>
-    shown(page.getByTestId(/^token-(row|card)$/).filter({ hasText: name })).getByRole("button", { name: "Revoke" });
+  for (const name of names) ids.push(await mint(api, name));
+  const revocable = () => listedWithRevoke(api);
 
   try {
     await page.goto("/settings/tokens");
@@ -166,10 +173,10 @@ test("a revoked token's Revoke hands the keyboard to the next token's, then to t
     expect(listed).toHaveLength(2);
     const [first, second] = listed;
 
-    await revokeOf(first.name).focus();
+    await revokeOf(page, first.name).focus();
     await page.keyboard.press("Enter");
-    await expect(revokeOf(first.name)).toHaveCount(0);
-    await expect(revokeOf(second.name), "the next token's Revoke").toBeFocused();
+    await expect(revokeOf(page, first.name)).toHaveCount(0);
+    await expect(revokeOf(page, second.name), "the next token's Revoke").toBeFocused();
 
     // The second: its next, else the one before it, else the name — read off
     // the list as it stands, since the suite's other files may leave a token.
@@ -177,8 +184,8 @@ test("a revoked token's Revoke hands the keyboard to the next token's, then to t
     const at = before.findIndex((token) => token.id === second.id);
     const neighbour = before[at + 1] ?? before[at - 1];
     await page.keyboard.press("Enter");
-    await expect(revokeOf(second.name)).toHaveCount(0);
-    await expect(neighbour ? revokeOf(neighbour.name) : page.getByLabel("Name")).toBeFocused();
+    await expect(revokeOf(page, second.name)).toHaveCount(0);
+    await expect(neighbour ? revokeOf(page, neighbour.name) : page.getByLabel("Name")).toBeFocused();
   } finally {
     for (const id of ids) await api.delete(`/auth/tokens/${id}`);
     await api.dispose();
@@ -214,9 +221,9 @@ test("a loss nobody could answer is not answered later, by whatever draws its ke
   // nobody asked for — on an iPhone, the on-screen keyboard rising under a tap
   // on Done.
   const api = await apiContext();
-  type Listed = { id: string; name: string; revoked_at: string | null };
-  const active = ((await (await api.get("/auth/tokens")).json()) as Listed[]).filter((token) => token.revoked_at === null);
-  test.skip(active.length > 0, "another token is active, so the Revoke has a neighbour to answer it");
+  const others = await listedWithRevoke(api);
+  if (others.length > 0) await api.dispose();
+  test.skip(others.length > 0, "another token has a Revoke, a neighbour to answer this one");
   const name = `E2E Keyboard ${testInfo.project.name} ${suffix} only`;
   try {
     await page.goto("/settings/tokens");
@@ -238,9 +245,94 @@ test("a loss nobody could answer is not answered later, by whatever draws its ke
     await expect(page.getByLabel("Name")).toBeVisible();
     await expect(page.getByLabel("Name")).not.toBeFocused();
     expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
+
+    // Nor by the next shell change (Codex #336): a phone turned to the rail, a
+    // window dragged across 768 px. The shell effect answers a removed control
+    // for a frame, for a twin that mounts a commit late; long after, it is not
+    // there to answer.
+    const wide = (page.viewportSize()?.width ?? 1280) >= 768;
+    await page.setViewportSize(wide ? { width: 390, height: 844 } : { width: 820, height: 1180 });
+    await page.waitForFunction((phone) => matchMedia("(max-width: 767.98px)").matches === phone, wide);
+    await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+    await expect(page.getByLabel("Name")).toBeVisible();
+    await expect(page.getByLabel("Name"), "after a shell change").not.toBeFocused();
+    expect(await page.evaluate(() => document.activeElement === document.body)).toBe(true);
   } finally {
     const tokens = (await (await api.get("/auth/tokens")).json()) as Listed[];
     for (const token of tokens.filter((each) => each.name === name)) await api.delete(`/auth/tokens/${token.id}`);
+    await api.dispose();
+  }
+});
+
+test("Enter in the name creates the token and hands the keyboard to Copy (Greptile #336)", async ({ page }, testInfo) => {
+  const name = `E2E Keyboard ${testInfo.project.name} ${suffix} entered`;
+  await page.goto("/settings/tokens");
+  try {
+    await page.getByLabel("Name").fill(name);
+    await page.getByLabel("Name").press("Enter");
+    await expect(page.getByTestId("minted-token")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Copy" })).toBeFocused();
+  } finally {
+    const api = await apiContext();
+    const tokens = (await (await api.get("/auth/tokens")).json()) as Listed[];
+    for (const token of tokens.filter((each) => each.name === name)) await api.delete(`/auth/tokens/${token.id}`);
+    await api.dispose();
+  }
+});
+
+test("an expired token has a Revoke, and its place in the order (Codex #336)", async ({ page }, testInfo) => {
+  // Expired, live, expired: whichever way the list runs, the live one has an
+  // expired one after it, and that one's Revoke is next.
+  const api = await apiContext();
+  const soon = new Date(Date.now() + 2_000).toISOString();
+  const names = ["expired a", "live", "expired b"].map((n) => `E2E Keyboard ${testInfo.project.name} ${suffix} ${n}`);
+  const ids = [await mint(api, names[0], soon), await mint(api, names[1]), await mint(api, names[2], soon)];
+  try {
+    await expect.poll(() => Date.now()).toBeGreaterThan(Date.parse(soon) + 250);
+    await page.goto("/settings/tokens");
+    page.on("dialog", (dialog) => void dialog.accept());
+    const listed = await listedWithRevoke(api);
+    const live = listed.findIndex((token) => token.id === ids[1]);
+    const next = listed[live + 1];
+    expect(next && [ids[0], ids[2]].includes(next.id), "an expired token follows the live one").toBe(true);
+    await expect(revokeOf(page, next.name), "an expired token has a Revoke").toBeVisible();
+
+    await revokeOf(page, names[1]).focus();
+    await page.keyboard.press("Enter");
+    await expect(revokeOf(page, names[1])).toHaveCount(0);
+    await expect(revokeOf(page, next.name), "the expired token's Revoke is next").toBeFocused();
+  } finally {
+    for (const id of ids) await api.delete(`/auth/tokens/${id}`);
+    await api.dispose();
+  }
+});
+
+test("a Revoke's neighbours are the list's when it is pressed, not when it was focused (Greptile #336)", async ({
+  page,
+}, testInfo) => {
+  const api = await apiContext();
+  const names = [1, 2, 3].map((n) => `E2E Keyboard ${testInfo.project.name} ${suffix} fresh ${n}`);
+  const ids: string[] = [];
+  for (const name of names) ids.push(await mint(api, name));
+  try {
+    await page.goto("/settings/tokens");
+    page.on("dialog", (dialog) => void dialog.accept());
+    const mine = (await listedWithRevoke(api)).filter((token) => ids.includes(token.id));
+    const [first, second, third] = mine;
+
+    // The keyboard on the first; the second is revoked elsewhere, and the list
+    // is refetched under the focused Revoke (a tab coming back to the front).
+    await revokeOf(page, first.name).focus();
+    expect((await api.delete(`/auth/tokens/${second.id}`)).status()).toBe(204);
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+    await expect(revokeOf(page, second.name)).toHaveCount(0);
+    await expect(revokeOf(page, first.name)).toBeFocused();
+
+    await page.keyboard.press("Enter");
+    await expect(revokeOf(page, first.name)).toHaveCount(0);
+    await expect(revokeOf(page, third.name), "the next token's Revoke as the list is now").toBeFocused();
+  } finally {
+    for (const id of ids) await api.delete(`/auth/tokens/${id}`);
     await api.dispose();
   }
 });

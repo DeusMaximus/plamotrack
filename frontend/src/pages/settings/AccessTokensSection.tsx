@@ -105,6 +105,9 @@ function CreateCard({ onMinted }: { onMinted: (minted: AccessTokenMinted) => voi
           <Input
             maxLength={100}
             data-focus-key={TOKEN_NAME_FOCUS}
+            // Enter here creates the token too, and the card that replaces
+            // this form has the keyboard next (Greptile #336).
+            data-focus-stand-in={TOKEN_COPY_FOCUS}
             placeholder={t("settings.tokens.namePlaceholder")}
             autoComplete="off"
             {...register("name", {
@@ -315,10 +318,11 @@ function tokenState(token: AccessToken) {
 }
 
 /** Where the keyboard goes when a revoked token's Revoke is gone (#268): the
- *  next token that can still be revoked, else the one before it, else the new
- *  token's name — so revoking several in turn is Enter, Enter, Enter. */
+ *  next token with a Revoke, else the one before it, else the new token's
+ *  name — so revoking several in turn is Enter, Enter, Enter. "With a Revoke"
+ *  is the rule that draws one: not revoked, expired or not (Codex #336). */
 function revokeStandIns(tokens: AccessToken[], id: string): string {
-  const revocable = tokens.filter((token) => !tokenState(token).inactive).map((token) => token.id);
+  const revocable = tokens.filter((token) => !tokenState(token).revoked).map((token) => token.id);
   const at = revocable.indexOf(id);
   const neighbours = [revocable[at + 1], revocable[at - 1]].filter((other) => other !== undefined);
   return [...neighbours.map((other) => `token:${other}`), TOKEN_NAME_FOCUS].join(" ");
