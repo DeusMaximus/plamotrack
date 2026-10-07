@@ -41,6 +41,52 @@ Template:
 
 ---
 
+## 2026-10-07 — Claude Code (Opus 5.5) — #268 MERGED as `fa68abc` (PR #336): a pressed control keeps the keyboard, or hands it on; CI Integration cap 25 → 40 min
+
+- **Done:**
+  - **[PR #336](https://github.com/DeusMaximus/plamotrack/pull/336)** squash-merged as **`fa68abc`**, pinned to head `b14aa8a` after all three checks. #268 is closed.
+    - **Owner's call (07/10):** fix the class (a control disabling itself under the keyboard), not only the stepper.
+    - **A control waiting on its own request keeps the keyboard.** `Button`'s new `pending` prop sets `aria-disabled` and refuses a press, form submission included (#55). It covers the steppers (both shapes), Export CSV, both Settings Saves, Create token, Revoke, and `AuthGate`'s four buttons.
+    - **A control that can't act any more** (disabled, or removed) hands the keyboard to the stand-in it names, through one `MutationObserver` (`stranded`) in `useFocusAcrossShells`:
+      - − at zero → +
+      - a saved Save → the field before it (**owner's call, 07/10**)
+      - a revoked token's Revoke → the next token's, then the previous, then the name field
+      - Create → Copy; Done → the name field; Enter in the name field → Copy
+    - The observer re-reads the focused control's keys on every mutation. It answers a loss once; a removed control nothing could answer is forgotten two frames later.
+    - `focusByKey` skips a disabled carrier. WebKit leaves `activeElement` on a just-disabled control, and in the first version + was never reached.
+    - Not changed: Data management's import (it has its own handling) and dialogs (`Modal`).
+  - **CI:** Integration's `timeout-minutes` went from 25 to 40 (**owner's call**). The last two runs took 22:57 and 26:25.
+  - **Docs:** design §13.7 has a bullet ("A control that changes its own state…"); `AGENTS.md`'s focus line is updated.
+  - **Tests:**
+    - `e2e/keyboard-place.spec.ts` (new) runs in app, phone and tablet: 9 tests.
+    - `settings.spec.ts` has the Save test; `auth.spec.ts` checks that a refused password keeps the keyboard on Sign in.
+    - Mutants: 22 killed (17 in the first pass, 5 in the review round). 3 survived (K3, K5, R6), and the code they mutated was removed. The tables are in the PR body.
+  - **Review:**
+    - Round 1 (Codex and Greptile): five P2s, all fixed in `b14aa8a`.
+    - Round 2: a focused `@codex review`, which came back clean.
+- **State:**
+  - **Unreleased on `main`:** #294, #289, #247, #302, #310, #313 (a migration), #314, #319, #322, #328, #330, #332, #334, #335, and now **#336**. See `.agents/next-release.md`.
+  - **Runs at `b14aa8a`:** focus suites in three projects, Chromium: 187 passed, 0 failed. keyboard-place under WebKit: 26 passed, 1 skipped. Earlier, at the pre-review head, the full Chromium suite: 244 passed, 0 failed.
+  - **Known gaps, filed:** #333, #326, #324 (local runs need `--workers=1`), #320.
+  - **Tooling:**
+    - `main` is clean; no worktrees, servers or e2e databases are left.
+    - Merged branches left on origin: `fix/268-stepper-keeps-focus`, `fix/331-token-dates-subscribe`, `fix/316-errors-beside-their-controls`, and the ones listed in older entries.
+  - **Carried:**
+    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
+    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
+    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
+- **Next — the pre-release plan (owner, 06/10), continued:**
+  1. **#326** (Home scrolls sideways): the owner's call on a strip's grade and scale is still open (wrap, truncate, or stack under the name; recommended: stack). Expect a briefed Codex round.
+
+  **Then the release**, likely **v0.6.0-alpha**: a migration (#313), a changed MCP tool (#289: `create_order` takes the shop's id) and two new phone features. Work through `.agents/releases.md` and `.agents/next-release.md`.
+  - The owner's Gunpla skill needs a refresh at the LXC upgrade, because of #289. #309's upgrade-notes line is drafted in the ledger.
+  - #333 can wait for after the release.
+
+  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
+- **Also next:**
+  1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`.
+  2. Carried: #279's edge probes, then #281's packaging; #282's VPS path; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
+
 ## 2026-10-07 — Claude Code (Opus 5.5) — #316 MERGED as `6d0252d` (PR #334), #331 MERGED as `30bb0c0` (PR #335); #268 in progress
 
 - **Done:**
@@ -229,48 +275,6 @@ Template:
     - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
 - **Next:**
   1. #329 (fold to fit; it closes Codex's round-2 finding and Kits' line), or #326 (Home) by the owner's priority. Then #315 and #316. #324 when local multi-worker runs matter.
-  2. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
-  3. Carried:
-     - #279's edge probes, then #281's packaging; #282's VPS path;
-     - at the next release, work through `.agents/next-release.md`;
-     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
-     - posting the rehearsal on #285.
-
-## 2026-10-05 — Claude Code (Opus 5.5) — #321 MERGED as `277cb0a` (PR #322) and #317 MERGED as `3fba4c3` (PR #325); #323, #324 filed
-
-- **Done:**
-  - **#317 was never a focus race.** Its #275 test opens `/inventory?tab=upgrades`, which can't be narrowed. With more than ten upgrades sorting ahead, the row is on page 2; 11 seeded leftovers reproduce it every time.
-  - **The sweep** found 38 lookups of that shape across 13 spec files (classified on #317's thread).
-  - **[PR #325](https://github.com/DeusMaximus/plamotrack/pull/325)** squash-merged as **`3fba4c3`** after `main` was merged in at `f9e8c6a`. It is test-only:
-    - Kits, Orders and Retailers open with `?q=` naming the test's own record.
-    - Inventory opens through `e2e/listRows.ts` → `openListAt`, which steps `?page=` and reads the pager, not the locale-formatted range (round 1, Codex and Greptile).
-    - `lists.spec`'s `openList` delegates to it.
-    - Local multi-worker runs: 17 failures on `main`, then 8–10. The rest are #324, #321, #323 and slow saves.
-  - **[PR #322](https://github.com/DeusMaximus/plamotrack/pull/322)** squash-merged as **`277cb0a`**; #321 is closed. It fixes #319's regression: a turn from phone to rail with the keyboard past row 10 fell to `<body>`.
-    - `usePaging()` (`lib/listState.ts`) now owns slicing via `paging.slice(rows)`. In the crossing render it lands on the page holding the record from `focusedRecordKeys()` (open dialogs' openers via `Modal`'s `holdOpener`, then the focused control) and writes `?page=N`.
-    - The hold writes once and asks the browser's address, not only the router. Another navigation ends it (round 1, Greptile).
-    - Inventory slices only the tab on screen (round 1, Codex P2).
-    - Design §13.7 ("Amended — #318", last bullet), AGENTS.md (the focusKey line) and two lessons are updated.
-  - **Reviews:**
-    - #322 round 1: Codex P1 and P2, Greptile 4/5; all taken. Round 2, briefed Codex desktop: **GO**, no findings, with five extra probes.
-    - #325: Codex P2 and Greptile 4/5, both taken; the connector's re-review was clean.
-  - **Decisions (owner, 03–05/10):** C over B for #321; separate PRs; fix #317's whole class in one branch; #322 got a briefed desktop round, #325 the connector only.
-- **State:**
-  - **Unreleased on `main`:** #294, #289, #247, #302, #310, #313 (a migration), #314, #319 and now **#322**, folded into #318's entry. #325 is test-only. See `.agents/next-release.md`.
-  - **Coverage gap on #322**, recorded in its PR body and not filed: the mutant *no turn while the URL has a page* survived 16 runs in Codex's replay. A deterministic witness needs the router's update held across a turn.
-  - **Known gaps, filed:**
-    - **#323 (bug, product):** an unbroken name widens all seven list tables past their box from 768 px up, measured. `lists.spec`'s fit test seeds only its own rows.
-    - **#324:** Home and import e2e read collection-wide state, so the local multi-worker default fails. Keep `--workers=1` until it's fixed.
-    - **#320:** Orders' render cost at hundreds of orders on a phone.
-    - **#315:** leaving Data management mid-import.
-    - **#316:** download errors at the section's head.
-  - **Tooling:** the iOS Simulator is still booted. No dev servers, worktrees or e2e databases are left, and `main` is clean. Merged branches left on origin: `fix/321-focus-row-page`, `fix/317-narrow-list-lookups`, `feat/318-page-size`.
-  - **Carried:**
-    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
-    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
-    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
-- **Next:**
-  1. #323 (product; a by-value rule for names, like `ReferenceRuler`), then #315 and #316 by priority. #324 when local multi-worker runs matter.
   2. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
   3. Carried:
      - #279's edge probes, then #281's packaging; #282's VPS path;
