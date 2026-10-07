@@ -3846,6 +3846,17 @@ import it here. That undoes the first of the three reasons the phone was export 
   iOS Simulator). On a phone the badge's column hugs the badge (`w-px`): the table
   had handed the number column's width to every column, and a short label lost a
   third of its row.
+- **…and so is every failure in Settings, by the control that failed** (#316). A
+  download's is said last in the card whose button failed (Export, or Blank
+  templates in either shape), and brought into view: on a phone the starter sheet
+  is the last card, and at the section's head its failure was a screen and more
+  above it. A form's is said beside its Save (General, Language & formatting,
+  Create a token); at the form's head, Language's sat under the sticky bar on a
+  320 px phone by the time Save was reached. A revoke's stays at the token list's
+  head, since a Revoke can be any row, and is brought into view instead
+  (`ErrorBanner reveal`: the nearest scroll, clear of the phone's bars, the
+  keyboard left where it was). A failure to *load* a section stays at its head:
+  nothing was pressed.
 - **Focus across the turn** is by key, as everywhere (`lib/focusKey.ts`): the file
   control, the mode, Preview, Apply, Cancel and the starter sheet each carry one in
   both shapes; the pack and the replace confirmation name a stand-in.

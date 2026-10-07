@@ -122,7 +122,10 @@ export function DataSection() {
   // under way, and what it is, until it answers (#314 round 2, Codex finding 5).
   // Nor by leaving: a section mounted under it says the same (#315).
   const [submitted, setSubmitted] = useState<ImportMode | null>(() => importRunState().pending);
-  const [error, setError] = useState<string | null>(null);
+  // A download's failure, and the card whose button failed, where it is said
+  // (#316): at the section's head, a phone put the starter sheet's a screen
+  // above its button, the last card on the page.
+  const [downloadError, setDownloadError] = useState<{ card: "export" | "templates"; message: string } | null>(null);
   // A preview's refusal: the draft's, so it goes with the draft. With the
   // apply's failure it is the import's own failures, said inside its card
   // rather than at the head of the section: on a phone the head is a screen
@@ -162,7 +165,6 @@ export function DataSection() {
     setPlan(null);
     setOutcome(null);
     setConfirmText("");
-    setError(null);
     setRefusal(null);
     if (fileInput.current) fileInput.current.value = "";
   }
@@ -178,14 +180,20 @@ export function DataSection() {
     setRefusal(null);
   }
 
-  async function download(path: string, name: string) {
-    setError(null);
+  async function download(path: string, name: string, card: "export" | "templates") {
+    setDownloadError(null);
     try {
       await downloadFile(path, name);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : String(err));
+      setDownloadError({ card, message: err instanceof ApiError ? err.message : String(err) });
     }
   }
+  const downloadFailure = (card: "export" | "templates") =>
+    downloadError?.card === card && (
+      <div className="mt-3">
+        <ErrorBanner reveal message={downloadError.message} />
+      </div>
+    );
 
   async function runPreview() {
     if (!file) return;
@@ -355,7 +363,7 @@ export function DataSection() {
     <Button
       variant="secondary"
       data-focus-key={FOCUS.starter}
-      onClick={() => download("/export/starter-sheet.csv", "plamotrack-starter-sheet.csv")}
+      onClick={() => download("/export/starter-sheet.csv", "plamotrack-starter-sheet.csv", "templates")}
     >
       {t("data.starterSheetButton")}
     </Button>
@@ -365,23 +373,22 @@ export function DataSection() {
     <div className="space-y-6">
       <SectionHeader title={t("settings.sections.data")} description={t("data.subtitle")} />
 
-      <ErrorBanner message={error} />
-
       <Card title={t("data.exportTitle")} description={t("data.exportDescription")}>
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => download("/export/archive", "plamotrack-export.zip")}>
+          <Button onClick={() => download("/export/archive", "plamotrack-export.zip", "export")}>
             {t("data.archiveButton")}
           </Button>
           {TABLE_EXPORTS.map((table) => (
             <Button
               key={table}
               variant="secondary"
-              onClick={() => download(`/export/${table}.csv`, `${table}.csv`)}
+              onClick={() => download(`/export/${table}.csv`, `${table}.csv`, "export")}
             >
               {importTableLabel(table)} .csv
             </Button>
           ))}
         </div>
+        {downloadFailure("export")}
       </Card>
 
       {!phone && (
@@ -392,12 +399,13 @@ export function DataSection() {
             <Button
               variant="secondary"
               data-focus-stand-in={FOCUS.starter}
-              onClick={() => download("/export/templates", "plamotrack-templates.zip")}
+              onClick={() => download("/export/templates", "plamotrack-templates.zip", "templates")}
             >
               {t("data.templatePackButton")}
             </Button>
           </div>
           <p className="mt-2 text-xs text-muted">{t("data.starterBlurb")}</p>
+          {downloadFailure("templates")}
         </Card>
       )}
 
@@ -659,6 +667,7 @@ export function DataSection() {
         <Card title={t("data.templatesTitle")} description={t("data.templatesDescription")}>
           {starterSheetButton}
           <p className="mt-2 text-xs text-muted">{t("data.starterBlurbPhone")}</p>
+          {downloadFailure("templates")}
         </Card>
       )}
     </div>

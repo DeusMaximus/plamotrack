@@ -89,7 +89,6 @@ function CreateCard({ onMinted }: { onMinted: (minted: AccessTokenMinted) => voi
   return (
     <Card title={t("settings.tokens.createTitle")} description={t("settings.tokens.createDescription")}>
       <form onSubmit={onSubmit} className="space-y-3">
-        <ErrorBanner message={error} />
         <Field label={t("settings.tokens.nameLabel")} required error={errors.name?.message}>
           <Input
             maxLength={100}
@@ -118,6 +117,8 @@ function CreateCard({ onMinted }: { onMinted: (minted: AccessTokenMinted) => voi
             ))}
           </Select>
         </Field>
+        {/* Beside Create, as every Settings form says its failure (#316). */}
+        <ErrorBanner message={error} />
         <Button type="submit" disabled={isSubmitting}>
           {isSubmitting ? t("settings.tokens.creating") : t("settings.tokens.createButton")}
         </Button>
@@ -185,7 +186,12 @@ function TokenList() {
 
   return (
     <Card title={t("settings.tokens.listTitle")} description={t("settings.tokens.listDescription")}>
+      {/* At the list's head, and a refused Revoke's brought into view when it
+          appears: a Revoke can be any row of a long list, a screen and more
+          below (#316). A list that fails to load is said here too, but nothing
+          was pressed, so the page stays where it is (PR #334 review). */}
       <ErrorBanner
+        reveal={actionError !== null}
         message={
           actionError ?? (error ? (error instanceof ApiError ? error.message : t("common.requestFailed")) : null)
         }

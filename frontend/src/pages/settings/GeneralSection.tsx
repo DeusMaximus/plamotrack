@@ -74,7 +74,6 @@ function CurrencyCard({ settings }: { settings: InstanceSettings }) {
       description={t("settings.general.currencyDescription")}
     >
       <form onSubmit={onSubmit} className="space-y-3">
-        <ErrorBanner message={error} />
         <Field
           label={t("settings.general.currencyLabel")}
           required
@@ -96,6 +95,9 @@ function CurrencyCard({ settings }: { settings: InstanceSettings }) {
           </datalist>
         </Field>
         <p className="text-xs text-muted">{t("settings.general.currencyNote")}</p>
+        {/* Beside its Save, not at the form's head: on the smallest phone the
+            head is under the sticky bar by the time Save is reached (#316). */}
+        <ErrorBanner message={error} />
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={!isDirty || isSubmitting}>
             {isSubmitting ? t("settings.general.saving") : t("common.save")}
