@@ -41,6 +41,48 @@ Template:
 
 ---
 
+## 2026-10-07 — Claude Code (Opus 5.5) — #326 MERGED as `8862a79` (PR #337): Home's strip rows stack under the name; the pre-release plan is done
+
+- **Done:**
+  - **[PR #337](https://github.com/DeusMaximus/plamotrack/pull/337)** squash-merged as **`8862a79`**. #326 is closed.
+    - **Owner's call (07/10):** a strip row stacks under its name, the narrow Recently completed strip's shape, by need at every width.
+    - `KitStrip` (`pages/HomePage.tsx`): every row is a grid with the pencil in its own column, beside both lines. The name and the meta share the other column: one line where they fit (an ordinary row is as it was), the meta under the name where they don't. `stacked` is now only the decree under 26rem (`basis-full`); the `display: contents` grid is gone.
+    - Home is measured as a table is: one `TableRuler` over the page. The grade, scale, kit number and a mail card's date line go through `Measured`. A bench card's name is a heading with `break-words`.
+    - e2e in `pages.spec.ts` seeds the issue's 92-character value in every field. It covers 320–1440 px in the three projects, plus 32 and 40 px browser fonts on a 320 px phone. The existing phone Home test's row locator is now `../..`.
+    - Mutants: 8, all killed.
+  - **Review:**
+    - Codex and CodeRabbit: no findings.
+    - Greptile: one P2 (the bench name's `Measured` floor ran under its edit control at a 32 px font). Reproduced, then fixed in `2cf4710`.
+  - Design §13.7 has an amendment under #323's "Not in this change: Home"; `.agents/next-release.md` has an entry.
+- **Decisions (owner, 07/10):** the bots alone reviewed #337, with no briefed round. **Release prep starts now.**
+- **State:**
+  - **The pre-release plan (owner, 06/10) is complete:** #316, #331, #268 and #326 are merged.
+  - **Unreleased on `main`:** 17 ledger entries in `.agents/next-release.md`, from #294 through #326. Among them are a migration (#313) and a changed MCP tool (#289: `create_order` takes the shop's id).
+  - **CI Integration:** 26:36 on #337, with the cap at 40 since #336.
+  - **Known gaps, filed:**
+    - #333 (owner: after the release);
+    - #324 (local runs need `--workers=1`);
+    - #320.
+  - **Tooling:**
+    - `main` is clean; no worktrees, servers or e2e databases are left.
+    - Merged branches left on origin: `fix/326-home-strips-stack`, `fix/268-stepper-keeps-focus`, `fix/331-token-dates-subscribe`, `fix/316-errors-beside-their-controls`, and older ones.
+  - **Carried:**
+    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
+    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
+    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
+- **Next — the release**, likely **v0.6.0-alpha**:
+  - Work through `.agents/releases.md` and `.agents/next-release.md`.
+  - Owed:
+    - #315's paragraph for the docs site's `using/import-export.mdx`;
+    - #309's upgrade-notes line (drafted in the ledger);
+    - the owner's Gunpla skill refresh at the LXC upgrade, because of #289.
+  - After the release: #333.
+
+  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
+- **Also next:**
+  1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`.
+  2. Carried: #279's edge probes, then #281's packaging; #282's VPS path; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
+
 ## 2026-10-07 — Claude Code (Opus 5.5) — #268 MERGED as `fa68abc` (PR #336): a pressed control keeps the keyboard, or hands it on; CI Integration cap 25 → 40 min
 
 - **Done:**
@@ -233,51 +275,4 @@ Template:
   2. Carried:
      - #279's edge probes, then #281's packaging; #282's VPS path;
      - cloud candidates: #124, #125, #238, #110, #116, #134 and #137;
-     - posting the rehearsal on #285.
-
-## 2026-10-06 — Claude Code (Opus 5.5) — #323 MERGED as `b2343a4` (PR #328): every free-text table cell gives way by its value; Inventory's Tools and Display fold; #326, #327, #329 filed
-
-- **Done:**
-  - **[PR #328](https://github.com/DeusMaximus/plamotrack/pull/328)** squash-merged as **`b2343a4`**, pinned to the reviewed head `b57dc13` after all three checks. #323 is closed.
-    - `frontend/src/components/Measured.tsx` (new) is Orders' `Reference`, lifted out and generalised as `Measured`/`TableRuler`.
-      - A value breaks anywhere only when its widest word is past a budget: `name` 10em, `text` 8em; the references keep 6em and 8.3em.
-      - It breaks down to a floor: 4em for a name, 3em for text.
-      - The measuring copy takes the drawn text's font.
-    - Every free-text cell that sets a column's width goes through it: Kits, Orders (including the lines box's delivery service), Retailers, and all four Inventory tables.
-    - **Siblings fixed in the same PR:**
-      - Inventory's category `<select>` gets `max-w-52`;
-      - a phone kit card's scale may narrow, and `GradeChip` wraps below 768 px;
-      - Inventory card `Facts` wrap instead of truncating.
-    - **Round 1 (Codex, P2):** words under their budgets add up. Inventory's **Tools fold Condition below 44rem, and Display fold Manufacturer and Notes below 55rem**. Both lines are measured with a word just under its budget in every column at once.
-    - **Round 2 (Codex, P2):** allowed values still outgrow fixed lines, Kits' #258 line included. **Owner's call:** ship as measured, state the contract (a line holds what it was measured with; past it the box scrolls), and file **#329, fold to fit**.
-    - **Round 3:** GO. Codex made 1,540 paired measurements against `main`: no regressions, and 565 main overflows now fit.
-  - **Tests** (`lists.spec.ts`): seeds with every free-text field unbroken; near-budget rows on all four Inventory tabs; the real widest words ("(Unidentified" 6.2em, "Workstation" 5.7em); a rule test (ordinary words stay plain, unbroken ones break, both floors, a clipped delivery service); Inventory in the sweep and the fold test. 22 mutants killed over the rounds.
-  - **Filed:**
-    - [#326](https://github.com/DeusMaximus/plamotrack/issues/326): Home has the same defect in its no-wrap strips. It's a design call.
-    - [#327](https://github.com/DeusMaximus/plamotrack/issues/327): WebKit's Tools table is 6 px over at 768 px with a ten-digit count. A failed test's leftover rows found it.
-    - [#329](https://github.com/DeusMaximus/plamotrack/issues/329): fold to fit, on every list. Codex's cautions are in its comment: no observer loop, invalidation when content changes, and tables that never fold today.
-  - Lesson: `.agents/lessons.md` → "Under its budget is still a width".
-- **Decisions (owner, 06/10):**
-  - Fold Inventory rather than break every value in a table that doesn't fit.
-  - Ship #328 scoped and sequence #329 after it.
-  - Desktop Codex for every round.
-- **State:**
-  - **Unreleased on `main`:** #294, #289, #247, #302, #310, #313 (a migration), #314, #319, #322 and now **#328**. See `.agents/next-release.md`; #323's entry is there.
-  - **Unexplained:** one full Chromium run at `a92e784` had two `tablet` tests fail because a list wasn't drawn within 5 s of loading. It didn't reproduce in 17/17 plus 3× repeats. Codex's settled-frame probe saw no observer churn from `Measured`. If it recurs, look there first.
-  - **Known gaps, filed:** #329, #326, #327; #324 (local runs need `--workers=1`); #320; #315; #316.
-  - **Tooling:**
-    - No dev servers, worktrees or e2e databases are left, and `main` is clean.
-    - Merged branches left on origin: `fix/323-unbroken-names`, `fix/321-focus-row-page`, `fix/317-narrow-list-lookups`, `feat/318-page-size`.
-    - Review briefs: `.dev/323/review-brief-{1,2,3}.md`.
-  - **Carried:**
-    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
-    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
-    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
-- **Next:**
-  1. #329 (fold to fit; it closes Codex's round-2 finding and Kits' line), or #326 (Home) by the owner's priority. Then #315 and #316. #324 when local multi-worker runs matter.
-  2. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
-  3. Carried:
-     - #279's edge probes, then #281's packaging; #282's VPS path;
-     - at the next release, work through `.agents/next-release.md`;
-     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
      - posting the rehearsal on #285.
