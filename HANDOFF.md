@@ -41,6 +41,48 @@ Template:
 
 ---
 
+## 2026-10-07 — Claude Code (Opus 5.5) — #316 MERGED as `6d0252d` (PR #334), #331 MERGED as `30bb0c0` (PR #335); #268 in progress
+
+- **Done:**
+  - **#316, [PR #334](https://github.com/DeusMaximus/plamotrack/pull/334)**, squash-merged as **`6d0252d`**. The session that merged it left no entry, so this restates it.
+    - A failure in Settings is said beside the control that failed. A download's failure is shown in its own card, and a form's error appears above its Save or Create. A refused Revoke is scrolled into view at the list's head; a failed list load is not (`ErrorBanner`'s `reveal`).
+    - The bots' round (Codex, Greptile, CodeRabbit) is answered in the PR.
+  - **#331, [PR #335](https://github.com/DeusMaximus/plamotrack/pull/335)**, squash-merged as **`30bb0c0`**. #331 is closed.
+    - `AccessTokensSection` and `DataSection` call `usePresentationVersion()` at their root. A Settings section is behind an `<Outlet>`, so a re-render above it can't reach it.
+    - The sweep found Data management's file size and import counts were stale too. Its table is in the PR body.
+    - e2e in `settings.spec.ts`, in `ar-EG` with full dates: both response orders for Access tokens, and a late settings row under a chosen file's size. Four mutants, all killed; Chromium and WebKit.
+    - Review: Codex 👍 and Greptile 5/5, with no findings. CodeRabbit was rate-limited.
+- **State:**
+  - **CI Integration is at its 25-minute cap** (`ci.yml`, `timeout-minutes: 25`). #335's first attempt was cancelled at 25:05; the rerun passed in 24:12. It was 16 min on 06/10. The owner reran it by hand. **Next PR to `main` may need the cap raised**; that call is the owner's.
+  - **Unreleased on `main`:** #294, #289, #247, #302, #310, #313 (a migration), #314, #319, #322, #328, #330, #332, and now **#334** and **#335**. See `.agents/next-release.md`.
+  - **#268 is in progress** on `fix/268-stepper-keeps-focus`, uncommitted on the primary Mac:
+    - **Owner's call (07/10):** fix the class (a control disabling itself under the keyboard), not only the stepper.
+    - A waiting control keeps the keyboard: `Button`'s new `pending` prop sets `aria-disabled` and refuses a press.
+    - A control that can't act any more hands the keyboard to the stand-in it names, through one `MutationObserver` in `useFocusAcrossShells`.
+    - **Owner's call (07/10):** a saved Save gives the keyboard to the field before it.
+    - New `e2e/keyboard-place.spec.ts` runs in app, phone and tablet.
+    - On mutants: 18 killed, and two survivors whose code was removed.
+    - A full Chromium run was in flight when this was written.
+  - **Known gaps, filed:** #333, #326, #324 (local runs need `--workers=1`), #320.
+  - **Tooling:**
+    - Merged branches left on origin: `fix/331-token-dates-subscribe`, `fix/316-errors-beside-their-controls`, and the ones listed in the entry below.
+  - **Carried:**
+    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
+    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
+    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
+- **Next — the pre-release plan (owner, 06/10), continued:**
+  1. **#268**: finish, open the PR, and let the bots review it.
+  2. **#326** (Home scrolls sideways): the owner's call on a strip's grade and scale is still open (wrap, truncate, or stack under the name; recommended: stack). Expect a briefed Codex round.
+
+  **Then the release**, likely **v0.6.0-alpha**: a migration (#313), a changed MCP tool (#289: `create_order` takes the shop's id) and two new phone features. Work through `.agents/releases.md` and `.agents/next-release.md`.
+  - The owner's Gunpla skill needs a refresh at the LXC upgrade, because of #289. #309's upgrade-notes line is drafted in the ledger.
+  - #333 can wait for after the release.
+
+  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
+- **Also next:**
+  1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`.
+  2. Carried: #279's edge probes, then #281's packaging; #282's VPS path; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
+
 ## 2026-10-07 — Claude Code (Opus 5.5) — #315 MERGED as `48c37b9` (PR #332): an import sent outlives leaving Data management; #333 filed
 
 - **Done:**
@@ -229,52 +271,6 @@ Template:
     - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
 - **Next:**
   1. #323 (product; a by-value rule for names, like `ReferenceRuler`), then #315 and #316 by priority. #324 when local multi-worker runs matter.
-  2. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
-  3. Carried:
-     - #279's edge probes, then #281's packaging; #282's VPS path;
-     - at the next release, work through `.agents/next-release.md`;
-     - cloud candidates: #124, #125, #268, #238, #110, #116, #134 and #137;
-     - posting the rehearsal on #285.
-
-## 2026-10-03 — Claude Code (Opus 5.5) — #318 MERGED as `3f72272` (PR #319): every row on a phone, ten a page wider; #320 filed
-
-- **Done:**
-  - **[PR #319](https://github.com/DeusMaximus/plamotrack/pull/319)** squash-merged as **`3f72272`** from `f6d81c5`, after all three checks. #318 is closed.
-    - The phone shell (below 768 px) shows every row on Kits, Orders, Inventory's four tabs and Retailers, with no pager. From 768 px it's ten a page, as before.
-    - Decided by the shell alone. `usePaging()` in `lib/listState.ts` is the one entry; `paginate` takes `"all"`. On a phone `?page=` is dropped in place (a replace).
-    - A page button's focus stand-in is now `page-action`. The phone's compact `pageWindow`, and the e2e that measured its fit, are gone.
-    - The design record is design §13.7, "Amended — #318".
-  - **The owner's calls (03/10):**
-    - A first build had a *Rows per page* (10 / 20 / All) browser-local preference, one value per shell. The owner dropped it before review. Nothing is stored, and §13.1's "the theme is the one exception" stands.
-    - `?page=` is dropped, not ignored.
-    - Greptile's Orders P2 is "revisit later" → **#320**.
-  - **Measured before deciding.** Chromium, 390 px, 300 rows a list (the owner has 116 kits and 82 orders):
-    - 0.2–0.4 s unthrottled; 0.9–2.1 s at a 4× CPU throttle.
-    - No scroll frame past 50 ms.
-    - Orders is the heaviest: about 5.7 s of long tasks at 4×. That is #320.
-  - **Reviews:**
-    - Round 1: the Codex connector found nothing. Greptile gave 4/5 with two P2s. Coverage of the other lists was taken (`f6d81c5`: a phone test over the six other lists, with 6 mutants killed). Orders render cost was declined and filed as #320.
-    - No desktop Codex round: a small PR, by the owner's routing.
-  - **Final state:**
-    - Full Chromium e2e from empty at `befff4b`: 185 passed / 0 failed. Targeted re-runs after the later changes.
-    - WebKit: both #318 tests (`phone`) and the focus sweep (`tablet`) pass.
-    - Mutants 5/6 on the design, plus 6/6 per list. The survivor was an equivalent override, which was removed.
-    - 648 unit tests.
-- **State:**
-  - **Unreleased on `main`:** #294, #289, #247, #302 (#299, #300, #301), #310 (#305), #313 (#309, a migration), #314 (#304) and now **#319 (#318)**. See `.agents/next-release.md`. #318's entry owes the docs site's phone page a line, and retaken phone screenshots that show a pager.
-  - **Not checked** for #318: iOS Safari on a device or in the Simulator; VoiceOver; a physical phone.
-  - **Known gaps, filed:**
-    - #315: leaving Data management while an import runs. An Add only repeat can duplicate kits.
-    - #316: download errors show at the section's head.
-    - #317: `lists.spec.ts`'s #275 test fails about 1 in 3 on `tablet`, on `main` too.
-    - #320: Orders render cost at hundreds of orders on a phone.
-  - **Tooling:** the iOS Simulator (iPhone 18 Pro) is still booted with the owner's dev session. No dev servers or throwaway databases are left, and `main` is clean. Merged branches left on origin: `feat/318-page-size`, `feat/304-phone-import`.
-  - **Carried:**
-    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
-    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
-    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
-- **Next:**
-  1. **#317**: the flaky #275 test on `tablet`. It's next, by the owner's call. Then #315 and #316.
   2. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`. Its open questions: does its domain layer map onto the op names, and does its store accept caller-chosen ids?
   3. Carried:
      - #279's edge probes, then #281's packaging; #282's VPS path;
