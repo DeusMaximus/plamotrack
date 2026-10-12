@@ -9,8 +9,9 @@
 
 import { useQuery, useQueryClient, type QueryClient } from "@tanstack/react-query";
 import { useCallback, useSyncExternalStore } from "react";
+import { useTranslation } from "react-i18next";
 
-import { api, authSessionQuery, setCsrfToken } from "../api/client";
+import { api, authSessionQuery, csrfTokenInUse, setCsrfToken } from "../api/client";
 import type { AuthSession } from "../api/types";
 import { forgetImportRun } from "./importRun";
 
@@ -22,21 +23,25 @@ export interface SignOut {
    *  second press (`aria-disabled`, #268), so two presses — in one control or
    *  in two — are one request. */
   pending: boolean;
-  /** The last attempt left this browser signed in, in the session it was made
-   *  in. */
-  failed: boolean;
+  /** What the last attempt ended in, when it did not sign out, for the session
+   *  it was made in: refused — still signed in — or unconfirmed, when nothing
+   *  answered to say either way. Null otherwise. */
+  message: string | null;
   dismiss: () => void;
 }
 
+type Failure = "refused" | "unconfirmed";
+
 interface Attempt {
   pending: boolean;
-  /** The CSRF token — one per session — of the session a sign-out failed to
-   *  end, or null. Keyed so that a failure never outlives its session: signed
-   *  out from another tab and in again, this tab's controls say nothing. */
-  failedIn: string | null;
+  /** How a sign-out failed, and the CSRF token — one per session — of the
+   *  session it was made in. Keyed so that a failure never outlives its
+   *  session: signed out from another tab and in again, this tab's controls
+   *  say nothing. */
+  failure: { kind: Failure; in: string } | null;
 }
 
-let attempt: Attempt = { pending: false, failedIn: null };
+let attempt: Attempt = { pending: false, failure: null };
 let running: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
@@ -53,7 +58,11 @@ function subscribe(listener: () => void) {
 }
 
 async function run(queryClient: QueryClient): Promise<void> {
-  update({ pending: true, failedIn: null });
+  update({ pending: true, failure: null });
+  // The session this press was made in, by the token the logout carries. A
+  // re-read that finds another — signed out and in from another tab while
+  // this one waited — says nothing about that one's logout (Codex #340).
+  const startedIn = csrfTokenInUse();
   let ended = false;
   try {
     await api.logout();
@@ -75,18 +84,26 @@ async function run(queryClient: QueryClient): Promise<void> {
   await queryClient.invalidateQueries({ queryKey: authSessionQuery.queryKey });
   const read = queryClient.getQueryState<AuthSession>(authSessionQuery.queryKey);
   const session = read?.status === "success" ? read.data : undefined;
-  // Unread, the server's word stands: a logout that answered ended it, one
-  // that did not left this browser as it was.
-  const signedIn = session ? session.state === "owner" : !ended;
-  if (signedIn) {
+  if (session?.state === "owner") {
     // Still the owner, so the page carries on, and its writes owe the
     // session's CSRF token. It is never cleared before this point: the gate
     // sets it only when the token *changes*, and a refused logout leaves the
     // same one, so a token cleared here stayed cleared and every write that
     // followed was refused until a reload (#333).
-    if (session?.csrf_token) setCsrfToken(session.csrf_token);
-    const token = (session ?? read?.data)?.csrf_token ?? null;
-    update({ pending: false, failedIn: ended ? null : token });
+    setCsrfToken(session.csrf_token);
+    // Refused in the session it was pressed in — which the controls say only
+    // while that is the session they are in: not in one begun since.
+    const refused = !ended && startedIn !== null;
+    update({ pending: false, failure: refused ? { kind: "refused", in: startedIn } : null });
+    return;
+  }
+  if (!session && !ended) {
+    // Neither the logout nor the re-read answered: the server may have ended
+    // the session and lost both answers. Saying "still signed in" would be a
+    // guess (Codex #340), so the page says it could not tell, keeps going as
+    // it was, and a second press settles it — a logout of an ended session is
+    // refused, and the re-read then finds it gone.
+    update({ pending: false, failure: startedIn ? { kind: "unconfirmed", in: startedIn } : null });
     return;
   }
   // Signed out — the gate is swapping to the login screen and every page
@@ -102,7 +119,8 @@ async function run(queryClient: QueryClient): Promise<void> {
 export function useSignOut(): SignOut {
   const queryClient = useQueryClient();
   const { data: session } = useQuery(authSessionQuery);
-  const { pending, failedIn } = useSyncExternalStore(subscribe, () => attempt);
+  const { t } = useTranslation();
+  const { pending, failure } = useSyncExternalStore(subscribe, () => attempt);
 
   const signOut = useCallback(() => {
     // The guard itself, for every control at once: state reaches a control a
@@ -114,7 +132,10 @@ export function useSignOut(): SignOut {
     return running;
   }, [queryClient]);
 
-  const dismiss = useCallback(() => update({ failedIn: null }), []);
-  const failed = failedIn !== null && failedIn === (session?.csrf_token ?? null);
-  return { signOut, pending, failed, dismiss };
+  const dismiss = useCallback(() => update({ failure: null }), []);
+  const message =
+    failure === null || failure.in !== session?.csrf_token
+      ? null
+      : t(failure.kind === "refused" ? "auth.signOutFailed" : "auth.signOutUnconfirmed");
+  return { signOut, pending, message, dismiss };
 }

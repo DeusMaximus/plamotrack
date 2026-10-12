@@ -133,7 +133,7 @@ export function Layout() {
 function Sidebar() {
   const { t } = useTranslation();
   const { data: session } = useQuery(authSessionQuery);
-  const { signOut, pending, failed } = useSignOut();
+  const { signOut, pending, message } = useSignOut();
   const failure = useId();
   return (
     // Sticky, viewport-high: the sidebar stays while the page scrolls (§13.3).
@@ -170,14 +170,14 @@ function Sidebar() {
           type="button"
           onClick={() => void signOut()}
           aria-disabled={pending || undefined}
-          aria-describedby={failed ? failure : undefined}
+          aria-describedby={message ? failure : undefined}
           className={`${NAV_ROW_CLASS} w-full text-muted hover:bg-chip hover:text-text aria-disabled:cursor-not-allowed`}
           {...SIGN_OUT_FOCUS}
         >
           <LogOut size={18} aria-hidden />
           {t("auth.signOut")}
         </button>
-        <ErrorBanner id={failure} message={failed ? t("auth.signOutFailed") : null} />
+        <ErrorBanner id={failure} message={message} />
       </div>
     </aside>
   );
@@ -188,11 +188,11 @@ function Sidebar() {
  *  icons, so the message is a bubble out over the page, opening from the
  *  button's foot towards the content. Fixed, not absolute: the rail scrolls,
  *  and a scroll container clips what overhangs it. It goes on the next press,
- *  a press anywhere else, or Escape; it holds no control, so the keyboard
- *  stays on the button. */
+ *  a press anywhere else — a pointer's or the keyboard's — or Escape; it holds
+ *  no control, so the keyboard stays on the button. */
 function RailSignOut() {
   const { t } = useTranslation();
-  const { signOut, pending, failed, dismiss } = useSignOut();
+  const { signOut, pending, message, dismiss } = useSignOut();
   const failure = useId();
   const button = useRef<HTMLButtonElement>(null);
   const bubble = useRef<HTMLDivElement>(null);
@@ -200,7 +200,7 @@ function RailSignOut() {
 
   useLayoutEffect(() => {
     const control = button.current;
-    if (!failed || !control) return;
+    if (!message || !control) return;
     // Measured against the layout viewport, which is what `fixed` is placed
     // in: its bottom edge aligned with the button's, 8 px clear of the rail's
     // edge (not the button's, which is inside it) on the content's side — the
@@ -217,7 +217,10 @@ function RailSignOut() {
       });
     };
     measure();
-    const away = (event: PointerEvent) => {
+    // A press elsewhere: a pointer going down, or a control activated from
+    // the keyboard or a switch, which fires a click and no pointer event
+    // (Codex #340).
+    const away = (event: Event) => {
       const target = event.target as Node;
       if (!control.contains(target) && !bubble.current?.contains(target)) dismiss();
     };
@@ -227,14 +230,16 @@ function RailSignOut() {
     window.addEventListener("resize", measure);
     rail?.addEventListener("scroll", measure);
     document.addEventListener("pointerdown", away);
+    document.addEventListener("click", away, true);
     document.addEventListener("keydown", escape);
     return () => {
       window.removeEventListener("resize", measure);
       rail?.removeEventListener("scroll", measure);
       document.removeEventListener("pointerdown", away);
+      document.removeEventListener("click", away, true);
       document.removeEventListener("keydown", escape);
     };
-  }, [failed, dismiss]);
+  }, [message, dismiss]);
 
   return (
     <>
@@ -245,16 +250,16 @@ function RailSignOut() {
         aria-label={t("auth.signOut")}
         title={t("auth.signOut")}
         aria-disabled={pending || undefined}
-        aria-describedby={failed ? failure : undefined}
+        aria-describedby={message ? failure : undefined}
         className={`${RAIL_ITEM_CLASS} ${RAIL_IDLE_CLASS} aria-disabled:cursor-not-allowed`}
         {...SIGN_OUT_FOCUS}
       >
         <LogOut size={20} aria-hidden />
       </button>
-      {failed && place && (
+      {message && place && (
         // The banner's tint is translucent; over the page it needs a surface.
         <div ref={bubble} style={place} className="fixed z-30 w-max max-w-64 rounded-sm bg-surface">
-          <ErrorBanner id={failure} message={t("auth.signOutFailed")} />
+          <ErrorBanner id={failure} message={message} />
         </div>
       )}
     </>

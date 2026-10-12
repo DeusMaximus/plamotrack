@@ -650,10 +650,20 @@ test.describe("Sign out, from this shell", () => {
           (alert) => alert.getBoundingClientRect().left - document.querySelector("aside")!.getBoundingClientRect().right,
         );
         expect(clears, `${kind}: the bubble clears the rail`).toBeGreaterThanOrEqual(0);
-        // The bubble covers the page, so it goes when asked; the keyboard stays.
-        await page.keyboard.press("Escape");
-        await expect(failure, kind).toHaveCount(0);
-        await expect(signOut, kind).toBeFocused();
+        // The bubble covers the page, so it goes when asked: Escape, with the
+        // keyboard left where it was; or a press of another control, from the
+        // keyboard as from a pointer (Codex #340: it heard pointers alone).
+        if (kind === "500") {
+          await page.keyboard.press("Escape");
+          await expect(failure, kind).toHaveCount(0);
+          await expect(signOut, kind).toBeFocused();
+        } else {
+          // Focused directly: WebKit's Tab skips buttons, as Safari's does
+          // unless full keyboard access is on. Enter is the activation.
+          await page.getByRole("button", { name: /^Theme: / }).focus();
+          await page.keyboard.press("Enter");
+          await expect(failure, kind).toHaveCount(0);
+        }
       }
       await page.unroute(LOGOUT);
 
@@ -774,6 +784,87 @@ test.describe("Sign out, from this shell", () => {
     await reread;
     await expect(failure).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  });
+
+  // Codex #340: a logout this tab sent belongs to the session it was sent in.
+  // Another tab signing out and in while it waits leaves this tab in a new
+  // session, which the refusal of the old one's logout says nothing about.
+  test("a refusal is not pinned on a session begun while the logout waited", async ({
+    page,
+    context,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "app", "the sidebar's message stays; one shell is enough");
+    await page.goto("/");
+    await page.getByLabel("Password").fill(OWNER_PASSWORD);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.locator("main")).toBeVisible();
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/api/auth/logout", async (route) => {
+      await held;
+      await route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+    });
+    const signOut = page.getByRole("button", { name: "Sign out" });
+    await signOut.click();
+    await expect(signOut).toHaveAttribute("aria-disabled", "true");
+
+    // Another tab, same cookie jar: out, and in again, while this one waits.
+    const other = await context.newPage();
+    await other.goto("/");
+    await other.getByRole("button", { name: "Sign out" }).click();
+    await other.getByLabel("Password").fill(OWNER_PASSWORD);
+    await other.getByRole("button", { name: "Sign in" }).click();
+    await expect(other.locator("main")).toBeVisible();
+    await other.close();
+
+    const reread = page.waitForResponse((response) => response.url().endsWith("/api/auth/session"));
+    release();
+    await reread;
+    await expect(signOut).not.toHaveAttribute("aria-disabled");
+    await expect(page.getByRole("alert")).toHaveCount(0);
+    // …and this tab writes in the new session, with its token.
+    const shop = `E2E Sign-out Shop later ${Date.now().toString(36)}`;
+    SHOPS.push(shop);
+    await page.getByRole("link", { name: "Retailers", exact: true }).click();
+    await page.getByRole("button", { name: "Add retailer" }).click();
+    await page.getByLabel("Name").fill(shop);
+    const created = page.waitForResponse(
+      (response) => response.url().endsWith("/api/retailers") && response.request().method() === "POST",
+    );
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    expect((await created).status()).toBe(201);
+  });
+
+  // Codex #340: a logout the server carried out, its answer lost, and the
+  // re-read lost too. Nothing says whether the session is gone, so the page
+  // must not say "still signed in" — it says it could not tell, and a second
+  // press, with the server back, settles it.
+  test("a sign-out nothing could confirm says so, and the next press settles it", async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "app", "the message is the same in every shell; one is enough");
+    await page.goto("/");
+    const signIn = page.getByRole("heading", { name: "Sign in" });
+    await page.getByLabel("Password").fill(OWNER_PASSWORD);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.locator("main")).toBeVisible();
+    await page.route("**/api/auth/logout", async (route) => {
+      await route.fetch();
+      await route.abort("connectionreset");
+    });
+    await page.route("**/api/auth/session", (route) => route.abort("connectionreset"));
+    const signOut = page.getByRole("button", { name: "Sign out" });
+    await signOut.click();
+    await expect(page.getByRole("alert")).toHaveText(
+      "Couldn't confirm the sign-out — plamotrack didn't answer. Try again.",
+    );
+    await expect(signOut).not.toHaveAttribute("aria-disabled");
+
+    await page.unrouteAll();
+    await signOut.click();
+    await expect(signIn).toBeVisible();
+    await page.reload();
+    await expect(signIn).toBeVisible();
   });
 
   // Greptile #340: More's message comes after the panel, and at the foot of a

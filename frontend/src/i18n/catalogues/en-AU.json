@@ -34,6 +34,7 @@
     "signInButton": "Sign in",
     "signOut": "Sign out",
     "signOutFailed": "Couldn't sign out — you're still signed in. Try again.",
+    "signOutUnconfirmed": "Couldn't confirm the sign-out — plamotrack didn't answer. Try again.",
     "checking": "Checking…",
     "passwordMismatch": "The passwords don't match.",
     "confirmPasswordLabel": "Confirm password",

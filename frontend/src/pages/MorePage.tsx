@@ -27,7 +27,7 @@ const PANEL_CLASS = "divide-y divide-rule rounded-md border border-border bg-sur
 export function MorePage() {
   const { t } = useTranslation();
   const { data: session } = useQuery(authSessionQuery);
-  const { signOut, pending, failed } = useSignOut();
+  const { signOut, pending, message } = useSignOut();
   const failure = useId();
   return (
     <div className="space-y-5.5">
@@ -59,7 +59,7 @@ export function MorePage() {
             type="button"
             onClick={() => void signOut()}
             aria-disabled={pending || undefined}
-            aria-describedby={failed ? failure : undefined}
+            aria-describedby={message ? failure : undefined}
             className={`${ROW_CLASS} hover:bg-chip aria-disabled:cursor-not-allowed`}
           >
             <LogOut size={20} aria-hidden className="shrink-0 text-muted" />
@@ -69,7 +69,7 @@ export function MorePage() {
         {/* Under the panel, not in it: the panel's rows are its dividers' (#333).
             Brought into view: at the foot of a short page it would arrive under
             the tab bar (Greptile #340). */}
-        <ErrorBanner id={failure} message={failed ? t("auth.signOutFailed") : null} reveal />
+        <ErrorBanner id={failure} message={message} reveal />
       </div>
     </div>
   );
