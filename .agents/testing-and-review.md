@@ -324,6 +324,17 @@ takes focus off a just-disabled control *after* the mutation observer has looked
 "Measured in Chromium" is a measurement of Chromium: where a rule is about an engine's
 focus or its timing, measure the other engine. `npx playwright install webkit` once.
 
+Three traps a test of a waiting or dismissable control meets (#333):
+- **Playwright will not click an `aria-disabled` control.** It waits for it to be
+  enabled and times out, which reads as the control never appearing. Where the press
+  *is* the subject (a second press refused), use `click({ force: true })`: it is still
+  a real press.
+- **WebKit's Tab skips buttons**, as Safari's does unless full keyboard access is on.
+  To test a keyboard activation, `focus()` the control and press Enter; don't Tab to it.
+- **React Query hears `visibilitychange` on `window`**, not `document`. A test that
+  forces a stale re-read moves the clock past the `staleTime` (`page.clock`) and
+  dispatches the event there.
+
 **Under WebKit, `setViewportSize` resolves before the page has heard of the resize**
 (#275). A step taken "immediately" after a turn there runs with the new viewport and
 the old shell — which is a real state, a few milliseconds long for a person, and the

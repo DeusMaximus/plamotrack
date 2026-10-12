@@ -41,6 +41,36 @@ Template:
 
 ---
 
+## 2026-10-13 — Claude Code (Opus 5.5) — #333 MERGED as `a25b57f` (PR #340): a failed sign-out says so, and the page keeps working
+
+- **Done:**
+  - **[PR #340](https://github.com/DeusMaximus/plamotrack/pull/340)** squash-merged as **`a25b57f`**, pinned to head `0f39652` after all three checks. #333 is closed.
+    - **The defect:** `useSignOut` cleared the CSRF token whatever the logout answered. `AuthGate` sets it only when it *changes*, so after a refused logout every write was 403 until a reload. The rejection escaped `onClick` unhandled, and nothing was said.
+    - **`lib/signOut.ts`:** one attempt for the tab, a module store read through `useSyncExternalStore` (the `importRun.ts` shape). It never clears the token up front. It re-reads the session and decides from that:
+      - still `owner` → keep the token; if the logout didn't answer, record **refused** against the session the press was made in (`csrfTokenInUse()` at the press);
+      - neither the logout nor the re-read answered → **unconfirmed** ("Couldn't confirm the sign-out…"); a second press settles it;
+      - otherwise signed out, as before.
+      A failure is shown only in the session it was recorded in. The hook returns `{ signOut, pending, message, dismiss }` and never rejects.
+    - **Said beside the control (owner's call, 12/10):** an `ErrorBanner` under Sign out in the sidebar and under More's panel (`reveal`), and in the rail a `fixed` bubble 8 px clear of the rail's edge. It goes on the next press, a pointerdown or click elsewhere, or Escape. All three controls are `aria-disabled` while waiting (#268's rule), and a second press, in any control, sends nothing.
+    - e2e in `shell.spec.ts`, "Sign out, from this shell": 6 new tests across `app`/`phone`/`tablet`. Each review finding's test was red before its fix. Mutants: about 20 over three rounds, all killed or removed as duplicates; one survivor ("decide from the logout's answer alone") is equivalent in effect.
+    - Design §13.7 bullet; `.agents/next-release.md` entry (the only one).
+  - **Review:** CodeRabbit had no findings. Greptile raised two P2s (per-control guard; More's banner under the tab bar), answered in `0a1a6f4`. Codex had none on `067a228`, then three P2s on `0a1a6f4` (failure keyed to the re-read's session; "still signed in" when nothing answered; the bubble ignored the keyboard), answered in `0f39652`. The owner merged without a further round.
+  - `.agents/testing-and-review.md`: three e2e traps from this work (forced click on an `aria-disabled` control, WebKit's Tab skipping buttons, React Query's `visibilitychange` on `window`).
+- **Decisions (owner):** the rail's failure is a bubble beside the icon (12/10); merge at `0f39652` without a further Codex round (13/10).
+- **State:**
+  - **Unreleased on `main`:** #333 only (`.agents/next-release.md`). README and docs site: nothing.
+  - `main` is clean. No worktrees, servers or e2e databases are left. Merged branches on origin include `fix/333-failed-sign-out` and the ones listed on 07/10.
+  - **The owner's LXC is on 0.5.2.** Upgrading to 0.6.0 is the owner's; refresh the Gunpla skill then (#289 changed `create_order`). The release's `plamotrack-gunpla.zip` is current.
+  - **testhost** is in the tunnel configuration from the 0.6.0 gate (`.env.before-claude-check` holds the gate's end state); the next gate run resets it. Don't recreate its Keycloak container: a new one changes `sub`.
+  - **Carried, owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete Claude.ai's "Testing" connector (still linked to `plamotest.gunp.la`). #278 is open for the skill-zip check.
+  - **Known gaps, filed:** #238, #324 (local e2e needs `--workers=1`), #320.
+- **Next:** the owner's pick.
+  - **M6.7**: #279's edge probes, then #281's packaging; #282's VPS path.
+  - **M7** waits on #28.
+
+  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
+- **Also next:** **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
+
 ## 2026-10-07 — Claude Code (Opus 5.5) — v0.6.0-alpha RELEASED (tag at `6dfc008`, prerelease); docs site and README updated
 
 - **Done:**
@@ -208,51 +238,6 @@ Template:
   **Then the release**, likely **v0.6.0-alpha**: a migration (#313), a changed MCP tool (#289: `create_order` takes the shop's id) and two new phone features. Work through `.agents/releases.md` and `.agents/next-release.md`.
   - The owner's Gunpla skill needs a refresh at the LXC upgrade, because of #289. #309's upgrade-notes line is drafted in the ledger.
   - #333 can wait for after the release.
-
-  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
-- **Also next:**
-  1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`.
-  2. Carried: #279's edge probes, then #281's packaging; #282's VPS path; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
-
-## 2026-10-07 — Claude Code (Opus 5.5) — #315 MERGED as `48c37b9` (PR #332): an import sent outlives leaving Data management; #333 filed
-
-- **Done:**
-  - **[PR #332](https://github.com/DeusMaximus/plamotrack/pull/332)** squash-merged as **`48c37b9`**, pinned to `c303e38` after all three checks. #315 is closed.
-    - **Owner's call (06/10):** hold the sent import above the routes, not block navigation (`<BrowserRouter>` has no `useBlocker`).
-    - `frontend/src/lib/importRun.ts` (new) is a module store, one import per tab. It holds the request, its outcome, a `beforeunload` hold while in flight, and the owner session the import was sent under (its CSRF token, one per session).
-    - A section mounted under a running import says so and holds the picker. The outcome is shown once, then acknowledged two animation frames after it is drawn.
-    - `DataSection.tsx` holds **one** `outcome` state, drawn and acknowledged as the same thing. A preview's refusal is a draft state of its own. The phone's fall-back clears only the draft. An accepted send replaces the last outcome.
-    - `AuthGate.tsx` calls `keepImportRunFor(...)` on every session read: the import goes on any read that is not its own session (signed out, expired, another owner session in another tab). `useSignOut` forgets it on a confirmed 204. A forgotten import is told to the section, so its card lets go.
-  - **Review:** Codex rounds 1–3 were each GO with P3s, all fixed in the PR. Codex's GitHub bot raised one P1 ("told is not shown"), also fixed.
-    - Withdrawn claims: M3 and M17 "equivalent", and "M2 can't be seen in the browser".
-    - Lesson: `.agents/lessons.md` → "Equivalent until someone finds the ordering".
-  - **Filed [#333](https://github.com/DeusMaximus/plamotrack/issues/333):** a failed sign-out clears the CSRF token and `AuthGate` never restores it (the re-read token is the same), and nothing says it failed. It predates #315.
-- **Decisions (owner, 06–07/10):** fix round 2's structural finding in the PR, not as a follow-up; merge after round 3 without a round 4, once a production-build check passed (15/15).
-- **State:**
-  - **Unreleased on `main`:** #294, #289, #247, #302, #310, #313 (a migration), #314, #319, #322, #328, #330, and now **#332**. See `.agents/next-release.md`. #315's entry owes the docs site's `using/import-export.mdx` a paragraph.
-  - **Tests:**
-    - `importRun.test.ts` has 22 unit tests.
-    - `pages.spec.ts` has the #315 e2e: leave and come back by Back and by links, a stubbed-frames step, the phone-turn answer, the mount-to-listener answer, the retry in three modes, two cross-tab session orderings, and a late sign-in. Several are Codex's reproductions; some open their own browser context with a real sign-in.
-    - 19 mutants, all killed; the table is in PR #332's body.
-  - **Runs at `c303e38`:** Chromium suite 207 passed / 89 skipped / 0 failed; WebKit and the production build, the import tests 15/15.
-  - **Known gaps, filed:** #333, #331, #326, #324 (local runs need `--workers=1`), #320, #316.
-  - **Tooling:**
-    - `main` is clean; no worktrees, servers or e2e databases are left.
-    - Merged branches left on origin: `fix/315-import-outlives-section`, `fix/329-fold-to-fit`, `fix/323-unbroken-names`, `fix/321-focus-row-page`, `fix/317-narrow-list-lookups`, `feat/318-page-size`.
-    - Briefs, responses and Codex's harnesses are in `.dev/315/`.
-  - **Carried:**
-    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
-    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
-    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
-- **Next — the pre-release plan (owner, 06/10), continued.** Each is its own PR, in this order:
-  1. **#316** (same file, `DataSection.tsx`): on a phone, a failed download's error shows a screen away from its button. Mind the new state shape: `error` (downloads), `refusal` (previews) and `outcome` (the sent import) are separate.
-  2. **#331**: subscribe `TokenList` to the presentation version, test both response orders, and sweep the other formatters (rule 11).
-  3. **#268**: the Inventory stock stepper drops focus to `<body>` on every press. Give the keyboard back to the record's control.
-  4. **#326** (Home scrolls sideways): the owner's call is still open on a strip's grade and scale (wrap, truncate, or stack under the name; recommended: stack). Expect a briefed Codex round.
-
-  #316, #331 and #268 are small enough for the bots' automatic reviews alone. **Then the release**, likely **v0.6.0-alpha**: a migration (#313), a changed MCP tool (#289: `create_order` takes the shop's id) and two new phone features. Work through `.agents/releases.md` and `.agents/next-release.md`.
-  - The owner's Gunpla skill needs a refresh at the LXC upgrade, because of #289. #309's upgrade-notes line is drafted in the ledger.
-  - #333 can wait for after the release, or go in with #316 if it's convenient (`signOut.ts`, `AuthGate.tsx`).
 
   Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
 - **Also next:**
