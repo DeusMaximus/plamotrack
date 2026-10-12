@@ -3106,6 +3106,13 @@ its foot could sit under Safari's toolbar; no web manifest and no touch icon.
 - **The rail** carries the brand mark, the five collection pages as icons with their
   accessible names and tooltips, Settings, the theme switch as one button that
   steps through the three choices, the identity's initial in OIDC mode, Sign out.
+- **A sign-out that did not sign out says so beside the control**, in every shell
+  (#333, owner's call 2026-10-12): an alert under Sign out in the sidebar and under
+  More's panel, and, since the rail is 64 px of icons, a bubble from the rail's
+  Sign out out over the page, gone on the next press, a press elsewhere (pointer or
+  keyboard), or Escape. The page stays signed in and its writes keep working. When
+  neither the logout nor the session re-read answers, it says it could not confirm
+  the sign-out rather than claiming either outcome (Codex #340).
 - **Accessible names are the same in every shell** ("Edit {name}", "New order",
   "Sign out"), so one e2e suite drives all three.
 - **On a phone**: a 16 px gutter; a page's header is a bar with its title, its count

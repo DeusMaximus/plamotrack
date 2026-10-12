@@ -154,7 +154,16 @@ export function Field({
  *  of a card whose end is under the tab bar — so the tap does not look like it
  *  did nothing. The keyboard stays where it was. Beside a Save it is not
  *  needed: the Save was just on screen. */
-export function ErrorBanner({ message, reveal = false }: { message: string | null; reveal?: boolean }) {
+export function ErrorBanner({
+  message,
+  reveal = false,
+  id,
+}: {
+  message: string | null;
+  reveal?: boolean;
+  /** For the control it is about to name it as its description. */
+  id?: string;
+}) {
   const banner = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (reveal && message) banner.current?.scrollIntoView({ block: "nearest" });
@@ -163,6 +172,7 @@ export function ErrorBanner({ message, reveal = false }: { message: string | nul
   return (
     <div
       ref={banner}
+      id={id}
       role="alert"
       className="rounded-sm border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger max-md:scroll-mt-16 max-md:scroll-mb-[calc(4.5rem+env(safe-area-inset-bottom))]"
     >
