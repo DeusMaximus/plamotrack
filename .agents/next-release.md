@@ -33,7 +33,7 @@ Shape:
 
 ---
 
-## #333 — a sign-out that fails says so, and the page keeps working (PR #NNN)
+## #333 — a sign-out that fails says so, and the page keeps working (PR #340)
 - **Release note:** If signing out fails (the server errors or the connection
   drops), plamotrack now says so beside the Sign out control, and you stay signed in
   with everything working. Before, nothing was said, and every change you then made
