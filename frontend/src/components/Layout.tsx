@@ -9,7 +9,7 @@ import {
   Store,
   Wrench,
 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 
@@ -21,6 +21,7 @@ import { useShell } from "../lib/shell";
 import { useSignOut } from "../lib/signOut";
 import { BrandMark } from "./BrandMark";
 import { ThemeCycleButton, ThemeSwitch } from "./ThemeSwitch";
+import { ErrorBanner } from "./ui";
 
 /** The collection's pages (§13.3): Home first — the start page (§13.2). No
  *  `end` on the root link: React Router's match rule treats `/` as a whole
@@ -132,7 +133,8 @@ export function Layout() {
 function Sidebar() {
   const { t } = useTranslation();
   const { data: session } = useQuery(authSessionQuery);
-  const signOut = useSignOut();
+  const { signOut, pending, failed } = useSignOut();
+  const failure = useId();
   return (
     // Sticky, viewport-high: the sidebar stays while the page scrolls (§13.3).
     <aside
@@ -166,15 +168,96 @@ function Sidebar() {
         )}
         <button
           type="button"
-          onClick={signOut}
-          className={`${NAV_ROW_CLASS} w-full text-muted hover:bg-chip hover:text-text`}
+          onClick={() => void signOut()}
+          aria-disabled={pending || undefined}
+          aria-describedby={failed ? failure : undefined}
+          className={`${NAV_ROW_CLASS} w-full text-muted hover:bg-chip hover:text-text aria-disabled:cursor-not-allowed`}
           {...SIGN_OUT_FOCUS}
         >
           <LogOut size={18} aria-hidden />
           {t("auth.signOut")}
         </button>
+        <ErrorBanner id={failure} message={failed ? t("auth.signOutFailed") : null} />
       </div>
     </aside>
+  );
+}
+
+/** The rail's Sign out (§13.7). A refused sign-out is said beside it, as the
+ *  sidebar and More page say it beside theirs (#333) — but the rail is 64 px of
+ *  icons, so the message is a bubble out over the page, opening from the
+ *  button's foot towards the content. Fixed, not absolute: the rail scrolls,
+ *  and a scroll container clips what overhangs it. It goes on the next press,
+ *  a press anywhere else, or Escape; it holds no control, so the keyboard
+ *  stays on the button. */
+function RailSignOut() {
+  const { t } = useTranslation();
+  const { signOut, pending, failed, dismiss } = useSignOut();
+  const failure = useId();
+  const button = useRef<HTMLButtonElement>(null);
+  const bubble = useRef<HTMLDivElement>(null);
+  const [place, setPlace] = useState<CSSProperties | null>(null);
+
+  useLayoutEffect(() => {
+    const control = button.current;
+    if (!failed || !control) return;
+    // Measured against the layout viewport, which is what `fixed` is placed
+    // in: its bottom edge aligned with the button's, 8 px clear of the rail's
+    // edge (not the button's, which is inside it) on the content's side — the
+    // right, or the left in a right-to-left page.
+    const rail = control.closest("aside");
+    const measure = () => {
+      const box = control.getBoundingClientRect();
+      const edge = (rail ?? control).getBoundingClientRect();
+      const { clientWidth, clientHeight } = document.documentElement;
+      const rtl = getComputedStyle(control).direction === "rtl";
+      setPlace({
+        bottom: clientHeight - box.bottom,
+        ...(rtl ? { right: clientWidth - edge.left + 8 } : { left: edge.right + 8 }),
+      });
+    };
+    measure();
+    const away = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!control.contains(target) && !bubble.current?.contains(target)) dismiss();
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") dismiss();
+    };
+    window.addEventListener("resize", measure);
+    rail?.addEventListener("scroll", measure);
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", escape);
+    return () => {
+      window.removeEventListener("resize", measure);
+      rail?.removeEventListener("scroll", measure);
+      document.removeEventListener("pointerdown", away);
+      document.removeEventListener("keydown", escape);
+    };
+  }, [failed, dismiss]);
+
+  return (
+    <>
+      <button
+        ref={button}
+        type="button"
+        onClick={() => void signOut()}
+        aria-label={t("auth.signOut")}
+        title={t("auth.signOut")}
+        aria-disabled={pending || undefined}
+        aria-describedby={failed ? failure : undefined}
+        className={`${RAIL_ITEM_CLASS} ${RAIL_IDLE_CLASS} aria-disabled:cursor-not-allowed`}
+        {...SIGN_OUT_FOCUS}
+      >
+        <LogOut size={20} aria-hidden />
+      </button>
+      {failed && place && (
+        // The banner's tint is translucent; over the page it needs a surface.
+        <div ref={bubble} style={place} className="fixed z-30 w-max max-w-64 rounded-sm bg-surface">
+          <ErrorBanner id={failure} message={t("auth.signOutFailed")} />
+        </div>
+      )}
+    </>
   );
 }
 
@@ -186,7 +269,6 @@ function Sidebar() {
 function Rail() {
   const { t } = useTranslation();
   const { data: session } = useQuery(authSessionQuery);
-  const signOut = useSignOut();
   return (
     <aside
       className={`sticky top-0 flex h-dvh w-16 shrink-0 flex-col items-center gap-1 overflow-y-auto ${SIDEBAR_DIVIDER_CLASS} border-border bg-bg pb-4 pt-4.5`}
@@ -223,16 +305,7 @@ function Rail() {
       {session?.auth_mode === "oidc" && session.display_name && (
         <Identity name={session.display_name} issuer={session.oidc_issuer} variant="initial" />
       )}
-      <button
-        type="button"
-        onClick={signOut}
-        aria-label={t("auth.signOut")}
-        title={t("auth.signOut")}
-        className={`${RAIL_ITEM_CLASS} ${RAIL_IDLE_CLASS}`}
-        {...SIGN_OUT_FOCUS}
-      >
-        <LogOut size={20} aria-hidden />
-      </button>
+      <RailSignOut />
     </aside>
   );
 }

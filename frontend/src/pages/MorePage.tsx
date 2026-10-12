@@ -1,12 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, LogOut, Settings, Store, type LucideIcon } from "lucide-react";
+import { useId } from "react";
 import { useTranslation } from "react-i18next";
 import { Link } from "react-router-dom";
 
 import { authSessionQuery } from "../api/client";
 import { Identity } from "../components/Layout";
 import { ThemeSwitch } from "../components/ThemeSwitch";
-import { MICRO_LABEL_CLASS, PageHeader } from "../components/ui";
+import { ErrorBanner, MICRO_LABEL_CLASS, PageHeader } from "../components/ui";
 import { useSignOut } from "../lib/signOut";
 
 /** The phone shell's fifth tab (design §13.7): everything the sidebar's lower
@@ -26,7 +27,8 @@ const PANEL_CLASS = "divide-y divide-rule rounded-md border border-border bg-sur
 export function MorePage() {
   const { t } = useTranslation();
   const { data: session } = useQuery(authSessionQuery);
-  const signOut = useSignOut();
+  const { signOut, pending, failed } = useSignOut();
+  const failure = useId();
   return (
     <div className="space-y-5.5">
       {/* Outside the cap below: the phone's bar is full-bleed, and at the wide
@@ -53,11 +55,19 @@ export function MorePage() {
           {session?.auth_mode === "oidc" && session.display_name && (
             <Identity name={session.display_name} issuer={session.oidc_issuer} variant="card" />
           )}
-          <button type="button" onClick={signOut} className={`${ROW_CLASS} hover:bg-chip`}>
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            aria-disabled={pending || undefined}
+            aria-describedby={failed ? failure : undefined}
+            className={`${ROW_CLASS} hover:bg-chip aria-disabled:cursor-not-allowed`}
+          >
             <LogOut size={20} aria-hidden className="shrink-0 text-muted" />
             {t("auth.signOut")}
           </button>
         </section>
+        {/* Under the panel, not in it: the panel's rows are its dividers' (#333). */}
+        <ErrorBanner id={failure} message={failed ? t("auth.signOutFailed") : null} />
       </div>
     </div>
   );

@@ -33,4 +33,10 @@ Shape:
 
 ---
 
-Nothing is unreleased: v0.6.0-alpha (7 October 2026) shipped every entry that was here.
+## #333 — a sign-out that fails says so, and the page keeps working (PR #NNN)
+- **Release note:** If signing out fails (the server errors or the connection
+  drops), plamotrack now says so beside the Sign out control, and you stay signed in
+  with everything working. Before, nothing was said, and every change you then made
+  was refused until you reloaded the page.
+- **README:** nothing.
+- **Docs site:** nothing.
