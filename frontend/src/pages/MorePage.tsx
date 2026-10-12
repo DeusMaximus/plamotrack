@@ -66,8 +66,10 @@ export function MorePage() {
             {t("auth.signOut")}
           </button>
         </section>
-        {/* Under the panel, not in it: the panel's rows are its dividers' (#333). */}
-        <ErrorBanner id={failure} message={failed ? t("auth.signOutFailed") : null} />
+        {/* Under the panel, not in it: the panel's rows are its dividers' (#333).
+            Brought into view: at the foot of a short page it would arrive under
+            the tab bar (Greptile #340). */}
+        <ErrorBanner id={failure} message={failed ? t("auth.signOutFailed") : null} reveal />
       </div>
     </div>
   );

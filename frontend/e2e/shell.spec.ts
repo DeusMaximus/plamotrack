@@ -690,6 +690,122 @@ test.describe("Sign out, from this shell", () => {
     expect(uncaught, "nothing escapes a Sign out control unhandled").toEqual([]);
   });
 
+  // Greptile #340: the attempt lived in each mounted control, so a control
+  // drawn while one was waiting — another shell's, or More's again — knew
+  // nothing of it and sent a second.
+  test("a sign-out still waiting is waiting in whichever control is drawn next", async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name === "app", "the desktop draws one Sign out, and nothing redraws it");
+    const phone = testInfo.project.name === "phone";
+    await page.setViewportSize(phone ? { width: 390, height: 844 } : { width: 820, height: 1180 });
+    await page.goto("/");
+    await page.getByLabel("Password").fill(OWNER_PASSWORD);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.locator("main")).toBeVisible();
+
+    let logouts = 0;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    await page.route("**/api/auth/logout", async (route) => {
+      logouts += 1;
+      await held;
+      await route.fulfill({ status: 500, contentType: "application/json", body: "{}" });
+    });
+    const signOut = page.getByRole("button", { name: "Sign out" });
+    await reach(page, signOut);
+    await signOut.click();
+    await expect(signOut).toHaveAttribute("aria-disabled", "true");
+
+    // Drawn again while the logout waits: the phone's More left and come back
+    // to, the rail turned into the sidebar.
+    if (phone) {
+      await chrome(page).getByRole("link", { name: "Kits", exact: true }).click();
+      await expect(signOut).toHaveCount(0);
+      await chrome(page).getByRole("link", { name: "More", exact: true }).click();
+    } else {
+      await page.setViewportSize({ width: 1366, height: 1024 });
+      await expectShell(page, "sidebar");
+    }
+    await expect(signOut).toHaveAttribute("aria-disabled", "true");
+    // Forced: Playwright waits for an aria-disabled control to be enabled,
+    // which is what is under test. The press is a real one all the same.
+    await signOut.click({ force: true });
+    release();
+
+    await expect(page.getByRole("alert")).toHaveText("Couldn't sign out — you're still signed in. Try again.");
+    expect(logouts, "one press's logout, whichever control was pressed after").toBe(1);
+    await expect(signOut).not.toHaveAttribute("aria-disabled");
+  });
+
+  // The failure is the tab's now, not a control's, so it is keyed to the session
+  // it happened in: once that session has gone — signed out and in again from
+  // another tab here — this tab says nothing of it.
+  test("a refusal is not said in a session that came after it", async ({ page, context }, testInfo) => {
+    test.skip(testInfo.project.name !== "app", "the sidebar's message stays; one shell is enough");
+    // A clock that can be moved past the session query's 30 s staleTime, so
+    // the re-read that brings the new session is certain, not hoped for.
+    await page.clock.install();
+    await page.goto("/");
+    await page.getByLabel("Password").fill(OWNER_PASSWORD);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.locator("main")).toBeVisible();
+    await page.route("**/api/auth/logout", (route) =>
+      route.fulfill({ status: 500, contentType: "application/json", body: "{}" }),
+    );
+    await page.getByRole("button", { name: "Sign out" }).click();
+    const failure = page.getByRole("alert");
+    await expect(failure).toHaveText("Couldn't sign out — you're still signed in. Try again.");
+
+    // Another tab, same cookie jar: signs out for real, and in again.
+    const other = await context.newPage();
+    await other.goto("/");
+    await other.getByRole("button", { name: "Sign out" }).click();
+    await other.getByLabel("Password").fill(OWNER_PASSWORD);
+    await other.getByRole("button", { name: "Sign in" }).click();
+    await expect(other.locator("main")).toBeVisible();
+    await other.close();
+
+    // This tab re-reads its session — a new one — and the old refusal goes.
+    const reread = page.waitForResponse((response) => response.url().endsWith("/api/auth/session"));
+    await page.clock.fastForward(31_000);
+    // React Query listens on window, not document.
+    await page.evaluate(() => window.dispatchEvent(new Event("visibilitychange")));
+    await reread;
+    await expect(failure).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  });
+
+  // Greptile #340: More's message comes after the panel, and at the foot of a
+  // short page that is under the tab bar unless it is brought into view.
+  test("on a short phone, More brings the refusal into view above the tab bar", async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "phone", "the tab bar is the phone shell's");
+    await page.setViewportSize({ width: 390, height: 420 });
+    await page.goto("/");
+    await page.getByLabel("Password").fill(OWNER_PASSWORD);
+    await page.getByRole("button", { name: "Sign in" }).click();
+    await expect(page.locator("main")).toBeVisible();
+    await page.goto("/more");
+    const signOut = page.getByRole("button", { name: "Sign out" });
+    await expect(signOut).toBeVisible();
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await page.route("**/api/auth/logout", (route) =>
+      route.fulfill({ status: 500, contentType: "application/json", body: "{}" }),
+    );
+    await signOut.click();
+    const failure = page.getByRole("alert");
+    await expect(failure).toBeVisible();
+    const bar = await box(page.getByRole("navigation", { name: "Main" }));
+    await expect
+      .poll(async () => {
+        const message = await box(failure);
+        return message.y >= 0 && message.y + message.height <= bar.y;
+      }, { message: "the whole message is on screen, clear of the tab bar" })
+      .toBe(true);
+  });
+
   test.afterAll("clean up the retailers the refused sign-outs created", async () => {
     const api = await apiContext();
     const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
