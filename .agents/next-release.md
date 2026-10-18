@@ -41,3 +41,14 @@ Shape:
   until you reloaded the page.
 - **README:** nothing.
 - **Docs site:** nothing.
+
+## #341, #343 — a damaged or unusual upload is refused with a reason, and long notes import (PR #347)
+- **Release note:** Importing a CSV or archive no longer fails with an unexplained
+  server error in a few cases. A kit whose build notes run past about 131,000
+  characters now imports again, including from plamotrack's own export, and so does
+  a CSV saved with old Mac (CR-only) line endings. A zip damaged in ways the import
+  didn't recognise is refused with a message naming the problem. A `manifest.json`
+  that can't be unpacked now refuses the import, as other damaged files in the
+  archive already did; one that unpacks but can't be read is still only a warning.
+- **README:** nothing.
+- **Docs site:** nothing.

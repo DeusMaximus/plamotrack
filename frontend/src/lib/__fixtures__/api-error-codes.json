@@ -169,6 +169,12 @@
     "import.confirm_required": {
       "params": []
     },
+    "import.csv_unreadable": {
+      "params": [
+        "source",
+        "line"
+      ]
+    },
     "import.currency_unknown": {
       "params": [
         "field",

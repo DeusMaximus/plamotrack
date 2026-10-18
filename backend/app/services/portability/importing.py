@@ -99,6 +99,14 @@ MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 #: comfortably under 50 MB, so this is headroom, not a working constraint.
 MAX_EXPANDED_BYTES = 100 * 1024 * 1024
 _EXPAND_CHUNK = 64 * 1024
+
+# The `csv` module refuses a field over 131,072 characters by default, and nothing
+# caps a free-text column that low: a `build_notes` the API accepted and the export
+# wrote came back as a 500 (#343). The size limits above are the real bound — a
+# member can't hold more characters than the budget lets it unpack to, nor a single
+# CSV more than the upload limit — so the field limit is raised to meet them. It is
+# process-wide, which is how `csv` keeps it; nothing else in the app reads CSV.
+csv.field_size_limit(max(MAX_EXPANDED_BYTES, MAX_UPLOAD_BYTES))
 MAX_ROWS = 50_000
 
 #: Every catalog table an order line can point at, by spec key. Derived, so a fifth
@@ -178,17 +186,36 @@ def _read_csv_text(raw: bytes, source: str) -> tuple[list[str], list[dict[str, s
             code=error_codes.IMPORT_ENCODING_INVALID,
             params={"source": source, "line": line},
         ) from exc
-    reader = csv.DictReader(io.StringIO(text_content))
-    header = [name.strip() for name in (reader.fieldnames or [])]
+    # `newline=""`, as `csv` asks of its source: under the default a file saved with
+    # bare-CR line endings — the old Mac "CSV (Macintosh)" — raised "new-line
+    # character seen in unquoted field" and answered 500 (#343). The reader then
+    # finds the line endings itself, and a quoted field keeps its own as written.
+    reader = csv.DictReader(io.StringIO(text_content, newline=""))
     rows: list[dict[str, str]] = []
-    for index, raw_row in enumerate(reader, start=2):  # line 1 is the header
-        row = {
-            (key or "").strip(): (value or "") for key, value in raw_row.items() if key is not None
-        }
-        if not any(value.strip() for value in row.values()):
-            continue  # blank spreadsheet filler line
-        row[_ROW_MARKER] = str(index)
-        rows.append(row)
+    try:
+        header = [name.strip() for name in (reader.fieldnames or [])]
+        for index, raw_row in enumerate(reader, start=2):  # line 1 is the header
+            row = {
+                (key or "").strip(): (value or "")
+                for key, value in raw_row.items()
+                if key is not None
+            }
+            if not any(value.strip() for value in row.values()):
+                continue  # blank spreadsheet filler line
+            row[_ROW_MARKER] = str(index)
+            rows.append(row)
+    except csv.Error as exc:
+        # Whatever `csv` still refuses is the uploaded file's shape, so under rule 6
+        # it is a refusal naming the file and the line, not a 500. The line is the
+        # inner reader's: `DictReader.line_num` is copied only once a row comes back,
+        # so on a failed row it still names the end of the one before.
+        line = reader.reader.line_num
+        raise InvalidInputError(
+            f"{source}: line {line} couldn't be read as CSV ({exc}). Open it in a "
+            "spreadsheet, save it as CSV again, and import it again.",
+            code=error_codes.IMPORT_CSV_UNREADABLE,
+            params={"source": source, "line": line},
+        ) from exc
     return header, rows
 
 
@@ -273,14 +300,23 @@ class _ExpansionBudget:
             zlib.error,
             RuntimeError,
             NotImplementedError,
+            ValueError,
         ) as exc:
             # Everything `zipfile` throws for a member it cannot hand back. Damage —
             # a bad CRC, a payload that ends early — is invisible to `ZipFile()`
-            # construction, which only reads the central directory. The other two are
-            # not damage but are just as much the uploader's business: `RuntimeError`
-            # for an encrypted member, `NotImplementedError` for a compression method
-            # this build has no decompressor for. All three are properties of a file
-            # someone uploaded, so under rule 6 none of them is a 500.
+            # construction, which only reads the central directory. `ValueError` is
+            # damage `open()` meets before any payload (#341): a header offset that
+            # resolves before the start of the file ("negative seek value"), and a
+            # per-file name flagged UTF-8 that isn't (`UnicodeDecodeError`). The other
+            # two are not damage but are just as much the uploader's business:
+            # `RuntimeError` for an encrypted member, `NotImplementedError` for a
+            # compression method this build has no decompressor for. All of them are
+            # properties of a file someone uploaded, so under rule 6 none is a 500.
+            #
+            # The manifest goes through here too, so a manifest that cannot be
+            # unpacked refuses the import like any other member (owner's call on
+            # #341, 18/10/2026). Only one that unpacks and then fails to parse is the
+            # "continuing without it" warning in `_read_zip`.
             raise InvalidInputError(
                 f"{entry} could not be unpacked ({exc}) — the archive may be damaged, "
                 "encrypted, or written with a compression method plamotrack can't "
@@ -488,7 +524,10 @@ def _read_zip(content: bytes, reference_currency: str) -> ParsedUpload:
 
     try:
         archive = zipfile.ZipFile(io.BytesIO(content))
-    except zipfile.BadZipFile as exc:
+    except (zipfile.BadZipFile, ValueError, NotImplementedError) as exc:
+        # `BadZipFile` is not all `ZipFile()` raises for a damaged directory (#341):
+        # a name flagged UTF-8 that isn't is a `UnicodeDecodeError`, and a record
+        # asking for a ZIP version past 6.3 is `NotImplementedError`.
         raise InvalidInputError(
             "that zip file is corrupt or not a zip archive",
             code=error_codes.IMPORT_ARCHIVE_INVALID,
