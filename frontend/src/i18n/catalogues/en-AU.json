@@ -162,6 +162,7 @@
       "cell_required": "{{field}} is required.",
       "column_unknown": "Column '{{column}}' isn't a {{table}} column and was ignored.",
       "confirm_required": "Replacing everything wipes the current collection first — type REPLACE to confirm.",
+      "csv_unreadable": "{{source}} couldn't be read as CSV (line {{line}}). Open it in a spreadsheet, save it as CSV again, and import it again.",
       "currency_unknown": "{{field}}: '{{currency}}' isn't a currency code we recognise — it will be stored as typed, and its amounts read as having 2 decimal places.",
       "currency_without_amount": "{{field}}: ignored — this file has no {{amountField}} column, and a currency can't be changed without restating the amount it applies to.",
       "encoding_invalid": "{{source}} isn't valid UTF-8 (line {{line}}). Re-save it as UTF-8 — in Excel, 'CSV UTF-8' — and import it again.",

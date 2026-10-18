@@ -6583,6 +6583,66 @@ CASES += [
     ),
 ]
 
+# --- #341/#343: an upload's damage is a refusal, never a 500 (rule 6). ---------------
+CASES += [
+    (
+        "341-1. a member's open() ValueError escapes the budget",
+        IMP,
+        "            NotImplementedError,\n            ValueError,\n        ) as exc:",
+        "            NotImplementedError,\n        ) as exc:",
+        "zipfile_raises_besides or manifest_that_cannot_be_unpacked",
+    ),
+    (
+        "341-2. ZipFile()'s UnicodeDecodeError escapes",
+        IMP,
+        "except (zipfile.BadZipFile, ValueError, NotImplementedError) as exc:",
+        "except (zipfile.BadZipFile, NotImplementedError) as exc:",
+        "zipfile_raises_besides",
+    ),
+    (
+        "341-3. ZipFile()'s NotImplementedError escapes",
+        IMP,
+        "except (zipfile.BadZipFile, ValueError, NotImplementedError) as exc:",
+        "except (zipfile.BadZipFile, ValueError) as exc:",
+        "zipfile_raises_besides or damaged_byte_in_an_archive",
+    ),
+    (
+        "341-4. a manifest that unpacks but isn't UTF-8 refuses the import",
+        IMP,
+        "except (json.JSONDecodeError, ValueError) as exc:\n                warnings.append(",
+        "except json.JSONDecodeError as exc:\n                warnings.append(",
+        "manifest_that_unpacks_but_isnt_utf8",
+    ),
+    (
+        "341-5. csv reads without newline=''",
+        IMP,
+        'io.StringIO(text_content, newline="")',
+        "io.StringIO(text_content)",
+        "bare_cr_line_endings",
+    ),
+    (
+        "341-6. csv keeps its default field limit",
+        IMP,
+        "csv.field_size_limit(max(MAX_EXPANDED_BYTES, MAX_UPLOAD_BYTES))",
+        "pass",
+        "survives_its_own_export",
+    ),
+    (
+        "341-7. csv.Error escapes",
+        IMP,
+        "    except csv.Error as exc:",
+        "    except ZeroDivisionError as exc:",
+        "what_csv_still_refuses",
+    ),
+    (
+        "341-8. the refusal names the line before the bad one",
+        IMP,
+        "line = reader.reader.line_num",
+        "line = reader.line_num",
+        "what_csv_still_refuses",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
