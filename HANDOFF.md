@@ -41,6 +41,38 @@ Template:
 
 ---
 
+## 2026-10-18 — Claude Code (Opus 5.5) — #342 MERGED as `e536064` (PR #345); #341 + #343 MERGED as `8a8c31c` (PR #347); #346 filed; #344 answered
+
+- **Done:**
+  - **[PR #345](https://github.com/DeusMaximus/plamotrack/pull/345)** (#342): four shared scenarios in `scenarios/imports.json`. Each imports a received order (a consumable line of 2) with its catalog sheet into an empty collection, then edits it up or down, deletes it, or deletes it below its line (refused `stock.insufficient` `{name, on_hand: 1, requested: 2}`). Two mutants in `orders.py` each kill exactly their pair. Reviews clean: Codex 👍, Greptile 5/5.
+  - **[PR #347](https://github.com/DeusMaximus/plamotrack/pull/347)** (#341, #343), all in `services/portability/importing.py`:
+    - Zip: `_ExpansionBudget.read` catches `ValueError` (a negative seek, or a per-file name flagged UTF-8 that isn't). `ZipFile()` catches `ValueError` and `NotImplementedError` beside `BadZipFile`.
+    - CSV: `csv.field_size_limit` raised to the import's own size limits, so a long `build_notes` from our own export imports again. `StringIO(newline="")`, which also fixes CR-only line endings (found by the probe). The new code `import.csv_unreadable` `{source, line}` is registered in all three code files. `line` is the inner reader's, because `DictReader.line_num` lags one line on a failed row.
+    - Tests: 18 in `test_portability.py`, two of them byte-flip sweeps (archive, CSV) through `read_upload`. On the unfixed code the archive sweep finds 13 escapes. Mutants `341-1`…`341-8` are in `mutation_test.py`. Backend 3134 passed. Reviews: Codex no findings, Greptile 5/5, CodeRabbit skips (fewer than 10 stars).
+  - **#346 filed:** a NUL character in any text value is a 500, from `POST /retailers` and from import apply. The preview plans the row as a create. Postgres refuses U+0000 in `text`, and no writer checks first. It crosses all three writers, so it was left out of #347.
+  - **#344 answered** ([comment](https://github.com/DeusMaximus/plamotrack/issues/344#issuecomment-6247492937)): plamotrack-ios should start its compat servers from the tag's release bundle (digest-pinned images plus `SHA256SUMS`) instead of building the source. Pins here help only tags cut after them.
+- **Decisions (owner, 18/10):**
+  - **A manifest that can't be unpacked refuses the import.** One that unpacks but isn't readable JSON is still the warning. Recorded on [#341](https://github.com/DeusMaximus/plamotrack/issues/341#issuecomment-6247038717) for plamotrack-ios.
+  - **#344 is low priority**, before or with the next release. The owner is taking the plamotrack-ios side.
+- **State:**
+  - **Unreleased on `main`:** #333 and #341/#343 (`.agents/next-release.md`). #342 is tests only. README and docs site: nothing.
+  - `main` is clean. Merged branches are left on origin: `test/342-imported-order-stock-scenarios`, `fix/341-343-upload-500s`.
+  - **#344 when it's picked up:**
+    - Five images, not four: `backend/Dockerfile:8` copies `ghcr.io/astral-sh/uv:0.5`.
+    - Postgres is in three places: the compose default, the `ci.yml` service, and `release-candidate.yml:57`. Line 57 re-resolves `postgres:16` on release day, so it must read the pin instead.
+    - The bump mechanism isn't chosen. Dependabot's handling of `COPY --from`, `${VAR:-image}` and workflow service images is unverified. The comment suggests a script plus a weekly check plus a runbook step.
+  - **Carried from 13/10:**
+    - The owner's LXC is on 0.5.2; refresh the Gunpla skill at upgrade (#289 changed `create_order`).
+    - testhost is in the tunnel configuration from the 0.6.0 gate (`.env.before-claude-check`); don't recreate its Keycloak container.
+    - Owner: allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access, and delete Claude.ai's "Testing" connector. #278 is open for the skill-zip check.
+    - Known gaps: #238, #324 (local e2e needs `--workers=1`), #320.
+- **Next:** the owner's pick.
+  - #346 (one predicate shared by the schemas and `parse_text`; refuse, don't strip), or #344.
+  - **M6.7:** #279's edge probes, then #281's packaging; #282's VPS path. **M7** waits on #28.
+
+  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
+- **Also next:** plamotrack-ios can re-sync the scenarios (#342's four). Its runner picks them up once plamotrack-ios#15 adds `update_order` and `delete_order`.
+
 ## 2026-10-13 — Claude Code (Opus 5.5) — #333 MERGED as `a25b57f` (PR #340): a failed sign-out says so, and the page keeps working
 
 - **Done:**
@@ -192,48 +224,6 @@ Template:
     - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
 - **Next — the pre-release plan (owner, 06/10), continued:**
   1. **#326** (Home scrolls sideways): the owner's call on a strip's grade and scale is still open (wrap, truncate, or stack under the name; recommended: stack). Expect a briefed Codex round.
-
-  **Then the release**, likely **v0.6.0-alpha**: a migration (#313), a changed MCP tool (#289: `create_order` takes the shop's id) and two new phone features. Work through `.agents/releases.md` and `.agents/next-release.md`.
-  - The owner's Gunpla skill needs a refresh at the LXC upgrade, because of #289. #309's upgrade-notes line is drafted in the ledger.
-  - #333 can wait for after the release.
-
-  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
-- **Also next:**
-  1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`.
-  2. Carried: #279's edge probes, then #281's packaging; #282's VPS path; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
-
-## 2026-10-07 — Claude Code (Opus 5.5) — #316 MERGED as `6d0252d` (PR #334), #331 MERGED as `30bb0c0` (PR #335); #268 in progress
-
-- **Done:**
-  - **#316, [PR #334](https://github.com/DeusMaximus/plamotrack/pull/334)**, squash-merged as **`6d0252d`**. The session that merged it left no entry, so this restates it.
-    - A failure in Settings is said beside the control that failed. A download's failure is shown in its own card, and a form's error appears above its Save or Create. A refused Revoke is scrolled into view at the list's head; a failed list load is not (`ErrorBanner`'s `reveal`).
-    - The bots' round (Codex, Greptile, CodeRabbit) is answered in the PR.
-  - **#331, [PR #335](https://github.com/DeusMaximus/plamotrack/pull/335)**, squash-merged as **`30bb0c0`**. #331 is closed.
-    - `AccessTokensSection` and `DataSection` call `usePresentationVersion()` at their root. A Settings section is behind an `<Outlet>`, so a re-render above it can't reach it.
-    - The sweep found Data management's file size and import counts were stale too. Its table is in the PR body.
-    - e2e in `settings.spec.ts`, in `ar-EG` with full dates: both response orders for Access tokens, and a late settings row under a chosen file's size. Four mutants, all killed; Chromium and WebKit.
-    - Review: Codex 👍 and Greptile 5/5, with no findings. CodeRabbit was rate-limited.
-- **State:**
-  - **CI Integration is at its 25-minute cap** (`ci.yml`, `timeout-minutes: 25`). #335's first attempt was cancelled at 25:05; the rerun passed in 24:12. It was 16 min on 06/10. The owner reran it by hand. **Next PR to `main` may need the cap raised**; that call is the owner's.
-  - **Unreleased on `main`:** #294, #289, #247, #302, #310, #313 (a migration), #314, #319, #322, #328, #330, #332, and now **#334** and **#335**. See `.agents/next-release.md`.
-  - **#268 is in progress** on `fix/268-stepper-keeps-focus`, uncommitted on the primary Mac:
-    - **Owner's call (07/10):** fix the class (a control disabling itself under the keyboard), not only the stepper.
-    - A waiting control keeps the keyboard: `Button`'s new `pending` prop sets `aria-disabled` and refuses a press.
-    - A control that can't act any more hands the keyboard to the stand-in it names, through one `MutationObserver` in `useFocusAcrossShells`.
-    - **Owner's call (07/10):** a saved Save gives the keyboard to the field before it.
-    - New `e2e/keyboard-place.spec.ts` runs in app, phone and tablet.
-    - On mutants: 18 killed, and two survivors whose code was removed.
-    - A full Chromium run was in flight when this was written.
-  - **Known gaps, filed:** #333, #326, #324 (local runs need `--workers=1`), #320.
-  - **Tooling:**
-    - Merged branches left on origin: `fix/331-token-dates-subscribe`, `fix/316-errors-beside-their-controls`, and the ones listed in the entry below.
-  - **Carried:**
-    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
-    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
-    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
-- **Next — the pre-release plan (owner, 06/10), continued:**
-  1. **#268**: finish, open the PR, and let the bots review it.
-  2. **#326** (Home scrolls sideways): the owner's call on a strip's grade and scale is still open (wrap, truncate, or stack under the name; recommended: stack). Expect a briefed Codex round.
 
   **Then the release**, likely **v0.6.0-alpha**: a migration (#313), a changed MCP tool (#289: `create_order` takes the shop's id) and two new phone features. Work through `.agents/releases.md` and `.agents/next-release.md`.
   - The owner's Gunpla skill needs a refresh at the LXC upgrade, because of #289. #309's upgrade-notes line is drafted in the ledger.
