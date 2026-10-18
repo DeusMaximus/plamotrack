@@ -137,6 +137,170 @@
           ]
         }
       }
+    },
+    {
+      "id": "editing-an-imported-received-line-up-adds-the-difference",
+      "why": "rule 2 after rule 10: the import states the cement on hand and delivers nothing; the edit then applies the difference to that count, +1",
+      "given": {},
+      "steps": [
+        {
+          "op": "import_archive",
+          "args": {
+            "mode": "merge",
+            "archive": {
+              "tables": {
+                "consumables": [
+                  { "id": "@consumables:cement", "name": "Tamiya Extra Thin Cement", "category": "cement", "quantity_on_hand": "2" }
+                ],
+                "orders": [
+                  { "id": "@orders:sheet", "retailer_name": "Corner Hobbies", "order_date": "2026-02-01", "currency_code": "AUD", "received_at": "2026-02-01T05:00:00+00:00" }
+                ],
+                "order_items": [
+                  { "id": "@order_items:sheet", "order_id": "@orders:sheet", "item_type": "consumable", "catalog_name": "Tamiya Extra Thin Cement", "quantity": "2", "unit_price": "7.00", "currency_code": "AUD" }
+                ]
+              }
+            }
+          },
+          "result": { "created": 4, "updated": 0 }
+        },
+        {
+          "op": "update_order",
+          "args": {
+            "order_id": "@orders:sheet",
+            "items": [
+              { "id": "@order_items:sheet", "item_type": "consumable", "catalog_ref_id": "@consumables:cement", "quantity": 3, "unit_price_minor": 700, "currency_code": "AUD" }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "tables": {
+          "retailers": [{ "name": "Corner Hobbies" }],
+          "orders": [{ "id": "@orders:sheet", "received_at": "2026-02-01T05:00:00+00:00" }],
+          "order_items": [{ "id": "@order_items:sheet", "catalog_ref_id": "@consumables:cement", "quantity": 3 }],
+          "consumables": [{ "id": "@consumables:cement", "quantity_on_hand": 3 }]
+        }
+      }
+    },
+    {
+      "id": "editing-an-imported-received-line-down-takes-the-difference",
+      "why": "rule 2 after rule 10: the edit takes the difference, 1, off the count the sheet stated, not the line's whole quantity",
+      "given": {},
+      "steps": [
+        {
+          "op": "import_archive",
+          "args": {
+            "mode": "merge",
+            "archive": {
+              "tables": {
+                "consumables": [
+                  { "id": "@consumables:cement", "name": "Tamiya Extra Thin Cement", "category": "cement", "quantity_on_hand": "2" }
+                ],
+                "orders": [
+                  { "id": "@orders:sheet", "retailer_name": "Corner Hobbies", "order_date": "2026-02-01", "currency_code": "AUD", "received_at": "2026-02-01T05:00:00+00:00" }
+                ],
+                "order_items": [
+                  { "id": "@order_items:sheet", "order_id": "@orders:sheet", "item_type": "consumable", "catalog_name": "Tamiya Extra Thin Cement", "quantity": "2", "unit_price": "7.00", "currency_code": "AUD" }
+                ]
+              }
+            }
+          },
+          "result": { "created": 4, "updated": 0 }
+        },
+        {
+          "op": "update_order",
+          "args": {
+            "order_id": "@orders:sheet",
+            "items": [
+              { "id": "@order_items:sheet", "item_type": "consumable", "catalog_ref_id": "@consumables:cement", "quantity": 1, "unit_price_minor": 700, "currency_code": "AUD" }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "tables": {
+          "retailers": [{ "name": "Corner Hobbies" }],
+          "orders": [{ "id": "@orders:sheet", "received_at": "2026-02-01T05:00:00+00:00" }],
+          "order_items": [{ "id": "@order_items:sheet", "catalog_ref_id": "@consumables:cement", "quantity": 1 }],
+          "consumables": [{ "id": "@consumables:cement", "quantity_on_hand": 1 }]
+        }
+      }
+    },
+    {
+      "id": "deleting-an-imported-received-order-takes-its-line-off-stock",
+      "why": "rule 2 after rule 10: delete undoes the entry, so the received line's 2 come off the 2 the sheet stated; the retailer stays",
+      "given": {},
+      "steps": [
+        {
+          "op": "import_archive",
+          "args": {
+            "mode": "merge",
+            "archive": {
+              "tables": {
+                "consumables": [
+                  { "id": "@consumables:cement", "name": "Tamiya Extra Thin Cement", "category": "cement", "quantity_on_hand": "2" }
+                ],
+                "orders": [
+                  { "id": "@orders:sheet", "retailer_name": "Corner Hobbies", "order_date": "2026-02-01", "currency_code": "AUD", "received_at": "2026-02-01T05:00:00+00:00" }
+                ],
+                "order_items": [
+                  { "id": "@order_items:sheet", "order_id": "@orders:sheet", "item_type": "consumable", "catalog_name": "Tamiya Extra Thin Cement", "quantity": "2", "unit_price": "7.00", "currency_code": "AUD" }
+                ]
+              }
+            }
+          },
+          "result": { "created": 4, "updated": 0 }
+        },
+        { "op": "delete_order", "args": { "order_id": "@orders:sheet" } }
+      ],
+      "then": {
+        "tables": {
+          "retailers": [{ "name": "Corner Hobbies" }],
+          "orders": [],
+          "order_items": [],
+          "consumables": [{ "id": "@consumables:cement", "quantity_on_hand": 0 }]
+        }
+      }
+    },
+    {
+      "id": "deleting-an-imported-order-below-its-line-is-refused",
+      "why": "rule 2 after rule 10: the sheet says 1 on hand, so undoing a received line of 2 would take stock below zero; the import stays as it landed",
+      "given": {},
+      "steps": [
+        {
+          "op": "import_archive",
+          "args": {
+            "mode": "merge",
+            "archive": {
+              "tables": {
+                "consumables": [
+                  { "id": "@consumables:cement", "name": "Tamiya Extra Thin Cement", "category": "cement", "quantity_on_hand": "1" }
+                ],
+                "orders": [
+                  { "id": "@orders:sheet", "retailer_name": "Corner Hobbies", "order_date": "2026-02-01", "currency_code": "AUD", "received_at": "2026-02-01T05:00:00+00:00" }
+                ],
+                "order_items": [
+                  { "id": "@order_items:sheet", "order_id": "@orders:sheet", "item_type": "consumable", "catalog_name": "Tamiya Extra Thin Cement", "quantity": "2", "unit_price": "7.00", "currency_code": "AUD" }
+                ]
+              }
+            }
+          },
+          "result": { "created": 4, "updated": 0 }
+        },
+        {
+          "op": "delete_order",
+          "args": { "order_id": "@orders:sheet" },
+          "expect": { "refused": { "kind": "conflict", "code": "stock.insufficient", "params": { "name": "Tamiya Extra Thin Cement", "on_hand": 1, "requested": 2 } } }
+        }
+      ],
+      "then": {
+        "tables": {
+          "retailers": [{ "name": "Corner Hobbies" }],
+          "orders": [{ "id": "@orders:sheet", "received_at": "2026-02-01T05:00:00+00:00" }],
+          "order_items": [{ "id": "@order_items:sheet", "catalog_ref_id": "@consumables:cement", "quantity": 2 }],
+          "consumables": [{ "id": "@consumables:cement", "quantity_on_hand": 1 }]
+        }
+      }
     }
   ]
 }
