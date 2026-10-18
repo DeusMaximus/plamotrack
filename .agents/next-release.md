@@ -42,7 +42,7 @@ Shape:
 - **README:** nothing.
 - **Docs site:** nothing.
 
-## #341, #343 — a damaged or unusual upload is refused with a reason, and long notes import (PR to come)
+## #341, #343 — a damaged or unusual upload is refused with a reason, and long notes import (PR #347)
 - **Release note:** Importing a CSV or archive no longer fails with an unexplained
   server error in a few cases. A kit whose build notes run past about 131,000
   characters now imports again, including from plamotrack's own export, and so does
