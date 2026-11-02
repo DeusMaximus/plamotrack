@@ -26,6 +26,7 @@ import csv
 import hashlib
 import io
 import json
+import lzma
 import uuid
 import zipfile
 import zlib
@@ -301,14 +302,20 @@ class _ExpansionBudget:
             RuntimeError,
             NotImplementedError,
             ValueError,
+            OSError,
+            lzma.LZMAError,
         ) as exc:
             # Everything `zipfile` throws for a member it cannot hand back. Damage —
             # a bad CRC, a payload that ends early — is invisible to `ZipFile()`
             # construction, which only reads the central directory. `ValueError` is
             # damage `open()` meets before any payload (#341): a header offset that
             # resolves before the start of the file ("negative seek value"), and a
-            # per-file name flagged UTF-8 that isn't (`UnicodeDecodeError`). The other
-            # two are not damage but are just as much the uploader's business:
+            # per-file name flagged UTF-8 that isn't (`UnicodeDecodeError`). The last
+            # two are how the BZIP2 and LZMA decompressors say the same thing (#352):
+            # `bz2` raises a bare `OSError`, which is damage here and not I/O because
+            # the archive is an in-memory buffer, so no disk or socket is involved.
+            # `RuntimeError` and `NotImplementedError` are not damage but are just as
+            # much the uploader's business:
             # `RuntimeError` for an encrypted member, `NotImplementedError` for a
             # compression method this build has no decompressor for. All of them are
             # properties of a file someone uploaded, so under rule 6 none is a 500.
@@ -1008,6 +1015,7 @@ class _Planner:
                     self.warnings.append(diagnostic)
 
         lone_grouped: set[str] = set()
+        unreadable: set[str] = set()
         for column in spec.columns:
             if column.name not in raw:
                 continue
@@ -1035,8 +1043,12 @@ class _Planner:
                     )
                 )
                 values[column.name] = None
+                unreadable.add(column.name)
 
         for column in spec.columns:
+            # A cell that could not be read has had its say: it is not also empty.
+            if column.name in unreadable:
+                continue
             if column.required and column.name in present and values.get(column.name) is None:
                 errors.append(
                     Diagnostic(

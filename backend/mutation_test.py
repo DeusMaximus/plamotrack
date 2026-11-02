@@ -6643,10 +6643,149 @@ CASES += [
     ),
 ]
 
+# --- #352/#346: text and archives a decoder or a database refuses (rule 6). ----------
+TEXT = ROOT / "app/services/text.py"
+BASE_SCHEMA = ROOT / "app/schemas/base.py"
+SPEC_FILE = ROOT / "app/services/portability/spec.py"
+KITS_SERVICE = ROOT / "app/services/kits.py"
+CATALOG_SERVICE = ROOT / "app/services/catalog.py"
+ORDERS_SERVICE = ROOT / "app/services/orders.py"
+OAUTH_STATE = ROOT / "app/auth/mcp_oauth_state.py"
+MAIN_APP = ROOT / "app/main.py"
+CASES += [
+    (
+        "352-1. BZIP2's OSError escapes",
+        IMP,
+        "            OSError,\n            lzma.LZMAError,\n        ) as exc:",
+        "            lzma.LZMAError,\n        ) as exc:",
+        "damaged_bzip2_or_lzma or no_single_damaged_byte or no_truncation",
+    ),
+    (
+        "352-2. LZMA's LZMAError escapes",
+        IMP,
+        "            OSError,\n            lzma.LZMAError,\n        ) as exc:",
+        "            OSError,\n        ) as exc:",
+        "damaged_bzip2_or_lzma or no_single_damaged_byte or no_truncation",
+    ),
+    (
+        "346-1. a NUL is storable",
+        TEXT,
+        '_UNSTORABLE = re.compile("[\\x00\\ud800-\\udfff]")',
+        '_UNSTORABLE = re.compile("[\\ud800-\\udfff]")',
+        "what_a_column_cannot_hold or a_create_refuses_it",
+    ),
+    (
+        "346-2. an unpaired surrogate is storable",
+        TEXT,
+        '_UNSTORABLE = re.compile("[\\x00\\ud800-\\udfff]")',
+        '_UNSTORABLE = re.compile("[\\x00]")',
+        "what_a_column_cannot_hold or a_create_refuses_it",
+    ),
+    (
+        "346-3. too much is unstorable: other control characters",
+        TEXT,
+        '_UNSTORABLE = re.compile("[\\x00\\ud800-\\udfff]")',
+        '_UNSTORABLE = re.compile("[\\x00-\\x1f\\ud800-\\udfff]")',
+        "what_it_can or ordinary_text",
+    ),
+    (
+        "346-4. the request base checks nothing",
+        BASE_SCHEMA,
+        "    if isinstance(value, str):\n        require_storable_text(value)",
+        "    if isinstance(value, str):\n        pass",
+        "a_create_refuses_it or an_update_refuses_it",
+    ),
+    (
+        "346-5. a stranger model holds a request body",
+        ROOT / "app/schemas/kits.py",
+        "class KitCreate(RequestModel):",
+        "class KitCreate(BaseModel):",
+        "every_request_body_comes_from_the_base",
+    ),
+    (
+        "346-6. the importer's text cell takes anything",
+        SPEC_FILE,
+        "    return require_storable_text(value) or None",
+        "    return value or None",
+        "a_preview_refuses_the_row or every_text_column",
+    ),
+    (
+        "346-7. the kits filter on grade reaches the query",
+        KITS_SERVICE,
+        '    refuse_unstorable_text("grade", grade)\n',
+        "",
+        "a_filter_refuses_it",
+    ),
+    (
+        "346-8. the kits filter on series reaches the query",
+        KITS_SERVICE,
+        '    refuse_unstorable_text("series", series)\n',
+        "",
+        "a_filter_refuses_it",
+    ),
+    (
+        "346-9. the catalog search reaches the query",
+        CATALOG_SERVICE,
+        '    refuse_unstorable_text("query", query)\n',
+        "",
+        "a_filter_refuses_it",
+    ),
+    (
+        "346-10. the category filter reaches the query",
+        CATALOG_SERVICE,
+        '    refuse_unstorable_text("category", category)\n',
+        "",
+        "a_filter_refuses_it",
+    ),
+    (
+        "346-11. MCP's stock reason is taken as written",
+        CATALOG_SERVICE,
+        '    refuse_unstorable_text("reason", reason)\n',
+        "",
+        "an_mcp_argument_is_refused",
+    ),
+    (
+        "346-12. MCP's shop name reaches the lookup",
+        ORDERS_SERVICE,
+        '    refuse_unstorable_text("retailer", name)\n',
+        "",
+        "create_order_s_flat_arguments",
+    ),
+    (
+        "346-13. a client's key reaches the state store's read",
+        OAUTH_STATE,
+        "        if not is_storable_text(key):\n            return None\n",
+        "",
+        "oauth_lookups or nul_code",
+    ),
+    (
+        "346-14. a 422 cannot echo a surrogate",
+        MAIN_APP,
+        "    return _EchoResponse(\n        status_code=422,",
+        "    return JSONResponse(\n        status_code=422,",
+        "can_echo_a_surrogate or credential_with_no_utf8_form",
+    ),
+    (
+        "346-15. every 422 leaves as ASCII",
+        MAIN_APP,
+        "            return super().render(content)\n",
+        '            return json.dumps(content, separators=(",", ":")).encode("ascii")\n',
+        "ordinary_422_keeps_the_default_bytes",
+    ),
+    (
+        "346-16. an unreadable required cell also says it is missing",
+        IMP,
+        "            if column.name in unreadable:\n                continue\n",
+        "",
+        "says_so_once",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
     "tests/test_portability.py",
+    "tests/test_unstorable_text.py",
     # The fold-in of the #109/#111/#113/#115 queues widened the case set to the
     # suites those branches wrote; each file below is named by at least one
     # case's `-k` expression, and the exit-5 NONE rule is what notices if one of

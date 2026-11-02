@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.auth.principal import Scope
+from app.schemas.base import RequestModel
 
 
 class SessionRead(BaseModel):
@@ -67,7 +68,7 @@ class OidcStartRead(BaseModel):
 # --- personal access tokens (§5.5 family 6; M6-4, #189) ------------------------
 
 
-class TokenCreate(BaseModel):
+class TokenCreate(RequestModel):
     """`POST /auth/tokens`: a name for the owner's own reference, the scopes —
     `collection:read`, or `collection:read` and `collection:write`; never
     `instance:admin` — and an optional expiry (offset-bearing ISO 8601)."""

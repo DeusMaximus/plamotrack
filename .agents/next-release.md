@@ -68,3 +68,13 @@ Shape:
   archive already did; one that unpacks but can't be read is still only a warning.
 - **README:** nothing.
 - **Docs site:** nothing.
+
+## #346, #352 — a stray NUL or a damaged BZIP2/LZMA archive is refused with a reason (PR #353)
+- **Release note:** A value containing a NUL character, or half of a broken Unicode
+  pair, is now refused with a message naming the field, from the web app, the REST
+  API, MCP tools and CSV imports. Before, it was an unexplained server error, and an
+  import preview approved the row that the import then failed on. Archives
+  compressed with BZIP2 or LZMA that are damaged are now refused the same way as
+  any other damaged archive.
+- **README:** nothing.
+- **Docs site:** nothing.

@@ -403,6 +403,12 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
 6. **Errors:** services raise `app.exceptions` domain errors (`NotFoundError`,
    `ConflictError`, `InvalidInputError`); the REST handler and MCP ToolError
    conversion are already wired — don't raise HTTP exceptions from services.
+   **Text a column can't hold** (a NUL, an unpaired surrogate) is one of these, and
+   `services/text.py` is its one predicate (#346): a request body inherits
+   `schemas/base.py`'s `RequestModel`, a CSV text cell is `parse_text`, and text that
+   reaches a query as an argument owes `refuse_unstorable_text` in its service.
+   `tests/test_unstorable_text.py` names every body, query parameter and flat MCP
+   argument, and fails on a new one until it has an answer.
 7. **Stock mutations** use row locks (`with_for_update`) — three concurrent writer
    types exist by design (UI, REST, MCP agents).
 7.1. **Every state-decided mutating service takes the write gate first** —

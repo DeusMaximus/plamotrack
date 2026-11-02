@@ -640,6 +640,11 @@
     "request.body_invalid": {
       "params": []
     },
+    "request.text_unstorable": {
+      "params": [
+        "field"
+      ]
+    },
     "request.validation": {
       "params": [
         "errors"

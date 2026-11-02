@@ -66,6 +66,7 @@ from app.services.numeric import (
     require_int4,
     strip_numeric_grouping,
 )
+from app.services.text import require_storable_text
 
 # --- cell parsers --------------------------------------------------------------
 
@@ -75,7 +76,7 @@ _FALSE = {"false", "f", "no", "n", "0"}
 
 def parse_text(raw: str) -> str | None:
     value = raw.strip()
-    return value or None
+    return require_storable_text(value) or None
 
 
 def parse_int(raw: str) -> int | None:

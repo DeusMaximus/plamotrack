@@ -2183,6 +2183,9 @@ async def test_a_kit_the_api_accepted_survives_its_own_export(http_client, notes
     assert created.status_code == 201, created.text
     archive = (await http_client.get("/export/archive")).content
 
+    # The preview first and on its own: `apply`'s helper goes on without a hash after
+    # a failed preview, so a parser failure would surface as `import.preview_required`.
+    await preview(http_client, archive)
     resp = await apply(http_client, archive)
     assert resp.status_code == 200, f"{resp.status_code} {resp.text[:200]}"
     assert (resp.json()["created"], resp.json()["updated"]) == (0, 0)
@@ -2195,6 +2198,7 @@ async def test_a_csv_with_bare_cr_line_endings_imports(http_client):
     `StringIO` without `newline=""`, `csv` raised "new-line character seen in
     unquoted field" and the upload was a 500."""
     content = b"id,name\r,Gundam Base\r,Hobby Search\r"
+    await preview(http_client, content, filename="retailers.csv")  # as above
     resp = await apply(http_client, content, filename="retailers.csv")
     assert resp.status_code == 200, f"{resp.status_code} {resp.text[:200]}"
     names = sorted(r["name"] for r in (await http_client.get("/retailers")).json())
@@ -2620,10 +2624,10 @@ async def test_what_zipfile_raises_besides_bad_zip_file_is_a_422(
     assert (await http_client.get("/kits")).json() == []
 
 
-def _with_manifest_bytes(manifest: bytes) -> bytes:
+def _with_manifest_bytes(manifest: bytes, method: int = zipfile.ZIP_DEFLATED) -> bytes:
     """manifest.json first, then a retailer — the order `zip_members` writes."""
     buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(buffer, "w", method) as archive:
         archive.writestr("manifest.json", manifest)
         archive.writestr("retailers.csv", RETAILERS_CSV)
     return buffer.getvalue()
@@ -2692,19 +2696,86 @@ def _what_escapes(filename: str, raw: bytes) -> tuple[list[str], int]:
     return escaped, refused
 
 
+#: Every compression method `zipfile` can write and read (#352): the decompressors
+#: raise different things, so "every method" is a claim only if every method is driven.
+ZIP_METHODS = [
+    pytest.param(zipfile.ZIP_STORED, id="stored"),
+    pytest.param(zipfile.ZIP_DEFLATED, id="deflate"),
+    pytest.param(zipfile.ZIP_BZIP2, id="bzip2"),
+    pytest.param(zipfile.ZIP_LZMA, id="lzma"),
+]
+
+
 @pytest.mark.filterwarnings("ignore:Overlapped entries")
-def test_no_single_damaged_byte_in_an_archive_escapes_as_anything_but_a_refusal():
+@pytest.mark.parametrize("method", ZIP_METHODS)
+def test_no_single_damaged_byte_in_an_archive_escapes_as_anything_but_a_refusal(method):
     """Rule 6, swept rather than listed: #341 found four exceptions by hand and #343
-    a fifth. Every one-byte change to a small archive — headers, directory, payload
-    — either still reads or is a domain refusal. Run against the reader before #341's
-    fix, this finds its `ValueError` and `NotImplementedError` (13 of them).
+    a fifth. Every one-byte change to a small archive — headers, directory, payload,
+    the manifest's as well as the sheet's — either still reads or is a domain refusal.
+    Run against the reader before #341's fix, this finds its `ValueError` and
+    `NotImplementedError` (13 of them); before #352's, BZIP2's `OSError` and LZMA's
+    `LZMAError`.
 
     Sync and through `read_upload`, which is everything the upload stage does with
-    the bytes, so the ~1,200 variants take well under a second."""
-    raw = _with_manifest_bytes(json.dumps(declaring(retailers=("retailers.csv", 1))).encode())
+    the bytes, so the variants take well under a second a method."""
+    raw = _with_manifest_bytes(
+        json.dumps(declaring(retailers=("retailers.csv", 1))).encode(), method
+    )
     escaped, refused = _what_escapes("archive.zip", raw)
     assert escaped == []
     assert refused > 0  # the sweep reached the refusals, so it isn't vacuous
+
+
+@pytest.mark.filterwarnings("ignore:Overlapped entries")
+@pytest.mark.parametrize("method", ZIP_METHODS)
+def test_no_truncation_of_an_archive_escapes_as_anything_but_a_refusal(method):
+    """The other way a payload is damaged: it ends. Cut at every length, including
+    inside the compressed data of each member."""
+    raw = _with_manifest_bytes(
+        json.dumps(declaring(retailers=("retailers.csv", 1))).encode(), method
+    )
+    escaped = []
+    for length in range(len(raw)):
+        try:
+            importing.read_upload("archive.zip", raw[:length], reference_currency="AUD")
+        except DomainError:
+            pass
+        except Exception as exc:  # noqa: BLE001 — what escapes is the finding
+            escaped.append(f"cut at {length}: {type(exc).__name__}: {exc}")
+    assert escaped == []
+
+
+def _with_damaged_payload(member: str, method: int) -> bytes:
+    """An archive of `manifest.json` and `retailers.csv` with a byte of `member`'s
+    compressed data flipped: the tenth, past the 9 bytes of LZMA's header that its
+    decoder reads loosely, and inside BZIP2's block magic. Found through the local
+    header, not by a fixed offset."""
+    raw = bytearray(_with_manifest_bytes(json.dumps(declaring()).encode(), method))
+    name = member.encode()
+    header = raw.index(b"PK\x03\x04")
+    while raw[header + 30 : header + 30 + len(name)] != name:
+        header = raw.index(b"PK\x03\x04", header + 4)
+    name_length, extra_length = struct.unpack_from("<HH", raw, header + 26)
+    raw[header + 30 + name_length + extra_length + 9] ^= 0xFF
+    return bytes(raw)
+
+
+@pytest.mark.parametrize("method", [zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA], ids=["bzip2", "lzma"])
+@pytest.mark.parametrize("member", ["retailers.csv", "manifest.json"])
+async def test_a_damaged_bzip2_or_lzma_member_is_a_422_naming_it(http_client, member, method):
+    """#352, from the top: both endpoints, either member. The manifest refuses like
+    any other, by the owner's call on #341. Each of these was a 500."""
+    content = _with_damaged_payload(member, method)
+    for path, data in (
+        ("/import/preview", {"mode": "merge"}),
+        ("/import/apply", {"mode": "merge", "plan_hash": "0" * 64}),
+    ):
+        resp = await http_client.post(
+            path, files={"file": ("archive.zip", content, "application/zip")}, data=data
+        )
+        assert resp.status_code == 422, f"{path}: {resp.status_code} {resp.text[:200]}"
+        assert resp.json()["code"] == "import.archive_damaged", resp.text
+        assert resp.json()["params"] == {"entry": member}, resp.text
 
 
 def test_no_single_damaged_byte_in_a_csv_escapes_as_anything_but_a_refusal():
