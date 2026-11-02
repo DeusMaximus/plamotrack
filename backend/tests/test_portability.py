@@ -2655,6 +2655,50 @@ async def test_a_manifest_that_cannot_be_unpacked_refuses_the_import(http_client
     assert resp.json()["params"] == {"entry": "manifest.json"}
 
 
+@pytest.mark.parametrize(
+    "manifest",
+    [
+        pytest.param({"format": "\ud800"}, id="format"),
+        pytest.param({"schema_version": "\ud800"}, id="schema_version"),
+        pytest.param({"app_version": "\udc00"}, id="app_version"),
+        pytest.param({"exported_at": "\ud800"}, id="exported_at"),
+        pytest.param(
+            {"tables": {"\ud800": {"file": "retailers.csv", "rows": 1}}}, id="a table's key"
+        ),
+        pytest.param({"tables": {"retailers": {"file": "\ud800", "rows": 1}}}, id="a table's file"),
+    ],
+)
+async def test_a_manifest_string_with_no_utf8_form_is_only_the_warning(http_client, manifest):
+    """Valid JSON whose text can't leave as a response: it went into the plan and the
+    diagnostics, and the response serializer raised. On apply that was a 500 *after the
+    commit* (Codex, #353 round 1). It's a manifest that can't be read, so it gets that
+    manifest's outcome: the warning, and the rows import."""
+    content = _with_manifest_bytes(json.dumps(manifest).encode())
+    plan = await preview(http_client, content)
+    assert [w["code"] for w in plan["warnings"]] == ["import.manifest_unreadable"]
+    assert plan["manifest"] is None
+
+    resp = await apply(http_client, content)
+    assert resp.status_code == 200, f"{resp.status_code} {resp.text[:200]}"
+    assert resp.json()["created"] == 1
+    assert [r["name"] for r in (await http_client.get("/retailers")).json()] == ["Gundam Base"]
+
+
+async def test_a_nul_in_a_manifest_is_not_this_refusal(http_client):
+    """A manifest is read and never stored, and a NUL leaves in a response as `\\u0000`.
+    The control on the test above: the check is the response's, not the column's."""
+    content = _with_manifest_bytes(json.dumps({"app_version": "a\x00b"}).encode())
+    plan = await preview(http_client, content)
+    assert "import.manifest_unreadable" not in [w["code"] for w in plan["warnings"]]
+    assert plan["manifest"]["app_version"] == "a\x00b"
+
+
+async def test_a_manifest_nested_past_the_parser_is_only_the_warning(http_client):
+    content = _with_manifest_bytes(b"[" * 200_000 + b"]" * 200_000)
+    plan = await preview(http_client, content)
+    assert [w["code"] for w in plan["warnings"]] == ["import.manifest_unreadable"]
+
+
 async def test_a_manifest_that_unpacks_but_isnt_utf8_is_still_only_a_warning(http_client):
     """The other half of the same call: the manifest's own `except ValueError` stays,
     because `json.loads` on bytes that aren't UTF-8 raises `UnicodeDecodeError` — a
@@ -2704,6 +2748,11 @@ ZIP_METHODS = [
     pytest.param(zipfile.ZIP_BZIP2, id="bzip2"),
     pytest.param(zipfile.ZIP_LZMA, id="lzma"),
 ]
+#: Python 3.14's fifth, read through `compression.zstd`. The packaged runtime is 3.12,
+#: where this member is `NotImplementedError` (`test_an_unreadable_member_is_a_422_naming_it`);
+#: a source install may run either, and `requires-python` allows both.
+if hasattr(zipfile, "ZIP_ZSTANDARD"):
+    ZIP_METHODS.append(pytest.param(zipfile.ZIP_ZSTANDARD, id="zstandard"))
 
 
 @pytest.mark.filterwarnings("ignore:Overlapped entries")
@@ -2760,11 +2809,12 @@ def _with_damaged_payload(member: str, method: int) -> bytes:
     return bytes(raw)
 
 
-@pytest.mark.parametrize("method", [zipfile.ZIP_BZIP2, zipfile.ZIP_LZMA], ids=["bzip2", "lzma"])
+@pytest.mark.parametrize("method", ZIP_METHODS[2:])
 @pytest.mark.parametrize("member", ["retailers.csv", "manifest.json"])
 async def test_a_damaged_bzip2_or_lzma_member_is_a_422_naming_it(http_client, member, method):
-    """#352, from the top: both endpoints, either member. The manifest refuses like
-    any other, by the owner's call on #341. Each of these was a 500."""
+    """#352, from the top: both endpoints, either member, and Zstandard where the
+    runtime reads it. The manifest refuses like any other, by the owner's call on
+    #341. Each of these was a 500."""
     content = _with_damaged_payload(member, method)
     for path, data in (
         ("/import/preview", {"mode": "merge"}),
@@ -2776,6 +2826,46 @@ async def test_a_damaged_bzip2_or_lzma_member_is_a_422_naming_it(http_client, me
         assert resp.status_code == 422, f"{path}: {resp.status_code} {resp.text[:200]}"
         assert resp.json()["code"] == "import.archive_damaged", resp.text
         assert resp.json()["params"] == {"entry": member}, resp.text
+
+
+class _Decompressor(io.BytesIO):
+    """A member stream that raises what it was told to, on the first read."""
+
+    def __init__(self, raising: BaseException) -> None:
+        super().__init__()
+        self.raising = raising
+
+    def read(self, *_args):
+        raise self.raising
+
+
+@pytest.mark.parametrize(
+    "raising",
+    [
+        pytest.param(OSError("Invalid data stream"), id="a bare OSError, as bz2 raises"),
+        pytest.param(KeyError("frame"), id="an exception nobody has listed"),
+        pytest.param(type("ZstdError", (Exception,), {})("bad"), id="a decompressor's own type"),
+    ],
+)
+def test_whatever_a_decompressor_raises_is_the_upload_s_damage(monkeypatch, raising):
+    """The invariant, one level up from the sweeps. #341, #352 and Zstandard were three
+    misses in one tuple: each decompressor has its own exception, a runtime can add
+    another, and a list of them is out of date by construction. So the read owns every
+    `Exception`, independent of the Python this runs on."""
+    content = zip_members({"retailers.csv": RETAILERS_CSV})  # before the patch: it writes too
+    monkeypatch.setattr(zipfile.ZipFile, "open", lambda *_a, **_k: _Decompressor(raising))
+    with pytest.raises(DomainError) as refused:
+        importing.read_upload("archive.zip", content, reference_currency="AUD")
+    assert refused.value.code == "import.archive_damaged"
+
+
+def test_running_out_of_memory_is_not_the_upload_s_damage(monkeypatch):
+    """The one `Exception` that says something about the server, and an archive told
+    it was damaged would be a false thing to tell the owner."""
+    content = zip_members({"retailers.csv": RETAILERS_CSV})
+    monkeypatch.setattr(zipfile.ZipFile, "open", lambda *_a, **_k: _Decompressor(MemoryError()))
+    with pytest.raises(MemoryError):
+        importing.read_upload("archive.zip", content, reference_currency="AUD")
 
 
 def test_no_single_damaged_byte_in_a_csv_escapes_as_anything_but_a_refusal():

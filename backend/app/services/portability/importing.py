@@ -26,10 +26,8 @@ import csv
 import hashlib
 import io
 import json
-import lzma
 import uuid
 import zipfile
-import zlib
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -291,34 +289,21 @@ class _ExpansionBudget:
                             params={"limit_mb": self.limit // 1024 // 1024},
                         )
                     chunks.append(chunk)
-        except DomainError:
-            # The budget above raises through here. Re-raised explicitly so it stays
-            # a budget refusal no matter what the tuple below grows to hold.
+        except (DomainError, MemoryError):
+            # The budget above raises through here, and stays a budget refusal. Running
+            # out of memory says something about the server, not the file.
             raise
-        except (
-            zipfile.BadZipFile,
-            EOFError,
-            zlib.error,
-            RuntimeError,
-            NotImplementedError,
-            ValueError,
-            OSError,
-            lzma.LZMAError,
-        ) as exc:
-            # Everything `zipfile` throws for a member it cannot hand back. Damage —
-            # a bad CRC, a payload that ends early — is invisible to `ZipFile()`
-            # construction, which only reads the central directory. `ValueError` is
-            # damage `open()` meets before any payload (#341): a header offset that
-            # resolves before the start of the file ("negative seek value"), and a
-            # per-file name flagged UTF-8 that isn't (`UnicodeDecodeError`). The last
-            # two are how the BZIP2 and LZMA decompressors say the same thing (#352):
-            # `bz2` raises a bare `OSError`, which is damage here and not I/O because
-            # the archive is an in-memory buffer, so no disk or socket is involved.
-            # `RuntimeError` and `NotImplementedError` are not damage but are just as
-            # much the uploader's business:
-            # `RuntimeError` for an encrypted member, `NotImplementedError` for a
-            # compression method this build has no decompressor for. All of them are
-            # properties of a file someone uploaded, so under rule 6 none is a 500.
+        except Exception as exc:
+            # Everything but those two, on purpose. All this reads is an in-memory
+            # buffer, so whatever is raised here is about the file someone uploaded, and
+            # under rule 6 none of it is a 500. Damage (a bad CRC, a payload that ends
+            # early) is invisible to `ZipFile()`, which only reads the central directory,
+            # and each decompressor reports it in its own words: `zlib.error`, a bare
+            # `OSError` from `bz2`, `lzma.LZMAError`, and on Python 3.14
+            # `compression.zstd.ZstdError`. So do an encrypted member (`RuntimeError`) and
+            # a method this build can't read (`NotImplementedError`). A list of them was
+            # missed three times (#341, #352, Zstandard on #353), and a runtime can add a
+            # method a list has never heard of.
             #
             # The manifest goes through here too, so a manifest that cannot be
             # unpacked refuses the import like any other member (owner's call on
@@ -582,9 +567,15 @@ def _read_zip(content: bytes, reference_currency: str) -> ParsedUpload:
                 )
             )
         elif manifest_names:
+            content = budget.read(archive, manifest_names[0])
             try:
-                data = json.loads(budget.read(archive, manifest_names[0]))
-            except (json.JSONDecodeError, ValueError) as exc:
+                data = json.loads(content)
+                # Valid JSON can spell text with no UTF-8 form (`"\\ud800"`). It would go
+                # into the plan and the diagnostics, and only fail as the response left:
+                # after the commit, on an apply (#353). `UnicodeEncodeError` is a
+                # `ValueError`, so it lands below as a manifest that can't be read.
+                json.dumps(data, ensure_ascii=False).encode()
+            except (json.JSONDecodeError, ValueError, RecursionError) as exc:
                 warnings.append(
                     Diagnostic(
                         code=error_codes.IMPORT_MANIFEST_UNREADABLE,

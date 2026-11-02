@@ -10,6 +10,7 @@ test is which status a bad value earns.
 
 import inspect
 import json
+import time
 import types
 import typing
 
@@ -21,13 +22,27 @@ from mcp.shared.exceptions import MCPError
 from pydantic import BaseModel
 
 from app.auth.registry import iter_effective_routes
+from app.auth.sessions import PLAIN_COOKIE_NAME
+from app.auth.setup_token import setup_token_state
 from app.main import app
 from app.mcp import mcp
 from app.schemas.base import RequestModel
+from app.services import oidc as oidc_service
+from app.services.oidc import CallbackError, OidcLoginRefused, validate_id_token_claims
 from app.services.portability import spec, starter_sheet
 from app.services.portability.spec import parse_text
 from app.services.text import is_storable_text, require_storable_text
-from tests.oidc_fake import FakeIdp
+from tests.oidc_fake import OWNER_SUB, FakeIdp
+from tests.test_auth_oidc import (
+    _auth_error,
+    _callback,
+    _owner,
+    _params,
+    _sign_in,
+    _start,
+    fresh_browser,
+    oidc_app,
+)
 from tests.test_mcp_oauth import NATIVE_CB, _bind_owner, _pkce, _state_rows, authorize, oauth_app
 from tests.test_portability import apply, make_csv, preview, zip_members
 
@@ -618,6 +633,114 @@ async def test_a_registered_client_s_nul_code_is_an_invalid_grant():
         )
         assert resp.status_code == 401, f"{resp.status_code} {resp.text[:200]}"
         assert resp.json()["error"] == "invalid_grant"
+
+
+# --- OIDC: text a provider sends is text someone sent --------------------------------
+
+
+def _setup_token_is_live(live, token: str) -> bool:
+    return setup_token_state(live).matches(token)
+
+
+@pytest.mark.parametrize("subject", NUL_ONLY)
+async def test_an_unstorable_subject_is_refused_and_keeps_the_setup_token(subject):
+    """`sub` is identity, so never edited: refused by the claim contract, on the way
+    to the callback's ordinary error. The first claim was a 500 that left the owner
+    unclaimed with the setup token already spent, which needs a restart to get back
+    (Codex, #353 round 1). The token still works, and the same provider can claim."""
+    fake = FakeIdp()
+    async with oidc_app(fake) as (live, browser):
+        token = setup_token_state(live).issue()
+        resp = await _sign_in(fake, browser, sub=subject, setup_token=token)
+        assert _auth_error(resp) == CallbackError.FAILED
+        assert (await _owner()).claimed_at is None
+        assert _setup_token_is_live(live, token)
+
+        assert _auth_error(await _sign_in(fake, browser, setup_token=token)) is None
+        assert (await _owner()).oidc_subject == OWNER_SUB
+
+
+@pytest.mark.parametrize("subject", UNSTORABLE)
+def test_the_claim_contract_refuses_it_for_the_mcp_proxy_too(subject):
+    """`nonce=None` is the proxy's call: one validator, so one answer on both paths.
+    The surrogates are driven here because the fake provider's encoder can't sign them;
+    a real provider's JSON can spell them, and they decode to this."""
+    now = int(time.time())
+    claims = {
+        "iss": "https://idp.test",
+        "aud": "client",
+        "iat": now,
+        "exp": now + 300,
+        "sub": subject,
+    }
+    with pytest.raises(OidcLoginRefused):
+        validate_id_token_claims(claims, issuer="https://idp.test", client_id="client", nonce=None)
+    claims["sub"] = "ordinary"
+    validate_id_token_claims(claims, issuer="https://idp.test", client_id="client", nonce=None)
+
+
+@pytest.mark.parametrize(
+    ("claims", "stored"),
+    [
+        pytest.param({"email": "a\x00b"}, None, id="the only label"),
+        pytest.param({"email": "a\x00b", "name": "Owner"}, "Owner", id="the next one is taken"),
+        pytest.param(
+            {"email": "\x00", "name": "a\x00b", "preferred_username": "owner"},
+            "owner",
+            id="the last one is taken",
+        ),
+        pytest.param({"email": "owner@idp.test"}, "owner@idp.test", id="control"),
+    ],
+)
+async def test_an_unstorable_label_is_passed_over_on_a_first_claim(claims, stored):
+    """A label, not an identity, and optional: a bad one is no reason to refuse the
+    owner their instance."""
+    fake = FakeIdp()
+    async with oidc_app(fake) as (live, browser):
+        token = setup_token_state(live).issue()
+        assert _auth_error(await _sign_in(fake, browser, setup_token=token, **claims)) is None
+        owner = await _owner()
+        assert (owner.oidc_subject, owner.display_name) == (OWNER_SUB, stored)
+        assert not _setup_token_is_live(live, token)
+
+
+def test_a_label_with_no_utf8_form_is_passed_over_too():
+    assert oidc_service._display_name({"email": "\ud800", "name": "Owner"}) == "Owner"
+    assert oidc_service._display_name({"email": "\udc00"}) is None
+
+
+async def test_an_unstorable_label_leaves_a_returning_owner_s_alone():
+    """The other state: the row has a label already, and the owner still signs in."""
+    fake = FakeIdp()
+    async with oidc_app(fake) as (live, browser):
+        token = setup_token_state(live).issue()
+        first = await _sign_in(fake, browser, setup_token=token, email="owner@idp.test")
+        assert _auth_error(first) is None
+        async with fresh_browser(live) as second:
+            assert _auth_error(await _sign_in(fake, second, email="a\x00b")) is None
+            assert PLAIN_COOKIE_NAME in second.cookies
+        assert (await _owner()).display_name == "owner@idp.test"
+
+
+async def test_a_claim_that_rolls_back_keeps_the_setup_token(monkeypatch):
+    """The other half of the first test, for any failure after the bind: the token is
+    spent by what commits. Consuming it first lost it to whatever failed next."""
+    fake = FakeIdp()
+
+    async def failing(*_args, **_kwargs):
+        raise RuntimeError("the audit insert failed")
+
+    async with oidc_app(fake) as (live, browser):
+        token = setup_token_state(live).issue()
+        started = await _start(browser, setup_token=token)
+        params = _params(started.json()["authorization_url"])
+        fake.next_token = {"id_token": fake.issue(nonce=params["nonce"])}
+        monkeypatch.setattr(oidc_service.audit, "record_event", failing)
+        assert (await _callback(browser, state=params["state"])).status_code == 500
+        monkeypatch.undo()
+
+        assert (await _owner()).claimed_at is None
+        assert _setup_token_is_live(live, token)
 
 
 # --- nothing new gets past the sweep -------------------------------------------------
