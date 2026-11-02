@@ -89,6 +89,7 @@ from app.services.portability.spec import (
     parse_currency,
     render,
 )
+from app.services.text import has_utf8_form
 from app.services.write_gate import acquire_write_gate
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -572,9 +573,9 @@ def _read_zip(content: bytes, reference_currency: str) -> ParsedUpload:
                 data = json.loads(content)
                 # Valid JSON can spell text with no UTF-8 form (`"\\ud800"`). It would go
                 # into the plan and the diagnostics, and only fail as the response left:
-                # after the commit, on an apply (#353). `UnicodeEncodeError` is a
-                # `ValueError`, so it lands below as a manifest that can't be read.
-                json.dumps(data, ensure_ascii=False).encode()
+                # after the commit, on an apply (#353).
+                if not has_utf8_form(data):
+                    raise ValueError("it holds text with no UTF-8 form")
             except (json.JSONDecodeError, ValueError, RecursionError) as exc:
                 warnings.append(
                     Diagnostic(

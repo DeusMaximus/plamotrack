@@ -14,7 +14,9 @@ the services' text filters (`refuse_unstorable_text`) and the MCP OAuth state st
 whose keys a client names.
 """
 
+import json
 import re
+from typing import Any
 
 from app import error_codes
 from app.exceptions import InvalidInputError
@@ -31,6 +33,18 @@ def is_storable_text(value: str) -> bool:
     """Whether a `text` column could hold this value. Other control characters,
     and a character outside the BMP, are ordinary text."""
     return _UNSTORABLE.search(value) is None
+
+
+def has_utf8_form(value: Any) -> bool:
+    """Whether every string in a JSON-shaped value, keys included, can leave in a
+    response. For JSON from outside that is read and shown rather than stored (a
+    manifest, a fetched client document): JSON can spell `"\\ud800"`, and nothing fails
+    until the response is encoded, long after the value was believed."""
+    try:
+        json.dumps(value, ensure_ascii=False, default=str).encode()
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def require_storable_text(value: str) -> str:

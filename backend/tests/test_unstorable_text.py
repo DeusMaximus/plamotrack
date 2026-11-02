@@ -18,6 +18,7 @@ import pytest
 from fastapi.dependencies.utils import get_dependant
 from fastmcp import Client
 from fastmcp.exceptions import ToolError
+from fastmcp.server.auth.cimd import CIMDFetcher
 from mcp.shared.exceptions import MCPError
 from pydantic import BaseModel
 
@@ -26,14 +27,16 @@ from app.auth.sessions import PLAIN_COOKIE_NAME
 from app.auth.setup_token import setup_token_state
 from app.main import app
 from app.mcp import mcp
+from app.routers.auth import OIDC_PROVIDER_ATTR
 from app.schemas.base import RequestModel
 from app.services import oidc as oidc_service
 from app.services.oidc import CallbackError, OidcLoginRefused, validate_id_token_claims
 from app.services.portability import spec, starter_sheet
 from app.services.portability.spec import parse_text
-from app.services.text import is_storable_text, require_storable_text
+from app.services.text import has_utf8_form, is_storable_text, require_storable_text
 from tests.oidc_fake import OWNER_SUB, FakeIdp
 from tests.test_auth_oidc import (
+    ORIGIN,
     _auth_error,
     _callback,
     _owner,
@@ -43,7 +46,17 @@ from tests.test_auth_oidc import (
     fresh_browser,
     oidc_app,
 )
-from tests.test_mcp_oauth import NATIVE_CB, _bind_owner, _pkce, _state_rows, authorize, oauth_app
+from tests.test_mcp_oauth import (
+    CIMD_CB,
+    CIMD_ID,
+    NATIVE_CB,
+    _bind_owner,
+    _cimd_document,
+    _pkce,
+    _state_rows,
+    authorize,
+    oauth_app,
+)
 from tests.test_portability import apply, make_csv, preview, zip_members
 
 UNSTORABLE = [
@@ -284,6 +297,43 @@ async def test_the_refusal_can_echo_a_surrogate_in_a_field_the_model_never_decla
     )
     assert resp.status_code == 422, f"{resp.status_code} {resp.text[:200]}"
     assert resp.json()["code"] == "request.validation"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param('{"name": 1e999, "grade": "HG"}', id="an overflowing number, a string field"),
+        pytest.param('{"name": "n", "grade": "HG", "status": 1e999}', id="an enum field"),
+        pytest.param('{"name": "n", "grade": -1e999}', id="minus infinity"),
+        pytest.param('{"name": NaN, "grade": "HG"}', id="NaN, which Python's JSON reads"),
+        pytest.param('{"name": Infinity, "grade": "\\ud800"}', id="beside a surrogate"),
+        pytest.param('{"name": "\\ud800", "grade": ["\\udc00", 1e999]}', id="inside a list"),
+    ],
+)
+async def test_the_refusal_stands_whatever_it_cannot_echo(http_client, body):
+    """The other value JSON can spell and a response can't (Codex, #353 round 2): Python
+    reads `1e999` as infinity, and the 422 echoing it failed on `allow_nan=False`. Valid
+    JSON has no spelling for it, so the value is what gets left out. The finding names
+    the field, which is what the caller needs."""
+    resp = await http_client.post(
+        "/kits", content=body, headers={"content-type": "application/json"}
+    )
+    assert resp.status_code == 422, f"{resp.status_code} {resp.text[:200]}"
+    parsed = json.loads(resp.content, parse_constant=_no_constants)
+    assert parsed["code"] == "request.validation"
+    assert parsed["params"]["errors"]
+    assert all("input" not in finding for finding in parsed["detail"])
+
+
+def _no_constants(name: str):
+    raise AssertionError(f"the response is not JSON: it spells {name}")
+
+
+async def test_an_anonymous_route_refuses_it_too(http_client):
+    resp = await http_client.post(
+        "/auth/login", content='{"password": 1e999}', headers={"content-type": "application/json"}
+    )
+    assert resp.status_code == 422, f"{resp.status_code} {resp.text[:200]}"
 
 
 async def test_an_ordinary_422_keeps_the_default_bytes(http_client):
@@ -741,6 +791,108 @@ async def test_a_claim_that_rolls_back_keeps_the_setup_token(monkeypatch):
 
         assert (await _owner()).claimed_at is None
         assert _setup_token_is_live(live, token)
+
+
+async def test_the_oidc_start_refuses_a_setup_token_with_no_utf8_form():
+    fake = FakeIdp()
+    async with oidc_app(fake) as (_live, browser):
+        resp = await browser.post(
+            "/auth/oidc/start",
+            content=_json({"setup_token": "a\ud800b"}),
+            headers={"content-type": "application/json", **ORIGIN},
+        )
+        _the_refusal(resp, "setup_token")
+
+
+UNUSABLE_ENDPOINTS = [
+    pytest.param("https://idp.test/\ud800", id="a surrogate"),
+    pytest.param("https://idp.test/a\x00b", id="a NUL"),
+    pytest.param("https://idp.test/\x01", id="a control character"),
+    pytest.param(["https://idp.test/token"], id="not a string"),
+    pytest.param("javascript:alert(1)", id="not http"),
+    pytest.param(None, id="null"),
+]
+
+
+@pytest.mark.parametrize("value", UNUSABLE_ENDPOINTS)
+@pytest.mark.parametrize("field", ["authorization_endpoint", "token_endpoint", "jwks_uri"])
+async def test_an_unusable_discovery_endpoint_is_an_unavailable_provider(field, value):
+    """The operator's own provider, so low exposure, but the same text (Codex, #353
+    round 2): `str(...)` cached whatever the document said, and it failed later, as a
+    500, at the start or after a good id_token at the callback. Refused where it enters,
+    through the answer a provider with no document already gets."""
+    fake = FakeIdp()
+    fake.discovery_overrides = {field: value}
+    async with oidc_app(fake) as (live, browser):
+        token = setup_token_state(live).issue()
+        resp = await _start(browser, setup_token=token)
+        assert resp.status_code == 503, f"{resp.status_code} {resp.text[:200]}"
+        assert resp.json()["code"] == "auth.oidc_provider_unavailable"
+        assert _setup_token_is_live(live, token)
+
+
+@pytest.mark.parametrize("value", UNUSABLE_ENDPOINTS)
+async def test_an_unusable_revocation_endpoint_is_no_revocation_endpoint(value):
+    """Optional and best effort, so unlike the three above it costs nobody a sign-in:
+    the provider has told us nothing usable, which is what omitting it says."""
+    fake = FakeIdp()
+    fake.discovery_overrides = {"revocation_endpoint": value}
+    async with oidc_app(fake) as (live, browser):
+        token = setup_token_state(live).issue()
+        assert _auth_error(await _sign_in(fake, browser, setup_token=token)) is None
+        provider = getattr(live.state, OIDC_PROVIDER_ATTR)
+        assert (await provider.metadata()).revocation_endpoint is None
+
+
+async def test_a_usable_revocation_endpoint_is_still_read():
+    fake = FakeIdp()
+    async with oidc_app(fake) as (live, browser):
+        token = setup_token_state(live).issue()
+        assert _auth_error(await _sign_in(fake, browser, setup_token=token)) is None
+        provider = getattr(live.state, OIDC_PROVIDER_ATTR)
+        assert (await provider.metadata()).revocation_endpoint == f"{fake.issuer}/revoke"
+
+
+async def _cimd_authorize(monkeypatch, **document):
+    """An ordinary authorization request from a client whose fetched document says
+    this, followed to the consent page. The fetch is mocked beneath the fetcher."""
+
+    async def fetched(_self, client_id_url):
+        assert client_id_url == CIMD_ID
+        return _cimd_document(**document)
+
+    monkeypatch.setattr(CIMDFetcher, "fetch", fetched)
+    fake = FakeIdp()
+    await _bind_owner()
+    async with oauth_app(fake) as (_live, client):
+        _verifier, challenge = _pkce()
+        first = await authorize(client, CIMD_ID, CIMD_CB, challenge=challenge)
+        if first.status_code != 302:
+            return first
+        return await client.get(first.headers["location"], follow_redirects=False)
+
+
+async def test_a_fetched_client_document_with_no_utf8_form_is_an_unknown_client(monkeypatch):
+    """Anyone can host one, and the consent page it reached could not be encoded (Codex,
+    #353 round 2). Its ids are identities, so nothing in it is edited: a document that
+    can't be displayed or stored is a client we don't have."""
+    resp = await _cimd_authorize(monkeypatch, client_name="a\ud800b")
+    assert resp.status_code == 400, f"{resp.status_code} {resp.text[:200]}"
+
+
+@pytest.mark.parametrize("name", ["Some web client", "a\x00b", "ホビーサーチ"])
+async def test_a_fetched_client_document_it_can_encode_still_reaches_consent(monkeypatch, name):
+    """A NUL leaves HTML as a character, and the state store encrypts: this is about
+    the response's encoding, not the column's."""
+    resp = await _cimd_authorize(monkeypatch, client_name=name)
+    assert resp.status_code == 200, f"{resp.status_code} {resp.text[:200]}"
+
+
+def test_has_utf8_form_reads_every_string_in_a_json_shape():
+    assert has_utf8_form({"a": ["b", {"c": "😀\x00"}], "d": None, "e": 1.5})
+    assert not has_utf8_form({"a": ["b", {"c": "\ud800"}]})
+    assert not has_utf8_form({"\udc00": 1})
+    assert has_utf8_form({"a": object()})  # the shape's other values are not its business
 
 
 # --- nothing new gets past the sweep -------------------------------------------------

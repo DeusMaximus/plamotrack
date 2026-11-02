@@ -180,15 +180,24 @@ async def unhandled_error_envelope(request: Request, exc: Exception) -> JSONResp
 
 
 class _EchoResponse(JSONResponse):
-    """A 422 echoes what was sent, and JSON can spell a value UTF-8 cannot: an
-    unpaired surrogate (#346). `\\ud800` is how that value leaves too. Every other
-    body keeps the default's bytes, which clients have been promised."""
+    """A 422 echoes what was sent, and JSON can spell what a response can't: an unpaired
+    surrogate has no UTF-8 form, and Python reads `1e999` as an infinity JSON has no
+    spelling for (#346, #353). Such a finding leaves without its `input` and names the
+    field all the same, and what is left goes out as ASCII, since a surrogate can also
+    be a key in `loc`. Every other body keeps the default's bytes, which clients have
+    been promised."""
 
     def render(self, content: Any) -> bytes:
         try:
             return super().render(content)
-        except UnicodeEncodeError:
-            return json.dumps(content, separators=(",", ":")).encode("ascii")
+        except ValueError:  # `UnicodeEncodeError` is one, and so is `allow_nan=False`'s
+            findings = [
+                {key: value for key, value in finding.items() if key != "input"}
+                for finding in content["detail"]
+            ]
+            return json.dumps(
+                {**content, "detail": findings}, allow_nan=False, separators=(",", ":")
+            ).encode("ascii")
 
 
 async def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:

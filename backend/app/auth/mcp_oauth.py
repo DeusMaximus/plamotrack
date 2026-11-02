@@ -379,6 +379,7 @@ from app.exceptions import UnavailableError
 from app.services import audit
 from app.services import auth as auth_service
 from app.services.oidc import OidcLoginRefused, OidcProvider
+from app.services.text import has_utf8_form
 
 log = logging.getLogger("plamotrack.auth")
 
@@ -2184,6 +2185,13 @@ class PlamotrackOAuthProxy(OAuthProxy):
             # nowhere, so the collection's cap never meets it (#242 — under
             # FastMCP 3 the lookup wrote a row, and at the cap the refused
             # write was caught here and read as an unknown client).
+            #
+            # Anyone can host a document, and JSON can spell text with no UTF-8
+            # form, which reached the consent page and could not be encoded (#353).
+            # Its ids are identities, so nothing in it is edited: it is a client we
+            # don't have.
+            if client is not None and not has_utf8_form(client.model_dump()):
+                return None
             return client
         return BoundDCRClient(**client.model_dump(), allow_unregistered_redirect_uris=False)
 
