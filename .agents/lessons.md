@@ -1884,3 +1884,21 @@ orderings the code can meet:** each way in (Back, link, URL, reload); each async
 continuation still in flight (a held request, a sign-in's `onAuthed`); and each other
 tab. Try to stage the worst one, with a held promise in the page released by an
 observer. Only if that fails, say "equivalent", and name what was tried.
+
+## A phrase the next refusal quotes (#353)
+
+The expansion-budget tests asserted `"unpacks to more than" in detail`, and they were
+right for as long as only one refusal could say it. #353 widened the member read to
+catch every `Exception`, and a new mutant let the budget's own refusal fall into that
+catch. It survived: the damage refusal interpolates the exception it caught, so it
+quoted the budget's sentence, and the assertion passed on the wrong refusal.
+
+**A message built from a caught exception can say anything that exception says. Assert
+the code.** This is "Green for the wrong reason" again, and it was the mutation pass
+that found it, not the test's own red run.
+
+The same PR has a second, smaller lesson about briefs. Codex's second round asked
+"find the next one of that shape", and it did, three times, each real and each P3, under
+a NO-GO. A brief that asks for the next instance will always get one, so its verdict
+stops being evidence about readiness. When the question has become "should this merge",
+ask that, with severity by exposure, and name in the record that the brief was framed so.

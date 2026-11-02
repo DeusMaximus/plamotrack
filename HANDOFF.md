@@ -41,6 +41,33 @@ Template:
 
 ---
 
+## 2026-11-02 — Claude Code (Opus 5.5) — #346 + #352 MERGED as `1188a67` (PR #353); #354, #355 filed; the owner's LXC is on 0.6.0
+
+- **Done:**
+  - **[PR #353](https://github.com/DeusMaximus/plamotrack/pull/353)** squash-merged as **`1188a67`**, pinned to head `eb94002`. #346 and #352 are closed. Text a column or a response can't carry is a refusal, never a 500:
+    - `services/text.py` is the one predicate (NUL, unpaired surrogate). `schemas/base.py`'s `RequestModel` covers every request body; `parse_text` covers a CSV cell, so the preview now errors the row; `refuse_unstorable_text` covers filters and MCP's flat arguments (new code `request.text_unstorable`); `OAuthStateStore` reads a NUL key as absent. Sign-in's three models stay on `BaseModel`, so a NUL in a password stays a wrong answer.
+    - `has_utf8_form` judges JSON read and shown rather than stored, where it enters: a manifest (the warning, and the rows import) and a fetched CIMD document (an unknown client). `_is_usable_endpoint` does the same for OIDC discovery.
+    - `_EchoResponse`: a 422 that can't echo a surrogate or `1e999` leaves without `input`.
+    - `_ExpansionBudget.read` catches every `Exception` but `DomainError` and `MemoryError`, after three misses in its list (#341, #352, Zstandard).
+    - OIDC: an unstorable `sub` is refused by the claim validator, a bad label is skipped, and the setup token is spent after the commit.
+    - An unreadable required import cell reports one diagnostic, for every column type.
+    - `tests/test_unstorable_text.py` names every body, text query parameter and flat MCP argument, and fails on a new one. Mutants `352-*` and `346-*` (32) are in `mutation_test.py`. Rule 6 in `AGENTS.md` carries the rule.
+  - **Review:** Codex (gpt-6.1-sol, high) NO-GO twice, every finding P3, all reproduced and fixed. GLM 5.3 (Mistral-hosted) GO on a narrower brief, which I wrote and which said P3s alone aren't a NO-GO, so it is less independent than an open round. Greptile 5/5 at `df5ef1a`. All on the PR body's coverage record. The reviewers' findings came back to the session, not the thread.
+  - **Filed:** [#354](https://github.com/DeusMaximus/plamotrack/issues/354) (`create_order`'s flat arguments that fail `OrderCreate` answer a generic error naming no field) and [#355](https://github.com/DeusMaximus/plamotrack/issues/355) (external JSON nobody has driven with these values: token responses, JWKS, other CIMD fields).
+  - `.agents/lessons.md`: "A phrase the next refusal quotes (#353)". `.gitignore` ignores `.cursor/` (8e8b4c7, with the 29/10 entry below).
+- **Decisions (owner, 02/11):** merge on GLM's GO without a third Codex round. `.cursor/` is ignored.
+- **State:**
+  - **The owner's LXC is on v0.6.0-alpha** (owner, 02/11). Older entries saying 0.5.2 were behind.
+  - **Unreleased on `main`:** #333, #341/#343, #346/#352 (`.agents/next-release.md`). #351's docs drift is pending there too, as work to do in the next release cycle.
+  - Backend 3675 tests collected. The last full local run was at `beb544f` (3606 passed, 1 xfailed); CI's Backend and Frontend passed on `eb94002`, and its required checks gated the merge. Packaged stack beyond CI, Playwright and a local 3.12 run: not run for this.
+  - **Owed to plamotrack-ios, unmeasured:** its planner still reports two diagnostics for an unreadable required cell, its handling of a NUL hasn't been run, and it hasn't re-synced `api-error-codes.json` for `request.text_unstorable`. No behaviour scenario was added for NUL.
+  - `main` is clean. Reviewer worktrees and branches are removed; `fix/346-352-nul-and-archive-500s` is left on origin as usual.
+  - **Carried from 29/10, not reverified:** #344 (image pins, low priority, before or with the next release): five images including uv, Postgres in Compose, CI and release-candidate, bump mechanism undecided. testhost is in the tunnel configuration from the 0.6.0 gate; don't recreate its Keycloak container. Owner: allow `pkg-containers.githubusercontent.com` in cloud Network access, delete the Claude.ai Testing connector, complete #278's skill-zip check. Known gaps: #238, #324 (local e2e uses `--workers=1`), #320. plamotrack-ios can re-sync #342's scenarios once its #15 adds `update_order` and `delete_order`.
+- **Next:** the owner's pick.
+  - **#348** (order notes, a problem the owner actually hit; `RequestModel` and `parse_text` now cover a new text field), then #350 and #349, which have open product questions for the owner (does `get_summary` spend use paid or shelf price).
+  - **The next release:** #351, #344.
+  - **M6.7:** #279's edge probes, then #281, #282. **M7** waits on #28.
+
 ## 2026-10-29 — Codex (GPT-6) — documentation drift filed as #351 for the next release cycle
 
 - **Done:**
@@ -183,45 +210,3 @@ Template:
 
   Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
 - **Also next:** **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
-
-## 2026-10-07 — Claude Code (Opus 5.5) — #326 MERGED as `8862a79` (PR #337): Home's strip rows stack under the name; the pre-release plan is done
-
-- **Done:**
-  - **[PR #337](https://github.com/DeusMaximus/plamotrack/pull/337)** squash-merged as **`8862a79`**. #326 is closed.
-    - **Owner's call (07/10):** a strip row stacks under its name, the narrow Recently completed strip's shape, by need at every width.
-    - `KitStrip` (`pages/HomePage.tsx`): every row is a grid with the pencil in its own column, beside both lines. The name and the meta share the other column: one line where they fit (an ordinary row is as it was), the meta under the name where they don't. `stacked` is now only the decree under 26rem (`basis-full`); the `display: contents` grid is gone.
-    - Home is measured as a table is: one `TableRuler` over the page. The grade, scale, kit number and a mail card's date line go through `Measured`. A bench card's name is a heading with `break-words`.
-    - e2e in `pages.spec.ts` seeds the issue's 92-character value in every field. It covers 320–1440 px in the three projects, plus 32 and 40 px browser fonts on a 320 px phone. The existing phone Home test's row locator is now `../..`.
-    - Mutants: 8, all killed.
-  - **Review:**
-    - Codex and CodeRabbit: no findings.
-    - Greptile: one P2 (the bench name's `Measured` floor ran under its edit control at a 32 px font). Reproduced, then fixed in `2cf4710`.
-  - Design §13.7 has an amendment under #323's "Not in this change: Home"; `.agents/next-release.md` has an entry.
-- **Decisions (owner, 07/10):** the bots alone reviewed #337, with no briefed round. **Release prep starts now.**
-- **State:**
-  - **The pre-release plan (owner, 06/10) is complete:** #316, #331, #268 and #326 are merged.
-  - **Unreleased on `main`:** 17 ledger entries in `.agents/next-release.md`, from #294 through #326. Among them are a migration (#313) and a changed MCP tool (#289: `create_order` takes the shop's id).
-  - **CI Integration:** 26:36 on #337, with the cap at 40 since #336.
-  - **Known gaps, filed:**
-    - #333 (owner: after the release);
-    - #324 (local runs need `--workers=1`);
-    - #320.
-  - **Tooling:**
-    - `main` is clean; no worktrees, servers or e2e databases are left.
-    - Merged branches left on origin: `fix/326-home-strips-stack`, `fix/268-stepper-keeps-focus`, `fix/331-token-dates-subscribe`, `fix/316-errors-beside-their-controls`, and older ones.
-  - **Carried:**
-    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
-    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
-    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
-- **Next — the release**, likely **v0.6.0-alpha**:
-  - Work through `.agents/releases.md` and `.agents/next-release.md`.
-  - Owed:
-    - #315's paragraph for the docs site's `using/import-export.mdx`;
-    - #309's upgrade-notes line (drafted in the ledger);
-    - the owner's Gunpla skill refresh at the LXC upgrade, because of #289.
-  - After the release: #333.
-
-  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
-- **Also next:**
-  1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`.
-  2. Carried: #279's edge probes, then #281's packaging; #282's VPS path; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
