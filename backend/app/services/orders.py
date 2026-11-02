@@ -48,6 +48,7 @@ from app.services.names import (
     find_by_name,
     require_unique_name,
 )
+from app.services.text import refuse_unstorable_text
 from app.services.write_gate import acquire_write_gate
 
 logger = logging.getLogger(__name__)
@@ -303,6 +304,7 @@ async def get_or_create_retailer(session: AsyncSession, name: str) -> Retailer:
     one thing this function exists to prevent. MCP's create_order calls this
     before the gated `create_order`, so without the gate here that read happens
     outside it."""
+    refuse_unstorable_text("retailer", name)
     await acquire_write_gate(session)
     wanted = clean_name(name)
     # An id is never a name (#289). This is the one place a name *becomes* a row, and

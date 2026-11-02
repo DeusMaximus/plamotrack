@@ -11,6 +11,7 @@ upstream client through `upstream_handler`, its httpx2 twin
 
 from __future__ import annotations
 
+import json
 import time
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qs
@@ -56,6 +57,8 @@ class FakeIdp:
     GOOD_CODE = "good-code"
 
     def __init__(self) -> None:
+        #: Any discovery field, as a provider's JSON would state it (#353).
+        self.discovery_overrides: dict = {}
         self.key = RSAKey.generate_key(2048, parameters={"kid": "k1"})
         self.other_key = RSAKey.generate_key(2048, parameters={"kid": "k2"})
         self.issuer = ISSUER
@@ -129,20 +132,24 @@ class FakeIdp:
         if path == "/.well-known/openid-configuration":
             if self.discovery_status != 200:
                 return httpx.Response(self.discovery_status, text="nope")
+            document = {
+                "issuer": self.issuer,
+                "authorization_endpoint": f"{ISSUER}/authorize",
+                "token_endpoint": f"{ISSUER}/token",
+                "jwks_uri": f"{ISSUER}/jwks",
+                "code_challenge_methods_supported": ["S256"],
+                **(
+                    {"revocation_endpoint": f"{ISSUER}/revoke"}
+                    if self.advertises_revocation
+                    else {}
+                ),
+                **self.discovery_overrides,
+            }
+            # `json.dumps` and not httpx's `json=`, whose encoder can't spell a surrogate.
             return httpx.Response(
                 200,
-                json={
-                    "issuer": self.issuer,
-                    "authorization_endpoint": f"{ISSUER}/authorize",
-                    "token_endpoint": f"{ISSUER}/token",
-                    "jwks_uri": f"{ISSUER}/jwks",
-                    "code_challenge_methods_supported": ["S256"],
-                    **(
-                        {"revocation_endpoint": f"{ISSUER}/revoke"}
-                        if self.advertises_revocation
-                        else {}
-                    ),
-                },
+                content=json.dumps(document),
+                headers={"content-type": "application/json"},
             )
         if path == "/jwks":
             return httpx.Response(200, json=self.jwks())

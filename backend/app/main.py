@@ -1,6 +1,8 @@
 import asyncio
 import contextlib
+import json
 from contextlib import asynccontextmanager
+from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
@@ -177,12 +179,33 @@ async def unhandled_error_envelope(request: Request, exc: Exception) -> JSONResp
     )
 
 
+class _EchoResponse(JSONResponse):
+    """A 422 echoes what was sent, and JSON can spell what a response can't: an unpaired
+    surrogate has no UTF-8 form, and Python reads `1e999` as an infinity JSON has no
+    spelling for (#346, #353). Such a finding leaves without its `input` and names the
+    field all the same, and what is left goes out as ASCII, since a surrogate can also
+    be a key in `loc`. Every other body keeps the default's bytes, which clients have
+    been promised."""
+
+    def render(self, content: Any) -> bytes:
+        try:
+            return super().render(content)
+        except ValueError:  # `UnicodeEncodeError` is one, and so is `allow_nan=False`'s
+            findings = [
+                {key: value for key, value in finding.items() if key != "input"}
+                for finding in content["detail"]
+            ]
+            return json.dumps(
+                {**content, "detail": findings}, allow_nan=False, separators=(",", ":")
+            ).encode("ascii")
+
+
 async def request_validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
     """FastAPI's 422, in the envelope. `detail` stays the default list body —
     its list-vs-string shape against a service 422 is load-bearing for clients
     and tests — while `code`/`params` make it machine-readable (#25)."""
     findings = jsonable_encoder(exc.errors())
-    return JSONResponse(
+    return _EchoResponse(
         status_code=422,
         content={
             "detail": findings,

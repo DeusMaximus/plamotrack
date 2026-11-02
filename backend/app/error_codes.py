@@ -247,6 +247,9 @@ AUTH_OIDC_PROVIDER_UNAVAILABLE = "auth.oidc_provider_unavailable"
 # --- request validation (FastAPI's 422 list shape) -------------------------
 REQUEST_VALIDATION = "request.validation"
 
+# --- text a query could not carry: a filter holding a NUL (`services/text.py`) ------
+REQUEST_TEXT_UNSTORABLE = "request.text_unstorable"
+
 # --- parser-stage failures (the 400 the framework raises before any schema
 # --- or service runs: multipart with no boundary, an unreadable body) -------
 REQUEST_BODY_INVALID = "request.body_invalid"

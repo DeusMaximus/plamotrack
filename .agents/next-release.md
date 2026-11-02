@@ -68,3 +68,22 @@ Shape:
   archive already did; one that unpacks but can't be read is still only a warning.
 - **README:** nothing.
 - **Docs site:** nothing.
+
+## #346, #352 — a stray NUL or a damaged BZIP2/LZMA archive is refused with a reason (PR #353)
+- **Release note:** A value containing a NUL character, or half of a broken Unicode
+  pair, is now refused instead of causing an unexplained server error, from the web
+  app, the REST API, MCP tools and CSV imports. The refusal names the field, except
+  for a few `create_order` arguments over MCP (#354). An import preview no longer
+  approves a row that the import then fails on. A damaged archive is now refused the
+  same way whichever compression it uses, and a `manifest.json` holding such a value
+  is treated as unreadable: a warning, and the rows still import. A provider's sign-in
+  with an unusable identity is refused without using up the setup token, and an
+  unusable display name is skipped. A provider whose discovery document names an
+  unusable endpoint is reported as unavailable, a fetched MCP client document that
+  can't be displayed is treated as an unknown client, and a number too large for JSON
+  in a request is refused rather than causing a server error. Two details a script could notice: a NUL in a
+  settings value now answers `request.validation` rather than `settings.value_invalid`,
+  and a required import cell that can't be read reports one problem rather than also
+  saying it is missing.
+- **README:** nothing.
+- **Docs site:** nothing.

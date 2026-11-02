@@ -85,6 +85,7 @@ from app.models import MCP_OAUTH_STATE_TABLE, OidcLogin
 from app.models.enums import AuthMode
 from app.services import audit
 from app.services import auth as auth_service
+from app.services.text import is_storable_text
 from app.services.write_gate import acquire_write_gate
 
 log = logging.getLogger("plamotrack.auth")
@@ -168,6 +169,17 @@ def _numeric_date(value: object) -> bool:
     return isinstance(value, float) and math.isfinite(value)
 
 
+def _is_usable_endpoint(value: object) -> bool:
+    """A discovery document's endpoint: an http(s) URL `httpx` will parse, holding only
+    text that can leave in a response."""
+    if not isinstance(value, str) or not is_storable_text(value):
+        return False
+    try:
+        return httpx.URL(value).scheme in ("http", "https")
+    except httpx.InvalidURL:
+        return False
+
+
 def validate_id_token_claims(
     claims: dict,
     *,
@@ -185,9 +197,9 @@ def validate_id_token_claims(
     *contains* this client — is refused rather than matched:
 
     - `iss` is the configured issuer, as a string (step 2);
-    - `sub` is a non-empty string — nothing else can bind an owner, and there
-      is no fall-back to `email` (Keycloak 25+ keeps `sub` in a client scope;
-      without it there is nothing to bind to);
+    - `sub` is a non-empty string a column can hold — nothing else can bind an
+      owner, and there is no fall-back to `email` (Keycloak 25+ keeps `sub` in a
+      client scope; without it there is nothing to bind to);
     - `aud` names exactly this client: the string, or an array whose only
       member is it. An additional audience is one this client does not trust,
       whatever `azp` says, so it is refused (step 3);
@@ -217,6 +229,9 @@ def validate_id_token_claims(
     sub = claims.get("sub")
     if not isinstance(sub, str) or not sub:
         raise refused("sub", "is missing or not a string")
+    if not is_storable_text(sub):
+        # Identity, so never edited into something the column can hold (#346).
+        raise refused("sub", "holds a character a column cannot store")
     aud = claims.get("aud")
     audiences = [aud] if isinstance(aud, str) else aud
     if (
@@ -351,21 +366,32 @@ class OidcProvider:
                     "as its issuer; check the setting.",
                     code=error_codes.AUTH_OIDC_PROVIDER_UNAVAILABLE,
                 )
-            try:
-                revocation = document.get("revocation_endpoint")
-                metadata = ProviderMetadata(
-                    issuer=issuer,
-                    authorization_endpoint=str(document["authorization_endpoint"]),
-                    token_endpoint=str(document["token_endpoint"]),
-                    jwks_uri=str(document["jwks_uri"]),
-                    revocation_endpoint=str(revocation) if revocation else None,
-                )
-            except KeyError as exc:
-                raise UnavailableError(
-                    "The identity provider's discovery document is missing "
-                    f"{exc.args[0]}; the provider is not usable for login.",
-                    code=error_codes.AUTH_OIDC_PROVIDER_UNAVAILABLE,
-                ) from exc
+            # Each is believed once and then used: a token request, a redirect the browser
+            # follows, a value in a response. A document naming something unusable is a
+            # provider not usable for login, here, and not a 500 at a later step (#353).
+            for name in ("authorization_endpoint", "token_endpoint", "jwks_uri"):
+                if name not in document:
+                    raise UnavailableError(
+                        "The identity provider's discovery document is missing "
+                        f"{name}; the provider is not usable for login.",
+                        code=error_codes.AUTH_OIDC_PROVIDER_UNAVAILABLE,
+                    )
+                if not _is_usable_endpoint(document[name]):
+                    log.error("OIDC discovery document's %s is not a usable URL", name)
+                    raise UnavailableError(
+                        f"The identity provider's discovery document has an unusable {name}; "
+                        "the provider is not usable for login.",
+                        code=error_codes.AUTH_OIDC_PROVIDER_UNAVAILABLE,
+                    )
+            # Optional, and revocation is best effort: an unusable one says what none does.
+            revocation = document.get("revocation_endpoint")
+            metadata = ProviderMetadata(
+                issuer=issuer,
+                authorization_endpoint=document["authorization_endpoint"],
+                token_endpoint=document["token_endpoint"],
+                jwks_uri=document["jwks_uri"],
+                revocation_endpoint=revocation if _is_usable_endpoint(revocation) else None,
+            )
             self._metadata = metadata
             return metadata
 
@@ -681,7 +707,6 @@ async def complete_login(
         owner.display_name = display_name
         if owner.claimed_at is None:
             owner.claimed_at = now
-        setup_state.consume()
         raw, session_row = auth_service.new_session_row(now, auth_mode=AuthMode.OIDC)
         session.add(session_row)
         await session.flush()
@@ -694,6 +719,9 @@ async def complete_login(
             detail="via=oidc",
         )
         await session.commit()
+        # Spent by what committed. Consumed before it, a failure in between left the
+        # owner unclaimed with no token, and only a restart issues another (#353).
+        setup_state.consume()
         return raw
 
     if (owner.oidc_issuer, owner.oidc_subject) != (provider.issuer, subject):
@@ -727,7 +755,8 @@ async def complete_login(
 def _display_name(claims: dict) -> str | None:
     for key in ("email", "name", "preferred_username"):
         value = claims.get(key)
-        if isinstance(value, str) and value.strip():
+        # A label, and optional: one a column can't hold is passed over, unlike `sub`.
+        if isinstance(value, str) and value.strip() and is_storable_text(value):
             return value.strip()[:200]
     return None
 

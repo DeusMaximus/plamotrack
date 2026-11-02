@@ -10,13 +10,14 @@ from app.models.enums import (
     ShippingSpeed,
     WouldOrderAgain,
 )
+from app.schemas.base import RequestModel
 from app.schemas.kits import KitRead
 from app.schemas.numeric import NonNegativeInt4, PositiveInt4, Rating
 from app.services.currency import CURRENCY_CODE_PATTERN as _CURRENCY_PATTERN
 from app.services.order_stage import OrderStage, order_stage
 
 
-class RetailerCreate(BaseModel):
+class RetailerCreate(RequestModel):
     name: str = Field(min_length=1)
     url: str | None = None
     rating: Rating | None = None
@@ -26,7 +27,7 @@ class RetailerCreate(BaseModel):
     notes: str | None = None
 
 
-class RetailerUpdate(BaseModel):
+class RetailerUpdate(RequestModel):
     model_config = ConfigDict(extra="forbid")
 
     name: str | None = Field(default=None, min_length=1)
@@ -51,7 +52,7 @@ class RetailerRead(BaseModel):
     notes: str | None
 
 
-class OrderKitDetails(BaseModel):
+class OrderKitDetails(RequestModel):
     """Details for the kit rows a kit-type order line spawns."""
 
     name: str = Field(min_length=1)
@@ -61,7 +62,7 @@ class OrderKitDetails(BaseModel):
     status: KitStatus = KitStatus.ORDERED  # use pre_ordered for pre-orders
 
 
-class NewCatalogItem(BaseModel):
+class NewCatalogItem(RequestModel):
     """Inline creation for the select-or-create flow (§3.9). Which fields are
     required depends on the line's item_type; validated in the service."""
 
@@ -80,7 +81,7 @@ class NewCatalogItem(BaseModel):
     notes: str | None = None
 
 
-class OrderItemCreate(BaseModel):
+class OrderItemCreate(RequestModel):
     item_type: ItemType
     quantity: PositiveInt4
     unit_price_minor: NonNegativeInt4
@@ -139,7 +140,7 @@ class OrderItemCreate(BaseModel):
         return self
 
 
-class OrderCreate(BaseModel):
+class OrderCreate(RequestModel):
     retailer_id: uuid.UUID
     order_date: date
     order_number: str | None = None  # retailer's reference — informational only
@@ -214,7 +215,7 @@ class OrderItemUpsert(OrderItemCreate):
         return self
 
 
-class OrderUpdate(BaseModel):
+class OrderUpdate(RequestModel):
     model_config = ConfigDict(extra="forbid")
 
     retailer_id: uuid.UUID | None = None
@@ -238,7 +239,7 @@ class OrderUpdate(BaseModel):
     items: list[OrderItemUpsert] | None = Field(default=None, min_length=1)
 
 
-class OrderReceive(BaseModel):
+class OrderReceive(RequestModel):
     """Optional body for POST /orders/{id}/receive (#93). No body, an empty
     object and an explicit null all mean the same thing: the order arrived now."""
 
@@ -247,7 +248,7 @@ class OrderReceive(BaseModel):
     received_at: AwareDatetime | None = None
 
 
-class OrderShip(BaseModel):
+class OrderShip(RequestModel):
     """Optional body for POST /orders/{id}/ship (#95), OrderReceive's mirror:
     no body, an empty object and an explicit null all mean "it shipped now"."""
 

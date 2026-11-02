@@ -28,7 +28,6 @@ import io
 import json
 import uuid
 import zipfile
-import zlib
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -90,6 +89,7 @@ from app.services.portability.spec import (
     parse_currency,
     render,
 )
+from app.services.text import has_utf8_form
 from app.services.write_gate import acquire_write_gate
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -290,28 +290,21 @@ class _ExpansionBudget:
                             params={"limit_mb": self.limit // 1024 // 1024},
                         )
                     chunks.append(chunk)
-        except DomainError:
-            # The budget above raises through here. Re-raised explicitly so it stays
-            # a budget refusal no matter what the tuple below grows to hold.
+        except (DomainError, MemoryError):
+            # The budget above raises through here, and stays a budget refusal. Running
+            # out of memory says something about the server, not the file.
             raise
-        except (
-            zipfile.BadZipFile,
-            EOFError,
-            zlib.error,
-            RuntimeError,
-            NotImplementedError,
-            ValueError,
-        ) as exc:
-            # Everything `zipfile` throws for a member it cannot hand back. Damage —
-            # a bad CRC, a payload that ends early — is invisible to `ZipFile()`
-            # construction, which only reads the central directory. `ValueError` is
-            # damage `open()` meets before any payload (#341): a header offset that
-            # resolves before the start of the file ("negative seek value"), and a
-            # per-file name flagged UTF-8 that isn't (`UnicodeDecodeError`). The other
-            # two are not damage but are just as much the uploader's business:
-            # `RuntimeError` for an encrypted member, `NotImplementedError` for a
-            # compression method this build has no decompressor for. All of them are
-            # properties of a file someone uploaded, so under rule 6 none is a 500.
+        except Exception as exc:
+            # Everything but those two, on purpose. All this reads is an in-memory
+            # buffer, so whatever is raised here is about the file someone uploaded, and
+            # under rule 6 none of it is a 500. Damage (a bad CRC, a payload that ends
+            # early) is invisible to `ZipFile()`, which only reads the central directory,
+            # and each decompressor reports it in its own words: `zlib.error`, a bare
+            # `OSError` from `bz2`, `lzma.LZMAError`, and on Python 3.14
+            # `compression.zstd.ZstdError`. So do an encrypted member (`RuntimeError`) and
+            # a method this build can't read (`NotImplementedError`). A list of them was
+            # missed three times (#341, #352, Zstandard on #353), and a runtime can add a
+            # method a list has never heard of.
             #
             # The manifest goes through here too, so a manifest that cannot be
             # unpacked refuses the import like any other member (owner's call on
@@ -575,9 +568,15 @@ def _read_zip(content: bytes, reference_currency: str) -> ParsedUpload:
                 )
             )
         elif manifest_names:
+            content = budget.read(archive, manifest_names[0])
             try:
-                data = json.loads(budget.read(archive, manifest_names[0]))
-            except (json.JSONDecodeError, ValueError) as exc:
+                data = json.loads(content)
+                # Valid JSON can spell text with no UTF-8 form (`"\\ud800"`). It would go
+                # into the plan and the diagnostics, and only fail as the response left:
+                # after the commit, on an apply (#353).
+                if not has_utf8_form(data):
+                    raise ValueError("it holds text with no UTF-8 form")
+            except (json.JSONDecodeError, ValueError, RecursionError) as exc:
                 warnings.append(
                     Diagnostic(
                         code=error_codes.IMPORT_MANIFEST_UNREADABLE,
@@ -1008,6 +1007,7 @@ class _Planner:
                     self.warnings.append(diagnostic)
 
         lone_grouped: set[str] = set()
+        unreadable: set[str] = set()
         for column in spec.columns:
             if column.name not in raw:
                 continue
@@ -1035,8 +1035,12 @@ class _Planner:
                     )
                 )
                 values[column.name] = None
+                unreadable.add(column.name)
 
         for column in spec.columns:
+            # A cell that could not be read has had its say: it is not also empty.
+            if column.name in unreadable:
+                continue
             if column.required and column.name in present and values.get(column.name) is None:
                 errors.append(
                     Diagnostic(

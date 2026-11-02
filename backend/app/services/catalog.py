@@ -35,6 +35,7 @@ from app.services.names import (
     require_unique_name,
 )
 from app.services.numeric import require_int4
+from app.services.text import refuse_unstorable_text
 from app.services.write_gate import acquire_write_gate
 
 logger = logging.getLogger(__name__)
@@ -141,6 +142,7 @@ async def search(
 ) -> list[CatalogSearchResult]:
     """Cross-table typeahead search — powers both the UI select-or-create flow and
     the MCP search_catalog tool, so agents hit the same de-dup path as humans (§7)."""
+    refuse_unstorable_text("query", query)
     results: list[CatalogSearchResult] = []
     for item_type, model in CATALOG_MODELS.items():
         rows = await session.scalars(
@@ -249,6 +251,7 @@ async def create_display_item(session: AsyncSession, data: DisplayItemCreate) ->
 async def list_catalog(
     session: AsyncSession, model: type[CatalogRow], category: str | None = None
 ) -> list[CatalogRow]:
+    refuse_unstorable_text("category", category)
     stmt = select(model).order_by(model.name)
     if category is not None:
         if "category" not in model.__table__.columns:
@@ -452,6 +455,9 @@ async def adjust_stock(
     session: AsyncSession, catalog_id: uuid.UUID, delta: int, reason: str | None = None
 ) -> StockAdjustmentResult:
     """Resolve a catalog id across the fungible tables and adjust its stock."""
+    # Stored nowhere, but MCP's flat argument reaches this without a schema, and REST
+    # refuses it: the two surfaces answer alike (rule 1).
+    refuse_unstorable_text("reason", reason)
     # Both callers now bound `delta` at their own edge — `Int4` on the MCP tool
     # argument and on `StockAdjustmentRequest` (#55) — but the check stays here
     # because the service is where they meet (rule 1), and a bound enforced only at

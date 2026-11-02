@@ -297,7 +297,8 @@
       "quantity_too_small": "Quantity is {{quantity}} — it has to be at least 1. To record nothing, leave the line out."
     },
     "request": {
-      "body_invalid": "The request couldn't be read — if this was a file upload, try it again."
+      "body_invalid": "The request couldn't be read — if this was a file upload, try it again.",
+      "text_unstorable": "{{field}} contains a character plamotrack can't store. Remove it and try again."
     },
     "retailer": {
       "has_orders_one": "'{{name}}' has {{countDisplay}} order — order history is kept, so the retailer can't be deleted.",

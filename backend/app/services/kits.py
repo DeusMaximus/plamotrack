@@ -11,6 +11,7 @@ from app.exceptions import ConflictError, InvalidInputError, NotFoundError
 from app.models import Kit, KitStatus
 from app.schemas.kits import KitCreate, KitUpdate
 from app.services.names import WHITESPACE
+from app.services.text import refuse_unstorable_text
 from app.services.write_gate import acquire_write_gate
 
 # Derived default scale per grade, overridable per kit (§3.1). SD kits are non-scale.
@@ -154,6 +155,8 @@ async def list_kits(
     stmt = select(Kit).order_by(*_kit_order(sort))
     if status is not None:
         stmt = stmt.where(Kit.status == status)
+    refuse_unstorable_text("grade", grade)
+    refuse_unstorable_text("series", series)
     if grade is not None:
         # Case-insensitive equality, not ILIKE — `M_` is a grade filter, not a
         # pattern that also matches MG (#49). Both sides folded by Postgres, as in

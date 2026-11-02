@@ -6643,10 +6643,247 @@ CASES += [
     ),
 ]
 
+# --- #352/#346: text and archives a decoder or a database refuses (rule 6). ----------
+TEXT = ROOT / "app/services/text.py"
+BASE_SCHEMA = ROOT / "app/schemas/base.py"
+SPEC_FILE = ROOT / "app/services/portability/spec.py"
+KITS_SERVICE = ROOT / "app/services/kits.py"
+CATALOG_SERVICE = ROOT / "app/services/catalog.py"
+ORDERS_SERVICE = ROOT / "app/services/orders.py"
+OAUTH_STATE = ROOT / "app/auth/mcp_oauth_state.py"
+MAIN_APP = ROOT / "app/main.py"
+CASES += [
+    (
+        "352-1. the member read catches a list again",
+        IMP,
+        "        except Exception as exc:\n            # Everything but those two, on purpose.",
+        "        except (zipfile.BadZipFile, EOFError, RuntimeError, NotImplementedError, ValueError) as exc:\n            # Everything but those two, on purpose.",
+        "whatever_a_decompressor_raises",
+    ),
+    (
+        "352-2. running out of memory reads as damage",
+        IMP,
+        "        except (DomainError, MemoryError):",
+        "        except DomainError:",
+        "running_out_of_memory",
+    ),
+    (
+        "352-3. a budget refusal reads as damage",
+        IMP,
+        "        except (DomainError, MemoryError):",
+        "        except MemoryError:",
+        "expanded_budget_is_enforced or budget_is_cumulative",
+    ),
+    (
+        "346-1. a NUL is storable",
+        TEXT,
+        '_UNSTORABLE = re.compile("[\\x00\\ud800-\\udfff]")',
+        '_UNSTORABLE = re.compile("[\\ud800-\\udfff]")',
+        "what_a_column_cannot_hold or a_create_refuses_it",
+    ),
+    (
+        "346-2. an unpaired surrogate is storable",
+        TEXT,
+        '_UNSTORABLE = re.compile("[\\x00\\ud800-\\udfff]")',
+        '_UNSTORABLE = re.compile("[\\x00]")',
+        "what_a_column_cannot_hold or a_create_refuses_it",
+    ),
+    (
+        "346-3. too much is unstorable: other control characters",
+        TEXT,
+        '_UNSTORABLE = re.compile("[\\x00\\ud800-\\udfff]")',
+        '_UNSTORABLE = re.compile("[\\x00-\\x1f\\ud800-\\udfff]")',
+        "what_it_can or ordinary_text",
+    ),
+    (
+        "346-4. the request base checks nothing",
+        BASE_SCHEMA,
+        "    if isinstance(value, str):\n        require_storable_text(value)",
+        "    if isinstance(value, str):\n        pass",
+        "a_create_refuses_it or an_update_refuses_it",
+    ),
+    (
+        "346-5. a stranger model holds a request body",
+        ROOT / "app/schemas/kits.py",
+        "class KitCreate(RequestModel):",
+        "class KitCreate(BaseModel):",
+        "every_request_body_comes_from_the_base",
+    ),
+    (
+        "346-6. the importer's text cell takes anything",
+        SPEC_FILE,
+        "    return require_storable_text(value) or None",
+        "    return value or None",
+        "a_preview_refuses_the_row or every_text_column",
+    ),
+    (
+        "346-7. the kits filter on grade reaches the query",
+        KITS_SERVICE,
+        '    refuse_unstorable_text("grade", grade)\n',
+        "",
+        "a_filter_refuses_it",
+    ),
+    (
+        "346-8. the kits filter on series reaches the query",
+        KITS_SERVICE,
+        '    refuse_unstorable_text("series", series)\n',
+        "",
+        "a_filter_refuses_it",
+    ),
+    (
+        "346-9. the catalog search reaches the query",
+        CATALOG_SERVICE,
+        '    refuse_unstorable_text("query", query)\n',
+        "",
+        "a_filter_refuses_it",
+    ),
+    (
+        "346-10. the category filter reaches the query",
+        CATALOG_SERVICE,
+        '    refuse_unstorable_text("category", category)\n',
+        "",
+        "a_filter_refuses_it",
+    ),
+    (
+        "346-11. MCP's stock reason is taken as written",
+        CATALOG_SERVICE,
+        '    refuse_unstorable_text("reason", reason)\n',
+        "",
+        "an_mcp_argument_is_refused",
+    ),
+    (
+        "346-12. MCP's shop name reaches the lookup",
+        ORDERS_SERVICE,
+        '    refuse_unstorable_text("retailer", name)\n',
+        "",
+        "create_order_s_flat_arguments",
+    ),
+    (
+        "346-13. a client's key reaches the state store's read",
+        OAUTH_STATE,
+        "        if not is_storable_text(key):\n            return None\n",
+        "",
+        "oauth_lookups or nul_code",
+    ),
+    (
+        "346-14. a 422 cannot echo a surrogate",
+        MAIN_APP,
+        "    return _EchoResponse(\n        status_code=422,",
+        "    return JSONResponse(\n        status_code=422,",
+        "can_echo_a_surrogate or credential_with_no_utf8_form",
+    ),
+    (
+        "346-15. every 422 leaves as ASCII",
+        MAIN_APP,
+        "            return super().render(content)\n",
+        '            return json.dumps(content, separators=(",", ":")).encode("ascii")\n',
+        "ordinary_422_keeps_the_default_bytes",
+    ),
+    (
+        "346-17. a manifest's surrogate reaches the response",
+        IMP,
+        "                if not has_utf8_form(data):\n",
+        "                if False:\n",
+        "manifest_string_with_no_utf8_form",
+    ),
+    (
+        "346-18. a manifest nested past the parser escapes",
+        IMP,
+        "except (json.JSONDecodeError, ValueError, RecursionError) as exc:",
+        "except (json.JSONDecodeError, ValueError) as exc:",
+        "nested_past_the_parser",
+    ),
+    (
+        "346-19. a provider's subject reaches the column",
+        ROOT / "app/services/oidc.py",
+        "    if not is_storable_text(sub):\n",
+        "    if False:\n",
+        "unstorable_subject or claim_contract",
+    ),
+    (
+        "346-20. a provider's label reaches the column",
+        ROOT / "app/services/oidc.py",
+        "value.strip() and is_storable_text(value):",
+        "value.strip():",
+        "unstorable_label or label_with_no_utf8_form",
+    ),
+    (
+        "346-21. the setup token is spent before the commit",
+        ROOT / "app/services/oidc.py",
+        "        if owner.claimed_at is None:\n            owner.claimed_at = now\n        raw, session_row",
+        "        if owner.claimed_at is None:\n            owner.claimed_at = now\n        setup_state.consume()\n        raw, session_row",
+        "claim_that_rolls_back",
+    ),
+    (
+        "346-22. the setup token is never spent",
+        ROOT / "app/services/oidc.py",
+        "        # owner unclaimed with no token, and only a restart issues another (#353).\n        setup_state.consume()\n",
+        "        # owner unclaimed with no token, and only a restart issues another (#353).\n",
+        "unstorable_label_is_passed_over",
+    ),
+    (
+        "346-23. a finding leaves with the value it can't echo",
+        MAIN_APP,
+        '                {key: value for key, value in finding.items() if key != "input"}\n',
+        "                finding\n",
+        "whatever_it_cannot_echo",
+    ),
+    (
+        "346-24. a 422 that can't echo only knows about surrogates",
+        MAIN_APP,
+        "        except ValueError:  # `UnicodeEncodeError` is one",
+        "        except UnicodeEncodeError:  # `UnicodeEncodeError` is one",
+        "whatever_it_cannot_echo",
+    ),
+    (
+        "346-25. a required discovery endpoint is believed",
+        ROOT / "app/services/oidc.py",
+        "                if not _is_usable_endpoint(document[name]):\n",
+        "                if False:\n",
+        "discovery_endpoint",
+    ),
+    (
+        "346-26. an unusable revocation endpoint is believed",
+        ROOT / "app/services/oidc.py",
+        "revocation_endpoint=revocation if _is_usable_endpoint(revocation) else None,",
+        "revocation_endpoint=revocation,",
+        "revocation_endpoint",
+    ),
+    (
+        "346-27. a usable revocation endpoint is dropped",
+        ROOT / "app/services/oidc.py",
+        "revocation_endpoint=revocation if _is_usable_endpoint(revocation) else None,",
+        "revocation_endpoint=None,",
+        "usable_revocation_endpoint",
+    ),
+    (
+        "346-28. any scheme is an endpoint",
+        ROOT / "app/services/oidc.py",
+        '        return httpx.URL(value).scheme in ("http", "https")\n',
+        "        httpx.URL(value)\n        return True\n",
+        "discovery_endpoint",
+    ),
+    (
+        "346-29. a client document's surrogate reaches consent",
+        ROOT / "app/auth/mcp_oauth.py",
+        "            if client is not None and not has_utf8_form(client.model_dump()):\n",
+        "            if False:\n",
+        "fetched_client_document_with_no_utf8_form",
+    ),
+    (
+        "346-16. an unreadable required cell also says it is missing",
+        IMP,
+        "            if column.name in unreadable:\n                continue\n",
+        "",
+        "says_so_once",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
     "tests/test_portability.py",
+    "tests/test_unstorable_text.py",
     # The fold-in of the #109/#111/#113/#115 queues widened the case set to the
     # suites those branches wrote; each file below is named by at least one
     # case's `-k` expression, and the exit-5 NONE rule is what notices if one of

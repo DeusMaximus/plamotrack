@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+from typing import TYPE_CHECKING
 
 import asyncpg
 from cryptography.fernet import Fernet
@@ -25,6 +26,10 @@ from sqlalchemy.engine import make_url
 
 from app.config import Settings
 from app.models import MCP_OAUTH_STATE_TABLE
+from app.services.text import is_storable_text
+
+if TYPE_CHECKING:
+    from key_value.aio._utils.managed_entry import ManagedEntry
 
 # --- the collections ----------------------------------------------------------------------
 
@@ -108,6 +113,16 @@ class OAuthStateStore(PostgreSQLStore):
     async def _create_pool(self) -> asyncpg.Pool:
         assert self._url is not None
         return await asyncpg.create_pool(self._url, min_size=1, max_size=STATE_STORE_POOL_SIZE)
+
+    # A client names the keys it asks about (`client_id`, a code, a transaction), and
+    # a NUL in one was a 500 from Postgres on anonymous routes (#346). No row can have
+    # such a key, so the lookup's honest answer is the protocol's own "no such thing".
+    # Nothing else needs the guard: the proxy mints every key it stores under, and it
+    # deletes only what a lookup has just found.
+    async def _get_managed_entry(self, *, key: str, collection: str) -> ManagedEntry | None:
+        if not is_storable_text(key):
+            return None
+        return await super()._get_managed_entry(key=key, collection=collection)
 
     async def count_live(self, collection: str) -> int:
         """Rows of `collection` that have not expired."""
