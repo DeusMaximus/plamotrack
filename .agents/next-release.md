@@ -78,7 +78,10 @@ Shape:
   same way whichever compression it uses, and a `manifest.json` holding such a value
   is treated as unreadable: a warning, and the rows still import. A provider's sign-in
   with an unusable identity is refused without using up the setup token, and an
-  unusable display name is skipped. Two details a script could notice: a NUL in a
+  unusable display name is skipped. A provider whose discovery document names an
+  unusable endpoint is reported as unavailable, a fetched MCP client document that
+  can't be displayed is treated as an unknown client, and a number too large for JSON
+  in a request is refused rather than causing a server error. Two details a script could notice: a NUL in a
   settings value now answers `request.validation` rather than `settings.value_invalid`,
   and a required import cell that can't be read reports one problem rather than also
   saying it is missing.

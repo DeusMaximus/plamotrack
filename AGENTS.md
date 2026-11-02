@@ -409,6 +409,9 @@ Schema changes: edit models → `uv run alembic revision --autogenerate -m "..."
    reaches a query as an argument owes `refuse_unstorable_text` in its service.
    `tests/test_unstorable_text.py` names every body, query parameter and flat MCP
    argument, and fails on a new one until it has an answer.
+   JSON from outside that is read and shown rather than stored (a manifest, a fetched
+   client document) owes `has_utf8_form` where it enters: nothing fails until the
+   response is encoded, long after the value was believed (#353).
 7. **Stock mutations** use row locks (`with_for_update`) — three concurrent writer
    types exist by design (UI, REST, MCP agents).
 7.1. **Every state-decided mutating service takes the write gate first** —
