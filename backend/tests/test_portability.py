@@ -2263,7 +2263,7 @@ async def test_the_expanded_budget_is_enforced_at_its_boundary(
         assert actions(resp.json(), "retailers") == ["create"]
     else:
         assert resp.status_code == 422, resp.text
-        assert "unpacks to more than" in resp.json()["detail"]
+        assert resp.json()["code"] == "import.archive_too_large", resp.text
 
 
 async def test_the_budget_is_cumulative_across_members(client, monkeypatch):
@@ -2282,7 +2282,7 @@ async def test_the_budget_is_cumulative_across_members(client, monkeypatch):
         data={"mode": "merge"},
     )
     assert resp.status_code == 422, resp.text
-    assert "unpacks to more than" in resp.json()["detail"]
+    assert resp.json()["code"] == "import.archive_too_large", resp.text
 
 
 async def test_a_compressible_archive_cannot_expand_past_the_real_budget(client):
@@ -2308,7 +2308,7 @@ async def test_a_compressible_archive_cannot_expand_past_the_real_budget(client)
         data={"mode": "merge"},
     )
     assert resp.status_code == 422, resp.text
-    assert "unpacks to more than" in resp.json()["detail"]
+    assert resp.json()["code"] == "import.archive_too_large", resp.text
 
 
 # --- reconciliation is over the rows actually consumed (external review of #75) ---
