@@ -41,6 +41,44 @@ Template:
 
 ---
 
+## 2026-10-29 — Codex (GPT-6) — documentation drift filed as #351 for the next release cycle
+
+- **Done:**
+  - Created [#351](https://github.com/DeusMaximus/plamotrack/issues/351), labelled
+    `documentation`, at the owner's request. Ten checklist items cover token
+    permissions and OAuth wording, phone import, archive compatibility, source
+    setup, Node requirements, implemented auth still marked planned, release
+    status, the retired Kanban dependency, and the generic frontend README.
+  - Findings link to `9908d5f`; the published baseline checked was v0.6.0-alpha.
+    Configuration-only Compose check reproduced the missing-password failure;
+    a compatibility-function probe confirmed export-format versus app-version
+    behaviour. No service was started or collection data changed.
+  - Added #351 as explicitly pending work in `.agents/next-release.md`.
+    Documentation corrections are not implemented by this bookkeeping change.
+  - Rotated the oldest hand-off entry into `.agents/handoff/2026-10.md` verbatim.
+- **Decisions (owner):** include the smaller documentation items and complete the
+  cleanup in the next release cycle. No existing milestone names that release;
+  the issue and release checklist carry the scheduling intent.
+- **State:**
+  - Issue #351 is published. Local ledger and hand-off changes are uncommitted
+    on `main`; no commit or push was requested.
+  - Unreleased implementation remains #333 and #341/#343; #342 was tests only.
+    The release ledger retains those entries separately from the pending task.
+  - Carried from 18/10, not reverified here: #346 (NUL text reaches Postgres)
+    and #344 (dependency/image pins, low priority before or with next release).
+    #344 needs five images including uv, and the Postgres pin in Compose, CI,
+    and release-candidate; the bump mechanism remains undecided.
+  - Carried operational notes: owner's LXC on 0.5.2; refresh the Gunpla skill at
+    upgrade (#289). testhost remains in the tunnel configuration from the 0.6.0
+    gate; do not recreate its Keycloak container. Owner follow-ups: allow
+    `pkg-containers.githubusercontent.com` in cloud Network access, delete the
+    Claude.ai Testing connector, and complete #278's skill-zip check.
+  - Known gaps: #238, #324 (local e2e uses `--workers=1`), #320.
+- **Next:** implement #351 in the next release cycle, with the docs-site claim
+  check it lists. Other sequencing remains #279's edge probes, then #281's
+  packaging and #282's VPS path; M7 waits on #28. plamotrack-ios can re-sync
+  #342's scenarios once its #15 adds `update_order` and `delete_order`.
+
 ## 2026-10-18 — Claude Code (Opus 5.5) — #342 MERGED as `e536064` (PR #345); #341 + #343 MERGED as `8a8c31c` (PR #347); #346 filed; #344 answered
 
 - **Done:**
@@ -182,52 +220,6 @@ Template:
     - #309's upgrade-notes line (drafted in the ledger);
     - the owner's Gunpla skill refresh at the LXC upgrade, because of #289.
   - After the release: #333.
-
-  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
-- **Also next:**
-  1. **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`.
-  2. Carried: #279's edge probes, then #281's packaging; #282's VPS path; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
-
-## 2026-10-07 — Claude Code (Opus 5.5) — #268 MERGED as `fa68abc` (PR #336): a pressed control keeps the keyboard, or hands it on; CI Integration cap 25 → 40 min
-
-- **Done:**
-  - **[PR #336](https://github.com/DeusMaximus/plamotrack/pull/336)** squash-merged as **`fa68abc`**, pinned to head `b14aa8a` after all three checks. #268 is closed.
-    - **Owner's call (07/10):** fix the class (a control disabling itself under the keyboard), not only the stepper.
-    - **A control waiting on its own request keeps the keyboard.** `Button`'s new `pending` prop sets `aria-disabled` and refuses a press, form submission included (#55). It covers the steppers (both shapes), Export CSV, both Settings Saves, Create token, Revoke, and `AuthGate`'s four buttons.
-    - **A control that can't act any more** (disabled, or removed) hands the keyboard to the stand-in it names, through one `MutationObserver` (`stranded`) in `useFocusAcrossShells`:
-      - − at zero → +
-      - a saved Save → the field before it (**owner's call, 07/10**)
-      - a revoked token's Revoke → the next token's, then the previous, then the name field
-      - Create → Copy; Done → the name field; Enter in the name field → Copy
-    - The observer re-reads the focused control's keys on every mutation. It answers a loss once; a removed control nothing could answer is forgotten two frames later.
-    - `focusByKey` skips a disabled carrier. WebKit leaves `activeElement` on a just-disabled control, and in the first version + was never reached.
-    - Not changed: Data management's import (it has its own handling) and dialogs (`Modal`).
-  - **CI:** Integration's `timeout-minutes` went from 25 to 40 (**owner's call**). The last two runs took 22:57 and 26:25.
-  - **Docs:** design §13.7 has a bullet ("A control that changes its own state…"); `AGENTS.md`'s focus line is updated.
-  - **Tests:**
-    - `e2e/keyboard-place.spec.ts` (new) runs in app, phone and tablet: 9 tests.
-    - `settings.spec.ts` has the Save test; `auth.spec.ts` checks that a refused password keeps the keyboard on Sign in.
-    - Mutants: 22 killed (17 in the first pass, 5 in the review round). 3 survived (K3, K5, R6), and the code they mutated was removed. The tables are in the PR body.
-  - **Review:**
-    - Round 1 (Codex and Greptile): five P2s, all fixed in `b14aa8a`.
-    - Round 2: a focused `@codex review`, which came back clean.
-- **State:**
-  - **Unreleased on `main`:** #294, #289, #247, #302, #310, #313 (a migration), #314, #319, #322, #328, #330, #332, #334, #335, and now **#336**. See `.agents/next-release.md`.
-  - **Runs at `b14aa8a`:** focus suites in three projects, Chromium: 187 passed, 0 failed. keyboard-place under WebKit: 26 passed, 1 skipped. Earlier, at the pre-review head, the full Chromium suite: 244 passed, 0 failed.
-  - **Known gaps, filed:** #333, #326, #324 (local runs need `--workers=1`), #320.
-  - **Tooling:**
-    - `main` is clean; no worktrees, servers or e2e databases are left.
-    - Merged branches left on origin: `fix/268-stepper-keeps-focus`, `fix/331-token-dates-subscribe`, `fix/316-errors-beside-their-controls`, and the ones listed in older entries.
-  - **Carried:**
-    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
-    - **testhost** is in the gate's state. Don't recreate its Keycloak container: a new one changes `sub`.
-    - #278 is open for the owner's skill-zip check. The LXC is a v0.5.2 release install.
-- **Next — the pre-release plan (owner, 06/10), continued:**
-  1. **#326** (Home scrolls sideways): the owner's call on a strip's grade and scale is still open (wrap, truncate, or stack under the name; recommended: stack). Expect a briefed Codex round.
-
-  **Then the release**, likely **v0.6.0-alpha**: a migration (#313), a changed MCP tool (#289: `create_order` takes the shop's id) and two new phone features. Work through `.agents/releases.md` and `.agents/next-release.md`.
-  - The owner's Gunpla skill needs a refresh at the LXC upgrade, because of #289. #309's upgrade-notes line is drafted in the ledger.
-  - #333 can wait for after the release.
 
   Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
 - **Also next:**

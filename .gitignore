@@ -26,3 +26,6 @@ playwright-report/
 
 # Claude Code personal settings — permission rules are per-machine, not shared
 .claude/settings.local.json
+
+# Cursor personal settings
+.cursor/

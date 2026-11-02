@@ -33,6 +33,22 @@ Shape:
 
 ---
 
+## #351 — reconcile documentation drift (pending next-release task)
+- [ ] Complete [#351](https://github.com/DeusMaximus/plamotrack/issues/351) during
+  the next release cycle, including the smaller Kanban and frontend README items.
+  The issue records ten findings, source links pinned to `9908d5f`, verification,
+  and completion criteria. This is pending work, not a shipped correction.
+- **Release note:** none required for this documentation-only task.
+- **README:** correct token permissions and MCP OAuth wording, phone import and
+  starter-sheet support, source-development `.env` setup, and the Node version floor.
+- **Docs site:** check the corresponding token, phone-import, archive-compatibility
+  and release-installation claims; correct confirmed duplicates. The audit covered
+  this repository, not a full audit of the separate docs site.
+- **Other docs:** correct the archive-version explanation in `docs/import-export.md`,
+  implemented-authentication and Kanban claims in `docs/design.md`, release-status
+  and source-build wording in `AGENTS.md` and `docs/design.md`, and replace the
+  generic `frontend/README.md` with a short project-specific orientation.
+
 ## #333 — a sign-out that fails says so, and the page keeps working (PR #340)
 - **Release note:** If signing out fails (the server errors or the connection
   drops), plamotrack now says so beside the Sign out control, and you stay signed in
