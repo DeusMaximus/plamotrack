@@ -659,8 +659,10 @@ function OrderForm({
   // but a following ship/receive call fails, the resubmit must not replay the
   // call that succeeded — the server 409s the repeat, which would turn a fixable
   // date typo into a dead end. Refs, not state: nothing renders from them, and
-  // the form unmounts on close so a fresh open starts clean.
-  const applied = useRef({ shipped: false, received: false });
+  // the form unmounts on close so a fresh open starts clean. `note` is the other
+  // way round: once a PATCH has stored this dialog's note, the opening value is no
+  // longer what is stored, so a retry owes the note even when the field isn't dirty.
+  const applied = useRef({ shipped: false, received: false, note: false });
   const { data: retailers } = useQuery({ queryKey: ["retailers"], queryFn: api.listRetailers });
 
   // Snapshotted once per open, deliberately: react-hook-form owns these values
@@ -743,7 +745,9 @@ function OrderForm({
       // Omitted from an edit that never touched it: the field holds a copy from when
       // the dialog opened, and an agent may have written the note since. Null is a
       // clear, so restating the copy would erase what it wrote.
-      ...(!order || dirtyFields.notes ? { notes: values.notes || null } : {}),
+      ...(!order || dirtyFields.notes || applied.current.note
+        ? { notes: values.notes || null }
+        : {}),
       // Omitted entirely when the edit never touched a line. `items: undefined`
       // means "leave the lines alone" to the API, and sending them anyway is how a
       // tracking-number change reached the kits at all (#65) — every save re-ran
@@ -784,6 +788,7 @@ function OrderForm({
     try {
       if (order) {
         await api.updateOrder(order.id, payload);
+        if ("notes" in payload) applied.current.note = true;
         // Ship before receive: an order may take both in one save, and shipping
         // is the earlier fact — receive advances the just-shipped kits onward.
         // Today = "it happened now": no body, so the server stamps the actual

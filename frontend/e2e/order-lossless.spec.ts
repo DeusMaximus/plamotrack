@@ -9,7 +9,7 @@
  * suite: the API already stores all of this correctly, and did throughout. Each
  * case below is one the browser used to destroy on the way past.
  */
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 
 import { apiContext } from "./api";
 
@@ -193,6 +193,114 @@ for (const [before, written] of [
     expect(stored.notes).toBe(written);
   });
 }
+
+// A save is a PATCH and then the ship or receive it carries, so it can fail halfway:
+// the note is stored, the dialog stays open, and the person gets another go.
+test.describe("a save that fails after its note was stored", () => {
+  type Transition = "ship" | "receive";
+  const DATE_LABEL = { ship: "Shipped on", receive: "Received on" } as const;
+  const STAMP = { ship: "shipped_at", receive: "received_at" } as const;
+  let seeded = 0;
+
+  /** An order of its own: a transition can't be undone for the next case. */
+  async function openFailingSave(page: Page, transition: Transition, notes: string | null) {
+    const number = `RETRY-${suffix}-${++seeded}`;
+    const api = await apiContext();
+    const retailers = (await (await api.get("/retailers")).json()) as { id: string; name: string }[];
+    const created = await api.post("/orders", {
+      data: {
+        retailer_id: retailers.find((retailer) => retailer.name === SHOP)!.id,
+        order_date: "2020-01-01",
+        order_number: number,
+        currency_code: reference,
+        notes,
+        items: [
+          {
+            item_type: "kit",
+            quantity: 1,
+            unit_price_minor: 1000,
+            currency_code: reference,
+            kit: { name: `E2E Retry Kit ${number}`, grade: "HG" },
+          },
+        ],
+      },
+    });
+    expect(created.status(), await created.text()).toBe(201);
+    const { id } = (await created.json()) as { id: string };
+    await api.dispose();
+
+    await page.route(`**/orders/${id}/${transition}`, (route) => route.fulfill({ status: 503 }), {
+      times: 1,
+    });
+    await page.goto(`/orders?q=${encodeURIComponent(number)}`);
+    await page.getByRole("row").filter({ hasText: number }).getByRole("button", { name: "Edit" }).click();
+    await expect(page.getByLabel("Notes")).toHaveValue(notes ?? "");
+    await page.getByLabel(DATE_LABEL[transition]).fill("2020-02-01");
+
+    const read = async () => {
+      const reader = await apiContext();
+      const stored = (await (await reader.get(`/orders/${id}`)).json()) as StoredOrder &
+        Record<(typeof STAMP)[Transition], string | null>;
+      await reader.dispose();
+      return stored;
+    };
+    const write = async (data: object) => {
+      const writer = await apiContext();
+      const response = await writer.patch(`/orders/${id}`, { data });
+      expect(response.status(), await response.text()).toBe(200);
+      await writer.dispose();
+    };
+    const save = page.getByRole("button", { name: "Save changes" });
+    /** The PATCH lands, the transition 503s, the dialog stays open and can go again. */
+    const saveAndFail = async () => {
+      const failed = page.waitForResponse(`**/orders/${id}/${transition}`);
+      await save.click();
+      expect((await failed).status()).toBe(503);
+      await expect(save).toBeEnabled();
+    };
+    const saveAndClose = async () => {
+      await save.click();
+      await expect(save).toBeHidden();
+    };
+    return { read, write, saveAndFail, saveAndClose };
+  }
+
+  for (const transition of ["ship", "receive"] as const) {
+    for (const before of [null, "The note it opened with."]) {
+      test(`${transition}: putting the note back to how it opened is kept, from ${before === null ? "no note" : "a note"}`, async ({ page }) => {
+        const { read, saveAndFail, saveAndClose } = await openFailingSave(page, transition, before);
+        await page.getByLabel("Notes").fill("Stored by the half that worked.");
+        await saveAndFail();
+        expect((await read()).notes).toBe("Stored by the half that worked.");
+
+        // Back to the opening value, which is not dirty, and is not what is stored.
+        await page.getByLabel("Notes").fill(before ?? "");
+        await saveAndClose();
+        const stored = await read();
+        expect(stored.notes).toBe(before);
+        expect(stored[STAMP[transition]]).not.toBeNull();
+      });
+    }
+
+    test(`${transition}: a retry that never touched the note still leaves what an agent wrote`, async ({ page }) => {
+      const { read, write, saveAndFail, saveAndClose } = await openFailingSave(page, transition, null);
+      await page.getByLabel("Tracking number").fill(`RETRY-${suffix}`);
+      await saveAndFail();
+      await write({ notes: "Written between the two tries." });
+      await saveAndClose();
+      expect((await read()).notes).toBe("Written between the two tries.");
+    });
+
+    test(`${transition}: a note the person wrote is still theirs on the retry`, async ({ page }) => {
+      const { read, write, saveAndFail, saveAndClose } = await openFailingSave(page, transition, null);
+      await page.getByLabel("Notes").fill("The person's note.");
+      await saveAndFail();
+      await write({ notes: "Written between the two tries." });
+      await saveAndClose();
+      expect((await read()).notes).toBe("The person's note.");
+    });
+  }
+});
 
 test("a new order is created with its note", async ({ page }) => {
   const NUMBER = `NOTED-${suffix}`;
