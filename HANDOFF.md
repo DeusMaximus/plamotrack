@@ -41,6 +41,27 @@ Template:
 
 ---
 
+## 2026-11-03 — Claude Code (Opus 5.5) — #348 order notes: PR #357 open at `a25fce9`, awaiting review; #356 filed
+
+- **Done:**
+  - **[PR #357](https://github.com/DeusMaximus/plamotrack/pull/357)** open, not merged, on `feat/348-order-notes`. Closes #348. `orders.notes` (nullable, one additive migration `8e41c7d2a9f6`) on REST, MCP, `orders.csv` (last column), the order editor, and the foot of the expanded lines in both shapes. Omitted leaves it; null or blank clears it.
+  - `services/text.stripped_or_none` is read by `OrderNotes` and `parse_text`, so a note never holds surrounding whitespace and its export re-imports as no change (rule 10).
+  - Tracked mutants `348-1` to `348-6`, all killed. `.agents/next-release.md` has the entry.
+  - **Filed [#356](https://github.com/DeusMaximus/plamotrack/issues/356):** on `main`, a stored text value with surrounding whitespace makes a re-import an update. Measured on `retailers.notes` only.
+  - Review brief for Codex at `.dev/348/review-brief-1.md` (gitignored, in the main checkout). The owner runs it; no review round has happened.
+- **Decisions (owner, 03/11):** notes are not searched, and searching an order by what it contains is for much later, alongside the planned gift-card, voucher and untracked-item work. Notes stay off the starter sheet.
+- **State:**
+  - At `a25fce9`: backend 3764 passed, 1 xfailed; frontend 672 passed; lint and build clean. Playwright (Chromium; `order-lossless`, `lists`, `dialogs`; app, phone, tablet): 76 passed, 51 skipped, before the last e2e edit; after it only the new not-cut test and the sideways-scroll test were rerun. CI on the PR was not read before this entry.
+  - Not run: the rest of Playwright locally, WebKit, `settings`, the packaged stack, a real MCP client, an older release reading a newer archive.
+  - **The dev database has not been migrated to `8e41c7d2a9f6`:** run `alembic upgrade head` before running that branch against it. `plamotrack_test` was left migrated by the branch's last run, and its head isn't on `main` until the PR merges. A pytest run on `main` before then can't downgrade it: use a scratch `TEST_DATABASE_URL`, or drop that database.
+  - **The owner's LXC is on v0.6.0-alpha.** **Unreleased on `main`:** #333, #341/#343, #346/#352, with #351's docs drift pending (`.agents/next-release.md`).
+  - **Owed to plamotrack-ios, unmeasured:** the new API field and CSV column, once #357 lands. From the last entry: its planner still reports two diagnostics for an unreadable required cell, its handling of a NUL hasn't been run, and it hasn't re-synced `api-error-codes.json` for `request.text_unstorable`.
+  - **Carried, not reverified:** #344 (image pins, before or with the next release; bump mechanism undecided). testhost is in the tunnel configuration from the 0.6.0 gate; don't recreate its Keycloak container. Owner: allow `pkg-containers.githubusercontent.com` in cloud Network access, delete the Claude.ai Testing connector, complete #278's skill-zip check. Known gaps: #238, #324 (local e2e uses `--workers=1`), #320. plamotrack-ios can re-sync #342's scenarios once its #15 adds `update_order` and `delete_order`.
+- **Next:**
+  - **PR #357:** the review round, then the owner's merge call (`gh pr merge --squash --auto --match-head-commit <reviewed sha>`, never `--admin`).
+  - Then #350 and #349, which have open product questions for the owner (does `get_summary` spend use paid or shelf price); #354, #355, #356.
+  - **The next release:** #351, #344. **M6.7:** #279's edge probes, then #281, #282. **M7** waits on #28.
+
 ## 2026-11-02 — Claude Code (Opus 5.5) — #346 + #352 MERGED as `1188a67` (PR #353); #354, #355 filed; the owner's LXC is on 0.6.0
 
 - **Done:**
@@ -168,45 +189,3 @@ Template:
   Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
 - **Also next:** **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
 
-## 2026-10-07 — Claude Code (Opus 5.5) — v0.6.0-alpha RELEASED (tag at `6dfc008`, prerelease); docs site and README updated
-
-- **Done:**
-  - **[v0.6.0-alpha](https://github.com/DeusMaximus/plamotrack/releases/tag/v0.6.0-alpha)** was published 2026-10-07 07:33 UTC as a prerelease, on the owner's approval at each step. It ships everything the ledger held, from #294 to #326.
-    - **Bump:** PR #338 → `6dfc008` (0.5.2 → 0.6.0 in the app, `pyproject.toml` and `uv.lock`).
-    - **Candidate:** [run 37581036003](https://github.com/DeusMaximus/plamotrack/actions/runs/37581036003), attempt 1, green, with Integration on native amd64 and arm64.
-    - **Annotated tag** `v0.6.0-alpha` at `6dfc008`.
-    - **Promote:** [run 37585808722](https://github.com/DeusMaximus/plamotrack/actions/runs/37585808722) → draft → published.
-    - **Checked by hand:** the published files downloaded anonymously pass `sha256sum -c` and are byte-identical to the gated bundle. Both version tags resolve anonymously to the gated digests. PostgreSQL is pinned at 16.15.
-  - **The first update from a release's files**, v0.5.2 → the candidate on testhost: green. Scripted by hand, since the driver has no phase for it. The state was a claimed owner, a retailer, two kits, an order and a PAT, plus a −3 low-stock threshold stored through 0.5.2's importer.
-    - After the update, `migrate` logged `cleared 1 negative value(s)`.
-    - The version, the 0.5.2 session, the token, the data and the volume all held, and MCP via the token listed 31 tools.
-    - The script and notes are in `.dev/release-0.6.0/` (gitignored). The procedure is in `.agents/releases.md`, step 5.
-  - **The deployment gate on the release files, every phase plus the tunnel:** green.
-    - Matrix: local 180, OIDC 183, tunnel 87 rows, 0 failing.
-    - T13: the link and all three restores.
-    - `/mcp` held 130 s through Cloudflare.
-  - **Real-client run (owner, 2026-10-07):** Claude.ai linked through `plamotest.gunp.la` and recorded an order through `create_order`. Confirmed server-side by the `auth.mcp_grant_issued` audit row and the order.
-  - **Docs site:** [plamotrack-docs#9](https://github.com/DeusMaximus/plamotrack-docs/pull/9) merged as `11561d3` (the changelog, install version, phone import, sorts, MCP reference, retaken screenshots, and a **new Pocket ID page**). Review fixes: Codex's Caddy HTTP-challenge P2, plus Greptile's four style-guide P2s.
-  - **README:** [PR #339](https://github.com/DeusMaximus/plamotrack/pull/339) merged as `36dfed4`. Codex caught the phone row still saying export-only; the same sweep fixed Milestone 6.7's row (Pocket ID supported, images published).
-  - **This commit:** `.agents/next-release.md` is emptied (all 15 entries shipped). `.agents/releases.md` records the update step's first run, and adds to step 7 that the README's own claims are read against the release, not only the ledger's lines.
-- **Decisions (owner, 07/10):** run the real-client check on Claude.ai; publish.
-- **State:**
-  - **Nothing is unreleased on `main`.**
-  - **testhost** is left in the **tunnel** configuration (`WEB_BIND` on the LAN, `PUBLIC_BASE_URL=https://plamotest.gunp.la`, OIDC with the gate's Keycloak). The gate's end state is saved on the host as `.env.before-claude-check`. The next gate run resets the host anyway. Claude.ai's test connector to `plamotest.gunp.la` is still linked on the owner's account.
-  - **The owner's LXC is on 0.5.2.** Upgrading it to 0.6.0 is the owner's; the Updating page covers it. **Gunpla skill refresh** at that upgrade, because `create_order` changed (#289). The release's `plamotrack-gunpla.zip` is current.
-  - **Known gaps, filed:** #333 (failed sign-out), #238, #324 (local runs need `--workers=1`), #320.
-  - **Tooling:**
-    - `main` is clean.
-    - The local `.dev/release-bundle`, `.dev/release-draft` and `.dev/gate-stage` directories can go.
-    - Merged branches left on origin: `release/v0.6.0-alpha`, `docs/readme-v0.6.0-alpha`, `fix/326-…`, `fix/268-…`, `fix/331-…`, `fix/316-…`, and older ones. In the docs repo: `release/v0.6.0-alpha`.
-  - **Carried:**
-    - **Owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete the Claude.ai "Testing" connector.
-    - **testhost:** don't recreate its Keycloak container; a new one changes `sub`.
-    - #278 is open for the owner's skill-zip check.
-- **Next:** the owner's pick. Candidates:
-  - **#333** (failed sign-out; small, `signOut.ts` and `AuthGate.tsx`);
-  - **M6.7**: #279's edge probes, then #281's packaging; #282's VPS path;
-  - **M7** waits on #28.
-
-  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
-- **Also next:** **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
