@@ -740,7 +740,10 @@ function OrderForm({
       delivery_service: values.delivery_service || null,
       tracking_number: values.tracking_number || null,
       tracking_url: values.tracking_url || null,
-      notes: values.notes || null,
+      // Omitted from an edit that never touched it: the field holds a copy from when
+      // the dialog opened, and an agent may have written the note since. Null is a
+      // clear, so restating the copy would erase what it wrote.
+      ...(!order || dirtyFields.notes ? { notes: values.notes || null } : {}),
       // Omitted entirely when the edit never touched a line. `items: undefined`
       // means "leave the lines alone" to the API, and sending them anyway is how a
       // tracking-number change reached the kits at all (#65) — every save re-ran

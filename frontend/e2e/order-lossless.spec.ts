@@ -161,6 +161,39 @@ test("a note is written, survives an edit that never mentions it, and clears", a
   expect((await findOrder()).notes).toBeNull();
 });
 
+// The dialog holds a copy from when it opened, and an agent can write the order
+// in the meantime. A save restates only what its own hand changed, so the agent's
+// note stands: first where there was none, then over one the dialog is showing.
+for (const [before, written] of [
+  [null, "Gift card AUD 50, written while the dialog was open."],
+  ["The note the dialog opened with.", "The note an agent replaced it with."],
+] as const) {
+  test(`a save that never touched the note leaves what an agent wrote meanwhile, over ${before === null ? "no note" : "a note"}`, async ({ page }) => {
+    const writeNote = async (notes: string | null) => {
+      const api = await apiContext();
+      const response = await api.patch(`/orders/${(await findOrder()).id}`, { data: { notes } });
+      expect(response.status(), await response.text()).toBe(200);
+      await api.dispose();
+    };
+    await writeNote(before);
+
+    await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
+    await page.getByRole("row").filter({ hasText: ORDER }).getByRole("button", { name: "Edit" }).click();
+    // The dialog has its copy before the agent writes: that is the whole order of events.
+    await expect(page.getByLabel("Notes")).toHaveValue(before ?? "");
+    await writeNote(written);
+
+    const tracking = `AGENT-${suffix}-${before === null ? "A" : "B"}`;
+    await page.getByLabel("Tracking number").fill(tracking);
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("button", { name: "Save changes" })).toBeHidden();
+
+    const stored = await findOrder();
+    expect(stored.tracking_number).toBe(tracking);
+    expect(stored.notes).toBe(written);
+  });
+}
+
 test("a new order is created with its note", async ({ page }) => {
   const NUMBER = `NOTED-${suffix}`;
   await page.goto("/orders");
