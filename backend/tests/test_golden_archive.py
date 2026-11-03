@@ -117,6 +117,7 @@ HEADERS = {
         "currency_code",
         "shipped_at",
         "received_at",
+        "notes",
     ),
     "order_items": (
         "id",

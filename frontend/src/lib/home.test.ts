@@ -81,6 +81,7 @@ function order(stage: OrderStage, items: OrderItem[], id = `order-${stage}`): Or
     currency_code: "JPY",
     shipped_at: stage === "in_transit" ? "2026-08-25T00:00:00Z" : null,
     received_at: stage === "received" ? "2026-08-30T00:00:00Z" : null,
+    notes: null,
     items,
     stage,
   };

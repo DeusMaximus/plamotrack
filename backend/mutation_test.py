@@ -6879,11 +6879,58 @@ CASES += [
     ),
 ]
 
+ORDER_SCHEMAS = ROOT / "app/schemas/orders.py"
+CASES += [
+    (
+        "348-1. a note keeps the whitespace around it",
+        ORDER_SCHEMAS,
+        "AfterValidator(lambda value: None if value is None else stripped_or_none(value))",
+        "AfterValidator(lambda value: value)",
+        "stores_what_a_note_is or re_imports_as_no_change",
+    ),
+    (
+        "348-2. a blank note stays blank",
+        TEXT,
+        "    return value.strip() or None\n",
+        "    return value.strip()\n",
+        "stores_what_a_note_is",
+    ),
+    (
+        "348-3. an update does not read the note",
+        ORDER_SCHEMAS,
+        "    # Omitted leaves it, null or blank clears it (#348).\n    notes: OrderNotes = None\n",
+        "",
+        "an_update_stores_what_a_note_is",
+    ),
+    (
+        "348-4. an update that omits it clears it",
+        ORDERS_SERVICE,
+        '    header = data.model_dump(exclude_unset=True, exclude={"items"})\n    if "retailer_id" in header:',
+        '    header = data.model_dump(exclude_unset=True, exclude={"items"})\n    header.setdefault("notes", None)\n    if "retailer_id" in header:',
+        "omits_it_leaves_it",
+    ),
+    (
+        "348-5. create_order drops the argument",
+        MCP,
+        "            notes=notes,\n",
+        "",
+        "a_create_stores_what_a_note_is",
+    ),
+    (
+        "348-6. the archive has no notes column",
+        SPEC,
+        '        col("notes", parse_text, help="Anything else about this purchase. Free text."),\n',
+        "",
+        "re_imports_as_no_change or merge_states_it",
+    ),
+]
+
 TEST_FILES = [
     "tests/test_order_invariants.py",
     "tests/test_cell_semantics.py",
     "tests/test_portability.py",
     "tests/test_unstorable_text.py",
+    "tests/test_order_notes.py",
     # The fold-in of the #109/#111/#113/#115 queues widened the case set to the
     # suites those branches wrote; each file below is named by at least one
     # case's `-k` expression, and the exit-5 NONE rule is what notices if one of

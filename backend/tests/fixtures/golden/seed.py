@@ -244,6 +244,7 @@ async def _seed(client) -> dict[str, dict[str, str]]:
                 "received": True,
                 "shipped_at": "2026-03-16T01:02:03+00:00",
                 "received_at": "2026-03-20T04:05:06.250000+00:00",
+                "notes": 'Part-paid with a gift card, "HLJ-GIFT",\nthe rest on the Visa.',
                 "items": [
                     {
                         "item_type": "kit",

@@ -57,6 +57,10 @@ class Order(UUIDPrimaryKeyMixin, Base):
     # the order is received, not at entry — quantity_on_hand means "physically
     # on hand", not "on hand + on order".
     received_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # What no other field holds: how it was paid, a substitution, a partial refund,
+    # a damage claim against this purchase (#348). Never read by anything but the
+    # person reading it, and never blank: see `services/text.stripped_or_none`.
+    notes: Mapped[str | None]
 
     # Every writer refuses a negative shipping cost (REST and MCP through
     # `NonNegativeInt4`, the importer through its column bound since #305); the

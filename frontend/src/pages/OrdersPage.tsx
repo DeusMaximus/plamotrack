@@ -858,6 +858,12 @@ function CardLines({ order, itemName }: { order: Order; itemName: Map<string, st
           </span>
         </div>
       )}
+      {order.notes && (
+        <OrderNotes
+          notes={order.notes}
+          className="border-t border-rule bg-surface px-3 py-2.5 text-[12.5px] text-muted"
+        />
+      )}
     </div>
   );
 }
@@ -919,6 +925,27 @@ function LinesBox({ order, itemName }: { order: Order; itemName: Map<string, str
           </span>
         </div>
       )}
+      {order.notes && (
+        <OrderNotes
+          notes={order.notes}
+          className="col-span-4 border-t border-rule bg-surface px-3 py-2 text-xs text-muted"
+        />
+      )}
+    </div>
+  );
+}
+
+/** The order's note (#348), closing the expanded box in both shapes: the whole width
+ *  of it, under its label, with its own line breaks, where the rows above are a label
+ *  and a short value. Not `Measured`, which is for a value a column has to size around
+ *  and leaves an ordinary one a plain word: a note spans the table, is prose whatever
+ *  its length, and may always break, so it asks no width of any column. */
+function OrderNotes({ notes, className }: { notes: string; className: string }) {
+  const { t } = useTranslation();
+  return (
+    <div className={className}>
+      <div>{t("orders.notes")}</div>
+      <div className="mt-0.5 whitespace-pre-wrap text-text wrap-anywhere">{notes}</div>
     </div>
   );
 }

@@ -32,6 +32,7 @@ type StoredOrder = {
   order_number: string | null;
   shipping_cost_minor: number | null;
   tracking_number: string | null;
+  notes: string | null;
   items: Line[];
 };
 
@@ -127,6 +128,60 @@ test("editing only the tracking number leaves currency, scale and free shipping 
   expect(edited.converted_currency_code).toBe(reference);
   expect(after.shipping_cost_minor).toBe(0);
   expect(await kitScale(edited.spawned_kit_ids[0])).toBe("1/100");
+});
+
+test("a note is written, survives an edit that never mentions it, and clears", async ({ page }) => {
+  const NOTE = "Part-paid with a gift card.\nThe rest on the Visa.";
+  const open = async () => {
+    await page.goto(`/orders?q=${encodeURIComponent(SHOP)}`);
+    await page.getByRole("row").filter({ hasText: ORDER }).getByRole("button", { name: "Edit" }).click();
+  };
+  const save = async () => {
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.getByRole("button", { name: "Save changes" })).toBeHidden();
+  };
+
+  await open();
+  // Surrounding whitespace is not part of a note: the server says what is.
+  await page.getByLabel("Notes").fill(`${NOTE}\n`);
+  await save();
+  expect((await findOrder()).notes).toBe(NOTE);
+
+  await open();
+  await expect(page.getByLabel("Notes")).toHaveValue(NOTE);
+  await page.getByLabel("Tracking number").fill(`NOTE-${suffix}`);
+  await save();
+  const edited = await findOrder();
+  expect(edited.tracking_number).toBe(`NOTE-${suffix}`);
+  expect(edited.notes).toBe(NOTE);
+
+  await open();
+  await page.getByLabel("Notes").fill("");
+  await save();
+  expect((await findOrder()).notes).toBeNull();
+});
+
+test("a new order is created with its note", async ({ page }) => {
+  const NUMBER = `NOTED-${suffix}`;
+  await page.goto("/orders");
+  await page.getByRole("button", { name: "New order" }).click();
+  const dialog = page.getByRole("dialog");
+  await dialog.locator('select[name="retailer_id"]').selectOption({ label: SHOP });
+  await page.getByLabel("Order number").fill(NUMBER);
+  await page.getByLabel("Notes").fill("Bought in store.");
+  await dialog.getByPlaceholder("Kit name *").fill(`E2E Noted Kit ${suffix}`);
+  await dialog.getByPlaceholder("Grade *").fill("HG");
+  await page.getByLabel("Unit price").first().fill("10");
+  await page.getByRole("button", { name: "Record order" }).click();
+  await expect(page.getByRole("button", { name: "Record order" })).toBeHidden();
+
+  const api = await apiContext();
+  const orders = (await (await api.get("/orders")).json()) as { id: string; order_number: string | null; notes: string | null }[];
+  const created = orders.find((order) => order.order_number === NUMBER)!;
+  expect(created.notes).toBe("Bought in store.");
+  const deleted = await api.delete(`/orders/${created.id}`);
+  expect(deleted.status(), await deleted.text()).toBe(204);
+  await api.dispose();
 });
 
 test("a cold edit waits for the data it rebuilds the form from", async ({ page }) => {

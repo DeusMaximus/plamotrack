@@ -236,6 +236,9 @@ export interface Order {
   /** Null = not marked shipped. Never carries stock semantics (#95). */
   shipped_at: string | null;
   received_at: string | null;
+  /** Free text for what no other field holds (#348). Never blank: the server
+   *  strips it and stores a blank one as null. */
+  notes: string | null;
   items: OrderItem[];
   /** Where the order sits (§13.2, #233), derived on the server from the dates
    *  and the spawned kits — received, in_transit (shipped), pre_ordered (every
@@ -301,6 +304,7 @@ export interface OrderCreate {
   tracking_url?: string | null;
   shipping_cost_minor?: number | null;
   currency_code: string;
+  notes?: string | null;
   received?: boolean;
   /** When the delivery actually arrived, for orders entered after the fact (#93).
    *  Offset-aware ISO 8601; requires `received: true`; omitted = now. */
@@ -325,6 +329,7 @@ export interface OrderUpdate {
   tracking_url?: string | null;
   shipping_cost_minor?: number | null;
   currency_code?: string;
+  notes?: string | null;
   /** Correction only: adjusts a receipt date already set (409 on a pending
    *  order — receiving goes through `receiveOrder`). Cannot be nulled. */
   received_at?: string;

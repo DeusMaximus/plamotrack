@@ -1,7 +1,16 @@
 import uuid
 from datetime import date, datetime
+from typing import Annotated
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import (
+    AfterValidator,
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    Field,
+    computed_field,
+    model_validator,
+)
 
 from app.models.enums import (
     ItemType,
@@ -15,6 +24,7 @@ from app.schemas.kits import KitRead
 from app.schemas.numeric import NonNegativeInt4, PositiveInt4, Rating
 from app.services.currency import CURRENCY_CODE_PATTERN as _CURRENCY_PATTERN
 from app.services.order_stage import OrderStage, order_stage
+from app.services.text import stripped_or_none
 
 
 class RetailerCreate(RequestModel):
@@ -140,6 +150,13 @@ class OrderItemCreate(RequestModel):
         return self
 
 
+#: What the importer's `parse_text` makes of the same cell, so a note written here
+#: comes back from its own export as no change at all (rule 10).
+OrderNotes = Annotated[
+    str | None, AfterValidator(lambda value: None if value is None else stripped_or_none(value))
+]
+
+
 class OrderCreate(RequestModel):
     retailer_id: uuid.UUID
     order_date: date
@@ -149,6 +166,7 @@ class OrderCreate(RequestModel):
     tracking_url: str | None = None
     shipping_cost_minor: NonNegativeInt4 | None = None
     currency_code: str = Field(pattern=_CURRENCY_PATTERN)
+    notes: OrderNotes = None
     # True = already in hand (store purchase / arrived before entry): stock is
     # applied and spawned kits start at backlog instead of ordered.
     received: bool = False
@@ -226,6 +244,8 @@ class OrderUpdate(RequestModel):
     tracking_url: str | None = None
     shipping_cost_minor: NonNegativeInt4 | None = None
     currency_code: str | None = Field(default=None, pattern=_CURRENCY_PATTERN)
+    # Omitted leaves it, null or blank clears it (#348).
+    notes: OrderNotes = None
     # Correction only (#93): adjusts a receipt date that is already set. On an
     # order not yet received it 409s — the pending → received transition stays in
     # receive_order, where the stock dispatch lives, and never here. Explicit null
@@ -291,6 +311,7 @@ class OrderRead(BaseModel):
     currency_code: str
     shipped_at: datetime | None
     received_at: datetime | None
+    notes: str | None
     items: list[OrderItemRead]
 
     # Derived on the way out, never stored (#233, §13.2): where the order sits —

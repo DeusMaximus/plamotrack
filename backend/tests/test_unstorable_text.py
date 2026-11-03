@@ -212,6 +212,7 @@ async def _order_body(http_client) -> dict:
         (lambda b, v: b.update(delivery_service=v), "delivery_service"),
         (lambda b, v: b.update(tracking_number=v), "tracking_number"),
         (lambda b, v: b.update(tracking_url=v), "tracking_url"),
+        (lambda b, v: b.update(notes=v), "notes"),
         (lambda b, v: b["items"][0]["kit"].update(name=v), "items.0.kit.name"),
         (lambda b, v: b["items"][0]["kit"].update(kit_number=v), "items.0.kit.kit_number"),
     ],
@@ -449,7 +450,8 @@ ORDER_LINE = {
 
 @pytest.mark.parametrize("value", UNSTORABLE)
 @pytest.mark.parametrize(
-    "field", ["retailer", "order_number", "delivery_service", "tracking_number", "tracking_url"]
+    "field",
+    ["retailer", "order_number", "delivery_service", "tracking_number", "tracking_url", "notes"],
 )
 async def test_create_order_s_flat_arguments_refuse_it(http_client, field, value):
     """The tool's only flat text: `retailer` is looked up before any schema runs, and
@@ -1000,6 +1002,7 @@ async def test_every_flat_text_argument_of_an_mcp_tool_is_accounted_for():
         ("create_order", "delivery_service"),
         ("create_order", "tracking_number"),
         ("create_order", "tracking_url"),
+        ("create_order", "notes"),
         # A closed grammar the tool or the service parses before any query.
         ("list_kits", "status"),
         ("list_kits", "sort"),

@@ -378,6 +378,7 @@ a gamble that remembering which ones pack properly has real value.
 | currency_code | text | ISO 4217 |
 | shipped_at | timestamp (nullable) | null = not marked shipped; a pure timeline record plus the in_transit kit advance — **never** a stock proxy (#95) |
 | received_at | timestamp (nullable) | null = pending (not yet arrived) — see §3.9 |
+| notes | text (nullable) | what no other field holds about this purchase: how it was paid, a substitution, a partial refund, a damage claim (#348). Read by nothing but the person reading it, so no state refuses an edit to it. Every writer stores what the importer's `parse_text` would read (`services/text.stripped_or_none`): no surrounding whitespace, blank is null, so its own export re-imports as no change (rule 10). Not on the starter sheet, whose rows are lines and would each have to say it |
 
 ### 3.9 `order_items`
 
@@ -2141,7 +2142,7 @@ is `/mcp/` on the API port (streamable HTTP).
   says in its description that display items carry no kit link, so an agent doesn't go
   looking for one or improvise a structured note (§3.5a)
 - `create_order(retailer | retailer_id, date, items[], order_number?, tracking?,
-  received?, received_at?, shipped_at?)` — the items array drives the same
+  notes?, received?, received_at?, shipped_at?)` — the items array drives the same
   fan-out/increment dispatch as the REST endpoint; the shop is named by exactly one
   of `retailer_id` (strict: an unknown id is not found, and nothing is created) or
   `retailer`, a name matched case-insensitively and created if new. A `retailer`

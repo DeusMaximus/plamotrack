@@ -1,9 +1,9 @@
 {
   "format": "plamotrack-archive",
   "export_version": 1,
-  "schema_version": "d5e9362140ea",
-  "app_version": "0.5.2",
-  "exported_at": "2026-10-01T06:29:03.984376+00:00",
+  "schema_version": "8e41c7d2a9f6",
+  "app_version": "0.6.0",
+  "exported_at": "2026-11-03T12:05:36.396062+00:00",
   "tables": {
     "instance_settings": {
       "file": "instance_settings.csv",

@@ -106,6 +106,7 @@ const DAY = 86_400_000;
 const iso = (daysAgo: number) => new Date(Date.now() - daysAgo * DAY).toISOString();
 const day = (daysAgo: number) => iso(daysAgo).slice(0, 10);
 
+const ORDER_NOTE = "Part-paid with a gift card.\nThe rest on the Visa.";
 const NAMES = {
   retailer: `${TAG} Hobby Works`,
   bareRetailer: `${TAG} Bare Shop`,
@@ -300,6 +301,7 @@ test.beforeAll(async () => {
     shipping_cost_minor: 1800,
     currency_code: "JPY",
     shipped_at: iso(4),
+    notes: ORDER_NOTE,
     items: [
       kitLine(NAMES.transitKit, "HG", 2800),
       { item_type: "consumable", quantity: 2, unit_price_minor: 400, currency_code: "JPY", catalog_ref_id: consumable.id },
@@ -398,6 +400,8 @@ test.beforeAll(async () => {
     retailer_id: unbrokenRetailer.id,
     order_date: day(55),
     delivery_service: UNBROKEN,
+    // Twice: once fits the desktop's box, and this has to be wider than every shell's.
+    notes: `${UNBROKEN}${UNBROKEN}`,
     shipping_cost_minor: 900,
     currency_code: "JPY",
     items: [kitLine(`Wide ${suffix} ${UNBROKEN}`, UNBROKEN, 1400)],
@@ -1507,6 +1511,35 @@ test("a pass that ends at the stage it began keeps the keyboard where it was", a
     await api.delete(`/auth/tokens/${token.id}`);
     await api.dispose();
   }
+});
+
+test("an order's note closes its lines, in its own line breaks, in every shell", async ({ page }) => {
+  await openList(page, `/orders?q=${q}`, NAMES.retailer);
+  const row = rowOf(page, ORDER_NUMBER);
+  const [first, second] = ORDER_NOTE.split("\n");
+  // Nothing but the record's own lines says it until the row is open.
+  await expect(main(page).getByText(first)).toHaveCount(0);
+
+  await shown(row.getByRole("button", { name: /^Show line items/ })).click();
+  const note = shown(main(page).getByText(first));
+  await expect(note).toBeVisible();
+  await expect(note).toContainText(second);
+  // Two lines because the note says two, not because the box is narrow: the words
+  // of either line would fit a width this box has at all three sizes.
+  expect(await linesOf(note)).toBe(2);
+  await expect(note.locator("xpath=..").getByText("Notes", { exact: true })).toBeVisible();
+});
+
+test("a note with nowhere to break breaks, and is not cut at the box's edge", async ({ page }) => {
+  // The fit tests cannot see this one. The box clips, and its name track gives way,
+  // so a note that will not break leaves the table the width it was and loses its end.
+  const narrowed = `/orders?q=${encodeURIComponent(UNBROKEN_NAMES.retailer)}`;
+  await openList(page, narrowed, UNBROKEN_NAMES.retailer);
+  await shown(main(page).getByRole("button", { name: /^Show line items/ })).click();
+  const note = shown(main(page).getByText("Notes", { exact: true })).locator("xpath=following-sibling::*[1]");
+  await expect(note).toHaveText(`${UNBROKEN}${UNBROKEN}`);
+  expect(await isCut(note)).toBe(false);
+  expect(await linesOf(note)).toBeGreaterThan(1);
 });
 
 test("an order card opens its lines as the table row does", async ({ page }, testInfo) => {

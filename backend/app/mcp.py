@@ -500,6 +500,7 @@ async def create_order(
     delivery_service: str | None = None,
     tracking_number: str | None = None,
     tracking_url: str | None = None,
+    notes: str | None = None,
     received: bool = False,
     received_at: str | None = None,
     shipped_at: str | None = None,
@@ -529,7 +530,10 @@ async def create_order(
     flag): spawned kits land in_transit stamped with it instead of ordered.
     Include the
     retailer's order_number from the confirmation email when available (support
-    reference — only unique per retailer, never treat it as an identifier). Prices
+    reference — only unique per retailer, never treat it as an identifier). `notes`
+    is free text for what no other field holds about this purchase: how it was paid,
+    a substitution, a partial refund, a damage claim. It changes no total and no
+    stock, so a real price or quantity belongs on the lines. Prices
     are integer minor units (cents/yen) with an ISO 4217 currency_code. Each item
     line's currency_code is required; the order-level currency_code is what may be
     omitted, and omitting it takes the instance's own reference currency, which
@@ -564,6 +568,7 @@ async def create_order(
             delivery_service=delivery_service,
             tracking_number=tracking_number,
             tracking_url=tracking_url,
+            notes=notes,
             shipping_cost_minor=shipping_cost_minor,
             currency_code=currency_code or await settings_service.reference_currency(session),
             received=received,
@@ -614,9 +619,9 @@ async def update_order(
     order_id: str, changes: OrderUpdate, remove_missing_lines: bool = False
 ) -> dict:
     """Correct an order after entry: header fields (order_date, order_number,
-    tracking, shipping_cost_minor, currency_code, retailer_id) and/or the line
-    set. Read the order with get_order first. Only the fields present in
-    `changes` are touched.
+    tracking, shipping_cost_minor, currency_code, retailer_id, notes) and/or the
+    line set. Read the order with get_order first. Only the fields present in
+    `changes` are touched; a null or blank `notes` clears it.
 
     `changes.items`, when present, is the FULL replacement set: a line with an
     `id` (from get_order) updates that line, a line without one is added — and a
