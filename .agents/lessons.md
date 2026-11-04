@@ -1911,8 +1911,9 @@ found defects in one line of `OrderFormModal`.
 Round 1: an edit restated the note it had copied when the dialog opened, so a save that
 never touched the field erased what an agent had written meanwhile. The e2e test "survives
 an edit that never mentions it" passed, because nothing else wrote the note while the
-dialog was open. The brief had also rated this no worse than `order_number`, and the
-review overruled that: a note is prose an agent writes on purpose.
+dialog was open. The brief had named the overwrite as something the dialog could already
+do to `order_number` and asked whether free text made it worse. The review reproduced it
+and rated it P2.
 
 Round 2: the fix asked "is this field dirty?", which compares with the opening value. A
 dialog save is a `PATCH` and then a ship or receive, so it can fail halfway. After that,
@@ -1925,5 +1926,6 @@ writes it: another writer, or this dialog's own first request. Test both, by wri
 between open and save, and by failing the second request of a save.** A dirty check answers
 "did the person change it?", not "does the row still say this?".
 
-That is where the sibling issue came from: order lines already have the retry trap, and
-#358's likely fix would give the header fields the same one.
+Both questions reach past the note. #358 records the other header fields failing the
+first, order lines failing the second, and that its likely fix would give the header
+fields the second as well.
