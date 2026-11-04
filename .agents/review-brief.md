@@ -1,19 +1,21 @@
 # Briefing an external reviewer — the envelope
 
-A review round here is a prompt pasted into Cursor or Codex by the owner, and the
-prompt has been rewritten from memory every time. The parts that recur are the parts
-that have cost time when forgotten: `--body-file` not `--body`, the phrase *mutation
-testing*, a fresh chat per Cursor round, a worktree rather than `git checkout --` for
-the negative control, the attribution line. This file holds them once. The agent
+A review round here starts from a brief, and briefs were once rewritten from memory
+every time. The parts that recur are the parts that have cost time when forgotten:
+`--body-file` not `--body`, the phrase *mutation testing*, a worktree rather than `git
+checkout --` for the negative control, the attribution line. This file holds them once.
+The agent
 opening the PR fills the `‹slots›`, **saves the finished brief as
-`.dev/<issue>/review-brief-<round>.md`** (gitignored, in the checkout the reviewer
-runs in) and gives the owner **one line** to paste into the Codex app — *"Follow the
-review brief at `<absolute path>`"* — with a few lines in chat saying what it asks.
-**The whole brief is not printed in chat** (owner's call, 2026-10-03): the reviewer
-reads the file, so a chat copy only duplicated it. History: until 2026-10-03 the
-brief was printed in full as well; before 2026-09-17 the printed copy *was* the
-paste; and on 2026-08-24 the owner ruled out handing over a bare path into a temp
-directory. A `.dev/` file plus the one-liner is neither. The reasons behind the fixed parts are in
+`.dev/<issue>/review-brief-<round>.md`** (gitignored, in the main checkout) and, when
+the owner asks for a round, starts it through T3 Code with **one line** as the task —
+*"Follow the review brief at `<absolute path>`"* (`testing-and-review.md` → "Starting a
+round"). Outside T3 Code the owner pastes that line into the Codex app. Either way, a few
+lines in chat say what it asks. **The whole brief is not printed in chat** (owner's call,
+2026-10-03): the reviewer reads the file, so a chat copy only duplicated it. History:
+until 2026-10-03 the brief was printed in full as well; before 2026-09-17 the printed
+copy *was* the paste; until 2026-11-04 the one line was the owner's to paste; and on
+2026-08-24 the owner ruled out handing over a bare path into a temp directory. A `.dev/`
+file plus the one-liner is neither. The reasons behind the fixed parts are in
 `testing-and-review.md` → "External review" and `lessons.md` → "Review"; this file
 is the shape, not the why.
 
@@ -55,11 +57,15 @@ owner's own instance is public behind a Cloudflare Tunnel. ‹Two or three sente
 and what this branch does about it — file names, not adjectives.› No migration /
 ‹one migration, additive›. Inventory counts and purchase records, not access control.
 
-**Environment is ready.** Repo at `/Users/tlgja/Code/plamotrack`; backend deps
-installed (`cd backend && uv sync` already run); the dev Postgres is up
-(`docker compose -f docker-compose.yml -f docker-compose.dev.yml ps db`). Run the
-suite from `backend/` with `uv run pytest`; **one pytest session at a time** — two
-overlapping runs deadlock on `TRUNCATE`. ‹Frontend: "untouched; don't start Vite" /
+**Environment is ready.** You're in a worktree at this head; the main checkout is
+`/Users/tlgja/Code/plamotrack`. Symlink its `.env`, `backend/.venv` (with
+`UV_NO_SYNC=1`) and `frontend/node_modules`, and don't stage them. The dev Postgres is up
+(`docker compose -f docker-compose.yml -f docker-compose.dev.yml ps db`), but don't
+migrate the dev database or run reproductions against it: HTTP reproductions go through
+the test suite's fixtures. Keep scratch files in a temp directory of your own and delete
+it before you finish; the one thing to leave in `.dev/‹issue›/` is your review, as
+`review-‹round›.md`. Run the suite from `backend/` with `uv run pytest`; **one pytest
+session at a time** — two overlapping runs deadlock on `TRUNCATE`. ‹Frontend: "untouched; don't start Vite" /
 "`npm install` done; `npm run build`, `npm test`, e2e needs chromium installed".›
 
 **Two jobs, in this order.** *First,* examine the complete feature contract on your
@@ -109,6 +115,17 @@ list, which comes after your own coverage list above, not instead of it:
 **Severity by real exposure, not shape**: pre-adoption alpha on a trusted network is
 a legitimate input to a P-level.
 
+**A P3 alone isn't a NO-GO.** If your verdict would be NO-GO and every finding is a P3,
+justify in each finding why it can't merge and be fixed later in a separate issue. A
+reason that holds is specific to this merge: for example, something a later fix couldn't
+recover, or a contract that's hard to change once shipped. "It's a real defect" or "this
+PR introduced it" isn't enough alone. Without that justification the verdict is GO, and
+you list the P3s as follow-ups to file. Rate severity first, and don't raise a P-level to
+reach a verdict.
+
+**If something can't run,** say so at the top and list every claim that depended on it as
+not re-measured. That isn't a NO-GO, and it's never verified by reading.
+
 **Output.** A verdict (GO / NO-GO), then findings numbered with P1–P3, each with the
 reproduction at `‹sha›` and the remedy — say both halves if the defect is right and
 the obvious remedy is wrong. Open with the attribution line and close with the
@@ -135,8 +152,8 @@ Pick one; it supplies the two `‹reviewer …›` slots and adds its own last p
 The reviewer names itself and its version — the lines below are what previous rounds
 wrote, given so the slots in the template read as one house style.
 
-**GLM 5.3 Flash (Zhipu AI, via T3 Code on OpenRouter).** The default reviewer —
-any size (1M context); see the roster in `testing-and-review.md` for its measured
+**GLM 5.3 Flash (Zhipu AI, via T3 Code on OpenRouter).** An option for a big round
+(1M context); see the roster in `testing-and-review.md` for its measured
 traits and the remedies caveat.
 
 ```
@@ -155,13 +172,13 @@ Add to the brief:
 > under you mid-round, re-run in a detached worktree at the reviewed head and say
 > so (the #173 round's precedent).
 
-**Codex (GPT-6; GPT 5.6 Sol before 2026-09-05; Daybreak Blue — GPT 5.6 Sol-based — from 2026-09-06 when GPT-6 Astra refuses).** Any size, or multi-round. Capacity stopped being the
+**Codex (GPT 6.1 Sol on high since 2026-10-31; earlier GPT-6, GPT 5.6 Sol and Daybreak Blue).** The default reviewer: any size, or multi-round. Capacity stopped being the
 constraint with the 2026-08-28 subscription bump — no meter check needed for a
 routine round.
 
 ```
-**Codex (OpenAI, GPT-6) — independent review of PR #‹N›, replayed at head `‹sha›`.**
-— **Codex (OpenAI, GPT-6)**
+**Codex (OpenAI, ‹your model›) — independent review of PR #‹N›, replayed at head `‹sha›`.**
+— **Codex (OpenAI, ‹your model›)**
 ```
 
 (*independent re-review* / *third independent review* on later rounds.) Add:

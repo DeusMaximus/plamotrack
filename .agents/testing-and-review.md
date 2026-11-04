@@ -879,32 +879,54 @@ the release gate instead. State the call and the reason in the hand-off entry.
   - **Greptile** reviews a PR's first push on its own. Re-runs are the owner's to trigger, and it is capped at 50 a month.
   - **The Codex connector** reviews when a PR opens. Re-run it with a PR comment, `@codex review`, optionally followed by what to look at.
   - Both read the diff; neither runs this repo's suites, so a clean pass is not a measured GO. On #314 they were still worth it: the connector found a real defect nothing else had (picking the same file again fires no `change`).
-- **Big changes** get a briefed round of real Codex on the owner's Mac.
-  - Use the Claude Code plugin's task route when the round has no browser or Docker leg.
-  - Otherwise use the **Codex desktop app**: anything with Playwright, which is most frontend work. #314's rounds 2–4 ran there (GPT 6.1 Sol): NO-GO, NO-GO, GO, each finding replayed with a control.
+- **Big changes** get a briefed round of Codex GPT 6.1 Sol on high (owner's call, 2026-10-31), which the authoring agent starts itself through T3 Code. See "Starting a round" below. Browser and Docker legs run there, so the route doesn't depend on the kind of change.
+  - **Outside T3 Code,** the owner pastes the same one line into the Codex desktop app. #314's rounds 2–4 ran that way: NO-GO, NO-GO, GO, each finding replayed with a control.
+  - The Claude Code plugin's task route remains for a round with no browser or Docker leg when neither of those is available.
 - GLM 5.3 / 5.3 Flash in T3 Code stays an option for a big round. Capacity is not the constraint.
 
 | Reviewer | Fits | Notes |
 | --- | --- | --- |
-| **GLM 5.3 Flash (Zhipu AI, via T3 Code on OpenRouter)** | **The default** for feature and fix rounds, any size | 1M context — holds a 2,000-insertion PR, its body and the process docs at once. Three rounds on 2026-08-28 (#171 GO+3P3, #173 GO+1P3, #174 GO+4P3): re-measures claims rather than reading them (its negative-control breakdowns have been exact), sweeps systematically (an AST prose-diff caught an author overclaim), probes empirically (injected a mutant to test an audit's pin), and discloses scope honestly. ~20 min and ~$0.07 a round (11.1M tokens ≈ $0.22 across all three, 96 % cache hit, OpenRouter billing). **Calibration: its findings have been reliable; its *remedies* are not pre-verified — measure a suggested fix like any claim** (#174 P3-1's suggested remedy failed measurement; the finding itself was right and subtle). It has not yet caught a hidden P2 on a branch that wasn't already exhaustively self-verified — widen its lane when it does. **#302 round 1 (2026-09-25):** it caught one. The branch had been exhaustively self-verified: a negative control, 9/9 mutants and a 28,128-case fuzz. It still found a P2: a mutant that sent the harness session's alembic and truncation to the dev database, invisible in the cloud where the author ran it. Its remedy for a P3 failed measurement again: it broke a real zone `%25`. Widening its lane is the owner's call. Replaced Cursor / Grok 4.6 (retired 2026-08-28, owner's call: the 256K context ceiling made large PRs a truncation risk; GLM holds them whole). |
+| **GLM 5.3 Flash (Zhipu AI, via T3 Code on OpenRouter)** | **An option** for a big round; the default from 2026-08-28 to 2026-10-31 | 1M context — holds a 2,000-insertion PR, its body and the process docs at once. Three rounds on 2026-08-28 (#171 GO+3P3, #173 GO+1P3, #174 GO+4P3): re-measures claims rather than reading them (its negative-control breakdowns have been exact), sweeps systematically (an AST prose-diff caught an author overclaim), probes empirically (injected a mutant to test an audit's pin), and discloses scope honestly. ~20 min and ~$0.07 a round (11.1M tokens ≈ $0.22 across all three, 96 % cache hit, OpenRouter billing). **Calibration: its findings have been reliable; its *remedies* are not pre-verified — measure a suggested fix like any claim** (#174 P3-1's suggested remedy failed measurement; the finding itself was right and subtle). It has not yet caught a hidden P2 on a branch that wasn't already exhaustively self-verified — widen its lane when it does. **#302 round 1 (2026-09-25):** it caught one. The branch had been exhaustively self-verified: a negative control, 9/9 mutants and a 28,128-case fuzz. It still found a P2: a mutant that sent the harness session's alembic and truncation to the dev database, invisible in the cloud where the author ran it. Its remedy for a P3 failed measurement again: it broke a real zone `%25`. Widening its lane is the owner's call. Replaced Cursor / Grok 4.6 (retired 2026-08-28, owner's call: the 256K context ceiling made large PRs a truncation risk; GLM holds them whole). |
 | **Cursor (Grok 4.6, SpaceXAI)** | **Not on the roster** — available until 2026-09-15, then gone | Retired 2026-08-28 for the 256K ceiling; the subscription runs out on the 15th. It reviewed #219 on 2026-09-07 because the owner picked it instead of GLM in T3 Chat by mistake, and the round was a good one for the record: it wrote the feature contract before reading the author's plan, found the P3 in the gap between its list and the coverage record — a collection the branch itself classified as a grant's, purged unread — named the remedy's wrong half (the record's top level vs `idp_tokens`), re-measured the control and all 16 mutants exactly, re-sampled the race kill 3/3, and listed what it left unexamined. Until the 15th a fix round it can hold whole is fine; after, it is history. |
-| **Codex (GPT-6 since 2026-09-05; GPT 5.6 Sol before; from #212 round 11, 2026-09-06, ChatGPT's Daybreak Blue — GPT 5.6 Sol-based — after GPT-6 Astra's refusals)** | The highest-stakes shared mechanisms; second opinions | Its first GPT-6 round (#212 round 2) reproduced two grant-lifecycle defects round 1 had not, each with an independent control, and corrected the author's mutant count. Has absorbed #86 (4,442 insertions) across four rounds, and its NO-GO rounds have caught hidden P2s (#159's isalpha currency, #169's parser-stage envelope). Reserve it for anything touching the write gate, money/stock semantics, migrations, and the M6 security work — and as a second opinion when a GO on an unpolished branch feels too easy. Subscription upped 2026-08-28; routine rounds need no meter check. **#236 (M6.5, 2026-09-10), four rounds:** two hidden P2s in the order clock (round 1 the SQL session's zone, round 2 Postgres's zone files against the settings' `zoneinfo` — 598 names executed), the tie P3 in round 3 (PEP 495), each with a ready reproduction and both halves of the remedy; re-measured 32 mutants and corrected the author's table twice; the visual leg (contrast composed in the browser, captures against the artboards) worked — it is the reviewer for the M6.5 PRs (owner's call). |
-| **Codex through the Claude Code plugin** (OpenAI's `codex` plugin, tried on #265, 2026-09-17) | **Source-and-unit legs only; second opinions mid-session** — not a review round for anything with a browser or Docker leg | Three routes. `/codex:review` and `/codex:adversarial-review` are typed by the owner (the plugin marks them user-invoked only), take no brief, and the plain one **ran no tests**: it read the diff, type-checked and reported nothing. The **task route** (`codex:codex-rescue`) is the agent's to launch and can carry the whole brief (`--prompt-file`), but runs in a hardcoded `workspace-write` sandbox with **no approval prompts**, and **Chromium will not start inside it** (`MachPortRendezvousServer … Permission denied`) — so on #265 it delivered the compiled-CSS parity check, the decoded icons, nine unit mutants and a correction to the author's negative-control count (10 green, not 11, from arithmetic alone), and a NO-GO that meant only "browser gate incomplete". The owner then resumed the same Codex session in the Codex app, where the browser leg ran and the round ended GO with two real P3s. Untested: a backend-only PR (pytest and Postgres over TCP should work in the sandbox). The plugin's shared runtime keeps the thread locked ("open in another app") until the Claude session ends; release it with the broker half of the plugin's own SessionEnd hook before `codex resume <id>`. **Channel rule (owner, 2026-09-17): a plugin round returns its result in-session and never posts on GitHub; a round started the old way talks through PR comments** — the unattended plugin run had put an environmental NO-GO on the public thread under the owner's account. |
+| **Codex (GPT 6.1 Sol on high since 2026-10-31; GPT-6 from 2026-09-05; GPT 5.6 Sol before; from #212 round 11, 2026-09-06, ChatGPT's Daybreak Blue — GPT 5.6 Sol-based — after GPT-6 Astra's refusals)** | **The default** for a briefed round, any size (owner's call, 2026-10-31) | Its first GPT-6 round (#212 round 2) reproduced two grant-lifecycle defects round 1 had not, each with an independent control, and corrected the author's mutant count. Has absorbed #86 (4,442 insertions) across four rounds, and its NO-GO rounds have caught hidden P2s (#159's isalpha currency, #169's parser-stage envelope). Subscription upped 2026-08-28; routine rounds need no meter check. **#236 (M6.5, 2026-09-10), four rounds:** two hidden P2s in the order clock (round 1 the SQL session's zone, round 2 Postgres's zone files against the settings' `zoneinfo` — 598 names executed), the tie P3 in round 3 (PEP 495), each with a ready reproduction and both halves of the remedy; re-measured 32 mutants and corrected the author's table twice; the visual leg (contrast composed in the browser, captures against the artboards) worked — it is the reviewer for the M6.5 PRs (owner's call). |
+| **Codex through the Claude Code plugin** (OpenAI's `codex` plugin, tried on #265, 2026-09-17) | **Source-and-unit legs only, where T3 Code and the Codex app aren't available** — not a review round for anything with a browser or Docker leg | Three routes. `/codex:review` and `/codex:adversarial-review` are typed by the owner (the plugin marks them user-invoked only), take no brief, and the plain one **ran no tests**: it read the diff, type-checked and reported nothing. The **task route** (`codex:codex-rescue`) is the agent's to launch and can carry the whole brief (`--prompt-file`), but runs in a hardcoded `workspace-write` sandbox with **no approval prompts**, and **Chromium will not start inside it** (`MachPortRendezvousServer … Permission denied`) — so on #265 it delivered the compiled-CSS parity check, the decoded icons, nine unit mutants and a correction to the author's negative-control count (10 green, not 11, from arithmetic alone), and a NO-GO that meant only "browser gate incomplete". The owner then resumed the same Codex session in the Codex app, where the browser leg ran and the round ended GO with two real P3s. Untested: a backend-only PR (pytest and Postgres over TCP should work in the sandbox). The plugin's shared runtime keeps the thread locked ("open in another app") until the Claude session ends; release it with the broker half of the plugin's own SessionEnd hook before `codex resume <id>`. **Channel rule (owner, 2026-09-17): a plugin round returns its result in-session and never posts on GitHub; a briefed round that can run its legs talks through PR comments** — the unattended plugin run had put an environmental NO-GO on the public thread under the owner's account. |
 | **Copilot auto-review** | Off | Disabled by the owner on 2026-08-11 to conserve credits until 1 September. Its useful finds have been API-state semantics readable off a diff, not value-space defects. Don't request one casually. |
 
 Match the tool to the size of the work rather than forcing everything through one
 queue. Both external tools output to chat unless told otherwise.
 
+### Starting a round
+
+The owner says when a round runs; the agent then starts it (owner's call, 2026-11-04,
+retiring the paste as the normal route):
+
+1. Write the brief, as below.
+2. Call `delegate_task`: `target` provider `codex`, model `gpt-6.1-sol`, option
+   `reasoningEffort: high` (T3 Code's default for Sol is `low`, so set it), `role:
+   review`, `isolation: worktree`. The task is the one line, *"Follow the review brief
+   at `<absolute path>`"*. The file stays in the main checkout, and the worktree reads it
+   by that path.
+3. Tell the owner in a few lines what it asks, and link the thread. Completion wakes the
+   session, so don't poll.
+4. Read the posted review, and check what the run left behind: `git worktree list` (T3
+   Code's worktree and branch stay until removed), ports, databases, `/private/tmp`,
+   `.dev/<issue>/`.
+
+**Each round is a new `delegate_task` with a new brief**, never a message to the last
+reviewer's thread. The PR thread and the coverage record are what carry over.
+
+**The review posts on the PR** (owner's call, 2026-11-04: a public record of what came up
+and how it was answered), and the next round reads that thread. It also reports back to
+the session. Don't run pytest against the same database while one runs.
+
 ### Briefing a reviewer
 
-**The brief is a template — `.agents/review-brief.md`.** Fill its `‹slots›`, save the
-finished brief as `.dev/<issue>/review-brief-<round>.md` (gitignored, in the checkout
-the reviewer runs in), and hand the owner **one line** to paste into the Codex app:
-*"Follow the review brief at `<absolute path>`"*, with a few lines in chat on what it
-asks. **Don't print the whole brief in chat** (owner's call, 2026-10-03: the reviewer
-reads the file, so the chat copy only duplicated it). That replaces the 2026-08-24 rule,
-which was about a bare temp-file path being no deliverable: the `.dev/` file is the
-deliverable now, and the one-liner is how it travels. Don't write a brief from memory:
+**The brief is a template — `.agents/review-brief.md`.** Fill its `‹slots›` and save the
+finished brief as `.dev/<issue>/review-brief-<round>.md` (gitignored, in the main
+checkout). It travels as the one line above. **Don't print the whole brief in chat**
+(owner's call, 2026-10-03: the reviewer reads the file, so the chat copy only duplicated
+it). That replaces the 2026-08-24 rule, which was about a bare temp-file path being no
+deliverable: the `.dev/` file is the deliverable now. Don't write a brief from memory:
 the fixed sentences are the wording that has worked, and the file's last section is
 the checklist that produces the per-PR "where I'd push" bullets, which is where the
 findings come from. The template also names the PR-body sections it points at
@@ -912,13 +934,17 @@ findings come from. The template also names the PR-body sections it points at
 so write the PR body to that shape. The bullets below are why the fixed parts say
 what they say:
 
-- **One line, not a wall of text:** the one-line paste above. Free **:8000 and :5173** before a frontend round: the e2e config reuses
+- **One line, not a wall of text:** the line above. Free **:8000 and :5173** before a frontend round: the e2e config reuses
   whatever is listening, and the dev database's owner password is not the suite's.
 - **Prepare the environment first:** deps installed (`uv sync`, `npm install`),
   db up, everything offline-resolvable. Otherwise every install is an approval
-  prompt inside the review.
+  prompt inside the review. **A worktree has no `.env` and no dependencies**, so the
+  brief says to symlink them from the main checkout, and that HTTP reproductions never
+  touch the dev database.
 - **Tell it where to post:** `gh pr comment N --body-file <path>` — `--body-file`,
-  not `--body`, because a shell string mangles backticks and `$`.
+  not `--body`, because a shell string mangles backticks and `$`. A review that can't
+  run a leg says so and lists what wasn't re-measured; that isn't a NO-GO (#265 put one
+  on the public thread).
 - **Give the reviewer two jobs, in order: the whole contract first, the fixes
   second.** The template says it in fixed words. A brief that specifies exactly how
   to verify the reported fixes — heads, failing assertions, mutants, the author's
@@ -934,9 +960,8 @@ what they say:
   what was checked, by what, at which head; what is unresolved; what is explicitly
   untested. Findings survive in the thread; tentative concerns, unexplored paths and
   the reasons particular checks were chosen do not — and a fresh reviewer session
-  otherwise rebuilds its understanding from the newest brief alone. Where practical,
-  keep one reviewer session through a PR's corrective rounds and open a fresh one
-  deliberately, for an independent pass, with the record in front of it.
+  otherwise rebuilds its understanding from the newest brief alone, and every round
+  through T3 Code is a fresh session.
 - **Point it at the test claim, and tell it to re-measure.** The PR body lists
   which tests fail against unfixed `main` and why; that is the claim most worth
   checking, and the author's counts are the first thing to get wrong (#109's body
@@ -945,11 +970,11 @@ what they say:
   invite it to push there.
 - **Vocabulary:** see the mutation-testing note above.
 - **One reviewer per round, a different model family from the author where you
-  can.** GLM and Codex are the defaults; Claude is an option with the caveat
-  written into the template's footer. Keep the working tree parked (on `main`,
-  or anywhere that will not switch) for the whole review window — a branch
-  changing under the reviewer cost half a round on #173 before it recovered
-  via worktree.
+  can.** Codex is the default; GLM and Claude are options, Claude with the caveat
+  written into the template's footer. Don't push to the branch during a round. A
+  reviewer in the shared checkout also needs the tree parked (on `main`, or anywhere
+  that will not switch) for the whole window — a branch changing under the reviewer
+  cost half a round on #173 before it recovered via worktree.
 
 ### Responding to a review
 
@@ -969,6 +994,15 @@ what they say:
 6. **Expect another round.** Merging on a NO-GO discards the review it was sent
    out for. If rounds keep landing in the same function, stop patching it and look
    for the invariant one level up.
+6.1. **A P3 alone isn't a NO-GO** (owner's call, 2026-11-04, after #353 and #357 each
+   took NO-GO rounds that were all P3s). A reviewer whose every finding is a P3 and
+   whose verdict is NO-GO must say, in each finding, why it can't merge and be fixed
+   later in a separate issue: a reason specific to this merge, such as something a later
+   fix couldn't recover, or a contract that's hard to change once shipped. "It's a real
+   defect" or "this PR introduced it" isn't enough alone. Without that the verdict is GO
+   and the P3s are follow-ups to file. Severity comes first, by real exposure, and isn't
+   raised to reach a verdict. Whether a justification holds is the owner's call, not the
+   author's, and a P3 the author can fix cheaply can still be fixed before merge.
 7. **File the siblings a review turns up** as their own issues; do not fold them in
    unless they share the root cause and the branch says so.
 7.1. **Update the coverage record** in the PR body: what this round checked and at

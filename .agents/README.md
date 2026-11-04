@@ -24,5 +24,5 @@ humans working alongside them) need *between* sessions, kept out of the always-l
   the change's own PR, worked through by the release and trimmed once it is published
   (`releases.md` step 7).
 - `review-brief.md` — the fill-in template for briefing an external reviewer
-  (Cursor / Codex / Claude), the PR-body shape it points at, and the checklist
+  (Codex by default, started through T3 Code), the PR-body shape it points at, and the checklist
   that produces the per-PR "where I'd push" section. Edited in place.
