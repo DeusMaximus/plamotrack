@@ -30,7 +30,7 @@ import { itemTypeTitle } from "../lib/labels";
 import type { CatalogSelection } from "./CatalogItemPicker";
 import { CatalogItemPicker } from "./CatalogItemPicker";
 import { Modal } from "./Modal";
-import { Button, EmptyState, ErrorBanner, Field, Input, Select } from "./ui";
+import { Button, EmptyState, ErrorBanner, Field, Input, Select, Textarea } from "./ui";
 
 /** The order dialog (new or edit), shared by the Orders page and Home (#233).
  *  Ship, Receive and Delete live here too (#120, §13.4): the one control on a
@@ -86,6 +86,7 @@ interface OrderFormValues {
   delivery_service: string;
   tracking_number: string;
   tracking_url: string;
+  notes: string;
   received: boolean;
   /** The arrival date (#93). On a create it rides the `received` flag; on an edit
    *  of a received order it corrects the stored receipt — sent only when dirty,
@@ -143,6 +144,7 @@ function orderToFormValues(order: Order, catalogName: Map<string, string>): Orde
     delivery_service: order.delivery_service ?? "",
     tracking_number: order.tracking_number ?? "",
     tracking_url: order.tracking_url ?? "",
+    notes: order.notes ?? "",
     received: order.received_at !== null,
     received_date: order.received_at === null ? "" : isoToLocalDateInput(order.received_at),
     shipped_date: order.shipped_at === null ? "" : isoToLocalDateInput(order.shipped_at),
@@ -657,8 +659,10 @@ function OrderForm({
   // but a following ship/receive call fails, the resubmit must not replay the
   // call that succeeded — the server 409s the repeat, which would turn a fixable
   // date typo into a dead end. Refs, not state: nothing renders from them, and
-  // the form unmounts on close so a fresh open starts clean.
-  const applied = useRef({ shipped: false, received: false });
+  // the form unmounts on close so a fresh open starts clean. `note` is the other
+  // way round: once a PATCH has stored this dialog's note, the opening value is no
+  // longer what is stored, so a retry owes the note even when the field isn't dirty.
+  const applied = useRef({ shipped: false, received: false, note: false });
   const { data: retailers } = useQuery({ queryKey: ["retailers"], queryFn: api.listRetailers });
 
   // Snapshotted once per open, deliberately: react-hook-form owns these values
@@ -676,6 +680,7 @@ function OrderForm({
         delivery_service: "",
         tracking_number: "",
         tracking_url: "",
+        notes: "",
         received: false,
         received_date: todayISO(),
         shipped_date: "",
@@ -737,6 +742,12 @@ function OrderForm({
       delivery_service: values.delivery_service || null,
       tracking_number: values.tracking_number || null,
       tracking_url: values.tracking_url || null,
+      // Omitted from an edit that never touched it: the field holds a copy from when
+      // the dialog opened, and an agent may have written the note since. Null is a
+      // clear, so restating the copy would erase what it wrote.
+      ...(!order || dirtyFields.notes || applied.current.note
+        ? { notes: values.notes || null }
+        : {}),
       // Omitted entirely when the edit never touched a line. `items: undefined`
       // means "leave the lines alone" to the API, and sending them anyway is how a
       // tracking-number change reached the kits at all (#65) — every save re-ran
@@ -777,6 +788,7 @@ function OrderForm({
     try {
       if (order) {
         await api.updateOrder(order.id, payload);
+        if ("notes" in payload) applied.current.note = true;
         // Ship before receive: an order may take both in one save, and shipping
         // is the earlier fact — receive advances the just-shipped kits onward.
         // Today = "it happened now": no body, so the server stamps the actual
@@ -824,6 +836,7 @@ function OrderForm({
           delivery_service: payload.delivery_service,
           tracking_number: payload.tracking_number,
           tracking_url: payload.tracking_url,
+          notes: payload.notes,
           received: values.received,
           // Today = "it arrived now": omit the date so the server stamps the
           // actual moment rather than midnight. A backdate is sent explicitly.
@@ -1003,6 +1016,9 @@ function OrderForm({
           </Field>
           <Field label={t("orders.trackingUrl")} className="col-span-3 max-md:col-span-full">
             <Input {...register("tracking_url")} placeholder={t("common.urlPlaceholder")} />
+          </Field>
+          <Field label={t("orders.notes")} className="col-span-full">
+            <Textarea {...register("notes")} placeholder={t("orders.notesPlaceholder")} />
           </Field>
         </div>
 

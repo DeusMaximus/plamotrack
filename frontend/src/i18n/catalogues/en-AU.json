@@ -803,6 +803,8 @@
     "deliveryServicePlaceholder": "blank = local pickup",
     "trackingNumber": "Tracking number",
     "trackingUrl": "Tracking URL",
+    "notes": "Notes",
+    "notesPlaceholder": "How it was paid, a substitution, a refund…",
     "alreadyInHand": "Already in hand (store purchase / delivery arrived) — stock counts immediately",
     "receivedOnPrefix": "on",
     "preOrderToggle": "Pre-order — kits wait as Pre-ordered until this order ships or arrives",

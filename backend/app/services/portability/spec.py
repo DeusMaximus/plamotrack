@@ -66,7 +66,7 @@ from app.services.numeric import (
     require_int4,
     strip_numeric_grouping,
 )
-from app.services.text import require_storable_text
+from app.services.text import require_storable_text, stripped_or_none
 
 # --- cell parsers --------------------------------------------------------------
 
@@ -75,8 +75,7 @@ _FALSE = {"false", "f", "no", "n", "0"}
 
 
 def parse_text(raw: str) -> str | None:
-    value = raw.strip()
-    return require_storable_text(value) or None
+    return stripped_or_none(require_storable_text(raw))
 
 
 def parse_int(raw: str) -> int | None:
@@ -694,6 +693,7 @@ ORDERS = TableSpec(
             parse_datetime,
             help="Blank = still pending. Set = arrived; stock is stated, never re-derived.",
         ),
+        col("notes", parse_text, help="Anything else about this purchase. Free text."),
     ),
     label=lambda row: (
         f"order {row.get('order_number') or '(no number)'} — {render(row.get('order_date'))}"

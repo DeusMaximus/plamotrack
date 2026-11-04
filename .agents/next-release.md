@@ -33,6 +33,16 @@ Shape:
 
 ---
 
+## #348 — an order can carry a note (PR #357)
+- **Release note:** Orders have a free-text notes field, for what no other field holds:
+  how it was paid, a substitution, a partial refund. It is in the order editor and under
+  an order's expanded lines, on the `create_order`, `update_order`, `get_order` and
+  `list_orders` tools, and in `orders.csv`. A note changes no total and no stock.
+- **README:** nothing. The MCP tool table does not list a tool's fields.
+- **Docs site:** `using/kits-and-orders.mdx`: one line that the order editor has a Notes
+  field and that the note shows under the order's expanded lines. `using/import-export.mdx`
+  lists the starter sheet's columns, which have no `notes`, so nothing there.
+
 ## #351 — reconcile documentation drift (pending next-release task)
 - [ ] Complete [#351](https://github.com/DeusMaximus/plamotrack/issues/351) during
   the next release cycle, including the smaller Kanban and frontend README items.

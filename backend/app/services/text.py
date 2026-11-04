@@ -55,6 +55,13 @@ def require_storable_text(value: str) -> str:
     return value
 
 
+def stripped_or_none(value: str) -> str | None:
+    """Free text as the importer reads a cell: no surrounding whitespace, and blank
+    is no value. A writer that stores anything else leaves a row the next re-import
+    of its own export calls an update, which rule 10 says it never is (#348)."""
+    return value.strip() or None
+
+
 def refuse_unstorable_text(field: str, value: str | None) -> None:
     """The service-layer refusal, for text that reaches a query as an argument
     rather than through a request schema: a list filter, the catalog search, a

@@ -45,11 +45,12 @@ OIDC_LOGIN = "0db6c35d0a7e"
 SESSION_AUTH_MODE = "4f3a9c1e7b2d"
 MCP_OAUTH_STATE = "d5e9362140ea"
 NON_NEGATIVE_CHECKS = "5cbec7813500"
+ORDER_NOTES = "8e41c7d2a9f6"
 
 # The current migration head, as a literal (this module keeps revision ids as
 # literals on purpose — see the header). The "recovered to head" / "nothing
 # moved" assertions compare against it, so a new migration bumps this one line.
-HEAD = NON_NEGATIVE_CHECKS
+HEAD = ORDER_NOTES
 
 
 def db(sql: str, **params) -> list[tuple]:
@@ -617,6 +618,37 @@ def test_non_negative_checks_clear_negatives_to_null_and_keep_the_rest(walk):
     db("UPDATE orders SET shipping_cost_minor = -1 WHERE order_number = 'zero'")
     db("UPDATE consumables SET low_stock_threshold = -1 WHERE name = 'zero'")
     assert db("SELECT shipping_cost_minor FROM orders WHERE order_number = 'negative'") == [(None,)]
+
+
+# --- 8e41c7d2a9f6: orders.notes (#348) ---------------------------------------------
+
+
+def test_order_notes_arrive_empty_and_leave_the_order_behind(walk):
+    """An order from before the column reads as having no note, and the rest of its
+    row is untouched in both directions. The downgrade drops the note and only the
+    note: the order is still there, and its header with it."""
+    walk.down(NON_NEGATIVE_CHECKS)
+    retailer_id = uuid.uuid4()
+    db("INSERT INTO retailers (id, name) VALUES (:r, 'Migration Test Shop 348')", r=retailer_id)
+    db(
+        "INSERT INTO orders (id, retailer_id, order_date, order_number, currency_code) "
+        "VALUES (:o, :r, :d, 'AMZ-1', 'AUD')",
+        o=uuid.uuid4(),
+        r=retailer_id,
+        d=date(2026, 10, 27),
+    )
+
+    walk.up(ORDER_NOTES)
+    assert db("SELECT order_number, notes FROM orders") == [("AMZ-1", None)]
+    db("UPDATE orders SET notes = 'Part-paid with a gift card'")
+
+    walk.down(NON_NEGATIVE_CHECKS)
+    assert db("SELECT order_number, order_date FROM orders") == [("AMZ-1", date(2026, 10, 27))]
+    columns = db(
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_name = 'orders' AND column_name = 'notes'"
+    )
+    assert columns == []
 
 
 def test_every_migration_renders_offline(capsys):
