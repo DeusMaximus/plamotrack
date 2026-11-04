@@ -41,6 +41,26 @@ Template:
 
 ---
 
+## 2026-11-04 — Claude Code (Opus 5.5) — #348 MERGED as `ff50f94` (PR #357); reviews now start through T3 Code; #358 filed
+
+- **Done:**
+  - **[PR #357](https://github.com/DeusMaximus/plamotrack/pull/357) merged** at reviewed head `11a280f`, closing #348: `orders.notes` on REST, MCP, `orders.csv`, the order editor and the expanded lines, with one additive migration, `8e41c7d2a9f6`.
+  - **Three Codex gpt-6.1-sol rounds:** NO-GO on a P2 (a save that never touched the note erased what an agent wrote, fixed `039007b`), NO-GO on a P3 (restoring a note on a retry after a failed ship or receive was ignored, fixed `11a280f`), then GO with no findings. Lesson: `lessons.md` → "A dialog's opening value stops being what's stored (#348, PR #357 rounds 1–2)".
+  - **Filed [#358](https://github.com/DeusMaximus/plamotrack/issues/358):** the order dialog's eight other header fields overwrite what an agent wrote while it was open (measured). Order lines already have the retry trap (measured), a likely fix would give header fields the same trap, and the kit and retailer dialogs look the same from reading only.
+  - **Docs on `main`:** `testing-and-review.md` and `review-brief.md` now say how a round starts through T3 Code. Scratch stays out of `.dev/<issue>/`.
+- **Decisions (owner, 04/11):** the authoring agent starts a round itself with `delegate_task` once the owner asks for one, and the paste is the fallback outside T3 Code. T3 reviewers post on the PR, for the public record. An all-P3 NO-GO has to justify why it can't merge and be fixed in a separate issue, and whether that holds is the owner's call.
+- **State:**
+  - PR checks at `11a280f`: Backend, Frontend and Integration all passed. CI on `main` at `ff50f94` was still running when this was written.
+  - Round 3 passed `order-lossless.spec.ts` in Chromium and WebKit, 19 probes of its own, ten negative controls and frontend 672. Not run on this PR: the rest of Playwright locally, `settings`, enlarged fonts, a request that fails in transport after the server committed it, a real MCP client over HTTP.
+  - **The dev database is not migrated to `8e41c7d2a9f6`:** run `alembic upgrade head` before running `main` against it.
+  - **The owner's LXC is on v0.6.0-alpha.** **Unreleased on `main`:** #333, #341/#343, #346/#352, #348, with #351's docs drift pending (`.agents/next-release.md`).
+  - **Owed to plamotrack-ios, unmeasured:** the new API field and CSV column. Also: its planner still reports two diagnostics for an unreadable required cell, its handling of a NUL hasn't been run, and it hasn't re-synced `api-error-codes.json` for `request.text_unstorable`.
+  - **Left behind:** reviewer scratch from rounds 1 and 2 in gitignored `.dev/348/`, harmless. It predates the scratch rule.
+  - **Carried, not reverified:** #344 (image pins, before or with the next release; bump mechanism undecided). testhost is in the tunnel configuration from the 0.6.0 gate; don't recreate its Keycloak container. Owner: allow `pkg-containers.githubusercontent.com` in cloud Network access, delete the Claude.ai Testing connector, complete #278's skill-zip check. Known gaps: #238, #324 (local e2e uses `--workers=1`), #320. plamotrack-ios can re-sync #342's scenarios once its #15 adds `update_order` and `delete_order`.
+- **Next:**
+  - #350 and #349, which have open product questions for the owner (does `get_summary` spend use paid or shelf price); #354, #355, #356, #358.
+  - **The next release:** #351, #344. **M6.7:** #279's edge probes, then #281, #282. **M7** waits on #28.
+
 ## 2026-11-03 — Claude Code (Opus 5.5) — #348 order notes: PR #357 open at `a25fce9`, awaiting review; #356 filed
 
 - **Done:**
@@ -158,34 +178,3 @@ Template:
 
   Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
 - **Also next:** plamotrack-ios can re-sync the scenarios (#342's four). Its runner picks them up once plamotrack-ios#15 adds `update_order` and `delete_order`.
-
-## 2026-10-13 — Claude Code (Opus 5.5) — #333 MERGED as `a25b57f` (PR #340): a failed sign-out says so, and the page keeps working
-
-- **Done:**
-  - **[PR #340](https://github.com/DeusMaximus/plamotrack/pull/340)** squash-merged as **`a25b57f`**, pinned to head `0f39652` after all three checks. #333 is closed.
-    - **The defect:** `useSignOut` cleared the CSRF token whatever the logout answered. `AuthGate` sets it only when it *changes*, so after a refused logout every write was 403 until a reload. The rejection escaped `onClick` unhandled, and nothing was said.
-    - **`lib/signOut.ts`:** one attempt for the tab, a module store read through `useSyncExternalStore` (the `importRun.ts` shape). It never clears the token up front. It re-reads the session and decides from that:
-      - still `owner` → keep the token; if the logout didn't answer, record **refused** against the session the press was made in (`csrfTokenInUse()` at the press);
-      - neither the logout nor the re-read answered → **unconfirmed** ("Couldn't confirm the sign-out…"); a second press settles it;
-      - otherwise signed out, as before.
-      A failure is shown only in the session it was recorded in. The hook returns `{ signOut, pending, message, dismiss }` and never rejects.
-    - **Said beside the control (owner's call, 12/10):** an `ErrorBanner` under Sign out in the sidebar and under More's panel (`reveal`), and in the rail a `fixed` bubble 8 px clear of the rail's edge. It goes on the next press, a pointerdown or click elsewhere, or Escape. All three controls are `aria-disabled` while waiting (#268's rule), and a second press, in any control, sends nothing.
-    - e2e in `shell.spec.ts`, "Sign out, from this shell": 6 new tests across `app`/`phone`/`tablet`. Each review finding's test was red before its fix. Mutants: about 20 over three rounds, all killed or removed as duplicates; one survivor ("decide from the logout's answer alone") is equivalent in effect.
-    - Design §13.7 bullet; `.agents/next-release.md` entry (the only one).
-  - **Review:** CodeRabbit had no findings. Greptile raised two P2s (per-control guard; More's banner under the tab bar), answered in `0a1a6f4`. Codex had none on `067a228`, then three P2s on `0a1a6f4` (failure keyed to the re-read's session; "still signed in" when nothing answered; the bubble ignored the keyboard), answered in `0f39652`. The owner merged without a further round.
-  - `.agents/testing-and-review.md`: three e2e traps from this work (forced click on an `aria-disabled` control, WebKit's Tab skipping buttons, React Query's `visibilitychange` on `window`).
-- **Decisions (owner):** the rail's failure is a bubble beside the icon (12/10); merge at `0f39652` without a further Codex round (13/10).
-- **State:**
-  - **Unreleased on `main`:** #333 only (`.agents/next-release.md`). README and docs site: nothing.
-  - `main` is clean. No worktrees, servers or e2e databases are left. Merged branches on origin include `fix/333-failed-sign-out` and the ones listed on 07/10.
-  - **The owner's LXC is on 0.5.2.** Upgrading to 0.6.0 is the owner's; refresh the Gunpla skill then (#289 changed `create_order`). The release's `plamotrack-gunpla.zip` is current.
-  - **testhost** is in the tunnel configuration from the 0.6.0 gate (`.env.before-claude-check` holds the gate's end state); the next gate run resets it. Don't recreate its Keycloak container: a new one changes `sub`.
-  - **Carried, owner:** allow `pkg-containers.githubusercontent.com` in the cloud environment's Network access; delete Claude.ai's "Testing" connector (still linked to `plamotest.gunp.la`). #278 is open for the skill-zip check.
-  - **Known gaps, filed:** #238, #324 (local e2e needs `--workers=1`), #320.
-- **Next:** the owner's pick.
-  - **M6.7**: #279's edge probes, then #281's packaging; #282's VPS path.
-  - **M7** waits on #28.
-
-  Can wait: #320, #324, #167, #162, #223–#227, #123–#125, #110, #116, #134, #137, #238, #249, #230, #179.
-- **Also next:** **plamotrack-ios** can copy `backend/tests/fixtures/scenarios/` and the golden archive from `main`; cloud candidates #124, #125, #238, #110, #116, #134 and #137; posting the rehearsal on #285.
-

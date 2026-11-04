@@ -1902,3 +1902,28 @@ The same PR has a second, smaller lesson about briefs. Codex's second round aske
 a NO-GO. A brief that asks for the next instance will always get one, so its verdict
 stops being evidence about readiness. When the question has become "should this merge",
 ask that, with severity by exposure, and name in the record that the brief was framed so.
+
+## A dialog's opening value stops being what's stored (#348, PR #357 rounds 1–2)
+
+The order editor's note field was written, reviewed and red-run, and two rounds still
+found defects in one line of `OrderFormModal`.
+
+Round 1: an edit restated the note it had copied when the dialog opened, so a save that
+never touched the field erased what an agent had written meanwhile. The e2e test "survives
+an edit that never mentions it" passed, because nothing else wrote the note while the
+dialog was open. The brief had also rated this no worse than `order_number`, and the
+review overruled that: a note is prose an agent writes on purpose.
+
+Round 2: the fix asked "is this field dirty?", which compares with the opening value. A
+dialog save is a `PATCH` and then a ship or receive, so it can fail halfway. After that,
+the opening value is no longer what's stored. A person who restored the old text on the
+retry had a clean field, so nothing was sent and the old text stayed gone. The first fix
+introduced that defect.
+
+**A value held from when a dialog opened describes the row only until something else
+writes it: another writer, or this dialog's own first request. Test both, by writing
+between open and save, and by failing the second request of a save.** A dirty check answers
+"did the person change it?", not "does the row still say this?".
+
+That is where the sibling issue came from: order lines already have the retry trap, and
+#358's likely fix would give the header fields the same one.
