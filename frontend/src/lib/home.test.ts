@@ -43,6 +43,7 @@ function kitLine(name: string, status: Kit["status"] = "ordered", quantity = 1):
     id: `line-${name}`,
     item_type: "kit",
     catalog_ref_id: null,
+    description: null,
     quantity,
     unit_price_minor: 2800,
     currency_code: "JPY",
@@ -58,8 +59,27 @@ function catalogLine(refId: string, quantity = 1): OrderItem {
     id: `line-${refId}`,
     item_type: "display",
     catalog_ref_id: refId,
+    description: null,
     quantity,
     unit_price_minor: 1200,
+    currency_code: "JPY",
+    converted_price_minor: null,
+    converted_currency_code: null,
+    spawned_kit_ids: [],
+    kits: [],
+  };
+}
+
+/** Something on the order the collection doesn't track (#349): no kit and no
+ *  catalog row, only what it was. */
+function otherLine(description: string, quantity = 1): OrderItem {
+  return {
+    id: `line-${description}`,
+    item_type: "other",
+    catalog_ref_id: null,
+    description,
+    quantity,
+    unit_price_minor: 350,
     currency_code: "JPY",
     converted_price_minor: null,
     converted_currency_code: null,
@@ -210,6 +230,20 @@ describe("mailCardLines", () => {
     });
   });
 
+  it("names an other line by its own description, with no list to wait for", () => {
+    const nothingLoaded = () => undefined;
+    const lines = mailCardLines(
+      order("ordered", [otherLine("Carry bag", 2), kitLine("MG Nu")]),
+      nothingLoaded,
+    );
+    expect(lines.headline).toEqual({
+      label: "Carry bag",
+      quantity: 2,
+      itemType: "other",
+      preOrder: false,
+    });
+  });
+
   it("leaves a catalog label null until its list has loaded", () => {
     const first = mailCardLines(order("ordered", [catalogLine("unknown")]), nameOf);
     expect(first.headline).toEqual({ label: null, quantity: 1, itemType: "display", preOrder: false });
@@ -265,6 +299,15 @@ describe("needsCatalogNames", () => {
     expect(
       needsCatalogNames([order("ordered", [kitLine("A"), kitLine("B"), catalogLine("base-1")])]),
     ).toBe(false);
+  });
+
+  it("is false for an other line a card names: it carries its own name", () => {
+    expect(needsCatalogNames([order("ordered", [otherLine("Carry bag")])])).toBe(false);
+    expect(needsCatalogNames([order("ordered", [kitLine("A"), otherLine("Carry bag")])])).toBe(
+      false,
+    );
+    // The control: the same card with a catalog line in that place does need them.
+    expect(needsCatalogNames([order("ordered", [kitLine("A"), catalogLine("base-1")])])).toBe(true);
   });
 
   it("is true when a card would name a catalog line — first, or the one other", () => {

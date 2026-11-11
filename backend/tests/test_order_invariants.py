@@ -193,6 +193,33 @@ INVARIANTS = [
     ),
     pytest.param(
         {
+            # #349: the type a line the collection does not track has. Stated with
+            # the description that type requires, so the refusal is the change of
+            # type and not a misshapen line.
+            "id": "item_type change to other",
+            "kits": 2,
+            "progress": (),
+            "rest": {"item_type": "other", "kit": None, "description": "Zaku II"},
+            "sheet": {"item_type": "other", "description": "Zaku II"},
+            "refused": True,
+        },
+        id="item_type change to other",
+    ),
+    pytest.param(
+        {
+            # #349: `description` belongs to an `other` line. On a kit line both
+            # writers refuse it and leave the line and its kits alone.
+            "id": "a description on a kit line",
+            "kits": 2,
+            "progress": (),
+            "rest": {"description": "Zaku II"},
+            "sheet": {"description": "Zaku II"},
+            "refused": True,
+        },
+        id="description on a kit line",
+    ),
+    pytest.param(
+        {
             "id": "reparent to another order",
             "kits": 2,
             "progress": (),
@@ -1363,7 +1390,7 @@ async def test_a_kit_cannot_take_its_provenance_from_a_catalog_line(client):
     plan = await preview(client, content, filename="kits.csv")
     assert actions(plan, "kits") == ["error", "error"], plan["tables"]
     error = row_error(plan["tables"][0]["rows"][0])
-    assert "is a consumable line" in error
+    assert "is not a kit line (its type is consumable)" in error
     assert "Point these kits at a kit line" in error, "the refusal has to name the fix"
 
     assert (await apply(client, content, filename="kits.csv")).status_code == 409

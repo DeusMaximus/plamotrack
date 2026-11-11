@@ -358,6 +358,7 @@ async def _seed(client) -> dict[str, dict[str, str]]:
     )
 
     # Bought over the counter: received at entry, no delivery, Australian dollars.
+    # The last order with lines, so the untracked line's id is the table's last.
     await _ok(
         await client.post(
             "/orders",
@@ -374,7 +375,16 @@ async def _seed(client) -> dict[str, dict[str, str]]:
                         "unit_price_minor": 4995,
                         "currency_code": "AUD",
                         "kit": {"name": "Zaku II", "grade": "HG", "scale": "1/144"},
-                    }
+                    },
+                    # Something on the receipt the collection does not track (#349):
+                    # no kit, no catalog row, a description and a price.
+                    {
+                        "item_type": "other",
+                        "quantity": 2,
+                        "unit_price_minor": 350,
+                        "currency_code": "AUD",
+                        "description": 'Carry bag, "large"',
+                    },
                 ],
             },
         ),

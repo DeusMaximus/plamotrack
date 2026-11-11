@@ -388,8 +388,9 @@ The dispatch point between orders and the catalog tables.
 |---|---|---|
 | id | uuid | |
 | order_id | uuid FK | |
-| item_type | enum | kit / tool / consumable / upgrade / display |
-| catalog_ref_id | uuid (nullable) | points at a row in one of the catalog tables (null for kit-type, since kits are spawned fresh) |
+| item_type | enum | kit / tool / consumable / upgrade / display / other |
+| catalog_ref_id | uuid (nullable) | points at a row in one of the catalog tables (null for kit-type, since kits are spawned fresh, and for `other`, which is tracked nowhere) |
+| description | text (nullable) | what an `other` line bought; set on those lines and on no others (#349) |
 | quantity | int | **semantics differ by item_type** — see below |
 | unit_price_minor | int | |
 | currency_code | text | ISO 4217 |
@@ -404,6 +405,32 @@ to be explicit in code and not merely documented:
 - `item_type = tool/consumable/upgrade/display` → quantity **increments**
   `quantity_on_hand` on the referenced catalog row, **when the order is received** —
   not at entry
+- `item_type = other` → quantity is **only a number on the receipt**: nothing is
+  created and nothing is counted, at entry or on receipt
+
+**Untracked lines (#349, 12/11/2026).** An order used to hold only things the
+collection tracks, so a mixed basket (a kit and a magazine, a tool and a carry bag)
+could not be entered as bought, and its total never matched the receipt. An `other`
+line is the rest of the basket: a `description`, a quantity and a price. It dispatches
+nothing, so it is legal in every state a kit line is (it may join an order that is
+already received, and an import may receive an order whose only non-kit lines are
+`other` ones), and the stock rules read "a line that points at a catalog row", never
+"a line that is not a kit". Three things were decided with it:
+
+- **No conversion.** `item_type` stays immutable in both directions. Something bought
+  untracked is tracked later by removing the line and adding a kit or catalog line.
+  The order editor already does that when the type select changes.
+- **The description belongs to the type.** Required on an `other` line, refused on
+  every other, by the request schema, the importer and two CHECK constraints. A kit
+  line is named by its kits and a catalog line by its catalog item; a third,
+  free-text name on those would be one more thing to drift.
+- **It counts toward the order's total and toward nothing else.** There is no spend
+  reporting today (`get_summary` counts kits and orders, not money). When there is,
+  untracked lines stay out of collection spend (owner's call, 05/11/2026).
+
+It is also why the archive's `export_version` is 2: a version-1 reader meets an
+`item_type` outside its vocabulary and refuses the row cell by cell, which blocks the
+import without saying the reader is simply older than the archive (§12.1).
 
 **Order lifecycle (revised 06/08/2026).** Orders are pending → received. The original
 design incremented stock at entry, which meant plamotrack would cheerfully report five
@@ -2630,7 +2657,10 @@ migrate, or seed from the spreadsheet they already keep.
 CSV, one file per table, zipped with a `manifest.json` carrying `format`,
 `export_version`, `schema_version` (the live Alembic revision), `app_version`,
 `exported_at`, and per-table row counts. An archive from a **newer** `export_version` is
-refused rather than mangled; a `schema_version` mismatch is a warning.
+refused rather than mangled; a `schema_version` mismatch is a warning. The version is
+**2** since #349 (12/11/2026), which added a row an older reader cannot hold: an
+`other` order line (§3.9). A column an older reader would merely drop, such as
+`orders.notes` (#348), does not move it. Version-1 archives read unchanged.
 
 The CSVs are deliberately human-readable as well as machine-restorable: every uuid FK
 carries a readable twin column (`retailer_name`, `catalog_name`), and every integer

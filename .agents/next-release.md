@@ -43,6 +43,29 @@ Shape:
   field and that the note shows under the order's expanded lines. `using/import-export.mdx`
   lists the starter sheet's columns, which have no `notes`, so nothing there.
 
+## #349 — an order can hold something the collection doesn't track (PR #360)
+- **Release note:** An order line can be of type **Other**: something on the order that
+  isn't a kit, tool, consumable, upgrade or display item, such as a magazine in a mixed
+  basket. It takes a description, a quantity and a price, counts toward the order's
+  total, and adds nothing to the collection: no kit, no catalog item, no stock. It is in
+  the order editor, on `create_order` and `update_order` (`item_type: "other"` with a
+  `description`), and in `order_items.csv`. A line's type still can't be changed, so to
+  start tracking something, remove the line and add a kit or catalog line.
+- **Release note (archives):** The archive's `export_version` is now 2. This release
+  reads archives from every earlier release. An earlier release refuses an archive
+  written by this one and says to update first.
+- **Upgrade note:** one migration (`61442608b20e`). Downgrading past it is refused
+  while any order holds an Other line.
+- **README:** nothing. The MCP tool table does not list a tool's fields.
+- **Docs site:** `using/kits-and-orders.mdx`: the line types an order takes now include
+  Other, what it is for, and that it is never tracked. `using/import-export.mdx`: the
+  archive's version, and that an older release refuses a newer archive.
+- **Other docs:** `docs/import-export.md`: `description` in `order_items.csv`; the
+  manifest example's `export_version`; and in "What an import can't do to an order",
+  that the receipt and joining rules are about tool, consumable, upgrade and display
+  lines, so an Other line is as free as a kit line, and that a description on any other
+  type of line is refused.
+
 ## #351 — reconcile documentation drift (pending next-release task)
 - [ ] Complete [#351](https://github.com/DeusMaximus/plamotrack/issues/351) during
   the next release cycle, including the smaller Kanban and frontend README items.

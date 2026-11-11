@@ -51,8 +51,9 @@ export function completedOn(kit: Kit): string | null {
 }
 
 export type LineSummary = {
-  /** The kit's name, or the catalog item's when its list has loaded — null
-   *  until then (the page falls back to the item type). */
+  /** The kit's name, an `other` line's description, or the catalog item's name
+   *  when its list has loaded — null until then (the page falls back to the item
+   *  type). */
   label: string | null;
   quantity: number;
   /** The wire type — what the page names the line by while a catalog name is
@@ -81,12 +82,13 @@ export function summarizeLine(
   order: Order,
   nameOf: (catalogId: string) => string | undefined,
 ): LineSummary {
-  const catalog = item.item_type !== "kit";
-  const label: string | null = catalog
-    ? item.catalog_ref_id
-      ? (nameOf(item.catalog_ref_id) ?? null)
-      : null
-    : (item.kits[0]?.name ?? null);
+  // A kit line is named by its kit, an `other` line (#349) by its description,
+  // which it carries itself, and a catalog line by a row of a list that may not
+  // have loaded yet.
+  let label: string | null;
+  if (item.item_type === "kit") label = item.kits[0]?.name ?? null;
+  else if (item.item_type === "other") label = item.description;
+  else label = item.catalog_ref_id ? (nameOf(item.catalog_ref_id) ?? null) : null;
   return {
     label,
     quantity: item.quantity,
@@ -130,6 +132,8 @@ export function trackingOf(order: Order, stage: OrderStage): Tracking | null {
 export function needsCatalogNames(orders: readonly Order[]): boolean {
   return orders.some((order) => {
     const named = order.items.length <= 2 ? order.items : order.items.slice(0, 1);
-    return named.some((item) => item.item_type !== "kit");
+    // Only a catalog line is named from those lists: a kit line and an `other`
+    // line (#349) carry their own names.
+    return named.some((item) => item.item_type !== "kit" && item.item_type !== "other");
   });
 }

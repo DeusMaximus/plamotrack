@@ -95,6 +95,7 @@
     "categoryRequired": "Category is required",
     "manufacturerRequired": "Manufacturer is required",
     "kitNameRequired": "Kit name is required",
+    "otherDescriptionRequired": "Say what this line was",
     "currencyCode": "3-letter ISO code",
     "requiredField": "required",
     "catalogSelection": "Search for an existing item or create a new one",
@@ -172,7 +173,7 @@
       "id_duplicated": "Row {{row}} already uses this id — two rows in one upload can't carry the same id.",
       "kept_stored": "{{field}}: left as it was — this column can't be emptied, and nothing in this row supplies a new value.",
       "kit_move_quantity_unstated": "$t(importField.order_item_id): this would leave order line {{lineId}} holding {{after}} kit(s), and nothing in this upload says how many that line bought — state the quantity on its $t(importTable.order_items).csv row, or leave $t(importField.order_item_id) as it is.",
-      "kit_move_to_catalog_line": "$t(importField.order_item_id): order line {{lineId}} is a {{itemType}} line, and a catalog line buys stock, not kits — point these kits at a kit line, or leave the column blank.",
+      "kit_move_to_catalog_line": "$t(importField.order_item_id): order line {{lineId}} is not a kit line (its type is {{itemType}}), and only a kit line buys kits — point these kits at a kit line, or leave the column blank.",
       "kit_move_unreconciled": "$t(importField.order_item_id): this would leave order line {{lineId}} holding {{after}} kit(s) while the line says it bought {{quantity}} — set that line's quantity to what it should hold, or leave $t(importField.order_item_id) as it is.",
       "kit_name_exists_one": "You already have {{countDisplay}} kit called '{{name}}' — importing adds another, since two of the same kit are two kits.",
       "kit_name_exists_other": "You already have {{countDisplay}} kits called '{{name}}' — importing adds another, since two of the same kit are two kits.",
@@ -186,6 +187,8 @@
       "kits_ship_advance_other": "Marking this order shipped moves {{countDisplay}} kits to in transit.",
       "kits_spawn_planned_one": "Will create {{countDisplay}} kit from this line.",
       "kits_spawn_planned_other": "Will create {{countDisplay}} kits from this line.",
+      "line_description_misplaced": "$t(importField.description): only a line of type other carries one, and this line's type is {{itemType}} — empty the cell.",
+      "line_description_required": "$t(importField.description): a line of type other isn't tracked in the collection, so its description is all that says what it bought — fill it in.",
       "line_joins_received": "$t(importField.order_id): this {{itemType}} line would join an order that's already received, and an import never changes what you have on hand — add the line in the app instead, which applies the stock as it saves.",
       "manifest_ambiguous_one": "The archive holds {{countDisplay}} manifest file — there's no telling which one describes it, so nothing will be imported from it.",
       "manifest_ambiguous_other": "The archive holds {{countDisplay}} manifest files — there's no telling which one describes it, so nothing will be imported from it.",
@@ -215,6 +218,7 @@
       "receipt_unaccounted": "$t(importField.received_at): marking this order received would leave the stock its catalog lines bought unaccounted for — take $t(importField.received_at) out of this sheet and receive the order in the app, which applies the stock.",
       "ref_dangling": "{{field}}: no {{table}} here has id {{id}}, so this row imports without it. Add that {{table}} row, or fill it in afterwards.",
       "ref_ignored_kit_line": "{{field}}: a kit line doesn't reference the catalog — its kits are spawned fresh, so the value was ignored.",
+      "ref_ignored_other_line": "{{field}}: a line of type other isn't tracked in the collection, so it references no catalog item — the value was ignored.",
       "ref_not_in_upload": "{{field}}: no {{table}} row with id {{id}} in this upload — a replace-all import deletes everything the upload doesn't contain, so add that row or name it by its readable column.",
       "ref_overwrite_unresolved": "{{field}}: id {{id}} names nothing here, and this row currently points at a stored {{table}} — an id that names nothing can't be what clears that link. Fix the id, or leave the column out of this sheet.",
       "ref_unmatched": "{{field}}: no matching {{table}} found — add it to the import or fix the reference.",
@@ -396,6 +400,11 @@
       "singular": "display item",
       "plural": "display items",
       "title": "Display item"
+    },
+    "other": {
+      "singular": "other item",
+      "plural": "other items",
+      "title": "Other"
     }
   },
   "packingQuality": {
@@ -538,6 +547,7 @@
     "kit_scale": "Kit scale",
     "kit_number": "Kit number",
     "kit_status": "Kit status",
+    "description": "Description",
     "grade": "Grade",
     "scale": "Scale",
     "series": "Series",
@@ -822,6 +832,9 @@
     "unitPrice": "Unit price",
     "removeLine": "Remove line",
     "kitNamePlaceholder": "Kit name *",
+    "otherDescription": "Description",
+    "otherDescriptionPlaceholder": "What was it? *",
+    "otherNote": "Not tracked in your collection — it only counts toward the order's total.",
     "gradePlaceholder": "Grade *",
     "scalePlaceholder": "Scale",
     "scaleTooltip": "Blank = derived from the grade",
@@ -875,6 +888,7 @@
     "itemCount_other": "{{countDisplay}} items",
     "shippedDate": "Shipped {{date}}",
     "stockOnReceipt": "stock applies on receipt",
+    "notTracked": "not tracked",
     "shippingLine": "Shipping",
     "shippingLineWith": "Shipping · {{service}}",
     "emptyFiltered": "No orders match these filters."

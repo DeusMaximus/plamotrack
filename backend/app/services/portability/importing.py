@@ -1113,14 +1113,40 @@ class _Planner:
             if item_type is None:
                 return None
             table = CATALOG_TABLE_BY_ITEM_TYPE.get(str(item_type))
-            if table is None:  # kit lines don't reference the catalog
+            if table is None:  # kit and `other` lines don't reference the catalog
                 # Dropped, and said out loud for the same reason as any other
                 # discarded reference (#82): the operator filled the cell in. This
                 # one never reaches the `dangling` path below, because there is no
-                # catalog table to fail to find it in — kits are spawned fresh, so
-                # the column means nothing here whatever it holds.
+                # catalog table to fail to find it in — kits are spawned fresh and
+                # an `other` line (#349) is tracked nowhere, so the column means
+                # nothing here whatever it holds.
                 discarded = row.values.get(column.name)
                 row.values[column.name] = None
+                if item_type is ItemType.OTHER:
+                    # Said of the readable mirror as well as the id: on a catalog
+                    # line a name creates the item it names, so a name typed on an
+                    # `other` line was typed expecting something, and nothing here
+                    # will come of it.
+                    stated = [(column.name, discarded)]
+                    alt = self._alt_for(spec, column)
+                    if alt is not None:
+                        stated.append((alt.name, row.values.get(alt.name)))
+                    for field, value in stated:
+                        if value is None:
+                            continue
+                        row.messages.append(
+                            Diagnostic(
+                                code=error_codes.IMPORT_REF_IGNORED_OTHER_LINE,
+                                params={"field": field},
+                                detail=(
+                                    f"{field}: an other line isn't tracked in the "
+                                    f"collection, so it references no catalog item and "
+                                    f"{value} was ignored — what it bought is its "
+                                    f"description"
+                                ),
+                            )
+                        )
+                    return None
                 if discarded is not None:
                     row.messages.append(
                         Diagnostic(
@@ -1301,6 +1327,10 @@ class _Planner:
     def _existing_line_fingerprint(self, item: OrderItem) -> tuple:
         if item.item_type is ItemType.KIT:
             ref_name = item.kits[0].name if item.kits else ""
+        elif item.item_type is ItemType.OTHER:
+            # Named by nothing but its description (#349), so that is the name two
+            # such lines are the same purchase by.
+            ref_name = item.description or ""
         else:
             ref_name = self.catalog_names.get(item.catalog_ref_id, "")
         return self._line_fingerprint(
@@ -1311,6 +1341,8 @@ class _Planner:
         item_type = values.get("item_type")
         if item_type is ItemType.KIT:
             ref_name = values.get("kit_name") or ""
+        elif item_type is ItemType.OTHER:
+            ref_name = values.get("description") or ""
         else:
             ref_name = values.get("catalog_name") or self.catalog_names.get(
                 values.get("catalog_ref_id"), ""
@@ -2729,10 +2761,10 @@ class _Planner:
                         code=error_codes.IMPORT_KIT_MOVE_TO_CATALOG_LINE,
                         params={"line_id": str(line_id), "item_type": str(item_type)},
                         detail=(
-                            f"order_item_id: order line {line_id} is a {item_type} line, and "
-                            "a kit's order_item_id records which line bought it — a catalog "
-                            "line buys stock, not kits. Point these kits at a kit line, or "
-                            "leave the column blank"
+                            f"order_item_id: order line {line_id} is not a kit line (its "
+                            f"type is {item_type}), and a kit's order_item_id records "
+                            "which line bought it — only a kit line buys kits. Point "
+                            "these kits at a kit line, or leave the column blank"
                         ),
                     ),
                 )

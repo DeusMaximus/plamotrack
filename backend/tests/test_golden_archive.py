@@ -136,6 +136,7 @@ HEADERS = {
         "kit_scale",
         "kit_number",
         "kit_status",
+        "description",
     ),
     "kits": (
         "id",
@@ -296,8 +297,11 @@ def assert_matches_golden(members: dict[str, bytes]) -> None:
 
 
 def test_export_version_is_pinned():
-    assert exporting.EXPORT_VERSION == 1
-    assert json.loads((GOLDEN / "manifest.json").read_bytes())["export_version"] == 1
+    """2 since #349: an `other` order line is a row a version-1 reader cannot hold
+    (its `item_type` is outside that reader's vocabulary), so an archive that may
+    carry one says so in the number a reader checks first."""
+    assert exporting.EXPORT_VERSION == 2
+    assert json.loads((GOLDEN / "manifest.json").read_bytes())["export_version"] == 2
 
 
 def test_every_portable_table_is_pinned():
